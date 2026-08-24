@@ -739,6 +739,18 @@ const (
 )
 
 const (
+	// ApiRedisStorageExpirationIndexSize records the cardinality of the global
+	// expiration ZSET (sandbox:storage:global:expiration) once per heal pass.
+	// Use the max/p99 to detect unbounded growth; a rising trend without a
+	// corresponding rise in live sandbox count indicates stale entries are
+	// accumulating faster than they are swept.
+	ApiRedisStorageExpirationIndexSize HistogramType = "api.redis_storage.expiration_index.size"
+
+	// ApiRedisStorageExpirationIndexSweepDuration records the wall-clock time
+	// of each ExpiredItems call (ZRANGEBYSCORE + MGET pipeline). Rising p99
+	// alongside a rising expiration_index.size confirms O(log N + K) growth.
+	ApiRedisStorageExpirationIndexSweepDuration HistogramType = "api.redis_storage.expiration_index.sweep_duration"
+
 	ApiRedisStoragePublisherPublishDuration HistogramType = "api.redis_storage.publisher.publish.duration"
 	// ApiRedisScriptDuration is the round trip of one Lua script run against
 	// the sandbox store, by script (see ApiRedisScriptCalls).
@@ -1299,10 +1311,12 @@ func GetGaugeInt(meter metric.Meter, name GaugeIntType) (metric.Int64ObservableG
 }
 
 var histogramDesc = map[HistogramType]string{
-	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
-	ApiRedisScriptDuration:                  "Round trip of one Lua script run against the sandbox store, by script",
-	ApiSandboxListAge:                       "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
-	ApiRedisStorageListGets:                 "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys",
+	ApiRedisStorageExpirationIndexSize:          "Cardinality of sandbox:storage:global:expiration ZSET at the time of each heal pass; use max/p99 to detect unbounded growth",
+	ApiRedisStorageExpirationIndexSweepDuration: "Wall-clock duration of one ExpiredItems call (ZRANGEBYSCORE + MGET pipeline); rising p99 alongside rising index size confirms O(log N) growth",
+	ApiRedisStoragePublisherPublishDuration:     "Duration of a single Redis PUBLISH round-trip from the storage publisher",
+	ApiRedisScriptDuration:                      "Round trip of one Lua script run against the sandbox store, by script",
+	ApiSandboxListAge:                           "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
+	ApiRedisStorageListGets:                     "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys",
 
 	FPHRunDurationName:                                "Duration of a completed free-page-hinting drain or run, labeled by phase",
 	FPHStopDurationName:                               "Duration of the stop of an abandoned hinting cycle, acknowledgement wait included",
@@ -1398,10 +1412,12 @@ var histogramDesc = map[HistogramType]string{
 }
 
 var histogramUnits = map[HistogramType]string{
-	ApiRedisStoragePublisherPublishDuration: "ms",
-	ApiRedisScriptDuration:                  "ms",
-	ApiSandboxListAge:                       "ms",
-	ApiRedisStorageListGets:                 "{command}",
+	ApiRedisStorageExpirationIndexSize:          "{entry}",
+	ApiRedisStorageExpirationIndexSweepDuration: "ms",
+	ApiRedisStoragePublisherPublishDuration:     "ms",
+	ApiRedisScriptDuration:                      "ms",
+	ApiSandboxListAge:                           "ms",
+	ApiRedisStorageListGets:                     "{command}",
 
 	FPHRunDurationName:                                "ms",
 	FPHStopDurationName:                               "ms",
