@@ -79,11 +79,36 @@ type DevicePool struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
+	maxDevices uint
+
 	// We use the bitset to speedup the free device lookup.
 	usedSlots *bitset.BitSet
 	mu        sync.Mutex
 
 	slots chan DeviceSlot
+}
+
+// PoolStatus summarises the current state of the device pool.
+type PoolStatus struct {
+	// Max is the total number of NBD device slots available on this host (nbds_max).
+	Max uint
+	// Used is the number of slots currently held by the pool.
+	Used uint
+	// PreWarmed is the number of slots pre-warmed and immediately available.
+	PreWarmed int
+}
+
+// Status returns a snapshot of the pool's current usage without scanning sysfs.
+func (d *DevicePool) Status() PoolStatus {
+	d.mu.Lock()
+	used := d.usedSlots.Count()
+	d.mu.Unlock()
+
+	return PoolStatus{
+		Max:       d.maxDevices,
+		Used:      used,
+		PreWarmed: len(d.slots),
+	}
 }
 
 func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
@@ -101,9 +126,10 @@ func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
 	}
 
 	pool := &DevicePool{
-		done:      make(chan struct{}),
-		usedSlots: bitset.New(maxDevices),
-		slots:     make(chan DeviceSlot, int(math.Min(float64(maxSlotsReady), float64(maxDevices)))),
+		done:       make(chan struct{}),
+		maxDevices: maxDevices,
+		usedSlots:  bitset.New(maxDevices),
+		slots:      make(chan DeviceSlot, int(math.Min(float64(maxSlotsReady), float64(maxDevices)))),
 	}
 
 	return pool, nil
