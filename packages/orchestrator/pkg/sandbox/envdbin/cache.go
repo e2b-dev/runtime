@@ -1198,8 +1198,7 @@ func probeVerdictIsAboutTheBytes(ctx context.Context, err error) bool {
 		return true
 	}
 
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		if exit.ProcessState == nil {
 			return false
 		}

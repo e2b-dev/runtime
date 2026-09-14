@@ -28,7 +28,7 @@ inputs:
     required: false
     default: ""
   dedup_mode:
-    description: "Memfile dedup mode"
+    description: "Memfile dedup mode; 'default' keeps the flag defaults (dedup disabled)"
     required: false
     default: "default"
   disable_memfd:

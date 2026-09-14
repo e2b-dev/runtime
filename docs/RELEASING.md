@@ -2,10 +2,9 @@
 
 This repository is a read-only mirror: its source of truth is E2B's internal
 monorepo, which exports the code here via copybara. Releases are cut there
-too — the [release-please](https://github.com/googleapis/release-please)
-config, the per-package release PRs, the `<component>-v<version>` git tags,
-and the publish workflow all live in the monorepo (each package's directory
-here maps to `go/oss/<directory>` there). No release tags or GitHub Releases
+too — the package list, SemVer release PRs, auto-deploy tags, and the
+publish workflow all live in the monorepo. Each directory in the table
+below is what gets tagged and published. No release tags or GitHub Releases
 appear in this repository.
 
 | Component | Package directory | Published artifact |
@@ -14,26 +13,37 @@ appear in this repository.
 | client-proxy | `packages/client-proxy` | image `us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy` |
 | clickhouse-migrator | `packages/clickhouse` | image `us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator` |
 | dashboard-api | `packages/dashboard-api` | image `us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboard-api` |
+| embed | `embed` | images `us-docker.pkg.dev/e2b-artifacts/embed/tools`, `…/embed/node-e2b` and `…/embed/seed` (released as one unit; the release moves every platform pin in `embed/compose/.env` and `embed/kubernetes/kustomization.yaml` — api, db-migrator, client-proxy, clickhouse-migrator, orchestrator and these three — to its own version) |
 | envd | `packages/envd` | binary `https://storage.googleapis.com/e2b-artifact-binaries/envd/v<version>/envd` |
 | nomad-nodepool-apm | `packages/nomad-nodepool-apm` | binaries `nomad-nodepool-apm`, `nomad-deployment-aware-target` under `…/nomad-nodepool-apm/v<version>/` |
 | orchestrator | `packages/orchestrator` | binaries `orchestrator`, `clean-nfs-cache` under `…/orchestrator/v<version>/` |
 
 ## How a release happens
 
-1. Conventional commits (`feat:`, `fix:`) touching a package's directory in
-   the monorepo accumulate into a per-package release PR maintained by the
-   monorepo's Release Please workflow. (The same commits arrive here through
-   the copybara export, so this mirror's history shows what each release
-   contains.)
-2. Merging the release PR tags the merge commit `<component>-v<version>` in
-   the monorepo (a git tag only — no GitHub Release is created).
-3. The tag push triggers the monorepo's publish workflow, which builds the
-   artifact from the same sources this mirror shows and pushes it to
-   `e2b-artifacts` — images as `:v<version>`, binaries as versioned objects
-   in the public `e2b-artifact-binaries` bucket.
+Two identities:
 
-Ordinary merges never publish: only a release PR merge (or a manual tag,
-below) mints a tag.
+1. Every commit on the monorepo's default branch that touches a package
+   directory is tagged
+   `<component>-vMAJOR.MINOR.YYYYMMDDHHMM-<sha>` for that package only, on
+   that package's current version line. That publish does not increment
+   the patch. The timestamp sits in the patch slot, so these tags sort
+   above every `MAJOR.MINOR.x` release — pin exact tags, not "highest".
+2. Conventional commits (`feat:`, `fix:`) accumulate into a release PR.
+   api, client-proxy, clickhouse-migrator, dashboard-api, embed,
+   nomad-nodepool-apm and orchestrator share one coordinated SemVer with
+   the rest of the platform: merging that PR tags each of them
+   `<component>-vX.Y.Z` at the same number, with changelog. envd is
+   versioned on its own and has its own release PR. (The same commits
+   arrive here through the copybara export.)
+3. Either tag is a git tag only — no GitHub Release. The tag push
+   publishes to `e2b-artifacts` — images as `:v<version>`, binaries as
+   versioned objects in the public `e2b-artifact-binaries` bucket at
+   `<component>/v<version>/`, each with a `<name>.sha256` beside it
+   (sha256sum format). Client-bucket copies use the same string:
+   `<name>.v<version>`, never a bare commit SHA. The `v` is on every tag,
+   image tag, bucket path and object suffix; pin with it.
+
+A manual tag (below) still publishes that commit.
 
 ## Release candidates / manual publishes
 

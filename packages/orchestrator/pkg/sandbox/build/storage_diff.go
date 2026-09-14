@@ -191,8 +191,7 @@ func (b *File) createDiff(ctx context.Context, buildID uuid.UUID) (Diff, error) 
 
 				break
 			}
-			var transErr *storage.PeerTransitionedError
-			if !errors.As(peerErr, &transErr) {
+			if _, ok := errors.AsType[*storage.PeerTransitionedError](peerErr); !ok {
 				return nil, fmt.Errorf("createDiff: peer Size for build %s: %w", buildID, peerErr)
 			}
 		}

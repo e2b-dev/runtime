@@ -8,16 +8,19 @@ import (
 	"sync"
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
+	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 )
 
 // BestOfKConfig holds the configuration parameters for the placement algorithm
 type BestOfKConfig struct {
-	// R is the cluster-wide max over-commit ratio
+	// R is the cluster-wide max CPU over-commit ratio
 	R float64
-	// Alpha is the weight for CPU usage in the score calculation
+	// Alpha is the weight for CPU and memory usage in the score calculation
 	Alpha float64
 	// K is the number of candidate nodes sampled per placement ("power of K choices")
 	K int
+	// ScoreHugepages includes hugepage-pool load in the score (max of CPU and memory).
+	ScoreHugepages bool
 }
 
 // DefaultBestOfKConfig returns the default placement configuration
@@ -29,14 +32,24 @@ func DefaultBestOfKConfig() BestOfKConfig {
 	}
 }
 
-// Score calculates the placement score for this node
+// Score calculates the placement score for this node. CPU load always
+// contributes. When config.ScoreHugepages is set, the score is the higher
+// of CPU and hugepage-memory load, so the tighter resource decides.
 func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxResources, config BestOfKConfig) float64 {
 	metrics := node.Metrics()
 
 	// Get locally recorded resources that haven't been reported yet.
 	pendingCPUs := int64(0)
+	pendingMiB := int64(0)
 	for _, res := range node.PlacementMetrics.InProgress() {
 		pendingCPUs += res.CPUs
+		pendingMiB += res.MiBMemory
+	}
+
+	// to avoid division by zero
+	cpuCount := float64(metrics.CpuCount)
+	if cpuCount == 0 {
+		return math.MaxFloat64
 	}
 
 	// Combine allocated resources with in-progress allocations
@@ -45,17 +58,37 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 	// 1 CPU used = 100% CPU percept
 	usageAvg := float64(metrics.CpuPercent) / 100
 
-	// to avoid division by zero
-	cpuCount := float64(metrics.CpuCount)
-	if cpuCount == 0 {
-		return math.MaxFloat64
-	}
-
 	totalCapacity := config.R * cpuCount
 
 	cpuRequested := float64(resources.CPUs)
 
-	return (cpuRequested + float64(reserved) + config.Alpha*usageAvg) / totalCapacity
+	cpuScore := (cpuRequested + float64(reserved) + config.Alpha*usageAvg) / totalCapacity
+
+	if !config.ScoreHugepages {
+		return cpuScore
+	}
+
+	return max(cpuScore, memoryScore(metrics, resources, pendingMiB, config))
+}
+
+// memoryScore is the CPU score's shape over the hugepage pool, where sandbox
+// memory lives: committed pages (used + reserved + in-flight + requested) plus
+// Alpha-weighted pages actually faulted in, over the pool. Commitment is the
+// kernel counters, not MemoryAllocatedBytes, so a sandbox on ordinary pages
+// does not fill the pool. No over-commit ratio; the pool is physical. A node
+// reporting no pool scores 0.5, so it does not look free next to a reporter.
+func memoryScore(metrics nodemanager.Metrics, resources nodemanager.SandboxResources, pendingMiB int64, config BestOfKConfig) float64 {
+	pageBytes := float64(metrics.HugePageSizeBytes)
+	poolBytes := float64(metrics.HugePagesTotal) * pageBytes
+	if poolBytes == 0 {
+		return 0.5
+	}
+
+	requested := float64(units.MBToBytes(resources.MiBMemory))
+	committed := float64(metrics.HugePagesUsed+metrics.HugePagesReserved)*pageBytes + float64(units.MBToBytes(pendingMiB))
+	used := float64(metrics.HugePagesUsed) * pageBytes
+
+	return (requested + committed + config.Alpha*used) / poolBytes
 }
 
 // BestOfK implements the fit-score-place algorithm

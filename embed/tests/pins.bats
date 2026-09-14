@@ -22,9 +22,12 @@ setup() {
   fi
 }
 
+# The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
+# after a hyphen, and two images from different commits must not compare equal.
 @test "api and db-migrator pins move together" {
-  api_tag="$(sed -n 's/^E2B_API_IMAGE=.*:\(v[0-9.]*\).*/\1/p' compose/.env)"
-  mig_tag="$(sed -n 's/^E2B_DB_MIGRATOR_IMAGE=.*:\(v[0-9.]*\).*/\1/p' compose/.env)"
+  api_tag="$(sed -n 's/^E2B_API_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
+  mig_tag="$(sed -n 's/^E2B_DB_MIGRATOR_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$api_tag" ]
   [ "$api_tag" = "$mig_tag" ]
 }
 
@@ -39,9 +42,10 @@ setup() {
 # The three stack-image variables, in the order the two install files list them.
 STACK_VARS=(E2B_TOOLS_IMAGE E2B_NODE_E2B_IMAGE E2B_SEED_IMAGE)
 
-# env_pin <variable>: the value compose/.env assigns it.
+# env_pin <variable>: the value compose/.env assigns it, without the trailing
+# release marker comment the stack-image lines carry.
 env_pin() {
-  sed -n "s|^$1=||p" compose/.env
+  sed -n "s|^$1=\([^ #]*\).*|\1|p" compose/.env
 }
 
 # k8s_pin <variable>: the newName:newTag the kustomization gives that image

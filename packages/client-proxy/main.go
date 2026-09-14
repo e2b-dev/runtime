@@ -41,11 +41,12 @@ const (
 
 	shutdownDrainingWait  = 15 * time.Second
 	shutdownUnhealthyWait = 15 * time.Second
-
-	version = "1.2.0"
 )
 
-var commitSHA string
+var (
+	commitSHA string
+	version   = "0.3.0" // x-release-please-version
+)
 
 func run() int {
 	config, err := cfg.Parse()

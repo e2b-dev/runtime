@@ -29,7 +29,6 @@ type TemplateBuildInfo struct {
 	TemplateID  string                 `json:"template_id"`
 	BuildStatus types.BuildStatusGroup `json:"build_status"`
 	Reason      types.BuildReason      `json:"reason"`
-	Version     *string                `json:"version,omitempty"`
 
 	ClusterID uuid.UUID `json:"cluster_id"`
 	NodeID    *string   `json:"node_id,omitempty"`
@@ -88,7 +87,6 @@ func (c *TemplatesBuildCache) fetchFromDB(templateID string, buildID uuid.UUID) 
 			TemplateID:  result.ActiveEnv.ID,
 			BuildStatus: result.EnvBuild.StatusGroup,
 			Reason:      result.EnvBuild.Reason,
-			Version:     result.EnvBuild.Version,
 			ClusterID:   clusters.WithClusterFallback(result.ActiveEnv.ClusterID),
 			NodeID:      result.EnvBuild.ClusterNodeID,
 		}, nil

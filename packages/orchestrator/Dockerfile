@@ -38,8 +38,9 @@ COPY ./orchestrator/Makefile ./orchestrator/Makefile
 WORKDIR /build/orchestrator
 
 ARG COMMIT_SHA
+ARG VERSION
 # Use Docker's TARGETARCH (set by --platform) so GOARCH matches the container platform.
-RUN --mount=type=cache,target=/root/.cache/go-build make build-local COMMIT_SHA=${COMMIT_SHA} BUILD_ARCH=${TARGETARCH}
+RUN --mount=type=cache,target=/root/.cache/go-build make build-local COMMIT_SHA=${COMMIT_SHA} VERSION=${VERSION} BUILD_ARCH=${TARGETARCH}
 
 FROM scratch
 

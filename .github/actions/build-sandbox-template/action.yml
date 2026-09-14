@@ -26,6 +26,72 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # The built template is a pure function of the source that builds it and
+    # runs inside it, the pins and sizes in this action file, the Go
+    # toolchain (go.work), and the compression configuration and race flag
+    # (the embedded envd binary is built with the job's RACE_FLAG, so
+    # instrumented and uninstrumented jobs produce different templates and
+    # must never share a key). Git tree hashes stand in for the source: they
+    # are exact, instant, and — unlike hashFiles over the package trees —
+    # computed once here rather than re-evaluated in the cache post step,
+    # where root-owned build litter under packages/ made hashing fail. A
+    # caller whose checkout layout differs from this repository may
+    # precompute the digest into TEMPLATE_SRC_HASH; otherwise it derives
+    # from HEAD here.
+    - name: Compute the template source hash
+      id: template-src
+      shell: bash
+      run: |
+        if [ -z "${TEMPLATE_SRC_HASH:-}" ]; then
+          TEMPLATE_SRC_HASH="$(git rev-parse HEAD:packages)-$(git rev-parse HEAD:.github/actions/build-sandbox-template)-$(git rev-parse HEAD:go.work)"
+        fi
+
+        # The base image tag is mutable: a republish must invalidate the
+        # cache even with identical sources. The manifest text is hashed to
+        # one token rather than --format'ed (buildx versions differ on
+        # format support and multi-line values break GITHUB_OUTPUT); any
+        # stable text per manifest works as a key segment. A failed lookup
+        # falls back to the tag string, i.e. possibly-stale reuse rather
+        # than a broken build.
+        base_image=$(grep -oE 'baseImage = "[^"]+"' packages/orchestrator/cmd/create-build/main.go | cut -d'"' -f2 || true)
+        base_digest=$( (docker buildx imagetools inspect "${base_image:-e2bdev/base:latest}" 2>/dev/null || echo "${base_image:-unresolved}") | sha256sum | cut -c1-16)
+
+        echo "hash=${TEMPLATE_SRC_HASH}-${base_digest}" >> "$GITHUB_OUTPUT"
+
+    # The stage directory holds only the base build. The template storage
+    # root itself cannot be the cache path: by the time the post step saves
+    # it, the suite's own pauses, snapshots and test builds have written
+    # gigabytes there. Exact key only: a restored template always matches
+    # what this checkout would build, and any relevant change rebuilds. On a
+    # hit the build step below reuses the restored build ID; concurrent
+    # first runs on one commit all build and the first save wins, which is
+    # only the cold cost once.
+# Blacksmith runners only: a staged template is 2.7-3.7 GiB (its
+    # artifacts are already compressed, so the cache cannot shrink them),
+    # and on GitHub's cache backend the restore barely beats the ~40s
+    # rebuild while a handful of source digests exhausts the repository's
+    # cache budget. Blacksmith's colocated cache is both faster and a
+    # separate quota. The runner is detected by process env, which the env
+    # context cannot see, hence the probe step.
+    - name: Detect the runner's cache backend
+      id: cache-backend
+      shell: bash
+      run: |
+        if [ -n "${BLACKSMITH_ACTIONS_RESULTS_URL:-}" ]; then
+          echo "blacksmith=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "blacksmith=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Cache the built template
+      if: steps.cache-backend.outputs.blacksmith == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /tmp/base-template-stage
+# gc dimension: DEBUG_GCFLAGS shapes the embedded envd binary the same
+        # way RACE_FLAG does (optimized vs -N -l debug builds).
+        key: base-template-race${{ env.RACE_FLAG }}-gc${{ env.DEBUG_GCFLAGS != '' && 'debug' || 'opt' }}-${{ inputs.compress_enabled }}-${{ inputs.compress_type }}-${{ inputs.compress_level }}-${{ inputs.compress_workers }}-disk${{ inputs.disk_size_mb }}-${{ steps.template-src.outputs.hash }}
+
     # Note: this cannot run concurrently with a running orchestrator -
     # create-build manages its own sandbox network state (slot pools,
     # namespaces) and the two processes conflict, wedging the provisioning VM.
@@ -35,29 +101,62 @@ runs:
         KERNEL_VERSION: "vmlinux-6.1.158-c1a568c"
         FIRECRACKER_VERSION: "v1.14-0.2.0"
         DISK_SIZE_MB: ${{ inputs.disk_size_mb }}
+        # 256 MiB guest memory: the CI sandboxes run the kernel, envd and
+        # light test commands, and a smaller memfile makes every pause,
+        # resume, compression and dedup in the suite proportionally cheaper.
+        # TestTemplateBuild* VMs size themselves from their own build
+        # configs, so this only shapes the base template.
+        MEMORY_MB: "256"
         COMPRESS_ENABLED: ${{ inputs.compress_enabled }}
         COMPRESS_TYPE: ${{ inputs.compress_type }}
         COMPRESS_LEVEL: ${{ inputs.compress_level }}
         COMPRESS_FRAME_ENCODE_WORKERS: ${{ inputs.compress_workers }}
       run: |
-        # Generate an unique build ID for the template for this run
-        export BUILD_ID=$(uuidgen)
+        stage="/tmp/base-template-stage"
+        marker="${stage}/build-id"
 
-        echo "This build unique ID: ${BUILD_ID}"
+        if [ -s "$marker" ]; then
+          # Restored by the cache step above; the marker carries the build ID
+          # the staged files were written under, so the database seed and the
+          # files agree without rebuilding anything.
+          BUILD_ID=$(cat "$marker")
+          echo "Template restored from cache with build ID ${BUILD_ID}"
+          mkdir -p /tmp/templates
+          cp -a "${stage}/files/." /tmp/templates/
+        else
+          BUILD_ID=$(uuidgen)
+          echo "This build unique ID: ${BUILD_ID}"
+        fi
+        export BUILD_ID
 
         echo "TESTS_SANDBOX_TEMPLATE_ID=${TEMPLATE_ID}" >> .env.test
         echo "TESTS_SANDBOX_BUILD_ID=${BUILD_ID}" >> .env.test
+        # The seed row must declare the memory the memfile was built with:
+        # the VM sizes itself from the row, and a row larger than the
+        # memfile makes resumes read past its end.
+        echo "TESTS_SANDBOX_RAM_MB=${MEMORY_MB}" >> .env.test
         echo "COMPRESS_ENABLED=${COMPRESS_ENABLED}" >> .env.test
         echo "COMPRESS_TYPE=${COMPRESS_TYPE}" >> .env.test
         echo "COMPRESS_LEVEL=${COMPRESS_LEVEL}" >> .env.test
         echo "COMPRESS_FRAME_ENCODE_WORKERS=${COMPRESS_FRAME_ENCODE_WORKERS}" >> .env.test
 
-        sudo -E make -C packages/orchestrator build-template \
-          ARTIFACTS_REGISTRY_PROVIDER=Local \
-          STORAGE_PROVIDER=Local \
-          TEMPLATE_ID=${TEMPLATE_ID} \
-          BUILD_ID=${BUILD_ID} \
-          KERNEL_VERSION=${KERNEL_VERSION} \
-          FC_VERSION=${FC_VERSION} \
-          DISK_SIZE_MB=${DISK_SIZE_MB}
+        if [ ! -s "$marker" ]; then
+          sudo -E make -C packages/orchestrator build-template \
+            ARTIFACTS_REGISTRY_PROVIDER=Local \
+            STORAGE_PROVIDER=Local \
+            TEMPLATE_ID=${TEMPLATE_ID} \
+            BUILD_ID=${BUILD_ID} \
+            KERNEL_VERSION=${KERNEL_VERSION} \
+            FC_VERSION=${FC_VERSION} \
+            DISK_SIZE_MB=${DISK_SIZE_MB} \
+            MEMORY_MB=${MEMORY_MB}
+
+          # Stage now, while the storage root holds exactly the base build;
+          # the services fill it with test artifacts later. The cache
+          # post-step reads the stage as the runner user.
+          sudo mkdir -p "${stage}/files"
+          sudo cp -a /tmp/templates/. "${stage}/files/"
+          echo "${BUILD_ID}" | sudo tee "$marker" >/dev/null
+          sudo chmod -R a+rX "$stage"
+        fi
       shell: bash

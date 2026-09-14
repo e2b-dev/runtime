@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -151,4 +152,35 @@ func setTemplatePublic(t *testing.T, db *testutils.Database, templateID string, 
 		public,
 	)
 	require.NoError(t, err)
+}
+
+func TestSetTemplateSource_WithoutSourceIsRejected(t *testing.T) {
+	t.Parallel()
+
+	// The V1 path sent an empty fromImage and let the builder find the base itself.
+	emptyImage := ""
+	emptyTemplate := ""
+
+	tests := []struct {
+		name         string
+		fromImage    *string
+		fromTemplate *string
+	}{
+		{name: "neither source"},
+		{name: "empty fromImage", fromImage: &emptyImage},
+		{name: "empty fromTemplate", fromTemplate: &emptyTemplate},
+		{name: "both empty", fromImage: &emptyImage, fromTemplate: &emptyTemplate},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			template := &templatemanagergrpc.TemplateConfig{}
+			err := setTemplateSource(t.Context(), nil, uuid.Nil, "team", template, tt.fromImage, tt.fromTemplate)
+
+			require.EqualError(t, err, "must specify either fromImage or fromTemplate")
+			assert.Nil(t, template.GetSource())
+		})
+	}
 }

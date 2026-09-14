@@ -25,8 +25,7 @@ func (s *APIStore) sendProvisioningError(ctx context.Context, c *gin.Context, op
 		return
 	}
 
-	var provisionErr *internalteamprovision.ProvisionError
-	if errors.As(err, &provisionErr) {
+	if provisionErr, ok := errors.AsType[*internalteamprovision.ProvisionError](err); ok {
 		if provisionErr.StatusCode < http.StatusBadRequest || provisionErr.StatusCode >= 600 {
 			telemetry.ReportErrorByCode(ctx, http.StatusInternalServerError, operation+" failed", err, attrs...)
 			s.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to "+operation)

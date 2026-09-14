@@ -25,20 +25,17 @@ func IsRetriable(err error) bool {
 	}
 
 	// Check for PostgreSQL errors
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return isRetriablePgError(pgErr)
 	}
 
 	// Check for connection errors
-	var connErr *pgconn.ConnectError
-	if errors.As(err, &connErr) {
+	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
 		return true
 	}
 
 	// Check for network errors
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 

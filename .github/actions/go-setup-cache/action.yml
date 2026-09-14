@@ -17,6 +17,20 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Ephemeral runners lack the pinned toolchain, so setup-go downloads it
+    # every run; restore it from the actions cache instead. No restore-keys:
+    # only the exact version helps.
+    - name: Resolve Go toolchain version
+      id: toolchain
+      shell: bash
+      run: awk '$1 == "go" { v = $2 } $1 == "toolchain" { v = substr($2, 3) } END { print "version=" v }' go.work >> "$GITHUB_OUTPUT"
+
+    - name: Cache Go toolchain
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.tool_cache }}/go/${{ steps.toolchain.outputs.version }}
+        key: go-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.version }}
+
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:

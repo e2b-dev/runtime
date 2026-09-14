@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,6 +44,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 type ClickhouseDelivery struct {
 	batcher *batcher.Batcher[SandboxHostStat]
 	conn    driver.Conn
+	ff      *featureflags.Client
 }
 
 type GatedClickhouseDelivery struct {
@@ -75,6 +77,7 @@ func NewDefaultClickhouseHostStatsDelivery(
 				logger.L().Error(ctx, "error batching sandbox host stats", zap.Error(err))
 			},
 		},
+		featureFlags,
 	)
 }
 
@@ -86,8 +89,9 @@ func NewClickhouseHostStatsDelivery(
 	ctx context.Context,
 	conn driver.Conn,
 	opts batcher.BatcherOptions,
+	featureFlags *featureflags.Client,
 ) (*ClickhouseDelivery, error) {
-	delivery := &ClickhouseDelivery{conn: conn}
+	delivery := &ClickhouseDelivery{conn: conn, ff: featureFlags}
 
 	var err error
 	delivery.batcher, err = batcher.NewBatcher(delivery.batchInserter, opts)
@@ -119,10 +123,24 @@ func (c *ClickhouseDelivery) Close(_ context.Context) error {
 	return c.batcher.Stop()
 }
 
+// insertSettings returns the per-query ClickHouse settings for one flush, or
+// nil when the server defaults apply.
+func (c *ClickhouseDelivery) insertSettings(ctx context.Context) clickhouse.Settings {
+	if c.ff == nil || !c.ff.BoolFlag(ctx, featureflags.ClickhouseHostStatsAsyncInsertFlag) {
+		return nil
+	}
+
+	return clickhouse.Settings{"async_insert": 1}
+}
+
 func (c *ClickhouseDelivery) batchInserter(ctx context.Context, stats []SandboxHostStat) error {
 	attrs := trace.WithAttributes(attribute.Int("batch.size", len(stats)))
 	ctx, span := tracer.Start(ctx, "Flush host stats batch to Clickhouse", attrs)
 	defer span.End()
+
+	if settings := c.insertSettings(ctx); settings != nil {
+		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(settings))
+	}
 
 	batch, err := c.conn.PrepareBatch(ctx, InsertSandboxHostStatQuery, driver.WithReleaseConnection())
 	if err != nil {

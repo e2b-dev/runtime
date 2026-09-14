@@ -16,6 +16,11 @@ endif
 # Published to by the release-please workflow on tagging a release.
 E2B_ARTIFACTS_REGISTRY ?= us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator
 
+# Architecture for the image lanes. Defaults to amd64; override for arm64:
+#   BUILD_ARCH=arm64 make build-and-upload
+BUILD_ARCH ?= amd64
+BUILD_PLATFORM ?= linux/$(BUILD_ARCH)
+
 # Optional version "hook" for the released-image flow.
 # When empty (default), build-and-upload builds from source and pushes to the
 # client's own core repo (the existing flow, unchanged).
@@ -64,22 +69,19 @@ migrate-host:
 
 .PHONY: build
 build:
-	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
-	@docker build --platform linux/amd64 --tag "$(CLICKHOUSE_MIGRATOR_IMAGE)" --tag "$(CLICKHOUSE_MIGRATOR_IMAGE):$(COMMIT_SHA)" .
+	@docker build --platform $(BUILD_PLATFORM) --tag "$(CLICKHOUSE_MIGRATOR_IMAGE)" .
 
 .PHONY: build-and-upload
 ifeq ($(strip $(CLICKHOUSE_MIGRATOR_VERSION)),)
 # Existing flow: build from source and push to the client's own core repo.
 build-and-upload:build
-	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
 	@docker push "$(CLICKHOUSE_MIGRATOR_IMAGE)"
-	@docker push "$(CLICKHOUSE_MIGRATOR_IMAGE):$(COMMIT_SHA)"
 else
 # Released-image flow: pull the prebuilt, versioned image from the E2B
 # artifacts registry and retag/push it into the client's own core repo.
 build-and-upload:
 	@echo "Using released clickhouse-migrator $(CLICKHOUSE_MIGRATOR_VERSION) from $(E2B_ARTIFACTS_REGISTRY)"
-	docker pull --platform linux/amd64 $(E2B_ARTIFACTS_REGISTRY):$(CLICKHOUSE_MIGRATOR_VERSION)
+	docker pull --platform $(BUILD_PLATFORM) $(E2B_ARTIFACTS_REGISTRY):$(CLICKHOUSE_MIGRATOR_VERSION)
 	docker tag $(E2B_ARTIFACTS_REGISTRY):$(CLICKHOUSE_MIGRATOR_VERSION) $(CLICKHOUSE_MIGRATOR_IMAGE):latest
 	docker tag $(E2B_ARTIFACTS_REGISTRY):$(CLICKHOUSE_MIGRATOR_VERSION) $(CLICKHOUSE_MIGRATOR_IMAGE):$(CLICKHOUSE_MIGRATOR_VERSION)
 	docker push $(CLICKHOUSE_MIGRATOR_IMAGE):latest

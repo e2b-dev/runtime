@@ -42,7 +42,7 @@ variable "boot_disk_type" {
 }
 
 variable "image" {
-  description = "Boot image. The stack requires Ubuntu 24.04 (apt, writable /etc, glibc >= 2.34)."
+  description = "Boot image. The stack requires Ubuntu 24.04 (apt, writable /etc, glibc >= 2.34). x86-64 only: the startup script installs Docker's amd64 apt repository, and GCE's arm64 machine types have no nested virtualization, so no /dev/kvm."
   type        = string
   default     = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
 }

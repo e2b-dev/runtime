@@ -3833,8 +3833,7 @@ func (s *Sandbox) foldAndCloseSeal(ctx context.Context, sealCache *block.Cache) 
 	// cleanup stack runs. Closing what we hold is then a double-close;
 	// tolerate it rather than misreport the fold-back as failed.
 	if err := sealCache.Close(); err != nil {
-		var closed *block.CacheClosedError
-		if errors.As(err, &closed) {
+		if _, ok := errors.AsType[*block.CacheClosedError](err); ok {
 			return nil
 		}
 

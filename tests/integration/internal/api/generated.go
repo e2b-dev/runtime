@@ -1348,7 +1348,8 @@ type TemplateBuildInfo struct {
 	// LogEntries Build logs structured
 	LogEntries []BuildLogEntry `json:"logEntries"`
 
-	// Logs Build logs
+	// Logs Build logs (always empty since the V1 build path was removed, use logEntries)
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Logs   []string           `json:"logs"`
 	Reason *BuildStatusReason `json:"reason,omitempty"`
 
@@ -1363,46 +1364,6 @@ type TemplateBuildInfo struct {
 type TemplateBuildLogsResponse struct {
 	// Logs Build logs structured
 	Logs []BuildLogEntry `json:"logs"`
-}
-
-// TemplateBuildRequest defines model for TemplateBuildRequest.
-type TemplateBuildRequest struct {
-	// Alias Alias of the template
-	Alias *string `json:"alias,omitempty"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount *CPUCount `json:"cpuCount,omitempty"`
-
-	// Dockerfile Dockerfile for the template
-	Dockerfile string `json:"dockerfile"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
-
-	// ReadyCmd Ready check command to execute in the template after the build
-	ReadyCmd *string `json:"readyCmd,omitempty"`
-
-	// StartCmd Start command to execute in the template after the build
-	StartCmd *string `json:"startCmd,omitempty"`
-
-	// TeamID Identifier of the team
-	TeamID *string `json:"teamID,omitempty"`
-}
-
-// TemplateBuildRequestV2 defines model for TemplateBuildRequestV2.
-type TemplateBuildRequestV2 struct {
-	// Alias Alias of the template
-	Alias string `json:"alias"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount *CPUCount `json:"cpuCount,omitempty"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
-
-	// TeamID Identifier of the team
-	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	TeamID *string `json:"teamID,omitempty"`
 }
 
 // TemplateBuildRequestV3 defines model for TemplateBuildRequestV3.
@@ -1431,7 +1392,7 @@ type TemplateBuildRequestV3 struct {
 	TeamID *string `json:"teamID,omitempty"`
 }
 
-// TemplateBuildStartV2 defines model for TemplateBuildStartV2.
+// TemplateBuildStartV2 Exactly one of fromImage or fromTemplate must be given and non-empty.
 type TemplateBuildStartV2 struct {
 	// Force Whether the whole build should be forced to run regardless of the cache
 	Force *bool `json:"force,omitempty"`
@@ -1455,49 +1416,6 @@ type TemplateBuildStartV2 struct {
 
 // TemplateBuildStatus Status of the template build
 type TemplateBuildStatus string
-
-// TemplateLegacy defines model for TemplateLegacy.
-type TemplateLegacy struct {
-	// Aliases Aliases of the template
-	Aliases []string `json:"aliases"`
-
-	// BuildCount Number of times the template was built
-	BuildCount int32 `json:"buildCount"`
-
-	// BuildID Identifier of the last successful build for given template
-	BuildID string `json:"buildID"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount CPUCount `json:"cpuCount"`
-
-	// CreatedAt Time when the template was created
-	CreatedAt time.Time `json:"createdAt"`
-	CreatedBy *TeamUser `json:"createdBy"`
-
-	// DiskSizeMB Disk size for the sandbox in MiB
-	DiskSizeMB DiskSizeMB `json:"diskSizeMB"`
-
-	// EnvdVersion Version of the envd running in the sandbox
-	EnvdVersion EnvdVersion `json:"envdVersion"`
-
-	// LastSpawnedAt Time when the template was last used
-	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB MemoryMB `json:"memoryMB"`
-
-	// Public Whether the template is public or only accessible by the team
-	Public bool `json:"public"`
-
-	// SpawnCount Number of times the template was used
-	SpawnCount int64 `json:"spawnCount"`
-
-	// TemplateID Identifier of the template
-	TemplateID string `json:"templateID"`
-
-	// UpdatedAt Time when the template was last updated
-	UpdatedAt time.Time `json:"updatedAt"`
-}
 
 // TemplateRequestResponseV3 defines model for TemplateRequestResponseV3.
 type TemplateRequestResponseV3 struct {
@@ -1929,11 +1847,6 @@ type PostSecretsJSONRequestBody = NewSecret
 // PostSecretsSecretIDJSONRequestBody defines body for PostSecretsSecretID for application/json ContentType.
 type PostSecretsSecretIDJSONRequestBody = SecretUpdate
 
-// PostTemplatesJSONRequestBody defines body for PostTemplates for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-type PostTemplatesJSONRequestBody = TemplateBuildRequest
-
 // DeleteTemplatesTagsJSONRequestBody defines body for DeleteTemplatesTags for application/json ContentType.
 type DeleteTemplatesTagsJSONRequestBody = DeleteTemplateTagsRequest
 
@@ -1944,16 +1857,6 @@ type PostTemplatesTagsJSONRequestBody = AssignTemplateTagsRequest
 //
 // Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type PatchTemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
-
-// PostTemplatesTemplateIDJSONRequestBody defines body for PostTemplatesTemplateID for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-type PostTemplatesTemplateIDJSONRequestBody = TemplateBuildRequest
-
-// PostV2TemplatesJSONRequestBody defines body for PostV2Templates for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-type PostV2TemplatesJSONRequestBody = TemplateBuildRequestV2
 
 // PatchV2TemplatesTemplateIDJSONRequestBody defines body for PatchV2TemplatesTemplateID for application/json ContentType.
 type PatchV2TemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
@@ -2664,28 +2567,6 @@ type ClientInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetTemplates(ctx context.Context, params *GetTemplatesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PostTemplatesWithBody Create template
-	//
-	// Create a new template.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /templates (the `PostTemplates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostTemplates Create template
-	//
-	// Create a new template.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /templates (the `PostTemplates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplates(ctx context.Context, body PostTemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetTemplatesAliasesAlias Check template alias
 	//
 	// Check if template with given alias exists.
@@ -2761,37 +2642,6 @@ type ClientInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PatchTemplatesTemplateID(ctx context.Context, templateID TemplateID, body PatchTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PostTemplatesTemplateIDWithBody Rebuild template
-	//
-	// Rebuild an template.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateIDWithBody(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostTemplatesTemplateID Rebuild template
-	//
-	// Rebuild an template.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateID(ctx context.Context, templateID TemplateID, body PostTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostTemplatesTemplateIDBuildsBuildID Start template build
-	//
-	// Start the build.
-	//
-	// Corresponds with POST /templates/{templateID}/builds/{buildID} (the `PostTemplatesTemplateIDBuildsBuildID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetTemplatesTemplateIDBuildsBuildIDLogs Template build logs
 	//
 	// Get template build logs.
@@ -2840,28 +2690,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 	GetV2Templates(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostV2TemplatesWithBody Create template (v2)
-	//
-	// Create a new template.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostV2TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostV2Templates Create template (v2)
-	//
-	// Create a new template.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostV2Templates(ctx context.Context, body PostV2TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PatchV2TemplatesTemplateIDWithBody Update template (v2)
 	//
@@ -4028,46 +3856,6 @@ func (c *Client) GetTemplates(ctx context.Context, params *GetTemplatesParams, r
 	return c.Client.Do(req)
 }
 
-// PostTemplatesWithBody Create template
-//
-// Create a new template.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /templates (the `PostTemplates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostTemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PostTemplates Create template
-//
-// Create a new template.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /templates (the `PostTemplates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostTemplates(ctx context.Context, body PostTemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // GetTemplatesAliasesAlias Check template alias
 //
 // Check if template with given alias exists.
@@ -4231,64 +4019,6 @@ func (c *Client) PatchTemplatesTemplateID(ctx context.Context, templateID Templa
 	return c.Client.Do(req)
 }
 
-// PostTemplatesTemplateIDWithBody Rebuild template
-//
-// Rebuild an template.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostTemplatesTemplateIDWithBody(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesTemplateIDRequestWithBody(c.Server, templateID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PostTemplatesTemplateID Rebuild template
-//
-// Rebuild an template.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostTemplatesTemplateID(ctx context.Context, templateID TemplateID, body PostTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesTemplateIDRequest(c.Server, templateID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PostTemplatesTemplateIDBuildsBuildID Start template build
-//
-// Start the build.
-//
-// Corresponds with POST /templates/{templateID}/builds/{buildID} (the `PostTemplatesTemplateIDBuildsBuildID` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostTemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // GetTemplatesTemplateIDBuildsBuildIDLogs Template build logs
 //
 // Get template build logs.
@@ -4398,46 +4128,6 @@ func (c *Client) GetV2SandboxesSandboxIDLogs(ctx context.Context, sandboxID Sand
 // Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 func (c *Client) GetV2Templates(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetV2TemplatesRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PostV2TemplatesWithBody Create template (v2)
-//
-// Create a new template.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostV2TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PostV2Templates Create template (v2)
-//
-// Create a new template.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostV2Templates(ctx context.Context, body PostV2TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6716,46 +6406,6 @@ func NewGetTemplatesRequest(server string, params *GetTemplatesParams) (*http.Re
 	return req, nil
 }
 
-// NewPostTemplatesRequest calls the generic PostTemplates builder with application/json body
-func NewPostTemplatesRequest(server string, body PostTemplatesJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPostTemplatesRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewPostTemplatesRequestWithBody constructs an http.Request for the PostTemplates method, with any body, and a specified content type
-func NewPostTemplatesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/templates")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetTemplatesAliasesAliasRequest constructs an http.Request for the GetTemplatesAliasesAlias method
 func NewGetTemplatesAliasesAliasRequest(server string, alias string) (*http.Request, error) {
 	var err error
@@ -7020,94 +6670,6 @@ func NewPatchTemplatesTemplateIDRequestWithBody(server string, templateID Templa
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewPostTemplatesTemplateIDRequest calls the generic PostTemplatesTemplateID builder with application/json body
-func NewPostTemplatesTemplateIDRequest(server string, templateID TemplateID, body PostTemplatesTemplateIDJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPostTemplatesTemplateIDRequestWithBody(server, templateID, "application/json", bodyReader)
-}
-
-// NewPostTemplatesTemplateIDRequestWithBody constructs an http.Request for the PostTemplatesTemplateID method, with any body, and a specified content type
-func NewPostTemplatesTemplateIDRequestWithBody(server string, templateID TemplateID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/templates/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewPostTemplatesTemplateIDBuildsBuildIDRequest constructs an http.Request for the PostTemplatesTemplateIDBuildsBuildID method
-func NewPostTemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "buildID", buildID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/templates/%s/builds/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -7704,46 +7266,6 @@ func NewGetV2TemplatesRequest(server string, params *GetV2TemplatesParams) (*htt
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewPostV2TemplatesRequest calls the generic PostV2Templates builder with application/json body
-func NewPostV2TemplatesRequest(server string, body PostV2TemplatesJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPostV2TemplatesRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewPostV2TemplatesRequestWithBody constructs an http.Request for the PostV2Templates method, with any body, and a specified content type
-func NewPostV2TemplatesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v2/templates")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8608,28 +8130,6 @@ type ClientWithResponsesInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetTemplatesWithResponse(ctx context.Context, params *GetTemplatesParams, reqEditors ...RequestEditorFn) (*GetTemplatesResponse, error)
 
-	// PostTemplatesWithBodyWithResponse Create template
-	//
-	// Create a new template.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /templates (the `PostTemplates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesResponse, error)
-
-	// PostTemplatesWithResponse Create template
-	//
-	// Create a new template.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /templates (the `PostTemplates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesWithResponse(ctx context.Context, body PostTemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesResponse, error)
-
 	// GetTemplatesAliasesAliasWithResponse Check template alias
 	//
 	// Check if template with given alias exists.
@@ -8711,39 +8211,6 @@ type ClientWithResponsesInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PatchTemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PatchTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTemplatesTemplateIDResponse, error)
 
-	// PostTemplatesTemplateIDWithBodyWithResponse Rebuild template
-	//
-	// Rebuild an template.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDResponse, error)
-
-	// PostTemplatesTemplateIDWithResponse Rebuild template
-	//
-	// Rebuild an template.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PostTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDResponse, error)
-
-	// PostTemplatesTemplateIDBuildsBuildIDWithResponse Start template build
-	//
-	// Start the build.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /templates/{templateID}/builds/{buildID} (the `PostTemplatesTemplateIDBuildsBuildID` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostTemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDBuildsBuildIDResponse, error)
-
 	// GetTemplatesTemplateIDBuildsBuildIDLogsWithResponse Template build logs
 	//
 	// Get template build logs.
@@ -8806,28 +8273,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 	GetV2TemplatesWithResponse(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*GetV2TemplatesResponse, error)
-
-	// PostV2TemplatesWithBodyWithResponse Create template (v2)
-	//
-	// Create a new template.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostV2TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesResponse, error)
-
-	// PostV2TemplatesWithResponse Create template (v2)
-	//
-	// Create a new template.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostV2TemplatesWithResponse(ctx context.Context, body PostV2TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesResponse, error)
 
 	// PatchV2TemplatesTemplateIDWithBodyWithResponse Update template (v2)
 	//
@@ -11903,75 +11348,6 @@ func (r GetTemplatesResponse) ContentType() string {
 	return ""
 }
 
-type PostTemplatesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *TemplateLegacy
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r PostTemplatesResponse) GetJSON202() *TemplateLegacy {
-	return r.JSON202
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostTemplatesResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostTemplatesResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostTemplatesResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostTemplatesResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r PostTemplatesResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PostTemplatesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostTemplatesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PostTemplatesResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type GetTemplatesAliasesAliasResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12331,116 +11707,6 @@ func (r PatchTemplatesTemplateIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PatchTemplatesTemplateIDResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PostTemplatesTemplateIDResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *TemplateLegacy
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r PostTemplatesTemplateIDResponse) GetJSON202() *TemplateLegacy {
-	return r.JSON202
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostTemplatesTemplateIDResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostTemplatesTemplateIDResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostTemplatesTemplateIDResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r PostTemplatesTemplateIDResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PostTemplatesTemplateIDResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostTemplatesTemplateIDResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PostTemplatesTemplateIDResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PostTemplatesTemplateIDBuildsBuildIDResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PostTemplatesTemplateIDBuildsBuildIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12917,75 +12183,6 @@ func (r GetV2TemplatesResponse) ContentType() string {
 	return ""
 }
 
-type PostV2TemplatesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *TemplateLegacy
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r PostV2TemplatesResponse) GetJSON202() *TemplateLegacy {
-	return r.JSON202
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV2TemplatesResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV2TemplatesResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostV2TemplatesResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV2TemplatesResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r PostV2TemplatesResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PostV2TemplatesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostV2TemplatesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PostV2TemplatesResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type PatchV2TemplatesTemplateIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13051,10 +12248,17 @@ func (r PatchV2TemplatesTemplateIDResponse) ContentType() string {
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -14299,39 +13503,6 @@ func (c *ClientWithResponses) GetTemplatesWithResponse(ctx context.Context, para
 	return ParseGetTemplatesResponse(rsp)
 }
 
-// PostTemplatesWithBodyWithResponse Create template
-//
-// Create a new template.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /templates (the `PostTemplates` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostTemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesResponse, error) {
-	rsp, err := c.PostTemplatesWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostTemplatesResponse(rsp)
-}
-
-// PostTemplatesWithResponse Create template
-//
-// Create a new template.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /templates (the `PostTemplates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostTemplatesWithResponse(ctx context.Context, body PostTemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesResponse, error) {
-	rsp, err := c.PostTemplates(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostTemplatesResponse(rsp)
-}
-
 // GetTemplatesAliasesAliasWithResponse Check template alias
 //
 // Check if template with given alias exists.
@@ -14466,56 +13637,6 @@ func (c *ClientWithResponses) PatchTemplatesTemplateIDWithResponse(ctx context.C
 	return ParsePatchTemplatesTemplateIDResponse(rsp)
 }
 
-// PostTemplatesTemplateIDWithBodyWithResponse Rebuild template
-//
-// Rebuild an template.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostTemplatesTemplateIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDResponse, error) {
-	rsp, err := c.PostTemplatesTemplateIDWithBody(ctx, templateID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostTemplatesTemplateIDResponse(rsp)
-}
-
-// PostTemplatesTemplateIDWithResponse Rebuild template
-//
-// Rebuild an template.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /templates/{templateID} (the `PostTemplatesTemplateID` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostTemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PostTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDResponse, error) {
-	rsp, err := c.PostTemplatesTemplateID(ctx, templateID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostTemplatesTemplateIDResponse(rsp)
-}
-
-// PostTemplatesTemplateIDBuildsBuildIDWithResponse Start template build
-//
-// Start the build.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /templates/{templateID}/builds/{buildID} (the `PostTemplatesTemplateIDBuildsBuildID` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostTemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, reqEditors ...RequestEditorFn) (*PostTemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostTemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostTemplatesTemplateIDBuildsBuildIDResponse(rsp)
-}
-
 // GetTemplatesTemplateIDBuildsBuildIDLogsWithResponse Template build logs
 //
 // Get template build logs.
@@ -14619,39 +13740,6 @@ func (c *ClientWithResponses) GetV2TemplatesWithResponse(ctx context.Context, pa
 		return nil, err
 	}
 	return ParseGetV2TemplatesResponse(rsp)
-}
-
-// PostV2TemplatesWithBodyWithResponse Create template (v2)
-//
-// Create a new template.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostV2TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesResponse, error) {
-	rsp, err := c.PostV2TemplatesWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostV2TemplatesResponse(rsp)
-}
-
-// PostV2TemplatesWithResponse Create template (v2)
-//
-// Create a new template.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v2/templates (the `PostV2Templates` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostV2TemplatesWithResponse(ctx context.Context, body PostV2TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesResponse, error) {
-	rsp, err := c.PostV2Templates(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostV2TemplatesResponse(rsp)
 }
 
 // PatchV2TemplatesTemplateIDWithBodyWithResponse Update template (v2)
@@ -17199,60 +16287,6 @@ func ParseGetTemplatesResponse(rsp *http.Response) (*GetTemplatesResponse, error
 	return response, nil
 }
 
-// ParsePostTemplatesResponse parses an HTTP response from a PostTemplatesWithResponse call
-func ParsePostTemplatesResponse(rsp *http.Response) (*PostTemplatesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostTemplatesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest TemplateLegacy
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetTemplatesAliasesAliasResponse parses an HTTP response from a GetTemplatesAliasesAliasWithResponse call
 func ParseGetTemplatesAliasesAliasResponse(rsp *http.Response) (*GetTemplatesAliasesAliasResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17523,89 +16557,6 @@ func ParsePatchTemplatesTemplateIDResponse(rsp *http.Response) (*PatchTemplatesT
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePostTemplatesTemplateIDResponse parses an HTTP response from a PostTemplatesTemplateIDWithResponse call
-func ParsePostTemplatesTemplateIDResponse(rsp *http.Response) (*PostTemplatesTemplateIDResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostTemplatesTemplateIDResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest TemplateLegacy
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePostTemplatesTemplateIDBuildsBuildIDResponse parses an HTTP response from a PostTemplatesTemplateIDBuildsBuildIDWithResponse call
-func ParsePostTemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*PostTemplatesTemplateIDBuildsBuildIDResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostTemplatesTemplateIDBuildsBuildIDResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 202:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
@@ -18009,60 +16960,6 @@ func ParseGetV2TemplatesResponse(rsp *http.Response) (*GetV2TemplatesResponse, e
 	return response, nil
 }
 
-// ParsePostV2TemplatesResponse parses an HTTP response from a PostV2TemplatesWithResponse call
-func ParsePostV2TemplatesResponse(rsp *http.Response) (*PostV2TemplatesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostV2TemplatesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest TemplateLegacy
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParsePatchV2TemplatesTemplateIDResponse parses an HTTP response from a PatchV2TemplatesTemplateIDWithResponse call
 func ParsePatchV2TemplatesTemplateIDResponse(rsp *http.Response) (*PatchV2TemplatesTemplateIDResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -18126,6 +17023,13 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 	switch {
 	case rsp.StatusCode == 202:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401

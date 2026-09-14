@@ -211,6 +211,17 @@ func WithAllocatedMemoryBytes(bytes uint64) TestOptions {
 	}
 }
 
+// WithHugePages sets the hugepage pool the test node reports: page counts, as
+// the kernel exposes them (total / used / reserved), plus the page size.
+func WithHugePages(total, used, reserved, pageSizeBytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.HugePagesTotal = total
+		node.metrics.HugePagesUsed = used
+		node.metrics.HugePagesReserved = reserved
+		node.metrics.HugePageSizeBytes = pageSizeBytes
+	}
+}
+
 // MockSandboxClientCustom allows custom error logic per call
 type MockSandboxClientCustom struct {
 	orchestrator.SandboxServiceClient

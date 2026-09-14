@@ -28,13 +28,11 @@ func ProcessSecurityErrors(e *openapi3filter.SecurityRequirementsError) error {
 	}
 
 	for _, err := range errs {
-		var teamForbidden *TeamForbiddenError
-		if errors.As(err, &teamForbidden) {
+		if teamForbidden, ok := errors.AsType[*TeamForbiddenError](err); ok {
 			return fmt.Errorf("%s%s", ForbiddenErrPrefix, teamForbidden.Error())
 		}
 
-		var teamBlocked *TeamBlockedError
-		if errors.As(err, &teamBlocked) {
+		if teamBlocked, ok := errors.AsType[*TeamBlockedError](err); ok {
 			return fmt.Errorf("%s%s", BlockedErrPrefix, teamBlocked.Error())
 		}
 	}

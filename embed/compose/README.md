@@ -8,9 +8,17 @@ the hub is [`../README.md`](../README.md).
 
 ## Requirements
 
-- Linux x86-64 with KVM, on a host you own and may mutate: bare metal, or a
-  VM created with nested virtualization enabled (on GCE,
-  `--enable-nested-virtualization`).
+- Linux x86-64 or arm64 with KVM and a 4 KiB-page kernel (Ubuntu's default
+  on both), on a host you own and may mutate: bare metal, or a VM created with
+  nested virtualization enabled (on GCE, `--enable-nested-virtualization`; on
+  Apple silicon, a Lima or other Virtualization.framework VM with nested
+  virtualization on, which needs an M3 or newer and macOS 15 or newer). x86-64
+  is what the guides were written and tested on. arm64 is not yet verified
+  end to end: no arm64 host has run this stack. The seven pinned images are
+  published for both architectures, and `fetch-artifacts` verifies the arm64
+  orchestrator and envd against the `.sha256` their release writes beside
+  the object. A pin with no such object still stops with a `FIX:` line
+  naming it.
 - Ubuntu 24.04 is the recommended host: kernel 6.8 or newer, glibc 2.34 or
   newer (the released orchestrator's floor), cgroup v2 (systemd's default),
   and `iptables`, `rsync`, `e2fsprogs` and `iproute2` installed. Ubuntu

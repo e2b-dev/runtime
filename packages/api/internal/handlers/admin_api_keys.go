@@ -28,8 +28,7 @@ func (a *APIStore) PostAdminTeamsTeamIDApiKeys(c *gin.Context, teamID openapi_ty
 
 	teamInfo, err := a.authService.GetTeamByID(ctx, teamID)
 	if err != nil {
-		var forbiddenErr *sharedauth.TeamForbiddenError
-		if errors.As(err, &forbiddenErr) {
+		if forbiddenErr, ok := errors.AsType[*sharedauth.TeamForbiddenError](err); ok {
 			a.sendAPIStoreError(c, http.StatusForbidden, forbiddenErr.Error())
 
 			return

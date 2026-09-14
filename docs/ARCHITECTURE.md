@@ -117,7 +117,10 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
 - **Placement**: keeps a live map of orchestrator nodes (discovered via Nomad, Kubernetes, or a
   static list). Chooses a node per sandbox with a **best-of-K** algorithm
   (`internal/orchestrator/placement/`): sample K ready nodes, score by CPU
-  commitment/usage, pick the lowest; retry on exhausted nodes. Tunable live via feature flags.
+  commitment/usage, pick the lowest; retry on exhausted nodes. With
+  `best-of-k-hugepage-memory` on, each node's score is the higher of its CPU
+  load and its hugepage-pool load. A node that reports no pool scores 0.5.
+  Tunable live via feature flags.
 - **State**: writes sandbox records to Redis (source of truth for *running* sandboxes) and the
   sandbox→node **routing catalog** (`sandbox:catalog:{id}`) in Redis that client-proxy reads. This
   API-written record is the default routing source; the orchestrator-written
@@ -441,10 +444,10 @@ sequenceDiagram
 
     U->>API: POST /volumes (create) or GET /volumes/{id}
     API->>PG: persist / load volume row
-    API->>API: mint JWT (aud = https://api.&lt;domain&gt;)<br/>resolve domain
+    API->>API: mint JWT (aud = https://api.#lt;domain#gt;)<br/>resolve domain
     API-->>U: { volumeID, name, token, domain? }
-    Note over U: domain is returned only for BYOC teams;<br/>SDK stores it and falls back to api.&lt;E2B_DOMAIN&gt; otherwise
-    U->>VC: /volumecontent/{id}/... at api.&lt;domain&gt;<br/>Authorization: Bearer token
+    Note over U: domain is returned only for BYOC teams.<br/>SDK stores it and falls back to api.#lt;E2B_DOMAIN#gt; otherwise
+    U->>VC: /volumecontent/{id}/... at api.#lt;domain#gt;<br/>Authorization: Bearer token
     VC->>VC: verify token (audience must match its own origin)
     VC-->>U: file content
 ```

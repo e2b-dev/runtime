@@ -145,9 +145,170 @@ func TestNewRedisClientRefusesPlaintextPassword(t *testing.T) {
 		require.ErrorContains(t, err, "plaintext")
 	})
 
+	t.Run("a password spelled in the URL meets the same rule", func(t *testing.T) {
+		t.Parallel()
+
+		// Otherwise the URL form would be a way around the rule REDIS_PASSWORD obeys.
+		_, err := NewRedisClient(t.Context(), RedisConfig{RedisURL: "redis://:secret@redis.example:6379"})
+		require.ErrorContains(t, err, "plaintext")
+	})
+
 	t.Run("a password with TLS is allowed", func(t *testing.T) {
 		t.Parallel()
 
-		require.NoError(t, refusePlaintextPassword(RedisConfig{RedisPassword: "secret"}, &tls.Config{MinVersion: tls.VersionTLS12}))
+		require.NoError(t, refusePlaintextPassword("secret", &tls.Config{MinVersion: tls.VersionTLS12}))
+	})
+}
+
+// REDIS_URL accepts the redis:// URL form as well as the bare host:port that predates it.
+func TestParseRedisURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a bare host:port is an address, not a URL", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := parseRedisURL("redis.example:6379")
+		require.NoError(t, err)
+		assert.Equal(t, "redis.example:6379", opts.Addr)
+		assert.Empty(t, opts.Password)
+		assert.Nil(t, opts.TLSConfig)
+	})
+
+	t.Run("a URL yields address, credentials and database", func(t *testing.T) {
+		t.Parallel()
+
+		// The reported failure: the whole string went to Addr and dialing said "too many colons".
+		opts, err := parseRedisURL("redis://user:secret@redis.example:6379/2")
+		require.NoError(t, err)
+		assert.Equal(t, "redis.example:6379", opts.Addr)
+		assert.Equal(t, "user", opts.Username)
+		assert.Equal(t, "secret", opts.Password)
+		assert.Equal(t, 2, opts.DB)
+	})
+
+	t.Run("rediss carries TLS", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := parseRedisURL("rediss://redis.example:6380")
+		require.NoError(t, err)
+		require.NotNil(t, opts.TLSConfig)
+		assert.Equal(t, "redis.example", opts.TLSConfig.ServerName)
+	})
+
+	t.Run("a scheme that fails to parse is an error, not an address", func(t *testing.T) {
+		t.Parallel()
+
+		// Falling back to host:port here would turn a typo into an unexplained dial failure.
+		for name, url := range map[string]string{
+			"unsupported scheme": "http://redis.example:6379",
+			"bad database":       "redis://redis.example:6379/not-a-number",
+			"unknown parameter":  "redis://redis.example:6379?nonsense=1",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := parseRedisURL(url)
+				require.ErrorContains(t, err, "REDIS_URL")
+			})
+		}
+	})
+
+	t.Run("a parse error does not echo the credentials", func(t *testing.T) {
+		t.Parallel()
+
+		// net/url echoes slices of the input back in its errors: the invalid
+		// escape quotes the fragment-stripped URL, and an unencoded '#' in
+		// the password turns the rest into an "invalid port" detail carrying
+		// the credential. None of it may reach the returned error.
+		for name, url := range map[string]string{
+			"invalid escape":      "redis://user:secret%zz@redis.example:6379",
+			"with fragment":       "redis://user:secret%zz@redis.example:6379#fragment",
+			"'#' in the password": "redis://:secret#pass@redis.example:6379",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := parseRedisURL(url)
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "secret")
+				assert.Contains(t, err.Error(), "<redacted>")
+			})
+		}
+	})
+}
+
+// The URL and the explicit REDIS_* settings describe one endpoint; the options reconcile them.
+func TestNewRedisOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pool settings win over the URL query", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := newRedisOptions(t.Context(), RedisConfig{RedisURL: "redis://redis.example:6379?pool_size=3"}, 40, 10)
+		require.NoError(t, err)
+		assert.Equal(t, 40, opts.PoolSize)
+		assert.Equal(t, 10, opts.MinIdleConns)
+		assert.Equal(t, time.Duration(-1), opts.ConnMaxIdleTime)
+		assert.Equal(t, connMaxLifetime, opts.ConnMaxLifetime)
+	})
+
+	t.Run("rediss enables the configured CA and pins the URL host", func(t *testing.T) {
+		t.Parallel()
+
+		// rediss:// alone means TLS, so a CA alongside it is honored rather than refused.
+		opts, err := newRedisOptions(t.Context(), RedisConfig{
+			RedisURL:         "rediss://:secret@redis.example:6380",
+			RedisTLSCABase64: selfSignedCAPEM(t),
+		}, 40, 10)
+		require.NoError(t, err)
+		require.NotNil(t, opts.TLSConfig)
+		assert.NotNil(t, opts.TLSConfig.RootCAs)
+		assert.Equal(t, "redis.example", opts.TLSConfig.ServerName)
+		assert.Equal(t, "secret", opts.Password)
+	})
+
+	t.Run("REDIS_TLS_ENABLED applies to a plain redis URL", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := newRedisOptions(t.Context(), RedisConfig{
+			RedisURL:        "redis://:secret@redis.example:6379",
+			RedisTLSEnabled: true,
+		}, 40, 10)
+		require.NoError(t, err)
+		require.NotNil(t, opts.TLSConfig)
+		assert.Equal(t, "redis.example", opts.TLSConfig.ServerName)
+	})
+
+	t.Run("REDIS_PASSWORD supplies the password a URL omits", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := newRedisOptions(t.Context(), RedisConfig{
+			RedisURL:        "rediss://redis.example:6380",
+			RedisPassword:   "secret",
+			RedisTLSEnabled: true,
+		}, 40, 10)
+		require.NoError(t, err)
+		assert.Equal(t, "secret", opts.Password)
+	})
+
+	t.Run("two passwords that disagree are refused", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := newRedisOptions(t.Context(), RedisConfig{
+			RedisURL:        "rediss://:from-url@redis.example:6380",
+			RedisPassword:   "from-env",
+			RedisTLSEnabled: true,
+		}, 40, 10)
+		require.ErrorContains(t, err, "REDIS_PASSWORD")
+	})
+
+	t.Run("a bare host:port keeps behaving as before", func(t *testing.T) {
+		t.Parallel()
+
+		opts, err := newRedisOptions(t.Context(), RedisConfig{RedisURL: "redis.example:6379"}, 40, 10)
+		require.NoError(t, err)
+		assert.Equal(t, "redis.example:6379", opts.Addr)
+		assert.Empty(t, opts.Password)
+		assert.Nil(t, opts.TLSConfig)
 	})
 }

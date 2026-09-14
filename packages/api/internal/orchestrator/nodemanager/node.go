@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/machineinfo"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
+	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 )
 
 // nodeSource is the discovery source a node came from. The zero value is
@@ -226,6 +227,7 @@ func (n *Node) OptimisticAdd(res SandboxResources) {
 	// Directly accumulate to the current metrics view
 	n.metrics.CpuAllocated += uint32(res.CPUs)
 	n.metrics.MemoryAllocatedBytes += uint64(res.MiBMemory) * 1024 * 1024 // Note: CpuPercent is difficult to estimate, usually just updating Allocated is sufficient for the scheduling algorithm
+	n.metrics.HugePagesReserved += hugePagesFor(res.MiBMemory, n.metrics.HugePageSizeBytes)
 }
 
 func (n *Node) OptimisticRemove(ctx context.Context, res SandboxResources) {
@@ -234,14 +236,42 @@ func (n *Node) OptimisticRemove(ctx context.Context, res SandboxResources) {
 
 	cpu := uint32(res.CPUs)
 	memory := uint64(res.MiBMemory) * 1024 * 1024
+	pages := hugePagesFor(res.MiBMemory, n.metrics.HugePageSizeBytes)
 
-	// Prevent underflow due to race condition (the sandbox was most likely already removed by the node sync)
-	if cpu > n.metrics.CpuAllocated || memory > n.metrics.MemoryAllocatedBytes {
-		logger.L().Warn(ctx, "OptimisticRemove would cause underflow, skipping", logger.WithNodeID(n.ID), zap.Uint32("cpuAllocated", n.metrics.CpuAllocated), zap.Uint64("memoryAllocatedBytes", n.metrics.MemoryAllocatedBytes), zap.Uint32("cpuToRemove", cpu), zap.Uint64("memoryToRemove", memory))
-
-		return
+	// Each counter subtracts on its own. After a metrics sync the sandbox
+	// sits in HugePagesUsed and Reserved is the kernel's HugePagesRsvd, so
+	// a reserved-page underflow must not leave CPU or allocated RAM stuck.
+	cpuSkipped := cpu > n.metrics.CpuAllocated
+	if !cpuSkipped {
+		n.metrics.CpuAllocated -= cpu
 	}
 
-	n.metrics.CpuAllocated -= cpu
-	n.metrics.MemoryAllocatedBytes -= memory
+	memorySkipped := memory > n.metrics.MemoryAllocatedBytes
+	if !memorySkipped {
+		n.metrics.MemoryAllocatedBytes -= memory
+	}
+
+	fromReserved := min(pages, n.metrics.HugePagesReserved)
+	n.metrics.HugePagesReserved -= fromReserved
+	left := pages - fromReserved
+	usedSkipped := left > n.metrics.HugePagesUsed
+	if left > 0 && !usedSkipped {
+		n.metrics.HugePagesUsed -= left
+	}
+
+	if cpuSkipped || memorySkipped || usedSkipped {
+		logger.L().Warn(ctx, "OptimisticRemove skipped counters that would underflow", logger.WithNodeID(n.ID), zap.Bool("cpuSkipped", cpuSkipped), zap.Bool("memorySkipped", memorySkipped), zap.Bool("hugePagesUsedSkipped", usedSkipped), zap.Uint32("cpuAllocated", n.metrics.CpuAllocated), zap.Uint64("memoryAllocatedBytes", n.metrics.MemoryAllocatedBytes), zap.Uint64("hugePagesReserved", n.metrics.HugePagesReserved), zap.Uint64("hugePagesUsed", n.metrics.HugePagesUsed), zap.Uint32("cpuToRemove", cpu), zap.Uint64("memoryToRemove", memory), zap.Uint64("hugePagesToRemove", pages))
+	}
+}
+
+// hugePagesFor is the page count a sandbox of miB commits against the pool.
+// Zero page size means the node reported no pool.
+func hugePagesFor(miB int64, pageSize uint64) uint64 {
+	if pageSize == 0 {
+		return 0
+	}
+
+	bytes := uint64(units.MBToBytes(miB))
+
+	return (bytes + pageSize - 1) / pageSize
 }

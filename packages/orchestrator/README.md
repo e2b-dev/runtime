@@ -251,7 +251,8 @@ kernels/vmlinux-6.1.158/arm64/vmlinux.bin
 - **SMT** is disabled (ARM processors don't support simultaneous multi-threading)
 - **CPU detection** uses fallback values since `gopsutil` doesn't populate Family/Model on ARM64
 - **OCI platform** is set to the target architecture instead of hardcoded `amd64`
-- **Busybox binaries** are committed for both architectures and selected automatically via Go build tags
+- **Busybox binaries** are fetched per architecture by `scripts/fetch-busybox.sh` and selected at runtime from `<busybox dir>/<version>/<GOARCH>/busybox`
+- **Guest kernel command line** drops the x86-only `i8042.*` and `clocksource=kvm-clock` parameters on arm64; the console stays `ttyS0` (Firecracker exposes a 16550-compatible UART on both architectures)
 
 ### Cross-architecture deployment
 
@@ -303,4 +304,4 @@ Automatically set in local mode. Set before running to override:
 ## Limitations
 
 - Custom template builds support base images from the declared distro families: **Debian/Ubuntu** (apt), the **RHEL family** — Fedora, CentOS Stream, Rocky, Alma — (dnf/microdnf/yum), **Arch** (pacman), and **Alpine** (apk, OpenRC). The distro is resolved from the image's `/etc/os-release` `ID` — never by probing for package managers. Images without an os-release identity (distroless, scratch) or from an undeclared family are rejected fast, with a build-log error naming the reason and the supported families (see `pkg/template/build/phases/base/distro`). Minimal/restricted-repo images may fail provisioning if their repos don't carry the required packages; the failure is surfaced in the build log.
-- Sandboxes always boot the kernel E2B supplies, never one from the base image: `/lib/modules` is empty, no kernel modules can be loaded, and SELinux is off. `kernel-devel` from a distro's repos resolves against a kernel that isn't running. **RHEL** (`rhel`, incl. UBI), **Oracle Linux** (`ol`) and **Amazon Linux** (`amzn`) are therefore not accepted even though they are RPM/dnf images — they are chosen for kABI, signed kernel modules and UEK, which this cannot honour. The community rebuilds above are supported because they are chosen for the userland.
+- Sandboxes always boot the kernel E2B supplies, never one from the base image: `/lib/modules` is empty, no kernel modules can be loaded, and SELinux is disabled on the kernel command line (`selinux=0`), so a base image that ships an SELinux policy boots without it. `kernel-devel` from a distro's repos resolves against a kernel that isn't running. **RHEL** (`rhel`, incl. UBI), **Oracle Linux** (`ol`) and **Amazon Linux** (`amzn`) are therefore not accepted even though they are RPM/dnf images — they are chosen for kABI, signed kernel modules and UEK, which this cannot honour. The community rebuilds above are supported because they are chosen for the userland.

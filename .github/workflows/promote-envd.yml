@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version to promote (e.g. v0.7.0); legacy commit-SHA suffixes are accepted while envd.<sha> objects age out
+        description: Release version to promote (e.g. v0.7.0 or v0.7.202609100404-76e17e06ca6)
         required: true
         type: string
       staging:
@@ -43,8 +43,8 @@ jobs:
         env:
           ENVD_VERSION: ${{ inputs.version }}
         run: |
-          if [[ ! "$ENVD_VERSION" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{7,40})$ ]]; then
-            echo "version must be a release version like v0.7.0 (or a legacy lowercase hexadecimal Git SHA suffix)."
+          if [[ ! "$ENVD_VERSION" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-f]{7,40})?|[0-9a-f]{7,40})$ ]]; then
+            echo "version must be a release version like v0.7.0, an auto-deploy identity like v0.7.202609100404-76e17e06ca6, or a legacy hexadecimal Git SHA."
             exit 1
           fi
 

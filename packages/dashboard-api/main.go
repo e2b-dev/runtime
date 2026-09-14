@@ -46,8 +46,7 @@ import (
 )
 
 const (
-	serviceName    = "dashboard-api"
-	serviceVersion = "0.1.0"
+	serviceName = "dashboard-api"
 
 	readHeaderTimeout = 5 * time.Second
 	readTimeout       = 10 * time.Second
@@ -60,6 +59,7 @@ const (
 var (
 	commitSHA                  string
 	expectedMigrationTimestamp string
+	serviceVersion             = "0.7.0" // x-release-please-version
 )
 
 func run() int {

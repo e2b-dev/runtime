@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type SeedData struct {
 	BuildID uuid.UUID
 	TeamID  uuid.UUID
 	UserID  uuid.UUID
+	RAMMB   int
 }
 
 func main() {
@@ -63,12 +65,29 @@ func run(ctx context.Context) int {
 	}
 	defer authDb.Close()
 
+	// The build rows must declare the memory the template's memfile was
+	// actually built with: the VM sizes itself from the row, and a row
+	// larger than the memfile makes resumes read past its end. CI always
+	// sets the env (build-sandbox-template writes it to .env.test); the
+	// fallback matches the orchestrator Makefile's MEMORY_MB default so a
+	// local build-then-seed without the env stays consistent too.
+	ramMB := 256
+	if v := os.Getenv("TESTS_SANDBOX_RAM_MB"); v != "" {
+		ramMB, err = strconv.Atoi(v)
+		if err != nil {
+			log.Printf("Invalid TESTS_SANDBOX_RAM_MB %q: %v", v, err)
+
+			return 1
+		}
+	}
+
 	data := SeedData{
 		APIKey:  os.Getenv("TESTS_E2B_API_KEY"),
 		EnvID:   os.Getenv("TESTS_SANDBOX_TEMPLATE_ID"),
 		BuildID: uuid.MustParse(os.Getenv("TESTS_SANDBOX_BUILD_ID")),
 		TeamID:  uuid.MustParse(os.Getenv("TESTS_SANDBOX_TEAM_ID")),
 		UserID:  uuid.MustParse(os.Getenv("TESTS_SANDBOX_USER_ID")),
+		RAMMB:   ramMB,
 	}
 
 	err = seed(ctx, db, authDb, data)
@@ -193,8 +212,8 @@ INSERT INTO env_builds (
 	cluster_node_id, version, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
 `, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusUploaded,
-				2, 512, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.14-0.2.0", pkg.Version,
-				"integration-test-node", templates.TemplateV1Version, build.createdAt)
+				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.14-0.2.0", pkg.Version,
+				"integration-test-node", templates.TemplateV2LatestVersion, build.createdAt)
 		} else {
 			err = db.TestsRawSQL(ctx, `
 INSERT INTO env_builds (
@@ -203,8 +222,8 @@ INSERT INTO env_builds (
 	cluster_node_id, version, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
 `, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusUploaded,
-				2, 512, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.14-0.2.0", pkg.Version,
-				"integration-test-node", templates.TemplateV1Version)
+				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.14-0.2.0", pkg.Version,
+				"integration-test-node", templates.TemplateV2LatestVersion)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to create env build: %w", err)

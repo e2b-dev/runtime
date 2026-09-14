@@ -57,8 +57,7 @@ func ToAPIError(err error, identifier string) *api.APIError {
 			Err:       err,
 		}
 	case errors.Is(err, ErrTemplateNotFound):
-		var notFoundErr templateNotFoundError
-		if errors.As(err, &notFoundErr) {
+		if notFoundErr, ok := errors.AsType[templateNotFoundError](err); ok {
 			identifier = notFoundErr.Identifier
 		}
 

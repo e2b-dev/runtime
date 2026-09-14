@@ -14,15 +14,41 @@ setup() {
   FAILURES=()
 }
 
-@test "check_arch rejects a non-x86_64 host with a FIX line" {
-  PF_ARCH=aarch64 check_arch
+@test "check_arch rejects an unsupported host with a FIX line naming it" {
+  PF_ARCH=mips check_arch
   [ "${#FAILURES[@]}" -eq 1 ]
-  [[ "${FAILURES[0]}" == *"FIX:"* ]]
+  [[ "${FAILURES[0]}" == *"FIX: only x86_64 and aarch64 hosts are supported"* ]]
+  [[ "${FAILURES[0]}" == *"no mips build"* ]]
 }
 
-@test "check_arch accepts x86_64" {
+@test "check_arch accepts x86_64 and aarch64" {
   PF_ARCH=x86_64 check_arch
+  PF_ARCH=aarch64 check_arch
   [ "${#FAILURES[@]}" -eq 0 ]
+}
+
+@test "check_page_size accepts 4096 and rejects a 64 KiB-page kernel with a FIX line" {
+  PF_PAGE_SIZE=4096 check_page_size
+  [ "${#FAILURES[@]}" -eq 0 ]
+  PF_PAGE_SIZE=65536 check_page_size
+  [ "${#FAILURES[@]}" -eq 1 ]
+  [[ "${FAILURES[0]}" == *"65536"* ]]
+  [[ "${FAILURES[0]}" == *"FIX: boot a 4 KiB-page kernel"* ]]
+}
+
+# One FIX per architecture: the x86 remedy names firmware switches and modules
+# that do not exist on arm64, and both must keep the phrase the guides quote.
+@test "check_kvm's FIX line is written for the host's architecture" {
+  PF_DEV="$BATS_TEST_TMPDIR/dev"; mkdir -p "$PF_DEV"
+  PF_ARCH=x86_64 check_kvm
+  [[ "${FAILURES[0]}" == *"kvm_intel or kvm_amd"* ]]
+  [[ "${FAILURES[0]}" == *"nested virtualization"* ]]
+  FAILURES=()
+  PF_ARCH=aarch64 check_kvm
+  [ "${#FAILURES[@]}" -eq 1 ]
+  [[ "${FAILURES[0]}" == *"EL2"* ]]
+  [[ "${FAILURES[0]}" == *"nested virtualization"* ]]
+  [[ "${FAILURES[0]}" != *"kvm_intel"* ]]
 }
 
 @test "check_kernel accepts 6.8.0-45-generic" {
@@ -80,7 +106,7 @@ FAKE_LDD
   : > "$d/sys/fs/cgroup/cgroup.controllers"
   # PF_GLIBC is deliberately NOT preset: the script must derive it itself,
   # under set -o pipefail, from the fake ldd on PATH.
-  run env -u PF_NO_MAIN PATH="$bindir:$PATH" PF_ARCH=x86_64 PF_UNAME_R=6.8.0-45-generic PF_FREE_GIB=50 \
+  run env -u PF_NO_MAIN PATH="$bindir:$PATH" PF_ARCH=x86_64 PF_PAGE_SIZE=4096 PF_UNAME_R=6.8.0-45-generic PF_FREE_GIB=50 \
       PF_SYS="$d/sys" PF_MODPROBE=true PF_SKIP_DEVICES=1 PF_TOOLS=bash bash "$BATS_TEST_DIRNAME/../compose/scripts/preflight.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"glibc=2.39"* ]]
@@ -115,7 +141,7 @@ FAKE_LDD
 
 @test "main exits 1 and prints a FIX line when a check fails" {
   d="$BATS_TEST_TMPDIR/root"; mkdir -p "$d/dev/net" "$d/sys/fs/cgroup"
-  run env -u PF_NO_MAIN PF_ARCH=aarch64 PF_UNAME_R=6.8.0 PF_GLIBC=2.39 PF_FREE_GIB=50 \
+  run env -u PF_NO_MAIN PF_ARCH=mips PF_PAGE_SIZE=4096 PF_UNAME_R=6.8.0 PF_GLIBC=2.39 PF_FREE_GIB=50 \
       PF_DEV="$d/dev" PF_SYS="$d/sys" PF_MODPROBE=true PF_TOOLS=bash bash "$BATS_TEST_DIRNAME/../compose/scripts/preflight.sh"
   [ "$status" -eq 1 ]
   [[ "$output" == *"FIX:"* ]]
@@ -125,8 +151,27 @@ FAKE_LDD
   d="$BATS_TEST_TMPDIR/root"; mkdir -p "$d/dev/net" "$d/sys/fs/cgroup"
   : > "$d/sys/fs/cgroup/cgroup.controllers"
   # character devices cannot be created without root; PF_SKIP_DEVICES bypasses the two device checks
-  run env -u PF_NO_MAIN PF_ARCH=x86_64 PF_UNAME_R=6.8.0-45-generic PF_GLIBC=2.39 PF_FREE_GIB=50 \
+  run env -u PF_NO_MAIN PF_ARCH=x86_64 PF_PAGE_SIZE=4096 PF_UNAME_R=6.8.0-45-generic PF_GLIBC=2.39 PF_FREE_GIB=50 \
       PF_SYS="$d/sys" PF_MODPROBE=true PF_SKIP_DEVICES=1 PF_TOOLS=bash bash "$BATS_TEST_DIRNAME/../compose/scripts/preflight.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"preflight: ok"* ]]
+  [[ "$output" == *"preflight: ok (arch=x86_64 page=4096"* ]]
+}
+
+@test "main passes on an aarch64 host with a 4 KiB-page kernel" {
+  d="$BATS_TEST_TMPDIR/root"; mkdir -p "$d/dev/net" "$d/sys/fs/cgroup"
+  : > "$d/sys/fs/cgroup/cgroup.controllers"
+  run env -u PF_NO_MAIN PF_ARCH=aarch64 PF_PAGE_SIZE=4096 PF_UNAME_R=6.8.0-45-generic PF_GLIBC=2.39 PF_FREE_GIB=50 \
+      PF_SYS="$d/sys" PF_MODPROBE=true PF_SKIP_DEVICES=1 PF_TOOLS=bash bash "$BATS_TEST_DIRNAME/../compose/scripts/preflight.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"preflight: ok (arch=aarch64 page=4096"* ]]
+}
+
+@test "main fails on an aarch64 host with a 64 KiB-page kernel" {
+  d="$BATS_TEST_TMPDIR/root"; mkdir -p "$d/dev/net" "$d/sys/fs/cgroup"
+  : > "$d/sys/fs/cgroup/cgroup.controllers"
+  run env -u PF_NO_MAIN PF_ARCH=aarch64 PF_PAGE_SIZE=65536 PF_UNAME_R=6.8.0-45-generic PF_GLIBC=2.39 PF_FREE_GIB=50 \
+      PF_SYS="$d/sys" PF_MODPROBE=true PF_SKIP_DEVICES=1 PF_TOOLS=bash bash "$BATS_TEST_DIRNAME/../compose/scripts/preflight.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"page size is 65536"* ]]
+  [[ "$output" == *"FIX: boot a 4 KiB-page kernel"* ]]
 }

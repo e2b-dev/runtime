@@ -564,8 +564,7 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 
 	team, err := a.authService.GetTeamByID(ctx, teamUUID)
 	if err != nil {
-		var forbiddenErr *sharedauth.TeamForbiddenError
-		if errors.As(err, &forbiddenErr) {
+		if _, ok := errors.AsType[*sharedauth.TeamForbiddenError](err); ok {
 			return nil, &api.APIError{
 				Code:      http.StatusForbidden,
 				ClientMsg: err.Error(),

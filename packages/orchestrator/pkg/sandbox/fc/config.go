@@ -51,7 +51,7 @@ func (t Config) FirecrackerPath(config cfg.BuilderConfig) string {
 	// Prefer arch-prefixed path ({version}/{arch}/firecracker) for multi-arch support.
 	// Fall back to legacy flat path ({version}/firecracker) for existing production nodes
 	// that haven't migrated to the arch-prefixed layout yet.
-	archPath := filepath.Join(config.FirecrackerVersionsDir, t.FirecrackerVersion, utils.TargetArch(), artifact.FirecrackerBinaryName)
+	archPath, legacyPath := t.firecrackerPaths(config)
 	if _, err := os.Stat(archPath); err == nil {
 		return archPath
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -60,7 +60,12 @@ func (t Config) FirecrackerPath(config cfg.BuilderConfig) string {
 		return archPath
 	}
 
-	return filepath.Join(config.FirecrackerVersionsDir, t.FirecrackerVersion, artifact.FirecrackerBinaryName)
+	return legacyPath
+}
+
+func (t Config) firecrackerPaths(config cfg.BuilderConfig) (archPath, legacyPath string) {
+	return filepath.Join(config.FirecrackerVersionsDir, t.FirecrackerVersion, utils.TargetArch(), artifact.FirecrackerBinaryName),
+		filepath.Join(config.FirecrackerVersionsDir, t.FirecrackerVersion, artifact.FirecrackerBinaryName)
 }
 
 type RootfsPaths struct {

@@ -38,7 +38,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
@@ -226,9 +225,6 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	ti.closers = append(ti.closers, func(ctx context.Context) { networkPool.Close(ctx) })
 
 	// Artifacts / Docker
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(ctx)
-	require.NoError(t, err)
-
 	dockerhubRepo, err := dockerhub.GetRemoteRepository(ctx)
 	require.NoError(t, err)
 	ti.closers = append(ti.closers, func(_ context.Context) { dockerhubRepo.Close() })
@@ -253,7 +249,7 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	buildMetrics, _ := metrics.NewBuildMetrics(noop.MeterProvider{})
 	ti.builder = build.NewBuilder(
 		builderConfig, l, flags, factory,
-		persistenceTemplate, persistenceBuild, artifactRegistry,
+		persistenceTemplate, persistenceBuild,
 		dockerhubRepo, sandboxProxy, sandboxes, templateCache, buildMetrics,
 		nil,
 	)

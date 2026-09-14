@@ -29,8 +29,7 @@ func NewPhaseBuildError(phaseMetadata PhaseMeta, err error) *PhaseBuildError {
 }
 
 func UnwrapPhaseBuildError(err error) *PhaseBuildError {
-	var phaseBuildError *PhaseBuildError
-	if errors.As(err, &phaseBuildError) {
+	if phaseBuildError, ok := errors.AsType[*PhaseBuildError](err); ok {
 		return phaseBuildError
 	}
 

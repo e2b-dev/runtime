@@ -180,8 +180,7 @@ func (a *Authenticator) walk(ctx context.Context) (string, error) {
 // IsUnauthorized reports whether a registry operation failed authentication —
 // the signal to Invalidate the cached token and retry once.
 func IsUnauthorized(err error) bool {
-	var terr *transport.Error
-	if errors.As(err, &terr) {
+	if terr, ok := errors.AsType[*transport.Error](err); ok {
 		return terr.StatusCode == http.StatusUnauthorized || terr.StatusCode == http.StatusForbidden
 	}
 
