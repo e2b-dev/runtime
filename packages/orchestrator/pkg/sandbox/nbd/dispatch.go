@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -35,6 +36,12 @@ var (
 )
 
 var ErrShuttingDown = errors.New("shutting down. Cannot serve any new requests")
+
+// isSocketClosed returns true when err indicates the NBD Unix socket was
+// closed by the peer — expected during normal sandbox shutdown.
+func isSocketClosed(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, io.ErrClosedPipe)
+}
 
 var dispatchBufPool = sync.Pool{
 	New: func() any {
@@ -360,7 +367,11 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmdHandle uint64, cmdFrom uint64
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd read",
+				logFn := logger.L().Error
+				if isSocketClosed(err) {
+					logFn = logger.L().Warn
+				}
+				logFn(ctx, "nbd error cmd read",
 					zap.Error(err),
 					zap.String("nbd_op", "read"),
 					zap.String("nbd_provider", d.provName),
@@ -432,7 +443,11 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmdHandle uint64, cmdFrom uint6
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd write",
+				logFn := logger.L().Error
+				if isSocketClosed(err) {
+					logFn = logger.L().Warn
+				}
+				logFn(ctx, "nbd error cmd write",
 					zap.Error(err),
 					zap.String("nbd_op", "write"),
 					zap.String("nbd_provider", d.provName),
@@ -515,7 +530,11 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmdHandle uint64, cmdFrom
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd write-zeroes",
+				logFn := logger.L().Error
+				if isSocketClosed(err) {
+					logFn = logger.L().Warn
+				}
+				logFn(ctx, "nbd error cmd write-zeroes",
 					zap.Error(err),
 					zap.String("nbd_op", "write-zeroes"),
 					zap.String("nbd_provider", d.provName),
