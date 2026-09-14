@@ -31,7 +31,7 @@ func UploadFileAs(tb testing.TB, ctx context.Context, sbx *api.Sandbox, envdClie
 
 	reqEditors := []envd.RequestEditorFn{setup.WithSandbox(tb, sbx.SandboxID)}
 	if sbx.EnvdAccessToken != nil {
-		reqEditors = append(reqEditors, setup.WithEnvdAccessToken(tb, *(sbx.EnvdAccessToken)))
+		reqEditors = append(reqEditors, setup.WithEnvdAccessToken(tb, *sbx.EnvdAccessToken))
 	}
 
 	writeRes, err := envdClient.HTTPClient.PostFilesWithBodyWithResponse(

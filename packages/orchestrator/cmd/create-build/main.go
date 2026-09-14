@@ -40,7 +40,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -337,11 +336,6 @@ func doBuild(
 	go networkPool.Populate(ctx)
 	defer networkPool.Close(parentCtx)
 
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(ctx)
-	if err != nil {
-		return fmt.Errorf("artifacts registry: %w", err)
-	}
-
 	dockerhubRepo, err := dockerhub.GetRemoteRepository(ctx)
 	if err != nil {
 		return fmt.Errorf("dockerhub: %w", err)
@@ -367,7 +361,7 @@ func doBuild(
 
 	builder := build.NewBuilder(
 		builderConfig, l, featureFlags, sandboxFactory,
-		persistenceTemplate, persistenceBuild, artifactRegistry,
+		persistenceTemplate, persistenceBuild,
 		dockerhubRepo, sandboxProxy, sandboxes, templateCache, buildMetrics,
 		uploads,
 	)

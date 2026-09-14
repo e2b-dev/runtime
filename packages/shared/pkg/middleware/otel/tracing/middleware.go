@@ -14,7 +14,7 @@
 
 // Based on https://github.com/DataDog/dd-trace-go/blob/8fb554ff7cf694267f9077ae35e27ce4689ed8b6/contrib/gin-gonic/gin/gintrace.go
 
-package tracing // import "go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+package tracing
 
 import (
 	"context"

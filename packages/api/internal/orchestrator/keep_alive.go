@@ -28,7 +28,7 @@ func (o *Orchestrator) KeepAliveFor(ctx context.Context, teamID uuid.UUID, sandb
 		ttl := getMaxAllowedTTL(now, sbx.StartTime, duration, sbx.MaxInstanceLength)
 		endTime := now.Add(ttl)
 
-		if (time.Since(sbx.StartTime)) > sbx.MaxInstanceLength {
+		if time.Since(sbx.StartTime) > sbx.MaxInstanceLength {
 			return sbx, errMaxInstanceLengthExceeded
 		}
 

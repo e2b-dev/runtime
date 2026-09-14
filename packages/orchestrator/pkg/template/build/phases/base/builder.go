@@ -30,7 +30,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/sandboxtools"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/storage/cache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
@@ -56,7 +55,6 @@ type BaseBuilder struct {
 
 	sandboxFactory      *sandbox.Factory
 	templateStorage     storage.StorageProvider
-	artifactRegistry    artifactsregistry.ArtifactsRegistry
 	dockerhubRepository dockerhub.RemoteRepository
 	featureFlags        *featureflags.Client
 	sandboxes           *sandbox.Map
@@ -72,7 +70,6 @@ func New(
 	logger logger.Logger,
 	proxy *proxy.SandboxProxy,
 	templateStorage storage.StorageProvider,
-	artifactRegistry artifactsregistry.ArtifactsRegistry,
 	dockerhubRepository dockerhub.RemoteRepository,
 	layerExecutor *layer.LayerExecutor,
 	index cache.Index,
@@ -87,7 +84,6 @@ func New(
 		proxy:  proxy,
 
 		templateStorage:     templateStorage,
-		artifactRegistry:    artifactRegistry,
 		dockerhubRepository: dockerhubRepository,
 		sandboxFactory:      sandboxFactory,
 		featureFlags:        featureFlags,
@@ -103,23 +99,15 @@ func (bb *BaseBuilder) Prefix() string {
 	return "base"
 }
 
-func (bb *BaseBuilder) String(ctx context.Context) (string, error) {
-	var baseSource string
-	if bb.Config.FromTemplate != nil {
-		baseSource = "FROM TEMPLATE " + bb.Config.FromTemplate.GetAlias()
-	} else {
-		fromImage := bb.Config.FromImage
-		if fromImage == "" {
-			tag, err := bb.artifactRegistry.GetTag(ctx, bb.Config.TemplateID, bb.Template.BuildID)
-			if err != nil {
-				return "", fmt.Errorf("error getting tag for template: %w", err)
-			}
-			fromImage = tag
-		}
-		baseSource = "FROM " + fromImage
+func (bb *BaseBuilder) String(_ context.Context) (string, error) {
+	switch {
+	case bb.Config.FromTemplate != nil:
+		return "FROM TEMPLATE " + bb.Config.FromTemplate.GetAlias(), nil
+	case bb.Config.FromImage != "":
+		return "FROM " + bb.Config.FromImage, nil
+	default:
+		return "", errors.New("build has no base image or template")
 	}
-
-	return baseSource, nil
 }
 
 func (bb *BaseBuilder) Metadata() phases.PhaseMeta {
@@ -179,7 +167,7 @@ func (bb *BaseBuilder) buildLayerFromOCI(
 	// Created here to be able to pass it to CreateSandbox for populating COW cache
 	rootfsPath := filepath.Join(templateBuildDir, rootfsBuildFileName)
 
-	rootfs, memfile, envsImg, err := constructLayerFilesFromOCI(ctx, userLogger, bb.BuildContext, bb.Metadata(), baseMetadata.Template.BuildID, bb.artifactRegistry, bb.dockerhubRepository, bb.featureFlags, rootfsPath)
+	rootfs, memfile, envsImg, err := constructLayerFilesFromOCI(ctx, userLogger, bb.BuildContext, bb.Metadata(), baseMetadata.Template.BuildID, bb.dockerhubRepository, bb.featureFlags, rootfsPath)
 	if err != nil {
 		return metadata.Template{}, fmt.Errorf("error building environment: %w", err)
 	}
@@ -343,11 +331,6 @@ func (bb *BaseBuilder) Layer(
 			User:    defaultUser,
 			WorkDir: nil,
 			EnvVars: make(map[string]string),
-		}
-
-		// This is a compatibility for v1 template builds
-		if bb.IsV1Build {
-			cmdMeta.WorkDir = new("/home/user")
 		}
 
 		meta := metadata.Template{

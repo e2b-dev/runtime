@@ -560,8 +560,7 @@ func (c *apiClient) balloonFreePageReporting(ctx context.Context) (bool, error) 
 	if err != nil {
 		// FC answers 400 when no balloon device is installed: no balloon, no
 		// free-page reporting.
-		var badReq *operations.DescribeBalloonConfigBadRequest
-		if errors.As(err, &badReq) {
+		if _, ok := errors.AsType[*operations.DescribeBalloonConfigBadRequest](err); ok {
 			return false, nil
 		}
 

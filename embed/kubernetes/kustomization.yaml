@@ -6,30 +6,31 @@ resources:
   - service.yaml
   - statefulset.yaml
 
-# Pins. Every tag here is hand-edited together with compose/.env
-# (tests/kubernetes.bats and tests/pins.bats keep them equal).
+# Pins. Every tag here moves together with compose/.env (tests/kubernetes.bats
+# and tests/pins.bats keep them equal). Lines with a marker are moved by each
+# Embed release to the platform version; the rest are hand-edited.
 images:
   - name: E2B_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/api
-    newTag: v0.14.1
+    newTag: v0.14.202609130627-59497eb9134 # x-release-please-version
   - name: E2B_DB_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/db-migrator
-    newTag: v0.14.1
+    newTag: v0.14.202609130627-59497eb9134 # x-release-please-version
   - name: E2B_CLIENT_PROXY_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy
-    newTag: v0.2.1
+    newTag: v0.3.202609130627-59497eb9134 # x-release-please-version
   - name: E2B_CLICKHOUSE_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator
-    newTag: v0.4.0
+    newTag: v0.4.202609130627-59497eb9134 # x-release-please-version
   - name: E2B_TOOLS_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/tools
-    newTag: v0.3.202609110002-08f7323aaa9
+    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
   - name: E2B_NODE_E2B_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/node-e2b
-    newTag: v0.3.202609110002-08f7323aaa9
+    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
   - name: E2B_SEED_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/seed
-    newTag: v0.3.202609110002-08f7323aaa9
+    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
 
 # Content-hashed names: a changed literal or file renames the map and rolls the
 # pod. Older maps are left behind (kustomize does not prune); delete them by
@@ -37,8 +38,8 @@ images:
 configMapGenerator:
   - name: e2b-versions
     literals:
-      - E2B_ORCHESTRATOR_VERSION=v0.15.0
-      - E2B_ENVD_VERSION=v0.9.0
+      - E2B_ORCHESTRATOR_VERSION=v0.16.202609130627-59497eb9134 # x-release-please-version
+      - E2B_ENVD_VERSION=v0.9.202609130627-59497eb9134
       - E2B_KERNEL_VERSION=vmlinux-6.1.177_5008931
       - E2B_FIRECRACKER_VERSION=v1.14-0.2.0
       - E2B_BUSYBOX_VERSION=1.36.1

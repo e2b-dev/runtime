@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/require"
 
@@ -58,4 +59,47 @@ func TestGatedClickhouseDelivery_PushNilFeatureFlagsDrops(t *testing.T) {
 
 	err := d.Push(SandboxHostStat{})
 	require.NoError(t, err)
+}
+
+func setAsyncInsertFlag(t *testing.T, source *ldtestdata.TestDataSource, value bool) {
+	t.Helper()
+
+	source.Update(source.Flag(featureflags.ClickhouseHostStatsAsyncInsertFlag.Key()).VariationForAll(value))
+}
+
+func TestClickhouseDelivery_InsertSettingsFlagOnEnablesAsyncInsert(t *testing.T) {
+	t.Parallel()
+
+	ff, source := newTestFeatureFlags(t)
+	setAsyncInsertFlag(t, source, true)
+	d := &ClickhouseDelivery{ff: ff}
+
+	require.Equal(t, clickhouse.Settings{"async_insert": 1}, d.insertSettings(t.Context()))
+}
+
+func TestClickhouseDelivery_InsertSettingsFlagOffKeepsServerDefaults(t *testing.T) {
+	t.Parallel()
+
+	ff, source := newTestFeatureFlags(t)
+	setAsyncInsertFlag(t, source, false)
+	d := &ClickhouseDelivery{ff: ff}
+
+	require.Nil(t, d.insertSettings(t.Context()))
+}
+
+func TestClickhouseDelivery_InsertSettingsUnsetFlagKeepsServerDefaults(t *testing.T) {
+	t.Parallel()
+
+	ff, _ := newTestFeatureFlags(t)
+	d := &ClickhouseDelivery{ff: ff}
+
+	require.Nil(t, d.insertSettings(t.Context()), "flag must fall back to off so a deploy changes nothing until flipped")
+}
+
+func TestClickhouseDelivery_InsertSettingsNilFeatureFlagsKeepsServerDefaults(t *testing.T) {
+	t.Parallel()
+
+	d := &ClickhouseDelivery{ff: nil}
+
+	require.Nil(t, d.insertSettings(t.Context()))
 }

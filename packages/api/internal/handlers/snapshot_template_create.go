@@ -129,8 +129,7 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 			return
 		}
 
-		var transErr *sandbox.InvalidStateTransitionError
-		if errors.As(err, &transErr) {
+		if transErr, ok := errors.AsType[*sandbox.InvalidStateTransitionError](err); ok {
 			a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be snapshotted while in '%s' state", sandboxID, transErr.CurrentState))
 
 			return

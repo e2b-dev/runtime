@@ -26,7 +26,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/filesystem"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -94,20 +93,17 @@ const (
 
 type Rootfs struct {
 	buildContext        buildcontext.BuildContext
-	artifactRegistry    artifactsregistry.ArtifactsRegistry
 	dockerhubRepository dockerhub.RemoteRepository
 	featureFlags        *featureflags.Client
 }
 
 func New(
-	artifactRegistry artifactsregistry.ArtifactsRegistry,
 	dockerhubRepository dockerhub.RemoteRepository,
 	buildContext buildcontext.BuildContext,
 	featureFlags *featureflags.Client,
 ) *Rootfs {
 	return &Rootfs{
 		buildContext:        buildContext,
-		artifactRegistry:    artifactRegistry,
 		dockerhubRepository: dockerhubRepository,
 		featureFlags:        featureFlags,
 	}
@@ -135,13 +131,7 @@ func (r *Rootfs) CreateExt4Filesystem(
 
 	l.Debug(ctx, "Requesting Docker Image")
 
-	var img containerregistry.Image
-	var err error
-	if template.FromImage != "" {
-		img, err = oci.GetPublicImage(childCtx, r.dockerhubRepository, template.FromImage, template.RegistryAuthProvider)
-	} else {
-		img, err = oci.GetImage(childCtx, r.artifactRegistry, template.TemplateID, r.buildContext.Template.BuildID)
-	}
+	img, err := oci.GetPublicImage(childCtx, r.dockerhubRepository, template.FromImage, template.RegistryAuthProvider)
 	if err != nil {
 		return containerregistry.Config{}, phases.NewPhaseBuildError(phaseMetadata, err)
 	}
@@ -165,13 +155,9 @@ func (r *Rootfs) CreateExt4Filesystem(
 
 	l.Info(ctx, "Creating file system and pulling Docker image")
 	maxRootfsSize := units.MBToBytes(int64(r.featureFlags.IntFlag(ctx, featureflags.BuildBaseRootfsSizeLimitMB)))
-	mkfsOpts := filesystem.MakeOptions{
-		DirIndex: r.featureFlags.BoolFlag(ctx, featureflags.BuildExt4DirIndex),
-	}
-	ext4Size, err := oci.ToExt4(ctx, l, img, rootfsPath, maxRootfsSize, template.RootfsBlockSize(), mkfsOpts)
+	ext4Size, err := oci.ToExt4(ctx, l, img, rootfsPath, maxRootfsSize, template.RootfsBlockSize())
 	if err != nil {
-		var imgErr *oci.ImageTooLargeError
-		if errors.As(err, &imgErr) {
+		if imgErr, ok := errors.AsType[*oci.ImageTooLargeError](err); ok {
 			return containerregistry.Config{}, phases.NewPhaseBuildError(phaseMetadata, imgErr)
 		}
 

@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/cmd/clean-nfs-cache/cleaner"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/version"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -21,10 +22,11 @@ import (
 )
 
 const (
-	serviceName    = "clean-nfs-cache"
-	commitSHA      = ""
-	serviceVersion = "0.1.0"
+	serviceName = "clean-nfs-cache"
+	commitSHA   = ""
 )
+
+var serviceVersion = version.Version
 
 func main() {
 	ctx := context.Background()

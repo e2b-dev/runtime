@@ -90,19 +90,6 @@ func (p *PosthogClient) CreateAnalyticsTeamEvent(ctx context.Context, teamID, ev
 	}
 }
 
-func (p *PosthogClient) CreateAnalyticsUserEvent(ctx context.Context, userID string, teamID string, event string, properties posthog.Properties) {
-	err := p.client.Enqueue(posthog.Capture{
-		DistinctId: userID,
-		Event:      event,
-		Properties: properties.Set(infraVersionKey, infraVersion).Set(teamIDKey, teamID),
-		Groups: posthog.NewGroups().
-			Set("team", teamID),
-	})
-	if err != nil {
-		logger.L().Error(ctx, "error when sending event to Posthog", zap.Error(err))
-	}
-}
-
 func (p *PosthogClient) GetPackageToPosthogProperties(header *http.Header) posthog.Properties {
 	properties := posthog.NewProperties().
 		Set("browser", header.Get("browser")).

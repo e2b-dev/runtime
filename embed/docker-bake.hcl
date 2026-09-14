@@ -16,9 +16,6 @@
 variable "REGISTRY_PREFIX" {
   default = "us-docker.pkg.dev/e2b-artifacts/embed"
 }
-variable "COMMIT_SHA" {
-  default = ""
-}
 // The seed builds from a source tree that has shared/, db/ and local-dev/
 // side by side. In the source monorepo that tree sits three levels above this
 // directory (the OSS tree that is exported as `packages/`); `make images`
@@ -35,37 +32,51 @@ group "default" {
   targets = ["tools", "node-e2b", "seed"]
 }
 
+// All three images are published for both architectures under one tag.
+// `make images` narrows this to the local daemon's platform with
+// --set "*.platform=...": the classic image store cannot --load a
+// multi-platform result.
 target "tools" {
   context    = "compose"
   dockerfile = "docker/tools.Dockerfile"
-  platforms  = ["linux/amd64"]
-  tags       = concat(["${REGISTRY_PREFIX}/tools"], COMMIT_SHA != "" ? ["${REGISTRY_PREFIX}/tools:${COMMIT_SHA}"] : [])
+  platforms  = ["linux/amd64", "linux/arm64"]
+  tags       = ["${REGISTRY_PREFIX}/tools"]
 }
 
 target "node-e2b" {
   context    = "compose"
   dockerfile = "docker/node-e2b.Dockerfile"
-  platforms  = ["linux/amd64"]
-  tags       = concat(["${REGISTRY_PREFIX}/node-e2b"], COMMIT_SHA != "" ? ["${REGISTRY_PREFIX}/node-e2b:${COMMIT_SHA}"] : [])
+  platforms  = ["linux/amd64", "linux/arm64"]
+  tags       = ["${REGISTRY_PREFIX}/node-e2b"]
 }
 
 target "seed" {
   context   = SEED_CONTEXT
-  platforms = ["linux/amd64"]
+  platforms = ["linux/amd64", "linux/arm64"]
   args = {
     SRC = SEED_SRC
   }
+  // The builder runs on the build host's platform and cross-compiles for the
+  // target, so an arm64 image costs one native Go build rather than an
+  // emulated one; the runtime stage is the target platform's Alpine.
   dockerfile-inline = <<-DOCKERFILE
-    FROM golang:1.26.8-alpine3.24
+    FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.24 AS builder
     ARG SRC=go/oss
+    ARG TARGETARCH
     WORKDIR /src
     COPY $${SRC}/shared ./shared
     COPY $${SRC}/db ./db
     COPY $${SRC}/local-dev ./local-dev
     WORKDIR /src/local-dev
     RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
-        go build -o /seed ./seed-local-database.go
+        CGO_ENABLED=0 GOARCH=$${TARGETARCH} go build -o /seed ./seed-local-database.go
+    FROM alpine:3.24
+    # Bump this date to force a rebuild from here down, so the upgrade below
+    # resolves against the current Alpine package index. Nothing reads the value.
+    ENV LAST_FORCED_UPDATE=2026-09-11
+    RUN apk upgrade --no-cache
+    COPY --from=builder /seed /seed
     ENTRYPOINT ["/seed"]
   DOCKERFILE
-  tags = concat(["${REGISTRY_PREFIX}/seed"], COMMIT_SHA != "" ? ["${REGISTRY_PREFIX}/seed:${COMMIT_SHA}"] : [])
+  tags = ["${REGISTRY_PREFIX}/seed"]
 }

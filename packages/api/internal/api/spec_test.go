@@ -22,7 +22,7 @@ func TestTemplateRegistrationConflictContract(t *testing.T) {
 
 	spec, err := GetSpec()
 	require.NoError(t, err)
-	for _, path := range []string{"/v3/templates", "/v2/templates", "/templates", "/templates/{templateID}"} {
+	for _, path := range []string{"/v3/templates"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 

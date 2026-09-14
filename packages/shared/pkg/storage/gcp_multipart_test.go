@@ -544,7 +544,7 @@ func TestMultipartUploader_RandomFailures_ChaosTest(t *testing.T) {
 			}
 
 			atomic.AddInt32(&successCount, 1)
-			partNum := strings.Split(strings.Split(r.URL.RawQuery, "partNumber=")[1], "&")[0]
+			partNum := r.URL.Query().Get("partNumber")
 			w.Header().Set("ETag", fmt.Sprintf(`"chaos-etag-%s"`, partNum))
 			w.WriteHeader(http.StatusOK)
 
@@ -596,7 +596,7 @@ func TestMultipartUploader_PartialFailures_Recovery(t *testing.T) {
 			w.Write(xmlData)
 
 		case strings.Contains(r.URL.RawQuery, "partNumber"):
-			partNumStr := strings.Split(strings.Split(r.URL.RawQuery, "partNumber=")[1], "&")[0]
+			partNumStr := r.URL.Query().Get("partNumber")
 
 			// Track attempts per part
 			val, _ := partAttempts.LoadOrStore(partNumStr, new(int32(0)))
@@ -806,7 +806,7 @@ func TestMultipartUploader_ResourceExhaustion_TooManyConcurrentUploads(t *testin
 			// Simulate work that takes time
 			time.Sleep(10 * time.Millisecond)
 
-			partNum := strings.Split(strings.Split(r.URL.RawQuery, "partNumber=")[1], "&")[0]
+			partNum := r.URL.Query().Get("partNumber")
 			w.Header().Set("ETag", fmt.Sprintf(`"resource-etag-%s"`, partNum))
 			w.WriteHeader(http.StatusOK)
 
@@ -857,7 +857,7 @@ func TestMultipartUploader_BoundaryConditions_ExactChunkSize(t *testing.T) {
 			partSizes = append(partSizes, len(body))
 			partSizesMu.Unlock()
 
-			partNum := strings.Split(strings.Split(r.URL.RawQuery, "partNumber=")[1], "&")[0]
+			partNum := r.URL.Query().Get("partNumber")
 			w.Header().Set("ETag", fmt.Sprintf(`"boundary-etag-%s"`, partNum))
 			w.WriteHeader(http.StatusOK)
 
@@ -914,7 +914,7 @@ func TestMultipartUploader_ConcurrentRetries_RaceCondition(t *testing.T) {
 			w.Write(xmlData)
 
 		case strings.Contains(r.URL.RawQuery, "partNumber"):
-			partNumStr := strings.Split(strings.Split(r.URL.RawQuery, "partNumber=")[1], "&")[0]
+			partNumStr := r.URL.Query().Get("partNumber")
 
 			// Track retry attempts per part with race-safe operations
 			val, _ := retryAttempts.LoadOrStore(partNumStr, new(int32(0)))

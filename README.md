@@ -15,7 +15,7 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/e2b)
 [![X](https://img.shields.io/badge/follow-%40e2b-000000.svg?logo=x&logoColor=white)](https://x.com/e2b)
 
-**[Docs](https://docs.e2b.dev)**
+**[Docs](https://docs.e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime)**
 | [Architecture](./docs/ARCHITECTURE.md)
 | [Run it yourself](./embed/README.md)
 | [SDKs & CLI](https://github.com/e2b-dev/E2B)
@@ -28,9 +28,9 @@
 
 ## What is E2B Runtime?
 
-E2B Runtime is the complete backend that powers [E2B Cloud](https://e2b.dev): the control-plane API, the per-node orchestrator that drives Firecracker, the agent that runs inside every VM, the edge router for sandbox traffic, and the template builder. It gives every agent session its own isolated Linux machine that boots from a snapshot, runs whatever the agent asks it to, and can be paused and resumed as if nothing happened.
+E2B Runtime is the complete backend that powers [E2B Cloud](https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime): the control-plane API, the per-node orchestrator that drives Firecracker, the agent that runs inside every VM, the edge router for sandbox traffic, and the template builder. It gives every agent session its own isolated Linux machine that boots from a snapshot, runs whatever the agent asks it to, and can be paused and resumed as if nothing happened.
 
-It is written in Go, licensed under Apache-2.0, and built by [E2B](https://e2b.dev). The same code serves the public cloud, dedicated enterprise deployments, and the single-machine [Embed](./embed/README.md) package you can run on your own hardware.
+It is written in Go, licensed under Apache-2.0, and built by [E2B](https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime). The same code serves the public cloud, dedicated enterprise deployments, and the single-machine [Embed](./embed/README.md) package you can run on your own hardware.
 
 ## Why it's fast
 
@@ -73,7 +73,7 @@ docker compose up -d --wait
 
 The same package ships as Terraform for GCP and as a Kubernetes manifest. It is an evaluation package, not a production deployment pattern.
 
-**In your own cloud, for production.** E2B runs the runtime as a dedicated deployment inside your account, with your data staying there. See [e2b.dev/enterprise](https://e2b.dev/enterprise).
+**In your own cloud, for production.** E2B runs the runtime as a dedicated deployment inside your account, with your data staying there. See [e2b.dev/enterprise](https://e2b.dev/enterprise?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime).
 
 ## How it fits together
 

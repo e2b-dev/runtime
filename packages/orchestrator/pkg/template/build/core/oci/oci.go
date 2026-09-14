@@ -26,7 +26,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/filesystem"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -76,8 +75,7 @@ func wrapImagePullError(ctx context.Context, err error, imageRef string) error {
 	logger.L().Warn(ctx, "failed to pull image", zap.String("image_ref", imageRef), zap.Error(err))
 
 	// Check for transport errors with specific error codes from the registry API
-	var transportErr *transport.Error
-	if errors.As(err, &transportErr) {
+	if transportErr, ok := errors.AsType[*transport.Error](err); ok {
 		for _, e := range transportErr.Errors {
 			switch e.Code {
 			case transport.ManifestUnknownErrorCode:
@@ -157,29 +155,6 @@ func GetPublicImage(ctx context.Context, dockerhubRepository dockerhub.RemoteRep
 	return img, nil
 }
 
-func GetImage(ctx context.Context, artifactRegistry artifactsregistry.ArtifactsRegistry, templateId string, buildId string) (containerregistry.Image, error) {
-	childCtx, childSpan := tracer.Start(ctx, "pull-docker-image")
-	defer childSpan.End()
-
-	platform := DefaultPlatform()
-
-	img, err := artifactRegistry.GetImage(childCtx, templateId, buildId, platform)
-	if err != nil {
-		logger.L().Warn(childCtx, "failed to pull build image", logger.WithTemplateID(templateId), logger.WithBuildID(buildId), zap.Error(err))
-
-		return nil, errors.New("failed to pull build image from registry")
-	}
-
-	telemetry.ReportEvent(childCtx, "pulled image")
-
-	err = verifyImagePlatform(childCtx, img, platform, fmt.Sprintf("%s/%s", templateId, buildId))
-	if err != nil {
-		return nil, err
-	}
-
-	return img, nil
-}
-
 func GetImageSize(img containerregistry.Image) (int64, error) {
 	imageSize := int64(0)
 
@@ -199,11 +174,11 @@ func GetImageSize(img containerregistry.Image) (int64, error) {
 	return imageSize, nil
 }
 
-func ToExt4(ctx context.Context, logger logger.Logger, img containerregistry.Image, rootfsPath string, maxSize int64, blockSize int64, mkfsOpts filesystem.MakeOptions) (int64, error) {
+func ToExt4(ctx context.Context, logger logger.Logger, img containerregistry.Image, rootfsPath string, maxSize int64, blockSize int64) (int64, error) {
 	ctx, childSpan := tracer.Start(ctx, "oci-to-ext4")
 	defer childSpan.End()
 
-	err := filesystem.Make(ctx, rootfsPath, units.BytesToMB(maxSize), blockSize, mkfsOpts)
+	err := filesystem.Make(ctx, rootfsPath, units.BytesToMB(maxSize), blockSize)
 	if err != nil {
 		return 0, fmt.Errorf("error creating ext4 file: %w", err)
 	}

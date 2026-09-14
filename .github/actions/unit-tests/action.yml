@@ -2,8 +2,8 @@ name: "Unit Tests"
 description: |
   Runs the unit test shard for one infra package, including the host setup
   that the package needs (bindfs for envd, NBD/hugepages/uffd for the
-  orchestrator). Always writes coverage.txt and junit.xml into the package
-  directory; callers decide whether to upload them.
+  orchestrator). Writes coverage.txt into the package directory when coverage
+  is enabled; coverage is opt-in and no CI workflow currently enables it.
 
   The workspace root must have this repository's layout. The logic lives in
   a composite action (instead of inline in pr-tests.yml) so that other
@@ -23,6 +23,10 @@ inputs:
     default: "false"
   race:
     description: "Run with the race detector (roughly doubles runtime; raises the go test timeout to 40m)"
+    required: false
+    default: "false"
+  coverage:
+    description: "Write coverage.txt (set/atomic covermode picked by go test); enable when the caller uploads it"
     required: false
     default: "false"
 
@@ -92,18 +96,20 @@ runs:
       run: go install gotest.tools/gotestsum@v1.13.0
 
     # sudo strips PATH; pass it through so gotestsum/go resolve to the
-    # runner's toolchain instead of /usr/bin/go. Trap chowns reports back to
-    # the runner so uploads can read them even when tests fail.
+    # runner's toolchain instead of /usr/bin/go. Trap chowns the coverage
+    # profile back to the runner so callers can read it even when tests fail.
     - name: Run tests that require sudo
       if: inputs.sudo == 'true'
       shell: bash
       working-directory: ${{ inputs.package }}
       run: |
-        trap 'sudo chown "$(id -u):$(id -g)" coverage.txt junit.xml 2>/dev/null || true' EXIT
+        trap 'sudo chown "$(id -u):$(id -g)" coverage.txt 2>/dev/null || true' EXIT
         RACE=""; TEST_TIMEOUT=20m
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
-        sudo -E env "PATH=$PATH" gotestsum --junitfile=junit.xml --format=standard-verbose \
-          -- -timeout $TEST_TIMEOUT $RACE -coverprofile=coverage.txt -covermode=atomic ${{ inputs.test-path }}
+        COVER=""
+        if [ "${{ inputs.coverage }}" = "true" ]; then COVER="-coverprofile=coverage.txt"; fi
+        sudo -E env "PATH=$PATH" gotestsum --format=standard-verbose \
+          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 $COVER ${{ inputs.test-path }}
 
     - name: Run tests
       if: inputs.sudo != 'true'
@@ -112,5 +118,7 @@ runs:
       run: |
         RACE=""; TEST_TIMEOUT=20m
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
-        gotestsum --junitfile=junit.xml --format=standard-verbose \
-          -- -timeout $TEST_TIMEOUT $RACE -coverprofile=coverage.txt -covermode=atomic ${{ inputs.test-path }}
+        COVER=""
+        if [ "${{ inputs.coverage }}" = "true" ]; then COVER="-coverprofile=coverage.txt"; fi
+        gotestsum --format=standard-verbose \
+          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 $COVER ${{ inputs.test-path }}

@@ -10,11 +10,16 @@ the hub is [`../README.md`](../README.md).
 ## Requirements
 
 - Kubernetes 1.29 or newer, for sidecar init containers.
-- One Linux x86-64 node with KVM (`/dev/kvm` present, which on a VM means
-  nested virtualization is on): Ubuntu 24.04, or another host with kernel 6.8
-  or newer, glibc 2.34 or newer, cgroup v2 and the `iptables`, `rsync`,
-  `e2fsprogs` and `iproute2` tools; 12 GiB RAM and 20 GiB free on `/`. No
-  Container-Optimized OS.
+- One Linux x86-64 or arm64 node with KVM (`/dev/kvm` present, which on a VM
+  means nested virtualization is on) and a 4 KiB-page kernel: Ubuntu 24.04, or
+  another host with kernel 6.8 or newer, glibc 2.34 or newer, cgroup v2 and
+  the `iptables`, `rsync`, `e2fsprogs` and `iproute2` tools; 12 GiB RAM and
+  20 GiB free on `/`. No Container-Optimized OS. arm64 is not yet verified
+  end to end: no arm64 node has run this stack. The seven pinned images are
+  published for both architectures, and the `fetch-artifacts` init container
+  verifies the arm64 orchestrator and envd against the `.sha256` their
+  release writes beside the object. A pin with no such object still stops
+  with a `FIX:` line naming it.
 - 4 GiB of 2 MiB hugepages, reserved before the kubelet starts, because it
   advertises only what it saw then. Every sandbox needs them, and the
   orchestrator's request is what stops the kubelet capping the pod at zero.

@@ -52,7 +52,6 @@ import (
 )
 
 const (
-	serviceVersion     = "1.0.0"
 	serviceName        = "orchestration-api"
 	maxMultipartMemory = 1 << 23 // 8 MiB
 	maxUploadLimit     = 1 << 24 // 16 MiB
@@ -96,6 +95,7 @@ const (
 var (
 	commitSHA                  string
 	expectedMigrationTimestamp string
+	serviceVersion             = "0.14.1" // x-release-please-version
 )
 
 func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T, port int) *http.Server {
@@ -163,14 +163,21 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 	r.Use(customMiddleware.CORS())
 
-	// Access tokens are removed. Registered before the OpenAPI validator
-	// middleware (which rejects paths missing from the spec) so old clients
-	// get a clear 410 instead of a 404.
-	accessTokensGone := func(c *gin.Context) {
-		apierrors.SendAPIStoreError(c, http.StatusGone, "E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation")
+	// Removed routes are registered before the OpenAPI validator middleware
+	// (which rejects paths missing from the spec) so old clients get a clear
+	// 410 instead of a 404.
+	gone := func(msg string) gin.HandlerFunc {
+		return func(c *gin.Context) { apierrors.SendAPIStoreError(c, http.StatusGone, msg) }
 	}
+	accessTokensGone := gone("E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation")
 	r.POST("/access-tokens", accessTokensGone)
 	r.DELETE("/access-tokens/:accessTokenID", accessTokensGone)
+
+	templateBuildV1Gone := gone("The v1 template build API is no longer supported. Upgrade the CLI and migrate to v2 templates. See https://e2b.dev/docs/template/migration-v2")
+	r.POST("/templates", templateBuildV1Gone)
+	r.POST("/templates/:templateID", templateBuildV1Gone)
+	r.POST("/templates/:templateID/builds/:buildID", templateBuildV1Gone)
+	r.POST("/v2/templates", templateBuildV1Gone)
 
 	// Create a team API Key auth validator
 	AuthenticationFunc := auth.CreateAuthenticationFunc(

@@ -148,7 +148,6 @@ func New(
 		sandboxFactory,
 		templatePersistence,
 		buildPersistence,
-		artifactsRegistry,
 		dockerhubRepository,
 		proxy,
 		sandboxFactory.Sandboxes,

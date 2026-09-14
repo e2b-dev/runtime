@@ -62,8 +62,7 @@ func ParseStorageURL(raw string) (Spec, error) {
 	if err != nil {
 		// Do not echo the raw URL: it may carry credentials. url.Error also
 		// embeds the URL, so unwrap it and keep only the underlying cause.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
 			err = urlErr.Err
 		}
 

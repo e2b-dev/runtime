@@ -61,6 +61,7 @@ func SetupDatabase(t *testing.T) *Database {
 		postgres.WithDatabase(testDatabaseName),
 		postgres.WithUsername(testUsername),
 		postgres.WithPassword(testPassword),
+		testcontainers.WithCmdArgs("-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).

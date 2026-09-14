@@ -164,22 +164,19 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 			routingSource := selectCatalog(ctx, featureFlagsClient, catalog, orchestratorCatalog)
 			nodeIP, err := catalogResolution(ctx, sandboxId, port, trafficAccessToken, envdAccessToken, routingSource, pausedSandboxResumer)
 			if err != nil {
-				var resumeDeniedErr *reverseproxy.SandboxResumePermissionDeniedError
-				if errors.As(err, &resumeDeniedErr) {
+				if resumeDeniedErr, ok := errors.AsType[*reverseproxy.SandboxResumePermissionDeniedError](err); ok {
 					l.Warn(ctx, "sandbox resume denied", zap.Error(err))
 
 					return nil, resumeDeniedErr
 				}
 
-				var resourceExhaustedErr *reverseproxy.SandboxResourceExhaustedError
-				if errors.As(err, &resourceExhaustedErr) {
+				if resourceExhaustedErr, ok := errors.AsType[*reverseproxy.SandboxResourceExhaustedError](err); ok {
 					l.Warn(ctx, "sandbox resource exhausted", zap.Error(err))
 
 					return nil, resourceExhaustedErr
 				}
 
-				var stillTransitioningErr *reverseproxy.SandboxStillTransitioningError
-				if errors.As(err, &stillTransitioningErr) {
+				if stillTransitioningErr, ok := errors.AsType[*reverseproxy.SandboxStillTransitioningError](err); ok {
 					l.Warn(ctx, "sandbox still transitioning", zap.Error(err))
 
 					return nil, stillTransitioningErr

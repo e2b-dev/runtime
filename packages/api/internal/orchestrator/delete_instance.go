@@ -72,8 +72,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 				return ErrSandboxNotFound
 			}
 
-			var transErr *sandbox.InvalidStateTransitionError
-			if errors.As(err, &transErr) {
+			if transErr, ok := errors.AsType[*sandbox.InvalidStateTransitionError](err); ok {
 				if transErr.CurrentState == sandbox.StateKilling {
 					logger.L().Info(ctx, "Sandbox is already killed", logger.WithSandboxID(sandboxID))
 

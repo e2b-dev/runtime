@@ -4,9 +4,15 @@ ENV := $(shell cat ../../.last_used_env || echo "not-set")
 # Short commit SHA, baked into the binary as main.commitSHA for provenance.
 # Upload objects are no longer named by it — see UPLOAD_VERSION below.
 BUILD := $(shell git rev-parse HEAD | cut -c1-7)
-LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD)"
-PROD_LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD) -s -w -buildid="
-DEBUG_LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD) -linkmode external -extldflags=-static"
+# LINK_VERSION is the identity baked into the binary. Distinct from VERSION,
+# which names the upload object (v-prefixed, derived from pkg/version.go).
+ifneq ($(strip $(LINK_VERSION)),)
+VERSION_LDFLAGS := -X=github.com/e2b-dev/infra/packages/envd/pkg.Version=$(LINK_VERSION)
+endif
+
+LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD) $(VERSION_LDFLAGS)"
+PROD_LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD) $(VERSION_LDFLAGS) -s -w -buildid="
+DEBUG_LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD) $(VERSION_LDFLAGS) -linkmode external -extldflags=-static"
 
 # Compiler flags for debug builds. The default disables optimizations and
 # inlining so binaries are debugger-friendly. CI overrides this with an empty
@@ -38,20 +44,23 @@ E2B_ARTIFACT_BINARIES_URL ?= https://storage.googleapis.com/e2b-artifact-binarie
 ENVD_VERSION := $(strip $(subst ",,$(ENVD_VERSION)))
 
 # Release version from pkg/version.go (bumped by release-please). Versioned
-# uploads are named envd.$(UPLOAD_VERSION) — by release version, not commit
-# SHA — so the object name matches the envd-upgrade-target flag grammar and
-# the central bucket's envd/<version>/ release dirs. Rebuilds of an unchanged
-# version overwrite the same object; that is safe because pkg/version.go must
-# be bumped on any envd behavior change. Legacy envd.<sha> objects stay in the
-# buckets untouched and age out on their own.
+# uploads are named envd.$(UPLOAD_VERSION) with the same vMAJOR.MINOR…
+# schema as image tags, so the object name matches the envd-upgrade-target
+# flag grammar and the central bucket's envd/<version>/ release dirs.
+# Rebuilds of an unchanged version overwrite the same object; that is safe
+# because pkg/version.go must be bumped on any envd behavior change. Legacy
+# envd.<sha> objects stay in the buckets untouched and age out on their own.
 VERSION := v$(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' pkg/version.go)
 # The version this run operates on: the released version when ENVD_VERSION is
 # set (released-artifact flow below), else the checkout's own version.
-# A legacy commit-SHA input is truncated to the fixed 7-char short SHA the old
-# uploads were named with (envd.<7-char-sha>); release versions (v-prefixed)
-# pass through verbatim.
-RAW_UPLOAD_VERSION = $(or $(ENVD_VERSION),$(VERSION))
-UPLOAD_VERSION = $(if $(filter v%,$(RAW_UPLOAD_VERSION)),$(RAW_UPLOAD_VERSION),$(shell printf '%.7s' "$(RAW_UPLOAD_VERSION)"))
+# A pin must carry the v prefix (v0.9.0 or an auto-deploy
+# v0.9.YYYYMMDDHHMM-<sha11>); a bare commit SHA is not a version.
+ifneq ($(strip $(ENVD_VERSION)),)
+ifeq ($(filter v%,$(ENVD_VERSION)),)
+$(error ENVD_VERSION must be a v-prefixed version (e.g. v0.9.0), not a commit SHA)
+endif
+endif
+UPLOAD_VERSION = $(or $(ENVD_VERSION),$(VERSION))
 
 # Architecture for builds. Defaults to amd64; override for ARM64 builds.
 # (e.g., BUILD_ARCH=arm64 make build-local)
@@ -93,8 +102,12 @@ build:
 # must not need a dynamic loader; -race requires cgo, hence the static external
 # link. osusergo/netgo keep user and DNS lookups pure Go, as in the CGO_ENABLED=0
 # build above, so only the race instrumentation differs from what ships.
+# RACE_FLAG="" drops the instrumentation (CI uses it for some suite
+# configurations); the cgo static link stays either way, harmlessly.
+RACE_FLAG ?= -race
+
 build-debug:
-	CGO_ENABLED=1 go build -race -tags osusergo,netgo $(DEBUG_GCFLAGS) -o bin/debug/envd ${DEBUG_LDFLAGS}
+	CGO_ENABLED=1 go build $(RACE_FLAG) -tags osusergo,netgo $(DEBUG_GCFLAGS) -o bin/debug/envd ${DEBUG_LDFLAGS}
 
 start-docker:
 	make build

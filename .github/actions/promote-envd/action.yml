@@ -5,7 +5,7 @@ inputs:
     description: "Target environment to promote envd in, e.g. staging"
     required: true
   version:
-    description: "Release version of the envd build to promote (e.g. v0.7.0); legacy commit-SHA suffixes are accepted while envd.<sha> objects age out"
+    description: "Release version of the envd build to promote (e.g. v0.7.0 or v0.7.202609100404-76e17e06ca6)"
     required: true
   infisical_machine_identity_id:
     description: "Infisical machine identity ID for accessing secrets"
@@ -15,7 +15,7 @@ runs:
   using: "composite"
   steps:
     - name: Pull deployment secrets into temporary file
-      uses: Infisical/secrets-action@v1.0.16
+      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
       with:
         method: "oidc"
         identity-id: ${{ inputs.infisical_machine_identity_id }}
@@ -41,7 +41,7 @@ runs:
         echo "GH_WORKLOAD_IDENTITY_PROVIDER=${GH_WORKLOAD_IDENTITY_PROVIDER}" >> "$GITHUB_ENV"
 
     - name: Load runtime environment
-      uses: Infisical/secrets-action@v1.0.16
+      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
       with:
         method: "oidc"
         identity-id: ${{ inputs.infisical_machine_identity_id }}
@@ -50,13 +50,13 @@ runs:
         export-type: "env"
 
     - name: Setup Service Account
-      uses: google-github-actions/auth@v3
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
       with:
         project_id: ${{ env.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ env.GH_WORKLOAD_IDENTITY_PROVIDER }}
 
     - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v3
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
     - name: Promote envd
       env:

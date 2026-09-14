@@ -103,8 +103,7 @@ type ProcessOptions struct {
 	KvmClock bool
 
 	// CmdlineArgs are extra guest kernel command line arguments overlaid on the
-	// defaults. Empty is the command line every sandbox has always booted with.
-	// Rejected wholesale if they include a key the orchestrator reserves
+	// defaults. Empty is the default command line. Rejected wholesale if they include a key the orchestrator reserves
 	// (see ValidateCmdlineArgs).
 	//
 	// Only boots that produce or restore a template's kernel need to set this: the
@@ -166,6 +165,22 @@ type Process struct {
 	balloonAccum atomic.Pointer[BalloonMetricsSnapshot]
 }
 
+func validateFirecrackerBinary(versions Config, config cfg.BuilderConfig) error {
+	firecrackerPath := versions.FirecrackerPath(config)
+	_, err := os.Stat(firecrackerPath)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, os.ErrNotExist) {
+		archPath, legacyPath := versions.firecrackerPaths(config)
+
+		return fmt.Errorf("firecracker binary not found; checked architecture-specific path %q and legacy path %q: %w", archPath, legacyPath, err)
+	}
+
+	return fmt.Errorf("error stating firecracker binary %q: %w", firecrackerPath, err)
+}
+
 func NewProcess(
 	ctx context.Context,
 	execCtx context.Context,
@@ -192,9 +207,8 @@ func NewProcess(
 		attribute.String("sandbox.cmd", startScript.Value),
 	)
 
-	_, err = os.Stat(versions.FirecrackerPath(config))
-	if err != nil {
-		return nil, fmt.Errorf("error stating firecracker binary: %w", err)
+	if err = validateFirecrackerBinary(versions, config); err != nil {
+		return nil, err
 	}
 
 	_, err = os.Stat(versions.HostKernelPath(config))
@@ -290,8 +304,7 @@ func (p *Process) configure(
 
 		waitErr := p.cmd.Wait()
 		if waitErr != nil {
-			var exitErr *exec.ExitError
-			if errors.As(waitErr, &exitErr) {
+			if exitErr, ok := errors.AsType[*exec.ExitError](waitErr); ok {
 				// Check if the process was killed by a signal
 				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && (status.Signal() == syscall.SIGKILL || status.Signal() == syscall.SIGTERM) {
 					p.Exit.SetError(nil)
@@ -790,8 +803,7 @@ func (p *Process) DrainBalloon(ctx context.Context) error {
 	}
 
 	if err := p.client.startBalloonHinting(ctx, true); err != nil {
-		var notConfigured *operations.StartBalloonHintingBadRequest
-		if errors.As(err, &notConfigured) {
+		if _, ok := errors.AsType[*operations.StartBalloonHintingBadRequest](err); ok {
 			outcome = "not-configured"
 
 			return nil

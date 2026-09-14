@@ -49,10 +49,12 @@ test:
 
 # Build the three project images locally under their published names, so a
 # compose.yaml that pins them runs the local build and pulls nothing. The
-# seed builds from the public runtime repository at the pinned commit.
+# seed builds from the public runtime repository at the pinned commit. The
+# bake file lists both architectures; --load needs exactly one, the daemon's.
 images:
 	set -a; . ./compose/.env; set +a; \
 	docker buildx bake --load \
+	  --set "*.platform=linux/$$(docker version -f '{{.Server.Arch}}')" \
 	  --set "seed.context=https://github.com/e2b-dev/runtime.git#$${RUNTIME_COMMIT}" \
 	  --set seed.args.SRC=packages \
 	  --set "tools.tags=$${E2B_TOOLS_IMAGE}" \
@@ -107,5 +109,5 @@ stores-check:
 	test "$$($(COMPOSE) exec -T clickhouse clickhouse-client --user clickhouse --password clickhouse --query 'SELECT count() > 0 FROM _migrations')" = 1 \
 	  || fail "the clickhouse _migrations ledger is empty" "re-run $(COMPOSE) run --rm clickhouse-migrator and read its output"; \
 	test "$$($(COMPOSE) exec -T clickhouse clickhouse-client --user clickhouse --password clickhouse --query "SELECT count() FROM system.tables WHERE database = currentDatabase() AND name = 'sandbox_logs'")" = 1 \
-	  || fail "the sandbox_logs table is missing" "E2B_CLICKHOUSE_MIGRATOR_IMAGE must be a release that carries the add_sandbox_logs migration (v0.4.0 does); re-run $(COMPOSE) run --rm clickhouse-migrator"; \
+	  || fail "the sandbox_logs table is missing" "E2B_CLICKHOUSE_MIGRATOR_IMAGE must be a release that carries the add_sandbox_logs migration (the v0.4 line does); re-run $(COMPOSE) run --rm clickhouse-migrator"; \
 	echo "stores-check: ok"

@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
@@ -55,7 +57,7 @@ func newWorkTrackingServer(t *testing.T, fcVersion string) (*ServerStore, *stora
 		wg:              &sync.WaitGroup{},
 		builder: build.NewBuilder(
 			cfg.BuilderConfig{HostEnvdPath: filepath.Join(t.TempDir(), "missing-envd")},
-			l, flags, nil, provider, nil, nil, nil, nil, nil, nil, buildMetrics, nil,
+			l, flags, nil, provider, nil, nil, nil, nil, nil, buildMetrics, nil,
 		),
 	}
 	t.Cleanup(s.wg.Wait)
@@ -89,12 +91,21 @@ func blockTemplateCleanup(t *testing.T, provider *storage.MockStorageProvider, b
 func TestTemplateCreateRejectionReleasesWork(t *testing.T) {
 	t.Parallel()
 
+	noSource := func(req *templatemanager.TemplateCreateRequest) { req.Template.Source = nil }
+	emptyImage := func(req *templatemanager.TemplateCreateRequest) {
+		req.Template.Source = &templatemanager.TemplateConfig_FromImage{FromImage: ""}
+	}
+
 	for _, tc := range []struct {
 		name, fcVersion, message string
 		duplicate                bool
+		mutate                   func(*templatemanager.TemplateCreateRequest)
+		code                     codes.Code
 	}{
-		{"invalid firecracker", "invalid", "invalid resolved firecracker version", false},
-		{"duplicate build", featureflags.DefaultFirecrackerVersion, "already exists in cache", true},
+		{"invalid firecracker", "invalid", "invalid resolved firecracker version", false, nil, codes.OK},
+		{"duplicate build", featureflags.DefaultFirecrackerVersion, "already exists in cache", true, nil, codes.OK},
+		{"no source", featureflags.DefaultFirecrackerVersion, "requires either fromImage or fromTemplate", false, noSource, codes.InvalidArgument},
+		{"empty fromImage", featureflags.DefaultFirecrackerVersion, "requires either fromImage or fromTemplate", false, emptyImage, codes.InvalidArgument},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -109,8 +120,16 @@ func TestTemplateCreateRejectionReleasesWork(t *testing.T) {
 				_, err := s.buildCache.Create(req.GetTemplate().GetTeamID(), req.GetTemplate().GetBuildID(), buildlogger.NewLogEntryLogger())
 				require.NoError(t, err)
 			}
+			if tc.mutate != nil {
+				tc.mutate(req)
+			}
 			_, err := s.TemplateCreate(t.Context(), req)
 			require.ErrorContains(t, err, tc.message)
+			if tc.code != codes.OK {
+				require.Equal(t, tc.code, status.Code(err))
+				_, err := s.buildCache.Get(req.GetTemplate().GetBuildID())
+				require.Error(t, err, "a rejected build must not enter the cache")
+			}
 			s.wg.Wait()
 			require.Zero(t, s.info.OutstandingWork())
 		})

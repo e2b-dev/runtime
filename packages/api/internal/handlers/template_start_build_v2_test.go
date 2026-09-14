@@ -161,3 +161,29 @@ func TestPostV3TemplatesMinimumFreeDiskPersistence(t *testing.T) {
 		})
 	}
 }
+
+func TestPostV2TemplatesTemplateIDBuildsBuildIDRequiresSource(t *testing.T) {
+	t.Parallel()
+
+	// The V1 flow sent an empty fromImage; it must fail as client input before the build row is touched.
+	for _, tt := range []struct{ name, body, message string }{
+		{"no source", `{"steps":[]}`, "must specify either fromImage or fromTemplate"},
+		{"empty fromImage", `{"fromImage":"","steps":[]}`, "must specify either fromImage or fromTemplate"},
+		{"empty fromTemplate", `{"fromTemplate":"","steps":[]}`, "must specify either fromImage or fromTemplate"},
+		{"both sources", `{"fromImage":"alpine","fromTemplate":"base","steps":[]}`, "cannot specify both fromImage and fromTemplate"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/templates/tpl/builds/00000000-0000-0000-0000-000000000000", strings.NewReader(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			(&APIStore{}).PostV2TemplatesTemplateIDBuildsBuildID(c, "tpl", "00000000-0000-0000-0000-000000000000")
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			require.Contains(t, recorder.Body.String(), tt.message)
+		})
+	}
+}

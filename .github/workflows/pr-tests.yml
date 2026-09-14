@@ -1,7 +1,7 @@
 # Runs the unit test shards on PRs.
 #
 # The test logic lives in the composite action .github/actions/unit-tests;
-# only the matrix and the Codecov uploads live here.
+# only the matrix lives here.
 
 name: Run tests on PRs
 
@@ -13,8 +13,6 @@ on:
         description: "Whether to run unit tests"
         required: false
         default: true
-    secrets:
-      CODECOV_TOKEN: { required: false }
 
 permissions:
   contents: read
@@ -33,23 +31,18 @@ jobs:
       # handles normal exit, the reap step in the unit-tests action handles
       # abnormal exit.
       TESTCONTAINERS_RYUK_DISABLED: "true"
-      # Surfaced as env so upload steps can gate on presence (skipped on fork PRs).
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
         include:
           - package: packages/api
-            flag: unit-api
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/client-proxy
-            flag: unit-client-proxy
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/db
-            flag: unit-db
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
@@ -57,27 +50,23 @@ jobs:
           # the FUSE-on-Blacksmith canary — if it fails, pin it back to
           # infra-tests.
           - package: packages/envd
-            flag: unit-envd
             test_path: ./...
             sudo: true
             runner: blacksmith-4vcpu-ubuntu-2404
           # The database seed: the key-resolution table and one Postgres-backed
           # run through testcontainers.
           - package: packages/local-dev
-            flag: unit-local-dev
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           # The one shard whose code carries cross-goroutine ownership
           # invariants (network slot pool, netns state) — race-checked.
           - package: packages/orchestrator
-            flag: unit-orchestrator
             test_path: ./...
             sudo: true
             race: true
             runner: infra-tests
           - package: packages/shared
-            flag: unit-shared
             test_path: ./pkg/...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
@@ -93,27 +82,6 @@ jobs:
           test-path: ${{ matrix.test_path }}
           sudo: ${{ matrix.sudo }}
           race: ${{ matrix.race || false }}
-
-      - name: Upload coverage to Codecov
-        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' &&
-          hashFiles(format('{0}/coverage.txt', matrix.package)) != '' }}
-        uses: codecov/codecov-action@v6
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ${{ matrix.package }}/coverage.txt
-          flags: ${{ matrix.flag }},unit
-          disable_search: true
-
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' &&
-          hashFiles(format('{0}/junit.xml', matrix.package)) != '' }}
-        uses: codecov/codecov-action@v6
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ${{ matrix.package }}/junit.xml
-          flags: ${{ matrix.flag }},unit
-          disable_search: true
-          report_type: test_results
 
   unit_tests:
     needs: run-tests

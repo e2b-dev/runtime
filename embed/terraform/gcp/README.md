@@ -211,7 +211,7 @@ commit instead of the files the module ships, for example
 | `machine_type` | `n4-standard-4` | 12 GiB RAM recommended; the default has 16 |
 | `boot_disk_size_gb` | `50` | 20 GiB has to stay free after the OS and Docker |
 | `boot_disk_type` | `hyperdisk-balanced` | n4 machine types support only Hyperdisk |
-| `image` | Ubuntu 24.04 LTS | the stack needs apt, a writable `/etc` and glibc 2.34 or newer |
+| `image` | Ubuntu 24.04 LTS | the stack needs apt, a writable `/etc` and glibc 2.34 or newer; x86-64 only (the startup script adds Docker's amd64 repository, and GCE's arm64 machine types have no nested virtualization) |
 | `hugepages` | `2048` | 2 MiB hugepages reserved for sandboxes; 2048 is 4 GiB |
 | `team_api_key` | generated | `e2b_` plus an even number of lowercase hex characters, at least 32 |
 | `compose_base_url` | the shipped files | a directory URL to fetch the two files from at first boot |

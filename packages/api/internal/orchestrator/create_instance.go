@@ -240,8 +240,7 @@ func (o *Orchestrator) CreateSandbox(
 		if err != nil {
 			logger.L().Warn(ctx, "Error waiting for sandbox to start", zap.Error(err), logger.WithSandboxID(sandboxID))
 
-			var apiErr *api.APIError
-			if errors.As(err, &apiErr) {
+			if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 				return sandbox.Sandbox{}, apiErr
 			}
 

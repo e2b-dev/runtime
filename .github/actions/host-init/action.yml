@@ -12,6 +12,36 @@ runs:
         printenv > .env.test
       shell: bash
 
+    # The artifact directories are created runner-writable up front so the
+    # cache below can restore into them; the init script (running as root)
+    # then skips any pull whose directory is already populated.
+    - name: Prepare artifact directories
+      run: sudo install -d -o "$(id -u)" -g "$(id -g)" /fc-kernels /fc-versions /fc-busybox
+      shell: bash
+
+    # Exact-key only, no restore-keys: the key hashes the files that pin the
+    # kernel and Firecracker versions plus the pull script itself, so a
+    # restored cache always holds exactly the pin-referenced artifacts and a
+    # pin bump repulls fresh. On runners with an accelerated actions cache
+    # the restore is a few seconds; a miss costs the plain pulls, nothing
+    # more. A busybox republish under the same path is not reflected in the
+    # key — delete the cache entry (or bump the pins) to pick it up.
+    # Restore and save are split so the save can be skipped when the init
+    # script fell back to a full prefix pull: only pin-referenced artifacts
+    # are ever cached, never the multi-GiB everything-pull.
+    - name: Restore sandbox artifacts
+      id: artifacts-restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          /fc-kernels
+          /fc-versions
+          /fc-busybox
+        # KERNEL_VERSIONS in the key: a job overriding the kernel list must
+        # not save its narrowed pull under the default key for other jobs to
+        # restore. Unset (the normal case) contributes an empty segment.
+        key: fc-artifacts-${{ env.KERNEL_VERSIONS }}-${{ env.FC_VERSIONS }}-${{ hashFiles('.github/actions/build-sandbox-template/action.yml', 'packages/shared/pkg/featureflags/flags.go', 'packages/orchestrator/pkg/cfg/model.go', '.github/actions/host-init/init-client.sh') }}
+
     - name: Initialize Host
       env:
         INIT_SCRIPT_PATH: "./.github/actions/host-init/init-client.sh"
@@ -19,3 +49,13 @@ runs:
         chmod +x "${INIT_SCRIPT_PATH}"
         sudo -E bash -c "${INIT_SCRIPT_PATH}"
       shell: bash
+
+    - name: Save sandbox artifacts
+      if: steps.artifacts-restore.outputs.cache-hit != 'true' && env.ARTIFACTS_FULL_PULL != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          /fc-kernels
+          /fc-versions
+          /fc-busybox
+        key: ${{ steps.artifacts-restore.outputs.cache-primary-key }}

@@ -4,7 +4,7 @@ gcloud 534.0.0
 go 1.26.8
 go:golang.org/x/tools/gopls 0.21.1
 go:github.com/vektra/mockery/v3 v3.7.0
-golangci-lint 2.12.2
+golangci-lint 2.13.2
 protoc 34.1
 protoc-gen-connect-go 1.19.2
 protoc-gen-go 1.36.11

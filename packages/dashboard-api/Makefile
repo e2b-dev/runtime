@@ -33,6 +33,11 @@ E2B_ARTIFACTS_REGISTRY ?= us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboar
 # carries the migrations dashboard-api expects during its startup check.
 DASHBOARD_API_VERSION := $(strip $(subst ",,$(DASHBOARD_API_VERSION)))
 
+VERSION_LDFLAGS :=
+ifneq ($(strip $(VERSION)),)
+VERSION_LDFLAGS := -X=main.serviceVersion=$(VERSION)
+endif
+
 HOSTNAME := $(shell hostname 2> /dev/null || hostnamectl hostname 2> /dev/null)
 $(if $(HOSTNAME),,$(error Failed to determine hostname: both 'hostname' and 'hostnamectl' failed))
 
@@ -44,13 +49,13 @@ generate:
 build:
 	$(eval COMMIT_SHA ?= $(shell git rev-parse --short HEAD))
 	$(eval EXPECTED_MIGRATION_TIMESTAMP ?= $(expectedMigration))
-	CGO_ENABLED=0 go build -o bin/dashboard-api -ldflags "-X=main.commitSHA=$(COMMIT_SHA) -X=main.expectedMigrationTimestamp=$(EXPECTED_MIGRATION_TIMESTAMP)" .
+	CGO_ENABLED=0 go build -o bin/dashboard-api -ldflags "-X=main.commitSHA=$(COMMIT_SHA) -X=main.expectedMigrationTimestamp=$(EXPECTED_MIGRATION_TIMESTAMP) $(VERSION_LDFLAGS)" .
 
 .PHONY: build-debug
 build-debug:
 	$(eval COMMIT_SHA ?= $(shell git rev-parse --short HEAD))
 	$(eval EXPECTED_MIGRATION_TIMESTAMP ?= $(expectedMigration))
-	CGO_ENABLED=1 go build -race -gcflags=all="-N -l" -o bin/dashboard-api -ldflags "-X=main.commitSHA=$(COMMIT_SHA) -X=main.expectedMigrationTimestamp=$(EXPECTED_MIGRATION_TIMESTAMP)" .
+	CGO_ENABLED=1 go build -race -gcflags=all="-N -l" -o bin/dashboard-api -ldflags "-X=main.commitSHA=$(COMMIT_SHA) -X=main.expectedMigrationTimestamp=$(EXPECTED_MIGRATION_TIMESTAMP) $(VERSION_LDFLAGS)" .
 
 .PHONY: build-and-upload
 build-and-upload:
@@ -58,7 +63,7 @@ ifeq ($(strip $(DASHBOARD_API_VERSION)),)
 	# Existing flow: build from source and push to the client's own core repo.
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
 	$(eval EXPECTED_MIGRATION_TIMESTAMP := $(expectedMigration))
-	@docker build --platform linux/amd64 --tag $(IMAGE_REGISTRY) --tag $(IMAGE_REGISTRY):$(COMMIT_SHA) --push --build-arg COMMIT_SHA="$(COMMIT_SHA)" --build-arg EXPECTED_MIGRATION_TIMESTAMP="$(EXPECTED_MIGRATION_TIMESTAMP)" -f ./Dockerfile ..
+	@docker build --platform linux/amd64 --tag $(IMAGE_REGISTRY) --push --build-arg COMMIT_SHA="$(COMMIT_SHA)" --build-arg EXPECTED_MIGRATION_TIMESTAMP="$(EXPECTED_MIGRATION_TIMESTAMP)" -f ./Dockerfile ..
 else
 	# Released-image flow: pull the prebuilt, versioned image from the E2B
 	# artifacts registry and retag/push it into the client's own core repo.

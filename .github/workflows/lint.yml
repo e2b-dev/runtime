@@ -76,10 +76,10 @@ jobs:
             ${{ matrix.modules }}/go.sum
 
       - name: Parse .tool-versions
-        uses: wistia/parse-tool-versions@v2.1.1
+        uses: wistia/parse-tool-versions@32f568a4ffd4bfa7720ebf93f171597d1ebc979a # v2.1.1
 
       - name: golangci-lint ${{ matrix.modules }}
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: "v${{ env.GOLANGCI_LINT }}"
           working-directory: ${{ matrix.modules }}

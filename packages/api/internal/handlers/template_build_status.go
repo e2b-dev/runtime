@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,7 +16,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
-	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -83,28 +81,17 @@ func (a *APIStore) GetTemplatesTemplateIDBuildsBuildIDStatus(c *gin.Context, tem
 	// Needs to be before logs request so the status is not set to done too early
 	result := api.TemplateBuildInfo{
 		LogEntries: nil,
-		Logs:       nil,
+		Logs:       make([]string, 0),
 		TemplateID: templateID,
 		BuildID:    buildID,
 		Status:     getCorrespondingTemplateBuildStatus(ctx, buildInfo.BuildStatus),
 		Reason:     getAPIReason(buildInfo.Reason),
 	}
 
-	lgs := make([]string, 0)
 	logEntries := make([]api.BuildLogEntry, 0)
 	offset := int32(0)
 	if params.LogsOffset != nil {
 		offset = *params.LogsOffset
-	}
-
-	// Check if we need to return legacy logs format too, used only for the v1 template builds in the CLI
-	cv := sharedUtils.DerefOrDefault(buildInfo.Version, templates.TemplateV1Version)
-	legacyLogs, err := sharedUtils.IsSmallerVersion(cv, templates.TemplateV2BetaVersion)
-	if err != nil {
-		telemetry.ReportError(ctx, "error when comparing versions", err, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when processing build logs")
-
-		return
 	}
 
 	cluster, ok := a.clusters.GetClusterById(buildInfo.ClusterID)
@@ -129,13 +116,9 @@ func (a *APIStore) GetTemplatesTemplateIDBuildsBuildIDStatus(c *gin.Context, tem
 	}
 
 	for _, entry := range logs {
-		if legacyLogs {
-			lgs = append(lgs, fmt.Sprintf("[%s] %s\n", entry.Timestamp.Format(time.RFC3339), entry.Message))
-		}
 		logEntries = append(logEntries, getAPILogEntry(entry))
 	}
 
-	result.Logs = lgs
 	result.LogEntries = logEntries
 
 	if result.Reason != nil && result.Reason.Step != nil {

@@ -23,6 +23,14 @@ TEST_PARALLELISM ?= 4
 #     last runner; the -skip only affects the templates package since no
 #     other package has TestTemplateBuild* tests.
 TEMPLATE_BUILDS_SHARD1_RE := ^TestTemplateBuild(ENV|COPY|RUN|W|Cache|Fuse|Unsupported)
+# Tests outside the TestTemplateBuild* family that build a template too: the
+# tag, delete and assignment flows in api/templates and envd's CA-cert and
+# process tests. In the rest shard each cost 65-190 s (run 34681252486) and
+# together they bounded it; next to the other builds they share that shard's
+# build tuning instead. Exact names, so a new test lands in rest until it is
+# listed here on purpose.
+TEMPLATE_BUILDING_TESTS_1_RE := ^Test(TagReassignment|DeleteTemplate|MultipleTagsOnSameTemplate|TemplateTagAssign|AssignmentOrdering|SandboxCreateWithTag|SandboxCreateWithAliasAndTag)
+TEMPLATE_BUILDING_TESTS_2_RE := ^Test(CACert|CommandKillNextApp)
 SANDBOXES_SHARD_PACKAGES := ./internal/tests/api/sandboxes/... ./internal/tests/api/metrics/... ./internal/tests/api/volumes/... ./internal/tests/proxies/...
 TEST_SHARD ?= all
 TEST_RUN_FLAGS :=
@@ -40,11 +48,11 @@ else ifeq ($(TEST_SHARD),no-templates)
 TEST_PACKAGES = $(shell go list ./internal/tests/... | grep -v -e '/tests/api/templates')
 else ifeq ($(TEST_SHARD),templates-builds-1)
 TEST_PACKAGES := ./internal/tests/api/templates/...
-TEST_RUN_FLAGS := -run '$(TEMPLATE_BUILDS_SHARD1_RE)'
+TEST_RUN_FLAGS := -run '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDING_TESTS_1_RE)'
 TESTS_ONLY_OK := no
 else ifeq ($(TEST_SHARD),templates-builds-2)
-TEST_PACKAGES := ./internal/tests/api/templates/...
-TEST_RUN_FLAGS := -run '^TestTemplateBuild' -skip '$(TEMPLATE_BUILDS_SHARD1_RE)'
+TEST_PACKAGES := ./internal/tests/api/templates/... ./internal/tests/envd/...
+TEST_RUN_FLAGS := -run '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_2_RE)' -skip '$(TEMPLATE_BUILDS_SHARD1_RE)'
 TESTS_ONLY_OK := no
 else ifeq ($(TEST_SHARD),sandboxes)
 TEST_PACKAGES := $(SANDBOXES_SHARD_PACKAGES)
@@ -52,7 +60,7 @@ else ifeq ($(TEST_SHARD),rest)
 # Everything not covered by the dedicated shards; computed via go list so
 # new packages are picked up automatically.
 TEST_PACKAGES = $(shell go list ./internal/tests/... | grep -v -e '/tests/api/sandboxes' -e '/tests/api/metrics' -e '/tests/api/volumes' -e '/tests/proxies')
-TEST_RUN_FLAGS := -skip '^TestTemplateBuild'
+TEST_RUN_FLAGS := -skip '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_1_RE)|$(TEMPLATE_BUILDING_TESTS_2_RE)'
 else ifeq ($(TEST_SHARD),all)
 TEST_PACKAGES := ./internal/tests/...
 else
@@ -77,6 +85,7 @@ seed:
 		TESTS_E2B_API_KEY=$(TESTS_E2B_API_KEY) \
 		TESTS_SANDBOX_TEMPLATE_ID=$(TESTS_SANDBOX_TEMPLATE_ID) \
 		TESTS_SANDBOX_BUILD_ID=$(TESTS_SANDBOX_BUILD_ID) \
+		TESTS_SANDBOX_RAM_MB=$(TESTS_SANDBOX_RAM_MB) \
 		go run seed.go
 	@echo "Done"
 

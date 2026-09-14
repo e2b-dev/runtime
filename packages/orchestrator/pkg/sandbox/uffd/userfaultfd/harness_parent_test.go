@@ -139,8 +139,7 @@ func configureCrossProcessTest(ctx context.Context, t *testing.T, tt testConfig)
 
 		waitErr := cmd.Wait()
 		if waitErr != nil {
-			var exitErr *exec.ExitError
-			if !errors.As(waitErr, &exitErr) {
+			if _, ok := errors.AsType[*exec.ExitError](waitErr); !ok {
 				t.Logf("helper process Wait: %v", waitErr)
 			}
 		}

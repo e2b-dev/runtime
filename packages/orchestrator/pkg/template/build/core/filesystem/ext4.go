@@ -47,13 +47,7 @@ const (
 	e2fsckRebootRecommended = 2
 )
 
-// MakeOptions carries the mkfs.ext4 choices that vary from build to build.
-type MakeOptions struct {
-	// DirIndex keeps the htree directory index mkfs.ext4 enables by default.
-	DirIndex bool
-}
-
-func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64, opts MakeOptions) error {
+func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64) error {
 	ctx, tuneSpan := tracer.Start(ctx, "make-ext4")
 	defer tuneSpan.End()
 
@@ -62,8 +56,8 @@ func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64,
 	}
 
 	// Explicit feature list for the rootfs. Defaults (resize_inode, sparse_super,
-	// has_journal, metadata_csum) are kept; we toggle only what we want to add or
-	// strip below.
+	// has_journal, metadata_csum, dir_index) are kept; we toggle only what we want
+	// to add or strip below.
 	features := []string{
 		"^64bit",
 		"^dir_nlink",
@@ -77,10 +71,6 @@ func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64,
 		"inline_data",
 		"large_file",
 		"sparse_super2",
-	}
-	if !opts.DirIndex {
-		// dir_index is a mkfs.ext4 base feature, so turning it off means stripping it.
-		features = append(features, "^dir_index")
 	}
 
 	cmd := exec.CommandContext(ctx,

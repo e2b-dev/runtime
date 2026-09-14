@@ -303,8 +303,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 			return
 		}
 
-		var vne InvalidVolumeMountsError
-		if errors.As(err, &vne) {
+		if vne, ok := errors.AsType[InvalidVolumeMountsError](err); ok {
 			a.sendAPIStoreError(c, http.StatusBadRequest, vne.Error())
 
 			return

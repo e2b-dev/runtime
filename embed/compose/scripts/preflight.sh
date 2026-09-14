@@ -8,6 +8,7 @@ PF_SYS="${PF_SYS:-/sys}"
 PF_DEV="${PF_DEV:-/dev}"
 PF_UNAME_R="${PF_UNAME_R:-$(uname -r)}"
 PF_ARCH="${PF_ARCH:-$(uname -m)}"
+PF_PAGE_SIZE="${PF_PAGE_SIZE:-$(getconf PAGESIZE 2>/dev/null || echo 0)}"
 if [ -z "${PF_GLIBC:-}" ]; then
   pf_ldd="$(ldd --version 2>/dev/null || true)"
   PF_GLIBC="$(awk 'NR==1{print $NF}' <<<"$pf_ldd")"
@@ -30,8 +31,17 @@ fail() { FAILURES+=("$1"); }
 version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
 
 check_arch() {
-  [ "$PF_ARCH" = "x86_64" ] ||
-    fail "host architecture is $PF_ARCH. FIX: only x86_64 hosts are supported; the released orchestrator and envd have no $PF_ARCH build"
+  case "$PF_ARCH" in
+    x86_64 | aarch64) ;;
+    *) fail "host architecture is $PF_ARCH. FIX: only x86_64 and aarch64 hosts are supported; the released orchestrator and envd have no $PF_ARCH build" ;;
+  esac
+}
+# The orchestrator's memory snapshots and its 2 MiB hugepages assume 4 KiB
+# pages; an arm64 kernel built with 64 KiB pages (RHEL's choice) would reserve
+# 512 MiB hugepages and mis-map every snapshot.
+check_page_size() {
+  [ "$PF_PAGE_SIZE" = 4096 ] ||
+    fail "the kernel page size is $PF_PAGE_SIZE bytes, need 4096. FIX: boot a 4 KiB-page kernel (Ubuntu's default on x86_64 and aarch64); the orchestrator's snapshots and 2 MiB hugepages assume 4 KiB pages"
 }
 check_kernel() {
   version_ge "${PF_UNAME_R%%-*}" 6.8 ||
@@ -39,7 +49,16 @@ check_kernel() {
 }
 check_kvm() {
   [ -n "$PF_SKIP_DEVICES" ] || [ -c "$PF_DEV/kvm" ] ||
-    fail "$PF_DEV/kvm is missing. FIX: on bare metal enable VT-x or AMD-V in firmware and modprobe kvm_intel or kvm_amd; on a VM recreate it with nested virtualization enabled (GCE: --enable-nested-virtualization)"
+    fail "$PF_DEV/kvm is missing. FIX: $(kvm_fix)"
+}
+# The remedy differs per architecture: x86 has firmware switches and two
+# modules to load; arm64 KVM is built into the kernel and only exists when the
+# firmware booted it at EL2 or the hypervisor exposes nested virtualization.
+kvm_fix() {
+  case "$PF_ARCH" in
+    aarch64) echo "on bare metal check that the firmware boots the kernel at EL2 (dmesg | grep -i kvm); on a VM recreate it with nested virtualization enabled (Apple silicon: a Lima or other Virtualization.framework VM with nestedVirtualization on, M3 or newer, macOS 15 or newer)" ;;
+    *) echo "on bare metal enable VT-x or AMD-V in firmware and modprobe kvm_intel or kvm_amd; on a VM recreate it with nested virtualization enabled (GCE: --enable-nested-virtualization)" ;;
+  esac
 }
 check_tun() {
   [ -n "$PF_SKIP_DEVICES" ] || [ -c "$PF_DEV/net/tun" ] ||
@@ -72,13 +91,13 @@ check_disk() {
 }
 
 main() {
-  check_arch; check_kernel; check_kvm; check_tun; check_cgroup2; check_glibc; check_nbd; check_tools; check_disk
+  check_arch; check_page_size; check_kernel; check_kvm; check_tun; check_cgroup2; check_glibc; check_nbd; check_tools; check_disk
   if [ "${#FAILURES[@]}" -gt 0 ]; then
     for f in "${FAILURES[@]}"; do echo "preflight: $f" >&2; done
     echo "FIX: resolve the ${#FAILURES[@]} item(s) above, then start the stack again" >&2
     exit 1
   fi
-  echo "preflight: ok (arch=$PF_ARCH kernel=$PF_UNAME_R glibc=$PF_GLIBC free=${PF_FREE_GIB}GiB)"
+  echo "preflight: ok (arch=$PF_ARCH page=$PF_PAGE_SIZE kernel=$PF_UNAME_R glibc=$PF_GLIBC free=${PF_FREE_GIB}GiB)"
 }
 
 if [ -z "${PF_NO_MAIN:-}" ]; then main; fi

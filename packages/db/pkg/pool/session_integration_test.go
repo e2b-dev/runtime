@@ -81,13 +81,19 @@ func TestAdvisoryLockSerializesOneKeyAndReleases(t *testing.T) {
 	client := testClient(t)
 	held, err := client.AcquireAdvisoryLock(t.Context(), "held")
 	require.NoError(t, err)
+	// A failed assertion below must not leave the session lock's connection
+	// checked out: client.Close would then wait for it forever.
+	t.Cleanup(func() { _ = held.Release(context.WithoutCancel(t.Context())) })
 
-	contended, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
-	_, err = client.TryAcquireAdvisoryLock(contended, "held")
+	// Try is non-blocking, so only a busy result is acceptable; a deadline
+	// here would turn a slow round-trip on a loaded runner into a failure.
+	_, err = client.TryAcquireAdvisoryLock(t.Context(), "held")
 	require.ErrorIs(t, err, ErrAdvisoryLockBusy)
 	assert.EqualValues(t, 1, client.Pool().Stat().AcquiredConns())
 
+	// The blocking form would wait for the lock; the deadline is what ends it.
+	contended, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
 	_, err = client.AcquireAdvisoryLock(contended, "held")
 	require.Error(t, err, "the same key acquired twice")
 

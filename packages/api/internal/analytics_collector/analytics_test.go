@@ -152,17 +152,3 @@ func TestTeamEventCarriesTeamID(t *testing.T) {
 	assert.Equal(t, "tpl", capture.Properties["environment"])
 	assert.Equal(t, infraVersion, capture.Properties[infraVersionKey])
 }
-
-func TestUserEventCarriesTeamID(t *testing.T) {
-	t.Parallel()
-
-	recorder := &captureRecorder{}
-	p := &PosthogClient{client: recorder}
-
-	p.CreateAnalyticsUserEvent(t.Context(), "user-id", "team-uuid", "built environment", posthog.NewProperties())
-
-	capture := recorder.capture(t)
-	assert.Equal(t, "user-id", capture.DistinctId)
-	assert.Equal(t, "team-uuid", capture.Properties[teamIDKey])
-	assert.Equal(t, "team-uuid", capture.Groups[teamGroup])
-}

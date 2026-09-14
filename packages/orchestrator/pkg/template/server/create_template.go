@@ -12,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
@@ -48,6 +50,10 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 
 	cfg := templateRequest.GetTemplate()
 
+	if cfg.GetFromImage() == "" && cfg.GetFromTemplate() == nil {
+		return nil, status.Error(codes.InvalidArgument, "template build requires either fromImage or fromTemplate")
+	}
+
 	metadata := storage.Paths{
 		BuildID: cfg.GetBuildID(),
 	}
@@ -64,11 +70,7 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	// TODO: Remove, temporary handling when version is not sent from the API
 	version := templateRequest.GetVersion()
 	if version == "" {
-		if cfg.GetFromImage() == "" && cfg.GetFromTemplate() == nil {
-			version = templates.TemplateV1Version
-		} else {
-			version = templates.TemplateV2BetaVersion
-		}
+		version = templates.TemplateV2BetaVersion
 	}
 
 	ctx = featureflags.AddToContext(

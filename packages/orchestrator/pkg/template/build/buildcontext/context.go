@@ -17,7 +17,6 @@ type BuildContext struct {
 	UploadErrGroup *errgroup.Group
 	EnvdVersion    string
 	CacheScope     string
-	IsV1Build      bool
 	Version        string
 	Rootfs         RootfsOptions
 }

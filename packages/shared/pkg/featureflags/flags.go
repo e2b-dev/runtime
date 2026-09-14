@@ -348,6 +348,11 @@ var (
 
 	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", env.IsDevelopment())
 
+	// EgressProxyInterceptTracingFlag turns on connection, request and upstream
+	// spans for a sandbox's TLS-intercepted egress. Target the sandbox or team
+	// context; the fallback keeps interception at its existing transform span.
+	EgressProxyInterceptTracingFlag = NewBoolFlag("egress-proxy-intercept-tracing", false)
+
 	// SandboxIamTokensFlag gates the sandbox IAM workload token configuration
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
@@ -383,11 +388,6 @@ var (
 
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
 	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
-
-	// BuildExt4DirIndex keeps the htree directory index that mkfs.ext4 enables by
-	// default on the rootfs. Read at mkfs time, so it governs only rootfs images
-	// built after the flip.
-	BuildExt4DirIndex = NewBoolFlag("build-ext4-dir-index", false)
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")
@@ -439,11 +439,15 @@ var (
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)
-	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
-	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
-	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
-	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
-	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)      // Default K=3
+	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400) // Default R=4 (stored as percentage, max over-commit ratio)
+	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)           // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
+	// BestOfKHugepageMemory includes hugepage-pool load in best-of-K scoring
+	// (max of CPU and memory). Off = CPU only. A node that reports no pool
+	// scores 0.5. Turn on after nodes report a pool.
+	BestOfKHugepageMemory       = NewBoolFlag("best-of-k-hugepage-memory", false)
+	EnvdInitTimeoutMilliseconds = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
+	EnvdTimeoutMilliseconds     = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
 	// GuestSyncTimeoutMs overrides the mandatory pre-pause guest-sync deadline
 	// for filesystem-only snapshots, in milliseconds. 0 (default) derives the
 	// timeout from guest RAM; a positive value pins it.
@@ -762,15 +766,15 @@ var (
 	//	psi=1
 	//	psi=1 nokaslr
 	//
-	// Empty (the default) is the command line every sandbox has always booted with, so a
-	// team that is not targeted is unaffected. Adding a parameter is a flag edit — no
+	// Empty (the default) is the default command line, so a team that is not targeted is
+	// unaffected. Adding a parameter is a flag edit — no
 	// orchestrator change and no deploy.
 	//
 	// Parsed the way the kernel parses a command line: whitespace separates parameters,
 	// the first '=' separates a name from its value, and a parameter with no '=' has an
 	// empty value. The orchestrator rejects the whole fragment if it sets a parameter it
 	// reserves (init, clocksource, root, ip, console, rootflags, panic, reboot, loglevel,
-	// quiet — see packages/orchestrator/pkg/sandbox/fc), falling back to the default
+	// quiet, selinux — see packages/orchestrator/pkg/sandbox/fc), falling back to the default
 	// command line rather than failing the build. The parsed parameters are recorded in
 	// the template's metadata and replayed when a filesystem-only snapshot cold-boots, so
 	// a snapshot keeps booting the way it was built even if this flag later changes.
@@ -857,6 +861,14 @@ var (
 	// ClickHouse endpoints (CLICKHOUSE_CONNECTION_STRINGS). Default DSN
 	// is unaffected.
 	ClickhouseWriteFanoutFlag = NewBoolFlag("clickhouse-write-fanout", false)
+
+	// ClickhouseHostStatsAsyncInsertFlag sets async_insert=1 on every
+	// sandbox_host_stats flush. Each orchestrator flushes its own small batch,
+	// so without it the server writes one tiny part per node per flush; with
+	// it the server buffers those inserts and writes one part per buffer flush.
+	// wait_for_async_insert stays at the server default, so a rejected flush
+	// still fails the batch and reaches the error handler.
+	ClickhouseHostStatsAsyncInsertFlag = NewBoolFlag("clickhouse-host-stats-async-insert", false)
 )
 
 // LogsWriteConfigFlag controls where sandbox/external logs are written, so

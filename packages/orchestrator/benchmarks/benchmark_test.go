@@ -38,7 +38,6 @@ import (
 	buildconfig "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
@@ -221,9 +220,6 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		TeamID:      "team-id",
 	}
 
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(b.Context())
-	require.NoError(b, err)
-
 	templateSpec2, err := cfg.TemplateStorage()
 	require.NoError(b, err)
 	persistenceTemplate, err := storage.NewProvider(b.Context(), templateSpec2)
@@ -275,7 +271,6 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		sandboxFactory,
 		persistenceTemplate,
 		persistenceBuild,
-		artifactRegistry,
 		dockerhubRepository,
 		sandboxProxy,
 		sandboxes,
