@@ -164,9 +164,7 @@ func TestAzurePartUploaderBlockIDsAreUploadScoped(t *testing.T) {
 }
 
 func TestNewAzureStorageAcceptsKeylessConnectionString(t *testing.T) {
-	// A least-privilege SAS connection string (no AccountKey) is a working config for
-	// every reachable operation except minting an upload SAS, which needs either a
-	// shared key or a credential allowed to fetch a user delegation key.
+	// A SAS-only connection string (no AccountKey) works for everything except minting an upload SAS.
 	t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
 		"BlobEndpoint=https://myaccount.blob.core.windows.net;SharedAccessSignature=sv=2022-11-02&ss=b&sig=fake")
 
@@ -321,16 +319,14 @@ func TestParseConnectionStringSharedKey(t *testing.T) {
 	}
 }
 
-// staticTokenCredential stands in for a managed identity: the user-delegation path needs a
-// bearer token, and the pipeline demands one before it will talk to the fake transport.
+// staticTokenCredential stands in for a managed identity — the pipeline demands a bearer token before it talks to the fake transport.
 type staticTokenCredential struct{}
 
 func (staticTokenCredential) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	return azcore.AccessToken{Token: "fake-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-// userDelegationKeyTransport answers the Get User Delegation Key call with a canned key and
-// records the request, so the request shape can be asserted without an AAD-backed account.
+// userDelegationKeyTransport answers Get User Delegation Key with a canned key and records the request, so its shape asserts without an AAD-backed account.
 type userDelegationKeyTransport struct {
 	query url.Values
 	calls int
@@ -360,8 +356,7 @@ func (t *userDelegationKeyTransport) Do(req *http.Request) (*http.Response, erro
 	}, nil
 }
 
-// The managed-identity path signs with a user delegation key fetched from the service; only
-// the RBAC grant behind that fetch cannot be exercised here.
+// Covers the managed-identity signing path; only the RBAC grant behind the key fetch cannot be exercised here.
 func TestAzureUploadSignedURLSignsWithUserDelegation(t *testing.T) {
 	t.Parallel()
 

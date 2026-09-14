@@ -344,9 +344,7 @@ func TestAzureIntegration(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, map[string]string{"x-ms-blob-type": "BlockBlob"}, upload.Headers)
 
-		// The header is what the fix is for: a SAS alone cannot satisfy Put Blob. The
-		// emulator rejects the request before the API handler, so it answers a bare 400
-		// where real Azure names the cause (MissingRequiredHeader) in the body.
+		// Azurite rejects the header-less PUT with a bare 400 where real Azure names MissingRequiredHeader.
 		status, _, err := putSignedURL(ctx, t, upload.URL, nil, body)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusBadRequest, status)

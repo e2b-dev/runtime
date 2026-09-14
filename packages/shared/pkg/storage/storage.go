@@ -65,9 +65,7 @@ func (t SeekableObjectType) String() string {
 	}
 }
 
-// UploadURL is a signed upload target for an external client. Headers must be sent
-// verbatim on the PUT: Azure's Put Blob rejects the request without x-ms-blob-type, and a
-// SAS can only pin response headers, never require a request one.
+// UploadURL is a signed upload target for an external client; Headers go verbatim on the PUT (a SAS can pin response headers but never require a request one).
 type UploadURL struct {
 	URL     string
 	Headers map[string]string

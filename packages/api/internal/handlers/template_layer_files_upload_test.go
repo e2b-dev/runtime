@@ -10,8 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 )
 
-// A client written against the pre-headers response must keep parsing the new one, and the
-// providers that need no request headers must keep producing the old bytes exactly.
+// Pre-headers clients must keep parsing the new response; header-less providers must keep producing the old bytes exactly.
 func TestTemplateBuildFileUploadHeadersAreAdditive(t *testing.T) {
 	t.Parallel()
 

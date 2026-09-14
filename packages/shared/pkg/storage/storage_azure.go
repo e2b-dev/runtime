@@ -48,8 +48,7 @@ type azureStorage struct {
 	containerName string
 	limiter       *limit.Limiter
 
-	// How the client authenticated decides how an upload SAS is signed: a shared key signs
-	// locally, a token credential fetches a user delegation key. A SAS-only one does neither.
+	// A shared key signs a SAS locally, a token credential fetches a user delegation key; SAS-only auth can do neither.
 	sharedKey   *azblob.SharedKeyCredential
 	canDelegate bool
 }
@@ -212,9 +211,7 @@ func (s *azureStorage) GetDetails() string {
 	return fmt.Sprintf("[Azure Storage, container set to %s]", s.containerName)
 }
 
-// Put Blob also requires the request header "x-ms-blob-type", which a SAS cannot carry (it
-// only pins response headers), so it travels back for the external client to send; without
-// it the upload fails with MissingRequiredHeader.
+// Put Blob also requires the "x-ms-blob-type" request header, which a SAS cannot carry, so it travels back in Headers for the external client to send.
 func (s *azureStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
 	blobURL := s.container.NewBlobClient(path).URL()
 

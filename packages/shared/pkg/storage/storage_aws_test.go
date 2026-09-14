@@ -691,9 +691,7 @@ func TestAWSDeleteObjectsWithPrefixRejectsEmptyPrefix(t *testing.T) {
 	require.Contains(t, err.Error(), "empty prefix")
 }
 
-// A presigned S3 PUT carries its authorization in the query string, so the upload client
-// must not be asked to add request headers — an Azure-shaped header map leaking into the
-// S3 or GCS response would break every upload that echoed it into the signature.
+// An Azure-shaped header map leaking into the S3/GCS response would break any upload that echoed it into the presigned signature.
 func TestS3UploadSignedURLNeedsNoRequestHeaders(t *testing.T) {
 	t.Parallel()
 
