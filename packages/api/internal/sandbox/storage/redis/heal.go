@@ -83,6 +83,15 @@ func (s *Storage) healExpirationIndex(ctx context.Context) (int, error) {
 		return healed, err
 	}
 
+	// Sample the ZSET cardinality once per heal pass. A single ZCARD piggybacked
+	// here costs one Redis round-trip every 5 min — negligible next to the
+	// forEachSandboxBatch scan that precedes it.
+	if n, zErr := s.redisClient.ZCard(ctx, globalExpirationSet).Result(); zErr == nil {
+		s.metrics.indexSize.Record(ctx, n)
+	} else {
+		logger.L().Warn(ctx, "Failed to sample expiration index size", zap.Error(zErr))
+	}
+
 	return healed, nil
 }
 
