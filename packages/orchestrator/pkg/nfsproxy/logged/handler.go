@@ -3,6 +3,7 @@ package logged
 import (
 	"context"
 	"fmt"
+	iofs "io/fs"
 	"net"
 
 	"github.com/go-git/go-billy/v5"
@@ -17,7 +18,10 @@ type loggedHandler struct {
 	config cfg.Config
 }
 
-var _ nfs.Handler = (*loggedHandler)(nil)
+var (
+	_ nfs.Handler        = (*loggedHandler)(nil)
+	_ nfs.CachingHandler = (*loggedHandler)(nil)
+)
 
 func WrapWithLogging(ctx context.Context, handler nfs.Handler, config cfg.Config) nfs.Handler {
 	return loggedHandler{ctx: ctx, inner: handler, config: config}
@@ -95,4 +99,22 @@ func (e loggedHandler) HandleLimit() int {
 	defer finish(e.ctx, nil)
 
 	return e.inner.HandleLimit()
+}
+
+func (e loggedHandler) VerifierFor(path string, contents []iofs.FileInfo) uint64 {
+	handler, ok := e.inner.(nfs.CachingHandler)
+	if !ok {
+		return 0
+	}
+
+	return handler.VerifierFor(path, contents)
+}
+
+func (e loggedHandler) DataForVerifier(path string, verifier uint64) []iofs.FileInfo {
+	handler, ok := e.inner.(nfs.CachingHandler)
+	if !ok {
+		return nil
+	}
+
+	return handler.DataForVerifier(path, verifier)
 }
