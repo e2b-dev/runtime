@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,111 @@ func TestCathedralSandboxOperationConcurrentReservationBindsOneSandbox(t *testin
 	assert.Equal(t, winnerIDs[0], op.SandboxID)
 	assert.Equal(t, digest, op.RequestSha256)
 	assert.Equal(t, "reserved", op.State)
+}
+
+func TestCathedralLifecycleOperationCannotCompleteWithoutBoundTerminalEvidence(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "cathedral-lifecycle-evidence")
+
+	const (
+		key         = "cathedral-delete-1"
+		digest      = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		sandboxID   = "i-delete-bound"
+		executionID = "exec-delete-bound"
+	)
+	remaining := int64(60_000)
+	op, err := db.SqlcClient.ReserveCathedralSandboxLifecycleOperation(t.Context(), queries.ReserveCathedralSandboxLifecycleOperationParams{
+		TeamID: teamID, OperationKey: key, RequestSha256: digest,
+		OperationKind: "delete", SandboxID: sandboxID, ExecutionID: executionID,
+		RemainingLifetimeMs: &remaining,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "reserved", op.State)
+	assert.Equal(t, "pending", op.CleanupState)
+
+	// Reserved is not dispatched and therefore cannot be promoted by a stale
+	// observer that merely noticed the registry row disappear.
+	rows, err := db.SqlcClient.CompleteCathedralSandboxLifecycleOperation(t.Context(), queries.CompleteCathedralSandboxLifecycleOperationParams{
+		ExecutionRemovedAt: time.Now(), CleanupState: "completed", ResultJson: `{}`,
+		TeamID: teamID, OperationKey: key, RequestSha256: digest,
+		OperationKind: "delete", SandboxID: sandboxID, ExecutionID: executionID,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, rows)
+
+	rows, err = db.SqlcClient.MarkCathedralSandboxLifecycleDispatching(t.Context(), queries.MarkCathedralSandboxLifecycleDispatchingParams{
+		TeamID: teamID, OperationKey: key, RequestSha256: digest,
+		OperationKind: "delete", SandboxID: sandboxID, ExecutionID: executionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	// A stale execution identity cannot complete the operation.
+	rows, err = db.SqlcClient.CompleteCathedralSandboxLifecycleOperation(t.Context(), queries.CompleteCathedralSandboxLifecycleOperationParams{
+		ExecutionRemovedAt: time.Now(), CleanupState: "completed", ResultJson: `{}`,
+		TeamID: teamID, OperationKey: key, RequestSha256: digest,
+		OperationKind: "delete", SandboxID: sandboxID, ExecutionID: "exec-new",
+	})
+	require.NoError(t, err)
+	assert.Zero(t, rows)
+
+	rows, err = db.SqlcClient.CompleteCathedralSandboxLifecycleOperation(t.Context(), queries.CompleteCathedralSandboxLifecycleOperationParams{
+		ExecutionRemovedAt: time.Now(), CleanupState: "completed", ResultJson: `{"evidence_source":"execution_bound_node_rpc"}`,
+		TeamID: teamID, OperationKey: key, RequestSha256: digest,
+		OperationKind: "delete", SandboxID: sandboxID, ExecutionID: executionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	ready, err := db.SqlcClient.GetCathedralSandboxLifecycleOperation(t.Context(), queries.GetCathedralSandboxLifecycleOperationParams{TeamID: teamID, OperationKey: key})
+	require.NoError(t, err)
+	assert.Equal(t, "completed", ready.State)
+	require.NotNil(t, ready.ExecutionRemovedAt)
+}
+
+func TestCathedralLifecycleOperationRepeatedKeyNeverRedispatchesOrRebinds(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "cathedral-lifecycle-key")
+	const digest = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+	_, err = db.SqlcClient.ReserveCathedralSandboxLifecycleOperation(t.Context(), queries.ReserveCathedralSandboxLifecycleOperationParams{
+		TeamID: teamID, OperationKey: "cathedral-pause-1", RequestSha256: digest,
+		OperationKind: "pause", SandboxID: "sbx-one", ExecutionID: "exec-one",
+	})
+	require.NoError(t, err)
+	_, err = db.SqlcClient.ReserveCathedralSandboxLifecycleOperation(t.Context(), queries.ReserveCathedralSandboxLifecycleOperationParams{
+		TeamID: teamID, OperationKey: "cathedral-pause-1", RequestSha256: digest,
+		OperationKind: "pause", SandboxID: "sbx-two", ExecutionID: "exec-two",
+	})
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
+	op, err := db.SqlcClient.GetCathedralSandboxLifecycleOperation(t.Context(), queries.GetCathedralSandboxLifecycleOperationParams{TeamID: teamID, OperationKey: "cathedral-pause-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "sbx-one", op.SandboxID)
+	assert.Equal(t, "exec-one", op.ExecutionID)
+
+	rows, err := db.SqlcClient.MarkCathedralSandboxLifecycleDispatching(t.Context(), queries.MarkCathedralSandboxLifecycleDispatchingParams{
+		TeamID: teamID, OperationKey: op.OperationKey, RequestSha256: digest,
+		OperationKind: "pause", SandboxID: op.SandboxID, ExecutionID: op.ExecutionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	rows, err = db.SqlcClient.MarkCathedralSandboxLifecycleDispatching(t.Context(), queries.MarkCathedralSandboxLifecycleDispatchingParams{
+		TeamID: teamID, OperationKey: op.OperationKey, RequestSha256: digest,
+		OperationKind: "pause", SandboxID: op.SandboxID, ExecutionID: op.ExecutionID,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, rows, "a repeated key cannot win dispatch twice")
 }
 
 func TestCathedralSandboxOperationSurvivesAmbiguousCreateAndStoresImmutableResponse(t *testing.T) {

@@ -553,6 +553,14 @@ sequenceDiagram
 - **Resume**: same path as creation, but placement prefers the **origin node** — if the snapshot
   is still in its local cache, resume avoids any object-storage reads. `Checkpoint` is a
   pause+resume in place used to persist state while keeping the sandbox running.
+- **Cathedral lifecycle evidence**: the Cathedral-only lifecycle endpoint binds the authenticated
+  team, sandbox ID, execution ID, request digest, operation kind, and idempotency key in Postgres
+  before dispatch. Completion is derived from the execution-bound node RPC, never from a missing
+  Redis/API listing. An already-running transition or transport ambiguity remains `unknown` and is
+  recovered by operation key without redispatch. Pause completion additionally records the
+  successful snapshot build; delete records snapshot/storage cleanup separately. The remaining
+  lifetime is frozen into the paused snapshot and reused by a resume that does not explicitly
+  override timeout. See `docs/cathedral-lifecycle-operations.md` for the consumer contract.
 - **Explicit filesystem-only resume**: `memory: false` on resume/connect demands a cold boot
   (`RebootSandbox`) even when the snapshot includes memory, as a self-serve rescue when the
   restored memory state is unusable. Gated per team by the `fs-only-resume-api` flag; when off

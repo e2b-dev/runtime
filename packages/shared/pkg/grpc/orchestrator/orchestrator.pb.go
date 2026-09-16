@@ -1126,6 +1126,10 @@ type SandboxPauseRequest struct {
 	// a snapshot cold-boots (reboots) from the rootfs. Default false = full memory
 	// snapshot, so existing callers are unaffected.
 	FilesystemOnly bool `protobuf:"varint,4,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
+	// Cathedral lifecycle operations require the snapshot to land in remote
+	// storage before pause can be reported terminal. Existing callers keep the
+	// asynchronous upload path when this is false.
+	WaitForStorage bool `protobuf:"varint,5,opt,name=wait_for_storage,json=waitForStorage,proto3" json:"wait_for_storage,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1184,6 +1188,13 @@ func (x *SandboxPauseRequest) GetBuildId() string {
 func (x *SandboxPauseRequest) GetFilesystemOnly() bool {
 	if x != nil {
 		return x.FilesystemOnly
+	}
+	return false
+}
+
+func (x *SandboxPauseRequest) GetWaitForStorage() bool {
+	if x != nil {
+		return x.WaitForStorage
 	}
 	return false
 }
@@ -1308,6 +1319,7 @@ func (x *SchedulingMetadata) GetRootfsBaseBuildId() string {
 type SandboxPauseResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
+	StorageDurable     bool                   `protobuf:"varint,2,opt,name=storage_durable,json=storageDurable,proto3" json:"storage_durable,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1347,6 +1359,13 @@ func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
 		return x.SchedulingMetadata
 	}
 	return nil
+}
+
+func (x *SandboxPauseResponse) GetStorageDurable() bool {
+	if x != nil {
+		return x.StorageDurable
+	}
+	return false
 }
 
 type SandboxCheckpointRequest struct {
@@ -1751,14 +1770,15 @@ const file_orchestrator_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
 	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\x99\x01\n" +
+	"\f_kill_reason\"\xc3\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
 	"\vtemplate_id\x18\x02 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12'\n" +
-	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\"\xb1\x03\n" +
+	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x12(\n" +
+	"\x10wait_for_storage\x18\x05 \x01(\bR\x0ewaitForStorage\"\xb1\x03\n" +
 	"\x12SchedulingMetadata\x121\n" +
 	"\x15memfile_base_build_id\x18\x01 \x01(\tR\x12memfileBaseBuildId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12*\n" +
@@ -1768,9 +1788,10 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x15rootfs_dropped_builds\x18\x06 \x01(\rR\x13rootfsDroppedBuilds\x12.\n" +
 	"\x13memfile_build_bytes\x18\a \x03(\x04R\x11memfileBuildBytes\x12,\n" +
 	"\x12rootfs_build_bytes\x18\b \x03(\x04R\x10rootfsBuildBytes\x12/\n" +
-	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\\\n" +
+	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\x85\x01\n" +
 	"\x14SandboxPauseResponse\x12D\n" +
-	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\"\xd6\x01\n" +
+	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x12'\n" +
+	"\x0fstorage_durable\x18\x02 \x01(\bR\x0estorageDurable\"\xd6\x01\n" +
 	"\x18SandboxCheckpointRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x19\n" +

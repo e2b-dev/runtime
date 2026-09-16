@@ -73,6 +73,27 @@ type BillingSandboxLog struct {
 	TeamID          uuid.UUID
 }
 
+type CathedralSandboxLifecycleOperation struct {
+	TeamID              uuid.UUID
+	OperationKey        string
+	RequestSha256       string
+	OperationKind       string
+	SandboxID           string
+	ExecutionID         string
+	State               string
+	ExecutionRemovedAt  *time.Time
+	SnapshotBuildID     pgtype.Text
+	SnapshotCompletedAt *time.Time
+	RemainingLifetimeMs pgtype.Int8
+	CleanupState        string
+	ResultJson          pgtype.Text
+	ErrorCode           pgtype.Int4
+	ErrorMessage        pgtype.Text
+	CreatedAt           time.Time
+	DispatchStartedAt   *time.Time
+	UpdatedAt           time.Time
+}
+
 type CathedralSandboxOperation struct {
 	TeamID         uuid.UUID
 	IdempotencyKey string

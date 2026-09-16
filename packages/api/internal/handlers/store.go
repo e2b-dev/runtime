@@ -200,27 +200,29 @@ type APIStore struct {
 	// pauseBackendOverride, when non-nil, replaces the orchestrator for the
 	// pause handler's two calls — tests use it to assert the gate's wiring
 	// (refusal before RemoveSandbox) without a real orchestrator.
-	pauseBackendOverride   pauseOrchestrator
-	resumeBackendOverride  resumeWaitOrchestrator
-	connectBackendOverride connectOrchestrator
-	teamSandboxCounter     teamRunningSandboxCounter
-	templateManager        *template_manager.TemplateManager
-	sqlcDB                 *sqlcdb.Client
-	authDB                 *authdb.Client
-	redisClient            redis.UniversalClient
-	templateCache          *templatecache.TemplateCache
-	templateBuildsCache    *templatecache.TemplatesBuildCache
-	snapshotCache          *snapshotcache.SnapshotCache
-	authService            sharedauth.Service
-	templateSpawnCounter   *utils.TemplateSpawnCounter
-	clickhouseStore        clickhouse.Clickhouse
-	sandboxLogsReader      *sandboxlogs.Reader
-	accessTokenGenerator   *sandbox.AccessTokenGenerator
-	featureFlags           *featureflags.Client
-	clusters               *clusters.Pool
-	snapshotUpsertSem      *sharedutils.AdjustableSemaphore
-	sandboxListSem         *sharedutils.AdjustableSemaphore
-	snapshotBuildQuerySem  *sharedutils.AdjustableSemaphore
+	pauseBackendOverride             pauseOrchestrator
+	resumeBackendOverride            resumeWaitOrchestrator
+	connectBackendOverride           connectOrchestrator
+	lifecycleBackendOverride         cathedralLifecycleOrchestrator
+	lifecycleSnapshotCleanupOverride func(context.Context, string, uuid.UUID) error
+	teamSandboxCounter               teamRunningSandboxCounter
+	templateManager                  *template_manager.TemplateManager
+	sqlcDB                           *sqlcdb.Client
+	authDB                           *authdb.Client
+	redisClient                      redis.UniversalClient
+	templateCache                    *templatecache.TemplateCache
+	templateBuildsCache              *templatecache.TemplatesBuildCache
+	snapshotCache                    *snapshotcache.SnapshotCache
+	authService                      sharedauth.Service
+	templateSpawnCounter             *utils.TemplateSpawnCounter
+	clickhouseStore                  clickhouse.Clickhouse
+	sandboxLogsReader                *sandboxlogs.Reader
+	accessTokenGenerator             *sandbox.AccessTokenGenerator
+	featureFlags                     *featureflags.Client
+	clusters                         *clusters.Pool
+	snapshotUpsertSem                *sharedutils.AdjustableSemaphore
+	sandboxListSem                   *sharedutils.AdjustableSemaphore
+	snapshotBuildQuerySem            *sharedutils.AdjustableSemaphore
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer

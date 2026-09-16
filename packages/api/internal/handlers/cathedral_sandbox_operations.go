@@ -199,10 +199,15 @@ func (a *APIStore) completeCathedralCreate(ctx context.Context, teamID uuid.UUID
 
 func (a *APIStore) GetV1CathedralCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, api.CathedralCapabilities{
-		Schema:                   api.N1,
-		DurableCreateIdempotency: true,
-		OperationLookup:          true,
-		SafeFork:                 false,
+		Schema:                     api.N1,
+		DurableCreateIdempotency:   true,
+		OperationLookup:            true,
+		SafeFork:                   false,
+		DurableLifecycleOperations: true,
+		SafeDelete:                 true,
+		SafePause:                  true,
+		PreservesRemainingLifetime: true,
+		ExecutionIdentity:          true,
 	})
 }
 

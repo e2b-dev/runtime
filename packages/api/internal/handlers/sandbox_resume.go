@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -174,6 +175,17 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(sandboxID))
 
 		return
+	}
+
+	// A Cathedral pause freezes the remaining lifetime in the durable snapshot.
+	// Preserve it on an implicit resume instead of granting the ordinary fresh
+	// default. An explicit timeout remains an intentional override.
+	if body.Timeout == nil && lastSnapshot.Snapshot.Config != nil && lastSnapshot.Snapshot.Config.RemainingLifetimeSeconds > 0 {
+		remaining := time.Duration(lastSnapshot.Snapshot.Config.RemainingLifetimeSeconds) * time.Second
+		if limit := time.Duration(teamInfo.Limits.MaxLengthHours) * time.Hour; limit > 0 && remaining > limit {
+			remaining = limit
+		}
+		timeout = remaining
 	}
 
 	// Pre-flight of the fetcher's authoritative gate so a disabled flag answers

@@ -105,7 +105,12 @@ func TestCathedralCapabilitiesFailClosedOnFork(t *testing.T) {
 	assert.JSONEq(t, `{
 		"schema": 1,
 		"durable_create_idempotency": true,
+		"durable_lifecycle_operations": true,
 		"operation_lookup": true,
-		"safe_fork": false
+		"safe_fork": false,
+		"safe_delete": true,
+		"safe_pause": true,
+		"preserves_remaining_lifetime": true,
+		"execution_identity": true
 	}`, recorder.Body.String())
 }

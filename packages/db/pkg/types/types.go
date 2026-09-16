@@ -167,6 +167,11 @@ type PausedSandboxConfig struct {
 	// any workload identity is rederived from the current execution rather than a
 	// stored subject. Pre-existing rows omit the key and decode to nil.
 	Iam *SandboxIam `json:"iam,omitempty"`
+
+	// RemainingLifetimeSeconds freezes the unconsumed lifetime at the point a
+	// pause transition commits. A resume without an explicit timeout restores
+	// this value instead of silently granting a fresh default lifetime.
+	RemainingLifetimeSeconds uint64 `json:"remainingLifetimeSeconds,omitempty"`
 }
 
 func (c PausedSandboxConfig) Value() (driver.Value, error) {

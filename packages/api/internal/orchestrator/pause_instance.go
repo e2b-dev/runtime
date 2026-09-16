@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/gogo/status"
 	"github.com/google/uuid"
@@ -27,14 +29,20 @@ import (
 type PauseQueueExhaustedError = sandbox.PauseQueueExhaustedError
 
 func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool) error {
+	_, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, 0, false)
+
+	return err
+}
+
+func (o *Orchestrator) pauseSandboxWithEvidence(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool, remainingLifetime time.Duration, waitForStorage bool) (string, error) {
 	ctx, span := tracer.Start(ctx, "pause-sandbox")
 	defer span.End()
 
-	result, err := o.throttledUpsertSnapshot(ctx, buildUpsertSnapshotParams(sbx, node, filesystemOnly))
+	result, err := o.throttledUpsertSnapshot(ctx, buildUpsertSnapshotParams(sbx, node, filesystemOnly, remainingLifetime))
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error inserting snapshot for env", err)
 
-		return err
+		return "", err
 	}
 
 	// The snapshot's CPU info is pinned to the source build (see
@@ -52,7 +60,7 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		zap.String("source_build_id", sbx.BuildID.String()),
 	)
 
-	err = snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly, restoreOnRefusal)
+	err = snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly, restoreOnRefusal, waitForStorage)
 	if err != nil {
 		// The build is already committed, and nothing reaps one left non-terminal.
 		o.failSnapshotBuild(ctx, result.BuildID, err)
@@ -60,40 +68,44 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		if errors.Is(err, PauseQueueExhaustedError{}) {
 			telemetry.ReportEvent(ctx, "pause refused retryably", telemetry.WithSandboxID(sbx.SandboxID))
 
-			return PauseQueueExhaustedError{}
+			return "", PauseQueueExhaustedError{}
 		}
 
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
-		return fmt.Errorf("error pausing sandbox: %w", err)
+		return "", fmt.Errorf("error pausing sandbox: %w", err)
 	}
 
 	if err := o.finishSnapshotBuild(ctx, result.BuildID, types.BuildStatusSuccess); err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
-		return fmt.Errorf("error pausing sandbox: %w", err)
+		return "", fmt.Errorf("error pausing sandbox: %w", err)
 	}
 
 	o.snapshotCache.Invalidate(context.WithoutCancel(ctx), sbx.SandboxID)
 
-	return nil
+	return result.BuildID.String(), nil
 }
 
-func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly bool, restoreOnRefusal bool) error {
+func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly bool, restoreOnRefusal bool, waitForStorage bool) error {
 	childCtx, childSpan := tracer.Start(ctx, "snapshot-instance")
 	defer childSpan.End()
 
 	client, childCtx := node.GetSandboxDeleteCtx(childCtx, sbx.SandboxID, sbx.ExecutionID, restoreOnRefusal)
-	_, err := client.Sandbox.Pause(
+	response, err := client.Sandbox.Pause(
 		childCtx, &orchestrator.SandboxPauseRequest{
 			SandboxId:      sbx.SandboxID,
 			TemplateId:     templateID,
 			BuildId:        buildID,
 			FilesystemOnly: filesystemOnly,
+			WaitForStorage: waitForStorage,
 		},
 	)
 
 	if err == nil {
+		if waitForStorage && (response == nil || !response.GetStorageDurable()) {
+			return errors.New("pause completed without durable storage confirmation")
+		}
 		telemetry.ReportEvent(ctx, "Paused sandbox")
 
 		return nil
@@ -125,7 +137,7 @@ func (o *Orchestrator) WaitForStateChange(ctx context.Context, teamID uuid.UUID,
 	return o.sandboxStore.WaitForStateChange(ctx, teamID, sandboxID)
 }
 
-func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, filesystemOnly bool) queries.UpsertSnapshotParams {
+func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, filesystemOnly bool, remaining ...time.Duration) queries.UpsertSnapshotParams {
 	metadata := types.JSONBStringMap(sbx.Metadata)
 	if metadata == nil {
 		metadata = types.JSONBStringMap{}
@@ -134,6 +146,17 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, file
 	var clusterID *uuid.UUID
 	if sbx.ClusterID != consts.LocalClusterID {
 		clusterID = &sbx.ClusterID
+	}
+
+	remainingLifetime := time.Duration(0)
+	if len(remaining) > 0 {
+		remainingLifetime = remaining[0]
+	}
+	remainingLifetimeSeconds := uint64(0)
+	if remainingLifetime > 0 {
+		// Round up so a valid sub-second remainder cannot serialize as the
+		// legacy zero/unset value and accidentally regain the default lifetime.
+		remainingLifetimeSeconds = uint64(math.Ceil(remainingLifetime.Seconds()))
 	}
 
 	return queries.UpsertSnapshotParams{
@@ -157,13 +180,14 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, file
 		AllowInternetAccess: sbx.AllowInternetAccess,
 		AutoPause:           sbx.AutoPause,
 		Config: &types.PausedSandboxConfig{
-			Version:                 types.PausedSandboxConfigVersion,
-			Network:                 sbx.Network,
-			AutoResume:              sbx.AutoResume,
-			VolumeMounts:            sbx.VolumeMounts,
-			FilesystemOnly:          filesystemOnly,
-			AutoPauseFilesystemOnly: sbx.AutoPauseFilesystemOnly,
-			Iam:                     sbx.Iam,
+			Version:                  types.PausedSandboxConfigVersion,
+			Network:                  sbx.Network,
+			AutoResume:               sbx.AutoResume,
+			VolumeMounts:             sbx.VolumeMounts,
+			FilesystemOnly:           filesystemOnly,
+			AutoPauseFilesystemOnly:  sbx.AutoPauseFilesystemOnly,
+			Iam:                      sbx.Iam,
+			RemainingLifetimeSeconds: remainingLifetimeSeconds,
 		},
 		OriginNodeID: node.ID,
 		Status:       types.BuildStatusSnapshotting,

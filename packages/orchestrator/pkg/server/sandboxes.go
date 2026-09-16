@@ -959,10 +959,36 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		return nil, status.Errorf(codes.Internal, "error snapshotting sandbox '%s': %s", in.GetSandboxId(), err)
 	}
 
-	s.uploadSnapshotAsync(ctx, sbx, res)
+	storageDurable := false
+	if in.GetWaitForStorage() {
+		uploadErr := retry.Do(
+			ctx,
+			defaultUploadRetryPolicy(),
+			isRetryableUploadErr,
+			res.upload.Run,
+			func(attempt int, backoff time.Duration, err error) {
+				sbxlogger.I(sbx).Warn(ctx, "snapshot upload attempt failed while waiting for durability",
+					zap.Int("attempt", attempt),
+					zap.Duration("backoff", backoff),
+					zap.Error(err),
+				)
+			},
+		)
+		res.completeUpload(ctx, uploadErr)
+		if uploadErr != nil {
+			s.uploadFailedCounter.Add(ctx, 1, metric.WithAttributes(attribute.Bool("fs_only", res.filesystemOnly)))
+			telemetry.ReportCriticalError(ctx, "error durably uploading paused sandbox", uploadErr, telemetry.WithSandboxID(in.GetSandboxId()))
 
-	// Best-effort: the local snapshot is now in the cache and the remote upload
-	// has been kicked off above (still in flight). Harvest a resume page-fault
+			return nil, status.Errorf(codes.Internal, "error durably uploading paused sandbox '%s': %s", in.GetSandboxId(), uploadErr)
+		}
+		storageDurable = true
+	} else {
+		s.uploadSnapshotAsync(ctx, sbx, res)
+	}
+
+	// Best-effort: the local snapshot is now in the cache. For an ordinary pause
+	// its remote upload is still in flight; the durability path waited above.
+	// Harvest a resume page-fault
 	// trace from a throwaway warm resume of the local snapshot and (when enabled)
 	// persist it as a prefetch mapping for the next resume. Runs in the
 	// background; never affects the pause result, and waits for the upload before
@@ -1001,6 +1027,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 	return &orchestrator.SandboxPauseResponse{
 		SchedulingMetadata: res.schedulingMetadata,
+		StorageDurable:     storageDurable,
 	}, nil
 }
 

@@ -188,6 +188,11 @@ message SandboxPauseRequest {
   // a snapshot cold-boots (reboots) from the rootfs. Default false = full memory
   // snapshot, so existing callers are unaffected.
   bool filesystem_only = 4;
+
+  // Cathedral lifecycle operations require the snapshot to land in remote
+  // storage before pause can be reported terminal. Existing callers keep the
+  // asynchronous upload path when this is false.
+  bool wait_for_storage = 5;
 }
 
 message SchedulingMetadata {
@@ -213,6 +218,7 @@ message SchedulingMetadata {
 
 message SandboxPauseResponse {
   SchedulingMetadata scheduling_metadata = 1;
+  bool storage_durable = 2;
 }
 
 message SandboxCheckpointRequest {
