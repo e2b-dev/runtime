@@ -73,7 +73,7 @@ func TestScannerSubscriber_Signal_DeliversToSlowReceiver(t *testing.T) {
 func TestScanner_Destroy_ExitsWithStalledSubscriber(t *testing.T) {
 	t.Parallel()
 
-	scanner := NewScanner(10 * time.Millisecond)
+	scanner := NewScanner(nil, 10*time.Millisecond)
 	scanner.AddSubscriber("stalled-sub", nil)
 
 	scanDone := make(chan struct{})
