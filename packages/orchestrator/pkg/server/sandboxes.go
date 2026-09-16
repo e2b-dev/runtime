@@ -686,12 +686,18 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 	childSpan.SetAttributes(
 		telemetry.WithSandboxID(in.GetSandboxId()),
 	)
+	if in.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	sbx, ok := s.sandboxFactory.Sandboxes.Get(in.GetSandboxId())
 	if !ok {
 		telemetry.ReportCriticalError(ctx, "sandbox not found", nil, telemetry.WithSandboxID(in.GetSandboxId()))
 
 		return nil, status.Errorf(codes.NotFound, "sandbox '%s' not found", in.GetSandboxId())
+	}
+	if sbx.Runtime.ExecutionID != in.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
 	childSpan.SetAttributes(
@@ -726,10 +732,8 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 	// Check health metrics before stopping the sandbox
 	sbx.Checks.Healthcheck(ctx, true)
 
-	// Start the cleanup in a goroutine—the initial kill request should be send as the first thing in stop, and at this point you cannot route to the sandbox anymore.
-	// We don't wait for the whole cleanup to finish here.
-	go func() {
-		err := sbx.Stop(context.WithoutCancel(ctx))
+	stop := func(stopCtx context.Context) error {
+		err := sbx.Stop(stopCtx)
 		if err != nil {
 			sbxlogger.I(sbx).Error(ctx, "error stopping sandbox",
 				logger.WithSandboxID(in.GetSandboxId()),
@@ -737,11 +741,30 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 				zap.Error(err),
 			)
 		}
-	}()
+
+		return err
+	}
+	if err := runDeleteStop(ctx, in.GetWaitForStop(), stop); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to stop sandbox '%s': %s", in.GetSandboxId(), err)
+	}
 
 	s.emitSandboxKilled(ctx, sbx, killReason)
 
 	return &emptypb.Empty{}, nil
+}
+
+// runDeleteStop preserves the legacy fire-and-forget delete while allowing an
+// execution-evidence caller to wait for the exact Firecracker stop result.
+func runDeleteStop(ctx context.Context, wait bool, stop func(context.Context) error) error {
+	if wait {
+		return stop(ctx)
+	}
+
+	go func() {
+		_ = stop(context.WithoutCancel(ctx))
+	}()
+
+	return nil
 }
 
 // emitSandboxKilled publishes the terminal surfaces of a sandbox kill — the
@@ -851,12 +874,18 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		telemetry.WithTemplateID(in.GetTemplateId()),
 		telemetry.WithBuildID(in.GetBuildId()),
 	)
+	if in.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	sbx, ok := s.sandboxFactory.Sandboxes.Get(in.GetSandboxId())
 	if !ok {
 		telemetry.ReportCriticalError(ctx, "sandbox not found", nil, telemetry.WithSandboxID(in.GetSandboxId()))
 
 		return nil, status.Error(codes.NotFound, "sandbox not found")
+	}
+	if sbx.Runtime.ExecutionID != in.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
 	ctx = featureflags.AddToContext(

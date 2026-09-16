@@ -140,7 +140,7 @@ func admissionTestSandbox(t *testing.T, sandboxID string, slotIdx int, durable *
 				Envd:              sandbox.EnvdMetadata{Version: "9.9.9"},
 				FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.14.1", KernelVersion: "vmlinux-6.1"},
 			}),
-			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID, ExecutionID: sandboxID},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 		Template:  admissionTestTemplate{memfile: &admissionRODevice{durable: durable, waiting: make(chan struct{})}},
@@ -158,7 +158,7 @@ func TestPause_AdmissionRefusesBeforeMarkStopping(t *testing.T) {
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
 
 	start := time.Now()
-	_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-refuse"})
+	_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-refuse", ExecutionId: "sbx-admission-refuse"})
 	elapsed := time.Since(start)
 
 	require.Error(t, pauseErr)
@@ -174,6 +174,22 @@ func TestPause_AdmissionRefusesBeforeMarkStopping(t *testing.T) {
 	assert.Equal(t, sandbox.StopReasonCrashed, sbx.GetStopReason(), "no stop reason may be set by a refusal")
 	assert.True(t, s.sandboxFactory.Sandboxes.MarkStopping(t.Context(), "sbx-admission-refuse", "lifecycle-1"),
 		"a refused pause must leave the sandbox unmarked")
+}
+
+func TestPause_StaleExecutionCannotPauseReplacement(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, new(0))
+	sbx := admissionTestSandbox(t, "sbx-stale-pause", 31, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{
+		SandboxId: sbx.Runtime.SandboxID, ExecutionId: "stale-execution",
+	})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	got, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
+	require.True(t, live)
+	require.Same(t, sbx, got)
 }
 
 // The swap resolving mid-grace admits the pause, which
@@ -196,7 +212,7 @@ func TestPause_AdmissionAdmitsWhenSwapResolvesMidGrace(t *testing.T) {
 
 	// Pause parks forever in the fake template's Metadata once admitted.
 	go func() {
-		_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-midgrace"})
+		_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-midgrace", ExecutionId: "sbx-admission-midgrace"})
 	}()
 
 	require.Eventually(t, func() bool {
@@ -234,7 +250,7 @@ func TestPause_FlagOffRunsTodaysOrder(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: sandboxID})
+				_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: sandboxID, ExecutionId: sandboxID})
 			}()
 
 			// Today's order: MarkStopping happens promptly — no admission
@@ -268,7 +284,7 @@ func TestPause_AdmissionInstantProbeRefuses(t *testing.T) {
 	sbx := admissionTestSandbox(t, "sbx-admission-instant", 17, utils.NewSetOnce[*header.Header]())
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
 
-	_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-instant"})
+	_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-instant", ExecutionId: "sbx-admission-instant"})
 
 	require.Error(t, pauseErr)
 	st, ok := status.FromError(pauseErr)
@@ -319,7 +335,7 @@ func TestPause_AdmissionCallerCancelIsNotARefusal(t *testing.T) {
 		cancel()
 	}()
 
-	_, pauseErr := s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-cancel"})
+	_, pauseErr := s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-cancel", ExecutionId: "sbx-admission-cancel"})
 	assert.Zero(t, s.info.OutstandingWork())
 
 	require.Error(t, pauseErr)
@@ -532,7 +548,7 @@ func TestPauseAdmissionMetrics_RefusedPause(t *testing.T) {
 		sbx := admissionTestSandbox(t, "sbx-metrics-refused", 21, utils.NewSetOnce[*header.Header]())
 		s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
 
-		_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-refused"})
+		_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-refused", ExecutionId: "sbx-metrics-refused"})
 		require.Error(t, pauseErr)
 
 		points := admissionCounterPoints(t, reader)
@@ -614,7 +630,7 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 			}
 		}()
 		go func() {
-			_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-raw"})
+			_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-raw", ExecutionId: "sbx-metrics-raw"})
 		}()
 
 		// The paused state follows completion of admission metric recording.
@@ -645,7 +661,7 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 		s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
 
 		go func() {
-			_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-ready"})
+			_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-ready", ExecutionId: "sbx-metrics-ready"})
 		}()
 
 		require.Eventually(t, func() bool {

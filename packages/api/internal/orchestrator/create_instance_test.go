@@ -198,7 +198,7 @@ func TestCreateSandbox_StaleDataAfterConcurrentPause(t *testing.T) {
 		assert.Equal(t, "base-tpl", sbx1.BaseTemplateID)
 
 		// Clean up reservation.
-		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID)
+		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID, sbx1.ExecutionID)
 
 		// Snapshot changes to V2.
 		snap.templateID = "tpl-v2"

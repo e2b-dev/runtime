@@ -52,14 +52,17 @@ type pauseStubClient struct {
 	// the record underneath the restore.
 	onPause func()
 
-	mu      sync.Mutex
-	deletes int
+	mu         sync.Mutex
+	deletes    int
+	lastDelete *orchestrator.SandboxDeleteRequest
+	lastPause  *orchestrator.SandboxPauseRequest
 }
 
-func (c *pauseStubClient) Delete(context.Context, *orchestrator.SandboxDeleteRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *pauseStubClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.deletes++
+	c.lastDelete = request
 
 	return &emptypb.Empty{}, c.deleteErr
 }
@@ -71,7 +74,24 @@ func (c *pauseStubClient) deleteCount() int {
 	return c.deletes
 }
 
+func (c *pauseStubClient) lastDeleteRequest() *orchestrator.SandboxDeleteRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.lastDelete
+}
+
+func (c *pauseStubClient) lastPauseRequest() *orchestrator.SandboxPauseRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.lastPause
+}
+
 func (c *pauseStubClient) Pause(_ context.Context, request *orchestrator.SandboxPauseRequest, _ ...grpc.CallOption) (*orchestrator.SandboxPauseResponse, error) {
+	c.mu.Lock()
+	c.lastPause = request
+	c.mu.Unlock()
 	if c.gate != nil {
 		<-c.gate
 	}
@@ -119,6 +139,7 @@ type refusalFixture struct {
 	recorder *recordingCollector
 	sbx      sandbox.Sandbox
 	reader   *sdkmetric.ManualReader
+	client   *pauseStubClient
 }
 
 // restoreOutcomes returns the pause-refusal-restore counter by (outcome, caller).
@@ -189,7 +210,8 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
 	node.ClusterID = clusterID
-	node.SetSandboxClient(&pauseStubClient{err: pauseErr})
+	client := &pauseStubClient{err: pauseErr}
+	node.SetSandboxClient(client)
 
 	recorder := &recordingCollector{}
 	reader := sdkmetric.NewManualReader()
@@ -235,7 +257,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 	}
 	require.NoError(t, o.sandboxStore.Add(t.Context(), sbx, nil))
 
-	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader}
+	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader, client: client}
 }
 
 func (f refusalFixture) removePause(t *testing.T) error {
@@ -425,7 +447,7 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 
 	stub := &pauseStubClient{err: refusedPauseErr()}
 	stub.onPause = func() {
-		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
 	}
 	node.SetSandboxClient(stub)
@@ -540,6 +562,34 @@ func TestRemoveSandboxWithEvidence_ConfirmedPauseCarriesSnapshotAndRemainingLife
 	assert.Equal(t, f.sbx.ExecutionID, evidence.ExecutionID)
 	assert.NotEmpty(t, evidence.SnapshotBuildID)
 	assert.InDelta(t, time.Hour.Seconds(), evidence.RemainingLifetime.Seconds(), 5)
+	require.Equal(t, f.sbx.ExecutionID, f.client.lastPauseRequest().GetExecutionId())
+	require.True(t, f.client.lastPauseRequest().GetWaitForStorage())
+}
+
+func TestRemoveSandboxWithEvidence_DeleteWaitsForExecutionStop(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.NoError(t, err)
+	require.True(t, evidence.Confirmed)
+	req := f.client.lastDeleteRequest()
+	require.Equal(t, f.sbx.ExecutionID, req.GetExecutionId())
+	require.True(t, req.GetWaitForStop())
+}
+
+func TestRemoveSandbox_LegacyDeleteRemainsAsync(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	require.NoError(t, f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill,
+	}))
+	req := f.client.lastDeleteRequest()
+	require.Equal(t, f.sbx.ExecutionID, req.GetExecutionId())
+	require.False(t, req.GetWaitForStop())
 }
 
 func TestRemoveSandboxWithEvidence_InFlightRemovalIsNeverTerminalProof(t *testing.T) {

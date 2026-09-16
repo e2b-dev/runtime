@@ -126,10 +126,20 @@ func (s *SandboxServer) Delete(_ context.Context, req *orchestrator.SandboxDelet
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
+	if req.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	sbx, ok := s.sandboxes[req.GetSandboxId()]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
+	}
+	if sbx.GetExecutionId() != req.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
+	}
 	delete(s.sandboxes, req.GetSandboxId())
-	s.mu.Unlock()
 
 	return &emptypb.Empty{}, nil
 }
@@ -138,11 +148,21 @@ func (s *SandboxServer) Pause(_ context.Context, req *orchestrator.SandboxPauseR
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
+	if req.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	// Pause is treated as a delete in the dummy: no real snapshotting happens.
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	sbx, ok := s.sandboxes[req.GetSandboxId()]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
+	}
+	if sbx.GetExecutionId() != req.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
+	}
 	delete(s.sandboxes, req.GetSandboxId())
-	s.mu.Unlock()
 
 	return &orchestrator.SandboxPauseResponse{}, nil
 }

@@ -1066,9 +1066,16 @@ func (x *SandboxUpdateRequest) GetEgress() *SandboxNetworkEgressConfig {
 }
 
 type SandboxDeleteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	KillReason    *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId  string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	KillReason *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
+	// The exact sandbox execution the caller intends to stop. The node rejects
+	// the operation when this does not match the live incarnation, preventing a
+	// delayed delete from killing a replacement execution with the same ID.
+	ExecutionId string `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	// Wait until the Firecracker stop has completed and surface any stop error.
+	// False preserves the legacy asynchronous delete behavior.
+	WaitForStop   bool `protobuf:"varint,4,opt,name=wait_for_stop,json=waitForStop,proto3" json:"wait_for_stop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1117,6 +1124,20 @@ func (x *SandboxDeleteRequest) GetKillReason() string {
 	return ""
 }
 
+func (x *SandboxDeleteRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
+func (x *SandboxDeleteRequest) GetWaitForStop() bool {
+	if x != nil {
+		return x.WaitForStop
+	}
+	return false
+}
+
 type SandboxPauseRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId  string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
@@ -1130,8 +1151,11 @@ type SandboxPauseRequest struct {
 	// storage before pause can be reported terminal. Existing callers keep the
 	// asynchronous upload path when this is false.
 	WaitForStorage bool `protobuf:"varint,5,opt,name=wait_for_storage,json=waitForStorage,proto3" json:"wait_for_storage,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The exact sandbox execution the caller intends to pause. The node rejects
+	// the operation when this does not match the live incarnation.
+	ExecutionId   string `protobuf:"bytes,6,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxPauseRequest) Reset() {
@@ -1197,6 +1221,13 @@ func (x *SandboxPauseRequest) GetWaitForStorage() bool {
 		return x.WaitForStorage
 	}
 	return false
+}
+
+func (x *SandboxPauseRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
 }
 
 type SchedulingMetadata struct {
@@ -1764,13 +1795,15 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\bend_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\aendTime\x88\x01\x01\x128\n" +
 	"\x06egress\x18\x03 \x01(\v2\x1b.SandboxNetworkEgressConfigH\x01R\x06egress\x88\x01\x01B\v\n" +
 	"\t_end_timeB\t\n" +
-	"\a_egress\"k\n" +
+	"\a_egress\"\xb2\x01\n" +
 	"\x14SandboxDeleteRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
-	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\xc3\x01\n" +
+	"killReason\x88\x01\x01\x12!\n" +
+	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x12\"\n" +
+	"\rwait_for_stop\x18\x04 \x01(\bR\vwaitForStopB\x0e\n" +
+	"\f_kill_reason\"\xe6\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
@@ -1778,7 +1811,8 @@ const file_orchestrator_proto_rawDesc = "" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12'\n" +
 	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x12(\n" +
-	"\x10wait_for_storage\x18\x05 \x01(\bR\x0ewaitForStorage\"\xb1\x03\n" +
+	"\x10wait_for_storage\x18\x05 \x01(\bR\x0ewaitForStorage\x12!\n" +
+	"\fexecution_id\x18\x06 \x01(\tR\vexecutionId\"\xb1\x03\n" +
 	"\x12SchedulingMetadata\x121\n" +
 	"\x15memfile_base_build_id\x18\x01 \x01(\tR\x12memfileBaseBuildId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12*\n" +

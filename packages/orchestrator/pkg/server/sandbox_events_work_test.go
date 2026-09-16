@@ -211,7 +211,23 @@ func TestUpdateDeleteNotFoundReleaseWork(t *testing.T) {
 	_, err := s.Update(t.Context(), &orchestrator.SandboxUpdateRequest{SandboxId: "missing"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 	require.Zero(t, s.info.OutstandingWork())
-	_, err = s.Delete(t.Context(), &orchestrator.SandboxDeleteRequest{SandboxId: "missing"})
+	_, err = s.Delete(t.Context(), &orchestrator.SandboxDeleteRequest{SandboxId: "missing", ExecutionId: "execution-missing"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 	require.Zero(t, s.info.OutstandingWork())
+}
+
+func TestDelete_StaleExecutionCannotStopReplacement(t *testing.T) {
+	t.Parallel()
+
+	sbx := eventWorkSandbox()
+	s := &Server{info: &service.ServiceInfo{}, sandboxFactory: &sandbox.Factory{Sandboxes: sandbox.NewSandboxesMap()}}
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+
+	_, err := s.Delete(t.Context(), &orchestrator.SandboxDeleteRequest{
+		SandboxId: sbx.Runtime.SandboxID, ExecutionId: "stale-execution", WaitForStop: true,
+	})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	got, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
+	require.True(t, live)
+	require.Same(t, sbx, got)
 }

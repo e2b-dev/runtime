@@ -212,6 +212,10 @@ under `pkg/`, almost all Linux-only.
 gRPC services on :5008 (`pkg/server/`, `pkg/service/`, `pkg/template/server/`, `pkg/volumes/`):
 
 - **SandboxService** — `Create`, `Update`, `List`, `Delete`, `Pause`, `Checkpoint`.
+  `Delete` and `Pause` are execution-fenced: callers provide the expected
+  execution ID and the node rejects a stale operation rather than act on a
+  replacement incarnation. Delete is asynchronous by default; evidence-bound
+  callers can request that it wait for the Firecracker stop result.
 - **TemplateService** — `TemplateCreate`, `TemplateBuildStatus`, `TemplateBuildDelete` (template-manager role only).
 - **InfoService** — node identity, roles, capacity, health status (used by API node discovery).
 - **ChunkService / VolumeService** — peer-to-peer template chunk serving; persistent volumes.
@@ -561,7 +565,11 @@ sequenceDiagram
 - **Cathedral lifecycle evidence**: the Cathedral-only lifecycle endpoint binds the authenticated
   team, sandbox ID, execution ID, request digest, operation kind, and idempotency key in Postgres
   before dispatch. Completion is derived from the execution-bound node RPC, never from a missing
-  Redis/API listing. An already-running transition or transport ambiguity remains `unknown` and is
+  Redis/API listing. Delete completion waits for the exact execution's Firecracker stop to return
+  successfully; legacy delete callers retain the asynchronous node RPC mode. Final running-sandbox
+  removal in Redis compares the expected execution atomically, so delayed cleanup for one execution
+  cannot delete a replacement installed by a lockless resume. An already-running transition or
+  transport ambiguity remains `unknown` and is
   recovered by operation key without redispatch. Pause completion additionally records the
   successful snapshot build; delete records snapshot/storage cleanup separately. The remaining
   lifetime is frozen into the paused snapshot and reused by a resume that does not explicitly

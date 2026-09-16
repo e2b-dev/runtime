@@ -101,10 +101,12 @@ func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sa
 	return s.storage.Get(ctx, teamID, sandboxID)
 }
 
-func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) {
-	err := s.storage.Remove(ctx, teamID, sandboxID)
+func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string, executionID string) {
+	err := s.storage.Remove(ctx, teamID, sandboxID, executionID)
 	if err != nil {
 		logger.L().Error(ctx, "Failed to remove sandbox from storage", zap.Error(err), logger.WithSandboxID(sandboxID))
+
+		return
 	}
 
 	err = s.reservations.Release(ctx, teamID, sandboxID)

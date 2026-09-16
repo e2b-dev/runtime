@@ -177,6 +177,15 @@ message SandboxUpdateRequest {
 message SandboxDeleteRequest {
   string sandbox_id = 1;
   optional string kill_reason = 2;
+
+  // The exact sandbox execution the caller intends to stop. The node rejects
+  // the operation when this does not match the live incarnation, preventing a
+  // delayed delete from killing a replacement execution with the same ID.
+  string execution_id = 3;
+
+  // Wait until the Firecracker stop has completed and surface any stop error.
+  // False preserves the legacy asynchronous delete behavior.
+  bool wait_for_stop = 4;
 }
 
 message SandboxPauseRequest {
@@ -193,6 +202,10 @@ message SandboxPauseRequest {
   // storage before pause can be reported terminal. Existing callers keep the
   // asynchronous upload path when this is false.
   bool wait_for_storage = 5;
+
+  // The exact sandbox execution the caller intends to pause. The node rejects
+  // the operation when this does not match the live incarnation.
+  string execution_id = 6;
 }
 
 message SchedulingMetadata {

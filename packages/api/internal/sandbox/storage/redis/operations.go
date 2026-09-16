@@ -75,7 +75,11 @@ func (s *Storage) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (
 }
 
 // Remove deletes a sandbox from Redis atomically with its team index entry.
-func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string, executionID string) error {
+	if executionID == "" {
+		return errors.New("expected execution ID is required to remove sandbox")
+	}
+
 	key := getSandboxKey(teamID.String(), sandboxID)
 	teamKey := GetSandboxStorageTeamIndexKey(teamID.String())
 
@@ -92,13 +96,25 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string
 		}
 	}()
 
-	// Execute Lua script for atomic DEL + SREM; it returns the deleted JSON
-	// so the expiration-index cleanup below is scoped to the execution we
-	// actually removed.
-	raw, err := removeSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey}, sandboxID).Text()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	// Execute the execution compare plus DEL + SREM atomically. The script
+	// returns the deleted JSON so expiration cleanup is scoped to the execution
+	// it actually removed.
+	result, err := removeSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey}, sandboxID, executionID).Slice()
+	if err != nil {
 		return fmt.Errorf("failed to remove sandbox from Redis: %w", err)
 	}
+	if len(result) != 2 {
+		return fmt.Errorf("failed to remove sandbox from Redis: unexpected script response %v", result)
+	}
+	outcome, ok := result[0].(int64)
+	if !ok {
+		return fmt.Errorf("failed to remove sandbox from Redis: unexpected script outcome %T", result[0])
+	}
+	if outcome == 2 {
+		return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
+	}
+
+	raw, _ := result[1].(string)
 
 	// Clean up from the global expiration index.
 	// Do it after the removal to prevent leaking expired sandboxes.
@@ -106,7 +122,7 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string
 	// Add for a newer execution wrote a different member, so it can never be
 	// unindexed here. If the key was already gone, any leftover execution
 	// member is swept by ExpiredItems once its score passes.
-	if raw != "" {
+	if outcome == 1 && raw != "" {
 		var sbx sandboxtypes.Sandbox
 		if unmarshalErr := json.Unmarshal([]byte(raw), &sbx); unmarshalErr == nil && sbx.ExecutionID != "" {
 			member := expirationMember(teamID.String(), sandboxID, sbx.ExecutionID)

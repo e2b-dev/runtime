@@ -99,6 +99,7 @@ func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.S
 			BuildId:        buildID,
 			FilesystemOnly: filesystemOnly,
 			WaitForStorage: waitForStorage,
+			ExecutionId:    sbx.ExecutionID,
 		},
 	)
 

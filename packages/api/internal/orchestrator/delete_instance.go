@@ -56,7 +56,7 @@ func (o *Orchestrator) RemoveSandboxWithEvidence(ctx context.Context, teamID uui
 	return o.removeSandbox(ctx, teamID, sandboxID, opts, true)
 }
 
-func (o *Orchestrator) removeSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts, waitForStorage bool) (SandboxRemovalEvidence, error) {
+func (o *Orchestrator) removeSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts, waitForCompletion bool) (SandboxRemovalEvidence, error) {
 	ctx, span := tracer.Start(ctx, "remove-sandbox")
 	defer span.End()
 	evidence := SandboxRemovalEvidence{SandboxID: sandboxID, ExecutionID: opts.ExpectExecutionID, Action: opts.Action}
@@ -147,7 +147,7 @@ func (o *Orchestrator) removeSandbox(ctx context.Context, teamID uuid.UUID, sand
 		logger.L().Info(ctx, "Sandbox was already in the process of being removed", logger.WithSandboxID(sandboxID), zap.String("state", string(sbx.State)))
 
 		if time.Since(sbx.EndTime) > sandbox.StaleCutoff && opts.Action.Effect == sandbox.TransitionExpires {
-			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 			go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 		}
 
@@ -180,11 +180,11 @@ func (o *Orchestrator) removeSandbox(ctx context.Context, teamID uuid.UUID, sand
 		if preserveRecord {
 			return
 		}
-		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 	}()
 	var snapshotBuildID string
-	snapshotBuildID, err = o.removeSandboxFromNodeWithEvidence(ctx, sbx, opts.Action, opts.Reason, opts.FilesystemOnly, restoreOnRefusal, evidence.RemainingLifetime, waitForStorage)
+	snapshotBuildID, err = o.removeSandboxFromNodeWithEvidence(ctx, sbx, opts.Action, opts.Reason, opts.FilesystemOnly, restoreOnRefusal, evidence.RemainingLifetime, waitForCompletion)
 	if err != nil {
 		if errors.Is(err, PauseQueueExhaustedError{}) {
 			if restoreOnRefusal {
@@ -280,7 +280,7 @@ func (o *Orchestrator) killRefusedSandbox(ctx context.Context, sbx sandbox.Sandb
 		return
 	}
 
-	if err := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonOrphaned); err != nil {
+	if err := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonOrphaned, false); err != nil {
 		logger.L().Error(ctx, "failed to kill a refused sandbox after a failed restore", zap.Error(err), logger.WithSandboxID(sbx.SandboxID))
 	}
 }
@@ -359,7 +359,7 @@ func (o *Orchestrator) removeSandboxFromNodeWithEvidence(
 	filesystemOnly bool,
 	restoreOnRefusal bool,
 	remainingLifetime time.Duration,
-	waitForStorage bool,
+	waitForCompletion bool,
 ) (string, error) {
 	ctx, span := tracer.Start(ctx, "remove-sandbox-from-node")
 	defer span.End()
@@ -402,10 +402,10 @@ func (o *Orchestrator) removeSandboxFromNodeWithEvidence(
 
 	switch stateAction {
 	case sandbox.StateActionPause:
-		buildID, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, remainingLifetime, waitForStorage)
+		buildID, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, remainingLifetime, waitForCompletion)
 		if err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
-				killErr := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonBaseTemplateMissing)
+				killErr := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonBaseTemplateMissing, false)
 				logger.L().Error(ctx, "Pause failed due to missing base template, killed sandbox as fallback",
 					logger.WithSandboxID(sbx.SandboxID),
 					zap.String("base_template_id", sbx.BaseTemplateID),
@@ -422,7 +422,7 @@ func (o *Orchestrator) removeSandboxFromNodeWithEvidence(
 
 		return buildID, nil
 	case sandbox.StateActionKill:
-		return "", o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), reason)
+		return "", o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), reason, waitForCompletion)
 	}
 
 	return "", nil
@@ -440,7 +440,7 @@ func (o *Orchestrator) killOrphanSandbox(ctx context.Context, sbx sandbox.NodeSa
 		return
 	}
 
-	err := o.killSandboxOnNode(ctx, node, sbx, sandbox.KillReasonOrphaned)
+	err := o.killSandboxOnNode(ctx, node, sbx, sandbox.KillReasonOrphaned, false)
 	if err != nil {
 		logger.L().Error(ctx, "Failed to kill orphan sandbox on node",
 			zap.Error(err),
@@ -456,11 +456,14 @@ func (o *Orchestrator) killSandboxOnNode(
 	node *nodemanager.Node,
 	sbx sandbox.NodeSandbox,
 	reason sandbox.KillReason,
+	waitForStop bool,
 ) error {
 	killReason := reason.String()
 	req := &orchestrator.SandboxDeleteRequest{
-		SandboxId:  sbx.SandboxID,
-		KillReason: &killReason,
+		SandboxId:   sbx.SandboxID,
+		KillReason:  &killReason,
+		ExecutionId: sbx.ExecutionID,
+		WaitForStop: waitForStop,
 	}
 
 	client, ctx := node.GetSandboxDeleteCtx(ctx, sbx.SandboxID, sbx.ExecutionID, false)

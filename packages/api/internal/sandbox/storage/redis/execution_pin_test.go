@@ -231,7 +231,7 @@ func TestStartTransitionScript_RefusesADeletedRecord(t *testing.T) {
 
 	sbx := createTestSandbox("sbx-cas-deleted")
 	require.NoError(t, storage.Add(ctx, sbx))
-	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID))
+	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
 
 	transitionID := uuid.NewString()
 	keys := transitionKeysFor(sbx, transitionID)
@@ -269,6 +269,31 @@ func TestStartTransitionScript_UnpinnedWritesUnconditionally(t *testing.T) {
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
+}
+
+func TestRemove_StaleCleanupCannotDeleteReplacementExecution(t *testing.T) {
+	t.Parallel()
+
+	storage, client := setupTestStorage(t)
+	ctx := t.Context()
+
+	old := createTestSandbox("sbx-final-remove-race")
+	replacement := old
+	replacement.ExecutionID = uuid.NewString()
+	replacement.EndTime = replacement.EndTime.Add(time.Hour)
+
+	require.NoError(t, storage.Add(ctx, old))
+	// Add is intentionally lockless. This models E2 landing after E1's node
+	// cleanup began but before E1's deferred Redis removal runs.
+	require.NoError(t, storage.Add(ctx, replacement))
+
+	err := storage.Remove(ctx, old.TeamID, old.SandboxID, old.ExecutionID)
+	require.ErrorIs(t, err, sandboxtypes.ErrExecutionMismatch)
+
+	stored, err := storage.Get(ctx, replacement.TeamID, replacement.SandboxID)
+	require.NoError(t, err)
+	require.Equal(t, replacement.ExecutionID, stored.ExecutionID)
+	require.True(t, client.SIsMember(ctx, GetSandboxStorageTeamIndexKey(replacement.TeamID.String()), replacement.SandboxID).Val())
 }
 
 // TestStartRemoving_NoExecutionPinRemovesWhateverIsStored keeps the guard

@@ -91,7 +91,7 @@ func TestAddRemove_ExecutionScopedMember(t *testing.T) {
 	member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
 
-	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID))
+	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID, sbx.ExecutionID))
 	requireMemberAbsent(t, client, member)
 
 	err := client.Get(t.Context(), getSandboxKey(teamID.String(), sbx.SandboxID)).Err()
@@ -121,7 +121,7 @@ func TestRemove_DoesNotUnindexFreshExecution(t *testing.T) {
 		Member: freshMember,
 	}).Err())
 
-	require.NoError(t, storage.Remove(t.Context(), teamID, sandboxID))
+	require.NoError(t, storage.Remove(t.Context(), teamID, sandboxID, old.ExecutionID))
 
 	// Old execution's member removed, fresh execution's member intact.
 	requireMemberAbsent(t, client, expirationMember(teamID.String(), sandboxID, old.ExecutionID))
