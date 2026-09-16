@@ -171,7 +171,9 @@ type PausedSandboxConfig struct {
 	// RemainingLifetimeSeconds freezes the unconsumed lifetime at the point a
 	// pause transition commits. A resume without an explicit timeout restores
 	// this value instead of silently granting a fresh default lifetime.
-	RemainingLifetimeSeconds uint64 `json:"remainingLifetimeSeconds,omitempty"`
+	// A pointer distinguishes a deliberately exhausted lifetime (zero) from a
+	// legacy snapshot that predates frozen-lifetime persistence (nil).
+	RemainingLifetimeSeconds *uint64 `json:"remainingLifetimeSeconds,omitempty"`
 }
 
 func (c PausedSandboxConfig) Value() (driver.Value, error) {

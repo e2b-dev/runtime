@@ -153,6 +153,11 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   re-enter the existing Redis reservation with the same sandbox ID; a changed body returns 409,
   and a completed operation returns its immutable stored response. The authenticated
   `/v1/cathedral/operations/{key}` route is the durable recovery lookup.
+  Execution-bound Cathedral pause/delete operations use Postgres dispatch leases and fenced
+  attempts. Recovery retries only when the same execution is provably still running; otherwise it
+  records an honest failed or unknown outcome rather than replaying a possibly committed action.
+  Frozen pause lifetime is presence-aware, caps connect and traffic auto-resume, and preserves
+  explicit zero as exhausted.
 - **Secrets**: `/secrets` is the only public surface for secret management (create, list, get,
   update, delete). The API authenticates the caller with the customer alternatives above, converts
   the authenticated team UUID to the project UUID the backend knows, checks the `customer-secrets`

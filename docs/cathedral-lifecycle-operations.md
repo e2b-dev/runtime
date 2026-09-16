@@ -13,10 +13,22 @@ authenticated `delete` or `pause` request with:
 - optional `filesystem_only` for pause.
 
 The server hashes the normalized request and binds team, sandbox, execution,
-operation, and key in Postgres before dispatch. Reusing a key with a different
-binding returns `409`. Replaying the same key returns the stored operation and
-never dispatches again. Recover it with
+operation, pause mode, and key in Postgres before dispatch. Reusing a key with
+a different binding returns `409`. Dispatch uses a fenced attempt number and a
+bounded lease. A replay or recovery request may dispatch a never-started
+`reserved` operation. It may retry an expired attempt only after the live
+registry proves the same pinned execution is still `running`, which proves the
+previous attempt did not commit a removal transition. A missing, superseded,
+or still-transitioning execution becomes `unknown` instead of being blindly
+acted on again. Recover with
 `GET /v1/cathedral/lifecycle-operations/{idempotencyKey}`.
+
+Node refusals that restore the same execution are returned to `reserved` and
+remain retryable. A known execution mismatch is terminal `failed`. Other
+unconfirmed provider outcomes remain `unknown`. Terminal writes run on a
+detached bounded context, are generation-fenced, and are retried; if durability
+still cannot be established, the request returns an error and recovery applies
+the lease rules above.
 
 Before the first dispatch, an authenticated consumer reads the current
 incarnation from `GET /v1/cathedral/sandboxes/{sandboxID}/identity`. That
@@ -34,24 +46,30 @@ or joining an in-flight removal is never terminal evidence.
 
 Delete reports snapshot/storage cleanup separately through `cleanup_state`.
 `completed` with `cleanup_state=failed` means compute removal is proven but
-storage cleanup debt remains; a consumer must retain that debt and must not
-represent full cleanup or final settlement as complete.
+storage cleanup debt remains. Replaying or recovering that exact operation key
+retries only the idempotent snapshot cleanup and never redispatches compute.
+A consumer must retain remaining debt and must not represent full cleanup or
+final settlement as complete.
 
 `unknown` is durable and non-retryable by POST. Recover it by key and reconcile
 with operator/provider evidence; do not blindly replay the lifecycle action.
 
-Pause persists `remaining_lifetime_ms`. The snapshot stores the same frozen
-remaining lifetime, and a resume without an explicit timeout uses it rather
-than granting a new default lifetime. Resume remains the existing authenticated
-endpoint; the operation protocol prevents stale pre-resume delete/pause work
-from acting on the new execution identity.
+Pause persists `remaining_lifetime_ms` from the same transition-owned remaining
+lifetime used to write the snapshot, with both values rounded up to seconds.
+Presence is explicit: zero means exhausted, while an absent field identifies a
+legacy snapshot. Resume without an explicit timeout uses the frozen value;
+connect and traffic auto-resume are capped by it and refuse exhausted snapshots.
+An explicit resume timeout remains the only override. The operation protocol
+prevents stale pre-resume delete/pause work from acting on the new execution
+identity.
 
 ## Consumer rules
 
 1. Generate one operation key per user intent and persist it before calling.
 2. Send the current provider `execution_id`; never identify an incarnation by
    sandbox ID alone.
-3. Treat `reserved`, `dispatching`, and `unknown` as non-terminal.
+3. Treat `reserved` as retryable, `dispatching` as leased in-flight work, and
+   `unknown` as non-terminal for business settlement but not safe to replay.
 4. Treat delete as compute-stopped only when `state=completed` and
    `execution_removed_at` is present. Close storage/billing only under the
    consumer's separately defined settlement rules and cleanup state.

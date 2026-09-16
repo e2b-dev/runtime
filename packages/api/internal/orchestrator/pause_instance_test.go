@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
@@ -45,8 +46,14 @@ func TestBuildUpsertSnapshotParams_PreservesRemainingLifetime(t *testing.T) {
 	node := &nodemanager.Node{ID: "node-1"}
 	params := buildUpsertSnapshotParams(sbx, node, false, 37*time.Minute)
 
-	assert.Equal(t, uint64((37 * time.Minute).Seconds()), params.Config.RemainingLifetimeSeconds)
+	require.NotNil(t, params.Config.RemainingLifetimeSeconds)
+	assert.Equal(t, uint64((37 * time.Minute).Seconds()), *params.Config.RemainingLifetimeSeconds)
 
 	subsecond := buildUpsertSnapshotParams(sbx, node, false, 500*time.Millisecond)
-	assert.Equal(t, uint64(1), subsecond.Config.RemainingLifetimeSeconds)
+	require.NotNil(t, subsecond.Config.RemainingLifetimeSeconds)
+	assert.Equal(t, uint64(1), *subsecond.Config.RemainingLifetimeSeconds)
+
+	exhausted := buildUpsertSnapshotParams(sbx, node, false, 0)
+	require.NotNil(t, exhausted.Config.RemainingLifetimeSeconds)
+	assert.Zero(t, *exhausted.Config.RemainingLifetimeSeconds)
 }

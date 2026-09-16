@@ -189,6 +189,12 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		return
 	}
 
+	timeout, exhausted := clampToFrozenSnapshotLifetime(timeout, lastSnapshot.Snapshot)
+	if exhausted {
+		a.sendAPIStoreError(c, http.StatusConflict, "Sandbox lifetime was exhausted before pause")
+		return
+	}
+
 	// A paused filesystem-only snapshot resumes by cold-booting (reboot) from its
 	// rootfs; the orchestrator selects reboot-vs-memory-resume from the snapshot
 	// metadata, so the generic resume path below handles it. In-memory state was

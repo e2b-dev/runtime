@@ -180,12 +180,18 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 	// A Cathedral pause freezes the remaining lifetime in the durable snapshot.
 	// Preserve it on an implicit resume instead of granting the ordinary fresh
 	// default. An explicit timeout remains an intentional override.
-	if body.Timeout == nil && lastSnapshot.Snapshot.Config != nil && lastSnapshot.Snapshot.Config.RemainingLifetimeSeconds > 0 {
-		remaining := time.Duration(lastSnapshot.Snapshot.Config.RemainingLifetimeSeconds) * time.Second
-		if limit := time.Duration(teamInfo.Limits.MaxLengthHours) * time.Hour; limit > 0 && remaining > limit {
-			remaining = limit
+	if body.Timeout == nil {
+		remaining, frozen := frozenSnapshotLifetime(lastSnapshot.Snapshot)
+		if frozen && remaining <= 0 {
+			a.sendAPIStoreError(c, http.StatusConflict, "Sandbox lifetime was exhausted before pause")
+			return
 		}
-		timeout = remaining
+		if frozen {
+			if limit := time.Duration(teamInfo.Limits.MaxLengthHours) * time.Hour; limit > 0 && remaining > limit {
+				remaining = limit
+			}
+			timeout = remaining
+		}
 	}
 
 	// Pre-flight of the fetcher's authoritative gate so a disabled flag answers
@@ -276,6 +282,32 @@ func setMemoryOverrideOutcome(c *gin.Context, memory *bool, createErr *api.APIEr
 // are memory snapshots.
 func snapshotIsFilesystemOnly(snap queries.Snapshot) bool {
 	return snap.Config != nil && snap.Config.FilesystemOnly
+}
+
+// frozenSnapshotLifetime returns the snapshot-authoritative remaining lifetime.
+// false distinguishes legacy rows without this field from an explicitly
+// exhausted (zero) Cathedral lifetime.
+func frozenSnapshotLifetime(snap queries.Snapshot) (time.Duration, bool) {
+	if snap.Config == nil || snap.Config.RemainingLifetimeSeconds == nil {
+		return 0, false
+	}
+
+	return time.Duration(*snap.Config.RemainingLifetimeSeconds) * time.Second, true
+}
+
+func clampToFrozenSnapshotLifetime(requested time.Duration, snap queries.Snapshot) (time.Duration, bool) {
+	remaining, frozen := frozenSnapshotLifetime(snap)
+	if !frozen {
+		return requested, false
+	}
+	if remaining <= 0 {
+		return 0, true
+	}
+	if requested > remaining {
+		return remaining, false
+	}
+
+	return requested, false
 }
 
 // demandsFilesystemBoot reports whether the request explicitly demands a cold

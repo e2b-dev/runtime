@@ -91,3 +91,13 @@ func TestLifecycleOperationToAPIPreservesEvidenceAndCleanupDebt(t *testing.T) {
 	require.NotNil(t, got.ErrorCode)
 	assert.Equal(t, 503, *got.ErrorCode)
 }
+
+func TestFrozenLifetimeMillisecondsMatchesSnapshotRounding(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(0), frozenLifetimeMilliseconds(0))
+	assert.Equal(t, int64(0), frozenLifetimeMilliseconds(-time.Second))
+	assert.Equal(t, int64(1000), frozenLifetimeMilliseconds(time.Millisecond))
+	assert.Equal(t, int64(1000), frozenLifetimeMilliseconds(time.Second))
+	assert.Equal(t, int64(2000), frozenLifetimeMilliseconds(time.Second+time.Nanosecond))
+}

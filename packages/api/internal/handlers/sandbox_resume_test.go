@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -92,6 +93,61 @@ func TestSnapshotIsFilesystemOnly(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.want, snapshotIsFilesystemOnly(tt.snapshot))
+		})
+	}
+}
+
+func TestFrozenSnapshotLifetimeDistinguishesLegacyAndExhausted(t *testing.T) {
+	t.Parallel()
+
+	zero := uint64(0)
+	seconds := uint64(37)
+	tests := []struct {
+		name   string
+		snap   queries.Snapshot
+		want   time.Duration
+		frozen bool
+	}{
+		{name: "legacy no config", snap: queries.Snapshot{}},
+		{name: "legacy no field", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{}}},
+		{name: "exhausted", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{RemainingLifetimeSeconds: &zero}}, frozen: true},
+		{name: "remaining", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{RemainingLifetimeSeconds: &seconds}}, want: 37 * time.Second, frozen: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, frozen := frozenSnapshotLifetime(tt.snap)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.frozen, frozen)
+		})
+	}
+}
+
+func TestClampToFrozenSnapshotLifetime(t *testing.T) {
+	t.Parallel()
+
+	zero := uint64(0)
+	remaining := uint64(30)
+	tests := []struct {
+		name      string
+		snap      queries.Snapshot
+		requested time.Duration
+		want      time.Duration
+		exhausted bool
+	}{
+		{name: "legacy unchanged", snap: queries.Snapshot{}, requested: time.Minute, want: time.Minute},
+		{name: "shorter request unchanged", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{RemainingLifetimeSeconds: &remaining}}, requested: 10 * time.Second, want: 10 * time.Second},
+		{name: "implicit request capped", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{RemainingLifetimeSeconds: &remaining}}, requested: time.Minute, want: 30 * time.Second},
+		{name: "zero remains exhausted", snap: queries.Snapshot{Config: &dbtypes.PausedSandboxConfig{RemainingLifetimeSeconds: &zero}}, requested: time.Minute, exhausted: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, exhausted := clampToFrozenSnapshotLifetime(tt.requested, tt.snap)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.exhausted, exhausted)
 		})
 	}
 }

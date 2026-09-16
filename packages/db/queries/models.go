@@ -27,24 +27,27 @@ type ActiveEnv struct {
 }
 
 type CathedralSandboxLifecycleOperation struct {
-	TeamID              uuid.UUID
-	OperationKey        string
-	RequestSha256       string
-	OperationKind       string
-	SandboxID           string
-	ExecutionID         string
-	State               string
-	ExecutionRemovedAt  *time.Time
-	SnapshotBuildID     *string
-	SnapshotCompletedAt *time.Time
-	RemainingLifetimeMs *int64
-	CleanupState        string
-	ResultJson          *string
-	ErrorCode           *int32
-	ErrorMessage        *string
-	CreatedAt           time.Time
-	DispatchStartedAt   *time.Time
-	UpdatedAt           time.Time
+	TeamID                 uuid.UUID
+	OperationKey           string
+	RequestSha256          string
+	OperationKind          string
+	SandboxID              string
+	ExecutionID            string
+	State                  string
+	ExecutionRemovedAt     *time.Time
+	SnapshotBuildID        *string
+	SnapshotCompletedAt    *time.Time
+	RemainingLifetimeMs    *int64
+	CleanupState           string
+	ResultJson             *string
+	ErrorCode              *int32
+	ErrorMessage           *string
+	CreatedAt              time.Time
+	DispatchStartedAt      *time.Time
+	UpdatedAt              time.Time
+	FilesystemOnly         bool
+	DispatchAttempt        int32
+	DispatchLeaseExpiresAt *time.Time
 }
 
 type CathedralSandboxOperation struct {
