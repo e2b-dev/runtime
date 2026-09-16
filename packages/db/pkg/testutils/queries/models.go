@@ -73,6 +73,20 @@ type BillingSandboxLog struct {
 	TeamID          uuid.UUID
 }
 
+type CathedralSandboxOperation struct {
+	TeamID         uuid.UUID
+	IdempotencyKey string
+	RequestSha256  string
+	OperationKind  string
+	SandboxID      string
+	State          string
+	ResponseJson   pgtype.Text
+	ErrorCode      pgtype.Int4
+	ErrorMessage   pgtype.Text
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type Cluster struct {
 	ID                 uuid.UUID
 	Endpoint           string

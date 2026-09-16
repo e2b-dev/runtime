@@ -26,6 +26,20 @@ type ActiveEnv struct {
 	Source        string
 }
 
+type CathedralSandboxOperation struct {
+	TeamID         uuid.UUID
+	IdempotencyKey string
+	RequestSha256  string
+	OperationKind  string
+	SandboxID      string
+	State          string
+	ResponseJson   *string
+	ErrorCode      *int32
+	ErrorMessage   *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type Cluster struct {
 	ID                 uuid.UUID
 	Endpoint           string

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -63,7 +64,7 @@ const (
 	maxIamTokens = 5
 )
 
-func (a *APIStore) PostSandboxes(c *gin.Context) {
+func (a *APIStore) PostSandboxes(c *gin.Context, params api.PostSandboxesParams) {
 	ctx := c.Request.Context()
 
 	body, err := ginutils.ParseBody[api.PostSandboxesJSONRequestBody](ctx, c)
@@ -129,6 +130,16 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 
 	telemetry.ReportEvent(ctx, "Parsed body")
 
+	cathedralClaim, proceed := a.inspectCathedralCreate(
+		c,
+		teamInfo.Team.ID,
+		params.IdempotencyKey,
+		body,
+	)
+	if !proceed {
+		return
+	}
+
 	identifier, tag, err := id.ParseName(body.TemplateID)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid template reference: %s", err))
@@ -171,19 +182,8 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	c.Set("envID", env.TemplateID)
 	setTemplateNameMetric(ctx, c, a.featureFlags, env.TemplateID, env.Names)
 
-	sandboxID := InstanceIDPrefix + id.Generate()
-
-	c.Set("instanceID", sandboxID)
-
-	sbxlogger.E(&sbxlogger.SandboxMetadata{
-		SandboxID:  sandboxID,
-		TemplateID: env.TemplateID,
-		TeamID:     teamInfo.Team.ID.String(),
-	}).Debug(ctx, "Started creating sandbox")
-
 	alias := firstAlias(env.Aliases)
 	telemetry.SetAttributes(ctx,
-		telemetry.WithSandboxID(sandboxID),
 		telemetry.WithTemplateID(env.TemplateID),
 		telemetry.WithBuildID(build.ID.String()),
 		attribute.String("env.alias", alias),
@@ -243,22 +243,19 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 		return
 	}
 
-	var envdAccessToken *string = nil
-	if body.Secure != nil && *body.Secure == true {
-		accessToken, tokenErr := a.getEnvdAccessToken(build.EnvdVersion, sandboxID)
-		if tokenErr != nil {
-			telemetry.ReportError(ctx, "secure envd access token error", tokenErr.Err, telemetry.WithSandboxID(sandboxID), telemetry.WithBuildID(build.ID.String()))
+	secureRequested := body.Secure != nil && *body.Secure
+	if secureRequested {
+		if tokenErr := validateEnvdAccessTokenVersion(build.EnvdVersion); tokenErr != nil {
+			telemetry.ReportError(ctx, "secure envd access token error", tokenErr.Err, telemetry.WithBuildID(build.ID.String()))
 			a.sendAPIStoreError(c, tokenErr.Code, tokenErr.ClientMsg)
 
 			return
 		}
-
-		envdAccessToken = &accessToken
 	}
 
 	iamCfg, iamErr := buildSandboxIam(body.Iam)
 	if iamErr != nil {
-		telemetry.ReportError(ctx, "invalid iam config", iamErr.Err, telemetry.WithSandboxID(sandboxID))
+		telemetry.ReportError(ctx, "invalid iam config", iamErr.Err)
 		a.sendAPIStoreError(c, iamErr.Code, iamErr.ClientMsg)
 
 		return
@@ -276,7 +273,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	if n := body.Network; n != nil {
 		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamInfo.Team.ID.String()))
 		if err := validateNetworkConfig(ctx, a.featureFlags, teamInfo.Team.ID, sharedUtils.DerefOrDefault(build.EnvdVersion, ""), maxDomains, n); err != nil {
-			telemetry.ReportError(ctx, "invalid network config", err.Err, telemetry.WithSandboxID(sandboxID))
+			telemetry.ReportError(ctx, "invalid network config", err.Err)
 			a.sendAPIStoreError(c, err.Code, err.ClientMsg)
 
 			return
@@ -310,7 +307,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 				Password: sharedUtils.DerefOrDefault(ep.Password, ""),
 			}, nil)
 			if err != nil {
-				telemetry.ReportError(ctx, "invalid egress proxy config", err, telemetry.WithSandboxID(sandboxID))
+				telemetry.ReportError(ctx, "invalid egress proxy config", err)
 				a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))
 
 				return
@@ -323,7 +320,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 
 		// Make sure envd seucre access is enforced when public access is disabled,
 		// This requirement forces users using newer features to secure sandboxes properly.
-		if !sharedUtils.DerefOrDefault(network.Ingress.AllowPublicAccess, types.AllowPublicAccessDefault) && envdAccessToken == nil {
+		if !sharedUtils.DerefOrDefault(network.Ingress.AllowPublicAccess, types.AllowPublicAccessDefault) && !secureRequested {
 			a.sendAPIStoreError(c, http.StatusBadRequest, "You cannot create a sandbox without public access unless you enable secure envd access via 'secure' flag.")
 
 			return
@@ -352,9 +349,39 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 			return
 		}
 
-		telemetry.ReportError(ctx, "failed to convert volume mounts", err, telemetry.WithSandboxID(sandboxID))
+		telemetry.ReportError(ctx, "failed to convert volume mounts", err)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "failed to convert volume mounts")
 
+		return
+	}
+
+	sandboxID, proceed := a.claimCathedralCreate(c, teamInfo.Team.ID, cathedralClaim)
+	if !proceed {
+		return
+	}
+
+	c.Set("instanceID", sandboxID)
+	sbxlogger.E(&sbxlogger.SandboxMetadata{
+		SandboxID:  sandboxID,
+		TemplateID: env.TemplateID,
+		TeamID:     teamInfo.Team.ID.String(),
+	}).Debug(ctx, "Started creating sandbox")
+	telemetry.SetAttributes(ctx, telemetry.WithSandboxID(sandboxID))
+
+	var envdAccessToken *string
+	if secureRequested {
+		accessToken, tokenErr := a.getEnvdAccessToken(build.EnvdVersion, sandboxID)
+		if tokenErr != nil {
+			telemetry.ReportError(ctx, "secure envd access token error", tokenErr.Err, telemetry.WithSandboxID(sandboxID), telemetry.WithBuildID(build.ID.String()))
+			a.sendAPIStoreError(c, tokenErr.Code, tokenErr.ClientMsg)
+			return
+		}
+		envdAccessToken = &accessToken
+	}
+
+	if err := a.markCathedralCreateStarted(ctx, teamInfo.Team.ID, cathedralClaim, sandboxID); err != nil {
+		telemetry.ReportError(ctx, "failed to mark durable create operation started", err, telemetry.WithSandboxID(sandboxID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "failed to start durable create operation")
 		return
 	}
 
@@ -409,7 +436,21 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 		)
 	}
 
-	c.JSON(http.StatusCreated, &sbx)
+	response, err := json.Marshal(sbx)
+	if err != nil {
+		telemetry.ReportError(ctx, "failed to encode sandbox create response", err, telemetry.WithSandboxID(sandboxID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "failed to encode sandbox create response")
+		return
+	}
+	if err := a.completeCathedralCreate(ctx, teamInfo.Team.ID, cathedralClaim, sandboxID, response); err != nil {
+		telemetry.ReportError(ctx, "failed to complete durable create operation", err, telemetry.WithSandboxID(sandboxID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "sandbox creation outcome is pending durable recovery")
+		return
+	}
+	if cathedralClaim != nil {
+		c.Header(cathedralIdempotencyAckHeader, cathedralClaim.key)
+	}
+	c.Data(http.StatusCreated, "application/json", response)
 }
 
 // iamTokenTypeJWTSVID is the only workload token type accepted in this version.
@@ -638,9 +679,9 @@ func getDBVolumesMap(ctx context.Context, sqlcDB *sqlcdb.Client, teamID uuid.UUI
 	return dbVolumesMap, nil
 }
 
-func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (string, *api.APIError) {
+func validateEnvdAccessTokenVersion(envdVersion *string) *api.APIError {
 	if envdVersion == nil {
-		return "", &api.APIError{
+		return &api.APIError{
 			Code:      http.StatusBadRequest,
 			ClientMsg: "You need to re-build template to allow using secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.",
 			Err:       errors.New("envd version is required during envd access token creation"),
@@ -650,18 +691,26 @@ func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (st
 	// check if the envd version is at least 0.2.0
 	ok, err := sharedUtils.IsGTEVersion(*envdVersion, minEnvdVersionForSecureFlag)
 	if err != nil {
-		return "", &api.APIError{
+		return &api.APIError{
 			Code:      http.StatusInternalServerError,
 			ClientMsg: "error during envd version check",
 			Err:       err,
 		}
 	}
 	if !ok {
-		return "", &api.APIError{
+		return &api.APIError{
 			Code:      http.StatusBadRequest,
 			ClientMsg: "Template is not compatible with secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.",
 			Err:       errors.New("envd version is not supported for secure flag"),
 		}
+	}
+
+	return nil
+}
+
+func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (string, *api.APIError) {
+	if apiErr := validateEnvdAccessTokenVersion(envdVersion); apiErr != nil {
+		return "", apiErr
 	}
 
 	key, err := a.accessTokenGenerator.GenerateEnvdAccessToken(sandboxID)

@@ -1,0 +1,143 @@
+package tests
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/queries"
+)
+
+func TestCathedralSandboxOperationConcurrentReservationBindsOneSandbox(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "cathedral-operation-race")
+
+	const contenders = 16
+	const key = "cathedral-create-race"
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var wg sync.WaitGroup
+	winners := make(chan string, contenders)
+	errorsCh := make(chan error, contenders)
+	for i := range contenders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			op, err := db.SqlcClient.ReserveCathedralSandboxOperation(t.Context(), queries.ReserveCathedralSandboxOperationParams{
+				TeamID:         teamID,
+				IdempotencyKey: key,
+				RequestSha256:  digest,
+				SandboxID:      fmt.Sprintf("i-contender-%02d", i),
+			})
+			if err == nil {
+				winners <- op.SandboxID
+				return
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				errorsCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(winners)
+	close(errorsCh)
+
+	for err := range errorsCh {
+		require.NoError(t, err)
+	}
+	var winnerIDs []string
+	for sandboxID := range winners {
+		winnerIDs = append(winnerIDs, sandboxID)
+	}
+	require.Len(t, winnerIDs, 1)
+
+	op, err := db.SqlcClient.GetCathedralSandboxOperation(t.Context(), queries.GetCathedralSandboxOperationParams{
+		TeamID:         teamID,
+		IdempotencyKey: key,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, winnerIDs[0], op.SandboxID)
+	assert.Equal(t, digest, op.RequestSha256)
+	assert.Equal(t, "reserved", op.State)
+}
+
+func TestCathedralSandboxOperationSurvivesAmbiguousCreateAndStoresImmutableResponse(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "cathedral-operation-recovery")
+
+	const key = "cathedral-create-recovery"
+	const digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const sandboxID = "i-provider-accepted"
+	op, err := db.SqlcClient.ReserveCathedralSandboxOperation(t.Context(), queries.ReserveCathedralSandboxOperationParams{
+		TeamID:         teamID,
+		IdempotencyKey: key,
+		RequestSha256:  digest,
+		SandboxID:      sandboxID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, sandboxID, op.SandboxID)
+
+	rows, err := db.SqlcClient.MarkCathedralSandboxOperationCreating(t.Context(), queries.MarkCathedralSandboxOperationCreatingParams{
+		TeamID:         teamID,
+		IdempotencyKey: key,
+		RequestSha256:  digest,
+		SandboxID:      sandboxID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	// This lookup represents process recovery after the provider accepted the
+	// sandbox but the HTTP response was lost. The original binding must survive.
+	recovered, err := db.SqlcClient.GetCathedralSandboxOperation(t.Context(), queries.GetCathedralSandboxOperationParams{
+		TeamID:         teamID,
+		IdempotencyKey: key,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "creating", recovered.State)
+	assert.Equal(t, sandboxID, recovered.SandboxID)
+
+	const response = `{"sandboxID":"i-provider-accepted","templateID":"base","clientID":"","envdVersion":"0.5.0"}`
+	rows, err = db.SqlcClient.CompleteCathedralSandboxOperation(t.Context(), queries.CompleteCathedralSandboxOperationParams{
+		ResponseJson:   response,
+		TeamID:         teamID,
+		IdempotencyKey: key,
+		RequestSha256:  digest,
+		SandboxID:      sandboxID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	rows, err = db.SqlcClient.CompleteCathedralSandboxOperation(t.Context(), queries.CompleteCathedralSandboxOperationParams{
+		ResponseJson:   `{"sandboxID":"different"}`,
+		TeamID:         teamID,
+		IdempotencyKey: key,
+		RequestSha256:  digest,
+		SandboxID:      sandboxID,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, rows, "a terminal replay response must be immutable")
+
+	ready, err := db.SqlcClient.GetCathedralSandboxOperation(t.Context(), queries.GetCathedralSandboxOperationParams{
+		TeamID:         teamID,
+		IdempotencyKey: key,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, ready.ResponseJson)
+	assert.Equal(t, response, *ready.ResponseJson)
+}

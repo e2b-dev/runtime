@@ -147,7 +147,12 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   sandbox→node **routing catalog** (`sandbox:catalog:{id}`) in Redis that client-proxy reads. This
   API-written record is the default routing source; the orchestrator-written
   `sandbox:routing:{id}` is a flag-gated alternative (see "Sandbox routing records"). Persistent
-  entities (templates, builds, snapshots, teams) live in Postgres.
+  entities (templates, builds, snapshots, teams) live in Postgres. Creates carrying an
+  `Idempotency-Key` also bind the authenticated team, canonical request digest, and one generated
+  sandbox ID in `cathedral_sandbox_operations` before orchestrator I/O. A replay can therefore
+  re-enter the existing Redis reservation with the same sandbox ID; a changed body returns 409,
+  and a completed operation returns its immutable stored response. The authenticated
+  `/v1/cathedral/operations/{key}` route is the durable recovery lookup.
 - **Secrets**: `/secrets` is the only public surface for secret management (create, list, get,
   update, delete). The API authenticates the caller with the customer alternatives above, converts
   the authenticated team UUID to the project UUID the backend knows, checks the `customer-secrets`
@@ -360,7 +365,7 @@ planes today.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `tiers` (quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the `team_limits` view reads it in preference to `tiers`), `envs` (templates), `env_builds` (build rows: vcpu, ram_mb, status, versions), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
+| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `tiers` (quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the `team_limits` view reads it in preference to `tiers`), `envs` (templates), `env_builds` (build rows: vcpu, ram_mb, status, versions), `env_aliases`, `snapshots` (paused sandboxes), `cathedral_sandbox_operations` (team-scoped durable create bindings and terminal responses), `team_api_keys`, `volumes`, `clusters` |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by API and dashboard-api |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -382,17 +387,23 @@ are resolved through the `.header` files).
 ### Sandbox creation
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'background':'#FAF9F5','primaryColor':'#E8DCCA','primaryTextColor':'#191919','primaryBorderColor':'#191919','lineColor':'#191919','fontSize':'16px'}}}%%
 sequenceDiagram
     autonumber
     participant C as SDK
     participant API as API
+    participant PG as Durable create ledger
     participant R as Redis
     participant O as Orchestrator (chosen node)
     participant FC as Firecracker
     participant E as envd (in VM)
 
     C->>API: POST /sandboxes {templateID}
-    API->>API: auth team, resolve template alias → ready build (Postgres/cache)
+    API->>API: auth team, validate request, resolve template → ready build
+    opt Idempotency-Key present
+        API->>PG: reserve team + key + request digest + sandboxID
+        PG-->>API: new binding or the existing sandboxID
+    end
     API->>API: best-of-K placement → pick node
     API->>O: gRPC SandboxService.Create(SandboxConfig)
     O->>O: fetch template (local cache / NFS / object storage)
@@ -402,6 +413,9 @@ sequenceDiagram
     E-->>O: 204
     O-->>API: Create OK
     API->>R: store running sandbox + routing catalog entry
+    opt Idempotency-Key present
+        API->>PG: store immutable 201 response, mark ready
+    end
     API-->>C: 201 sandbox {sandboxID, domain}
 ```
 
@@ -409,6 +423,9 @@ The API blocks on the gRPC `Create`, which itself blocks on envd's `/init` — w
 gets a response, the sandbox is fully usable. Fresh creates are internally a *resume* of the
 template's base snapshot (cold boots happen for filesystem-only templates and builds, or when
 an explicit resume requests one — see pause and resume below; template creates never do).
+For a durable create, the binding is reserved only after request validation and before the first
+orchestrator call. If the response is lost, replaying the same key and body uses the same sandbox
+ID; it never interprets an empty inventory list as proof that no sandbox exists.
 
 ### Sandbox traffic
 

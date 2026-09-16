@@ -79,7 +79,7 @@ func TestPostSandboxes_FsOnlyAutoPauseVersionGate(t *testing.T) {
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
-	store.PostSandboxes(ginCtx)
+	store.PostSandboxes(ginCtx, api.PostSandboxesParams{})
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 
