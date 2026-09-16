@@ -133,8 +133,9 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   already-authoritative team/sandbox/execution/template IDs; the definitions are passed to the
   orchestrator in `SandboxConfig.iam`. The API mints no credential and delivers nothing into the
   sandbox; file-based delivery is rejected at admission. Definitions are persisted in the
-  running-sandbox (Redis) and paused-snapshot (Postgres) state so they survive pause/resume and
-  orchestrator re-sync; a fork starts a new workload and does not inherit them.
+  running-sandbox (Redis) and paused-snapshot (Postgres) state so they survive pause/resume,
+  orchestrator re-sync, and fork. A fork inherits the definitions from its source snapshot but
+  gets fresh sandbox and execution IDs, so its workload identity is rederived rather than copied.
 - **Placement**: keeps a live map of orchestrator nodes (discovered via Nomad, Kubernetes, or a
   static list). Chooses a node per sandbox with a **best-of-K** algorithm
   (`internal/orchestrator/placement/`): sample K ready nodes, score by CPU

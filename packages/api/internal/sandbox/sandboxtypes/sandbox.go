@@ -128,7 +128,8 @@ type Sandbox struct {
 	Network                 *types.SandboxNetworkConfig       `json:"network"`
 	VolumeMounts            []*types.SandboxVolumeMountConfig `json:"volumeMounts"`
 	// Iam records the sandbox workload identity configuration. Persisted so it
-	// survives re-sync and is carried into the paused snapshot.
+	// survives re-sync and is carried into the paused snapshot used by resume or
+	// fork.
 	Iam *types.SandboxIam `json:"iam,omitempty"`
 
 	State State `json:"state"`

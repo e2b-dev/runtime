@@ -12,8 +12,8 @@ import (
 )
 
 // TestBuildUpsertSnapshotParams_PreservesIam verifies the sandbox workload
-// identity configuration is written into the paused-sandbox config so it
-// survives a pause/resume cycle through Postgres.
+// identity configuration is written into the paused-sandbox config so the
+// Postgres snapshot supplies it to a later resume or fork.
 func TestBuildUpsertSnapshotParams_PreservesIam(t *testing.T) {
 	t.Parallel()
 

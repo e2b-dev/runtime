@@ -163,9 +163,10 @@ type PausedSandboxConfig struct {
 	AutoPauseFilesystemOnly bool `json:"autoPauseFilesystemOnly,omitempty"`
 
 	// Iam preserves the sandbox workload identity configuration across
-	// pause/resume. A resumed sandbox gets a freshly generated execution ID, so
-	// any workload identity is rederived from the current execution rather than a
-	// stored subject. Pre-existing rows omit the key and decode to nil.
+	// pause/resume and fork. A resume gets a fresh execution ID, and a fork gets
+	// fresh sandbox and execution IDs, so identity is rederived from the current
+	// execution rather than a stored subject. Pre-existing rows omit the key and
+	// decode to nil.
 	Iam *SandboxIam `json:"iam,omitempty"`
 }
 
