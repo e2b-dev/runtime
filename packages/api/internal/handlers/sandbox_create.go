@@ -76,7 +76,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context, params api.PostSandboxesParams)
 		return
 	}
 
-	a.createSandbox(c, body, sandbox.SandboxTimeoutDefault)
+	a.createSandbox(c, body, sandbox.SandboxTimeoutDefault, params.IdempotencyKey)
 }
 
 // PostV2Sandboxes creates a sandbox with secured envd access; the request has no secure field to opt out.
@@ -92,7 +92,7 @@ func (a *APIStore) PostV2Sandboxes(c *gin.Context) {
 		return
 	}
 
-	a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+	a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2, nil)
 }
 
 func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
@@ -116,7 +116,7 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 }
 
 // createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
-func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) {
+func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration, cathedralOperationKey *string) {
 	ctx := c.Request.Context()
 
 	// Get team from context, use TeamContextKey
@@ -133,7 +133,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	cathedralClaim, proceed := a.inspectCathedralCreate(
 		c,
 		teamInfo.Team.ID,
-		params.IdempotencyKey,
+		cathedralOperationKey,
 		body,
 	)
 	if !proceed {
