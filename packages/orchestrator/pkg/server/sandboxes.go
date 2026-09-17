@@ -972,8 +972,14 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 	// guest and can close the sandbox, which would read as a crash.
 	sbx.SetStopReason(sandbox.StopReasonPaused)
 
-	// Stop the old sandbox in background after we're done
-	defer s.stopSandboxAsync(context.WithoutCancel(ctx), sbx)
+	// Legacy pauses keep their asynchronous teardown. Evidence pauses attempt
+	// the stop synchronously below so the response cannot race continued VM use.
+	stopAttempted := false
+	defer func() {
+		if !stopAttempted {
+			s.stopSandboxAsync(context.WithoutCancel(ctx), sbx)
+		}
+	}()
 
 	// Defer the rootfs reflink off the pause critical path when enabled: pause is a
 	// suspend, so nothing reads the diff until a later resume (which waits on the
@@ -1011,6 +1017,12 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 			return nil, status.Errorf(codes.Internal, "error durably uploading paused sandbox '%s': %s", in.GetSandboxId(), uploadErr)
 		}
 		storageDurable = true
+		stopAttempted = true
+		if stopErr := sbx.Stop(ctx); stopErr != nil {
+			telemetry.ReportCriticalError(ctx, "error stopping durably paused sandbox", stopErr, telemetry.WithSandboxID(in.GetSandboxId()))
+
+			return nil, status.Errorf(codes.Internal, "snapshot for sandbox '%s' is durable but its execution did not stop: %s", in.GetSandboxId(), stopErr)
+		}
 	} else {
 		s.uploadSnapshotAsync(ctx, sbx, res)
 	}
@@ -1057,6 +1069,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 	return &orchestrator.SandboxPauseResponse{
 		SchedulingMetadata: res.schedulingMetadata,
 		StorageDurable:     storageDurable,
+		StopCompleted:      in.GetWaitForStorage(),
 	}, nil
 }
 

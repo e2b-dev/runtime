@@ -117,4 +117,19 @@ func TestPauseEvidenceRequestRequiresExactExecutionID(t *testing.T) {
 
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	})
+
+	t.Run("exact", func(t *testing.T) {
+		server := NewSandbox()
+		createTestSandbox(t, server)
+
+		response, err := server.Pause(context.Background(), &orchestrator.SandboxPauseRequest{
+			SandboxId:      testSandboxID,
+			ExecutionId:    testExecutionID,
+			WaitForStorage: true,
+		})
+
+		require.NoError(t, err)
+		require.True(t, response.GetStorageDurable())
+		require.True(t, response.GetStopCompleted())
+	})
 }

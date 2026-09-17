@@ -112,8 +112,12 @@ func (c *pauseStubClient) Pause(_ context.Context, request *orchestrator.Sandbox
 	if c.storageDurable != nil {
 		durable = *c.storageDurable
 	}
+	stopped := request.GetWaitForStorage()
+	if c.stopCompleted != nil {
+		stopped = *c.stopCompleted
+	}
 
-	return &orchestrator.SandboxPauseResponse{StorageDurable: durable}, nil
+	return &orchestrator.SandboxPauseResponse{StorageDurable: durable, StopCompleted: stopped}, nil
 }
 
 // recordingCollector counts InstanceStopped emissions — the stopped-analytics
@@ -660,6 +664,23 @@ func TestRemoveSandboxWithEvidence_PauseWithoutStorageConfirmationStaysUnconfirm
 	require.True(t, ok)
 	durable := false
 	node.SetSandboxClient(&pauseStubClient{storageDurable: &durable})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionPause, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	assert.False(t, evidence.Confirmed)
+	assert.Empty(t, evidence.SnapshotBuildID)
+}
+
+func TestRemoveSandboxWithEvidence_PauseWithoutStopConfirmationStaysUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	completed := false
+	node.SetSandboxClient(&pauseStubClient{stopCompleted: &completed})
 
 	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
 		Action: sandbox.StateActionPause, ExpectExecutionID: f.sbx.ExecutionID,

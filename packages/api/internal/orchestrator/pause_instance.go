@@ -111,6 +111,9 @@ func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.S
 		if waitForStorage && (response == nil || !response.GetStorageDurable()) {
 			return errors.New("pause completed without durable storage confirmation")
 		}
+		if waitForStorage && !response.GetStopCompleted() {
+			return errors.New("pause completed without Firecracker stop confirmation")
+		}
 		telemetry.ReportEvent(ctx, "Paused sandbox")
 
 		return nil

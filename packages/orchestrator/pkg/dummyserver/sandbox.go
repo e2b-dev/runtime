@@ -164,7 +164,10 @@ func (s *SandboxServer) Pause(_ context.Context, req *orchestrator.SandboxPauseR
 	}
 	delete(s.sandboxes, req.GetSandboxId())
 
-	return &orchestrator.SandboxPauseResponse{}, nil
+	return &orchestrator.SandboxPauseResponse{
+		StorageDurable: req.GetWaitForStorage(),
+		StopCompleted:  req.GetWaitForStorage(),
+	}, nil
 }
 
 func (s *SandboxServer) Checkpoint(_ context.Context, _ *orchestrator.SandboxCheckpointRequest) (*orchestrator.SandboxCheckpointResponse, error) {

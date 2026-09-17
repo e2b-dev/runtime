@@ -1398,8 +1398,12 @@ type SandboxPauseResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
 	StorageDurable     bool                   `protobuf:"varint,2,opt,name=storage_durable,json=storageDurable,proto3" json:"storage_durable,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// True only when a wait_for_storage request also waited for the exact
+	// execution's Firecracker stop. Older nodes decode to false so Cathedral
+	// cannot mistake storage upload alone for a completed pause during rollout.
+	StopCompleted bool `protobuf:"varint,3,opt,name=stop_completed,json=stopCompleted,proto3" json:"stop_completed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxPauseResponse) Reset() {
@@ -1442,6 +1446,13 @@ func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
 func (x *SandboxPauseResponse) GetStorageDurable() bool {
 	if x != nil {
 		return x.StorageDurable
+	}
+	return false
+}
+
+func (x *SandboxPauseResponse) GetStopCompleted() bool {
+	if x != nil {
+		return x.StopCompleted
 	}
 	return false
 }
@@ -1871,10 +1882,11 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x15rootfs_dropped_builds\x18\x06 \x01(\rR\x13rootfsDroppedBuilds\x12.\n" +
 	"\x13memfile_build_bytes\x18\a \x03(\x04R\x11memfileBuildBytes\x12,\n" +
 	"\x12rootfs_build_bytes\x18\b \x03(\x04R\x10rootfsBuildBytes\x12/\n" +
-	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\x85\x01\n" +
+	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\xac\x01\n" +
 	"\x14SandboxPauseResponse\x12D\n" +
 	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x12'\n" +
-	"\x0fstorage_durable\x18\x02 \x01(\bR\x0estorageDurable\"\xd6\x01\n" +
+	"\x0fstorage_durable\x18\x02 \x01(\bR\x0estorageDurable\x12%\n" +
+	"\x0estop_completed\x18\x03 \x01(\bR\rstopCompleted\"\xd6\x01\n" +
 	"\x18SandboxCheckpointRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x19\n" +

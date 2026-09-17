@@ -39,8 +39,8 @@ a completed delete remains readable after the live sandbox identity is gone.
 `completed` is written only after an execution-bound node RPC confirms that
 the execution stopped. For pause, the snapshot build must also have reached a
 durable successful state and its build ID is recorded. The Cathedral pause RPC
-waits for remote snapshot storage to complete before returning that evidence;
-the ordinary runtime pause path remains asynchronous. `404` from ordinary
+waits for both remote snapshot storage and Firecracker teardown before returning
+that evidence; the ordinary runtime pause path remains asynchronous. `404` from ordinary
 sandbox GET/list, a registry row disappearing, a legacy delete acknowledgement,
 or joining an in-flight removal is never terminal evidence.
 

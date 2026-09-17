@@ -239,6 +239,10 @@ message SchedulingMetadata {
 message SandboxPauseResponse {
   SchedulingMetadata scheduling_metadata = 1;
   bool storage_durable = 2;
+  // True only when a wait_for_storage request also waited for the exact
+  // execution's Firecracker stop. Older nodes decode to false so Cathedral
+  // cannot mistake storage upload alone for a completed pause during rollout.
+  bool stop_completed = 3;
 }
 
 message SandboxCheckpointRequest {
