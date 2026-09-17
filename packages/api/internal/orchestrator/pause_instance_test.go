@@ -44,6 +44,9 @@ func TestBuildUpsertSnapshotParams_PreservesRemainingLifetime(t *testing.T) {
 		SandboxID: "sbx-1", BaseTemplateID: "tmpl", BuildID: uuid.New(),
 	}
 	node := &nodemanager.Node{ID: "node-1"}
+	legacy := buildUpsertSnapshotParams(sbx, node, false)
+	assert.Nil(t, legacy.Config.RemainingLifetimeSeconds)
+
 	params := buildUpsertSnapshotParams(sbx, node, false, 37*time.Minute)
 
 	require.NotNil(t, params.Config.RemainingLifetimeSeconds)

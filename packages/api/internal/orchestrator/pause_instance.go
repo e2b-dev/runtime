@@ -29,16 +29,20 @@ import (
 type PauseQueueExhaustedError = sandbox.PauseQueueExhaustedError
 
 func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool) error {
-	_, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, 0, false)
+	_, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, nil, false)
 
 	return err
 }
 
-func (o *Orchestrator) pauseSandboxWithEvidence(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool, remainingLifetime time.Duration, waitForStorage bool) (string, error) {
+func (o *Orchestrator) pauseSandboxWithEvidence(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool, remainingLifetime *time.Duration, waitForStorage bool) (string, error) {
 	ctx, span := tracer.Start(ctx, "pause-sandbox")
 	defer span.End()
 
-	result, err := o.throttledUpsertSnapshot(ctx, buildUpsertSnapshotParams(sbx, node, filesystemOnly, remainingLifetime))
+	params := buildUpsertSnapshotParams(sbx, node, filesystemOnly)
+	if remainingLifetime != nil {
+		params = buildUpsertSnapshotParams(sbx, node, filesystemOnly, *remainingLifetime)
+	}
+	result, err := o.throttledUpsertSnapshot(ctx, params)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error inserting snapshot for env", err)
 
@@ -149,15 +153,15 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, file
 		clusterID = &sbx.ClusterID
 	}
 
-	remainingLifetime := time.Duration(0)
+	var remainingLifetimeSeconds *uint64
 	if len(remaining) > 0 {
-		remainingLifetime = remaining[0]
-	}
-	remainingLifetimeSeconds := uint64(0)
-	if remainingLifetime > 0 {
+		value := uint64(0)
 		// Round up so a valid sub-second remainder cannot serialize as the
 		// legacy zero/unset value and accidentally regain the default lifetime.
-		remainingLifetimeSeconds = uint64(math.Ceil(remainingLifetime.Seconds()))
+		if remaining[0] > 0 {
+			value = uint64(math.Ceil(remaining[0].Seconds()))
+		}
+		remainingLifetimeSeconds = &value
 	}
 
 	return queries.UpsertSnapshotParams{
@@ -188,7 +192,7 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, file
 			FilesystemOnly:           filesystemOnly,
 			AutoPauseFilesystemOnly:  sbx.AutoPauseFilesystemOnly,
 			Iam:                      sbx.Iam,
-			RemainingLifetimeSeconds: &remainingLifetimeSeconds,
+			RemainingLifetimeSeconds: remainingLifetimeSeconds,
 		},
 		OriginNodeID: node.ID,
 		Status:       types.BuildStatusSnapshotting,

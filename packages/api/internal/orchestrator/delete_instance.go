@@ -402,7 +402,7 @@ func (o *Orchestrator) removeSandboxFromNodeWithEvidence(
 
 	switch stateAction {
 	case sandbox.StateActionPause:
-		buildID, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, remainingLifetime, waitForCompletion)
+		buildID, err := o.pauseSandboxWithEvidence(ctx, node, sbx, filesystemOnly, restoreOnRefusal, &remainingLifetime, waitForCompletion)
 		if err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
 				killErr := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonBaseTemplateMissing, false)
