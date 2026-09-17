@@ -46,6 +46,7 @@ type pauseStubClient struct {
 	err            error
 	deleteErr      error
 	storageDurable *bool
+	stopCompleted  *bool
 	// gate, when set, holds the answer until closed.
 	gate <-chan struct{}
 	// onPause, when set, runs before the answer — a test's chance to change
@@ -58,13 +59,18 @@ type pauseStubClient struct {
 	lastPause  *orchestrator.SandboxPauseRequest
 }
 
-func (c *pauseStubClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *pauseStubClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*orchestrator.SandboxDeleteResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.deletes++
 	c.lastDelete = request
 
-	return &emptypb.Empty{}, c.deleteErr
+	completed := request.GetWaitForStop()
+	if c.stopCompleted != nil {
+		completed = *c.stopCompleted
+	}
+
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: completed}, c.deleteErr
 }
 
 func (c *pauseStubClient) deleteCount() int {
@@ -590,6 +596,22 @@ func TestRemoveSandbox_LegacyDeleteRemainsAsync(t *testing.T) {
 	req := f.client.lastDeleteRequest()
 	require.Equal(t, f.sbx.ExecutionID, req.GetExecutionId())
 	require.False(t, req.GetWaitForStop())
+}
+
+func TestRemoveSandboxWithEvidence_OlderNodeWithoutStopAcknowledgementStaysUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node := f.o.GetNode(f.sbx.ClusterID, f.sbx.NodeID)
+	require.NotNil(t, node)
+	completed := false
+	node.SetSandboxClient(&pauseStubClient{stopCompleted: &completed})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	require.False(t, evidence.Confirmed)
 }
 
 func TestRemoveSandboxWithEvidence_InFlightRemovalIsNeverTerminalProof(t *testing.T) {

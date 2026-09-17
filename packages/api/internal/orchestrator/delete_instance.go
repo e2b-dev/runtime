@@ -467,7 +467,7 @@ func (o *Orchestrator) killSandboxOnNode(
 	}
 
 	client, ctx := node.GetSandboxDeleteCtx(ctx, sbx.SandboxID, sbx.ExecutionID, false)
-	_, err := client.Sandbox.Delete(ctx, req)
+	response, err := client.Sandbox.Delete(ctx, req)
 	st, ok := status.FromError(err)
 	if ok && st.Code() == codes.NotFound {
 		logger.L().Info(ctx, "Sandbox not found during kill",
@@ -477,6 +477,9 @@ func (o *Orchestrator) killSandboxOnNode(
 		)
 	} else if err != nil {
 		return fmt.Errorf("failed to delete sandbox: %w", err)
+	}
+	if waitForStop && (response == nil || !response.GetStopCompleted()) {
+		return errors.New("delete completed without Firecracker stop confirmation")
 	}
 
 	node.OptimisticRemove(ctx, nodemanager.SandboxResources{

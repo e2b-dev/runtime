@@ -673,7 +673,7 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 	}, nil
 }
 
-func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteRequest) (*emptypb.Empty, error) {
+func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteRequest) (*orchestrator.SandboxDeleteResponse, error) {
 	releaseWork := s.info.TrackWork()
 	defer releaseWork()
 
@@ -750,7 +750,7 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 
 	s.emitSandboxKilled(ctx, sbx, killReason)
 
-	return &emptypb.Empty{}, nil
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: in.GetWaitForStop()}, nil
 }
 
 // runDeleteStop preserves the legacy fire-and-forget delete while allowing an

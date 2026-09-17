@@ -215,7 +215,8 @@ gRPC services on :5008 (`pkg/server/`, `pkg/service/`, `pkg/template/server/`, `
   `Delete` and `Pause` are execution-fenced: callers provide the expected
   execution ID and the node rejects a stale operation rather than act on a
   replacement incarnation. Delete is asynchronous by default; evidence-bound
-  callers can request that it wait for the Firecracker stop result.
+  callers can request that it wait for the Firecracker stop result and require
+  the response's explicit completion acknowledgement (absent from older nodes).
 - **TemplateService** — `TemplateCreate`, `TemplateBuildStatus`, `TemplateBuildDelete` (template-manager role only).
 - **InfoService** — node identity, roles, capacity, health status (used by API node discovery).
 - **ChunkService / VolumeService** — peer-to-peer template chunk serving; persistent volumes.

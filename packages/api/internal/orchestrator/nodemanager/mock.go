@@ -104,8 +104,8 @@ func (n *mockLegacySandboxClient) Create(_ context.Context, _ *orchestrator.Sand
 	return &orchestrator.SandboxCreateResponse{}, nil
 }
 
-func (n *mockLegacySandboxClient) Delete(_ context.Context, _ *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
+func (n *mockLegacySandboxClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*orchestrator.SandboxDeleteResponse, error) {
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: request.GetWaitForStop()}, nil
 }
 
 // mockTemplateClient implements templatemanager.TemplateServiceClient

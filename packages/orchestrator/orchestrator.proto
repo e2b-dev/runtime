@@ -188,6 +188,13 @@ message SandboxDeleteRequest {
   bool wait_for_stop = 4;
 }
 
+message SandboxDeleteResponse {
+  // True only when a wait_for_stop request was honored and the exact
+  // execution's Firecracker stop completed without error. An older server
+  // decodes to false, so evidence callers fail closed during rolling upgrades.
+  bool stop_completed = 1;
+}
+
 message SandboxPauseRequest {
   string sandbox_id = 1;
   string template_id = 2;
@@ -278,7 +285,7 @@ service SandboxService {
   rpc Create(SandboxCreateRequest) returns (SandboxCreateResponse);
   rpc Update(SandboxUpdateRequest) returns (google.protobuf.Empty);
   rpc List(google.protobuf.Empty) returns (SandboxListResponse);
-  rpc Delete(SandboxDeleteRequest) returns (google.protobuf.Empty);
+  rpc Delete(SandboxDeleteRequest) returns (SandboxDeleteResponse);
   rpc Pause(SandboxPauseRequest) returns (SandboxPauseResponse);
   rpc Checkpoint(SandboxCheckpointRequest) returns (SandboxCheckpointResponse);
 }

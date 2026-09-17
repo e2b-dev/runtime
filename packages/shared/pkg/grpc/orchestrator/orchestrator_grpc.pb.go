@@ -35,7 +35,7 @@ type SandboxServiceClient interface {
 	Create(ctx context.Context, in *SandboxCreateRequest, opts ...grpc.CallOption) (*SandboxCreateResponse, error)
 	Update(ctx context.Context, in *SandboxUpdateRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	List(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SandboxListResponse, error)
-	Delete(ctx context.Context, in *SandboxDeleteRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	Delete(ctx context.Context, in *SandboxDeleteRequest, opts ...grpc.CallOption) (*SandboxDeleteResponse, error)
 	Pause(ctx context.Context, in *SandboxPauseRequest, opts ...grpc.CallOption) (*SandboxPauseResponse, error)
 	Checkpoint(ctx context.Context, in *SandboxCheckpointRequest, opts ...grpc.CallOption) (*SandboxCheckpointResponse, error)
 }
@@ -78,9 +78,9 @@ func (c *sandboxServiceClient) List(ctx context.Context, in *emptypb.Empty, opts
 	return out, nil
 }
 
-func (c *sandboxServiceClient) Delete(ctx context.Context, in *SandboxDeleteRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *sandboxServiceClient) Delete(ctx context.Context, in *SandboxDeleteRequest, opts ...grpc.CallOption) (*SandboxDeleteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(SandboxDeleteResponse)
 	err := c.cc.Invoke(ctx, SandboxService_Delete_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ type SandboxServiceServer interface {
 	Create(context.Context, *SandboxCreateRequest) (*SandboxCreateResponse, error)
 	Update(context.Context, *SandboxUpdateRequest) (*emptypb.Empty, error)
 	List(context.Context, *emptypb.Empty) (*SandboxListResponse, error)
-	Delete(context.Context, *SandboxDeleteRequest) (*emptypb.Empty, error)
+	Delete(context.Context, *SandboxDeleteRequest) (*SandboxDeleteResponse, error)
 	Pause(context.Context, *SandboxPauseRequest) (*SandboxPauseResponse, error)
 	Checkpoint(context.Context, *SandboxCheckpointRequest) (*SandboxCheckpointResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
@@ -137,7 +137,7 @@ func (UnimplementedSandboxServiceServer) Update(context.Context, *SandboxUpdateR
 func (UnimplementedSandboxServiceServer) List(context.Context, *emptypb.Empty) (*SandboxListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedSandboxServiceServer) Delete(context.Context, *SandboxDeleteRequest) (*emptypb.Empty, error) {
+func (UnimplementedSandboxServiceServer) Delete(context.Context, *SandboxDeleteRequest) (*SandboxDeleteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
 }
 func (UnimplementedSandboxServiceServer) Pause(context.Context, *SandboxPauseRequest) (*SandboxPauseResponse, error) {
