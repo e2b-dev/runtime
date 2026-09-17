@@ -126,7 +126,7 @@ func (s *SandboxServer) Delete(_ context.Context, req *orchestrator.SandboxDelet
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
-	if req.GetExecutionId() == "" {
+	if req.GetWaitForStop() && req.GetExecutionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
 	}
 
@@ -136,7 +136,7 @@ func (s *SandboxServer) Delete(_ context.Context, req *orchestrator.SandboxDelet
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
 	}
-	if sbx.GetExecutionId() != req.GetExecutionId() {
+	if req.GetExecutionId() != "" && sbx.GetExecutionId() != req.GetExecutionId() {
 		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
 	}
 	delete(s.sandboxes, req.GetSandboxId())
@@ -148,7 +148,7 @@ func (s *SandboxServer) Pause(_ context.Context, req *orchestrator.SandboxPauseR
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
-	if req.GetExecutionId() == "" {
+	if req.GetWaitForStorage() && req.GetExecutionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
 	}
 
@@ -159,7 +159,7 @@ func (s *SandboxServer) Pause(_ context.Context, req *orchestrator.SandboxPauseR
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
 	}
-	if sbx.GetExecutionId() != req.GetExecutionId() {
+	if req.GetExecutionId() != "" && sbx.GetExecutionId() != req.GetExecutionId() {
 		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
 	}
 	delete(s.sandboxes, req.GetSandboxId())

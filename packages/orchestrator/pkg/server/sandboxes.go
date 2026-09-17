@@ -686,7 +686,7 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 	childSpan.SetAttributes(
 		telemetry.WithSandboxID(in.GetSandboxId()),
 	)
-	if in.GetExecutionId() == "" {
+	if in.GetWaitForStop() && in.GetExecutionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
 	}
 
@@ -696,7 +696,7 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 
 		return nil, status.Errorf(codes.NotFound, "sandbox '%s' not found", in.GetSandboxId())
 	}
-	if sbx.Runtime.ExecutionID != in.GetExecutionId() {
+	if in.GetExecutionId() != "" && sbx.Runtime.ExecutionID != in.GetExecutionId() {
 		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
@@ -874,7 +874,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		telemetry.WithTemplateID(in.GetTemplateId()),
 		telemetry.WithBuildID(in.GetBuildId()),
 	)
-	if in.GetExecutionId() == "" {
+	if in.GetWaitForStorage() && in.GetExecutionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
 	}
 
@@ -884,7 +884,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 		return nil, status.Error(codes.NotFound, "sandbox not found")
 	}
-	if sbx.Runtime.ExecutionID != in.GetExecutionId() {
+	if in.GetExecutionId() != "" && sbx.Runtime.ExecutionID != in.GetExecutionId() {
 		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
