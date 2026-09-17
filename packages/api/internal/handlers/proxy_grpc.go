@@ -210,6 +210,10 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 	minAutoResumeTimeout := time.Duration(s.api.featureFlags.IntFlag(ctx, featureflags.MinAutoResumeTimeoutSeconds)) * time.Second
 
 	timeout := calculateAutoResumeTimeout(autoResume, minAutoResumeTimeout, team)
+	timeout, exhausted := clampToFrozenSnapshotLifetime(timeout, snap.Snapshot)
+	if exhausted {
+		return nil, status.Error(codes.FailedPrecondition, "sandbox lifetime exhausted")
+	}
 
 	var envdAccessToken *string
 	if snap.Snapshot.EnvSecure {

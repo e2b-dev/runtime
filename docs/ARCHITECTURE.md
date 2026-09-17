@@ -147,7 +147,17 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   sandbox→node **routing catalog** (`sandbox:catalog:{id}`) in Redis that client-proxy reads. This
   API-written record is the default routing source; the orchestrator-written
   `sandbox:routing:{id}` is a flag-gated alternative (see "Sandbox routing records"). Persistent
-  entities (templates, builds, snapshots, teams) live in Postgres.
+  entities (templates, builds, snapshots, teams) live in Postgres. Creates carrying an
+  `Idempotency-Key` also bind the authenticated team, canonical request digest, and one generated
+  sandbox ID in `cathedral_sandbox_operations` before orchestrator I/O. A replay can therefore
+  re-enter the existing Redis reservation with the same sandbox ID; a changed body returns 409,
+  and a completed operation returns its immutable stored response. The authenticated
+  `/v1/cathedral/operations/{key}` route is the durable recovery lookup.
+  Execution-bound Cathedral pause/delete operations use Postgres dispatch leases and fenced
+  attempts. Recovery retries only when the same execution is provably still running; otherwise it
+  records an honest failed or unknown outcome rather than replaying a possibly committed action.
+  Frozen pause lifetime is presence-aware, caps connect and traffic auto-resume, and preserves
+  explicit zero as exhausted.
 - **Secrets**: `/secrets` is the only public surface for secret management (create, list, get,
   update, delete). The API authenticates the caller with the customer alternatives above, converts
   the authenticated team UUID to the project UUID the backend knows, checks the `customer-secrets`
@@ -202,6 +212,11 @@ under `pkg/`, almost all Linux-only.
 gRPC services on :5008 (`pkg/server/`, `pkg/service/`, `pkg/template/server/`, `pkg/volumes/`):
 
 - **SandboxService** — `Create`, `Update`, `List`, `Delete`, `Pause`, `Checkpoint`.
+  `Delete` and `Pause` are execution-fenced: callers provide the expected
+  execution ID and the node rejects a stale operation rather than act on a
+  replacement incarnation. Delete is asynchronous by default; evidence-bound
+  callers can request that it wait for the Firecracker stop result and require
+  the response's explicit completion acknowledgement (absent from older nodes).
 - **TemplateService** — `TemplateCreate`, `TemplateBuildStatus`, `TemplateBuildDelete` (template-manager role only).
 - **InfoService** — node identity, roles, capacity, health status (used by API node discovery).
 - **ChunkService / VolumeService** — peer-to-peer template chunk serving; persistent volumes.
@@ -360,7 +375,7 @@ planes today.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `tiers` (quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the `team_limits` view reads it in preference to `tiers`), `envs` (templates), `env_builds` (build rows: vcpu, ram_mb, status, versions), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
+| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `tiers` (quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the `team_limits` view reads it in preference to `tiers`), `envs` (templates), `env_builds` (build rows: vcpu, ram_mb, status, versions), `env_aliases`, `snapshots` (paused sandboxes), `cathedral_sandbox_operations` (team-scoped durable create bindings and terminal responses), `team_api_keys`, `volumes`, `clusters` |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by API and dashboard-api |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -382,17 +397,23 @@ are resolved through the `.header` files).
 ### Sandbox creation
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'background':'#FAF9F5','primaryColor':'#E8DCCA','primaryTextColor':'#191919','primaryBorderColor':'#191919','lineColor':'#191919','fontSize':'16px'}}}%%
 sequenceDiagram
     autonumber
     participant C as SDK
     participant API as API
+    participant PG as Durable create ledger
     participant R as Redis
     participant O as Orchestrator (chosen node)
     participant FC as Firecracker
     participant E as envd (in VM)
 
     C->>API: POST /sandboxes {templateID}
-    API->>API: auth team, resolve template alias → ready build (Postgres/cache)
+    API->>API: auth team, validate request, resolve template → ready build
+    opt Idempotency-Key present
+        API->>PG: reserve team + key + request digest + sandboxID
+        PG-->>API: new binding or the existing sandboxID
+    end
     API->>API: best-of-K placement → pick node
     API->>O: gRPC SandboxService.Create(SandboxConfig)
     O->>O: fetch template (local cache / NFS / object storage)
@@ -402,6 +423,9 @@ sequenceDiagram
     E-->>O: 204
     O-->>API: Create OK
     API->>R: store running sandbox + routing catalog entry
+    opt Idempotency-Key present
+        API->>PG: store immutable 201 response, mark ready
+    end
     API-->>C: 201 sandbox {sandboxID, domain}
 ```
 
@@ -409,6 +433,9 @@ The API blocks on the gRPC `Create`, which itself blocks on envd's `/init` — w
 gets a response, the sandbox is fully usable. Fresh creates are internally a *resume* of the
 template's base snapshot (cold boots happen for filesystem-only templates and builds, or when
 an explicit resume requests one — see pause and resume below; template creates never do).
+For a durable create, the binding is reserved only after request validation and before the first
+orchestrator call. If the response is lost, replaying the same key and body uses the same sandbox
+ID; it never interprets an empty inventory list as proof that no sandbox exists.
 
 ### Sandbox traffic
 
@@ -536,6 +563,18 @@ sequenceDiagram
 - **Resume**: same path as creation, but placement prefers the **origin node** — if the snapshot
   is still in its local cache, resume avoids any object-storage reads. `Checkpoint` is a
   pause+resume in place used to persist state while keeping the sandbox running.
+- **Cathedral lifecycle evidence**: the Cathedral-only lifecycle endpoint binds the authenticated
+  team, sandbox ID, execution ID, request digest, operation kind, and idempotency key in Postgres
+  before dispatch. Completion is derived from the execution-bound node RPC, never from a missing
+  Redis/API listing. Delete completion waits for the exact execution's Firecracker stop to return
+  successfully; legacy delete callers retain the asynchronous node RPC mode. Final running-sandbox
+  removal in Redis compares the expected execution atomically, so delayed cleanup for one execution
+  cannot delete a replacement installed by a lockless resume. An already-running transition or
+  transport ambiguity remains `unknown` and is
+  recovered by operation key without redispatch. Pause completion additionally records the
+  successful snapshot build; delete records snapshot/storage cleanup separately. The remaining
+  lifetime is frozen into the paused snapshot and reused by a resume that does not explicitly
+  override timeout. See `docs/cathedral-lifecycle-operations.md` for the consumer contract.
 - **Explicit filesystem-only resume**: `memory: false` on resume/connect demands a cold boot
   (`RebootSandbox`) even when the snapshot includes memory, as a self-serve rescue when the
   restored memory state is unusable. Gated per team by the `fs-only-resume-api` flag; when off

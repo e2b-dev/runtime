@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
@@ -33,4 +35,28 @@ func TestBuildUpsertSnapshotParams_PreservesIam(t *testing.T) {
 
 		assert.Equal(t, in, params.Config.Iam)
 	}
+}
+
+func TestBuildUpsertSnapshotParams_PreservesRemainingLifetime(t *testing.T) {
+	t.Parallel()
+
+	sbx := sandbox.Sandbox{
+		SandboxID: "sbx-1", BaseTemplateID: "tmpl", BuildID: uuid.New(),
+	}
+	node := &nodemanager.Node{ID: "node-1"}
+	legacy := buildUpsertSnapshotParams(sbx, node, false)
+	assert.Nil(t, legacy.Config.RemainingLifetimeSeconds)
+
+	params := buildUpsertSnapshotParams(sbx, node, false, 37*time.Minute)
+
+	require.NotNil(t, params.Config.RemainingLifetimeSeconds)
+	assert.Equal(t, uint64((37 * time.Minute).Seconds()), *params.Config.RemainingLifetimeSeconds)
+
+	subsecond := buildUpsertSnapshotParams(sbx, node, false, 500*time.Millisecond)
+	require.NotNil(t, subsecond.Config.RemainingLifetimeSeconds)
+	assert.Equal(t, uint64(1), *subsecond.Config.RemainingLifetimeSeconds)
+
+	exhausted := buildUpsertSnapshotParams(sbx, node, false, 0)
+	require.NotNil(t, exhausted.Config.RemainingLifetimeSeconds)
+	assert.Zero(t, *exhausted.Config.RemainingLifetimeSeconds)
 }

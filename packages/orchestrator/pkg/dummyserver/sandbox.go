@@ -122,29 +122,52 @@ func (s *SandboxServer) List(_ context.Context, _ *emptypb.Empty) (*orchestrator
 	return &orchestrator.SandboxListResponse{Sandboxes: out}, nil
 }
 
-func (s *SandboxServer) Delete(_ context.Context, req *orchestrator.SandboxDeleteRequest) (*emptypb.Empty, error) {
+func (s *SandboxServer) Delete(_ context.Context, req *orchestrator.SandboxDeleteRequest) (*orchestrator.SandboxDeleteResponse, error) {
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
+	if req.GetWaitForStop() && req.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	sbx, ok := s.sandboxes[req.GetSandboxId()]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
+	}
+	if req.GetExecutionId() != "" && sbx.GetExecutionId() != req.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
+	}
 	delete(s.sandboxes, req.GetSandboxId())
-	s.mu.Unlock()
 
-	return &emptypb.Empty{}, nil
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: req.GetWaitForStop()}, nil
 }
 
 func (s *SandboxServer) Pause(_ context.Context, req *orchestrator.SandboxPauseRequest) (*orchestrator.SandboxPauseResponse, error) {
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
 	}
+	if req.GetWaitForStorage() && req.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	// Pause is treated as a delete in the dummy: no real snapshotting happens.
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	sbx, ok := s.sandboxes[req.GetSandboxId()]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
+	}
+	if req.GetExecutionId() != "" && sbx.GetExecutionId() != req.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox %q execution changed", req.GetSandboxId())
+	}
 	delete(s.sandboxes, req.GetSandboxId())
-	s.mu.Unlock()
 
-	return &orchestrator.SandboxPauseResponse{}, nil
+	return &orchestrator.SandboxPauseResponse{
+		StorageDurable: req.GetWaitForStorage(),
+		StopCompleted:  req.GetWaitForStorage(),
+	}, nil
 }
 
 func (s *SandboxServer) Checkpoint(_ context.Context, _ *orchestrator.SandboxCheckpointRequest) (*orchestrator.SandboxCheckpointResponse, error) {

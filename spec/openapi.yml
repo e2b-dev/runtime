@@ -136,6 +136,15 @@ components:
         description: >
           Identifier of the secret (sec_ prefixed), or its canonical
           lower-case name
+    cathedralOperationKey:
+      name: idempotencyKey
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: Cathedral durable create operation key
 
     webhookID:
       name: webhookID
@@ -785,6 +794,135 @@ components:
           type: string
           nullable: true
           description: Base domain where the sandbox traffic is accessible
+
+    CathedralCapabilities:
+      type: object
+      required:
+        - schema
+        - durable_create_idempotency
+        - operation_lookup
+        - safe_fork
+        - durable_lifecycle_operations
+        - safe_delete
+        - safe_pause
+        - preserves_remaining_lifetime
+        - execution_identity
+      properties:
+        schema:
+          type: integer
+          enum: [1]
+        durable_create_idempotency:
+          type: boolean
+        operation_lookup:
+          type: boolean
+        safe_fork:
+          type: boolean
+        durable_lifecycle_operations:
+          type: boolean
+        safe_delete:
+          type: boolean
+        safe_pause:
+          type: boolean
+        preserves_remaining_lifetime:
+          type: boolean
+        execution_identity:
+          type: boolean
+
+    CathedralSandboxOperation:
+      type: object
+      required:
+        - idempotency_key
+        - sandbox_id
+        - state
+      properties:
+        idempotency_key:
+          type: string
+        sandbox_id:
+          type: string
+        state:
+          type: string
+          enum: [reserved, creating, ready, failed]
+        sandbox:
+          $ref: "#/components/schemas/Sandbox"
+        error_code:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+
+    CathedralLifecycleOperationRequest:
+      type: object
+      required: [operation, execution_id]
+      properties:
+        operation:
+          type: string
+          enum: [delete, pause]
+        execution_id:
+          type: string
+          minLength: 1
+        filesystem_only:
+          type: boolean
+          default: false
+
+    CathedralSandboxIdentity:
+      type: object
+      required: [sandbox_id, execution_id, state]
+      properties:
+        sandbox_id:
+          type: string
+        execution_id:
+          type: string
+        state:
+          type: string
+          enum: [running, pausing, killing, snapshotting]
+
+    CathedralLifecycleOperation:
+      type: object
+      required:
+        - operation_key
+        - operation
+        - sandbox_id
+        - execution_id
+        - state
+        - cleanup_state
+      properties:
+        operation_key:
+          type: string
+        operation:
+          type: string
+          enum: [delete, pause]
+        sandbox_id:
+          type: string
+        execution_id:
+          type: string
+        state:
+          type: string
+          enum: [reserved, dispatching, completed, failed, unknown]
+        cleanup_state:
+          type: string
+          enum: [not_required, pending, completed, failed]
+        execution_removed_at:
+          type: string
+          format: date-time
+          nullable: true
+        snapshot_build_id:
+          type: string
+          nullable: true
+        snapshot_completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        remaining_lifetime_ms:
+          type: integer
+          format: int64
+          nullable: true
+        error_code:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
 
     SandboxDetail:
       required:
@@ -2820,6 +2958,177 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /v1/cathedral/capabilities:
+    get:
+      summary: Get the Cathedral durability contract supported by this control plane
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      responses:
+        "200":
+          description: Cathedral durability capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralCapabilities"
+        "401":
+          $ref: "#/components/responses/401"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /v1/cathedral/operations/{idempotencyKey}:
+    get:
+      summary: Recover a Cathedral create operation by its durable idempotency key
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/cathedralOperationKey"
+      responses:
+        "200":
+          description: Durable Cathedral create operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralSandboxOperation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations:
+    post:
+      summary: Start an execution-bound Cathedral lifecycle operation
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CathedralLifecycleOperationRequest"
+      responses:
+        "200":
+          description: Existing durable operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralLifecycleOperation"
+        "201":
+          description: Lifecycle operation completed with terminal evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralLifecycleOperation"
+        "202":
+          description: Operation is durable but its terminal outcome is not yet proven
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralLifecycleOperation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /v1/cathedral/sandboxes/{sandboxID}/identity:
+    get:
+      summary: Read the authenticated current Cathedral sandbox execution identity
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      responses:
+        "200":
+          description: Current sandbox execution identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralSandboxIdentity"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /v1/cathedral/lifecycle-operations/{idempotencyKey}:
+    get:
+      summary: Recover a Cathedral lifecycle operation by durable key
+      tags: [sandboxes]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/cathedralOperationKey"
+      responses:
+        "200":
+          description: Durable lifecycle operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CathedralLifecycleOperation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
   /sandboxes:
     get:
       summary: List running sandboxes
@@ -2872,6 +3181,18 @@ paths:
           AdminTeamAuth: []
         - AdminJWTAuth: []
           AdminTeamAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            Durable Cathedral create operation key. Replays with the same
+            authenticated team and request body return the same sandbox; reuse
+            with a different request body is rejected.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
       requestBody:
         required: true
         content:
@@ -2881,6 +3202,11 @@ paths:
       responses:
         "201":
           description: The sandbox was created successfully
+          headers:
+            X-E2B-Idempotency-Key:
+              description: Echoes the accepted durable create operation key
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2889,6 +3215,8 @@ paths:
           $ref: "#/components/responses/401"
         "400":
           $ref: "#/components/responses/400"
+        "409":
+          $ref: "#/components/responses/409"
         "429":
           $ref: "#/components/responses/429"
         "500":

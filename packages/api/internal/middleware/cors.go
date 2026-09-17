@@ -18,6 +18,7 @@ var allowedRequestHeaders = []string{
 	// API Key header
 	"Authorization",
 	"X-API-Key",
+	"Idempotency-Key",
 	auth.HeaderTeamID,
 	// Custom headers sent from SDK
 	"browser",
@@ -42,6 +43,8 @@ var exposedResponseHeaders = []string{
 	"X-Next-Token",
 	// Running sandbox total, set by GET /v2/sandboxes
 	"X-Total-Running",
+	// Durable Cathedral sandbox create acknowledgement
+	"X-E2B-Idempotency-Key",
 	// Rate limiting
 	"RateLimit-Limit",
 	"RateLimit-Remaining",

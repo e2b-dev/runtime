@@ -125,6 +125,28 @@ func TestPausedSandboxConfig_LegacyRowDefaultsToMemoryAutoPause(t *testing.T) {
 	assert.True(t, decoded.FilesystemOnly, "unrelated fields must still decode")
 }
 
+func TestPausedSandboxConfigDistinguishesExhaustedFromLegacyLifetime(t *testing.T) {
+	t.Parallel()
+
+	zero := uint64(0)
+	v, err := PausedSandboxConfig{
+		Version: PausedSandboxConfigVersion, RemainingLifetimeSeconds: &zero,
+	}.Value()
+	require.NoError(t, err)
+	raw, ok := v.(string)
+	require.True(t, ok)
+	assert.Contains(t, raw, `"remainingLifetimeSeconds":0`)
+
+	var exhausted PausedSandboxConfig
+	require.NoError(t, json.Unmarshal([]byte(raw), &exhausted))
+	require.NotNil(t, exhausted.RemainingLifetimeSeconds)
+	assert.Zero(t, *exhausted.RemainingLifetimeSeconds)
+
+	var legacy PausedSandboxConfig
+	require.NoError(t, json.Unmarshal([]byte(`{"version":"v1"}`), &legacy))
+	assert.Nil(t, legacy.RemainingLifetimeSeconds)
+}
+
 func TestPausedSandboxConfigHTTPSPortsRoundTrip(t *testing.T) {
 	t.Parallel()
 

@@ -43,23 +43,34 @@ import (
 type pauseStubClient struct {
 	orchestrator.SandboxServiceClient
 
-	err error
+	err            error
+	deleteErr      error
+	storageDurable *bool
+	stopCompleted  *bool
 	// gate, when set, holds the answer until closed.
 	gate <-chan struct{}
 	// onPause, when set, runs before the answer — a test's chance to change
 	// the record underneath the restore.
 	onPause func()
 
-	mu      sync.Mutex
-	deletes int
+	mu         sync.Mutex
+	deletes    int
+	lastDelete *orchestrator.SandboxDeleteRequest
+	lastPause  *orchestrator.SandboxPauseRequest
 }
 
-func (c *pauseStubClient) Delete(context.Context, *orchestrator.SandboxDeleteRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *pauseStubClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*orchestrator.SandboxDeleteResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.deletes++
+	c.lastDelete = request
 
-	return &emptypb.Empty{}, nil
+	completed := request.GetWaitForStop()
+	if c.stopCompleted != nil {
+		completed = *c.stopCompleted
+	}
+
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: completed}, c.deleteErr
 }
 
 func (c *pauseStubClient) deleteCount() int {
@@ -69,7 +80,24 @@ func (c *pauseStubClient) deleteCount() int {
 	return c.deletes
 }
 
-func (c *pauseStubClient) Pause(_ context.Context, _ *orchestrator.SandboxPauseRequest, _ ...grpc.CallOption) (*orchestrator.SandboxPauseResponse, error) {
+func (c *pauseStubClient) lastDeleteRequest() *orchestrator.SandboxDeleteRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.lastDelete
+}
+
+func (c *pauseStubClient) lastPauseRequest() *orchestrator.SandboxPauseRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.lastPause
+}
+
+func (c *pauseStubClient) Pause(_ context.Context, request *orchestrator.SandboxPauseRequest, _ ...grpc.CallOption) (*orchestrator.SandboxPauseResponse, error) {
+	c.mu.Lock()
+	c.lastPause = request
+	c.mu.Unlock()
 	if c.gate != nil {
 		<-c.gate
 	}
@@ -80,7 +108,16 @@ func (c *pauseStubClient) Pause(_ context.Context, _ *orchestrator.SandboxPauseR
 		return nil, c.err
 	}
 
-	return &orchestrator.SandboxPauseResponse{}, nil
+	durable := request.GetWaitForStorage()
+	if c.storageDurable != nil {
+		durable = *c.storageDurable
+	}
+	stopped := request.GetWaitForStorage()
+	if c.stopCompleted != nil {
+		stopped = *c.stopCompleted
+	}
+
+	return &orchestrator.SandboxPauseResponse{StorageDurable: durable, StopCompleted: stopped}, nil
 }
 
 // recordingCollector counts InstanceStopped emissions — the stopped-analytics
@@ -112,6 +149,7 @@ type refusalFixture struct {
 	recorder *recordingCollector
 	sbx      sandbox.Sandbox
 	reader   *sdkmetric.ManualReader
+	client   *pauseStubClient
 }
 
 // restoreOutcomes returns the pause-refusal-restore counter by (outcome, caller).
@@ -182,7 +220,8 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
 	node.ClusterID = clusterID
-	node.SetSandboxClient(&pauseStubClient{err: pauseErr})
+	client := &pauseStubClient{err: pauseErr}
+	node.SetSandboxClient(client)
 
 	recorder := &recordingCollector{}
 	reader := sdkmetric.NewManualReader()
@@ -228,7 +267,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 	}
 	require.NoError(t, o.sandboxStore.Add(t.Context(), sbx, nil))
 
-	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader}
+	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader, client: client}
 }
 
 func (f refusalFixture) removePause(t *testing.T) error {
@@ -418,7 +457,7 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 
 	stub := &pauseStubClient{err: refusedPauseErr()}
 	stub.onPause = func() {
-		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
 	}
 	node.SetSandboxClient(stub)
@@ -518,6 +557,137 @@ func TestRemoveSandbox_SuccessRemovesAndEmits(t *testing.T) {
 
 	require.Eventually(t, func() bool { return f.recorder.stoppedCount() == 1 },
 		3*time.Second, 10*time.Millisecond)
+}
+
+func TestRemoveSandboxWithEvidence_ConfirmedPauseCarriesSnapshotAndRemainingLifetime(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionPause, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.NoError(t, err)
+	assert.True(t, evidence.Confirmed)
+	assert.False(t, evidence.AlreadyInProgress)
+	assert.Equal(t, f.sbx.ExecutionID, evidence.ExecutionID)
+	assert.NotEmpty(t, evidence.SnapshotBuildID)
+	assert.InDelta(t, time.Hour.Seconds(), evidence.RemainingLifetime.Seconds(), 5)
+	require.Equal(t, f.sbx.ExecutionID, f.client.lastPauseRequest().GetExecutionId())
+	require.True(t, f.client.lastPauseRequest().GetWaitForStorage())
+}
+
+func TestRemoveSandboxWithEvidence_DeleteWaitsForExecutionStop(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.NoError(t, err)
+	require.True(t, evidence.Confirmed)
+	req := f.client.lastDeleteRequest()
+	require.Equal(t, f.sbx.ExecutionID, req.GetExecutionId())
+	require.True(t, req.GetWaitForStop())
+}
+
+func TestRemoveSandbox_LegacyDeleteRemainsAsync(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	require.NoError(t, f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill,
+	}))
+	req := f.client.lastDeleteRequest()
+	require.Equal(t, f.sbx.ExecutionID, req.GetExecutionId())
+	require.False(t, req.GetWaitForStop())
+}
+
+func TestRemoveSandboxWithEvidence_OlderNodeWithoutStopAcknowledgementStaysUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node := f.o.GetNode(f.sbx.ClusterID, f.sbx.NodeID)
+	require.NotNil(t, node)
+	completed := false
+	node.SetSandboxClient(&pauseStubClient{stopCompleted: &completed})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	require.False(t, evidence.Confirmed)
+}
+
+func TestRemoveSandboxWithEvidence_InFlightRemovalIsNeverTerminalProof(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	_, _, finish, err := f.o.sandboxStore.StartRemoving(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.NoError(t, err)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		finish(context.WithoutCancel(t.Context()), nil)
+	}()
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.NoError(t, err)
+	assert.False(t, evidence.Confirmed)
+	assert.True(t, evidence.AlreadyInProgress)
+}
+
+func TestRemoveSandboxWithEvidence_NodeFailureAndMissingRegistryStayUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	node.SetSandboxClient(&pauseStubClient{deleteErr: errors.New("node transport lost")})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionKill, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	assert.False(t, evidence.Confirmed)
+	_, getErr := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.ErrorIs(t, getErr, sandbox.ErrNotFound, "legacy registry absence is not promoted to completion evidence")
+}
+
+func TestRemoveSandboxWithEvidence_PauseWithoutStorageConfirmationStaysUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	durable := false
+	node.SetSandboxClient(&pauseStubClient{storageDurable: &durable})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionPause, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	assert.False(t, evidence.Confirmed)
+	assert.Empty(t, evidence.SnapshotBuildID)
+}
+
+func TestRemoveSandboxWithEvidence_PauseWithoutStopConfirmationStaysUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	completed := false
+	node.SetSandboxClient(&pauseStubClient{stopCompleted: &completed})
+
+	evidence, err := f.o.RemoveSandboxWithEvidence(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{
+		Action: sandbox.StateActionPause, ExpectExecutionID: f.sbx.ExecutionID,
+	})
+	require.ErrorIs(t, err, ErrSandboxOperationFailed)
+	assert.False(t, evidence.Confirmed)
+	assert.Empty(t, evidence.SnapshotBuildID)
 }
 
 // A fatal (non-retryable) pause failure removes and emits exactly as before.

@@ -75,7 +75,7 @@ func TestRemoveSandbox_RefusalRouteRestorePreservesSuccessor(t *testing.T) {
 				require.Equal(t, f.sbx.ExecutionID, stored.ExecutionID)
 
 				if tc.removeOnly {
-					f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+					f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 
 					return
 				}

@@ -39,6 +39,156 @@ func (e AWSRegistryType) Valid() bool {
 	}
 }
 
+// Defines values for CathedralCapabilitiesSchema.
+const (
+	N1 CathedralCapabilitiesSchema = 1
+)
+
+// Valid indicates whether the value is a known member of the CathedralCapabilitiesSchema enum.
+func (e CathedralCapabilitiesSchema) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralLifecycleOperationCleanupState.
+const (
+	CathedralLifecycleOperationCleanupStateCompleted   CathedralLifecycleOperationCleanupState = "completed"
+	CathedralLifecycleOperationCleanupStateFailed      CathedralLifecycleOperationCleanupState = "failed"
+	CathedralLifecycleOperationCleanupStateNotRequired CathedralLifecycleOperationCleanupState = "not_required"
+	CathedralLifecycleOperationCleanupStatePending     CathedralLifecycleOperationCleanupState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the CathedralLifecycleOperationCleanupState enum.
+func (e CathedralLifecycleOperationCleanupState) Valid() bool {
+	switch e {
+	case CathedralLifecycleOperationCleanupStateCompleted:
+		return true
+	case CathedralLifecycleOperationCleanupStateFailed:
+		return true
+	case CathedralLifecycleOperationCleanupStateNotRequired:
+		return true
+	case CathedralLifecycleOperationCleanupStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralLifecycleOperationOperation.
+const (
+	CathedralLifecycleOperationOperationDelete CathedralLifecycleOperationOperation = "delete"
+	CathedralLifecycleOperationOperationPause  CathedralLifecycleOperationOperation = "pause"
+)
+
+// Valid indicates whether the value is a known member of the CathedralLifecycleOperationOperation enum.
+func (e CathedralLifecycleOperationOperation) Valid() bool {
+	switch e {
+	case CathedralLifecycleOperationOperationDelete:
+		return true
+	case CathedralLifecycleOperationOperationPause:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralLifecycleOperationState.
+const (
+	CathedralLifecycleOperationStateCompleted   CathedralLifecycleOperationState = "completed"
+	CathedralLifecycleOperationStateDispatching CathedralLifecycleOperationState = "dispatching"
+	CathedralLifecycleOperationStateFailed      CathedralLifecycleOperationState = "failed"
+	CathedralLifecycleOperationStateReserved    CathedralLifecycleOperationState = "reserved"
+	CathedralLifecycleOperationStateUnknown     CathedralLifecycleOperationState = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the CathedralLifecycleOperationState enum.
+func (e CathedralLifecycleOperationState) Valid() bool {
+	switch e {
+	case CathedralLifecycleOperationStateCompleted:
+		return true
+	case CathedralLifecycleOperationStateDispatching:
+		return true
+	case CathedralLifecycleOperationStateFailed:
+		return true
+	case CathedralLifecycleOperationStateReserved:
+		return true
+	case CathedralLifecycleOperationStateUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralLifecycleOperationRequestOperation.
+const (
+	CathedralLifecycleOperationRequestOperationDelete CathedralLifecycleOperationRequestOperation = "delete"
+	CathedralLifecycleOperationRequestOperationPause  CathedralLifecycleOperationRequestOperation = "pause"
+)
+
+// Valid indicates whether the value is a known member of the CathedralLifecycleOperationRequestOperation enum.
+func (e CathedralLifecycleOperationRequestOperation) Valid() bool {
+	switch e {
+	case CathedralLifecycleOperationRequestOperationDelete:
+		return true
+	case CathedralLifecycleOperationRequestOperationPause:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralSandboxIdentityState.
+const (
+	CathedralSandboxIdentityStateKilling      CathedralSandboxIdentityState = "killing"
+	CathedralSandboxIdentityStatePausing      CathedralSandboxIdentityState = "pausing"
+	CathedralSandboxIdentityStateRunning      CathedralSandboxIdentityState = "running"
+	CathedralSandboxIdentityStateSnapshotting CathedralSandboxIdentityState = "snapshotting"
+)
+
+// Valid indicates whether the value is a known member of the CathedralSandboxIdentityState enum.
+func (e CathedralSandboxIdentityState) Valid() bool {
+	switch e {
+	case CathedralSandboxIdentityStateKilling:
+		return true
+	case CathedralSandboxIdentityStatePausing:
+		return true
+	case CathedralSandboxIdentityStateRunning:
+		return true
+	case CathedralSandboxIdentityStateSnapshotting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CathedralSandboxOperationState.
+const (
+	CathedralSandboxOperationStateCreating CathedralSandboxOperationState = "creating"
+	CathedralSandboxOperationStateFailed   CathedralSandboxOperationState = "failed"
+	CathedralSandboxOperationStateReady    CathedralSandboxOperationState = "ready"
+	CathedralSandboxOperationStateReserved CathedralSandboxOperationState = "reserved"
+)
+
+// Valid indicates whether the value is a known member of the CathedralSandboxOperationState enum.
+func (e CathedralSandboxOperationState) Valid() bool {
+	switch e {
+	case CathedralSandboxOperationStateCreating:
+		return true
+	case CathedralSandboxOperationStateFailed:
+		return true
+	case CathedralSandboxOperationStateReady:
+		return true
+	case CathedralSandboxOperationStateReserved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GCPRegistryType.
 const (
 	Gcp GCPRegistryType = "gcp"
@@ -179,16 +329,16 @@ func (e OrderDirection) Valid() bool {
 
 // Defines values for SandboxOnTimeout.
 const (
-	Kill  SandboxOnTimeout = "kill"
-	Pause SandboxOnTimeout = "pause"
+	SandboxOnTimeoutKill  SandboxOnTimeout = "kill"
+	SandboxOnTimeoutPause SandboxOnTimeout = "pause"
 )
 
 // Valid indicates whether the value is a known member of the SandboxOnTimeout enum.
 func (e SandboxOnTimeout) Valid() bool {
 	switch e {
-	case Kill:
+	case SandboxOnTimeoutKill:
 		return true
-	case Pause:
+	case SandboxOnTimeoutPause:
 		return true
 	default:
 		return false
@@ -197,16 +347,16 @@ func (e SandboxOnTimeout) Valid() bool {
 
 // Defines values for SandboxState.
 const (
-	Paused  SandboxState = "paused"
-	Running SandboxState = "running"
+	SandboxStatePaused  SandboxState = "paused"
+	SandboxStateRunning SandboxState = "running"
 )
 
 // Valid indicates whether the value is a known member of the SandboxState enum.
 func (e SandboxState) Valid() bool {
 	switch e {
-	case Paused:
+	case SandboxStatePaused:
 		return true
-	case Running:
+	case SandboxStateRunning:
 		return true
 	default:
 		return false
@@ -412,6 +562,80 @@ type BuildStatusReason struct {
 
 // CPUCount CPU cores for the sandbox
 type CPUCount = int32
+
+// CathedralCapabilities defines model for CathedralCapabilities.
+type CathedralCapabilities struct {
+	DurableCreateIdempotency   bool                        `json:"durable_create_idempotency"`
+	DurableLifecycleOperations bool                        `json:"durable_lifecycle_operations"`
+	ExecutionIdentity          bool                        `json:"execution_identity"`
+	OperationLookup            bool                        `json:"operation_lookup"`
+	PreservesRemainingLifetime bool                        `json:"preserves_remaining_lifetime"`
+	SafeDelete                 bool                        `json:"safe_delete"`
+	SafeFork                   bool                        `json:"safe_fork"`
+	SafePause                  bool                        `json:"safe_pause"`
+	Schema                     CathedralCapabilitiesSchema `json:"schema"`
+}
+
+// CathedralCapabilitiesSchema defines model for CathedralCapabilities.Schema.
+type CathedralCapabilitiesSchema int
+
+// CathedralLifecycleOperation defines model for CathedralLifecycleOperation.
+type CathedralLifecycleOperation struct {
+	CleanupState        CathedralLifecycleOperationCleanupState `json:"cleanup_state"`
+	ErrorCode           *int                                    `json:"error_code,omitempty"`
+	ErrorMessage        *string                                 `json:"error_message,omitempty"`
+	ExecutionId         string                                  `json:"execution_id"`
+	ExecutionRemovedAt  *time.Time                              `json:"execution_removed_at,omitempty"`
+	Operation           CathedralLifecycleOperationOperation    `json:"operation"`
+	OperationKey        string                                  `json:"operation_key"`
+	RemainingLifetimeMs *int64                                  `json:"remaining_lifetime_ms,omitempty"`
+	SandboxId           string                                  `json:"sandbox_id"`
+	SnapshotBuildId     *string                                 `json:"snapshot_build_id,omitempty"`
+	SnapshotCompletedAt *time.Time                              `json:"snapshot_completed_at,omitempty"`
+	State               CathedralLifecycleOperationState        `json:"state"`
+}
+
+// CathedralLifecycleOperationCleanupState defines model for CathedralLifecycleOperation.CleanupState.
+type CathedralLifecycleOperationCleanupState string
+
+// CathedralLifecycleOperationOperation defines model for CathedralLifecycleOperation.Operation.
+type CathedralLifecycleOperationOperation string
+
+// CathedralLifecycleOperationState defines model for CathedralLifecycleOperation.State.
+type CathedralLifecycleOperationState string
+
+// CathedralLifecycleOperationRequest defines model for CathedralLifecycleOperationRequest.
+type CathedralLifecycleOperationRequest struct {
+	ExecutionId    string                                      `json:"execution_id"`
+	FilesystemOnly *bool                                       `json:"filesystem_only,omitempty"`
+	Operation      CathedralLifecycleOperationRequestOperation `json:"operation"`
+}
+
+// CathedralLifecycleOperationRequestOperation defines model for CathedralLifecycleOperationRequest.Operation.
+type CathedralLifecycleOperationRequestOperation string
+
+// CathedralSandboxIdentity defines model for CathedralSandboxIdentity.
+type CathedralSandboxIdentity struct {
+	ExecutionId string                        `json:"execution_id"`
+	SandboxId   string                        `json:"sandbox_id"`
+	State       CathedralSandboxIdentityState `json:"state"`
+}
+
+// CathedralSandboxIdentityState defines model for CathedralSandboxIdentity.State.
+type CathedralSandboxIdentityState string
+
+// CathedralSandboxOperation defines model for CathedralSandboxOperation.
+type CathedralSandboxOperation struct {
+	ErrorCode      *int                           `json:"error_code,omitempty"`
+	ErrorMessage   *string                        `json:"error_message,omitempty"`
+	IdempotencyKey string                         `json:"idempotency_key"`
+	Sandbox        *Sandbox                       `json:"sandbox,omitempty"`
+	SandboxId      string                         `json:"sandbox_id"`
+	State          CathedralSandboxOperationState `json:"state"`
+}
+
+// CathedralSandboxOperationState defines model for CathedralSandboxOperation.State.
+type CathedralSandboxOperationState string
 
 // ConnectSandbox defines model for ConnectSandbox.
 type ConnectSandbox struct {
@@ -1865,6 +2089,9 @@ type ApiKeyID = string
 // BuildID defines model for buildID.
 type BuildID = string
 
+// CathedralOperationKey defines model for cathedralOperationKey.
+type CathedralOperationKey = string
+
 // ClusterID defines model for clusterID.
 type ClusterID = openapi_types.UUID
 
@@ -2013,6 +2240,12 @@ type GetSandboxesParams struct {
 	Metadata *string `form:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
+// PostSandboxesParams defines parameters for PostSandboxes.
+type PostSandboxesParams struct {
+	// IdempotencyKey Durable Cathedral create operation key. Replays with the same authenticated team and request body return the same sandbox; reuse with a different request body is rejected.
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
 // GetSandboxesMetricsParams defines parameters for GetSandboxesMetrics.
 type GetSandboxesMetricsParams struct {
 	// SandboxIds Comma-separated list of sandbox IDs to get metrics for
@@ -2114,6 +2347,11 @@ type GetTemplatesTemplateIDBuildsBuildIDStatusParams struct {
 	// Limit Maximum number of logs that should be returned
 	Limit *int32    `form:"limit,omitempty" json:"limit,omitempty"`
 	Level *LogLevel `form:"level,omitempty" json:"level,omitempty"`
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams defines parameters for PostV1CathedralSandboxesSandboxIDLifecycleOperations.
+type PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams struct {
+	IdempotencyKey string `json:"Idempotency-Key"`
 }
 
 // GetV2SandboxesParams defines parameters for GetV2Sandboxes.
@@ -2239,6 +2477,9 @@ type PostTemplatesTagsJSONRequestBody = AssignTemplateTagsRequest
 //
 // Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type PatchTemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody defines body for PostV1CathedralSandboxesSandboxIDLifecycleOperations for application/json ContentType.
+type PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody = CathedralLifecycleOperationRequest
 
 // PostV2SandboxesJSONRequestBody defines body for PostV2Sandboxes for application/json ContentType.
 type PostV2SandboxesJSONRequestBody = NewSandboxV2
@@ -2726,7 +2967,7 @@ type ClientInterface interface {
 	// Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostSandboxesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesWithBody(ctx context.Context, params *PostSandboxesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxes Create sandbox
 	//
@@ -2737,7 +2978,7 @@ type ClientInterface interface {
 	// Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostSandboxes(ctx context.Context, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxes(ctx context.Context, params *PostSandboxesParams, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSandboxesMetrics List sandbox metrics
 	//
@@ -3124,6 +3365,40 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /templates/{templateID}/tags (the `GetTemplatesTemplateIDTags` operationId).
 	GetTemplatesTemplateIDTags(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetV1CathedralCapabilities Get the Cathedral durability contract supported by this control plane
+	//
+	// Corresponds with GET /v1/cathedral/capabilities (the `GetV1CathedralCapabilities` operationId).
+	GetV1CathedralCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetV1CathedralLifecycleOperationsIdempotencyKey Recover a Cathedral lifecycle operation by durable key
+	//
+	// Corresponds with GET /v1/cathedral/lifecycle-operations/{idempotencyKey} (the `GetV1CathedralLifecycleOperationsIdempotencyKey` operationId).
+	GetV1CathedralLifecycleOperationsIdempotencyKey(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetV1CathedralOperationsIdempotencyKey Recover a Cathedral create operation by its durable idempotency key
+	//
+	// Corresponds with GET /v1/cathedral/operations/{idempotencyKey} (the `GetV1CathedralOperationsIdempotencyKey` operationId).
+	GetV1CathedralOperationsIdempotencyKey(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetV1CathedralSandboxesSandboxIDIdentity Read the authenticated current Cathedral sandbox execution identity
+	//
+	// Corresponds with GET /v1/cathedral/sandboxes/{sandboxID}/identity (the `GetV1CathedralSandboxesSandboxIDIdentity` operationId).
+	GetV1CathedralSandboxesSandboxIDIdentity(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBody Start an execution-bound Cathedral lifecycle operation
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+	PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBody(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostV1CathedralSandboxesSandboxIDLifecycleOperations Start an execution-bound Cathedral lifecycle operation
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+	PostV1CathedralSandboxesSandboxIDLifecycleOperations(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, body PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetV2Sandboxes List sandboxes (v2)
 	//
@@ -3881,8 +4156,8 @@ func (c *Client) GetSandboxes(ctx context.Context, params *GetSandboxesParams, r
 //
 // Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostSandboxesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostSandboxesWithBody(ctx context.Context, params *PostSandboxesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3901,8 +4176,8 @@ func (c *Client) PostSandboxesWithBody(ctx context.Context, contentType string, 
 //
 // Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PostSandboxes(ctx context.Context, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesRequest(c.Server, body)
+func (c *Client) PostSandboxes(ctx context.Context, params *PostSandboxesParams, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4741,6 +5016,100 @@ func (c *Client) GetTemplatesTemplateIDFilesHash(ctx context.Context, templateID
 // Corresponds with GET /templates/{templateID}/tags (the `GetTemplatesTemplateIDTags` operationId).
 func (c *Client) GetTemplatesTemplateIDTags(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTemplatesTemplateIDTagsRequest(c.Server, templateID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetV1CathedralCapabilities Get the Cathedral durability contract supported by this control plane
+//
+// Corresponds with GET /v1/cathedral/capabilities (the `GetV1CathedralCapabilities` operationId).
+func (c *Client) GetV1CathedralCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV1CathedralCapabilitiesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetV1CathedralLifecycleOperationsIdempotencyKey Recover a Cathedral lifecycle operation by durable key
+//
+// Corresponds with GET /v1/cathedral/lifecycle-operations/{idempotencyKey} (the `GetV1CathedralLifecycleOperationsIdempotencyKey` operationId).
+func (c *Client) GetV1CathedralLifecycleOperationsIdempotencyKey(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV1CathedralLifecycleOperationsIdempotencyKeyRequest(c.Server, idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetV1CathedralOperationsIdempotencyKey Recover a Cathedral create operation by its durable idempotency key
+//
+// Corresponds with GET /v1/cathedral/operations/{idempotencyKey} (the `GetV1CathedralOperationsIdempotencyKey` operationId).
+func (c *Client) GetV1CathedralOperationsIdempotencyKey(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV1CathedralOperationsIdempotencyKeyRequest(c.Server, idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetV1CathedralSandboxesSandboxIDIdentity Read the authenticated current Cathedral sandbox execution identity
+//
+// Corresponds with GET /v1/cathedral/sandboxes/{sandboxID}/identity (the `GetV1CathedralSandboxesSandboxIDIdentity` operationId).
+func (c *Client) GetV1CathedralSandboxesSandboxIDIdentity(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV1CathedralSandboxesSandboxIDIdentityRequest(c.Server, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBody Start an execution-bound Cathedral lifecycle operation
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+func (c *Client) PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBody(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequestWithBody(c.Server, sandboxID, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperations Start an execution-bound Cathedral lifecycle operation
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+func (c *Client) PostV1CathedralSandboxesSandboxIDLifecycleOperations(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, body PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequest(c.Server, sandboxID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6492,18 +6861,18 @@ func NewGetSandboxesRequest(server string, params *GetSandboxesParams) (*http.Re
 }
 
 // NewPostSandboxesRequest calls the generic PostSandboxes builder with application/json body
-func NewPostSandboxesRequest(server string, body PostSandboxesJSONRequestBody) (*http.Request, error) {
+func NewPostSandboxesRequest(server string, params *PostSandboxesParams, body PostSandboxesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSandboxesRequestWithBody(server, "application/json", bodyReader)
+	return NewPostSandboxesRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostSandboxesRequestWithBody constructs an http.Request for the PostSandboxes method, with any body, and a specified content type
-func NewPostSandboxesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSandboxesRequestWithBody(server string, params *PostSandboxesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6527,6 +6896,21 @@ func NewPostSandboxesRequestWithBody(server string, contentType string, body io.
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -8272,6 +8656,195 @@ func NewGetTemplatesTemplateIDTagsRequest(server string, templateID TemplateID) 
 	return req, nil
 }
 
+// NewGetV1CathedralCapabilitiesRequest constructs an http.Request for the GetV1CathedralCapabilities method
+func NewGetV1CathedralCapabilitiesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cathedral/capabilities")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetV1CathedralLifecycleOperationsIdempotencyKeyRequest constructs an http.Request for the GetV1CathedralLifecycleOperationsIdempotencyKey method
+func NewGetV1CathedralLifecycleOperationsIdempotencyKeyRequest(server string, idempotencyKey CathedralOperationKey) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "idempotencyKey", idempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cathedral/lifecycle-operations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetV1CathedralOperationsIdempotencyKeyRequest constructs an http.Request for the GetV1CathedralOperationsIdempotencyKey method
+func NewGetV1CathedralOperationsIdempotencyKeyRequest(server string, idempotencyKey CathedralOperationKey) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "idempotencyKey", idempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cathedral/operations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetV1CathedralSandboxesSandboxIDIdentityRequest constructs an http.Request for the GetV1CathedralSandboxesSandboxIDIdentity method
+func NewGetV1CathedralSandboxesSandboxIDIdentityRequest(server string, sandboxID SandboxID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cathedral/sandboxes/%s/identity", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequest calls the generic PostV1CathedralSandboxesSandboxIDLifecycleOperations builder with application/json body
+func NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequest(server string, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, body PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequestWithBody(server, sandboxID, params, "application/json", bodyReader)
+}
+
+// NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequestWithBody constructs an http.Request for the PostV1CathedralSandboxesSandboxIDLifecycleOperations method, with any body, and a specified content type
+func NewPostV1CathedralSandboxesSandboxIDLifecycleOperationsRequestWithBody(server string, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cathedral/sandboxes/%s/lifecycle-operations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewGetV2SandboxesRequest constructs an http.Request for the GetV2Sandboxes method
 func NewGetV2SandboxesRequest(server string, params *GetV2SandboxesParams) (*http.Request, error) {
 	var err error
@@ -9295,7 +9868,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostSandboxesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error)
+	PostSandboxesWithBodyWithResponse(ctx context.Context, params *PostSandboxesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error)
 
 	// PostSandboxesWithResponse Create sandbox
 	//
@@ -9306,7 +9879,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostSandboxesWithResponse(ctx context.Context, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error)
+	PostSandboxesWithResponse(ctx context.Context, params *PostSandboxesParams, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error)
 
 	// GetSandboxesMetricsWithResponse List sandbox metrics
 	//
@@ -9733,6 +10306,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /templates/{templateID}/tags (the `GetTemplatesTemplateIDTags` operationId).
 	GetTemplatesTemplateIDTagsWithResponse(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*GetTemplatesTemplateIDTagsResponse, error)
+
+	// GetV1CathedralCapabilitiesWithResponse Get the Cathedral durability contract supported by this control plane
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cathedral/capabilities (the `GetV1CathedralCapabilities` operationId).
+	GetV1CathedralCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetV1CathedralCapabilitiesResponse, error)
+
+	// GetV1CathedralLifecycleOperationsIdempotencyKeyWithResponse Recover a Cathedral lifecycle operation by durable key
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cathedral/lifecycle-operations/{idempotencyKey} (the `GetV1CathedralLifecycleOperationsIdempotencyKey` operationId).
+	GetV1CathedralLifecycleOperationsIdempotencyKeyWithResponse(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*GetV1CathedralLifecycleOperationsIdempotencyKeyResponse, error)
+
+	// GetV1CathedralOperationsIdempotencyKeyWithResponse Recover a Cathedral create operation by its durable idempotency key
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cathedral/operations/{idempotencyKey} (the `GetV1CathedralOperationsIdempotencyKey` operationId).
+	GetV1CathedralOperationsIdempotencyKeyWithResponse(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*GetV1CathedralOperationsIdempotencyKeyResponse, error)
+
+	// GetV1CathedralSandboxesSandboxIDIdentityWithResponse Read the authenticated current Cathedral sandbox execution identity
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cathedral/sandboxes/{sandboxID}/identity (the `GetV1CathedralSandboxesSandboxIDIdentity` operationId).
+	GetV1CathedralSandboxesSandboxIDIdentityWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetV1CathedralSandboxesSandboxIDIdentityResponse, error)
+
+	// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBodyWithResponse Start an execution-bound Cathedral lifecycle operation
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+	PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse, error)
+
+	// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithResponse Start an execution-bound Cathedral lifecycle operation
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+	PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, body PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse, error)
 
 	// GetV2SandboxesWithResponse List sandboxes (v2)
 	//
@@ -11941,6 +12556,11 @@ func (r GetSandboxesResponse) ContentType() string {
 	return ""
 }
 
+// PostSandboxesResponse201Headers the declared response headers of an HTTP 201 response for PostSandboxes
+type PostSandboxesResponse201Headers struct {
+	XE2BIdempotencyKey *string
+}
+
 // PostSandboxesResponse429Headers the declared response headers of an HTTP 429 response for PostSandboxes
 type PostSandboxesResponse429Headers struct {
 	RetryAfter *int
@@ -11955,6 +12575,8 @@ type PostSandboxesResponse struct {
 	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -11963,6 +12585,8 @@ type PostSandboxesResponse struct {
 	JSON503 *N503
 	// JSON504 the response for an HTTP 504 `application/json` response
 	JSON504 *N504
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *PostSandboxesResponse201Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesResponse429Headers
 }
@@ -11980,6 +12604,11 @@ func (r PostSandboxesResponse) GetJSON400() *N400 {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PostSandboxesResponse) GetJSON401() *N401 {
 	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostSandboxesResponse) GetJSON409() *N409 {
+	return r.JSON409
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -14791,6 +15420,358 @@ func (r GetTemplatesTemplateIDTagsResponse) ContentType() string {
 	return ""
 }
 
+type GetV1CathedralCapabilitiesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CathedralCapabilities
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetV1CathedralCapabilitiesResponse) GetJSON200() *CathedralCapabilities {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetV1CathedralCapabilitiesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetV1CathedralCapabilitiesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetV1CathedralCapabilitiesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV1CathedralCapabilitiesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV1CathedralCapabilitiesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetV1CathedralCapabilitiesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetV1CathedralLifecycleOperationsIdempotencyKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CathedralLifecycleOperation
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetJSON200() *CathedralLifecycleOperation {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetV1CathedralLifecycleOperationsIdempotencyKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetV1CathedralOperationsIdempotencyKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CathedralSandboxOperation
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetJSON200() *CathedralSandboxOperation {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetV1CathedralOperationsIdempotencyKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetV1CathedralSandboxesSandboxIDIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CathedralSandboxIdentity
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetJSON200() *CathedralSandboxIdentity {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetV1CathedralSandboxesSandboxIDIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CathedralLifecycleOperation
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CathedralLifecycleOperation
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *CathedralLifecycleOperation
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON200() *CathedralLifecycleOperation {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON201() *CathedralLifecycleOperation {
+	return r.JSON201
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON202() *CathedralLifecycleOperation {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetV2SandboxesResponse200Headers the declared response headers of an HTTP 200 response for GetV2Sandboxes
 type GetV2SandboxesResponse200Headers struct {
 	XNextToken    *string
@@ -16280,8 +17261,8 @@ func (c *ClientWithResponses) GetSandboxesWithResponse(ctx context.Context, para
 // Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 //
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostSandboxesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error) {
-	rsp, err := c.PostSandboxesWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesWithBodyWithResponse(ctx context.Context, params *PostSandboxesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error) {
+	rsp, err := c.PostSandboxesWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -16296,8 +17277,8 @@ func (c *ClientWithResponses) PostSandboxesWithBodyWithResponse(ctx context.Cont
 //
 // Corresponds with POST /sandboxes (the `PostSandboxes` operationId).
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PostSandboxesWithResponse(ctx context.Context, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error) {
-	rsp, err := c.PostSandboxes(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesWithResponse(ctx context.Context, params *PostSandboxesParams, body PostSandboxesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesResponse, error) {
+	rsp, err := c.PostSandboxes(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -17001,6 +17982,84 @@ func (c *ClientWithResponses) GetTemplatesTemplateIDTagsWithResponse(ctx context
 		return nil, err
 	}
 	return ParseGetTemplatesTemplateIDTagsResponse(rsp)
+}
+
+// GetV1CathedralCapabilitiesWithResponse Get the Cathedral durability contract supported by this control plane
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cathedral/capabilities (the `GetV1CathedralCapabilities` operationId).
+func (c *ClientWithResponses) GetV1CathedralCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetV1CathedralCapabilitiesResponse, error) {
+	rsp, err := c.GetV1CathedralCapabilities(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV1CathedralCapabilitiesResponse(rsp)
+}
+
+// GetV1CathedralLifecycleOperationsIdempotencyKeyWithResponse Recover a Cathedral lifecycle operation by durable key
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cathedral/lifecycle-operations/{idempotencyKey} (the `GetV1CathedralLifecycleOperationsIdempotencyKey` operationId).
+func (c *ClientWithResponses) GetV1CathedralLifecycleOperationsIdempotencyKeyWithResponse(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*GetV1CathedralLifecycleOperationsIdempotencyKeyResponse, error) {
+	rsp, err := c.GetV1CathedralLifecycleOperationsIdempotencyKey(ctx, idempotencyKey, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV1CathedralLifecycleOperationsIdempotencyKeyResponse(rsp)
+}
+
+// GetV1CathedralOperationsIdempotencyKeyWithResponse Recover a Cathedral create operation by its durable idempotency key
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cathedral/operations/{idempotencyKey} (the `GetV1CathedralOperationsIdempotencyKey` operationId).
+func (c *ClientWithResponses) GetV1CathedralOperationsIdempotencyKeyWithResponse(ctx context.Context, idempotencyKey CathedralOperationKey, reqEditors ...RequestEditorFn) (*GetV1CathedralOperationsIdempotencyKeyResponse, error) {
+	rsp, err := c.GetV1CathedralOperationsIdempotencyKey(ctx, idempotencyKey, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV1CathedralOperationsIdempotencyKeyResponse(rsp)
+}
+
+// GetV1CathedralSandboxesSandboxIDIdentityWithResponse Read the authenticated current Cathedral sandbox execution identity
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cathedral/sandboxes/{sandboxID}/identity (the `GetV1CathedralSandboxesSandboxIDIdentity` operationId).
+func (c *ClientWithResponses) GetV1CathedralSandboxesSandboxIDIdentityWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetV1CathedralSandboxesSandboxIDIdentityResponse, error) {
+	rsp, err := c.GetV1CathedralSandboxesSandboxIDIdentity(ctx, sandboxID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV1CathedralSandboxesSandboxIDIdentityResponse(rsp)
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBodyWithResponse Start an execution-bound Cathedral lifecycle operation
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+func (c *ClientWithResponses) PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse, error) {
+	rsp, err := c.PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithBody(ctx, sandboxID, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse(rsp)
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithResponse Start an execution-bound Cathedral lifecycle operation
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations (the `PostV1CathedralSandboxesSandboxIDLifecycleOperations` operationId).
+func (c *ClientWithResponses) PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams, body PostV1CathedralSandboxesSandboxIDLifecycleOperationsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse, error) {
+	rsp, err := c.PostV1CathedralSandboxesSandboxIDLifecycleOperations(ctx, sandboxID, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse(rsp)
 }
 
 // GetV2SandboxesWithResponse List sandboxes (v2)
@@ -19070,6 +20129,13 @@ func ParsePostSandboxesResponse(rsp *http.Response) (*PostSandboxesResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19101,6 +20167,16 @@ func ParsePostSandboxesResponse(rsp *http.Response) (*PostSandboxesResponse, err
 	}
 
 	switch {
+	case rsp.StatusCode == 201:
+		var headers PostSandboxesResponse201Headers
+		if values := rsp.Header.Values("X-E2B-Idempotency-Key"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-E2B-Idempotency-Key", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XE2BIdempotencyKey = &value
+		}
+		response.Headers201 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSandboxesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -21615,6 +22691,283 @@ func ParseGetTemplatesTemplateIDTagsResponse(rsp *http.Response) (*GetTemplatesT
 	return response, nil
 }
 
+// ParseGetV1CathedralCapabilitiesResponse parses an HTTP response from a GetV1CathedralCapabilitiesWithResponse call
+func ParseGetV1CathedralCapabilitiesResponse(rsp *http.Response) (*GetV1CathedralCapabilitiesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV1CathedralCapabilitiesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CathedralCapabilities
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetV1CathedralLifecycleOperationsIdempotencyKeyResponse parses an HTTP response from a GetV1CathedralLifecycleOperationsIdempotencyKeyWithResponse call
+func ParseGetV1CathedralLifecycleOperationsIdempotencyKeyResponse(rsp *http.Response) (*GetV1CathedralLifecycleOperationsIdempotencyKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV1CathedralLifecycleOperationsIdempotencyKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CathedralLifecycleOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetV1CathedralOperationsIdempotencyKeyResponse parses an HTTP response from a GetV1CathedralOperationsIdempotencyKeyWithResponse call
+func ParseGetV1CathedralOperationsIdempotencyKeyResponse(rsp *http.Response) (*GetV1CathedralOperationsIdempotencyKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV1CathedralOperationsIdempotencyKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CathedralSandboxOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetV1CathedralSandboxesSandboxIDIdentityResponse parses an HTTP response from a GetV1CathedralSandboxesSandboxIDIdentityWithResponse call
+func ParseGetV1CathedralSandboxesSandboxIDIdentityResponse(rsp *http.Response) (*GetV1CathedralSandboxesSandboxIDIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV1CathedralSandboxesSandboxIDIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CathedralSandboxIdentity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse parses an HTTP response from a PostV1CathedralSandboxesSandboxIDLifecycleOperationsWithResponse call
+func ParsePostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse(rsp *http.Response) (*PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostV1CathedralSandboxesSandboxIDLifecycleOperationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CathedralLifecycleOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CathedralLifecycleOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest CathedralLifecycleOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetV2SandboxesResponse parses an HTTP response from a GetV2SandboxesWithResponse call
 func ParseGetV2SandboxesResponse(rsp *http.Response) (*GetV2SandboxesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -22593,7 +23946,7 @@ type ServerInterface interface {
 	// (POST /sandboxes)
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PostSandboxes(c *gin.Context)
+	PostSandboxes(c *gin.Context, params PostSandboxesParams)
 	// GetSandboxesMetrics List sandbox metrics
 	// (GET /sandboxes/metrics)
 	GetSandboxesMetrics(c *gin.Context, params GetSandboxesMetricsParams)
@@ -22703,6 +24056,21 @@ type ServerInterface interface {
 	// GetTemplatesTemplateIDTags List template tags
 	// (GET /templates/{templateID}/tags)
 	GetTemplatesTemplateIDTags(c *gin.Context, templateID TemplateID)
+	// GetV1CathedralCapabilities Get the Cathedral durability contract supported by this control plane
+	// (GET /v1/cathedral/capabilities)
+	GetV1CathedralCapabilities(c *gin.Context)
+	// GetV1CathedralLifecycleOperationsIdempotencyKey Recover a Cathedral lifecycle operation by durable key
+	// (GET /v1/cathedral/lifecycle-operations/{idempotencyKey})
+	GetV1CathedralLifecycleOperationsIdempotencyKey(c *gin.Context, idempotencyKey CathedralOperationKey)
+	// GetV1CathedralOperationsIdempotencyKey Recover a Cathedral create operation by its durable idempotency key
+	// (GET /v1/cathedral/operations/{idempotencyKey})
+	GetV1CathedralOperationsIdempotencyKey(c *gin.Context, idempotencyKey CathedralOperationKey)
+	// GetV1CathedralSandboxesSandboxIDIdentity Read the authenticated current Cathedral sandbox execution identity
+	// (GET /v1/cathedral/sandboxes/{sandboxID}/identity)
+	GetV1CathedralSandboxesSandboxIDIdentity(c *gin.Context, sandboxID SandboxID)
+	// PostV1CathedralSandboxesSandboxIDLifecycleOperations Start an execution-bound Cathedral lifecycle operation
+	// (POST /v1/cathedral/sandboxes/{sandboxID}/lifecycle-operations)
+	PostV1CathedralSandboxesSandboxIDLifecycleOperations(c *gin.Context, sandboxID SandboxID, params PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams)
 	// GetV2Sandboxes List sandboxes (v2)
 	// (GET /v2/sandboxes)
 	GetV2Sandboxes(c *gin.Context, params GetV2SandboxesParams)
@@ -23602,6 +24970,33 @@ func (siw *ServerInterfaceWrapper) GetSandboxes(c *gin.Context) {
 // PostSandboxes operation middleware
 func (siw *ServerInterfaceWrapper) PostSandboxes(c *gin.Context) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostSandboxesParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -23609,7 +25004,7 @@ func (siw *ServerInterfaceWrapper) PostSandboxes(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.PostSandboxes(c)
+	siw.Handler.PostSandboxes(c, params)
 }
 
 // GetSandboxesMetrics operation middleware
@@ -24629,6 +26024,146 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDTags(c *gin.Context) {
 	siw.Handler.GetTemplatesTemplateIDTags(c, templateID)
 }
 
+// GetV1CathedralCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) GetV1CathedralCapabilities(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetV1CathedralCapabilities(c)
+}
+
+// GetV1CathedralLifecycleOperationsIdempotencyKey operation middleware
+func (siw *ServerInterfaceWrapper) GetV1CathedralLifecycleOperationsIdempotencyKey(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "idempotencyKey" -------------
+	var idempotencyKey CathedralOperationKey
+
+	err = runtime.BindStyledParameterWithOptions("simple", "idempotencyKey", c.Param("idempotencyKey"), &idempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter idempotencyKey: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetV1CathedralLifecycleOperationsIdempotencyKey(c, idempotencyKey)
+}
+
+// GetV1CathedralOperationsIdempotencyKey operation middleware
+func (siw *ServerInterfaceWrapper) GetV1CathedralOperationsIdempotencyKey(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "idempotencyKey" -------------
+	var idempotencyKey CathedralOperationKey
+
+	err = runtime.BindStyledParameterWithOptions("simple", "idempotencyKey", c.Param("idempotencyKey"), &idempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter idempotencyKey: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetV1CathedralOperationsIdempotencyKey(c, idempotencyKey)
+}
+
+// GetV1CathedralSandboxesSandboxIDIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetV1CathedralSandboxesSandboxIDIdentity(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetV1CathedralSandboxesSandboxIDIdentity(c, sandboxID)
+}
+
+// PostV1CathedralSandboxesSandboxIDLifecycleOperations operation middleware
+func (siw *ServerInterfaceWrapper) PostV1CathedralSandboxesSandboxIDLifecycleOperations(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV1CathedralSandboxesSandboxIDLifecycleOperationsParams
+
+	headers := c.Request.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Header parameter Idempotency-Key is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostV1CathedralSandboxesSandboxIDLifecycleOperations(c, sandboxID, params)
+}
+
 // GetV2Sandboxes operation middleware
 func (siw *ServerInterfaceWrapper) GetV2Sandboxes(c *gin.Context) {
 
@@ -25032,6 +26567,11 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/teams", wrapper.GetTeams)
 	router.GET(options.BaseURL+"/teams/:teamID/metrics", wrapper.GetTeamsTeamIDMetrics)
 	router.GET(options.BaseURL+"/teams/:teamID/metrics/max", wrapper.GetTeamsTeamIDMetricsMax)
+	router.GET(options.BaseURL+"/v1/cathedral/capabilities", wrapper.GetV1CathedralCapabilities)
+	router.GET(options.BaseURL+"/v1/cathedral/operations/:idempotencyKey", wrapper.GetV1CathedralOperationsIdempotencyKey)
+	router.POST(options.BaseURL+"/v1/cathedral/sandboxes/:sandboxID/lifecycle-operations", wrapper.PostV1CathedralSandboxesSandboxIDLifecycleOperations)
+	router.GET(options.BaseURL+"/v1/cathedral/sandboxes/:sandboxID/identity", wrapper.GetV1CathedralSandboxesSandboxIDIdentity)
+	router.GET(options.BaseURL+"/v1/cathedral/lifecycle-operations/:idempotencyKey", wrapper.GetV1CathedralLifecycleOperationsIdempotencyKey)
 	router.GET(options.BaseURL+"/sandboxes", wrapper.GetSandboxes)
 	router.POST(options.BaseURL+"/sandboxes", wrapper.PostSandboxes)
 	router.GET(options.BaseURL+"/v2/sandboxes", wrapper.GetV2Sandboxes)
@@ -25109,304 +26649,326 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"WI1tiwR/+fTl/wsAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

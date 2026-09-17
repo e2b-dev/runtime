@@ -15,7 +15,7 @@ const (
 type Storage interface {
 	Add(ctx context.Context, sandbox Sandbox) error
 	Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, error)
-	Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+	Remove(ctx context.Context, teamID uuid.UUID, sandboxID string, executionID string) error
 
 	TeamItems(ctx context.Context, teamID uuid.UUID, states []State) ([]Sandbox, error)
 	ExpiredItems(ctx context.Context) ([]Sandbox, error)

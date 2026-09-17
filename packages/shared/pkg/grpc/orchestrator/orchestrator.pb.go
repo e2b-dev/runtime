@@ -1066,9 +1066,16 @@ func (x *SandboxUpdateRequest) GetEgress() *SandboxNetworkEgressConfig {
 }
 
 type SandboxDeleteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	KillReason    *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId  string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	KillReason *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
+	// The exact sandbox execution the caller intends to stop. The node rejects
+	// the operation when this does not match the live incarnation, preventing a
+	// delayed delete from killing a replacement execution with the same ID.
+	ExecutionId string `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	// Wait until the Firecracker stop has completed and surface any stop error.
+	// False preserves the legacy asynchronous delete behavior.
+	WaitForStop   bool `protobuf:"varint,4,opt,name=wait_for_stop,json=waitForStop,proto3" json:"wait_for_stop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1117,6 +1124,67 @@ func (x *SandboxDeleteRequest) GetKillReason() string {
 	return ""
 }
 
+func (x *SandboxDeleteRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
+func (x *SandboxDeleteRequest) GetWaitForStop() bool {
+	if x != nil {
+		return x.WaitForStop
+	}
+	return false
+}
+
+type SandboxDeleteResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True only when a wait_for_stop request was honored and the exact
+	// execution's Firecracker stop completed without error. An older server
+	// decodes to false, so evidence callers fail closed during rolling upgrades.
+	StopCompleted bool `protobuf:"varint,1,opt,name=stop_completed,json=stopCompleted,proto3" json:"stop_completed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxDeleteResponse) Reset() {
+	*x = SandboxDeleteResponse{}
+	mi := &file_orchestrator_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxDeleteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxDeleteResponse) ProtoMessage() {}
+
+func (x *SandboxDeleteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxDeleteResponse.ProtoReflect.Descriptor instead.
+func (*SandboxDeleteResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SandboxDeleteResponse) GetStopCompleted() bool {
+	if x != nil {
+		return x.StopCompleted
+	}
+	return false
+}
+
 type SandboxPauseRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId  string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
@@ -1126,13 +1194,20 @@ type SandboxPauseRequest struct {
 	// a snapshot cold-boots (reboots) from the rootfs. Default false = full memory
 	// snapshot, so existing callers are unaffected.
 	FilesystemOnly bool `protobuf:"varint,4,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Cathedral lifecycle operations require the snapshot to land in remote
+	// storage before pause can be reported terminal. Existing callers keep the
+	// asynchronous upload path when this is false.
+	WaitForStorage bool `protobuf:"varint,5,opt,name=wait_for_storage,json=waitForStorage,proto3" json:"wait_for_storage,omitempty"`
+	// The exact sandbox execution the caller intends to pause. The node rejects
+	// the operation when this does not match the live incarnation.
+	ExecutionId   string `protobuf:"bytes,6,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxPauseRequest) Reset() {
 	*x = SandboxPauseRequest{}
-	mi := &file_orchestrator_proto_msgTypes[15]
+	mi := &file_orchestrator_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1144,7 +1219,7 @@ func (x *SandboxPauseRequest) String() string {
 func (*SandboxPauseRequest) ProtoMessage() {}
 
 func (x *SandboxPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[15]
+	mi := &file_orchestrator_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1157,7 +1232,7 @@ func (x *SandboxPauseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxPauseRequest.ProtoReflect.Descriptor instead.
 func (*SandboxPauseRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{15}
+	return file_orchestrator_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SandboxPauseRequest) GetSandboxId() string {
@@ -1188,6 +1263,20 @@ func (x *SandboxPauseRequest) GetFilesystemOnly() bool {
 	return false
 }
 
+func (x *SandboxPauseRequest) GetWaitForStorage() bool {
+	if x != nil {
+		return x.WaitForStorage
+	}
+	return false
+}
+
+func (x *SandboxPauseRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
 type SchedulingMetadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// memfile_base_build_id / rootfs_base_build_id are each artifact's root layer
@@ -1214,7 +1303,7 @@ type SchedulingMetadata struct {
 
 func (x *SchedulingMetadata) Reset() {
 	*x = SchedulingMetadata{}
-	mi := &file_orchestrator_proto_msgTypes[16]
+	mi := &file_orchestrator_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1315,7 @@ func (x *SchedulingMetadata) String() string {
 func (*SchedulingMetadata) ProtoMessage() {}
 
 func (x *SchedulingMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[16]
+	mi := &file_orchestrator_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1328,7 @@ func (x *SchedulingMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingMetadata.ProtoReflect.Descriptor instead.
 func (*SchedulingMetadata) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{16}
+	return file_orchestrator_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SchedulingMetadata) GetMemfileBaseBuildId() string {
@@ -1308,13 +1397,18 @@ func (x *SchedulingMetadata) GetRootfsBaseBuildId() string {
 type SandboxPauseResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	StorageDurable     bool                   `protobuf:"varint,2,opt,name=storage_durable,json=storageDurable,proto3" json:"storage_durable,omitempty"`
+	// True only when a wait_for_storage request also waited for the exact
+	// execution's Firecracker stop. Older nodes decode to false so Cathedral
+	// cannot mistake storage upload alone for a completed pause during rollout.
+	StopCompleted bool `protobuf:"varint,3,opt,name=stop_completed,json=stopCompleted,proto3" json:"stop_completed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxPauseResponse) Reset() {
 	*x = SandboxPauseResponse{}
-	mi := &file_orchestrator_proto_msgTypes[17]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1326,7 +1420,7 @@ func (x *SandboxPauseResponse) String() string {
 func (*SandboxPauseResponse) ProtoMessage() {}
 
 func (x *SandboxPauseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[17]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1339,7 +1433,7 @@ func (x *SandboxPauseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxPauseResponse.ProtoReflect.Descriptor instead.
 func (*SandboxPauseResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{17}
+	return file_orchestrator_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
@@ -1347,6 +1441,20 @@ func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
 		return x.SchedulingMetadata
 	}
 	return nil
+}
+
+func (x *SandboxPauseResponse) GetStorageDurable() bool {
+	if x != nil {
+		return x.StorageDurable
+	}
+	return false
+}
+
+func (x *SandboxPauseResponse) GetStopCompleted() bool {
+	if x != nil {
+		return x.StopCompleted
+	}
+	return false
 }
 
 type SandboxCheckpointRequest struct {
@@ -1363,7 +1471,7 @@ type SandboxCheckpointRequest struct {
 
 func (x *SandboxCheckpointRequest) Reset() {
 	*x = SandboxCheckpointRequest{}
-	mi := &file_orchestrator_proto_msgTypes[18]
+	mi := &file_orchestrator_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1375,7 +1483,7 @@ func (x *SandboxCheckpointRequest) String() string {
 func (*SandboxCheckpointRequest) ProtoMessage() {}
 
 func (x *SandboxCheckpointRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[18]
+	mi := &file_orchestrator_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1388,7 +1496,7 @@ func (x *SandboxCheckpointRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCheckpointRequest.ProtoReflect.Descriptor instead.
 func (*SandboxCheckpointRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{18}
+	return file_orchestrator_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SandboxCheckpointRequest) GetSandboxId() string {
@@ -1421,7 +1529,7 @@ type SandboxCheckpointResponse struct {
 
 func (x *SandboxCheckpointResponse) Reset() {
 	*x = SandboxCheckpointResponse{}
-	mi := &file_orchestrator_proto_msgTypes[19]
+	mi := &file_orchestrator_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1541,7 @@ func (x *SandboxCheckpointResponse) String() string {
 func (*SandboxCheckpointResponse) ProtoMessage() {}
 
 func (x *SandboxCheckpointResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[19]
+	mi := &file_orchestrator_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1554,7 @@ func (x *SandboxCheckpointResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCheckpointResponse.ProtoReflect.Descriptor instead.
 func (*SandboxCheckpointResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{19}
+	return file_orchestrator_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SandboxCheckpointResponse) GetSchedulingMetadata() *SchedulingMetadata {
@@ -1484,7 +1592,7 @@ type RunningSandbox struct {
 
 func (x *RunningSandbox) Reset() {
 	*x = RunningSandbox{}
-	mi := &file_orchestrator_proto_msgTypes[20]
+	mi := &file_orchestrator_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1496,7 +1604,7 @@ func (x *RunningSandbox) String() string {
 func (*RunningSandbox) ProtoMessage() {}
 
 func (x *RunningSandbox) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[20]
+	mi := &file_orchestrator_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1509,7 +1617,7 @@ func (x *RunningSandbox) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunningSandbox.ProtoReflect.Descriptor instead.
 func (*RunningSandbox) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{20}
+	return file_orchestrator_proto_rawDescGZIP(), []int{21}
 }
 
 // Deprecated: Marked as deprecated in orchestrator.proto.
@@ -1585,7 +1693,7 @@ type SandboxListResponse struct {
 
 func (x *SandboxListResponse) Reset() {
 	*x = SandboxListResponse{}
-	mi := &file_orchestrator_proto_msgTypes[21]
+	mi := &file_orchestrator_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1597,7 +1705,7 @@ func (x *SandboxListResponse) String() string {
 func (*SandboxListResponse) ProtoMessage() {}
 
 func (x *SandboxListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[21]
+	mi := &file_orchestrator_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1610,7 +1718,7 @@ func (x *SandboxListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxListResponse.ProtoReflect.Descriptor instead.
 func (*SandboxListResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{21}
+	return file_orchestrator_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SandboxListResponse) GetSandboxes() []*RunningSandbox {
@@ -1745,20 +1853,26 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\bend_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\aendTime\x88\x01\x01\x128\n" +
 	"\x06egress\x18\x03 \x01(\v2\x1b.SandboxNetworkEgressConfigH\x01R\x06egress\x88\x01\x01B\v\n" +
 	"\t_end_timeB\t\n" +
-	"\a_egress\"k\n" +
+	"\a_egress\"\xb2\x01\n" +
 	"\x14SandboxDeleteRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
-	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\x99\x01\n" +
+	"killReason\x88\x01\x01\x12!\n" +
+	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x12\"\n" +
+	"\rwait_for_stop\x18\x04 \x01(\bR\vwaitForStopB\x0e\n" +
+	"\f_kill_reason\">\n" +
+	"\x15SandboxDeleteResponse\x12%\n" +
+	"\x0estop_completed\x18\x01 \x01(\bR\rstopCompleted\"\xe6\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
 	"\vtemplate_id\x18\x02 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12'\n" +
-	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\"\xb1\x03\n" +
+	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x12(\n" +
+	"\x10wait_for_storage\x18\x05 \x01(\bR\x0ewaitForStorage\x12!\n" +
+	"\fexecution_id\x18\x06 \x01(\tR\vexecutionId\"\xb1\x03\n" +
 	"\x12SchedulingMetadata\x121\n" +
 	"\x15memfile_base_build_id\x18\x01 \x01(\tR\x12memfileBaseBuildId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12*\n" +
@@ -1768,9 +1882,11 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x15rootfs_dropped_builds\x18\x06 \x01(\rR\x13rootfsDroppedBuilds\x12.\n" +
 	"\x13memfile_build_bytes\x18\a \x03(\x04R\x11memfileBuildBytes\x12,\n" +
 	"\x12rootfs_build_bytes\x18\b \x03(\x04R\x10rootfsBuildBytes\x12/\n" +
-	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\\\n" +
+	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\xac\x01\n" +
 	"\x14SandboxPauseResponse\x12D\n" +
-	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\"\xd6\x01\n" +
+	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x12'\n" +
+	"\x0fstorage_durable\x18\x02 \x01(\bR\x0estorageDurable\x12%\n" +
+	"\x0estop_completed\x18\x03 \x01(\bR\rstopCompleted\"\xd6\x01\n" +
 	"\x18SandboxCheckpointRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x19\n" +
@@ -1799,7 +1915,7 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x06Create\x12\x15.SandboxCreateRequest\x1a\x16.SandboxCreateResponse\x127\n" +
 	"\x06Update\x12\x15.SandboxUpdateRequest\x1a\x16.google.protobuf.Empty\x124\n" +
 	"\x04List\x12\x16.google.protobuf.Empty\x1a\x14.SandboxListResponse\x127\n" +
-	"\x06Delete\x12\x15.SandboxDeleteRequest\x1a\x16.google.protobuf.Empty\x124\n" +
+	"\x06Delete\x12\x15.SandboxDeleteRequest\x1a\x16.SandboxDeleteResponse\x124\n" +
 	"\x05Pause\x12\x14.SandboxPauseRequest\x1a\x15.SandboxPauseResponse\x12C\n" +
 	"\n" +
 	"Checkpoint\x12\x19.SandboxCheckpointRequest\x1a\x1a.SandboxCheckpointResponseB/Z-https://github.com/e2b-dev/infra/orchestratorb\x06proto3"
@@ -1816,7 +1932,7 @@ func file_orchestrator_proto_rawDescGZIP() []byte {
 	return file_orchestrator_proto_rawDescData
 }
 
-var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_orchestrator_proto_goTypes = []any{
 	(*SandboxConfig)(nil),               // 0: SandboxConfig
 	(*SandboxIam)(nil),                  // 1: SandboxIam
@@ -1833,63 +1949,64 @@ var file_orchestrator_proto_goTypes = []any{
 	(*SandboxCreateResponse)(nil),       // 12: SandboxCreateResponse
 	(*SandboxUpdateRequest)(nil),        // 13: SandboxUpdateRequest
 	(*SandboxDeleteRequest)(nil),        // 14: SandboxDeleteRequest
-	(*SandboxPauseRequest)(nil),         // 15: SandboxPauseRequest
-	(*SchedulingMetadata)(nil),          // 16: SchedulingMetadata
-	(*SandboxPauseResponse)(nil),        // 17: SandboxPauseResponse
-	(*SandboxCheckpointRequest)(nil),    // 18: SandboxCheckpointRequest
-	(*SandboxCheckpointResponse)(nil),   // 19: SandboxCheckpointResponse
-	(*RunningSandbox)(nil),              // 20: RunningSandbox
-	(*SandboxListResponse)(nil),         // 21: SandboxListResponse
-	nil,                                 // 22: SandboxConfig.EnvVarsEntry
-	nil,                                 // 23: SandboxConfig.MetadataEntry
-	nil,                                 // 24: SandboxIam.TokensEntry
-	nil,                                 // 25: SandboxNetworkTransform.HeadersEntry
-	nil,                                 // 26: SandboxNetworkEgressConfig.RulesEntry
-	nil,                                 // 27: SandboxCheckpointRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),       // 28: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),               // 29: google.protobuf.Empty
+	(*SandboxDeleteResponse)(nil),       // 15: SandboxDeleteResponse
+	(*SandboxPauseRequest)(nil),         // 16: SandboxPauseRequest
+	(*SchedulingMetadata)(nil),          // 17: SchedulingMetadata
+	(*SandboxPauseResponse)(nil),        // 18: SandboxPauseResponse
+	(*SandboxCheckpointRequest)(nil),    // 19: SandboxCheckpointRequest
+	(*SandboxCheckpointResponse)(nil),   // 20: SandboxCheckpointResponse
+	(*RunningSandbox)(nil),              // 21: RunningSandbox
+	(*SandboxListResponse)(nil),         // 22: SandboxListResponse
+	nil,                                 // 23: SandboxConfig.EnvVarsEntry
+	nil,                                 // 24: SandboxConfig.MetadataEntry
+	nil,                                 // 25: SandboxIam.TokensEntry
+	nil,                                 // 26: SandboxNetworkTransform.HeadersEntry
+	nil,                                 // 27: SandboxNetworkEgressConfig.RulesEntry
+	nil,                                 // 28: SandboxCheckpointRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),       // 29: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),               // 30: google.protobuf.Empty
 }
 var file_orchestrator_proto_depIdxs = []int32{
-	22, // 0: SandboxConfig.env_vars:type_name -> SandboxConfig.EnvVarsEntry
-	23, // 1: SandboxConfig.metadata:type_name -> SandboxConfig.MetadataEntry
+	23, // 0: SandboxConfig.env_vars:type_name -> SandboxConfig.EnvVarsEntry
+	24, // 1: SandboxConfig.metadata:type_name -> SandboxConfig.MetadataEntry
 	5,  // 2: SandboxConfig.network:type_name -> SandboxNetworkConfig
 	4,  // 3: SandboxConfig.volumeMounts:type_name -> SandboxVolumeMount
 	3,  // 4: SandboxConfig.auto_resume:type_name -> SandboxAutoResumeConfig
 	1,  // 5: SandboxConfig.iam:type_name -> SandboxIam
-	24, // 6: SandboxIam.tokens:type_name -> SandboxIam.TokensEntry
+	25, // 6: SandboxIam.tokens:type_name -> SandboxIam.TokensEntry
 	9,  // 7: SandboxNetworkConfig.egress:type_name -> SandboxNetworkEgressConfig
 	10, // 8: SandboxNetworkConfig.ingress:type_name -> SandboxNetworkIngressConfig
-	25, // 9: SandboxNetworkTransform.headers:type_name -> SandboxNetworkTransform.HeadersEntry
+	26, // 9: SandboxNetworkTransform.headers:type_name -> SandboxNetworkTransform.HeadersEntry
 	6,  // 10: SandboxNetworkRule.transform:type_name -> SandboxNetworkTransform
 	7,  // 11: SandboxNetworkDomainRules.rules:type_name -> SandboxNetworkRule
-	26, // 12: SandboxNetworkEgressConfig.rules:type_name -> SandboxNetworkEgressConfig.RulesEntry
+	27, // 12: SandboxNetworkEgressConfig.rules:type_name -> SandboxNetworkEgressConfig.RulesEntry
 	0,  // 13: SandboxCreateRequest.sandbox:type_name -> SandboxConfig
-	28, // 14: SandboxCreateRequest.start_time:type_name -> google.protobuf.Timestamp
-	28, // 15: SandboxCreateRequest.end_time:type_name -> google.protobuf.Timestamp
-	16, // 16: SandboxCreateResponse.scheduling_metadata:type_name -> SchedulingMetadata
-	28, // 17: SandboxUpdateRequest.end_time:type_name -> google.protobuf.Timestamp
+	29, // 14: SandboxCreateRequest.start_time:type_name -> google.protobuf.Timestamp
+	29, // 15: SandboxCreateRequest.end_time:type_name -> google.protobuf.Timestamp
+	17, // 16: SandboxCreateResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	29, // 17: SandboxUpdateRequest.end_time:type_name -> google.protobuf.Timestamp
 	9,  // 18: SandboxUpdateRequest.egress:type_name -> SandboxNetworkEgressConfig
-	16, // 19: SandboxPauseResponse.scheduling_metadata:type_name -> SchedulingMetadata
-	27, // 20: SandboxCheckpointRequest.metadata:type_name -> SandboxCheckpointRequest.MetadataEntry
-	16, // 21: SandboxCheckpointResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	17, // 19: SandboxPauseResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	28, // 20: SandboxCheckpointRequest.metadata:type_name -> SandboxCheckpointRequest.MetadataEntry
+	17, // 21: SandboxCheckpointResponse.scheduling_metadata:type_name -> SchedulingMetadata
 	0,  // 22: RunningSandbox.config:type_name -> SandboxConfig
-	28, // 23: RunningSandbox.start_time:type_name -> google.protobuf.Timestamp
-	28, // 24: RunningSandbox.end_time:type_name -> google.protobuf.Timestamp
-	20, // 25: SandboxListResponse.sandboxes:type_name -> RunningSandbox
+	29, // 23: RunningSandbox.start_time:type_name -> google.protobuf.Timestamp
+	29, // 24: RunningSandbox.end_time:type_name -> google.protobuf.Timestamp
+	21, // 25: SandboxListResponse.sandboxes:type_name -> RunningSandbox
 	2,  // 26: SandboxIam.TokensEntry.value:type_name -> SandboxIamToken
 	8,  // 27: SandboxNetworkEgressConfig.RulesEntry.value:type_name -> SandboxNetworkDomainRules
 	11, // 28: SandboxService.Create:input_type -> SandboxCreateRequest
 	13, // 29: SandboxService.Update:input_type -> SandboxUpdateRequest
-	29, // 30: SandboxService.List:input_type -> google.protobuf.Empty
+	30, // 30: SandboxService.List:input_type -> google.protobuf.Empty
 	14, // 31: SandboxService.Delete:input_type -> SandboxDeleteRequest
-	15, // 32: SandboxService.Pause:input_type -> SandboxPauseRequest
-	18, // 33: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
+	16, // 32: SandboxService.Pause:input_type -> SandboxPauseRequest
+	19, // 33: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
 	12, // 34: SandboxService.Create:output_type -> SandboxCreateResponse
-	29, // 35: SandboxService.Update:output_type -> google.protobuf.Empty
-	21, // 36: SandboxService.List:output_type -> SandboxListResponse
-	29, // 37: SandboxService.Delete:output_type -> google.protobuf.Empty
-	17, // 38: SandboxService.Pause:output_type -> SandboxPauseResponse
-	19, // 39: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
+	30, // 35: SandboxService.Update:output_type -> google.protobuf.Empty
+	22, // 36: SandboxService.List:output_type -> SandboxListResponse
+	15, // 37: SandboxService.Delete:output_type -> SandboxDeleteResponse
+	18, // 38: SandboxService.Pause:output_type -> SandboxPauseResponse
+	20, // 39: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
 	34, // [34:40] is the sub-list for method output_type
 	28, // [28:34] is the sub-list for method input_type
 	28, // [28:28] is the sub-list for extension type_name
@@ -1915,7 +2032,7 @@ func file_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

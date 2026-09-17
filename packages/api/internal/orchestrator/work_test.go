@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
@@ -97,11 +96,11 @@ type gatedKillClient struct {
 	entered chan struct{}
 }
 
-func (c *gatedKillClient) Delete(context.Context, *orchestrator.SandboxDeleteRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *gatedKillClient) Delete(_ context.Context, request *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*orchestrator.SandboxDeleteResponse, error) {
 	close(c.entered)
 	<-c.gate
 
-	return &emptypb.Empty{}, nil
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: request.GetWaitForStop()}, nil
 }
 
 // gatedPauseFixture holds a pause inside its node RPC until the returned

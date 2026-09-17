@@ -759,7 +759,7 @@ func TestPostSandboxes_MissingBareAliasUsesPromotedFallbackKey(t *testing.T) {
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
-	store.PostSandboxes(ginCtx)
+	store.PostSandboxes(ginCtx, api.PostSandboxesParams{})
 
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 
@@ -819,7 +819,7 @@ func TestPostSandboxes_PrivateTemplateHidesAccessDenied(t *testing.T) {
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
-	store.PostSandboxes(ginCtx)
+	store.PostSandboxes(ginCtx, api.PostSandboxesParams{})
 
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 
@@ -873,7 +873,7 @@ func assertMissingTagDisclosure(t *testing.T, public bool, alias string) {
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
-	store.PostSandboxes(ginCtx)
+	store.PostSandboxes(ginCtx, api.PostSandboxesParams{})
 
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 
@@ -934,7 +934,7 @@ func assertMissingDefaultTagDisclosure(t *testing.T) {
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
-	store.PostSandboxes(ginCtx)
+	store.PostSandboxes(ginCtx, api.PostSandboxesParams{})
 
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 

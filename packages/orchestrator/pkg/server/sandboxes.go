@@ -673,7 +673,7 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 	}, nil
 }
 
-func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteRequest) (*emptypb.Empty, error) {
+func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteRequest) (*orchestrator.SandboxDeleteResponse, error) {
 	releaseWork := s.info.TrackWork()
 	defer releaseWork()
 
@@ -686,12 +686,18 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 	childSpan.SetAttributes(
 		telemetry.WithSandboxID(in.GetSandboxId()),
 	)
+	if in.GetWaitForStop() && in.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	sbx, ok := s.sandboxFactory.Sandboxes.Get(in.GetSandboxId())
 	if !ok {
 		telemetry.ReportCriticalError(ctx, "sandbox not found", nil, telemetry.WithSandboxID(in.GetSandboxId()))
 
 		return nil, status.Errorf(codes.NotFound, "sandbox '%s' not found", in.GetSandboxId())
+	}
+	if in.GetExecutionId() != "" && sbx.Runtime.ExecutionID != in.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
 	childSpan.SetAttributes(
@@ -726,10 +732,8 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 	// Check health metrics before stopping the sandbox
 	sbx.Checks.Healthcheck(ctx, true)
 
-	// Start the cleanup in a goroutine—the initial kill request should be send as the first thing in stop, and at this point you cannot route to the sandbox anymore.
-	// We don't wait for the whole cleanup to finish here.
-	go func() {
-		err := sbx.Stop(context.WithoutCancel(ctx))
+	stop := func(stopCtx context.Context) error {
+		err := sbx.Stop(stopCtx)
 		if err != nil {
 			sbxlogger.I(sbx).Error(ctx, "error stopping sandbox",
 				logger.WithSandboxID(in.GetSandboxId()),
@@ -737,11 +741,30 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 				zap.Error(err),
 			)
 		}
-	}()
+
+		return err
+	}
+	if err := runDeleteStop(ctx, in.GetWaitForStop(), stop); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to stop sandbox '%s': %s", in.GetSandboxId(), err)
+	}
 
 	s.emitSandboxKilled(ctx, sbx, killReason)
 
-	return &emptypb.Empty{}, nil
+	return &orchestrator.SandboxDeleteResponse{StopCompleted: in.GetWaitForStop()}, nil
+}
+
+// runDeleteStop preserves the legacy fire-and-forget delete while allowing an
+// execution-evidence caller to wait for the exact Firecracker stop result.
+func runDeleteStop(ctx context.Context, wait bool, stop func(context.Context) error) error {
+	if wait {
+		return stop(ctx)
+	}
+
+	go func() {
+		_ = stop(context.WithoutCancel(ctx))
+	}()
+
+	return nil
 }
 
 // emitSandboxKilled publishes the terminal surfaces of a sandbox kill — the
@@ -851,12 +874,18 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		telemetry.WithTemplateID(in.GetTemplateId()),
 		telemetry.WithBuildID(in.GetBuildId()),
 	)
+	if in.GetWaitForStorage() && in.GetExecutionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "execution_id is required")
+	}
 
 	sbx, ok := s.sandboxFactory.Sandboxes.Get(in.GetSandboxId())
 	if !ok {
 		telemetry.ReportCriticalError(ctx, "sandbox not found", nil, telemetry.WithSandboxID(in.GetSandboxId()))
 
 		return nil, status.Error(codes.NotFound, "sandbox not found")
+	}
+	if in.GetExecutionId() != "" && sbx.Runtime.ExecutionID != in.GetExecutionId() {
+		return nil, status.Errorf(codes.FailedPrecondition, "sandbox '%s' execution changed", in.GetSandboxId())
 	}
 
 	ctx = featureflags.AddToContext(
@@ -943,8 +972,14 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 	// guest and can close the sandbox, which would read as a crash.
 	sbx.SetStopReason(sandbox.StopReasonPaused)
 
-	// Stop the old sandbox in background after we're done
-	defer s.stopSandboxAsync(context.WithoutCancel(ctx), sbx)
+	// Legacy pauses keep their asynchronous teardown. Evidence pauses attempt
+	// the stop synchronously below so the response cannot race continued VM use.
+	stopAttempted := false
+	defer func() {
+		if !stopAttempted {
+			s.stopSandboxAsync(context.WithoutCancel(ctx), sbx)
+		}
+	}()
 
 	// Defer the rootfs reflink off the pause critical path when enabled: pause is a
 	// suspend, so nothing reads the diff until a later resume (which waits on the
@@ -959,10 +994,42 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		return nil, status.Errorf(codes.Internal, "error snapshotting sandbox '%s': %s", in.GetSandboxId(), err)
 	}
 
-	s.uploadSnapshotAsync(ctx, sbx, res)
+	storageDurable := false
+	if in.GetWaitForStorage() {
+		uploadErr := retry.Do(
+			ctx,
+			defaultUploadRetryPolicy(),
+			isRetryableUploadErr,
+			res.upload.Run,
+			func(attempt int, backoff time.Duration, err error) {
+				sbxlogger.I(sbx).Warn(ctx, "snapshot upload attempt failed while waiting for durability",
+					zap.Int("attempt", attempt),
+					zap.Duration("backoff", backoff),
+					zap.Error(err),
+				)
+			},
+		)
+		res.completeUpload(ctx, uploadErr)
+		if uploadErr != nil {
+			s.uploadFailedCounter.Add(ctx, 1, metric.WithAttributes(attribute.Bool("fs_only", res.filesystemOnly)))
+			telemetry.ReportCriticalError(ctx, "error durably uploading paused sandbox", uploadErr, telemetry.WithSandboxID(in.GetSandboxId()))
 
-	// Best-effort: the local snapshot is now in the cache and the remote upload
-	// has been kicked off above (still in flight). Harvest a resume page-fault
+			return nil, status.Errorf(codes.Internal, "error durably uploading paused sandbox '%s': %s", in.GetSandboxId(), uploadErr)
+		}
+		storageDurable = true
+		stopAttempted = true
+		if stopErr := sbx.Stop(ctx); stopErr != nil {
+			telemetry.ReportCriticalError(ctx, "error stopping durably paused sandbox", stopErr, telemetry.WithSandboxID(in.GetSandboxId()))
+
+			return nil, status.Errorf(codes.Internal, "snapshot for sandbox '%s' is durable but its execution did not stop: %s", in.GetSandboxId(), stopErr)
+		}
+	} else {
+		s.uploadSnapshotAsync(ctx, sbx, res)
+	}
+
+	// Best-effort: the local snapshot is now in the cache. For an ordinary pause
+	// its remote upload is still in flight; the durability path waited above.
+	// Harvest a resume page-fault
 	// trace from a throwaway warm resume of the local snapshot and (when enabled)
 	// persist it as a prefetch mapping for the next resume. Runs in the
 	// background; never affects the pause result, and waits for the upload before
@@ -1001,6 +1068,8 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 	return &orchestrator.SandboxPauseResponse{
 		SchedulingMetadata: res.schedulingMetadata,
+		StorageDurable:     storageDurable,
+		StopCompleted:      in.GetWaitForStorage(),
 	}, nil
 }
 
