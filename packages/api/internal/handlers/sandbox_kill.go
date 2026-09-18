@@ -65,9 +65,21 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 		Action: sandbox.StateActionKill,
 		Reason: sandbox.KillReasonRequest,
 	})
+
+	// runningRemoved records whether RemoveSandbox killed a running record. When
+	// it did not (the sandbox is paused: only a snapshot exists, no running
+	// record to lock), deleting the snapshot below races a concurrent resume,
+	// whose publication (storage.Add) is a lockless SET+SADD with no
+	// delete-intent check. Without a rendezvous the DELETE can soft-delete the
+	// snapshot and return 204 while the resume republishes the sandbox as
+	// running. We fence that window with a kill-claim on the reservation the
+	// resume holds for its whole lifecycle.
+	runningRemoved := false
+
 	switch {
 	case err == nil:
 		killedOrRemoved = true
+		runningRemoved = true
 	case errors.Is(err, orchestrator.ErrSandboxNotFound):
 		logger.L().Debug(ctx, "Running sandbox not found", logger.WithSandboxID(sandboxID))
 	case errors.Is(err, orchestrator.ErrSandboxOperationFailed):
@@ -81,12 +93,41 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 		return
 	}
 
+	// Paused sandbox: claim the ID against a concurrent resume before touching
+	// the snapshot. If a resume is in flight (or already finished, so the
+	// sandbox is running again), refuse with 409 and leave the snapshot intact —
+	// the client retries the kill against the running sandbox through the locked
+	// path above. An accepted kill (a claim) is irreversible: reserveScript
+	// rejects any resume that starts after it.
+	claimTaken := false
+	if !runningRemoved {
+		claimed, claimErr := a.orchestrator.ClaimPausedKill(ctx, teamID, sandboxID)
+		if claimErr != nil {
+			telemetry.ReportError(ctx, "error claiming paused sandbox for deletion", claimErr)
+			a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error killing sandbox: %s", claimErr))
+
+			return
+		}
+		if !claimed {
+			logger.L().Info(ctx, "Refusing to delete paused sandbox: a resume is in flight", logger.WithSandboxID(sandboxID))
+			a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox %s is resuming; retry the delete once it is running", sandboxID))
+
+			return
+		}
+		claimTaken = true
+	}
+
 	// remove any snapshots when the sandbox is not running
 	deleteSnapshotErr := a.deleteSnapshot(ctx, sandboxID, teamID)
 	switch {
 	case errors.Is(deleteSnapshotErr, db.ErrSnapshotNotFound):
 		// no snapshot found, nothing to do
 	case deleteSnapshotErr != nil:
+		if claimTaken {
+			// The snapshot survived, so drop the claim to unblock future resumes
+			// of this ID rather than making them wait out the claim's TTL.
+			a.orchestrator.ReleasePausedKillClaim(context.WithoutCancel(ctx), teamID, sandboxID)
+		}
 		telemetry.ReportError(ctx, "error deleting sandbox", deleteSnapshotErr)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error deleting sandbox: %s", deleteSnapshotErr))
 

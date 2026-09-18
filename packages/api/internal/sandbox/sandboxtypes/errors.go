@@ -65,6 +65,12 @@ func (PauseQueueExhaustedError) Error() string {
 // RestoreRunning.
 var ErrExecutionMismatch = errors.New("sandbox execution no longer matches")
 
+// ErrSandboxKilled reports that a reservation was refused because a concurrent
+// DELETE claimed the sandbox ID for removal (see ReservationStorage.ClaimKill).
+// A resume that hits this must not publish the sandbox: the kill was accepted
+// first and is irreversible.
+var ErrSandboxKilled = errors.New("sandbox was concurrently killed")
+
 // ErrRestoreConflict reports that the record was rewritten between the
 // restore's read and its compare-and-set; nothing was written.
 var ErrRestoreConflict = errors.New("sandbox changed during restoration")

@@ -25,6 +25,14 @@ const (
 	// and cleaned up. This handles the case where an API instance crashes mid-creation.
 	// 90 seconds is well beyond any realistic sandbox creation time.
 	staleTTL = 90 * time.Second
+
+	// killClaimTTL is how long a DELETE's kill-claim over a sandbox ID blocks a
+	// resume's reservation. It only has to outlive the snapshot soft-delete
+	// becoming durable — after that any resume fails when it fetches the
+	// snapshot — so it is kept short. The claim is normally cleared explicitly
+	// (ReleaseKillClaim) if the delete fails; this TTL is the backstop for a
+	// crashed API instance.
+	killClaimTTL = 30 * time.Second
 )
 
 var _ sandboxtypes.ReservationStorage = (*ReservationStorage)(nil)
@@ -56,8 +64,10 @@ func (s *ReservationStorage) Reserve(ctx context.Context, teamID uuid.UUID, sand
 	now := float64(time.Now().Unix())
 	staleCutoff := float64(time.Now().Add(-staleTTL).Unix())
 
+	killClaimKey := getKillClaimKey(teamIDStr, sandboxID)
+
 	result, err := reserveScript.Run(ctx, s.redisClient,
-		[]string{storageIndexKey, pendingSetKey, resultKeyStr},
+		[]string{storageIndexKey, pendingSetKey, resultKeyStr, killClaimKey},
 		sandboxID, limit, now, staleCutoff,
 	).Int()
 	if err != nil {
@@ -77,9 +87,58 @@ func (s *ReservationStorage) Reserve(ctx context.Context, teamID uuid.UUID, sand
 	case reserveResultLimitExceeded:
 		return nil, nil, &sandboxtypes.LimitExceededError{TeamID: teamID}
 
+	case reserveResultKilled:
+		return nil, nil, sandboxtypes.ErrSandboxKilled
+
 	default:
 		return nil, nil, fmt.Errorf("unexpected reserve script result: %d", result)
 	}
+}
+
+// ClaimKill fences off a paused sandbox's ID against a concurrent resume before
+// the caller soft-deletes its snapshot. It returns claimed=true when no resume
+// is in flight and the caller may proceed with the delete; false when a resume
+// is pending or the sandbox is already running again, in which case the caller
+// must not delete the snapshot and should surface a retryable conflict.
+//
+// See claimKillScript for the ordering argument that makes an accepted kill
+// irreversible against resume's lockless publication.
+func (s *ReservationStorage) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (claimed bool, err error) {
+	teamIDStr := teamID.String()
+	storageIndexKey := getStorageIndexKey(teamIDStr)
+	pendingSetKey := getPendingSetKey(teamIDStr)
+	killClaimKey := getKillClaimKey(teamIDStr, sandboxID)
+
+	result, err := claimKillScript.Run(ctx, s.redisClient,
+		[]string{storageIndexKey, pendingSetKey, killClaimKey},
+		sandboxID, int(killClaimTTL.Seconds()),
+	).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to run claim-kill script: %w", err)
+	}
+
+	switch result {
+	case claimKillResultClaimed:
+		return true, nil
+	case claimKillResultInFlight:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected claim-kill script result: %d", result)
+	}
+}
+
+// ReleaseKillClaim drops a claim taken by ClaimKill. It is best-effort cleanup
+// for when the snapshot delete fails after the claim was taken; the claim's TTL
+// is the backstop if this never runs.
+func (s *ReservationStorage) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+	killClaimKey := getKillClaimKey(teamID.String(), sandboxID)
+
+	err := releaseKillClaimScript.Run(ctx, s.redisClient, []string{killClaimKey}).Err()
+	if err != nil {
+		return fmt.Errorf("failed to run release-kill-claim script: %w", err)
+	}
+
+	return nil
 }
 
 func (s *ReservationStorage) Release(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
