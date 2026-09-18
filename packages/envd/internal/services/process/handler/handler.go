@@ -574,7 +574,9 @@ func (p *Handler) Wait() {
 
 	err := p.cmd.Wait()
 
-	p.tty.Close()
+	if p.tty != nil {
+		p.tty.Close()
+	}
 
 	var errMsg *string
 
