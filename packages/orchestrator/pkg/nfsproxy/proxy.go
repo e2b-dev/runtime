@@ -10,13 +10,13 @@ import (
 	"sync"
 
 	"github.com/willscott/go-nfs"
-	"github.com/willscott/go-nfs/helpers"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/chroot"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/logged"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/metrics"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/recovery"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/tracing"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
@@ -29,6 +29,19 @@ var setLogLevelOnce sync.Once
 type Proxy struct {
 	config cfg.Config
 	server *nfs.Server
+}
+
+type cacheLifecycleSubscriber struct {
+	handler *mountcache.Handler
+}
+
+func (s cacheLifecycleSubscriber) OnInsert(_ context.Context, _ *sandbox.Sandbox) {}
+
+func (s cacheLifecycleSubscriber) OnNetworkRelease(_ context.Context, sbx *sandbox.Sandbox) {
+	s.handler.RemoveOwner(mountcache.Owner{
+		SandboxID:   sbx.Runtime.SandboxID,
+		LifecycleID: sbx.LifecycleID,
+	})
 }
 
 func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox.Map, config cfg.Config) (*Proxy, error) {
@@ -47,7 +60,9 @@ func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox
 	}
 
 	// wrap the handler in middleware
-	handler = helpers.NewCachingHandler(handler, cacheLimit)
+	cachingHandler := mountcache.NewHandler(handler, cacheLimit)
+	sandboxes.Subscribe(cacheLifecycleSubscriber{handler: cachingHandler})
+	handler = cachingHandler
 
 	if config.Tracing {
 		handler = tracing.WrapWithTracing(handler, config)
