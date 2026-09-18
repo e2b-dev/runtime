@@ -81,7 +81,7 @@ func (m *stallProv) WriteZeroesAt(_, length int64) (int, error) {
 }
 
 func nbdRequest(typ uint16, handle, from uint64, length uint32) []byte {
-	b := make([]byte, 28)
+	b := make([]byte, nbdRequestHeaderSize)
 	binary.BigEndian.PutUint32(b[0:], NBDRequestMagic)
 	binary.BigEndian.PutUint16(b[4:], 0) // flags
 	binary.BigEndian.PutUint16(b[6:], typ)
@@ -191,5 +191,86 @@ func TestDispatchWriteZeroesReadLoopStall(t *testing.T) {
 				t.Fatal("read loop did not serve the probe after replies drained")
 			}
 		})
+	}
+}
+
+// writeCapturer is a minimal Provider that records the last WriteAt call.
+type writeCapturer struct {
+	mu  sync.Mutex
+	data []byte
+	off  int64
+}
+
+func (w *writeCapturer) ReadAt(_ context.Context, p []byte, _ int64) (int, error) {
+	return len(p), nil
+}
+func (w *writeCapturer) Size(_ context.Context) (int64, error)  { return 1 << 40, nil }
+func (w *writeCapturer) WriteZeroesAt(_, l int64) (int, error)  { return int(l), nil }
+
+func (w *writeCapturer) WriteAt(p []byte, off int64) (int, error) {
+	w.mu.Lock()
+	w.data = append([]byte{}, p...)
+	w.off = off
+	w.mu.Unlock()
+
+	return len(p), nil
+}
+
+func (w *writeCapturer) captured() (data []byte, off int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.data, w.off
+}
+
+// TestDispatchMaxSizeWrite verifies that a write at the maximum-typical payload
+// size (4 MiB == dispatchBufferSize - nbdRequestHeaderSize) is correctly
+// dispatched. The payload is larger than the old buffer (4 MiB exactly), which
+// previously required an extra Read syscall for the 28 trailing bytes.
+func TestDispatchMaxSizeWrite(t *testing.T) {
+	t.Parallel()
+
+	const payloadSize = dispatchBufferSize - nbdRequestHeaderSize // 4 MiB
+
+	// Build payload with a known pattern so we can verify round-trip integrity.
+	payload := make([]byte, payloadSize)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+
+	conn := &ctrlConn{
+		reqCh:      make(chan []byte, 4),
+		gate:       make(chan struct{}),
+		firstWrite: make(chan struct{}),
+	}
+	close(conn.gate) // allow reply writes immediately
+
+	prov := &writeCapturer{}
+	d := NewDispatch(conn, prov, false)
+
+	// Queue: write request (header + full payload) then disconnect.
+	req := append(nbdRequest(NBDCmdWrite, 7, 0, uint32(payloadSize)), payload...)
+	conn.reqCh <- req
+	conn.reqCh <- nbdRequest(NBDCmdDisconnect, 0, 0, 0)
+
+	if err := d.Handle(t.Context()); err != nil {
+		t.Fatalf("Handle() unexpected error: %v", err)
+	}
+	// Drain waits for all async write goroutines to complete before we read
+	// back the captured data.
+	d.Drain()
+
+	got, gotOff := prov.captured()
+	if gotOff != 0 {
+		t.Errorf("WriteAt offset: got %d, want 0", gotOff)
+	}
+	if len(got) != payloadSize {
+		t.Errorf("WriteAt data length: got %d, want %d", len(got), payloadSize)
+	}
+	for i, b := range got {
+		if b != payload[i] {
+			t.Errorf("data mismatch at byte %d: got %02x, want %02x", i, b, payload[i])
+			break
+		}
 	}
 }

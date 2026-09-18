@@ -52,11 +52,17 @@ type Provider interface {
 }
 
 const (
-	// TODO: Look into optimizing the buffer reads by increasing the buffer size by 28 bytes,
-	// to account for a request that is 28 bytes of header + 4MB of data (this seems to be preferred kernel buffer size).
-	dispatchBufferSize = 4 * 1024 * 1024
-	// https://sourceforge.net/p/nbd/mailman/message/35081223/
-	// 32MB is the maximum buffer size for a single request that should be universally supported.
+	// nbdRequestHeaderSize is the wire size of an NBD request header (see Request).
+	nbdRequestHeaderSize = 28
+
+	// dispatchBufferSize is the raw read buffer for the NBD socket.
+	// 4 MiB covers the largest data payload; the extra nbdRequestHeaderSize bytes allow a
+	// full max-size payload to be coalesced with the next request header in a single Read
+	// call, saving one syscall per max-size request.
+	dispatchBufferSize = 4*1024*1024 + nbdRequestHeaderSize
+
+	// dispatchMaxWriteBufferSize is the maximum payload accepted for a single write.
+	// 32 MiB is universally supported: https://sourceforge.net/p/nbd/mailman/message/35081223/
 	dispatchMaxWriteBufferSize = 32 * 1024 * 1024
 )
 
@@ -200,13 +206,13 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 			}
 
 			// Make sure we have a complete header
-			if wp-rp < 28 {
+			if wp-rp < nbdRequestHeaderSize {
 				break // Try again when we have more data...
 			}
 
 			// We can read the neader...
 
-			header := buffer[rp : rp+28]
+			header := buffer[rp : rp+nbdRequestHeaderSize]
 			request.Magic = binary.BigEndian.Uint32(header)
 			request.Flags = binary.BigEndian.Uint16(header[4:6])
 			request.Type = binary.BigEndian.Uint16(header[6:8])
@@ -224,13 +230,13 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 			case NBDCmdFlush:
 				return errors.New("not supported: Flush")
 			case NBDCmdRead:
-				rp += 28
+				rp += nbdRequestHeaderSize
 				err := d.cmdRead(ctx, request.Handle, request.From, request.Length)
 				if err != nil {
 					return err
 				}
 			case NBDCmdWrite:
-				rp += 28
+				rp += nbdRequestHeaderSize
 
 				if request.Length > dispatchMaxWriteBufferSize {
 					return fmt.Errorf("nbd write request length %d exceeds maximum %d", request.Length, dispatchMaxWriteBufferSize)
@@ -242,8 +248,7 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 
 				rp += dataCopied
 
-				// We need to wait for more data here, otherwise we will deadlock if the buffer is Xmb and the length is Xmb because of the header's extra 28 bytes needed.
-				// At the same time we don't want to increase the default buffer size as the max would be 32mb which is too large for hundreds of sandbox connections.
+				// Read any remaining payload bytes that did not fit in the dispatch buffer.
 
 				for dataCopied < int(request.Length) {
 					n, err := d.fp.Read(data[dataCopied:])
@@ -268,7 +273,7 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 				}
 			case NBDCmdWriteZeroes, NBDCmdTrim:
 				// TRIM and WRITE_ZEROES both punch the cache; NO_HOLE is intentionally ignored.
-				rp += 28
+				rp += nbdRequestHeaderSize
 				err := d.cmdWriteZeroes(ctx, request.Handle, request.From, int64(request.Length))
 				if err != nil {
 					return err
