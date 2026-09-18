@@ -153,6 +153,25 @@ func (pb *OptimizeBuilder) Build(
 		Memory: memoryPrefetchMapping,
 	})
 
+	// Wait for the finalize phase's async uploads (snapshot data and the
+	// pre-prefetch metadata) before re-uploading metadata with the prefetch
+	// mapping. Finalize uploads via the build's UploadErrGroup and returns
+	// immediately, so without this wait the goroutine's metadata upload and
+	// updateMetadata below race on the same metadata object for this build —
+	// the later writer wins, and an interleaving that finishes the finalize
+	// upload last clobbers the prefetch mapping. Waiting is also the earliest
+	// point where re-publishing makes sense: a failed finalize upload means
+	// the remote build is incomplete and the mapping would dangle.
+	if err := pb.finalizeUploadsSettled(); err != nil {
+		pb.logger.Warn(ctx, "finalize upload failed; skipping prefetch metadata publish", zap.Error(err))
+
+		return phases.LayerResult{
+			Metadata: sourceLayer.Metadata,
+			Cached:   false,
+			Hash:     currentLayer.Hash,
+		}, nil
+	}
+
 	// Upload the updated metadata
 	err = pb.updateMetadata(ctx, updatedMetadata)
 	if err != nil {
@@ -254,6 +273,22 @@ func (pb *OptimizeBuilder) runSandboxAndCollectPrefetch(
 	}
 
 	return prefetchData, nil
+}
+
+// finalizeUploadsSettled waits for the finalize phase's async uploads and
+// reports whether they all succeeded. The build's UploadErrGroup carries the
+// finalize goroutine (snapshot data + the pre-prefetch metadata upload); the
+// builder's own Wait for the same group runs only after every phase, so
+// without this gate the optimize phase's metadata re-upload can interleave
+// with — and be clobbered by — the finalize upload writing the same object.
+// A non-nil error means the finalize upload failed; the same error
+// resurfaces at the builder-level wait, so callers treat it as a soft skip.
+func (pb *OptimizeBuilder) finalizeUploadsSettled() error {
+	if pb.UploadErrGroup == nil {
+		return nil
+	}
+
+	return pb.UploadErrGroup.Wait()
 }
 
 // updateMetadata updates the template metadata in storages.
