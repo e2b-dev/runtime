@@ -58,6 +58,11 @@ type expirationIndexMetrics struct {
 	sweptOrphan        metric.MeasurementOption
 	sweptDeadExecution metric.MeasurementOption
 	sweptInvalid       metric.MeasurementOption
+
+	// indexSize records the ZSET cardinality once per heal pass (every 5 min).
+	indexSize metric.Int64Histogram
+	// sweepDuration records wall-clock time of each ExpiredItems call.
+	sweepDuration metric.Int64Histogram
 }
 
 const sweptReasonAttr = "reason"
@@ -78,6 +83,16 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 		return expirationIndexMetrics{}, fmt.Errorf("expiration index swept counter: %w", err)
 	}
 
+	indexSize, err := telemetry.GetHistogram(meter, telemetry.ApiRedisStorageExpirationIndexSize)
+	if err != nil {
+		return expirationIndexMetrics{}, fmt.Errorf("expiration index size histogram: %w", err)
+	}
+
+	sweepDuration, err := telemetry.GetHistogram(meter, telemetry.ApiRedisStorageExpirationIndexSweepDuration)
+	if err != nil {
+		return expirationIndexMetrics{}, fmt.Errorf("expiration index sweep duration histogram: %w", err)
+	}
+
 	return expirationIndexMetrics{
 		indexHealed:        healed,
 		indexRescored:      rescored,
@@ -85,6 +100,8 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 		sweptOrphan:        metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "orphan"))),
 		sweptDeadExecution: metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "dead_execution"))),
 		sweptInvalid:       metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "invalid"))),
+		indexSize:          indexSize,
+		sweepDuration:      sweepDuration,
 	}, nil
 }
 
