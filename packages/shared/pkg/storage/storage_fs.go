@@ -125,8 +125,11 @@ func (o *fsObject) Put(_ context.Context, data []byte, _ ...PutOption) error {
 	defer handle.Close()
 
 	_, err = io.Copy(handle, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
 
-	return err
+	return o.clearSizeSidecar()
 }
 
 func (o *fsObject) StoreFile(ctx context.Context, path string, opts ...PutOption) (*FullFrameTable, [32]byte, error) {
@@ -162,16 +165,22 @@ func (o *fsObject) StoreFile(ctx context.Context, path string, opts ...PutOption
 	defer handle.Close()
 
 	n, err := io.Copy(handle, r)
-	if err == nil {
-		logger.L().Debug(ctx, "Stored file to filesystem",
-			zap.String("object", o.path),
-			zap.String("source", path),
-			zap.Int64("size_uncompressed", n),
-			zap.String("compression", "none"),
-		)
+	if err != nil {
+		return nil, [32]byte{}, err
 	}
 
-	return nil, [32]byte{}, err
+	if err = o.clearSizeSidecar(); err != nil {
+		return nil, [32]byte{}, err
+	}
+
+	logger.L().Debug(ctx, "Stored file to filesystem",
+		zap.String("object", o.path),
+		zap.String("source", path),
+		zap.Int64("size_uncompressed", n),
+		zap.String("compression", "none"),
+	)
+
+	return nil, [32]byte{}, nil
 }
 
 func (o *fsObject) storeFileCompressed(ctx context.Context, localPath string, cfg CompressConfig, sink FrameSink) (*FullFrameTable, [32]byte, error) {
@@ -301,6 +310,15 @@ func (o *fsObject) getHandle(checkExistence bool) (*os.File, error) {
 	}
 
 	return handle, nil
+}
+
+func (o *fsObject) clearSizeSidecar() error {
+	err := os.Remove(SizeSidecar(o.path))
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+
+	return fmt.Errorf("failed to remove uncompressed-size sidecar for %s: %w", o.path, err)
 }
 
 // fsPartUploader implements partUploader for local filesystem.
