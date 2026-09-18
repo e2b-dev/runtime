@@ -290,7 +290,12 @@ func (o *fsObject) getHandle(checkExistence bool) (*os.File, error) {
 		}
 	}
 
-	handle, err := os.OpenFile(o.path, os.O_RDWR|os.O_CREATE, 0o644)
+	flags := os.O_RDWR | os.O_CREATE
+	if !checkExistence {
+		flags |= os.O_TRUNC
+	}
+
+	handle, err := os.OpenFile(o.path, flags, 0o644)
 	if err != nil {
 		return nil, err
 	}

@@ -63,6 +63,58 @@ func TestFSPut(t *testing.T) {
 	require.Equal(t, payload, string(data))
 }
 
+func TestFSPutTruncatesExistingObject(t *testing.T) {
+	t.Parallel()
+	p := newTempProvider(t)
+	ctx := t.Context()
+
+	obj, err := p.OpenBlob(ctx, "overwrite/dst.txt")
+	require.NoError(t, err)
+
+	require.NoError(t, obj.Put(ctx, []byte("a longer initial payload")))
+	require.NoError(t, obj.Put(ctx, []byte("short")))
+
+	seekable, ok := obj.(Seekable)
+	require.True(t, ok)
+	size, err := seekable.Size(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, len("short"), size)
+
+	data, err := GetBlob(ctx, obj)
+	require.NoError(t, err)
+	require.Equal(t, []byte("short"), data)
+}
+
+func TestFSStoreFileTruncatesExistingObject(t *testing.T) {
+	t.Parallel()
+	p := newTempProvider(t)
+	ctx := t.Context()
+
+	srcPath := filepath.Join(t.TempDir(), "src.txt")
+	require.NoError(t, os.WriteFile(srcPath, []byte("a longer initial payload"), 0o600))
+
+	obj, err := p.OpenSeekable(ctx, "overwrite/dst.txt")
+	require.NoError(t, err)
+
+	_, _, err = obj.StoreFile(ctx, srcPath)
+	require.NoError(t, err)
+
+	const replacement = "short"
+	require.NoError(t, os.WriteFile(srcPath, []byte(replacement), 0o600))
+	_, _, err = obj.StoreFile(ctx, srcPath)
+	require.NoError(t, err)
+
+	size, err := obj.Size(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, len(replacement), size)
+
+	blob, ok := obj.(Blob)
+	require.True(t, ok)
+	data, err := GetBlob(ctx, blob)
+	require.NoError(t, err)
+	require.Equal(t, []byte(replacement), data)
+}
+
 func TestDelete(t *testing.T) {
 	t.Parallel()
 	p := newTempProvider(t)
