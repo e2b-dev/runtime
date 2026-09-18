@@ -152,9 +152,10 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	ttlSeconds := int(transitionKeyTTL.Seconds())
 	resultTtlSeconds := int(transitionResultKeyTTL.Seconds())
 
+	eidKey := getSandboxExecutionIDKey(teamID.String(), sandboxID)
 	written, err := startTransitionScript.Run(ctx, s.redisClient,
-		[]string{key, transitionKey, resultKey},
-		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID,
+		[]string{key, transitionKey, resultKey, eidKey},
+		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID, updated.ExecutionID,
 	).Int64()
 	if err != nil {
 		return transition, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
