@@ -217,15 +217,20 @@ func NewProcess(
 	}
 
 	cmd := exec.CommandContext(execCtx,
-		"unshare",
-		"-m",
-		"--",
 		"bash",
 		"-c",
 		startScript.Value,
 	)
 
-	p := &Process{
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:       true,                // Create a new session
+		Unshareflags: syscall.CLONE_NEWNS, // Create a new mount namespace.
+		// Note: unlike `unshare -m` (util-linux >= 2.27), CLONE_NEWNS does NOT automatically
+		// set MS_PRIVATE propagation. Private isolation is ensured by `mount --make-rprivate /`
+		// as the first command in both startScriptV1 and startScriptV2.
+	}
+
+	return &Process{
 		Versions:              versions,
 		Exit:                  utils.NewErrorOnce(),
 		cmd:                   cmd,
@@ -239,13 +244,7 @@ func NewProcess(
 
 		kernelPath: startScript.KernelPath,
 		rootfsPath: startScript.RootfsPath,
-	}
-
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create a new session
-	}
-
-	return p, nil
+	}, nil
 }
 
 func (p *Process) configure(
