@@ -493,14 +493,14 @@ func (p *Handler) ResizeTty(size *pty.Winsize) error {
 
 func (p *Handler) WriteStdin(data []byte) error {
 	if p.tty != nil {
-		return errors.New("tty assigned to process — input should be written to the pty, not the stdin")
+		return ErrStdinOnPty
 	}
 
 	p.stdinMu.Lock()
 	defer p.stdinMu.Unlock()
 
 	if p.stdin == nil {
-		return errors.New("stdin not enabled or closed")
+		return ErrStdinUnavailable
 	}
 
 	_, err := p.stdin.Write(data)
@@ -515,7 +515,7 @@ func (p *Handler) WriteStdin(data []byte) error {
 // Only works for non-PTY processes.
 func (p *Handler) CloseStdin() error {
 	if p.tty != nil {
-		return errors.New("cannot close stdin for PTY process — send Ctrl+D (0x04) instead")
+		return ErrCloseStdinOnPty
 	}
 
 	p.stdinMu.Lock()
@@ -535,7 +535,7 @@ func (p *Handler) CloseStdin() error {
 
 func (p *Handler) WriteTty(data []byte) error {
 	if p.tty == nil {
-		return errors.New("tty not assigned to process — input should be written to the stdin, not the tty")
+		return ErrTtyUnavailable
 	}
 
 	_, err := p.tty.Write(data)
