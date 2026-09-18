@@ -225,7 +225,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	if runningSandboxes >= maxRunningSandboxesPerNode {
 		telemetry.ReportEvent(ctx, "max number of running sandboxes reached")
 
-		return nil, status.Errorf(codes.ResourceExhausted, "max number of running sandboxes on node reached (%d), please retry", maxRunningSandboxesPerNode)
+		return nil, status.Errorf(codes.ResourceExhausted, "max number of running sandboxes on node reached: current=%d, max=%d, please retry", runningSandboxes, maxRunningSandboxesPerNode)
 	}
 
 	// Check if we've reached the max number of starting instances on this node
@@ -239,7 +239,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		if !acquired {
 			telemetry.ReportEvent(ctx, "too many starting sandboxes on node")
 
-			return nil, status.Errorf(codes.ResourceExhausted, "too many sandboxes starting on this node, please retry")
+			return nil, status.Errorf(codes.ResourceExhausted, "too many sandboxes starting on this node: current=%d, max=%d, please retry", s.startingSandboxes.Current(), s.startingSandboxes.Limit())
 		}
 	}
 	defer s.startingSandboxes.Release(1)
