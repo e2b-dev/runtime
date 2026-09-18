@@ -189,6 +189,10 @@ type VolumeMountConfig struct {
 	Name string
 	Path string
 	Type string
+	// Sync controls the NFS mount mode inside the sandbox.
+	// true (default): sync mount — data safety, required when pause/resume is used.
+	// false: async mount — high throughput, only when pause/resume is not needed.
+	Sync bool
 }
 
 type EnvdMetadata struct {
