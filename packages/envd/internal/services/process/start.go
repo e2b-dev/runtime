@@ -90,11 +90,14 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 
 			return
 		case event := <-start:
+			setStreamWriteDeadline(ctx)
 			streamErr := stream.Send(&rpc.StartResponse{
 				Event: &rpc.ProcessEvent{
 					Event: &event,
 				},
 			})
+			clearStreamWriteDeadline(ctx)
+
 			if streamErr != nil {
 				cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending start event: %w", streamErr)))
 
@@ -109,6 +112,7 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 		for {
 			select {
 			case <-keepaliveTicker.C:
+				setStreamWriteDeadline(ctx)
 				streamErr := stream.Send(&rpc.StartResponse{
 					Event: &rpc.ProcessEvent{
 						Event: &rpc.ProcessEvent_Keepalive{
@@ -116,6 +120,8 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 						},
 					},
 				})
+				clearStreamWriteDeadline(ctx)
+
 				if streamErr != nil {
 					cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending keepalive: %w", streamErr)))
 
@@ -130,11 +136,14 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 					break dataLoop
 				}
 
+				setStreamWriteDeadline(ctx)
 				streamErr := stream.Send(&rpc.StartResponse{
 					Event: &rpc.ProcessEvent{
 						Event: &event,
 					},
 				})
+				clearStreamWriteDeadline(ctx)
+
 				if streamErr != nil {
 					cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending data event: %w", streamErr)))
 
@@ -157,11 +166,14 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 				return
 			}
 
+			setStreamWriteDeadline(ctx)
 			streamErr := stream.Send(&rpc.StartResponse{
 				Event: &rpc.ProcessEvent{
 					Event: &event,
 				},
 			})
+			clearStreamWriteDeadline(ctx)
+
 			if streamErr != nil {
 				cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending end event: %w", streamErr)))
 

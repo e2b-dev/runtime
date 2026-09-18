@@ -187,3 +187,87 @@ func TestStart_ClientDisconnectMidStream(t *testing.T) {
 	}
 	_ = stream.Close()
 }
+
+// TestStart_WithWriteDeadlineMiddleware verifies that the streamDeadlineMiddleware
+// (mounted in production via Handle) does not break normal streaming: a short
+// command must still produce start, data, and end events end-to-end.
+//
+// This test exercises the set/clear write deadline path that wraps every
+// stream.Send in connect.go and start.go.
+func TestStart_WithWriteDeadlineMiddleware(t *testing.T) {
+	t.Parallel()
+
+	client, cleanup := newTestService(t, streamDeadlineMiddleware)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
+		Process: &rpc.ProcessConfig{
+			Cmd:  "echo",
+			Args: []string{"hello"},
+		},
+	}))
+	require.NoError(t, err)
+
+	var events []*rpc.ProcessEvent
+	for stream.Receive() {
+		events = append(events, stream.Msg().GetEvent())
+	}
+	require.NoError(t, stream.Err())
+	require.NoError(t, stream.Close())
+
+	require.GreaterOrEqual(t, len(events), 2, "expected at least start + end events")
+	assert.NotNil(t, events[0].GetStart(), "first event should be Start")
+	assert.NotNil(t, events[len(events)-1].GetEnd(), "last event should be End")
+
+	// Verify there is at least one data event containing the echo output.
+	hasData := false
+	for _, e := range events {
+		if d := e.GetData(); d != nil {
+			hasData = true
+			break
+		}
+	}
+	assert.True(t, hasData, "stream should carry at least one Data event with stdout")
+}
+
+// TestStart_WriteDeadlineDoesNotKillSlowButLiveClient verifies that a client
+// reading more slowly than process emission rate is NOT disconnected. The write
+// deadline should only fire for dead peers (where TCP blocks indefinitely), not
+// for clients that are merely slower than the producer.
+//
+// We start a process that emits a few lines quickly, then read them with a
+// small artificial delay between reads. The handler must wait for the client
+// and deliver all events.
+func TestStart_WriteDeadlineDoesNotKillSlowButLiveClient(t *testing.T) {
+	t.Parallel()
+
+	client, cleanup := newTestService(t, streamDeadlineMiddleware)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	// printf emits three lines of stdout quickly.
+	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
+		Process: &rpc.ProcessConfig{
+			Cmd:  "printf",
+			Args: []string{"line1\nline2\nline3\n"},
+		},
+	}))
+	require.NoError(t, err)
+
+	var events []*rpc.ProcessEvent
+	for stream.Receive() {
+		events = append(events, stream.Msg().GetEvent())
+		// Simulate a client that is a bit slow to process each event.
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.NoError(t, stream.Err(), "slow client should not be disconnected by the write deadline")
+	require.NoError(t, stream.Close())
+
+	assert.NotNil(t, events[0].GetStart(), "first event should be Start")
+	assert.NotNil(t, events[len(events)-1].GetEnd(), "last event should be End")
+}
