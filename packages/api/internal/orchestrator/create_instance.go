@@ -418,6 +418,23 @@ func (o *Orchestrator) CreateSandbox(
 			o.maybeRemapResumeOriginNode(ctx, snapshotSandboxID, team, sbxData.NodeID, placed.WarmedNode)
 		}
 
+		// A create the request context cancelled mid-flight may still have
+		// completed on the node, leaving an instance the API never registered
+		// (no running-store record, no index, no catalog entry). Compensate
+		// immediately with a best-effort kill of this exact (id, execution)
+		// rather than waiting a full orphan grace period for reconcile to
+		// reclaim it. Detached from the cancelled request context.
+		if placed.InterruptedNode != nil {
+			o.compensateInterruptedCreate(
+				context.WithoutCancel(ctx),
+				placed.InterruptedNode,
+				sandboxID,
+				executionID,
+				sbxData.Build.Vcpu,
+				sbxData.Build.RamMb,
+			)
+		}
+
 		return sandbox.Sandbox{}, placementAPIError(err)
 	}
 

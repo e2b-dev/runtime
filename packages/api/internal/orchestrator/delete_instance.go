@@ -29,6 +29,10 @@ const refusalRetryAfter = 10 * time.Second
 
 const pauseTimeout = 80 * time.Second
 
+// interruptedCreateKillTimeout bounds the best-effort kill of an instance a
+// node may have created for a request that was cancelled before registration.
+const interruptedCreateKillTimeout = 30 * time.Second
+
 func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "remove-sandbox")
 	defer span.End()
@@ -390,6 +394,36 @@ func (o *Orchestrator) killOrphanSandbox(ctx context.Context, sbx sandbox.NodeSa
 			zap.Error(err),
 			logger.WithSandboxID(sbx.SandboxID),
 			logger.WithNodeID(sbx.NodeID),
+			zap.String("kill_reason", sandbox.KillReasonOrphaned.String()),
+		)
+	}
+}
+
+// compensateInterruptedCreate best-effort kills an instance a node may have
+// created for a request whose context was cancelled before the API registered
+// it. It runs the same node-side kill as the orphan reconciler, just eagerly on
+// the failure path so the leak window is near-zero instead of an orphan grace
+// period. A no-op on the node (NotFound) is handled by killSandboxOnNode, so a
+// create the node never actually completed costs only a cheap delete RPC. The
+// caller must pass a context detached from the cancelled request.
+func (o *Orchestrator) compensateInterruptedCreate(ctx context.Context, node *nodemanager.Node, sandboxID, executionID string, vcpu, ramMB int64) {
+	ctx, cancel := context.WithTimeout(ctx, interruptedCreateKillTimeout)
+	defer cancel()
+
+	nodeSbx := sandbox.NodeSandbox{
+		SandboxID:   sandboxID,
+		ExecutionID: executionID,
+		NodeID:      node.ID,
+		ClusterID:   node.ClusterID,
+		VCpu:        vcpu,
+		RamMB:       ramMB,
+	}
+
+	if err := o.killSandboxOnNode(ctx, node, nodeSbx, sandbox.KillReasonOrphaned); err != nil {
+		logger.L().Error(ctx, "Failed to compensate interrupted sandbox create on node",
+			zap.Error(err),
+			logger.WithSandboxID(sandboxID),
+			logger.WithNodeID(node.ID),
 			zap.String("kill_reason", sandbox.KillReasonOrphaned.String()),
 		)
 	}

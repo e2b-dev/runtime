@@ -26,6 +26,13 @@ type PlacementResult struct {
 	WarmedNode *nodemanager.Node
 	// TimedOut reports whether placement failed due to context cancellation/deadline.
 	TimedOut bool
+	// InterruptedNode is the node whose in-flight SandboxCreate was interrupted
+	// by the request context being cancelled/timing out. The node may have
+	// completed the create server-side even though the RPC returned Canceled, so
+	// it can hold an instance the API never registered. Set only on such a
+	// failure; callers should issue a best-effort kill of the (sandboxID,
+	// executionID) on it to avoid leaving an orphan until reconcile reclaims it.
+	InterruptedNode *nodemanager.Node
 	// Response is the successful create's RPC response; nil on failure.
 	Response *orchestrator.SandboxCreateResponse
 }
@@ -89,12 +96,20 @@ func placeSandbox(
 	// First node that attempted the create (not a fast ResourceExhausted refusal).
 	var firstTriedNode *nodemanager.Node
 
+	// Node whose in-flight SandboxCreate returned because the request context
+	// was cancelled/timed out. That node may still have completed the create
+	// server-side, so it is the one that can hold an unregistered instance.
+	var interruptedNode *nodemanager.Node
+
 	var lastCreateErr error
 
 	// failed reports the warming node only when the failure was caused by the
 	// request context being cancelled or timing out (ctx.Err() != nil). Hard
 	// failures (where the context is still live) carry no node, so callers never
 	// pin a retry to a node that genuinely refused the sandbox.
+	//
+	// It also surfaces the interrupted node so the caller can compensate for a
+	// create the node may have finished after the RPC was cancelled.
 	//
 	// TODO [EN-1099]: We key off ctx.Err() rather than the gRPC status code because
 	// the orchestrator currently collapses a timed-out resume into codes.Internal
@@ -105,7 +120,7 @@ func placeSandbox(
 			return PlacementResult{}, err
 		}
 
-		return PlacementResult{WarmedNode: firstTriedNode, TimedOut: true}, err
+		return PlacementResult{WarmedNode: firstTriedNode, InterruptedNode: interruptedNode, TimedOut: true}, err
 	}
 
 	attempt := 0
@@ -192,6 +207,15 @@ func placeSandbox(
 		// sandbox (i.e. did not refuse with ResourceExhausted).
 		if statusCode != codes.ResourceExhausted && firstTriedNode == nil {
 			firstTriedNode = failedNode
+		}
+
+		// If the request context was cancelled while this node's create was in
+		// flight, the node may have finished creating the instance even though
+		// the RPC returned. A ResourceExhausted refusal never started a create,
+		// so it cannot leak. Track the most recent such node as the compensation
+		// target; the loop exits on the next ctx.Done() check.
+		if ctx.Err() != nil && statusCode != codes.ResourceExhausted {
+			interruptedNode = failedNode
 		}
 
 		switch statusCode {
