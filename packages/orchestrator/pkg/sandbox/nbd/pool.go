@@ -243,7 +243,62 @@ func (d *DevicePool) isDeviceFree(slot DeviceSlot) (bool, error) {
 		return false, fmt.Errorf("failed to parse size: %w", err)
 	}
 
-	return size == 0, nil
+	if size != 0 {
+		return false, nil
+	}
+
+	// size==0 and no pid only prove the synchronous half of NBD disconnect
+	// finished (capacity reset, connection torn down). The kernel still drains
+	// in-flight blk_mq requests and tears down the page cache on a workqueue
+	// afterwards; a slot handed out in that window races the tail of the
+	// previous device's teardown, which surfaces as the sector-0/partition-scan
+	// EIO seen in dmesg. Require the device to be quiescent -- no in-flight
+	// requests and no holders -- before calling it free.
+	return d.isDeviceQuiescent(slot)
+}
+
+// isDeviceQuiescent reports whether the kernel has finished the asynchronous
+// teardown for a disconnected device: no in-flight blk_mq requests and no
+// holders (udev/partition-probe/mount references). Both signals are best-effort
+// -- if the sysfs files are absent (older kernels, or the device node not yet
+// materialized) the device is treated as quiescent so the pool never wedges on
+// a signal that will never appear.
+func (d *DevicePool) isDeviceQuiescent(slot DeviceSlot) (bool, error) {
+	inflightFile := fmt.Sprintf("%s/nbd%d/inflight", d.sysBlockDir, slot)
+
+	data, err := os.ReadFile(inflightFile)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("failed to read inflight file: %w", err)
+		}
+		// No inflight signal available: fall through to the holders check.
+	} else {
+		// The file is two whitespace-separated counters: reads and writes
+		// currently in flight. Any non-zero field means the device is not yet
+		// idle.
+		for _, field := range strings.Fields(string(data)) {
+			n, parseErr := strconv.ParseUint(field, 10, 64)
+			if parseErr != nil {
+				return false, fmt.Errorf("failed to parse inflight file: %w", parseErr)
+			}
+			if n != 0 {
+				return false, nil
+			}
+		}
+	}
+
+	holdersDir := fmt.Sprintf("%s/nbd%d/holders", d.sysBlockDir, slot)
+
+	entries, err := os.ReadDir(holdersDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+
+		return false, fmt.Errorf("failed to read holders dir: %w", err)
+	}
+
+	return len(entries) == 0, nil
 }
 
 func (d *DevicePool) getMaybeEmptySlot(start DeviceSlot) (DeviceSlot, func(), bool) {
