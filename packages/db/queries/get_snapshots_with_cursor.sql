@@ -30,7 +30,8 @@ JOIN LATERAL (
 WHERE
     s.team_id = @team_id
     -- The order here is important, we want started_at descending, but sandbox_id ascending
-    AND s.metadata @> @metadata
+    -- Avoid estimating JSON containment when the caller supplied no metadata filter.
+    AND (@metadata::jsonb = '{}'::jsonb OR s.metadata @> @metadata)
     AND s.sandbox_started_at >= @started_after::timestamptz
     AND (s.sandbox_started_at, @cursor_id::text) < (@cursor_time, s.sandbox_id)
 ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
@@ -70,7 +71,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
-    AND s.metadata @> @metadata
+    AND (@metadata::jsonb = '{}'::jsonb OR s.metadata @> @metadata)
     AND s.sandbox_started_at >= @started_after::timestamptz
     -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
     -- gives the planner an indexable starting point for the ascending scan.
@@ -111,7 +112,7 @@ JOIN LATERAL (
 WHERE
     s.team_id = @team_id
     AND s.base_env_id = @template_id
-    AND s.metadata @> @metadata
+    AND (@metadata::jsonb = '{}'::jsonb OR s.metadata @> @metadata)
     AND s.sandbox_started_at >= @started_after::timestamptz
     AND (s.sandbox_started_at, @cursor_id::text) < (@cursor_time, s.sandbox_id)
 ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
@@ -149,7 +150,7 @@ JOIN LATERAL (
 WHERE
     s.team_id = @team_id
     AND s.base_env_id = @template_id
-    AND s.metadata @> @metadata
+    AND (@metadata::jsonb = '{}'::jsonb OR s.metadata @> @metadata)
     AND s.sandbox_started_at >= @started_after::timestamptz
     -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
     -- gives the planner an indexable starting point for the ascending scan.
