@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -296,17 +297,55 @@ func (o *fsObject) getHandle(checkExistence bool) (*os.File, error) {
 	return handle, nil
 }
 
-func replaceFile(path string, r io.Reader) (int64, error) {
+// tmpFileMarker is embedded in the name of the temporary file used for atomic
+// replacement. It is shared by replaceFile (which creates such files) and
+// SweepStaleTempFiles (which reclaims the ones a crash left behind), so the two
+// can never drift out of sync. Temp files are named ".<object>.tmp-<random>".
+const tmpFileMarker = ".tmp-"
+
+// envBool reads a boolean environment toggle, returning def when unset or
+// unparseable. Accepts the strconv.ParseBool set (1/t/T/TRUE/true/... etc).
+func envBool(name string, def bool) bool {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+
+	return parsed
+}
+
+// fsyncDurable, when true, makes replaceFile fsync the temp file before the
+// rename and fsync the parent directory after it, so a crash cannot leave a
+// renamed-but-empty/truncated object. It defaults to false to preserve the
+// previous (page-cache-only) performance for the high-frequency cache writes;
+// callers that store crash-critical objects (snapshots, headers) can enable it.
+// It is a package-level var (not a const) so it can be toggled by config or in
+// tests without threading a parameter through every caller.
+var fsyncDurable = envBool("STORAGE_FS_FSYNC_DURABLE", false)
+
+// replaceFile atomically replaces path with the contents of r via a temp file
+// in the same directory followed by a rename. When durable is true it fsyncs the
+// temp file before the rename and the parent directory after, so a crash cannot
+// leave a renamed-but-empty object; the cost is two extra fsyncs per write.
+func replaceFile(path string, r io.Reader, durable bool) (int64, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+tmpFileMarker+"*")
 	if err != nil {
 		return 0, err
 	}
 	tmpPath := tmp.Name()
+	// On any failure before Rename succeeds this removes the temp file; after a
+	// successful Rename the temp path no longer exists so Remove is a no-op. A
+	// crash between CreateTemp and Rename skips this entirely — SweepStaleTempFiles
+	// reclaims such orphans.
 	defer os.Remove(tmpPath)
 
 	if err := tmp.Chmod(0o644); err != nil {
@@ -321,6 +360,18 @@ func replaceFile(path string, r io.Reader) (int64, error) {
 
 		return n, err
 	}
+
+	// Durability: flush the data to disk before it becomes reachable under the
+	// object's name, otherwise the rename can be persisted while the contents are
+	// still only in the page cache (crash => renamed-but-empty object).
+	if durable {
+		if err := tmp.Sync(); err != nil {
+			tmp.Close()
+
+			return n, err
+		}
+	}
+
 	if err := tmp.Close(); err != nil {
 		return n, err
 	}
@@ -329,11 +380,87 @@ func replaceFile(path string, r io.Reader) (int64, error) {
 		return n, err
 	}
 
+	// Persist the directory entry created by the rename, so the replacement
+	// survives a crash immediately after it.
+	if durable {
+		if err := fsyncDir(dir); err != nil {
+			return n, err
+		}
+	}
+
 	return n, nil
 }
 
+// fsyncDir flushes a directory's metadata so a rename into it is durable.
+// A directory that cannot be opened O_RDONLY for sync is treated as a no-op
+// rather than a hard error (some filesystems reject directory fsync).
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+
+	if err := d.Sync(); err != nil {
+		// EINVAL / ENOTSUP: filesystem doesn't support directory fsync — the
+		// rename itself is still atomic, only the extra durability is missing.
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// SweepStaleTempFiles removes atomic-replacement temp files (".*.tmp-*") under
+// dir that are older than olderThan and are therefore orphans left by a crash
+// (OOM kill, power loss) between CreateTemp and Rename. The age gate ensures a
+// temp file belonging to a concurrently in-flight write is never removed. It
+// returns the number of files reclaimed. Missing dir is not an error.
+func SweepStaleTempFiles(dir string, olderThan time.Duration) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+
+		return 0, err
+	}
+
+	cutoff := time.Now().Add(-olderThan)
+	removed := 0
+	var errs []error
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Match ".<object>.tmp-<random>": leading dot + contains the marker.
+		if !strings.HasPrefix(name, ".") || !strings.Contains(name, tmpFileMarker) {
+			continue
+		}
+		info, statErr := e.Info()
+		if statErr != nil {
+			continue // vanished concurrently; ignore
+		}
+		if info.ModTime().After(cutoff) {
+			continue // possibly an in-flight write; leave it
+		}
+		if rmErr := os.Remove(filepath.Join(dir, name)); rmErr != nil && !os.IsNotExist(rmErr) {
+			errs = append(errs, rmErr)
+
+			continue
+		}
+		removed++
+	}
+
+	return removed, errors.Join(errs...)
+}
+
 func (o *fsObject) replaceFrom(r io.Reader) (int64, error) {
-	n, err := replaceFile(o.path, r)
+	n, err := replaceFile(o.path, r, fsyncDurable)
 	if err != nil {
 		return n, err
 	}
@@ -364,7 +491,7 @@ func (u *fsPartUploader) Complete(_ context.Context) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	_, err := replaceFile(u.fullPath, bytes.NewReader(u.Assemble()))
+	_, err := replaceFile(u.fullPath, bytes.NewReader(u.Assemble()), fsyncDurable)
 
 	return err
 }
