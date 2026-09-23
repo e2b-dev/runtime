@@ -1,0 +1,38 @@
+# Compose overlay for one isolated, temporary Cathedral proof host.
+# Use only through proof-host.sh, which checks the artifact lock and ingress guard.
+services:
+  api:
+    image: ${CATHEDRAL_API_IMAGE:?build the pinned Cathedral artifacts first}
+    pull_policy: never
+    restart: "no"
+  db-migrator:
+    image: ${CATHEDRAL_DB_MIGRATOR_IMAGE:?build the pinned Cathedral artifacts first}
+    pull_policy: never
+  fetch-artifacts:
+    volumes:
+      - ${CATHEDRAL_ARTIFACT_DIR:?build the pinned Cathedral artifacts first}:/opt/cathedral/artifacts:ro
+      - ${CATHEDRAL_DEPLOY_DIR:?set the Cathedral deploy directory}/fetch-pinned-artifacts.sh:/opt/cathedral/fetch-pinned-artifacts.sh:ro
+    command: ["/bin/bash", "/opt/cathedral/fetch-pinned-artifacts.sh"]
+  orchestrator:
+    restart: "no"
+  client-proxy:
+    restart: "no"
+  cathedral-ready:
+    image: ${E2B_TOOLS_IMAGE:?use the pinned Embed tools image}
+    restart: "no"
+    depends_on:
+      base-template:
+        condition: service_completed_successfully
+      client-proxy:
+        condition: service_healthy
+    command: ["/bin/sh", "-c", "echo 'Cathedral proof template and runtime are ready'; while :; do sleep 3600; done"]
+  # The upstream compose launcher executes /var/lib/e2b/bin/orchestrator on the
+  # host. fetch-artifacts installs our verified pinned binary there first.
+  dashboard:
+    profiles: [cathedral-dashboard]
+  dashboard-api:
+    profiles: [cathedral-dashboard]
+  ready:
+    profiles: [cathedral-dashboard]
+  smoke:
+    profiles: [cathedral-smoke]

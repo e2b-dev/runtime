@@ -686,6 +686,19 @@ E2B Embed (`embed/`) runs the same containers on one machine, the web dashboard 
 shapes (Compose, Terraform for GCP, Kubernetes); its ports, start order and images are in
 `embed/docs/REFERENCE.md`.
 
+The Cathedral one-host proof overlay in `deploy/cathedral` reuses Embed Compose's local
+PostgreSQL, Redis, ClickHouse, filesystem artifact store, host setup, and base-template build.
+It substitutes a source-pinned API and PostgreSQL migrator image and installs the matching
+source-pinned orchestrator binary after the upstream artifact fetch. The upstream envd and
+Firecracker/kernel/BusyBox pins remain aligned with that Compose release. Since the host-networked
+API, client-proxy, and orchestrator bind all interfaces, the proof requires a host ingress guard
+blocking non-loopback access to their ports before startup; a separate private TLS front door is
+required for remote access. This is one temporary isolated host, not the multi-node topology above.
+For a bounded remote proof, `deploy/cathedral/ingress-proxy.go` adds two loopback-only HTTP
+listeners: :13000 permits the authenticated Cathedral control routes to API :3000, and :13002
+permits token-protected envd process/filesystem traffic to client-proxy :3002. Separate temporary
+HTTPS tunnels may front those listeners; they do not change the runtime's host-network bindings.
+
 ```mermaid
 flowchart TB
     LB["Load balancer + TLS<br/>api.* → API | *.domain → client-proxy"]

@@ -1,0 +1,11 @@
+{
+  "nftables": [
+    {"metainfo": {"json_schema_version": 1}},
+    {"chain": {"family": "inet", "table": "cathedral_proof", "name": "input", "type": "filter", "hook": "input", "prio": -100, "policy": "accept"}},
+    {"rule": {"family": "inet", "table": "cathedral_proof", "chain": "input", "expr": [
+      {"match": {"op": "!=", "left": {"meta": {"key": "iifname"}}, "right": "lo"}},
+      {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [3000, 3001, 3002, 3003, 3010, 5007, 5008, 5009, 5109, 6060, 6061, 30006]}}},
+      {"drop": null}
+    ]}}
+  ]
+}

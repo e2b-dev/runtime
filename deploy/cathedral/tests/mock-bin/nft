@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  '-j -y list chain inet cathedral_proof input')
+    jq "${CATHEDRAL_NFT_TEST_FILTER:-.}" "$CATHEDRAL_NFT_TEST_FIXTURE"
+    ;;
+  *) echo 'unexpected nft invocation in test' >&2; exit 1 ;;
+esac
