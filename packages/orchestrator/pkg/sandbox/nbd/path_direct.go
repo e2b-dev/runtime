@@ -88,6 +88,8 @@ type DirectPathMount struct {
 	devicePool   *DevicePool
 	featureFlags *featureflags.Client
 
+	logger logger.Logger
+
 	Backend         block.Device
 	deviceIndex     uint32
 	blockSize       uint64
@@ -127,12 +129,13 @@ func WithDeadconnTimeout(d time.Duration) MountOption {
 	return func(m *DirectPathMount) { m.deadconnTimeout = d }
 }
 
-func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, opts ...MountOption) *DirectPathMount {
+func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, lg logger.Logger, opts ...MountOption) *DirectPathMount {
 	m := &DirectPathMount{
 		Backend:         b,
 		blockSize:       4096,
 		devicePool:      devicePool,
 		featureFlags:    featureFlags,
+		logger:          lg,
 		socksClient:     make([]*os.File, 0),
 		socksServer:     make([]io.Closer, 0),
 		deviceIndex:     math.MaxUint32,
@@ -168,7 +171,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			span.SetStatus(codes.Error, err.Error())
 		}
 		span.End()
-		logger.L().Debug(ctx, "opening direct path mount", zap.Uint32("device_index", d.deviceIndex), zap.Error(err))
+		d.logger.Debug(ctx, "opening direct path mount", zap.Uint32("device_index", d.deviceIndex), zap.Error(err))
 	}()
 
 	telemetry.ReportEvent(ctx, "opening direct path mount")
@@ -221,20 +224,20 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			}
 			server.Close()
 
-			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes)
-			// Capture deviceIndex for the goroutine closure — it's reassigned on
-			// each retry iteration of the outer for-loop (not a range loop, so
-			// Go 1.22+ loop variable fix doesn't apply).
-			devIdx := deviceIndex
+			// Capture deviceIndex here — it's reassigned on each retry
+			// iteration of the outer for-loop (not a range loop, so Go 1.22+
+			// loop variable fix doesn't apply).
+			connLogger := d.logger.With(
+				zap.Uint32("device_index", deviceIndex),
+				zap.Int("socket_index", i),
+			)
+
+			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes, connLogger)
 			// Start reading commands on the socket and dispatching them to our provider
 			d.handlersWg.Go(func() {
 				handleErr := dispatch.Handle(handlerCtx)
 				// The error is expected to happen if the nbd (socket connection) is closed
-				logger.L().Info(handlerCtx, "closing handler for NBD commands",
-					zap.Error(handleErr),
-					zap.Uint32("device_index", devIdx),
-					zap.Int("socket_index", i),
-				)
+				connLogger.Info(handlerCtx, "closing handler for NBD commands", zap.Error(handleErr))
 			})
 
 			d.socksServer = append(d.socksServer, serverc)
@@ -264,19 +267,19 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			break
 		}
 
-		logger.L().Error(ctx, "error opening NBD, retrying", zap.Error(connectErr), zap.Uint32("device_index", deviceIndex))
+		d.logger.Error(ctx, "error opening NBD, retrying", zap.Error(connectErr), zap.Uint32("device_index", deviceIndex))
 
 		// Sometimes (rare), there seems to be a BADF error here. Lets just retry for now...
 		// Close things down and try again...
 		err := closeSocketPairs(d.socksClient, d.socksServer)
 		if err != nil {
-			logger.L().Error(ctx, "error closing socket pairs on error opening NBD", zap.Error(err))
+			d.logger.Error(ctx, "error closing socket pairs on error opening NBD", zap.Error(err))
 		}
 
 		// Release the device back to the pool
 		err = d.devicePool.ReleaseDevice(ctx, deviceIndex)
 		if err != nil {
-			logger.L().Error(ctx, "error opening NBD, error releasing device", zap.Error(err), zap.Uint32("device_index", deviceIndex))
+			d.logger.Error(ctx, "error opening NBD, error releasing device", zap.Error(err), zap.Uint32("device_index", deviceIndex))
 		}
 
 		if strings.Contains(connectErr.Error(), "invalid argument") {
@@ -348,7 +351,7 @@ func (d *DirectPathMount) closeConnected(ctx context.Context, deviceIndex uint32
 	// Warn, not Debug: this is rare, it means a device and a pool slot came within
 	// one branch of being stranded, and the build failure the caller reports does
 	// not name either of them.
-	logger.L().Warn(ctx, "tearing down a connected NBD device Open cannot return",
+	d.logger.Warn(ctx, "tearing down a connected NBD device Open cannot return",
 		zap.Uint32("device_index", deviceIndex),
 		zap.String("stage", stage),
 	)
@@ -468,7 +471,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		stage.Store("sync")
 		watchdog := time.AfterFunc(deviceCloseWarnThreshold, func() {
 			nbdSlowCloseCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("stage", stage.Load().(string))))
-			logger.L().Warn(ctx, "NBD device descriptor close stalled",
+			d.logger.Warn(ctx, "NBD device descriptor close stalled",
 				zap.Duration("threshold", deviceCloseWarnThreshold),
 				zap.Uint32("device_index", idx),
 			)
@@ -497,7 +500,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		}
 
 		if !watchdog.Stop() {
-			logger.L().Warn(ctx, "NBD device descriptor close finished after stalling",
+			d.logger.Warn(ctx, "NBD device descriptor close finished after stalling",
 				zap.Duration("duration", time.Since(closeStart)),
 				zap.Uint32("device_index", idx),
 			)
@@ -559,7 +562,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 	// Release the device back to the pool, retry if it is in use
 	if idx != math.MaxUint32 {
 		telemetry.ReportEvent(ctx, "releasing device to the pool")
-		err := d.devicePool.ReleaseDevice(ctx, idx, WithInfiniteRetry())
+		err := d.devicePool.ReleaseDevice(ctx, idx, WithInfiniteRetry(), WithLogger(d.logger))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("error releasing overlay device: %w", err))
 		}

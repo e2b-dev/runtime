@@ -216,9 +216,10 @@ type StopReason string
 const (
 	// StopReasonKilled covers Delete and the teardowns the orchestrator does
 	// itself after an operation leaves the sandbox unusable.
-	StopReasonKilled        StopReason = "killed"
-	StopReasonPaused        StopReason = "paused"
-	StopReasonCheckpointing StopReason = "checkpointing"
+	StopReasonKilled             StopReason = "killed"
+	StopReasonPaused             StopReason = "paused"
+	StopReasonCheckpointing      StopReason = "checkpointing"
+	StopReasonRegistrationFailed StopReason = "registration_failed"
 	// StopReasonCrashed is the absence of a recorded reason: nothing asked the
 	// sandbox to stop and it went down anyway.
 	StopReasonCrashed StopReason = "crashed"
@@ -775,8 +776,8 @@ func (f *Factory) EgressProxy() network.EgressProxy {
 }
 
 // NewDirectPathMount opens host-side NBD access without a Firecracker VM.
-func (f *Factory) NewDirectPathMount(backend block.Device) *nbd.DirectPathMount {
-	return nbd.NewDirectPathMount(backend, f.devicePool, f.featureFlags)
+func (f *Factory) NewDirectPathMount(backend block.Device, lg logger.Logger) *nbd.DirectPathMount {
+	return nbd.NewDirectPathMount(backend, f.devicePool, f.featureFlags, lg)
 }
 
 // PreBootFn is an optional callback invoked after the rootfs is ready but before
@@ -853,6 +854,8 @@ func (f *Factory) CreateSandbox(
 		return nil, fmt.Errorf("failed to get rootfs: %w", err)
 	}
 
+	sbxLogger := runtime.Logger()
+
 	var rootfsProvider rootfs.Provider
 	if rootfsCachePath == "" {
 		rootfsProvider, err = rootfs.NewNBDProvider(
@@ -861,6 +864,7 @@ func (f *Factory) CreateSandbox(
 			sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
 			f.devicePool,
 			f.featureFlags,
+			sbxLogger,
 		)
 	} else {
 		rootfsProvider, err = rootfs.NewDirectProvider(
@@ -869,6 +873,7 @@ func (f *Factory) CreateSandbox(
 			// Populate direct cache directly from the source file
 			// This is needed for marking all blocks as dirty and being able to read them directly
 			rootfsCachePath,
+			sbxLogger,
 		)
 	}
 	if err != nil {
@@ -878,7 +883,7 @@ func (f *Factory) CreateSandbox(
 	go func() {
 		runErr := rootfsProvider.Start(execCtx)
 		if runErr != nil {
-			runtime.Logger().Error(ctx, "rootfs overlay error", zap.Error(runErr))
+			sbxLogger.Error(ctx, "rootfs overlay error", zap.Error(runErr))
 		}
 	}()
 
@@ -984,11 +989,7 @@ func (f *Factory) CreateSandbox(
 	}
 
 	f.Sandboxes.AssignNetwork(ctx, sbx)
-	cleanup.Add(ctx, func(ctx context.Context) error {
-		f.Sandboxes.MarkStopping(ctx, runtime.SandboxID, sbx.LifecycleID)
-
-		return nil
-	})
+	f.Sandboxes.reclaimLiveEntryOnCleanup(ctx, cleanup, runtime.SandboxID, sbx.LifecycleID)
 
 	// Do not move this call: it must run after AssignNetwork above and
 	// before fcHandle.Create below, so OnNetworkAssign always runs before
@@ -1350,6 +1351,7 @@ func (f *Factory) ResumeSandbox(
 			sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
 			f.devicePool,
 			f.featureFlags,
+			sbxLogger,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
@@ -1604,11 +1606,7 @@ func (f *Factory) ResumeSandbox(
 	// during the resume (e.g. for TCP firewall lookups). On failure the deferred cleanup
 	// will remove it.
 	f.Sandboxes.AssignNetwork(ctx, sbx)
-	cleanup.Add(ctx, func(ctx context.Context) error {
-		f.Sandboxes.MarkStopping(ctx, runtime.SandboxID, sbx.LifecycleID)
-
-		return nil
-	})
+	f.Sandboxes.reclaimLiveEntryOnCleanup(ctx, cleanup, runtime.SandboxID, sbx.LifecycleID)
 
 	reason := NetworkAssignReasonResume
 	if ropts.skipLiveRegistration {
@@ -1746,6 +1744,11 @@ func (s *Sandbox) Wait(ctx context.Context) error {
 }
 
 func (s *Sandbox) Close(ctx context.Context) error {
+	// The live-map entry is reclaimed inside the chain, by the callback
+	// Map.reclaimLiveEntryOnCleanup registers. Close must not reclaim it here:
+	// a writer at this point runs after the whole chain, which would move the
+	// moment the sandbox leaves Get, Items and Count to the very end of teardown,
+	// past every step the registration point was chosen to precede.
 	err := s.cleanup.Run(ctx)
 	if s.sandboxes != nil {
 		s.sandboxes.MarkStopped(context.WithoutCancel(ctx), s)

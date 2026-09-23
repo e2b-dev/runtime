@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -39,7 +40,7 @@ func TestPathDirect_CloseFlushesAfterOpenContextEnds(t *testing.T) {
 	// Short kernel deadlines: a flush nobody answers returns only after
 	// ioTimeout + deadconnTimeout, and the 10 s bound below has to be able to
 	// fail before that.
-	mnt := NewDirectPathMount(overlay, newPartitionedPool(t), featureFlags,
+	mnt := NewDirectPathMount(overlay, newPartitionedPool(t), featureFlags, logger.L(),
 		WithIOTimeout(20*time.Second),
 		WithDeadconnTimeout(10*time.Second),
 	)

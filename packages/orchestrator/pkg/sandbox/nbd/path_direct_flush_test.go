@@ -17,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -157,7 +158,7 @@ func setupNBDMount(t *testing.T, featureFlags *featureflags.Client, backend bloc
 
 	devicePool := newPartitionedPool(t)
 
-	mnt := NewDirectPathMount(backend, devicePool, featureFlags, mountOpts...)
+	mnt := NewDirectPathMount(backend, devicePool, featureFlags, logger.L(), mountOpts...)
 
 	deviceIndex, err := mnt.Open(t.Context())
 	require.NoError(t, err, "failed to open nbd mount")

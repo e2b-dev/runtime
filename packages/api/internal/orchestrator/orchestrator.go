@@ -118,6 +118,8 @@ type Orchestrator struct {
 	// same string, and nesting Do calls for the same key on the same Group would
 	// block forever.
 	discoveryGroup singleflight.Group
+
+	startup *startupGate
 }
 
 func New(
@@ -216,6 +218,8 @@ func New(
 		},
 	)
 
+	o.startup = newStartupGate(ctx, clusters.StartupReady(), o.syncClusterDiscoveredNodes)
+
 	// Evict old sandboxes
 	sandboxEvictor, err := evictor.New(ctx, o.sandboxStore, o.RemoveSandbox, o.featureFlagsClient, meter)
 	if err != nil {
@@ -244,6 +248,12 @@ func New(
 	go o.updateBestOfKConfig(ctx)
 
 	return &o, nil
+}
+
+// StartupReady closes once startup has observed a local node, completed the
+// initial cluster registry gate, and projected those snapshots into placement.
+func (o *Orchestrator) StartupReady() <-chan struct{} {
+	return o.startup.Ready()
 }
 
 func (o *Orchestrator) startStatusLogging(ctx context.Context) {

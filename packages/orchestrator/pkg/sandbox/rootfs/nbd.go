@@ -28,6 +28,8 @@ type NBDProvider struct {
 	mnt          *nbd.DirectPathMount
 	featureFlags *featureflags.Client
 
+	logger logger.Logger
+
 	ready *utils.SetOnce[string]
 
 	blockSize int64
@@ -40,7 +42,7 @@ type NBDProvider struct {
 	devicePool         *nbd.DevicePool
 }
 
-func NewNBDProvider(ctx context.Context, rootfs block.ReadonlyDevice, cachePath string, devicePool *nbd.DevicePool, featureFlags *featureflags.Client) (Provider, error) {
+func NewNBDProvider(ctx context.Context, rootfs block.ReadonlyDevice, cachePath string, devicePool *nbd.DevicePool, featureFlags *featureflags.Client, lg logger.Logger) (Provider, error) {
 	size, err := rootfs.Size(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting device size: %w", err)
@@ -55,12 +57,13 @@ func NewNBDProvider(ctx context.Context, rootfs block.ReadonlyDevice, cachePath 
 
 	overlay := block.NewOverlay(rootfs, cache)
 
-	mnt := nbd.NewDirectPathMount(overlay, devicePool, featureFlags)
+	mnt := nbd.NewDirectPathMount(overlay, devicePool, featureFlags, lg)
 
 	return &NBDProvider{
 		mnt:                mnt,
 		overlay:            overlay,
 		featureFlags:       featureFlags,
+		logger:             lg,
 		ready:              utils.NewSetOnce[string](),
 		finishedOperations: make(chan struct{}, 1),
 		blockSize:          blockSize,
@@ -96,7 +99,7 @@ func (o *NBDProvider) ejectAndStopSandbox(
 	go func() {
 		err := closeSandbox(ctx)
 		if err != nil {
-			logger.L().Error(ctx, "error stopping sandbox on cow export", zap.Error(err))
+			o.logger.Error(ctx, "error stopping sandbox on cow export", zap.Error(err))
 		}
 	}()
 
@@ -107,7 +110,7 @@ func (o *NBDProvider) ejectAndStopSandbox(
 		// if that failed
 		closeErr := cache.Close()
 		if closeErr != nil {
-			logger.L().Warn(ctx, "error closing cache", zap.Error(closeErr))
+			o.logger.Warn(ctx, "error closing cache", zap.Error(closeErr))
 		}
 
 		return nil, errors.New("timeout waiting for overlay device to be released")
@@ -136,7 +139,7 @@ func (o *NBDProvider) ExportDiff(
 		// if that failed
 		closeErr := cache.Close()
 		if closeErr != nil {
-			logger.L().Warn(ctx, "error closing cache", zap.Error(closeErr))
+			o.logger.Warn(ctx, "error closing cache", zap.Error(closeErr))
 		}
 
 		return nil, fmt.Errorf("error exporting cache: %w", err)
@@ -259,7 +262,7 @@ func (o *NBDProvider) Close(ctx context.Context) error {
 		errs = append(errs, fmt.Errorf("error closing overlay cache: %w", err))
 	}
 
-	logger.L().Info(ctx, "overlay device released")
+	o.logger.Info(ctx, "overlay device released")
 
 	return errors.Join(errs...)
 }

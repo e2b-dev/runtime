@@ -270,6 +270,29 @@ func (m *Map) MarkStopping(ctx context.Context, sandboxID, lifecycleID string) b
 	return err == nil
 }
 
+// reclaimLiveEntryOnCleanup registers the teardown callback that drops this
+// lifecycle's entry from the live map. It is the only teardown caller of
+// MarkStopping; Close must not reclaim the entry itself.
+//
+// Its position in the cleanup chain is load-bearing: the chain runs backward, so
+// registering after the network slot's release has been registered runs this
+// callback before it, and the entry stays in the live map through the VM stop and
+// the final host-stats sample. That is what decides when the sandbox leaves Get,
+// Items and Count, and so when OnStopping reaches subscribers. It does not decide
+// host-IP findability: GetByHostPort reads the network index, which the slot
+// return clears asynchronously and well after this chain ends. Do not move this
+// call.
+func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, sandboxID, lifecycleID string) {
+	cleanup.Add(ctx, func(ctx context.Context) error {
+		// false is the normal outcome: an operation-initiated stop (delete, pause,
+		// checkpoint) reclaims the entry before the chain runs, and a lifecycle that
+		// never became live has no entry to reclaim.
+		m.MarkStopping(ctx, sandboxID, lifecycleID)
+
+		return nil
+	})
+}
+
 // MarkStoppingReserved exchanges the matching live entry for a checkpoint hold before notifying subscribers.
 func (m *Map) MarkStoppingReserved(ctx context.Context, sandboxID, lifecycleID string) (*Reservation, error) {
 	return m.markStopping(ctx, sandboxID, lifecycleID, true)

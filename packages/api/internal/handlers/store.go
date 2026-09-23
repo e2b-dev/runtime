@@ -192,7 +192,7 @@ type teamRunningSandboxCounter interface {
 }
 
 type APIStore struct {
-	Healthy      atomic.Bool
+	startupState atomic.Uint32
 	config       cfg.Config
 	posthog      *analyticscollector.PosthogClient
 	Telemetry    *telemetry.Client
@@ -234,6 +234,12 @@ type APIStore struct {
 	webhookManagement webhookmanagement.WebhookManagementServiceClient
 	sandboxEvents     webhookevents.SandboxEventsServiceClient
 }
+
+const (
+	startupStateStarting uint32 = iota
+	startupStateReady
+	startupStateDraining
+)
 
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
@@ -427,21 +433,15 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 
 	go a.updateDBThrottleLimits(ctx)
 
-	// Wait till there's at least one, otherwise we can't create sandboxes yet
+	// Health stays blocked until the orchestrator has completed both startup
+	// gates and projected its initial cluster snapshots into placement.
 	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if orch.NodeCount() != 0 {
-					logger.L().Info(ctx, "Nodes are ready, setting API as healthy")
-					a.Healthy.Store(true)
-
-					return
-				}
-			}
+		select {
+		case <-ctx.Done():
+			return
+		case <-orch.StartupReady():
+			logger.L().Info(ctx, "Startup readiness completed, setting API as healthy")
+			a.markStartupReady()
 		}
 	}()
 
@@ -562,13 +562,23 @@ func (a *APIStore) sendAPIStoreError(c *gin.Context, code int, message string) {
 }
 
 func (a *APIStore) GetHealth(c *gin.Context) {
-	if a.Healthy.Load() {
+	if a.startupState.Load() == startupStateReady {
 		c.String(http.StatusOK, "Health check successful")
 
 		return
 	}
 
 	c.String(http.StatusServiceUnavailable, "Service is unavailable")
+}
+
+func (a *APIStore) markStartupReady() {
+	a.startupState.CompareAndSwap(startupStateStarting, startupStateReady)
+}
+
+// BeginDrain permanently marks this API instance unhealthy. Startup completion
+// racing with shutdown cannot restore readiness after the drain begins.
+func (a *APIStore) BeginDrain() {
+	a.startupState.Store(startupStateDraining)
 }
 
 func (a *APIStore) GetTeamFromAPIKey(ctx context.Context, ginCtx *gin.Context, apiKey string) (*types.Team, *api.APIError) {

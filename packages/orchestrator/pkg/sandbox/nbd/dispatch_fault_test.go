@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // replyConn is a fake NBD socket: Read serves queued request bytes, Write
@@ -93,7 +94,7 @@ func TestDispatch_MmapFault(t *testing.T) {
 	require.NoError(t, os.Truncate(path, 0))
 
 	conn := &replyConn{reqCh: make(chan []byte, 8), replies: make(chan Response, 8)}
-	d := NewDispatch(conn, &faultProv{cache: cache}, true)
+	d := NewDispatch(conn, &faultProv{cache: cache}, true, logger.L())
 
 	done := make(chan error, 1)
 	go func() { done <- d.Handle(t.Context()) }()

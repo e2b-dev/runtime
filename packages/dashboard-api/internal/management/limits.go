@@ -69,7 +69,7 @@ func (s *Service) ApplyProjectLimits(ctx context.Context, projection ProjectLimi
 }
 
 func (s *Service) applyProjectLimits(ctx context.Context, projection ProjectLimitsProjection) (bool, error) {
-	txDB, tx, err := s.limitsDB.WithTx(ctx)
+	txDB, tx, err := s.projectDB.WithTx(ctx)
 	if err != nil {
 		return false, fmt.Errorf("start project limits transaction: %w", err)
 	}

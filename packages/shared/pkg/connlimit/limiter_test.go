@@ -223,5 +223,20 @@ func TestConnectionLimiter_Concurrent(t *testing.T) {
 		}
 
 		wg.Wait()
+		assert.Zero(t, limiter.Count("sandbox1"))
+		assert.Zero(t, limiter.connections.Count(), "last release removes idle counters")
 	})
+}
+
+func TestConnectionLimiter_LateAdmissionAfterRemoval(t *testing.T) {
+	t.Parallel()
+	limiter := NewConnectionLimiter()
+	limiter.TryAcquire("lifecycle", 1)
+	limiter.Remove("lifecycle")
+	_, acquired := limiter.TryAcquire("lifecycle", 1)
+	assert.True(t, acquired)
+	limiter.Release("lifecycle")
+	assert.Zero(t, limiter.connections.Count())
+	limiter.TryAcquire("blocked", 0)
+	assert.Zero(t, limiter.connections.Count())
 }

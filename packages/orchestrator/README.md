@@ -84,6 +84,22 @@ Flags:
 - `-signal-pause <signal>` - Wait for signal before pause (e.g., `SIGTERM`, `SIGUSR1`)
 - `-cmd-pause <cmd>` - Execute command in sandbox, then pause on success
 - `-cmd-signal-pause <cmd>` - Execute command in sandbox, then wait for `SIGUSR1` before pause
+- `-envd-version <version>` - The guest's envd version (default: a placeholder — see the caveat below)
+
+**envd version caveat:**
+
+`resume-build` has no database and the snapshot metadata does not record the build's envd
+version (only the kernel and Firecracker ones), so unless `-envd-version` is given the tool
+reports a fixed placeholder (`1.0.0`). Every `envd.version` field in its output and logs is
+then that placeholder, **not** the guest's version — don't reason from it. To read the real
+one, mount the build's rootfs (`mount-build-rootfs`) and run its `/usr/bin/envd -version`,
+or read `X-Envd-Version`, which a running envd reports on `/init`.
+
+The placeholder sits above every envd version gate, so the gated capabilities (`/freeze`,
+`/fsfreeze`, `/collapse`, the KVM clock, the upgrade `from_version`) stay on. Against an
+older guest that is a path production would not take, so pass `-envd-version` with the
+guest's real version when the behavior under test depends on one of those gates. The tool
+prints which of the two it is using when it loads the build.
 
 **Pause mode example:**
 

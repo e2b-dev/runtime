@@ -1665,7 +1665,7 @@ func (s *Server) finishSandboxStart(ctx context.Context, reservation *sandbox.Re
 
 func (s *Server) markSandboxLive(ctx context.Context, sbx *sandbox.Sandbox, reservation *sandbox.Reservation) error {
 	if err := reservation.MarkRunning(ctx, sbx); err != nil {
-		sbx.SetStopReason(sandbox.StopReasonKilled)
+		sbx.SetStopReason(sandbox.StopReasonRegistrationFailed)
 
 		return err
 	}

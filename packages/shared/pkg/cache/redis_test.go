@@ -148,6 +148,26 @@ func TestRedisCache_Delete(t *testing.T) {
 	assert.ErrorIs(t, err, redis.Nil)
 }
 
+func TestRedisCache_TryDeleteReportsAFailedEviction(t *testing.T) {
+	t.Parallel()
+	redisClient := redis_utils.SetupInstance(t)
+	rc := newTestRedisCache(t, redisClient)
+	defer rc.Close(t.Context())
+
+	rc.Set(t.Context(), "key1", testValue{ID: "5", Name: "Eve"})
+	require.NoError(t, rc.TryDelete(t.Context(), "key1"))
+
+	unreachable := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+	t.Cleanup(func() { _ = unreachable.Close() })
+	broken := NewRedisCache[testValue](RedisConfig[testValue]{
+		TTL: 30 * time.Second, RedisClient: unreachable, RedisPrefix: t.Name(),
+		RedisTimeout: 200 * time.Millisecond, LockTTL: RedisLockOff,
+	})
+	defer broken.Close(t.Context())
+
+	require.Error(t, broken.TryDelete(t.Context(), "key1"))
+}
+
 // A writer (GetOrSet backfill) holds the per-key lock across its SET. Delete
 // must wait for that lock — even past the 5s acquire timeout used by writers —
 // so the DEL is ordered after the in-flight write and stale data cannot be

@@ -53,6 +53,12 @@ func (c *authCache) Invalidate(ctx context.Context, key string) {
 	c.cache.Delete(ctx, key)
 }
 
+// TryInvalidate removes a single entry and reports a failed eviction, for
+// callers that must retry rather than leave the stale entry serving.
+func (c *authCache) TryInvalidate(ctx context.Context, key string) error {
+	return c.cache.TryDelete(ctx, key)
+}
+
 // Close is a no-op for the Redis-backed cache (no background goroutines).
 func (c *authCache) Close(ctx context.Context) error {
 	return c.cache.Close(ctx)

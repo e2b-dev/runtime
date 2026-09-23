@@ -16,6 +16,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -62,7 +63,7 @@ func TestCloseClosesTheDescriptorBeforeTheHandlerTeardown(t *testing.T) {
 
 	pool := newPartitionedPool(t)
 
-	mnt := NewDirectPathMount(overlay, pool, featureFlags)
+	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L())
 
 	_, err = mnt.Open(ctx)
 	require.NoError(t, err)

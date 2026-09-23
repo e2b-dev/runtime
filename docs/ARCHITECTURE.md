@@ -349,6 +349,14 @@ already owned by a different user returns 409. A revocation removes only that Us
 caches member authorization, so each accepted command invalidates that User's authorization for
 the Project after commit.
 
+`PUT /v1/management/projects/{projectID}/block` applies a revision-fenced block
+state. The `projection.project_blocks` revision and `public.teams.is_blocked` /
+`blocked_reason` commit together. Older or duplicate revisions leave stored state
+unchanged. Every accepted delivery invalidates the team auth cache; eviction
+failures return an error so retries can finish invalidation after commit. The API
+uses this state when admitting billable work. Direct admin block writes do not
+advance the projection revision; a newer management delivery replaces them.
+
 The management surface also owns a replay-safe cluster lifecycle. A caller registers a stable
 cluster UUID with immutable connection details, assigns it only to the named project, detaches that
 exact assignment before provider cleanup, and deletes the cluster only after no project references

@@ -68,6 +68,7 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose logging")
 	console := flag.Bool("console", false, "forward Firecracker's output and the guest kernel serial console (tty) to stdout (fresh boot / -reboot only)")
 	firecracker := flag.String("firecracker", "", "override the build's Firecracker version (e.g. when the baked version isn't on this node); safe for a cold boot/-reboot, risky for a memory resume")
+	envdVersionFlag := flag.String("envd-version", "", fmt.Sprintf("the guest's envd version, which the snapshot does not record (default: %s, a placeholder above every version gate)", placeholderEnvdVersion))
 
 	// Command execution (no pause)
 	cmd := flag.String("cmd", "", "execute command in sandbox and exit (no snapshot)")
@@ -163,6 +164,11 @@ func main() {
 
 	if *fromBuild == "" {
 		log.Fatal("-from-build required")
+	}
+
+	envdVer, err := resolveEnvdVersion(*envdVersionFlag)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	if os.Geteuid() != 0 {
@@ -269,6 +275,7 @@ func main() {
 		iterations:         *iterations,
 		console:            *console,
 		firecrackerVersion: *firecracker,
+		envdVersion:        envdVer,
 	}
 
 	benchIters := *iterations
@@ -286,7 +293,7 @@ func main() {
 		script:   *gdbScript,
 	}
 
-	err := run(ctx, *fromBuild, *iterations, *coldStart, *noPrefetch, *noEgress, *verbose, *shell, *reboot, *forceReboot, pauseOpts, runOpts, fphBenchOpts, gdbOpts)
+	err = run(ctx, *fromBuild, *iterations, *coldStart, *noPrefetch, *noEgress, *verbose, *shell, *reboot, *forceReboot, pauseOpts, runOpts, fphBenchOpts, gdbOpts)
 	cancel()
 
 	if err != nil {
@@ -331,10 +338,11 @@ type pauseTimings struct {
 }
 
 type runOptions struct {
-	cmd                string // command to run and exit (no pause)
-	iterations         int    // number of iterations (0 = single run)
-	console            bool   // forward the guest kernel console + FC output to stdout/stderr (fresh boot)
-	firecrackerVersion string // override the build's Firecracker version (empty = use the build's own)
+	cmd                string      // command to run and exit (no pause)
+	iterations         int         // number of iterations (0 = single run)
+	console            bool        // forward the guest kernel console + FC output to stdout/stderr (fresh boot)
+	firecrackerVersion string      // override the build's Firecracker version (empty = use the build's own)
+	envdVersion        envdVersion // the guest envd version to report and gate on
 }
 
 func (r runOptions) enabled() bool {
@@ -1149,6 +1157,51 @@ func (r *runner) benchmark(ctx context.Context, n int) error {
 	return lastErr
 }
 
+// placeholderEnvdVersion is not the guest's real version — see the envd version caveat in the README.
+const placeholderEnvdVersion = "1.0.0"
+
+// envdVersion is the guest envd version the tool reports and gates on. resolveEnvdVersion
+// is its only constructor, and a value it did not produce reports placeholderEnvdVersion.
+type envdVersion struct {
+	value string
+	given bool
+}
+
+// resolveEnvdVersion builds an envdVersion from the -envd-version flag.
+//
+// An unparseable version is refused here because the capability gates read a parse error as
+// "capability absent" and only log it, so a typo would silently leave /freeze, /fsfreeze
+// and /collapse off.
+func resolveEnvdVersion(flagValue string) (envdVersion, error) {
+	if flagValue == "" {
+		return envdVersion{}, nil
+	}
+
+	// The floor never matters; this calls the gates' own parser for its error.
+	if _, err := utils.IsGTEVersion(flagValue, "0.0.0"); err != nil {
+		return envdVersion{}, fmt.Errorf("invalid -envd-version %q: %w", flagValue, err)
+	}
+
+	return envdVersion{value: flagValue, given: true}, nil
+}
+
+func (v envdVersion) String() string {
+	if !v.given {
+		return placeholderEnvdVersion
+	}
+
+	return v.value
+}
+
+// describe reports the version and where it came from.
+func (v envdVersion) describe() string {
+	if v.given {
+		return fmt.Sprintf("%s (-envd-version)", v)
+	}
+
+	return fmt.Sprintf("%s (placeholder, not the guest's version — pass -envd-version)", v)
+}
+
 func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefetch, noEgress, verbose, shell, reboot, forceReboot bool, pauseOpts pauseOptions, runOpts runOptions, fphBenchOpts fphBenchOptions, gdbOpts gdbOptions) error {
 	// Silence other loggers unless verbose mode
 	var l logger.Logger
@@ -1335,13 +1388,15 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 		fcVersion = runOpts.firecrackerVersion
 	}
 
+	fmt.Printf("   envd: %s\n", runOpts.envdVersion.describe())
+
 	token := "local"
 	sbxCfg := sandbox.NewConfig(sandbox.Config{
 		BaseTemplateID:    buildID,
 		Vcpu:              1,
 		RamMB:             512,
 		FreePageReporting: fphBenchOpts.enabled,
-		Envd:              sandbox.EnvdMetadata{Vars: map[string]string{}, AccessToken: &token, Version: "1.0.0"},
+		Envd:              sandbox.EnvdMetadata{Vars: map[string]string{}, AccessToken: &token, Version: runOpts.envdVersion.String()},
 		FirecrackerConfig: fc.Config{
 			KernelVersion:      meta.Template.KernelVersion,
 			FirecrackerVersion: fcVersion,

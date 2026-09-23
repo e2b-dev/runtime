@@ -70,6 +70,9 @@ type Config struct {
 	// Comma-separated CIDRs to allow through the predefined firewall deny list.
 	// These are allowed before the private-range deny rules, so they can
 	// reach hosts in the 10.0.0.0/8, 172.16.0.0/12, etc. blocks.
+	// The exemption applies to every sandbox on the node. A wide prefix such as
+	// 0.0.0.0/0, a link-local prefix or 100.64.0.0/10 also opens cloud metadata
+	// endpoints such as 169.254.169.254.
 	AllowSandboxInternalCIDRs []string `env:"ALLOW_SANDBOX_INTERNAL_CIDRS" envDefault:"" envSeparator:","`
 
 	// TCP firewall ports - separate ports for different traffic types to avoid

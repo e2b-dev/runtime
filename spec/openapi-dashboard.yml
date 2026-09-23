@@ -1384,6 +1384,28 @@ components:
           items:
             $ref: "#/components/schemas/ManagementProjectMemberIdentity"
 
+    ManagementProjectBlockRequest:
+      type: object
+      description: >-
+        Desired project block state. A newer revision replaces the state,
+        including any intervening manual block or unblock.
+      required: [revision, blocked]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Monotonic per-project revision. Older or duplicate revisions
+            succeed without changing stored state.
+        blocked:
+          type: boolean
+          description: Whether the project is refused billable work.
+        reason:
+          type: string
+          description: >-
+            Reason included in blocked-request errors. Cleared when blocked is false.
+
     ManagementProjectLimits:
       type: object
       description: >-
@@ -2569,6 +2591,39 @@ paths:
       responses:
         "204":
           description: Effective limits are synchronized.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+        "501":
+          $ref: "#/components/responses/501"
+
+  /v1/management/projects/{projectID}/block:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    put:
+      operationId: managementApplyProjectBlock
+      summary: Apply a project's block state (v1).
+      description: >-
+        Records whether the project is refused billable work, which the auth
+        path reads before it lets a sandbox start. An older or duplicate
+        revision is accepted without changing target state.
+      tags: [control-plane-management]
+      security:
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagementProjectBlockRequest"
+      responses:
+        "204":
+          description: Block state is applied or already superseded.
         "400":
           $ref: "#/components/responses/400"
         "401":

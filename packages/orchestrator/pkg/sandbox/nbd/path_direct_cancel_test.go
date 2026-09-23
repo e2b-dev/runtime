@@ -18,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -107,7 +108,7 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	// from here on nothing else may take the slot whose release is under test, and nothing
 	// can, because the device is connected and so reads as in-use.
 	connected := DeviceSlot(math.MaxUint32)
-	mnt := NewDirectPathMount(overlay, pool, featureFlags,
+	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L(),
 		withAfterConnect(func(deviceIndex uint32) {
 			connected = deviceIndex
 			stopFeeder()

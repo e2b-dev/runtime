@@ -253,11 +253,15 @@ func (s *AuthService) InvalidateTeamMemberCache(ctx context.Context, userID uuid
 // the change it reflects has committed. One budget covers the whole sweep: the
 // reads below decide which keys to drop, so a cancelled context part-way
 // through would leave an arbitrary subset of them stale.
+//
+// A failed eviction is returned rather than logged, and the sweep continues
+// past it: the caller has already committed the change and needs to know the
+// cache still disagrees, while every key that can be dropped now is dropped.
 func (s *AuthService) InvalidateTeamCache(ctx context.Context, teamID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invalidateTimeout)
 	defer cancel()
 
-	s.teamCache.Invalidate(ctx, teamCacheKey(teamID))
+	evictions := []error{s.teamCache.TryInvalidate(ctx, teamCacheKey(teamID))}
 
 	hashes, err := s.store.GetTeamAPIKeyHashes(ctx, teamID)
 	if err != nil {
@@ -265,7 +269,7 @@ func (s *AuthService) InvalidateTeamCache(ctx context.Context, teamID uuid.UUID)
 	}
 
 	for _, hash := range hashes {
-		s.teamCache.Invalidate(ctx, hash)
+		evictions = append(evictions, s.teamCache.TryInvalidate(ctx, hash))
 	}
 
 	memberIDs, err := s.store.GetTeamMemberIDs(ctx, teamID)
@@ -274,7 +278,11 @@ func (s *AuthService) InvalidateTeamCache(ctx context.Context, teamID uuid.UUID)
 	}
 
 	for _, userID := range memberIDs {
-		s.teamCache.Invalidate(ctx, teamMemberCacheKey(userID, teamID.String()))
+		evictions = append(evictions, s.teamCache.TryInvalidate(ctx, teamMemberCacheKey(userID, teamID.String())))
+	}
+
+	if err := errors.Join(evictions...); err != nil {
+		return fmt.Errorf("failed to evict team cache entries: %w", err)
 	}
 
 	return nil

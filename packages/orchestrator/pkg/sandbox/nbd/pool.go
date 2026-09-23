@@ -353,7 +353,7 @@ func (d *DevicePool) release(ctx context.Context, idx DeviceSlot) error {
 
 // ReleaseDevice will return an error if the device is not free and not release the slot — you can retry.
 func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...ReleaseOption) error {
-	opt := releaseOptions{}
+	opt := releaseOptions{logger: logger.L()}
 	for _, o := range opts {
 		o(&opt)
 	}
@@ -384,7 +384,11 @@ func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...
 		}
 
 		if attempt%100 == 0 {
-			logger.L().Error(ctx, "error releasing device", zap.Int("attempt", attempt), zap.Error(err))
+			opt.logger.Error(ctx, "error releasing device",
+				zap.Uint32("device_index", idx),
+				zap.Int("attempt", attempt),
+				zap.Error(err),
+			)
 		}
 
 		// Wait on the context too: Close bounds a stuck device with WithTimeout,
@@ -449,6 +453,7 @@ func (d *DevicePool) Close(ctx context.Context) error {
 type releaseOptions struct {
 	timeout       time.Duration
 	infiniteRetry bool
+	logger        logger.Logger
 }
 
 type ReleaseOption func(*releaseOptions)
@@ -462,5 +467,17 @@ func WithTimeout(timeout time.Duration) ReleaseOption {
 func WithInfiniteRetry() ReleaseOption {
 	return func(opts *releaseOptions) {
 		opts.infiniteRetry = true
+	}
+}
+
+// WithLogger attributes the retry log to whoever owns the release; the pool's
+// own releases are host-scoped and carry no identity.
+func WithLogger(lg logger.Logger) ReleaseOption {
+	return func(opts *releaseOptions) {
+		if lg == nil {
+			return
+		}
+
+		opts.logger = lg
 	}
 }

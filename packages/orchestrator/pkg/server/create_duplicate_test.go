@@ -230,6 +230,7 @@ func TestMarkSandboxLiveRejectsForeignReservationBeforeHealthChecks(t *testing.T
 	t.Cleanup(foreign.Release)
 	sbx := drainTestSandbox(t, "candidate")
 	require.Error(t, s.markSandboxLive(t.Context(), sbx, foreign))
+	require.Equal(t, sandbox.StopReasonRegistrationFailed, sbx.GetStopReason())
 	require.Empty(t, s.sandboxFactory.Sandboxes.Items())
 	require.NoError(t, owner.MarkRunning(t.Context(), sbx))
 }

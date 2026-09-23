@@ -69,7 +69,6 @@ func NewCluster(
 }
 
 func newLocalCluster(
-	ctx context.Context,
 	tel *telemetry.Client,
 	storeDiscovery servicediscovery.Discoverer,
 	clickhouse clickhouse.Clickhouse,
@@ -97,9 +96,6 @@ func newLocalCluster(
 		newLocalClusterResourceProvider(clickhouse, queryLogsProvider, sandboxLogsReader, featureFlags, instances, config),
 	)
 
-	// Periodically sync cluster instances
-	go c.synchronization.Start(ctx, instancesSyncInterval, instancesSyncTimeout, true)
-
 	return c
 }
 
@@ -112,7 +108,6 @@ func remoteInstanceAuthorization(secret string, tls bool, sd servicediscovery.In
 }
 
 func newRemoteCluster(
-	ctx context.Context,
 	tel *telemetry.Client,
 	endpoint string,
 	endpointTLS bool,
@@ -166,10 +161,27 @@ func newRemoteCluster(
 		newRemoteClusterResourceProvider(clusterID, instances, httpClient),
 	)
 
-	// Periodically sync cluster instances
-	go c.synchronization.Start(ctx, instancesSyncInterval, instancesSyncTimeout, true)
-
 	return c, nil
+}
+
+// initialSyncMode says whether a cluster should run a discovery round as soon
+// as it starts, or wait for the first scheduled tick. A cluster that already
+// applied a snapshot during startup must not immediately run a second,
+// overlapping discovery for the same cluster.
+type initialSyncMode int
+
+const (
+	syncImmediately initialSyncMode = iota
+	syncOnNextTick
+)
+
+// Start begins the periodic discovery loop after construction.
+func (c *Cluster) Start(ctx context.Context, mode initialSyncMode) {
+	if ctx.Err() != nil {
+		return
+	}
+
+	go c.synchronization.Start(ctx, instancesSyncInterval, instancesSyncTimeout, mode == syncImmediately)
 }
 
 func (c *Cluster) Close(ctx context.Context) error {

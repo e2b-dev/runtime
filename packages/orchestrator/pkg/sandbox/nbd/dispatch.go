@@ -99,15 +99,61 @@ type Response struct {
 	Handle uint64
 }
 
+const (
+	opRead        = "read"
+	opWrite       = "write"
+	opWriteZeroes = "write-zeroes"
+	opTrim        = "trim"
+)
+
+// punchOp names the command a punch came from: a failed WRITE_ZEROES leaves
+// data the guest was told was zeroed, a failed TRIM only unreclaimed space.
+func punchOp(cmdType uint16) string {
+	if cmdType == NBDCmdTrim {
+		return opTrim
+	}
+
+	return opWriteZeroes
+}
+
+// command is one NBD request, distilled from the wire header to what serving
+// and reporting it need.
+type command struct {
+	op     string
+	handle uint64
+	offset uint64
+	length int64
+}
+
+// cmdOf distils r under the given op. It takes r by value on purpose: the read
+// loop reuses one Request for the next command, while the handlers keep
+// serving this one in their own goroutines.
+func cmdOf(op string, r Request) command {
+	return command{
+		op:     op,
+		handle: r.Handle,
+		offset: r.From,
+		length: int64(r.Length),
+	}
+}
+
+func (c command) fields() []zap.Field {
+	return []zap.Field{
+		zap.String("nbd_op", c.op),
+		zap.Uint64("nbd_handle", c.handle),
+		zap.Uint64("nbd_offset", c.offset),
+		zap.Int64("nbd_length", c.length),
+	}
+}
+
 type Dispatch struct {
 	fp             io.ReadWriter
 	responseHeader []byte
 	writeLock      sync.Mutex
 	prov           Provider
-	// provName is the concrete backend type name, cached at construction so
-	// error logs can identify which storage layer failed without reflection
-	// on every call.
-	provName         string
+	// logger is tagged with the backend type name at construction, so the
+	// reflection stays out of the per-request path.
+	logger           logger.Logger
 	pendingResponses sync.WaitGroup
 	shuttingDown     bool
 	shuttingDownLock sync.Mutex
@@ -119,12 +165,12 @@ type Dispatch struct {
 	asyncWriteZeroes bool
 }
 
-func NewDispatch(fp io.ReadWriter, prov Provider, asyncWriteZeroes bool) *Dispatch {
+func NewDispatch(fp io.ReadWriter, prov Provider, asyncWriteZeroes bool, lg logger.Logger) *Dispatch {
 	d := &Dispatch{
 		responseHeader:   make([]byte, 16),
 		fp:               fp,
 		prov:             prov,
-		provName:         fmt.Sprintf("%T", prov),
+		logger:           lg.With(zap.String("nbd_provider", fmt.Sprintf("%T", prov))),
 		fatal:            make(chan error, 1),
 		asyncWriteZeroes: asyncWriteZeroes,
 	}
@@ -225,7 +271,7 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 				return errors.New("not supported: Flush")
 			case NBDCmdRead:
 				rp += 28
-				err := d.cmdRead(ctx, request.Handle, request.From, request.Length)
+				err := d.cmdRead(ctx, cmdOf(opRead, request))
 				if err != nil {
 					return err
 				}
@@ -262,14 +308,14 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 					}
 				}
 
-				err := d.cmdWrite(ctx, request.Handle, request.From, data)
+				err := d.cmdWrite(ctx, cmdOf(opWrite, request), data)
 				if err != nil {
 					return err
 				}
 			case NBDCmdWriteZeroes, NBDCmdTrim:
 				// TRIM and WRITE_ZEROES both punch the cache; NO_HOLE is intentionally ignored.
 				rp += 28
-				err := d.cmdWriteZeroes(ctx, request.Handle, request.From, int64(request.Length))
+				err := d.cmdWriteZeroes(ctx, cmdOf(punchOp(request.Type), request))
 				if err != nil {
 					return err
 				}
@@ -285,7 +331,7 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 	}
 }
 
-func (d *Dispatch) cmdRead(ctx context.Context, cmdHandle uint64, cmdFrom uint64, cmdLength uint32) error {
+func (d *Dispatch) cmdRead(ctx context.Context, cmd command) error {
 	d.shuttingDownLock.Lock()
 	if d.shuttingDown {
 		d.shuttingDownLock.Unlock()
@@ -296,17 +342,17 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmdHandle uint64, cmdFrom uint64
 	d.pendingResponses.Add(1)
 	d.shuttingDownLock.Unlock()
 
-	performRead := func(handle uint64, from uint64, length uint32) error {
+	performRead := func() error {
 		// buffered to avoid goroutine leak
 		errchan := make(chan error, 1)
-		data := make([]byte, length)
+		data := make([]byte, cmd.length)
 
 		nbdReadConncurent.Add(ctx, 1)
 
 		go func() {
 			start := time.Now()
 			err := block.RunFaultSafe(ctx, func() error {
-				_, readErr := d.prov.ReadAt(ctx, data, int64(from))
+				_, readErr := d.prov.ReadAt(ctx, data, int64(cmd.offset))
 
 				return readErr
 			})
@@ -338,36 +384,22 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmdHandle uint64, cmdFrom uint64
 			// Per-request backend failure: signal it to the NBD client via the
 			// response error byte and keep the dispatch loop alive. Only
 			// writeResponse errors (dead NBD socket) escalate through d.fatal.
-			logger.L().Error(ctx, "nbd backend read failed",
-				zap.Error(readErr),
-				zap.String("nbd_op", "read"),
-				zap.String("nbd_provider", d.provName),
-				zap.Uint64("nbd_handle", handle),
-				zap.Uint64("nbd_offset", from),
-				zap.Uint32("nbd_length", length),
-			)
+			d.logger.Error(ctx, "nbd backend read failed", append(cmd.fields(), zap.Error(readErr))...)
 
-			return d.writeResponse(1, handle, []byte{})
+			return d.writeResponse(1, cmd.handle, []byte{})
 		}
 
 		// read was successful
-		return d.writeResponse(0, handle, data)
+		return d.writeResponse(0, cmd.handle, data)
 	}
 
 	go func() {
-		err := performRead(cmdHandle, cmdFrom, cmdLength)
+		err := performRead()
 		if err != nil {
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd read",
-					zap.Error(err),
-					zap.String("nbd_op", "read"),
-					zap.String("nbd_provider", d.provName),
-					zap.Uint64("nbd_handle", cmdHandle),
-					zap.Uint64("nbd_offset", cmdFrom),
-					zap.Uint32("nbd_length", cmdLength),
-				)
+				d.logger.Error(ctx, "nbd error cmd read", append(cmd.fields(), zap.Error(err))...)
 			}
 		}
 		d.pendingResponses.Done()
@@ -376,7 +408,7 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmdHandle uint64, cmdFrom uint64
 	return nil
 }
 
-func (d *Dispatch) cmdWrite(ctx context.Context, cmdHandle uint64, cmdFrom uint64, cmdData []byte) error {
+func (d *Dispatch) cmdWrite(ctx context.Context, cmd command, cmdData []byte) error {
 	d.shuttingDownLock.Lock()
 	if d.shuttingDown {
 		d.shuttingDownLock.Unlock()
@@ -387,14 +419,14 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmdHandle uint64, cmdFrom uint6
 	d.pendingResponses.Add(1)
 	d.shuttingDownLock.Unlock()
 
-	performWrite := func(handle uint64, from uint64, data []byte) error {
+	performWrite := func() error {
 		// buffered to avoid goroutine leak
 		errchan := make(chan error, 1)
 		go func() {
 			// Even a write can fault: a store to a non-resident page pages
 			// it in first.
 			errchan <- block.RunFaultSafe(ctx, func() error {
-				_, writeErr := d.prov.WriteAt(data, int64(from))
+				_, writeErr := d.prov.WriteAt(cmdData, int64(cmd.offset))
 
 				return writeErr
 			})
@@ -410,36 +442,22 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmdHandle uint64, cmdFrom uint6
 		}
 
 		if writeErr != nil {
-			logger.L().Error(ctx, "nbd backend write failed",
-				zap.Error(writeErr),
-				zap.String("nbd_op", "write"),
-				zap.String("nbd_provider", d.provName),
-				zap.Uint64("nbd_handle", handle),
-				zap.Uint64("nbd_offset", from),
-				zap.Int("nbd_length", len(data)),
-			)
+			d.logger.Error(ctx, "nbd backend write failed", append(cmd.fields(), zap.Error(writeErr))...)
 
-			return d.writeResponse(1, handle, []byte{})
+			return d.writeResponse(1, cmd.handle, []byte{})
 		}
 
 		// write was successful
-		return d.writeResponse(0, handle, []byte{})
+		return d.writeResponse(0, cmd.handle, []byte{})
 	}
 
 	go func() {
-		err := performWrite(cmdHandle, cmdFrom, cmdData)
+		err := performWrite()
 		if err != nil {
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd write",
-					zap.Error(err),
-					zap.String("nbd_op", "write"),
-					zap.String("nbd_provider", d.provName),
-					zap.Uint64("nbd_handle", cmdHandle),
-					zap.Uint64("nbd_offset", cmdFrom),
-					zap.Int("nbd_length", len(cmdData)),
-				)
+				d.logger.Error(ctx, "nbd error cmd write", append(cmd.fields(), zap.Error(err))...)
 			}
 		}
 		d.pendingResponses.Done()
@@ -457,7 +475,7 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmdHandle uint64, cmdFrom uint6
 // writeLock, the loop stops draining the socket, and the kernel eventually
 // times out the connection (EIO). When asyncWriteZeroes is true the work runs
 // in a goroutine like cmdRead/cmdWrite, so the read loop is never blocked.
-func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmdHandle uint64, cmdFrom uint64, cmdLength int64) error {
+func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmd command) error {
 	performWriteZeroes := func() error {
 		// Run the backend call in a goroutine and select on ctx, mirroring
 		// cmdRead/cmdWrite, so a WriteZeroesAt that blocks cannot hang this
@@ -468,7 +486,7 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmdHandle uint64, cmdFrom
 			// The punch-hole fallback clears the mmap in-process, so this
 			// can fault like a write.
 			errchan <- block.RunFaultSafe(ctx, func() error {
-				_, zeroErr := d.prov.WriteZeroesAt(int64(cmdFrom), cmdLength)
+				_, zeroErr := d.prov.WriteZeroesAt(int64(cmd.offset), cmd.length)
 
 				return zeroErr
 			})
@@ -484,16 +502,10 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmdHandle uint64, cmdFrom
 		var respErr uint32
 		if zeroErr != nil {
 			respErr = 1
-			logger.L().Error(ctx, "nbd backend write-zeroes failed",
-				zap.Error(zeroErr),
-				zap.String("nbd_provider", d.provName),
-				zap.Uint64("nbd_handle", cmdHandle),
-				zap.Uint64("nbd_offset", cmdFrom),
-				zap.Int64("nbd_length", cmdLength),
-			)
+			d.logger.Error(ctx, "nbd backend punch failed", append(cmd.fields(), zap.Error(zeroErr))...)
 		}
 
-		return d.writeResponse(respErr, cmdHandle, nil)
+		return d.writeResponse(respErr, cmd.handle, nil)
 	}
 
 	if !d.asyncWriteZeroes {
@@ -515,14 +527,7 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmdHandle uint64, cmdFrom
 			select {
 			case d.fatal <- err:
 			default:
-				logger.L().Error(ctx, "nbd error cmd write-zeroes",
-					zap.Error(err),
-					zap.String("nbd_op", "write-zeroes"),
-					zap.String("nbd_provider", d.provName),
-					zap.Uint64("nbd_handle", cmdHandle),
-					zap.Uint64("nbd_offset", cmdFrom),
-					zap.Int64("nbd_length", cmdLength),
-				)
+				d.logger.Error(ctx, "nbd error cmd punch", append(cmd.fields(), zap.Error(err))...)
 			}
 		}
 

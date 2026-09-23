@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
@@ -504,6 +505,192 @@ func TestMapConcurrentMarkStoppingAndStoppedDoesNotResurrectLifecycle(t *testing
 
 		require.Empty(t, sandboxes.LifecycleItems())
 	}
+}
+
+func TestMapMarkRunningRefusesCollidingLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	oldSbx := testMapSandbox(t, "lifecycle-old")
+	newSbx := testMapSandbox(t, "lifecycle-new")
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), oldSbx))
+
+	// The old lifecycle is still live (e.g. it crashed and nothing removed it
+	// yet): the new lifecycle must be refused, not silently dropped — a silent
+	// drop leaves its FC process running with no id-based way to reach it.
+	require.ErrorIs(t, sandboxes.MarkRunning(t.Context(), newSbx), ErrSandboxAlreadyRunning)
+
+	live, ok := sandboxes.Get(oldSbx.Runtime.SandboxID)
+	require.True(t, ok)
+	require.Same(t, oldSbx, live)
+	require.Len(t, sandboxes.LifecycleItems(), 1)
+}
+
+func TestMapMarkRunningIdempotentForSameLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.Len(t, sandboxes.Items(), 1)
+	require.Len(t, sandboxes.LifecycleItems(), 1)
+}
+
+func TestSandboxCloseDoesNotRemoveNewerLiveLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	oldSbx := testMapSandbox(t, "lifecycle-old")
+	newSbx := testMapSandbox(t, "lifecycle-new")
+	// The registrar captures the old lifecycle's ID when it is called, where the
+	// callback it replaced read it when the chain ran. This test is what pins the
+	// two to the same value: it fails if the owner reclaims by anything else.
+	attachOwnedCleanup(t, sandboxes, oldSbx)
+
+	sandboxes.MarkRunning(t.Context(), oldSbx)
+	require.True(t, sandboxes.MarkStopping(t.Context(), oldSbx.Runtime.SandboxID, oldSbx.LifecycleID))
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), newSbx))
+
+	// The old lifecycle's Close must not evict the newer live lifecycle.
+	require.NoError(t, oldSbx.Close(t.Context()))
+
+	live, ok := sandboxes.Get(newSbx.Runtime.SandboxID)
+	require.True(t, ok)
+	require.Same(t, newSbx, live)
+}
+
+// stoppingRecorder appends to a shared event log on every OnStopping, so a test
+// can attribute a removal to the mechanism that made it rather than only observe
+// that the entry is gone.
+type stoppingRecorder struct {
+	insertRecorder
+
+	mu     *sync.Mutex
+	events *[]string
+}
+
+func (r *stoppingRecorder) OnStopping(context.Context, *Sandbox) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	*r.events = append(*r.events, "reclaim")
+}
+
+// attachOwnedCleanup gives sbx the cleanup chain a factory would build: the
+// registrar's callback, and nothing else. Both factories register it at one
+// fixed point, so a fixture without it asserts a behaviour no real sandbox has.
+func attachOwnedCleanup(t *testing.T, sandboxes *Map, sbx *Sandbox) {
+	t.Helper()
+
+	sbx.cleanup = NewCleanup()
+	sbx.sandboxes = sandboxes
+	sandboxes.reclaimLiveEntryOnCleanup(t.Context(), sbx.cleanup, sbx.Runtime.SandboxID, sbx.LifecycleID)
+}
+
+// The cleanup chain owns the reclamation, and owns it at one point: after the
+// steps registered before the registrar and before those registered after it.
+// An end-state assertion cannot see this — the entry is gone either way — so the
+// markers and the event log are the test.
+func TestSandboxCloseReclaimsLiveEntryInTheCleanupChain(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	mark := func(name string) func(context.Context) error {
+		return func(context.Context) error {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, name)
+
+			return nil
+		}
+	}
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	// The chain runs backward, so a callback registered later runs earlier. The
+	// names say when each one RUNS, which is the order being asserted.
+	sbx.cleanup = NewCleanup()
+	sbx.sandboxes = sandboxes
+	sbx.cleanup.Add(t.Context(), mark("late"))
+	sandboxes.reclaimLiveEntryOnCleanup(t.Context(), sbx.cleanup, sbx.Runtime.SandboxID, sbx.LifecycleID)
+	sbx.cleanup.Add(t.Context(), mark("early"))
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sbx.Close(t.Context()))
+
+	require.Empty(t, sandboxes.Items())
+	require.Equal(t, []string{"early", "reclaim", "late"}, events,
+		"the chain must reclaim the entry exactly once, between the steps either side of the registrar")
+}
+
+// An operation-initiated stop — delete, pause, checkpoint — reclaims the entry
+// before the chain runs. The chain's callback must then do nothing at all: no
+// second OnStopping for subscribers to act on twice.
+func TestSandboxCloseDoesNotReclaimAnEntryAnOperationAlreadyTook(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	attachOwnedCleanup(t, sandboxes, sbx)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.True(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID),
+		"the operation reclaims the entry first, as Delete and Pause require")
+	require.NoError(t, sbx.Close(t.Context()))
+
+	require.Equal(t, []string{"reclaim"}, events,
+		"the chain's callback must not reclaim an entry an operation already took")
+}
+
+// Two drivers can call Close for one lifecycle: the lifecycle goroutine and the
+// start rollback. Cleanup.Run is once-guarded, so they reclaim once between them
+// and neither returns before the reclamation has completed.
+func TestSandboxCloseConcurrentClosesReclaimOnce(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	attachOwnedCleanup(t, sandboxes, sbx)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	for range 2 {
+		go func() {
+			defer wg.Done()
+			<-start
+			assert.NoError(t, sbx.Close(t.Context()))
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, []string{"reclaim"}, events)
+	require.Empty(t, sandboxes.Items())
+	require.Empty(t, sandboxes.LifecycleItems())
 }
 
 func testMapSandbox(t *testing.T, lifecycleID string) *Sandbox {
