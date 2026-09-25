@@ -14,6 +14,7 @@ const (
 	transitionKeyPrefix = "transition"
 	lockKeyPrefix       = "lock"
 	notifySuffix        = "notify"
+	eidSuffix           = "eid"
 	sandboxesKey        = "sandboxes"
 	indexKey            = "index"
 )
@@ -65,6 +66,14 @@ func GetTeamPrefix(teamID string) string {
 
 func getSandboxKey(teamID, sandboxID string) string {
 	return redis_utils.CreateKey(GetTeamPrefix(teamID), sandboxesKey, sandboxID)
+}
+
+// getSandboxExecutionIDKey returns the key that stores the sandbox execution ID.
+// It shares the same {teamID} hash tag as the sandbox key, so both keys land
+// on the same Redis Cluster slot and can be read/written atomically in a single
+// Lua script.
+func getSandboxExecutionIDKey(teamID, sandboxID string) string {
+	return redis_utils.CreateKey(getSandboxKey(teamID, sandboxID), eidSuffix)
 }
 
 // GetSandboxStorageTeamIndexKey returns the storage team index key for external packages (e.g. reservations).

@@ -38,7 +38,8 @@ func (s *Storage) Add(ctx context.Context, sbx sandboxtypes.Sandbox) error {
 	}
 
 	// Execute Lua script for atomic SET + SADD
-	err = addSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey}, data, sbx.SandboxID).Err()
+	eidKey := getSandboxExecutionIDKey(sbx.TeamID.String(), sbx.SandboxID)
+	err = addSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey, eidKey}, data, sbx.SandboxID, sbx.ExecutionID).Err()
 	if err != nil {
 		return fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
@@ -95,7 +96,8 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string
 	// Execute Lua script for atomic DEL + SREM; it returns the deleted JSON
 	// so the expiration-index cleanup below is scoped to the execution we
 	// actually removed.
-	raw, err := removeSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey}, sandboxID).Text()
+	eidKey := getSandboxExecutionIDKey(teamID.String(), sandboxID)
+	raw, err := removeSandboxScript.Run(ctx, s.redisClient, []string{key, teamKey, eidKey}, sandboxID).Text()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("failed to remove sandbox from Redis: %w", err)
 	}
