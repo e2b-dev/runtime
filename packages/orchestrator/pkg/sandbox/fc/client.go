@@ -454,7 +454,7 @@ func (c *apiClient) installBalloon(ctx context.Context, freePageReporting, freeP
 	defer span.End()
 
 	amountMib := int64(0)
-	deflateOnOom := false
+	deflateOnOom := true
 
 	balloonConfig := operations.PutBalloonParams{
 		Context: ctx,
