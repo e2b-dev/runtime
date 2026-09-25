@@ -249,13 +249,17 @@ func SyncChangesToDisk(
 	proxy *proxy.SandboxProxy,
 	sandboxID string,
 ) error {
+	// Use plain "sync" with an explicit PATH so this works on musl-based distros
+	// (e.g. Alpine) where the glibc-linked /usr/bin/busybox injected by e2b
+	// cannot be executed.
 	return RunCommand(
 		ctx,
 		proxy,
 		sandboxID,
-		rootfs.SandboxBusyBoxPath+" sync",
+		"sync",
 		metadata.Context{
-			User: "root",
+			User:    "root",
+			EnvVars: map[string]string{"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		},
 	)
 }
