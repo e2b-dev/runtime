@@ -522,6 +522,11 @@ const (
 )
 
 const (
+	// ApiRedisStorageTeamIndexSize records the number of members in each team's
+	// sandbox index SET at the time of the periodic heal pass (every 5 min).
+	// Use the p99/max to detect unbounded growth caused by stale entries.
+	ApiRedisStorageTeamIndexSize HistogramType = "api.redis_storage.team_index.size"
+
 	ApiRedisStoragePublisherPublishDuration HistogramType = "api.redis_storage.publisher.publish.duration"
 
 	// Firecracker net histograms — per-sandbox distribution per metrics flush, no sandbox_id.
@@ -889,6 +894,7 @@ func GetGaugeInt(meter metric.Meter, name GaugeIntType) (metric.Int64ObservableG
 }
 
 var histogramDesc = map[HistogramType]string{
+	ApiRedisStorageTeamIndexSize:            "Number of members in a team's sandbox index SET; sampled once per heal pass (every 5 min)",
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 
 	BuildDurationHistogramName:                        "Time taken to build a template",
@@ -963,6 +969,7 @@ var histogramDesc = map[HistogramType]string{
 }
 
 var histogramUnits = map[HistogramType]string{
+	ApiRedisStorageTeamIndexSize:            "{entry}",
 	ApiRedisStoragePublisherPublishDuration: "ms",
 
 	BuildDurationHistogramName:                        "ms",

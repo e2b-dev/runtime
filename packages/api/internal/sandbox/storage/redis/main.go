@@ -58,6 +58,10 @@ type expirationIndexMetrics struct {
 	sweptOrphan        metric.MeasurementOption
 	sweptDeadExecution metric.MeasurementOption
 	sweptInvalid       metric.MeasurementOption
+
+	// teamIndexSize records each team's index SET cardinality once per heal
+	// pass. Use the p99/max to detect unbounded accumulation of stale entries.
+	teamIndexSize metric.Int64Histogram
 }
 
 const sweptReasonAttr = "reason"
@@ -78,6 +82,11 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 		return expirationIndexMetrics{}, fmt.Errorf("expiration index swept counter: %w", err)
 	}
 
+	teamIndexSize, err := telemetry.GetHistogram(meter, telemetry.ApiRedisStorageTeamIndexSize)
+	if err != nil {
+		return expirationIndexMetrics{}, fmt.Errorf("team index size histogram: %w", err)
+	}
+
 	return expirationIndexMetrics{
 		indexHealed:        healed,
 		indexRescored:      rescored,
@@ -85,6 +94,7 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 		sweptOrphan:        metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "orphan"))),
 		sweptDeadExecution: metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "dead_execution"))),
 		sweptInvalid:       metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "invalid"))),
+		teamIndexSize:      teamIndexSize,
 	}, nil
 }
 
