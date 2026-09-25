@@ -463,6 +463,25 @@ func (f IntFlag) Fallback() int {
 	return f.fallback
 }
 
+// envIntOr reads key as an int, falling back when it is unset, unparseable, or
+// not positive. It exists for the same reason as envBoolOr: on a cluster with no
+// LaunchDarkly an int flag resolves to a value only a rebuild can change, and
+// max-sandboxes-per-node's fallback is sized for cloud node types rather than
+// for the host it runs on. A non-positive value keeps the fallback so a typo
+// cannot silently stop a node from accepting sandboxes.
+func envIntOr(key string, fallback int) int {
+	raw := env.GetEnv(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
+}
+
 func NewIntFlag(name string, fallback int) IntFlag {
 	flag := IntFlag{name: name, fallback: fallback}
 	builder := launchDarklyOfflineStore.Flag(flag.name).ValueForAll(ldvalue.Int(fallback))
@@ -472,7 +491,7 @@ func NewIntFlag(name string, fallback int) IntFlag {
 }
 
 var (
-	MaxSandboxesPerNode = NewIntFlag("max-sandboxes-per-node", 200)
+	MaxSandboxesPerNode = NewIntFlag("max-sandboxes-per-node", envIntOr("MAX_SANDBOXES_PER_NODE", 200))
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
 	StorageConcurrentUploadLimit  = NewIntFlag("gcloud-concurrent-upload-limit", 8)
 	StorageMaxUploadTasks         = NewIntFlag("gcloud-max-tasks", 16)
@@ -623,7 +642,7 @@ var (
 
 	// MaxStartingInstancesPerNode limits concurrent sandbox start/resume operations on a single orchestrator node.
 	// Must be > 0.
-	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", 3)
+	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", envIntOr("MAX_STARTING_INSTANCES_PER_NODE", 3))
 
 	// MaxConcurrentEvictions caps the number of sandbox evictions that can run
 	// in parallel per API instance. Excess items remain expired in the store
