@@ -191,10 +191,10 @@ func (s *Service) getProcess(selector *rpc.ProcessSelector) (*handler.Handler, e
 			if *value.Tag == tag {
 				proc = value
 
-				return true
+				return false
 			}
 
-			return false
+			return true
 		})
 
 		if proc == nil {
