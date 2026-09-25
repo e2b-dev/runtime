@@ -42,8 +42,8 @@ func getDefaultGateway(ctx context.Context) (string, error) {
 	}
 
 	for _, route := range routes {
-		// 0.0.0.0/0
-		if route.Dst.String() == "0.0.0.0/0" && route.Gw != nil {
+		// Default route has a nil Dst (representing 0.0.0.0/0).
+		if route.Dst == nil && route.Gw != nil {
 			logger.L().Info(ctx, "default gateway", zap.String("gateway", route.Gw.String()))
 
 			link, linkErr := netlink.LinkByIndex(route.LinkIndex)
