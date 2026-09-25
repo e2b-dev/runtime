@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -1741,7 +1742,15 @@ func (s *Server) setupSandboxLifecycle(ctx context.Context, sbx *sandbox.Sandbox
 
 		cleanupErr := sbx.Close(ctx)
 		if cleanupErr != nil {
-			sbxlogger.I(sbx).Error(ctx, "failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
+			if errors.Is(cleanupErr, syscall.EIO) || errors.Is(cleanupErr, syscall.ENXIO) {
+				// After a VM crash the NBD device is in error state. sync() on
+				// /dev/nbdX returns EIO (device error) or ENXIO (device already
+				// disconnected). Both are expected here — no data is lost because
+				// the VM already exited. Log at Warn and continue cleanup.
+				sbxlogger.I(sbx).Warn(ctx, "failed to flush sandbox device after VM crash (ignoring)", zap.Error(cleanupErr))
+			} else {
+				sbxlogger.I(sbx).Error(ctx, "failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
+			}
 		}
 
 		closeErr := s.proxy.RemoveFromPool(sbx.LifecycleID)
