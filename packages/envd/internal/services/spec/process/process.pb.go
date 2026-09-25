@@ -7,10 +7,11 @@
 package process
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -1514,9 +1515,15 @@ type ProcessEvent_EndEvent struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
+	// The exit code of the process. Meaningful only when exited is true.
 	ExitCode int32   `protobuf:"zigzag32,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	// Whether the process exited normally (as opposed to being signaled).
 	Exited   bool    `protobuf:"varint,2,opt,name=exited,proto3" json:"exited,omitempty"`
+	// Human-readable description of the process exit status (e.g. "exit status 1", "signal: killed").
 	Status   string  `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	// Runtime/infrastructure-level error encountered while starting, waiting for,
+	// or observing the process. This is NOT set for normal non-zero exits;
+	// use exit_code and status to inspect the process result.
 	Error    *string `protobuf:"bytes,4,opt,name=error,proto3,oneof" json:"error,omitempty"`
 }
 
