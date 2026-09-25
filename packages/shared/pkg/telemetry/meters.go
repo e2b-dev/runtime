@@ -522,6 +522,18 @@ const (
 )
 
 const (
+	// ApiRedisStorageExpirationIndexSize records the cardinality of the global
+	// expiration ZSET (sandbox:storage:global:expiration) once per heal pass.
+	// Use the max/p99 to detect unbounded growth; a rising trend without a
+	// corresponding rise in live sandbox count indicates stale entries are
+	// accumulating faster than they are swept.
+	ApiRedisStorageExpirationIndexSize HistogramType = "api.redis_storage.expiration_index.size"
+
+	// ApiRedisStorageExpirationIndexSweepDuration records the wall-clock time
+	// of each ExpiredItems call (ZRANGEBYSCORE + MGET pipeline). Rising p99
+	// alongside a rising expiration_index.size confirms O(log N + K) growth.
+	ApiRedisStorageExpirationIndexSweepDuration HistogramType = "api.redis_storage.expiration_index.sweep_duration"
+
 	ApiRedisStoragePublisherPublishDuration HistogramType = "api.redis_storage.publisher.publish.duration"
 
 	// Firecracker net histograms — per-sandbox distribution per metrics flush, no sandbox_id.
@@ -889,7 +901,9 @@ func GetGaugeInt(meter metric.Meter, name GaugeIntType) (metric.Int64ObservableG
 }
 
 var histogramDesc = map[HistogramType]string{
-	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
+	ApiRedisStorageExpirationIndexSize:          "Cardinality of sandbox:storage:global:expiration ZSET at the time of each heal pass; use max/p99 to detect unbounded growth",
+	ApiRedisStorageExpirationIndexSweepDuration: "Wall-clock duration of one ExpiredItems call (ZRANGEBYSCORE + MGET pipeline); rising p99 alongside rising index size confirms O(log N) growth",
+	ApiRedisStoragePublisherPublishDuration:     "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 
 	BuildDurationHistogramName:                        "Time taken to build a template",
 	BuildPhaseDurationHistogramName:                   "Time taken to build each phase of a template",
@@ -963,7 +977,9 @@ var histogramDesc = map[HistogramType]string{
 }
 
 var histogramUnits = map[HistogramType]string{
-	ApiRedisStoragePublisherPublishDuration: "ms",
+	ApiRedisStorageExpirationIndexSize:          "{entry}",
+	ApiRedisStorageExpirationIndexSweepDuration: "ms",
+	ApiRedisStoragePublisherPublishDuration:     "ms",
 
 	BuildDurationHistogramName:                        "ms",
 	BuildPhaseDurationHistogramName:                   "ms",
