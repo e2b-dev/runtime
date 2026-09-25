@@ -574,7 +574,10 @@ func (p *Handler) Wait() {
 
 	err := p.cmd.Wait()
 
-	p.tty.Close()
+	// Processes started without a PTY have no tty to close.
+	if p.tty != nil {
+		p.tty.Close()
+	}
 
 	var errMsg *string
 
