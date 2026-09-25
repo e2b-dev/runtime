@@ -11,6 +11,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -51,7 +52,11 @@ func (a *APIStore) PostSandboxesSandboxIDTimeout(
 
 	_, apiErr := a.orchestrator.KeepAliveFor(ctx, teamID, sandboxID, duration, true)
 	if apiErr != nil {
-		telemetry.ReportError(ctx, "error when setting timeout", apiErr.Err)
+		if apiErr.Code == http.StatusNotFound {
+			logger.L().Info(ctx, "sandbox not found for timeout update", logger.WithSandboxID(sandboxID))
+		} else {
+			telemetry.ReportError(ctx, "error when setting timeout", apiErr.Err)
+		}
 		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 		return

@@ -86,7 +86,7 @@ func NewLogger(loggerConfig LoggerConfig) (Logger, error) {
 	cores := make([]zapcore.Core, 0)
 	cores = append(cores, loggerConfig.Cores...)
 
-	logger, err := config.Build(
+	opts := []zap.Option{
 		zap.WrapCore(func(c zapcore.Core) zapcore.Core {
 			cores = append(cores, c)
 
@@ -98,7 +98,11 @@ func NewLogger(loggerConfig LoggerConfig) (Logger, error) {
 			zap.Int("pid", os.Getpid()),
 		),
 		zap.Fields(loggerConfig.InitialFields...),
-	)
+	}
+	if !loggerConfig.DisableStacktrace {
+		opts = append([]zap.Option{zap.AddStacktrace(zapcore.ErrorLevel)}, opts...)
+	}
+	logger, err := config.Build(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("error building logger: %w", err)
 	}
