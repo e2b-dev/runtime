@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	iofs "io/fs"
 	"net"
 
 	"github.com/go-git/go-billy/v5"
@@ -18,7 +19,10 @@ type Handler struct {
 	ctx   context.Context //nolint:containedctx // can't change the API, still need it
 }
 
-var _ nfs.Handler = (*Handler)(nil)
+var (
+	_ nfs.Handler        = (*Handler)(nil)
+	_ nfs.CachingHandler = (*Handler)(nil)
+)
 
 func WrapWithRecovery(ctx context.Context, h nfs.Handler) *Handler {
 	return &Handler{inner: h, ctx: ctx}
@@ -67,6 +71,28 @@ func (h Handler) HandleLimit() int {
 	defer tryRecovery(h.ctx, "HandleLimit")
 
 	return h.inner.HandleLimit()
+}
+
+func (h Handler) VerifierFor(path string, contents []iofs.FileInfo) (verifier uint64) {
+	defer tryRecovery(h.ctx, "VerifierFor")
+
+	handler, ok := h.inner.(nfs.CachingHandler)
+	if !ok {
+		return 0
+	}
+
+	return handler.VerifierFor(path, contents)
+}
+
+func (h Handler) DataForVerifier(path string, verifier uint64) (contents []iofs.FileInfo) {
+	defer tryRecovery(h.ctx, "DataForVerifier")
+
+	handler, ok := h.inner.(nfs.CachingHandler)
+	if !ok {
+		return nil
+	}
+
+	return handler.DataForVerifier(path, verifier)
 }
 
 // tryRecovery must be called via `defer` directly so that recover() runs in

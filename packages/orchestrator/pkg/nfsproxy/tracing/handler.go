@@ -3,6 +3,7 @@ package tracing
 import (
 	"context"
 	"fmt"
+	iofs "io/fs"
 	"net"
 
 	"github.com/go-git/go-billy/v5"
@@ -17,7 +18,10 @@ type tracingHandler struct {
 	config cfg.Config
 }
 
-var _ nfs.Handler = (*tracingHandler)(nil)
+var (
+	_ nfs.Handler        = (*tracingHandler)(nil)
+	_ nfs.CachingHandler = (*tracingHandler)(nil)
+)
 
 func WrapWithTracing(handler nfs.Handler, config cfg.Config) nfs.Handler {
 	return &tracingHandler{inner: handler, config: config}
@@ -100,4 +104,22 @@ func (e *tracingHandler) InvalidateHandle(ctx context.Context, filesystem billy.
 
 func (e *tracingHandler) HandleLimit() int {
 	return e.inner.HandleLimit()
+}
+
+func (e *tracingHandler) VerifierFor(path string, contents []iofs.FileInfo) uint64 {
+	handler, ok := e.inner.(nfs.CachingHandler)
+	if !ok {
+		return 0
+	}
+
+	return handler.VerifierFor(path, contents)
+}
+
+func (e *tracingHandler) DataForVerifier(path string, verifier uint64) []iofs.FileInfo {
+	handler, ok := e.inner.(nfs.CachingHandler)
+	if !ok {
+		return nil
+	}
+
+	return handler.DataForVerifier(path, verifier)
 }

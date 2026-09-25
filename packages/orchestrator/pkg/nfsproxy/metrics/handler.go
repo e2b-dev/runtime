@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"fmt"
+	iofs "io/fs"
 	"net"
 
 	"github.com/go-git/go-billy/v5"
@@ -16,7 +17,10 @@ type metricsHandler struct {
 	config cfg.Config
 }
 
-var _ nfs.Handler = (*metricsHandler)(nil)
+var (
+	_ nfs.Handler        = (*metricsHandler)(nil)
+	_ nfs.CachingHandler = (*metricsHandler)(nil)
+)
 
 func WrapWithMetrics(handler nfs.Handler, config cfg.Config) nfs.Handler {
 	return &metricsHandler{inner: handler, config: config}
@@ -97,4 +101,22 @@ func (m *metricsHandler) InvalidateHandle(ctx context.Context, filesystem billy.
 
 func (m *metricsHandler) HandleLimit() int {
 	return m.inner.HandleLimit()
+}
+
+func (m *metricsHandler) VerifierFor(path string, contents []iofs.FileInfo) uint64 {
+	handler, ok := m.inner.(nfs.CachingHandler)
+	if !ok {
+		return 0
+	}
+
+	return handler.VerifierFor(path, contents)
+}
+
+func (m *metricsHandler) DataForVerifier(path string, verifier uint64) []iofs.FileInfo {
+	handler, ok := m.inner.(nfs.CachingHandler)
+	if !ok {
+		return nil
+	}
+
+	return handler.DataForVerifier(path, verifier)
 }
