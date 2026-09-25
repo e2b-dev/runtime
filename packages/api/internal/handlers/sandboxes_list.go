@@ -509,6 +509,10 @@ func convertFromDBMountsToAPIMounts(mounts []*dbtypes.SandboxVolumeMountConfig) 
 	results := make([]api.SandboxVolumeMount, 0, len(mounts))
 
 	for _, item := range mounts {
+		if item == nil {
+			continue
+		}
+
 		results = append(results, api.SandboxVolumeMount{
 			Name: item.Name,
 			Path: item.Path,
