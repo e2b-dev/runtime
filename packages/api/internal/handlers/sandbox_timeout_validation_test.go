@@ -110,3 +110,43 @@ func TestSandboxFork_RejectsNonPositiveTimeout(t *testing.T) {
 		})
 	}
 }
+
+// TestSandboxConnect_RejectsNonPositiveTimeout verifies that POST /sandboxes/{id}/connect
+// returns 400 for zero and negative timeout values. The check runs before any
+// sandbox-ID length check or snapshot lookup.
+func TestSandboxConnect_RejectsNonPositiveTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		timeout int32
+	}{
+		{"zero", 0},
+		{"negative one", -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			store := &APIStore{}
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+
+			body, err := json.Marshal(api.PostSandboxesSandboxIDConnectJSONRequestBody{
+				Timeout: tc.timeout,
+			})
+			require.NoError(t, err)
+
+			ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes/abc/connect", bytes.NewReader(body))
+			ginCtx.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, ginCtx, minimalTeamInfo())
+
+			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
+			store.PostSandboxesSandboxIDConnect(ginCtx, "abc123")
+
+			assertBadRequestTimeout(t, recorder)
+		})
+	}
+}
+
