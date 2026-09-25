@@ -205,13 +205,28 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	logger := a.logger.With().Str(string(logs.OperationIDKey), operationID).Logger()
 
 	if r.Body != nil {
+		// Cap the body to 1 MiB before reading. The largest legitimate /init
+		// payload contains EnvVars and a CaBundle, but no bulk data; 1 MiB is
+		// a generous upper bound that no real orchestrator payload approaches.
+		// Without this limit a guest process can send an unbounded body and
+		// OOM-kill envd, the sandbox control plane, without any credentials.
+		// Capping also preserves the intent of memguard.WipeBytes below: if
+		// the body were huge, partial GC scans could page the secret to disk
+		// before the wipe runs.
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		// Read raw body so we can wipe it after parsing
 		body, err := io.ReadAll(r.Body)
 		// Ensure body is wiped after we're done
 		defer memguard.WipeBytes(body)
 		if err != nil {
-			logger.Error().Msgf("Failed to read request body: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				logger.Error().Msg("request body exceeds 1 MiB limit")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+			} else {
+				logger.Error().Msgf("Failed to read request body: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+			}
 
 			return
 		}
