@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -15,6 +16,13 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/logs"
 	"github.com/e2b-dev/infra/packages/envd/internal/permissions"
 )
+
+// maxFileSizeForIdentityFallback is the maximum file size to read into memory
+// when stat.Size() returns 0 (virtual files like procfs/sysfs). Files larger
+// than this are served via the normal http.ServeContent path, which may return
+// an empty body for truly size=0 virtual files but avoids loading large files
+// into memory unnecessarily.
+const maxFileSizeForIdentityFallback = 64 * 1024 // 64 KiB
 
 func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesParams) {
 	defer r.Body.Close()
@@ -165,6 +173,26 @@ func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesPa
 		if err != nil {
 			a.logger.Error().Err(err).Str(string(logs.OperationIDKey), operationID).Msg("error writing gzip response")
 		}
+
+		return
+	}
+
+	// For identity encoding, handle the case where stat.Size() returns 0 but the file
+	// has content (virtual files like procfs/sysfs). http.ServeContent uses seek to
+	// determine the size, which returns 0 for these files, causing empty responses.
+	// We read the content into memory and use a bytes.Reader to preserve Range/
+	// conditional request semantics while serving the actual content.
+	if stat.Size() == 0 {
+		content, readErr := io.ReadAll(io.LimitReader(file, maxFileSizeForIdentityFallback))
+		if readErr != nil {
+			errMsg = fmt.Errorf("error reading file '%s': %w", resolvedPath, readErr)
+			errorCode = http.StatusInternalServerError
+			jsonError(w, errorCode, errMsg)
+
+			return
+		}
+
+		http.ServeContent(w, r, path, stat.ModTime(), bytes.NewReader(content))
 
 		return
 	}
