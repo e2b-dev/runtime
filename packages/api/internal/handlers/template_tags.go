@@ -75,6 +75,13 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 		return
 	}
 
+	if aliasInfo.TeamID != team.ID {
+		a.sendAPIStoreError(c, http.StatusForbidden, fmt.Sprintf("You don't have access to sandbox template '%s'", identifier))
+		telemetry.ReportError(ctx, "no access to the template", nil, telemetry.WithTemplateID(aliasInfo.TemplateID))
+
+		return
+	}
+
 	client, tx, err := a.sqlcDB.WithTx(ctx)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error when beginning transaction", err)
@@ -111,13 +118,6 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 		attribute.String("env.team.name", team.Name),
 		telemetry.WithTemplateID(template.ID),
 	)
-
-	if aliasInfo.TeamID != team.ID {
-		a.sendAPIStoreError(c, http.StatusForbidden, fmt.Sprintf("You don't have access to sandbox template '%s'", identifier))
-		telemetry.ReportError(ctx, "no access to the template", nil, telemetry.WithTemplateID(template.ID))
-
-		return
-	}
 
 	tags, err := id.ValidateAndDeduplicateTags(body.Tags)
 	if err != nil {
