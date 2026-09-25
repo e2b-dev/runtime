@@ -73,6 +73,18 @@ func newAWSStorage(ctx context.Context, spec Spec, limiter *limit.Limiter) (*aws
 		// default virtual-host style https://bucket.host/key) is required by
 		// most S3-compatible backends (MinIO, Ceph, …).
 		o.UsePathStyle = spec.UsePathStyle
+
+		// S3-compatible backends (MinIO, Ceph, etc.) do not return x-amz-checksum-*
+		// response headers. Without this setting the SDK logs a WARN for every
+		// GetObject response because it cannot validate the payload checksum.
+		// WhenRequired tells the SDK to only validate when the caller explicitly
+		// requested a checksum — matching the actual contract with these backends.
+		// Standard AWS S3 returns checksums and benefits from WhenSupported (the
+		// SDK default), so this opt-out is gated on UsePathStyle which already
+		// identifies S3-compatible deployments.
+		if spec.UsePathStyle {
+			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		}
 	})
 	presignClient := s3.NewPresignClient(client)
 
