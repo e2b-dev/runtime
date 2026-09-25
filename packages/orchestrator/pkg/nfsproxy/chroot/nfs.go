@@ -122,7 +122,19 @@ func (h *NFSHandler) Mount(
 	conn net.Conn,
 	request nfs.MountRequest,
 ) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
-	fs, err := h.getChroot(ctx, conn.RemoteAddr(), request)
+	sbx, err := h.sandboxes.GetByHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		sourceIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+		logger.L().Warn(ctx, "failed to get path",
+			zap.String("request", string(request.Dirpath)),
+			logger.WithSandboxIP(sourceIP),
+			zap.Error(fmt.Errorf("%w: %w", ErrUnknownSandbox, err)),
+		)
+
+		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
+	}
+
+	fs, err := h.getChroot(ctx, sbx, request)
 	if err != nil {
 		sourceIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 
@@ -134,17 +146,12 @@ func (h *NFSHandler) Mount(
 		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
 	}
 
-	return nfs.MountStatusOk, wrapChrooted(fs), nil
+	return nfs.MountStatusOk, wrapChrooted(fs, sbx.Runtime.SandboxID, sbx.LifecycleID), nil
 }
 
 var mountPath = regexp.MustCompile(`^/[^/]+$`)
 
-func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request nfs.MountRequest) (*chrooted.Chrooted, error) {
-	sbx, err := h.sandboxes.GetByHostPort(remoteAddr.String())
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnknownSandbox, err)
-	}
-
+func (h *NFSHandler) getChroot(ctx context.Context, sbx *sandbox.Sandbox, request nfs.MountRequest) (*chrooted.Chrooted, error) {
 	// normalize the mount path
 	requestedPath := string(request.Dirpath)
 	regexpMatch := mountPath.MatchString(requestedPath)
