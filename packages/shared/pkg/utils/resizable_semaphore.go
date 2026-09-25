@@ -96,6 +96,20 @@ func (s *AdjustableSemaphore) SetLimit(limit int64) error {
 	return nil
 }
 
+func (s *AdjustableSemaphore) Current() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.used
+}
+
+func (s *AdjustableSemaphore) Limit() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.limit
+}
+
 func (s *AdjustableSemaphore) Release(n int64) {
 	if n <= 0 {
 		panic("Release: n must be > 0")
