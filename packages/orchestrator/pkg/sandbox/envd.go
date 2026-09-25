@@ -222,7 +222,7 @@ func (s *Sandbox) callEnvdCollapse(ctx context.Context, timeout time.Duration) (
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 
-		return envd.CollapseResult{}, fmt.Errorf("collapse returned %d: %s", resp.StatusCode, utils.Truncate(string(body), 100))
+		return envd.CollapseResult{}, fmt.Errorf("collapse returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result envd.CollapseResult
@@ -248,7 +248,7 @@ func (s *Sandbox) postEnvd(ctx context.Context, timeout time.Duration, path stri
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("%s returned %d: %s", path, resp.StatusCode, utils.Truncate(string(body), 100))
+		return fmt.Errorf("%s returned %d: %s", path, resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -327,7 +327,7 @@ func (s *Sandbox) CallEnvdUpgrade(ctx context.Context, localSrcPath, guestBinPat
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 
-		return false, fmt.Errorf("upgrade returned %d: %s", resp.StatusCode, utils.Truncate(string(body), 100))
+		return false, fmt.Errorf("upgrade returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	// envd answered instead of exec'ing — no swap happened, exec not confirmed.
@@ -590,7 +590,7 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		s.log().Error(ctx, "envd init request failed",
 			logger.WithEnvdVersion(s.Config.Envd.Version),
 			zap.Int("status_code", response.StatusCode),
-			zap.String("response_body", utils.Truncate(string(body), 100)),
+			zap.String("response_body", string(body)),
 		)
 
 		return fmt.Errorf("unexpected status code: %d", response.StatusCode)
