@@ -37,7 +37,7 @@ func (c *Cleanup) AddNoContext(ctx context.Context, f func() error) {
 }
 
 func (c *Cleanup) Add(ctx context.Context, f func(ctx context.Context) error) {
-	if c.hasRun.Load() == true {
+	if c.hasRun.Load() {
 		err := f(context.WithoutCancel(ctx))
 		if err != nil {
 			logger.L().Error(ctx, "failed to run function after cleanup has run", zap.Error(err))
@@ -47,13 +47,26 @@ func (c *Cleanup) Add(ctx context.Context, f func(ctx context.Context) error) {
 	}
 
 	c.mu.Lock()
+
+	// Double-check after acquiring the lock — run() may have executed
+	// between the fast-path check above and the lock acquisition.
+	if c.hasRun.Load() {
+		c.mu.Unlock()
+
+		err := f(context.WithoutCancel(ctx))
+		if err != nil {
+			logger.L().Error(ctx, "failed to run function after cleanup has run", zap.Error(err))
+		}
+
+		return
+	}
 	defer c.mu.Unlock()
 
 	c.cleanup = append(c.cleanup, f)
 }
 
 func (c *Cleanup) AddPriority(ctx context.Context, f func(ctx context.Context) error) {
-	if c.hasRun.Load() == true {
+	if c.hasRun.Load() {
 		err := f(context.WithoutCancel(ctx))
 		if err != nil {
 			logger.L().Error(ctx, "failed to run priority function after cleanup has run", zap.Error(err))
@@ -63,6 +76,19 @@ func (c *Cleanup) AddPriority(ctx context.Context, f func(ctx context.Context) e
 	}
 
 	c.mu.Lock()
+
+	// Double-check after acquiring the lock — run() may have executed
+	// between the fast-path check above and the lock acquisition.
+	if c.hasRun.Load() {
+		c.mu.Unlock()
+
+		err := f(context.WithoutCancel(ctx))
+		if err != nil {
+			logger.L().Error(ctx, "failed to run priority function after cleanup has run", zap.Error(err))
+		}
+
+		return
+	}
 	defer c.mu.Unlock()
 
 	c.priorityCleanup = append(c.priorityCleanup, f)
@@ -77,10 +103,10 @@ func (c *Cleanup) Run(ctx context.Context) error {
 }
 
 func (c *Cleanup) run(ctx context.Context) {
-	c.hasRun.Store(true)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.hasRun.Store(true)
 
 	var errs []error
 
