@@ -472,10 +472,13 @@ func (s *Sandbox) convertMounts(mounts []VolumeMountConfig) []envd.VolumeMount {
 	results := make([]envd.VolumeMount, 0, len(mounts))
 
 	for _, mount := range mounts {
-		results = append(results, envd.VolumeMount{
+		syncVal := mount.Sync
+		vm := envd.VolumeMount{
 			NfsTarget: fmt.Sprintf("%s:/%s", s.config.NetworkConfig.OrchestratorInSandboxIPAddress, mount.Name),
 			Path:      mount.Path,
-		})
+			Sync:      &syncVal,
+		}
+		results = append(results, vm)
 	}
 
 	return results

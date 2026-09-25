@@ -526,6 +526,65 @@ func TestSetData(t *testing.T) {
 	})
 }
 
+func TestNFSMountOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("async options contain expected flags", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, nfsAsyncOptions, "async")
+		assert.Contains(t, nfsAsyncOptions, "noatime")
+		assert.Contains(t, nfsAsyncOptions, "nodiratime")
+		assert.Contains(t, nfsAsyncOptions, "actimeo=3600")
+		assert.NotContains(t, nfsAsyncOptions, ",sync,")       // must not have sync write mode
+		assert.NotContains(t, nfsAsyncOptions, "lookupcache=") // must not have lookup cache control
+	})
+
+	t.Run("sync options contain expected flags", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, nfsSyncOptions, ",sync,")
+		assert.Contains(t, nfsSyncOptions, "noac")
+		assert.Contains(t, nfsSyncOptions, "lookupcache=none")
+		assert.NotContains(t, nfsSyncOptions, "async")
+		assert.NotContains(t, nfsSyncOptions, "actimeo")
+	})
+
+	t.Run("both profiles share base options", func(t *testing.T) {
+		t.Parallel()
+		for _, opt := range nfsBaseOptions {
+			assert.Contains(t, nfsAsyncOptions, opt, "async missing base option %q", opt)
+			assert.Contains(t, nfsSyncOptions, opt, "sync missing base option %q", opt)
+		}
+	})
+}
+
+func TestSyncDefaultValue(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil sync defaults to sync mount (true)", func(t *testing.T) {
+		t.Parallel()
+		volume := VolumeMount{NfsTarget: "host:/vol", Path: "/mnt"}
+		// volume.Sync is nil
+		syncMount := volume.Sync == nil || *volume.Sync
+		assert.True(t, syncMount, "nil Sync should default to sync (true)")
+	})
+
+	t.Run("explicit true uses sync mount", func(t *testing.T) {
+		t.Parallel()
+		tr := true
+		volume := VolumeMount{NfsTarget: "host:/vol", Path: "/mnt", Sync: &tr}
+		syncMount := volume.Sync == nil || *volume.Sync
+		assert.True(t, syncMount)
+	})
+
+	t.Run("explicit false uses async mount", func(t *testing.T) {
+		t.Parallel()
+		f := false
+		volume := VolumeMount{NfsTarget: "host:/vol", Path: "/mnt", Sync: &f}
+		syncMount := volume.Sync == nil || *volume.Sync
+		assert.False(t, syncMount)
+	})
+}
+
 func TestShouldRemountNFS(t *testing.T) {
 	t.Parallel()
 

@@ -467,6 +467,7 @@ func createVolumeMountModelsFromAPI(volumeMounts []*orchestrator.SandboxVolumeMo
 			Name: v.GetName(),
 			Path: v.GetPath(),
 			Type: v.GetType(),
+			Sync: true, // default to sync (safe for pause/resume)
 		})
 	}
 

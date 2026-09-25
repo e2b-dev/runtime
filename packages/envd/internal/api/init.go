@@ -637,11 +637,25 @@ func writeInitError(w http.ResponseWriter, logger zerolog.Logger, err error) {
 	w.Write([]byte(err.Error()))
 }
 
-var nfsOptions = strings.Join([]string{
-	// wait for data to be sent to proxy server before returning.
-	// async might cause issues if the sandbox is shut down suddenly.
-	"sync",
+// NFS mount options are split into two profiles to support different use cases:
+//
+// Sync (default, sync=true or unset):
+//   Use when pause/resume IS needed (the common case). Every write() blocks until data
+//   reaches the NFS proxy, and attribute/lookup caches are disabled so resume always sees
+//   fresh state. Trade-off: higher I/O latency due to per-write network round trips.
+//
+// Async (sync=false):
+//   Use when pause/resume is NOT needed. Provides significantly better I/O throughput
+//   by allowing the kernel to batch writes and cache file attributes. Trade-off: data in
+//   the kernel's NFS writeback cache may be lost if the sandbox is paused or killed suddenly.
+//
+// How to choose:
+//   - Sandboxes with pause/resume (most scenarios) → sync (default)
+//   - Short-lived sandboxes, no pause/resume, high I/O → set sync=false for async
+//   - Self-hosted deployments without pause/resume → set sync=false for async
 
+// nfsBaseOptions are shared by both sync and async NFS mount profiles.
+var nfsBaseOptions = []string{
 	"rsize=1048576",  // 1 MB read buffer
 	"wsize=1048576",  // 1 MB write buffer
 	"mountproto=tcp", // nfs proxy only supports tcp
@@ -650,11 +664,30 @@ var nfsOptions = strings.Join([]string{
 	"port=2049",      // nfs proxy only supports mounting on port 2049
 	"nfsvers=3",      // nfs proxy is nfs version 3
 	"noacl",          // no reason for acl in the sandbox
+}
 
-	// disable caching so that pause/resume works correctly
-	"noac",
-	"lookupcache=none",
-}, ",")
+// nfsAsyncOptions is used when sync=false. Prioritises throughput.
+// Suitable for workloads without pause/resume: async writes are batched by the kernel,
+// noatime/nodiratime avoid unnecessary metadata updates, and actimeo=3600 caches
+// file/dir attributes for 1 hour to minimize GETATTR RPCs.
+var nfsAsyncOptions = strings.Join(append([]string{
+	"rw",
+	"async",         // kernel batches writes, returns immediately
+	"noatime",       // don't update access time on reads
+	"nodiratime",    // don't update directory access time
+	"actimeo=3600",  // cache file/dir attributes for 1 hour
+}, nfsBaseOptions...), ",")
+
+// nfsSyncOptions is used when sync=true (default). Prioritises data safety for pause/resume.
+// Every write() blocks until data reaches the NFS proxy. Attribute and lookup caches
+// are disabled so that after a pause/resume cycle (where the NFS proxy connection is
+// re-established with a new lifecycle ID), the client always sees fresh server state.
+var nfsSyncOptions = strings.Join(append([]string{
+	"rw",
+	"sync",            // block until data reaches NFS proxy server
+	"noac",             // no attribute caching — fresh metadata after resume
+	"lookupcache=none", // no directory lookup caching — fresh entries after resume
+}, nfsBaseOptions...), ",")
 
 const nfsMountTimeout = 10 * time.Second
 
@@ -699,7 +732,9 @@ func (a *API) setupNFS(ctx context.Context, logger zerolog.Logger, lifecycleID *
 				return fmt.Errorf("failed to unmount stale NFS mount at %q: %w", volume.Path, err)
 			}
 
-			if err := a.mountNFS(wgCtx, volume.NfsTarget, volume.Path); err != nil {
+			// Default to sync (safe for pause/resume); only use async when explicitly set to false.
+			syncMount := volume.Sync == nil || *volume.Sync
+			if err := a.mountNFS(wgCtx, volume.NfsTarget, volume.Path, syncMount); err != nil {
 				return fmt.Errorf("failed to mount NFS at %q: %w", volume.Path, err)
 			}
 
@@ -748,10 +783,19 @@ func (a *API) unmountNFS(ctx context.Context, logger zerolog.Logger, path string
 	return nil
 }
 
-func (a *API) mountNFS(ctx context.Context, nfsTarget, path string) error {
+// mountNFS mounts an NFS volume at the given path.
+// syncMount controls the mount profile:
+//   - true  (default): sync options — data safety, required for pause/resume
+//   - false:           async options — high throughput, no pause/resume safety
+func (a *API) mountNFS(ctx context.Context, nfsTarget, path string, syncMount bool) error {
+	opts := nfsSyncOptions
+	if !syncMount {
+		opts = nfsAsyncOptions
+	}
+
 	commands := [][]string{
 		{"mkdir", "-p", path},
-		{"mount", "-v", "-t", "nfs", "-o", "fg,hard," + nfsOptions, nfsTarget, path},
+		{"mount", "-v", "-t", "nfs", "-o", "fg,hard," + opts, nfsTarget, path},
 	}
 
 	for _, command := range commands {

@@ -146,3 +146,67 @@ func TestEnvdInitEmptyCaBundle(t *testing.T) { //nolint:paralleltest
 
 	assert.Empty(t, captured.CaBundle, "caBundle should be omitted when empty")
 }
+
+func TestConvertMounts(t *testing.T) {
+	t.Parallel()
+
+	const orchIP = "192.0.2.1"
+	sbx := &Sandbox{
+		Metadata: &Metadata{
+			Config: NewConfig(Config{}),
+		},
+	}
+	sbx.config.NetworkConfig.OrchestratorInSandboxIPAddress = orchIP
+
+	t.Run("sync true is passed through", func(t *testing.T) {
+		t.Parallel()
+		mounts := []VolumeMountConfig{
+			{Name: "vol-a", Path: "/data", Sync: true},
+		}
+		result := sbx.convertMounts(mounts)
+		require.Len(t, result, 1)
+		assert.Equal(t, orchIP+":/vol-a", result[0].NfsTarget)
+		assert.Equal(t, "/data", result[0].Path)
+		require.NotNil(t, result[0].Sync)
+		assert.True(t, *result[0].Sync)
+	})
+
+	t.Run("sync false is passed through", func(t *testing.T) {
+		t.Parallel()
+		mounts := []VolumeMountConfig{
+			{Name: "vol-b", Path: "/cache", Sync: false},
+		}
+		result := sbx.convertMounts(mounts)
+		require.Len(t, result, 1)
+		require.NotNil(t, result[0].Sync)
+		assert.False(t, *result[0].Sync)
+	})
+
+	t.Run("multiple mounts have independent sync pointers", func(t *testing.T) {
+		t.Parallel()
+		mounts := []VolumeMountConfig{
+			{Name: "vol-1", Path: "/a", Sync: true},
+			{Name: "vol-2", Path: "/b", Sync: false},
+			{Name: "vol-3", Path: "/c", Sync: true},
+		}
+		result := sbx.convertMounts(mounts)
+		require.Len(t, result, 3)
+
+		// Each pointer must be independent (not aliased)
+		assert.True(t, *result[0].Sync)
+		assert.False(t, *result[1].Sync)
+		assert.True(t, *result[2].Sync)
+
+		// Mutating one must not affect others
+		*result[0].Sync = false
+		assert.False(t, *result[0].Sync)
+		assert.False(t, *result[1].Sync) // was already false
+		assert.True(t, *result[2].Sync)  // must remain true
+	})
+
+	t.Run("empty mounts returns empty slice", func(t *testing.T) {
+		t.Parallel()
+		result := sbx.convertMounts(nil)
+		assert.Empty(t, result)
+	})
+}
