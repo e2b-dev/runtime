@@ -589,6 +589,10 @@ var (
 	// Must be > 0.
 	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", 3)
 
+	// MaxConcurrentTemplateBuilds limits concurrent template builds on a single
+	// template-manager node. Non-positive values disable the cap.
+	MaxConcurrentTemplateBuilds = NewIntFlag("max-concurrent-template-builds", -1)
+
 	// MaxConcurrentEvictions caps the number of sandbox evictions that can run
 	// in parallel per API instance. Excess items remain expired in the store
 	// and are picked up by the next eviction tick. Must be > 0; non-positive

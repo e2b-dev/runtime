@@ -216,6 +216,18 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 			}
 		}()
 
+		// Queue builds inside the background goroutine so the gRPC handler stays
+		// non-blocking and the node does not oversubscribe build resources.
+		if s.buildLimitEnabled.Load() {
+			if err := s.buildLimiter.Acquire(ctx, 1); err != nil {
+				telemetry.ReportEvent(ctx, "build cancelled while queued for the build limiter")
+				buildInfo.SetFail(builderrors.UnwrapUserError(err))
+
+				return
+			}
+			defer s.buildLimiter.Release(1)
+		}
+
 		res, err := s.builder.Build(ctx, metadata, template, core)
 		_ = core.Sync()
 		if err != nil {
