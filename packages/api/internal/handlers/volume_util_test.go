@@ -1,11 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"net"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
@@ -151,3 +156,73 @@ func TestFindNodesByVolumeLabel(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRetryableError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error is not retryable",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "net.ErrClosed is retryable",
+			err:      net.ErrClosed,
+			expected: true,
+		},
+		{
+			name:     "context.DeadlineExceeded is retryable",
+			err:      context.DeadlineExceeded,
+			expected: true,
+		},
+		{
+			name:     "context.Canceled is retryable",
+			err:      context.Canceled,
+			expected: true,
+		},
+		{
+			name:     "gRPC codes.Unavailable is retryable",
+			err:      status.Error(codes.Unavailable, "connection refused"),
+			expected: true,
+		},
+		{
+			name:     "gRPC codes.DeadlineExceeded is retryable",
+			err:      status.Error(codes.DeadlineExceeded, "context deadline exceeded"),
+			expected: true,
+		},
+		{
+			name:     "gRPC codes.Canceled is retryable",
+			err:      status.Error(codes.Canceled, "request canceled"),
+			expected: true,
+		},
+		{
+			name:     "gRPC codes.NotFound is not retryable",
+			err:      status.Error(codes.NotFound, "volume not found"),
+			expected: false,
+		},
+		{
+			name:     "gRPC codes.InvalidArgument is not retryable",
+			err:      status.Error(codes.InvalidArgument, "bad volume name"),
+			expected: false,
+		},
+		{
+			name:     "generic error is not retryable",
+			err:      errors.New("something went wrong"),
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.expected, isRetryableError(tc.err))
+		})
+	}
+}
+

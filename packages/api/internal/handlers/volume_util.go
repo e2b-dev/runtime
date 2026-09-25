@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal"
@@ -250,8 +251,16 @@ func isUnknownVolumeTypeError(err error) (string, bool) {
 }
 
 func isRetryableError(err error) bool {
-	if errors.Is(err, net.ErrClosed) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return true
+	}
+
+	st, ok := status.FromError(err)
+	if ok {
+		switch st.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			return true
+		}
 	}
 
 	return false
