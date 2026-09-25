@@ -334,7 +334,7 @@ func (ppb *PostProcessingBuilder) postProcessingFn(userLogger logger.Logger) lay
 			if meta.Start.StartCmd == "" {
 				readyCmd = "sleep 0"
 			} else {
-				readyCmd = GetDefaultReadyCommand(ppb.Config.TemplateID)
+				readyCmd = GetDefaultReadyCommand(ppb.Config.StartCmdTimeout)
 			}
 		}
 		err = ppb.runReadyCommand(
