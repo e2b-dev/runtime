@@ -41,6 +41,7 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 	end, endCancel := proc.EndEvent.Fork()
 	defer endCancel()
 
+	setStreamWriteDeadline(ctx)
 	streamErr := stream.Send(&rpc.ConnectResponse{
 		Event: &rpc.ProcessEvent{
 			Event: &rpc.ProcessEvent_Start{
@@ -50,6 +51,8 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 			},
 		},
 	})
+	clearStreamWriteDeadline(ctx)
+
 	if streamErr != nil {
 		return connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending start event: %w", streamErr))
 	}
@@ -64,6 +67,7 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 		for {
 			select {
 			case <-keepaliveTicker.C:
+				setStreamWriteDeadline(ctx)
 				streamErr := stream.Send(&rpc.ConnectResponse{
 					Event: &rpc.ProcessEvent{
 						Event: &rpc.ProcessEvent_Keepalive{
@@ -71,6 +75,8 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 						},
 					},
 				})
+				clearStreamWriteDeadline(ctx)
+
 				if streamErr != nil {
 					cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending keepalive: %w", streamErr)))
 
@@ -85,11 +91,14 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 					break dataLoop
 				}
 
+				setStreamWriteDeadline(ctx)
 				streamErr := stream.Send(&rpc.ConnectResponse{
 					Event: &rpc.ProcessEvent{
 						Event: &event,
 					},
 				})
+				clearStreamWriteDeadline(ctx)
+
 				if streamErr != nil {
 					cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending data event: %w", streamErr)))
 
@@ -126,11 +135,14 @@ func (s *Service) handleConnect(ctx context.Context, req *connect.Request[rpc.Co
 				return
 			}
 
+			setStreamWriteDeadline(ctx)
 			streamErr := stream.Send(&rpc.ConnectResponse{
 				Event: &rpc.ProcessEvent{
 					Event: &event,
 				},
 			})
+			clearStreamWriteDeadline(ctx)
+
 			if streamErr != nil {
 				cancel(connect.NewError(connect.CodeUnknown, fmt.Errorf("error sending end event: %w", streamErr)))
 
