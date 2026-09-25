@@ -89,6 +89,13 @@ type API struct {
 	// re-adopted (possibly hostile) guest process can neither drive an upgrade
 	// nor be handed a running workload before /init has re-established auth.
 	initialized atomic.Bool
+
+	// mmdsPollRunning is set to true while a PollForMMDSOpts goroutine is
+	// in flight. CompareAndSwap on this flag prevents PostInit from spawning
+	// a new polling goroutine on every /init retry — each goroutine sends up
+	// to 1200 HTTP requests over its 60 s lifetime, so N concurrent retries
+	// would produce O(N*1200) MMDS calls and O(N) goroutine stack allocations.
+	mmdsPollRunning atomic.Bool
 }
 
 // Initialized reports whether the first authenticated /init has completed.

@@ -294,11 +294,19 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		a.initialized.Store(true)
 	}
 
-	go func() { //nolint:contextcheck // TODO: fix this later
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
-	}()
+	// Only one MMDS-poll goroutine may be in flight at a time. Without this
+	// guard every /init retry (the orchestrator retries with infinite backoff
+	// until the sandbox responds) spawns a fresh goroutine that lives for 60 s
+	// and fires up to 1 200 HTTP requests — O(N) goroutines and O(N*1200)
+	// connections accumulate silently until they time out.
+	if a.mmdsPollRunning.CompareAndSwap(false, true) {
+		go func() { //nolint:contextcheck
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
+			a.mmdsPollRunning.Store(false)
+		}()
+	}
 
 	// After SetData, so this reports what is actually in effect rather than what was
 	// requested. Set before WriteHeader.
