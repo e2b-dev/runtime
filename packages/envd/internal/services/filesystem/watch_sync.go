@@ -168,7 +168,7 @@ func (s Service) CreateWatcher(ctx context.Context, req *connect.Request[rpc.Cre
 	}
 
 	if !info.IsDir() {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path %s not a directory: %w", watchPath, err))
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path %s is not a directory", watchPath))
 	}
 
 	// Check if path is on a network filesystem mount

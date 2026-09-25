@@ -215,3 +215,25 @@ func TestCreateWatcherOnNetworkMount(t *testing.T) {
 	})
 	assert.NotEmpty(t, watcherID)
 }
+
+func TestCreateWatcher_NotADirectory(t *testing.T) {
+	t.Parallel()
+
+	u, err := user.Current()
+	require.NoError(t, err)
+
+	filePath := filepath.Join(t.TempDir(), "file.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0o644))
+
+	svc := mockService()
+	ctx := authn.SetInfo(t.Context(), u)
+
+	_, err = svc.CreateWatcher(ctx, connect.NewRequest(&filesystem.CreateWatcherRequest{
+		Path: filePath,
+	}))
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	assert.Contains(t, err.Error(), "is not a directory")
+	assert.NotContains(t, err.Error(), "%!w")
+}
+
