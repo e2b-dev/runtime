@@ -173,3 +173,14 @@ func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string,
 
 	return finishStart, waitForStart, nil
 }
+
+// ClaimKill fences a paused sandbox's ID against a concurrent resume before its
+// snapshot is deleted. See ReservationStorage.ClaimKill.
+func (s *Store) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (bool, error) {
+	return s.reservations.ClaimKill(ctx, teamID, sandboxID)
+}
+
+// ReleaseKillClaim drops a claim taken by ClaimKill.
+func (s *Store) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+	return s.reservations.ReleaseKillClaim(ctx, teamID, sandboxID)
+}

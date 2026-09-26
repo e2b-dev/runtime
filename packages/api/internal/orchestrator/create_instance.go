@@ -207,6 +207,16 @@ func (o *Orchestrator) CreateSandbox(
 						"please visit 'https://e2b.dev/docs/billing'", totalConcurrentInstances),
 				Err: fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
 			}
+		case errors.Is(err, sandbox.ErrSandboxKilled):
+			// A DELETE claimed this sandbox ID for removal while this resume was
+			// starting. The kill wins: the snapshot is being (or has been)
+			// deleted, so publishing this sandbox would resurrect a sandbox the
+			// client was told was gone. Refuse instead.
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusNotFound,
+				ClientMsg: fmt.Sprintf("Sandbox '%s' was deleted", sandboxID),
+				Err:       fmt.Errorf("resume of '%s' refused: %w", sandboxID, err),
+			}
 		default:
 			logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(err))
 

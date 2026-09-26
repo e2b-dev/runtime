@@ -60,6 +60,7 @@ var (
 	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
 	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
 	ErrDraining           = sandboxtypes.ErrDraining
+	ErrSandboxKilled      = sandboxtypes.ErrSandboxKilled
 
 	AllowedTransitions = sandboxtypes.AllowedTransitions
 

@@ -9,6 +9,7 @@ const (
 	reservationsKey = "reservations"
 	pendingKey      = "pending"
 	resultKey       = "result"
+	killedKey       = "killed"
 	notifySuffix    = "notify"
 )
 
@@ -39,4 +40,11 @@ func getResultKey(teamID, sandboxID string) string {
 // e.g. sandbox:storage:{teamID}:reservations:sandboxID:notify
 func getReservationRoutingKey(teamID, sandboxID string) string {
 	return redis_utils.CreateKey(getReservationPrefix(teamID), sandboxID, notifySuffix)
+}
+
+// getKillClaimKey returns the key holding a DELETE's claim over a sandbox ID,
+// written by claimKillScript and checked by reserveScript.
+// e.g. sandbox:storage:{teamID}:reservations:sandboxID:killed
+func getKillClaimKey(teamID, sandboxID string) string {
+	return redis_utils.CreateKey(getReservationPrefix(teamID), sandboxID, killedKey)
 }

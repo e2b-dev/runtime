@@ -29,6 +29,23 @@ const refusalRetryAfter = 10 * time.Second
 
 const pauseTimeout = 80 * time.Second
 
+// ClaimPausedKill fences a paused sandbox's ID against a concurrent resume
+// before the caller deletes its snapshot. It returns claimed=true when no
+// resume is in flight and the caller may proceed; false when a resume is
+// pending or the sandbox is already running again, in which case the snapshot
+// must be left intact and the kill retried against the running sandbox.
+func (o *Orchestrator) ClaimPausedKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (bool, error) {
+	return o.sandboxStore.ClaimKill(ctx, teamID, sandboxID)
+}
+
+// ReleasePausedKillClaim drops a claim taken by ClaimPausedKill. Best-effort:
+// the claim also expires on its own.
+func (o *Orchestrator) ReleasePausedKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID string) {
+	if err := o.sandboxStore.ReleaseKillClaim(ctx, teamID, sandboxID); err != nil {
+		logger.L().Error(ctx, "failed to release paused-kill claim", zap.Error(err), logger.WithSandboxID(sandboxID))
+	}
+}
+
 func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "remove-sandbox")
 	defer span.End()
