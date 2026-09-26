@@ -8,10 +8,13 @@ import (
 	"github.com/go-git/go-billy/v5"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
 )
 
 type wrappedFS struct {
-	chroot *chrooted.Chrooted
+	chroot      *chrooted.Chrooted
+	sandboxID   string
+	lifecycleID string
 }
 
 func (f *wrappedFS) Create(filename string) (billy.File, error) {
@@ -82,8 +85,12 @@ func (f *wrappedFS) Root() string {
 	return f.chroot.Root()
 }
 
+func (f *wrappedFS) NFSCacheOwner() mountcache.Owner {
+	return mountcache.Owner{SandboxID: f.sandboxID, LifecycleID: f.lifecycleID}
+}
+
 var _ billy.Filesystem = (*wrappedFS)(nil)
 
-func wrapChrooted(chroot *chrooted.Chrooted) *wrappedFS {
-	return &wrappedFS{chroot: chroot}
+func wrapChrooted(chroot *chrooted.Chrooted, sandboxID, lifecycleID string) *wrappedFS {
+	return &wrappedFS{chroot: chroot, sandboxID: sandboxID, lifecycleID: lifecycleID}
 }
