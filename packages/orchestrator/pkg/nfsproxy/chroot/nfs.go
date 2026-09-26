@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/go-git/go-billy/v5"
@@ -104,6 +107,8 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 	h.mu.Unlock()
 
 	for _, chroot := range chroots {
+		h.removeNFSOrphans(ctx, sbx.Runtime.SandboxID, chroot.Root())
+
 		err := chroot.Close()
 		if err != nil {
 			logger.L().Warn(ctx, "failed to close chroot",
@@ -114,6 +119,46 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 			)
 		}
 		h.chrootUnmountsCounter.Add(ctx, 1)
+	}
+}
+
+// removeNFSOrphans removes .nfs* files left by the NFS silly-rename mechanism.
+// When an NFS client deletes a file that still has open fds, it renames the file
+// to .nfsXXXX instead of removing it, and sends a REMOVE only after the last fd
+// is closed. If the client VM is killed before closing its fds, the .nfs* file
+// remains on the server permanently. This function cleans them up at sandbox teardown.
+func (h *NFSHandler) removeNFSOrphans(ctx context.Context, sandboxID, dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.L().Warn(ctx, "failed to read volume dir for NFS orphan cleanup",
+				logger.WithSandboxID(sandboxID),
+				zap.String("dir", dir),
+				zap.Error(err),
+			)
+		}
+
+		return
+	}
+
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".nfs") {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logger.L().Warn(ctx, "failed to remove NFS orphan file",
+				logger.WithSandboxID(sandboxID),
+				zap.String("path", path),
+				zap.Error(err),
+			)
+		} else {
+			logger.L().Info(ctx, "removed NFS orphan file",
+				logger.WithSandboxID(sandboxID),
+				zap.String("path", path),
+			)
+		}
 	}
 }
 
