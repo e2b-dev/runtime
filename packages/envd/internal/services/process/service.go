@@ -164,7 +164,9 @@ func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults, 
 
 	path, h := spec.NewProcessHandler(service, interceptors)
 
-	server.Mount(path, h)
+	// streamDeadlineMiddleware injects the http.ResponseWriter into the context
+	// so that stream handlers can call setStreamWriteDeadline before each Send.
+	server.Mount(path, streamDeadlineMiddleware(h))
 
 	return service
 }
