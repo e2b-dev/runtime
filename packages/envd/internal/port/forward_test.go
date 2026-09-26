@@ -16,7 +16,7 @@ func TestStartForwarding_StopsOnClosedMessages(t *testing.T) {
 	t.Parallel()
 
 	l := zerolog.Nop()
-	scanner := NewScanner(time.Hour)
+	scanner := NewScanner(&l, time.Hour)
 	f := &Forwarder{
 		logger:            &l,
 		ports:             make(map[string]*PortToForward),

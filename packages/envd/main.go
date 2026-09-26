@@ -318,11 +318,12 @@ func run() error {
 		IdleTimeout:  idleTimeout,
 	}
 
+	portLogger := l.With().Str("logger", "port-forwarder").Logger()
+
 	// Bind all open ports on 127.0.0.1 and localhost to the eth0 interface
-	portScanner := publicport.NewScanner(portScannerInterval)
+	portScanner := publicport.NewScanner(&portLogger, portScannerInterval)
 	defer portScanner.Destroy()
 
-	portLogger := l.With().Str("logger", "port-forwarder").Logger()
 	portForwarder := publicport.NewForwarder(&portLogger, portScanner, cgroupManager)
 	if resumeHandover {
 		// Re-adopt the socats carried across the upgrade before the forwarder's
