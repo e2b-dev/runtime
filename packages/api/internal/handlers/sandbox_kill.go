@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/db"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
@@ -69,12 +70,26 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 	case err == nil:
 		killedOrRemoved = true
 	case errors.Is(err, orchestrator.ErrSandboxNotFound):
-		logger.L().Debug(ctx, "Running sandbox not found", logger.WithSandboxID(sandboxID))
+		logger.L().Info(ctx, "Running sandbox not found, checking for snapshot",
+			logger.WithSandboxID(sandboxID),
+			logger.WithTeamID(teamID.String()),
+		)
 	case errors.Is(err, orchestrator.ErrSandboxOperationFailed):
+		logger.L().Error(ctx, "Failed to kill sandbox on orchestrator node",
+			logger.WithSandboxID(sandboxID),
+			logger.WithTeamID(teamID.String()),
+			zap.Error(err),
+		)
+		telemetry.ReportError(ctx, "error killing sandbox on node", err)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error killing sandbox: %s", err))
 
 		return
 	default:
+		logger.L().Error(ctx, "Unexpected error removing sandbox",
+			logger.WithSandboxID(sandboxID),
+			logger.WithTeamID(teamID.String()),
+			zap.Error(err),
+		)
 		telemetry.ReportError(ctx, "error killing sandbox", err)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error killing sandbox: %s", err))
 
@@ -87,7 +102,12 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 	case errors.Is(deleteSnapshotErr, db.ErrSnapshotNotFound):
 		// no snapshot found, nothing to do
 	case deleteSnapshotErr != nil:
-		telemetry.ReportError(ctx, "error deleting sandbox", deleteSnapshotErr)
+		logger.L().Error(ctx, "Failed to delete sandbox snapshot from DB",
+			logger.WithSandboxID(sandboxID),
+			logger.WithTeamID(teamID.String()),
+			zap.Error(deleteSnapshotErr),
+		)
+		telemetry.ReportError(ctx, "error deleting sandbox snapshot", deleteSnapshotErr)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error deleting sandbox: %s", deleteSnapshotErr))
 
 		return
@@ -98,7 +118,10 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 	if killedOrRemoved {
 		c.Status(http.StatusNoContent)
 	} else {
-		logger.L().Debug(ctx, "Sandbox not found for deletion", logger.WithSandboxID(sandboxID))
+		logger.L().Info(ctx, "Sandbox not found: not running and no snapshot",
+			logger.WithSandboxID(sandboxID),
+			logger.WithTeamID(teamID.String()),
+		)
 		a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(sandboxID))
 	}
 }
