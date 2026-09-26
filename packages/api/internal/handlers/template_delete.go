@@ -8,11 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -52,6 +54,48 @@ func (a *APIStore) softDeleteTemplate(ctx context.Context, teamID uuid.UUID, tem
 	}
 
 	return aliasKeys, nil
+}
+
+type deleteBuildFn func(ctx context.Context, buildID uuid.UUID, templateID string, clusterID uuid.UUID, nodeID string) error
+
+// deleteTemplateArtifacts removes GCS/S3 build artifacts for builds that are
+// exclusively owned by the given template. It is called after the template has
+// been soft-deleted from the database; failures are logged but do not affect the
+// HTTP response because the DB deletion is already committed.
+func (a *APIStore) deleteTemplateArtifacts(ctx context.Context, templateID string) {
+	a.deleteTemplateArtifactsWithDeleter(ctx, templateID, a.templateManager.DeleteBuild)
+}
+
+func (a *APIStore) deleteTemplateArtifactsWithDeleter(ctx context.Context, templateID string, deleteFn deleteBuildFn) {
+	builds, err := a.sqlcDB.GetExclusiveBuildsForTemplateDeletion(ctx, templateID)
+	if err != nil {
+		logger.L().Error(ctx, "Failed to query exclusive builds for artifact cleanup",
+			logger.WithTemplateID(templateID),
+			zap.Error(err),
+		)
+
+		return
+	}
+
+	for _, b := range builds {
+		if b.ClusterNodeID == nil {
+			continue
+		}
+
+		clusterID := clusters.WithClusterFallback(b.ClusterID)
+		if err := deleteFn(ctx, b.BuildID, templateID, clusterID, *b.ClusterNodeID); err != nil {
+			logger.L().Warn(ctx, "Failed to delete build artifacts",
+				logger.WithTemplateID(templateID),
+				zap.String("build_id", b.BuildID.String()),
+				zap.Error(err),
+			)
+		} else {
+			logger.L().Info(ctx, "Deleted build artifacts",
+				logger.WithTemplateID(templateID),
+				zap.String("build_id", b.BuildID.String()),
+			)
+		}
+	}
 }
 
 // DeleteTemplatesTemplateID serves to delete a template (e.g. in CLI)
@@ -128,6 +172,10 @@ func (a *APIStore) DeleteTemplatesTemplateID(c *gin.Context, aliasOrTemplateID a
 
 	a.templateCache.InvalidateAllTags(context.WithoutCancel(ctx), templateID)
 	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), templateID, aliasKeys)
+
+	// Delete GCS/S3 artifacts in the background; DB deletion is already committed
+	// so artifact cleanup failures must not block or fail the HTTP response.
+	go a.deleteTemplateArtifacts(context.WithoutCancel(ctx), templateID)
 
 	telemetry.ReportEvent(ctx, "deleted template from db")
 
