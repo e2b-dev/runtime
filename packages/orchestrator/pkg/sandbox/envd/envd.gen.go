@@ -208,6 +208,15 @@ type VolumeMount struct {
 
 	// Path Mount path inside the sandbox
 	Path string `json:"path"`
+
+	// Sync Controls NFS mount mode. Defaults to true (sync).
+	// - true (sync, default): Uses sync writes with no attribute/lookup caching (noac, lookupcache=none).
+	//   Required when pause/resume IS used, ensures all writes reach the NFS proxy before
+	//   returning and guarantees fresh metadata after resume. This is the safe default.
+	// - false (async): Uses async writes with aggressive attribute caching (actimeo=3600).
+	//   Best for throughput-sensitive workloads (git clone, npm install, large file I/O).
+	//   Only safe when pause/resume is NOT used, as async writes may be lost on sudden VM stop.
+	Sync *bool `json:"sync,omitempty"`
 }
 
 // FilePath defines model for FilePath.
