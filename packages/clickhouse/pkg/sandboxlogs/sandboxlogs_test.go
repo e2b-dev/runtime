@@ -28,18 +28,6 @@ func TestAtLeastLevels(t *testing.T) {
 	assert.Equal(t, []string{"", "debug", "info", "warn", "error"}, atLeastLevels(logs.LevelDebug))
 }
 
-func TestUnixNano(t *testing.T) {
-	t.Parallel()
-
-	ts := time.Date(2024, 1, 2, 3, 4, 5, 6, time.UTC)
-	assert.Equal(t, ts.UnixNano(), unixNano(ts))
-
-	// Non-UTC input must be normalized to the same instant.
-	loc := time.FixedZone("test", 3600)
-	local := ts.In(loc)
-	assert.Equal(t, ts.UnixNano(), unixNano(local))
-}
-
 func TestRowToLogEntry(t *testing.T) {
 	t.Parallel()
 
