@@ -123,58 +123,60 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	}
 
 	// Try to get the running sandbox first
-	sbx, err := a.orchestrator.GetSandbox(ctx, team.ID, sandboxId)
-	if err == nil {
-		// Check if sandbox belongs to the team
-		if sbx.TeamID != team.ID {
-			telemetry.ReportCriticalError(ctx, fmt.Sprintf("sandbox '%s' doesn't belong to team '%s'", sandboxId, team.ID.String()), nil)
-			a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(id))
+	if a.orchestrator != nil {
+		sbx, err := a.orchestrator.GetSandbox(ctx, team.ID, sandboxId)
+		if err == nil {
+			// Check if sandbox belongs to the team
+			if sbx.TeamID != team.ID {
+				telemetry.ReportCriticalError(ctx, fmt.Sprintf("sandbox '%s' doesn't belong to team '%s'", sandboxId, team.ID.String()), nil)
+				a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(id))
+
+				return
+			}
+
+			state := api.Running
+			switch sbx.State {
+			// Sandbox is being paused or already is paused, user can work with that as if it's paused
+			case sandbox.StatePausing:
+				state = api.Paused
+			// Sandbox is being stopped or already is stopped, user can't work with it anymore
+			case sandbox.StateKilling:
+				logger.L().Debug(ctx, "Sandbox is being killed", logger.WithSandboxID(sandboxId))
+				a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(id))
+
+				return
+			}
+
+			// Sandbox exists and belongs to the team - return running sandbox sbx
+			sandbox := api.SandboxDetail{
+				ClientID:            sbx.ClientID,
+				TemplateID:          sbx.BaseTemplateID,
+				Alias:               sbx.Alias,
+				SandboxID:           sbx.SandboxID,
+				StartedAt:           sbx.StartTime,
+				CpuCount:            api.CPUCount(sbx.VCpu),
+				MemoryMB:            api.MemoryMB(sbx.RamMB),
+				DiskSizeMB:          api.DiskSizeMB(sbx.TotalDiskSizeMB),
+				EndAt:               sbx.EndTime,
+				State:               state,
+				EnvdVersion:         sbx.EnvdVersion,
+				EnvdAccessToken:     sbx.EnvdAccessToken,
+				AllowInternetAccess: sbx.AllowInternetAccess,
+				Domain:              sbxDomain,
+				Network:             dbNetworkConfigToAPI(sbx.Network),
+				Lifecycle:           sandboxLifecycleToAPI(sbx.AutoPause, sbx.AutoResume),
+				VolumeMounts:        convertFromDBMountsToAPIMounts(sbx.VolumeMounts),
+			}
+
+			if sbx.Metadata != nil {
+				meta := api.SandboxMetadata(sbx.Metadata)
+				sandbox.Metadata = &meta
+			}
+
+			c.JSON(http.StatusOK, sandbox)
 
 			return
 		}
-
-		state := api.Running
-		switch sbx.State {
-		// Sandbox is being paused or already is paused, user can work with that as if it's paused
-		case sandbox.StatePausing:
-			state = api.Paused
-		// Sandbox is being stopped or already is stopped, user can't work with it anymore
-		case sandbox.StateKilling:
-			logger.L().Debug(ctx, "Sandbox is being killed", logger.WithSandboxID(sandboxId))
-			a.sendAPIStoreError(c, http.StatusNotFound, utils.SandboxNotFoundMsg(id))
-
-			return
-		}
-
-		// Sandbox exists and belongs to the team - return running sandbox sbx
-		sandbox := api.SandboxDetail{
-			ClientID:            sbx.ClientID,
-			TemplateID:          sbx.BaseTemplateID,
-			Alias:               sbx.Alias,
-			SandboxID:           sbx.SandboxID,
-			StartedAt:           sbx.StartTime,
-			CpuCount:            api.CPUCount(sbx.VCpu),
-			MemoryMB:            api.MemoryMB(sbx.RamMB),
-			DiskSizeMB:          api.DiskSizeMB(sbx.TotalDiskSizeMB),
-			EndAt:               sbx.EndTime,
-			State:               state,
-			EnvdVersion:         sbx.EnvdVersion,
-			EnvdAccessToken:     sbx.EnvdAccessToken,
-			AllowInternetAccess: sbx.AllowInternetAccess,
-			Domain:              sbxDomain,
-			Network:             dbNetworkConfigToAPI(sbx.Network),
-			Lifecycle:           sandboxLifecycleToAPI(sbx.AutoPause, sbx.AutoResume),
-			VolumeMounts:        convertFromDBMountsToAPIMounts(sbx.VolumeMounts),
-		}
-
-		if sbx.Metadata != nil {
-			meta := api.SandboxMetadata(sbx.Metadata)
-			sandbox.Metadata = &meta
-		}
-
-		c.JSON(http.StatusOK, sandbox)
-
-		return
 	}
 
 	// If sandbox not found try to get the latest snapshot
@@ -235,12 +237,17 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 
 	var autoResumeConfig *dbtypes.SandboxAutoResumeConfig
 	var networkConfig *dbtypes.SandboxNetworkConfig
+	var volumeMounts []*dbtypes.SandboxVolumeMountConfig
 	if lastSnapshot.Snapshot.Config != nil {
 		autoResumeConfig = lastSnapshot.Snapshot.Config.AutoResume
 		networkConfig = lastSnapshot.Snapshot.Config.Network
+		volumeMounts = lastSnapshot.Snapshot.Config.VolumeMounts
 	}
 
-	pausedAlias := firstAlias(lastSnapshot.Aliases)
+	var alias *string
+	if len(lastSnapshot.Aliases) > 0 {
+		alias = &lastSnapshot.Aliases[0]
+	}
 
 	sandbox := api.SandboxDetail{
 		ClientID:            consts.ClientID, // for backwards compatibility we need to return a client id
@@ -258,9 +265,9 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		Domain:              nil,
 		Network:             dbNetworkConfigToAPI(networkConfig),
 		Lifecycle:           sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
+		VolumeMounts:        convertFromDBMountsToAPIMounts(volumeMounts),
+		Alias:               alias,
 	}
-
-	sandbox.Alias = &pausedAlias
 
 	if lastSnapshot.Snapshot.Metadata != nil {
 		metadata := api.SandboxMetadata(lastSnapshot.Snapshot.Metadata)
