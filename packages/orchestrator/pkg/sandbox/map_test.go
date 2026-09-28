@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -947,6 +948,144 @@ func TestSandboxCloseWithoutALiveEntryCountsNothing(t *testing.T) {
 	attachOwnedCleanup(t, sandboxes, live)
 	require.NoError(t, sandboxes.MarkRunning(t.Context(), live))
 	require.NoError(t, live.Close(t.Context()), "Close must succeed with a live entry too")
+}
+
+// Starts that have not reached MarkRunning hold a slot, so a node at its limit
+// refuses the next create even while nothing is live yet.
+func TestMapReserveWithinCountsStartsInFlight(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+
+	a, err := sandboxes.ReserveWithin("sandbox-a", 2)
+	require.NoError(t, err)
+	b, err := sandboxes.ReserveWithin("sandbox-b", 2)
+	require.NoError(t, err)
+	require.Zero(t, sandboxes.Count(), "nothing is live yet")
+
+	_, err = sandboxes.ReserveWithin("sandbox-c", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	a.Release()
+	c, err := sandboxes.ReserveWithin("sandbox-c", 2)
+	require.NoError(t, err, "a released start frees its slot")
+	b.Release()
+	c.Release()
+}
+
+// Between MarkRunning and Release a start is both live and reserved. It must
+// count once, or a node would refuse creates it has room for.
+func TestMapReserveWithinCountsALiveReservationOnce(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+
+	r, err := sandboxes.ReserveWithin("sandbox-1", 2)
+	require.NoError(t, err)
+	require.NoError(t, r.MarkRunning(t.Context(), testMapSandbox(t, "lifecycle-1")))
+
+	other, err := sandboxes.ReserveWithin("sandbox-2", 2)
+	require.NoError(t, err)
+
+	_, err = sandboxes.ReserveWithin("sandbox-3", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	r.Release()
+	other.Release()
+	third, err := sandboxes.ReserveWithin("sandbox-3", 2)
+	require.NoError(t, err, "releasing the unstarted reservation frees its slot")
+	_, err = sandboxes.ReserveWithin("sandbox-4", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity, "the live sandbox still holds its slot after the start finishes")
+	third.Release()
+}
+
+// A checkpoint hold replaces the live entry while the old VM still runs, so it
+// keeps holding the slot.
+func TestMapReserveWithinCountsCheckpointHolds(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	hold, err := sandboxes.MarkStoppingReserved(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	require.Zero(t, sandboxes.Count())
+
+	_, err = sandboxes.ReserveWithin("sandbox-2", 1)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	hold.Release()
+	r, err := sandboxes.ReserveWithin("sandbox-2", 1)
+	require.NoError(t, err)
+	r.Release()
+}
+
+// A duplicate ID is refused as a duplicate even on a full node, so the caller
+// does not retry it elsewhere and create a second VM.
+func TestMapReserveWithinRefusesDuplicatesBeforeCapacity(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	r, err := sandboxes.ReserveWithin("sandbox-1", 1)
+	require.NoError(t, err)
+	t.Cleanup(r.Release)
+
+	_, err = sandboxes.ReserveWithin("sandbox-1", 1)
+	require.ErrorIs(t, err, ErrSandboxAlreadyRunning)
+	require.NotErrorIs(t, err, ErrNodeAtCapacity)
+}
+
+func TestMapReserveWithinRefusesNonPositiveLimits(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	for _, limit := range []int64{0, -1} {
+		_, err := sandboxes.ReserveWithin("sandbox-1", limit)
+		require.ErrorIs(t, err, ErrNodeAtCapacity, "limit %d", limit)
+	}
+}
+
+// Many concurrent creates for distinct IDs admit exactly limit of them.
+func TestMapReserveWithinAdmitsExactlyTheLimitUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit    = 5
+		creators = 64
+	)
+	sandboxes := NewSandboxesMap()
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		admitted []*Reservation
+		refused  int
+	)
+	start := make(chan struct{})
+	for i := range creators {
+		wg.Go(func() {
+			<-start
+			r, err := sandboxes.ReserveWithin(fmt.Sprintf("sandbox-%d", i), limit)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				assert.ErrorIs(t, err, ErrNodeAtCapacity)
+				refused++
+
+				return
+			}
+			admitted = append(admitted, r)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	require.Len(t, admitted, limit)
+	require.Equal(t, creators-limit, refused)
+	for _, r := range admitted {
+		r.Release()
+	}
 }
 
 func testMapSandbox(t *testing.T, lifecycleID string) *Sandbox {
