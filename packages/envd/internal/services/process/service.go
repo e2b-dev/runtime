@@ -15,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/services/process/handler"
 	rpc "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process"
 	spec "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process/processconnect"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/streaming"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -160,7 +161,10 @@ func (s *Service) clearTerminatedForTag(tag string) {
 func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults, workloadFreezer *cgroups.WorkloadFreezer) *Service {
 	service := newService(l, defaults, workloadFreezer)
 
-	interceptors := connect.WithInterceptors(logs.NewUnaryLogInterceptor(l))
+	interceptors := connect.WithInterceptors(
+		logs.NewUnaryLogInterceptor(l),
+		streaming.DisableProxyBuffering(),
+	)
 
 	path, h := spec.NewProcessHandler(service, interceptors)
 
