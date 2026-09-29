@@ -137,7 +137,10 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   static list). Chooses a node per sandbox with a **best-of-K** algorithm
   (`internal/orchestrator/placement/`): sample K ready nodes, score by the
   higher of CPU load and hugepage-pool load, pick the lowest; retry on
-  exhausted nodes. A node that reports no pool scores 0.5. Hugepage scoring
+  exhausted nodes. A node that refuses a create (`ResourceExhausted`) stays
+  eligible, and each refusal waits a full-jitter backoff that doubles up to a
+  cap, so a placement that finds every node busy does not re-send creates as
+  fast as they are refused. A node that reports no pool scores 0.5. Hugepage scoring
   is on by default (`BEST_OF_K_HUGEPAGE_MEMORY`); set it false to rank on
   CPU alone. K, overcommit ratio, and alpha are tunable live via feature
   flags.
@@ -552,6 +555,9 @@ sequenceDiagram
 - **Resume**: same path as creation, but placement prefers the **origin node** — if the snapshot
   is still in its local cache, resume avoids any object-storage reads. `Checkpoint` is a
   pause+resume in place used to persist state while keeping the sandbox running.
+- **Fork**: checkpoints the original in place, then starts each fork from that snapshot as a
+  new sandbox rather than a resume — like a sandbox created from a snapshot template — so
+  placement spreads the forks across nodes instead of preferring the original's node.
 - **Explicit filesystem-only resume**: `memory: false` on resume/connect demands a cold boot
   (`RebootSandbox`) even when the snapshot includes memory, as a self-serve rescue when the
   restored memory state is unusable. Gated per team by the `fs-only-resume-api` flag; when off

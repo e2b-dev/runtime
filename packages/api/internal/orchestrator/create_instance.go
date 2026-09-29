@@ -371,7 +371,10 @@ func (o *Orchestrator) CreateSandbox(
 
 	var node *nodemanager.Node
 
-	if isResume && sbxData.NodeID != nil {
+	// Only a resume is pinned to the node its snapshot was taken on; any other
+	// start from a snapshot (a fork) is placed like a new sandbox.
+	affinityRequested := isResume && sbxData.NodeID != nil
+	if affinityRequested {
 		telemetry.ReportEvent(ctx, "Placing sandbox on the node where the snapshot was taken")
 
 		clusterID := clusters.WithClusterFallback(team.ClusterID)
@@ -426,8 +429,8 @@ func (o *Orchestrator) CreateSandbox(
 	// The sandbox was created successfully
 	attributes := []attribute.KeyValue{
 		attribute.Bool("is_resume", isResume),
-		attribute.Bool("node_affinity_requested", sbxData.NodeID != nil),
-		attribute.Bool("node_affinity_success", sbxData.NodeID != nil && node.ID == *sbxData.NodeID),
+		attribute.Bool("node_affinity_requested", affinityRequested),
+		attribute.Bool("node_affinity_success", affinityRequested && node.ID == *sbxData.NodeID),
 	}
 	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
 

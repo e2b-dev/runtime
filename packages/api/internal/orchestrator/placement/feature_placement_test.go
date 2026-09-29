@@ -41,6 +41,7 @@ func TestPlaceSandbox_FleetTooOldReported(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	var unsupportedErr UnsupportedFeatureError
@@ -64,6 +65,7 @@ func TestPlaceSandbox_EmptyClusterIsNotFleetTooOld(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	var noNodesErr NoNodesAvailableError
@@ -89,6 +91,7 @@ func TestPlaceSandbox_OneCapableNodeIsNotFleetTooOld(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	require.NoError(t, err)
@@ -122,6 +125,7 @@ func TestPlaceSandbox_PreferredNodeTooOldIsNotUsed(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	require.NoError(t, err)
@@ -149,6 +153,7 @@ func TestPlaceSandbox_PreferredNodeCapableIsUsed(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	require.NoError(t, err)
@@ -174,6 +179,7 @@ func TestPlaceSandbox_CancelledRequestStaysATimeout(t *testing.T) {
 		requireHighFeature(t),
 		false,
 		nil,
+		defaultRefusalBackoff,
 	)
 
 	var timeoutErr PlacementTimeoutError
