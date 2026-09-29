@@ -86,7 +86,11 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 
 		select {
 		case <-ctx.Done():
-			cancel(ctx.Err())
+			// Client went away before the start event was sent (it stopped
+			// reading the stream). Record the cause so the "server stream end"
+			// log line can tell a client cancel from a deadline; the process
+			// itself keeps running on its own context (see procCtx above).
+			cancel(fmt.Errorf("stream canceled before start event: %w", context.Cause(ctx)))
 
 			return
 		case event := <-start:
@@ -122,7 +126,9 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 					return
 				}
 			case <-ctx.Done():
-				cancel(ctx.Err())
+				// Client stopped reading mid-stream (timeout / sibling cancel /
+				// caller exit). The process is unaffected; only the stream ends.
+				cancel(fmt.Errorf("stream canceled while streaming output: %w", context.Cause(ctx)))
 
 				return
 			case event, ok := <-data:
@@ -147,7 +153,8 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 
 		select {
 		case <-ctx.Done():
-			cancel(ctx.Err())
+			// Client went away while waiting for the terminal exit event.
+			cancel(fmt.Errorf("stream canceled before end event: %w", context.Cause(ctx)))
 
 			return
 		case event, ok := <-end:
