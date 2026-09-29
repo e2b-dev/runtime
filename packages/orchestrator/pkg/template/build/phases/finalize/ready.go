@@ -74,13 +74,12 @@ func (ppb *PostProcessingBuilder) runReadyCommand(
 	}
 }
 
-func GetDefaultReadyCommand(templateID string) string {
-	// HACK: This is a temporary fix for a customer that needs a bigger time to start the command.
-	// TODO: Remove this after we can add customizable wait time for building templates.
-	// TODO: Make this user configurable, with health check too
-	if templateID == "zegbt9dl3l2ixqem82mm" || templateID == "ot5bidkk3j2so2j02uuz" || templateID == "0zeou1s7agaytqitvmzc" {
-		return fmt.Sprintf("sleep %d", int((120 * time.Second).Seconds()))
+// GetDefaultReadyCommand returns a ready command that sleeps for the given duration.
+// Pass 0 to use the built-in default (20s).
+func GetDefaultReadyCommand(startCmdTimeout time.Duration) string {
+	if startCmdTimeout <= 0 {
+		startCmdTimeout = defaultReadyWait
 	}
 
-	return fmt.Sprintf("sleep %d", int(defaultReadyWait.Seconds()))
+	return fmt.Sprintf("sleep %d", int(startCmdTimeout.Seconds()))
 }

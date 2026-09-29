@@ -1,6 +1,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -55,6 +57,10 @@ type TemplateConfig struct {
 
 	// Command to run to check if the template is ready.
 	ReadyCmd string
+
+	// Maximum time to wait for StartCmd when no ReadyCmd is provided.
+	// Zero means use the built-in default (20s).
+	StartCmdTimeout time.Duration
 
 	// FromImage is the base image to use for building the template.
 	FromImage string
