@@ -651,6 +651,12 @@ var nfsOptions = strings.Join([]string{
 	"nfsvers=3",      // nfs proxy is nfs version 3
 	"noacl",          // no reason for acl in the sandbox
 
+	// Resolve locks node-locally. The nfs proxy has no lock manager and its
+	// portmap never registers NLM, so without this a hard-mounted lock request
+	// (e.g. flock) is sent to the proxy, gets port 0, and retries forever in
+	// uninterruptible sleep. See github.com/e2b-dev/infra issue #3619.
+	"nolock",
+
 	// disable caching so that pause/resume works correctly
 	"noac",
 	"lookupcache=none",
