@@ -300,6 +300,55 @@ func TestGetSnapshotsWithCursorAsc_OrdersOldestFirstAndPaginates(t *testing.T) {
 	assert.Equal(t, oldestToNewest[1:], activeIDs)
 }
 
+// TestGetSnapshotsWithCursor_OrdersNewestFirstAndPaginates verifies the descending keyset
+// query returns snapshots newest-first and walks the pages without gaps or overlaps, and
+// that a snapshot without a ready build is dropped before LIMIT rather than taking a slot.
+func TestGetSnapshotsWithCursor_OrdersNewestFirstAndPaginates(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
+
+	oldestToNewest := make([]string, 0, 3)
+	for range 3 {
+		sandboxID := "sandbox-" + uuid.New().String()
+		testutils.UpsertTestSnapshot(t, ctx, db, "snapshot-template-"+uuid.New().String(), sandboxID, teamID, baseTemplateID)
+		oldestToNewest = append(oldestToNewest, sandboxID)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Newest of all, but still snapshotting: it has no ready build.
+	testutils.UpsertTestSnapshotWithStatus(t, ctx, db, "snapshot-template-"+uuid.New().String(),
+		"sandbox-"+uuid.New().String(), teamID, baseTemplateID, types.BuildStatusSnapshotting)
+
+	page1, err := db.SqlcClient.GetSnapshotsWithCursor(ctx, queries.GetSnapshotsWithCursorParams{
+		TeamID:     teamID,
+		Metadata:   types.JSONBStringMap{},
+		CursorTime: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		Limit:      2,
+	})
+	require.NoError(t, err)
+	require.Len(t, page1, 2, "a snapshot without a ready build must not take a page slot")
+	assert.Equal(t, []string{oldestToNewest[2], oldestToNewest[1]}, []string{
+		page1[0].Snapshot.SandboxID,
+		page1[1].Snapshot.SandboxID,
+	}, "descending query should return newest sandbox first")
+
+	last := page1[1].Snapshot
+	page2, err := db.SqlcClient.GetSnapshotsWithCursor(ctx, queries.GetSnapshotsWithCursorParams{
+		TeamID:     teamID,
+		Metadata:   types.JSONBStringMap{},
+		CursorID:   last.SandboxID,
+		CursorTime: last.SandboxStartedAt,
+		Limit:      2,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, oldestToNewest[0], page2[0].Snapshot.SandboxID)
+}
+
 func TestGetSnapshotsByTemplateWithCursor_FiltersTemplateAndStartedAfter(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)

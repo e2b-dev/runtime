@@ -16,45 +16,59 @@ import (
 
 const getSnapshotsByTemplateWithCursor = `-- name: GetSnapshotsByTemplateWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
-    eb.id AS build_id,
-    eb.vcpu AS build_vcpu,
-    eb.ram_mb AS build_ram_mb,
-    eb.total_disk_size_mb AS build_total_disk_size_mb,
-    eb.envd_version AS build_envd_version,
-    eb.created_at AS build_created_at
-FROM "public"."snapshots" s
-JOIN "public"."active_envs" e ON e.id = s.env_id
+    snap.created_at, snap.env_id, snap.sandbox_id, snap.id, snap.metadata, snap.base_env_id, snap.sandbox_started_at, snap.env_secure, snap.origin_node_id, snap.allow_internet_access, snap.auto_pause, snap.team_id, snap.config,
+    page.build_id,
+    page.build_vcpu,
+    page.build_ram_mb,
+    page.build_total_disk_size_mb,
+    page.build_envd_version,
+    page.build_created_at
+FROM (
+    SELECT
+        s.id,
+        s.sandbox_started_at,
+        s.sandbox_id,
+        eb.id AS build_id,
+        eb.vcpu AS build_vcpu,
+        eb.ram_mb AS build_ram_mb,
+        eb.total_disk_size_mb AS build_total_disk_size_mb,
+        eb.envd_version AS build_envd_version,
+        eb.created_at AS build_created_at
+    FROM "public"."snapshots" s
+    JOIN "public"."active_envs" e ON e.id = s.env_id
+    JOIN LATERAL (
+        SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+        FROM "public"."env_build_assignments" eba
+        JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+        WHERE
+            eba.env_id = s.env_id
+            AND eba.tag = 'default'
+            AND eb.status_group = 'ready'
+        ORDER BY eba.created_at DESC
+        LIMIT 1
+    ) eb ON TRUE
+    WHERE
+        s.team_id = $2
+        AND s.base_env_id = $3
+        AND CASE
+            WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+                THEN TRUE
+            ELSE s.metadata @> $4
+        END
+        AND s.sandbox_started_at >= $5::timestamptz
+        AND (s.sandbox_started_at, $6::text) < ($7, s.sandbox_id)
+    ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
+    LIMIT $1
+) page
+JOIN "public"."snapshots" snap ON snap.id = page.id
 LEFT JOIN LATERAL (
     SELECT
         ARRAY_AGG(alias ORDER BY alias) AS aliases,
         ARRAY_AGG(CASE WHEN namespace IS NOT NULL THEN namespace || '/' || alias ELSE alias END ORDER BY alias) AS names
     FROM "public"."env_aliases"
-    WHERE env_id = s.base_env_id
+    WHERE env_id = snap.base_env_id
 ) ea ON TRUE
-JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
-    FROM "public"."env_build_assignments" eba
-    JOIN "public"."env_builds" eb ON eb.id = eba.build_id
-    WHERE
-        eba.env_id = s.env_id
-        AND eba.tag = 'default'
-        AND eb.status_group = 'ready'
-    ORDER BY eba.created_at DESC
-    LIMIT 1
-) eb ON TRUE
-WHERE
-    s.team_id = $2
-    AND s.base_env_id = $3
-    AND CASE
-        WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
-            THEN TRUE
-        ELSE s.metadata @> $4
-    END
-    AND s.sandbox_started_at >= $5::timestamptz
-    AND (s.sandbox_started_at, $6::text) < ($7, s.sandbox_id)
-ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
-LIMIT $1
+ORDER BY page.sandbox_started_at DESC, page.sandbox_id ASC
 `
 
 type GetSnapshotsByTemplateWithCursorParams struct {
@@ -131,48 +145,62 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 
 const getSnapshotsByTemplateWithCursorAsc = `-- name: GetSnapshotsByTemplateWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
-    eb.id AS build_id,
-    eb.vcpu AS build_vcpu,
-    eb.ram_mb AS build_ram_mb,
-    eb.total_disk_size_mb AS build_total_disk_size_mb,
-    eb.envd_version AS build_envd_version,
-    eb.created_at AS build_created_at
-FROM "public"."snapshots" s
-JOIN "public"."active_envs" e ON e.id = s.env_id
+    snap.created_at, snap.env_id, snap.sandbox_id, snap.id, snap.metadata, snap.base_env_id, snap.sandbox_started_at, snap.env_secure, snap.origin_node_id, snap.allow_internet_access, snap.auto_pause, snap.team_id, snap.config,
+    page.build_id,
+    page.build_vcpu,
+    page.build_ram_mb,
+    page.build_total_disk_size_mb,
+    page.build_envd_version,
+    page.build_created_at
+FROM (
+    SELECT
+        s.id,
+        s.sandbox_started_at,
+        s.sandbox_id,
+        eb.id AS build_id,
+        eb.vcpu AS build_vcpu,
+        eb.ram_mb AS build_ram_mb,
+        eb.total_disk_size_mb AS build_total_disk_size_mb,
+        eb.envd_version AS build_envd_version,
+        eb.created_at AS build_created_at
+    FROM "public"."snapshots" s
+    JOIN "public"."active_envs" e ON e.id = s.env_id
+    JOIN LATERAL (
+        SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+        FROM "public"."env_build_assignments" eba
+        JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+        WHERE
+            eba.env_id = s.env_id
+            AND eba.tag = 'default'
+            AND eb.status_group = 'ready'
+        ORDER BY eba.created_at DESC
+        LIMIT 1
+    ) eb ON TRUE
+    WHERE
+        s.team_id = $2
+        AND s.base_env_id = $3
+        AND CASE
+            WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+                THEN TRUE
+            ELSE s.metadata @> $4
+        END
+        AND s.sandbox_started_at >= $5::timestamptz
+        -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
+        -- gives the planner an indexable starting point for the ascending scan.
+        AND s.sandbox_started_at >= $6
+        AND (s.sandbox_started_at > $6 OR s.sandbox_id < $7::text)
+    ORDER BY s.sandbox_started_at ASC, s.sandbox_id DESC
+    LIMIT $1
+) page
+JOIN "public"."snapshots" snap ON snap.id = page.id
 LEFT JOIN LATERAL (
     SELECT
         ARRAY_AGG(alias ORDER BY alias) AS aliases,
         ARRAY_AGG(CASE WHEN namespace IS NOT NULL THEN namespace || '/' || alias ELSE alias END ORDER BY alias) AS names
     FROM "public"."env_aliases"
-    WHERE env_id = s.base_env_id
+    WHERE env_id = snap.base_env_id
 ) ea ON TRUE
-JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
-    FROM "public"."env_build_assignments" eba
-    JOIN "public"."env_builds" eb ON eb.id = eba.build_id
-    WHERE
-        eba.env_id = s.env_id
-        AND eba.tag = 'default'
-        AND eb.status_group = 'ready'
-    ORDER BY eba.created_at DESC
-    LIMIT 1
-) eb ON TRUE
-WHERE
-    s.team_id = $2
-    AND s.base_env_id = $3
-    AND CASE
-        WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
-            THEN TRUE
-        ELSE s.metadata @> $4
-    END
-    AND s.sandbox_started_at >= $5::timestamptz
-    -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
-    -- gives the planner an indexable starting point for the ascending scan.
-    AND s.sandbox_started_at >= $6
-    AND (s.sandbox_started_at > $6 OR s.sandbox_id < $7::text)
-ORDER BY s.sandbox_started_at ASC, s.sandbox_id DESC
-LIMIT $1
+ORDER BY page.sandbox_started_at ASC, page.sandbox_id DESC
 `
 
 type GetSnapshotsByTemplateWithCursorAscParams struct {
@@ -249,46 +277,60 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 
 const getSnapshotsWithCursor = `-- name: GetSnapshotsWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
-    eb.id AS build_id,
-    eb.vcpu AS build_vcpu,
-    eb.ram_mb AS build_ram_mb,
-    eb.total_disk_size_mb AS build_total_disk_size_mb,
-    eb.envd_version AS build_envd_version,
-    eb.created_at AS build_created_at
-FROM "public"."snapshots" s
-JOIN "public"."active_envs" e ON e.id = s.env_id
+    snap.created_at, snap.env_id, snap.sandbox_id, snap.id, snap.metadata, snap.base_env_id, snap.sandbox_started_at, snap.env_secure, snap.origin_node_id, snap.allow_internet_access, snap.auto_pause, snap.team_id, snap.config,
+    page.build_id,
+    page.build_vcpu,
+    page.build_ram_mb,
+    page.build_total_disk_size_mb,
+    page.build_envd_version,
+    page.build_created_at
+FROM (
+    SELECT
+        s.id,
+        s.sandbox_started_at,
+        s.sandbox_id,
+        eb.id AS build_id,
+        eb.vcpu AS build_vcpu,
+        eb.ram_mb AS build_ram_mb,
+        eb.total_disk_size_mb AS build_total_disk_size_mb,
+        eb.envd_version AS build_envd_version,
+        eb.created_at AS build_created_at
+    FROM "public"."snapshots" s
+    JOIN "public"."active_envs" e ON e.id = s.env_id
+    JOIN LATERAL (
+        SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+        FROM "public"."env_build_assignments" eba
+        JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+        WHERE
+            eba.env_id = s.env_id
+            AND eba.tag = 'default'
+            AND eb.status_group = 'ready'
+        ORDER BY eba.created_at DESC
+        LIMIT 1
+    ) eb ON TRUE
+    WHERE
+        s.team_id = $2
+        -- The order here is important, we want started_at descending, but sandbox_id ascending
+        -- Short-circuit empty filters only for objects; legacy values still use containment.
+        AND CASE
+            WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+                THEN TRUE
+            ELSE s.metadata @> $3
+        END
+        AND s.sandbox_started_at >= $4::timestamptz
+        AND (s.sandbox_started_at, $5::text) < ($6, s.sandbox_id)
+    ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
+    LIMIT $1
+) page
+JOIN "public"."snapshots" snap ON snap.id = page.id
 LEFT JOIN LATERAL (
     SELECT
         ARRAY_AGG(alias ORDER BY alias) AS aliases,
         ARRAY_AGG(CASE WHEN namespace IS NOT NULL THEN namespace || '/' || alias ELSE alias END ORDER BY alias) AS names
     FROM "public"."env_aliases"
-    WHERE env_id = s.base_env_id
+    WHERE env_id = snap.base_env_id
 ) ea ON TRUE
-JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
-    FROM "public"."env_build_assignments" eba
-    JOIN "public"."env_builds" eb ON eb.id = eba.build_id
-    WHERE
-        eba.env_id = s.env_id
-        AND eba.tag = 'default'
-        AND eb.status_group = 'ready'
-    ORDER BY eba.created_at DESC
-    LIMIT 1
-) eb ON TRUE
-WHERE
-    s.team_id = $2
-    -- The order here is important, we want started_at descending, but sandbox_id ascending
-    -- Short-circuit empty filters only for objects; legacy values still use containment.
-    AND CASE
-        WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
-            THEN TRUE
-        ELSE s.metadata @> $3
-    END
-    AND s.sandbox_started_at >= $4::timestamptz
-    AND (s.sandbox_started_at, $5::text) < ($6, s.sandbox_id)
-ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
-LIMIT $1
+ORDER BY page.sandbox_started_at DESC, page.sandbox_id ASC
 `
 
 type GetSnapshotsWithCursorParams struct {
@@ -312,6 +354,11 @@ type GetSnapshotsWithCursorRow struct {
 	BuildCreatedAt       time.Time
 }
 
+// The page subquery leaves out the wide columns, so a sort over a team's snapshots never
+// carries their metadata and config; full rows and aliases are fetched for the page alone.
+// The build lookup stays inside because it drops snapshots without a ready build, which
+// must happen before LIMIT. The outer ORDER BY reads page columns so the planner can keep
+// the subquery's order instead of sorting full rows again. All four queries share this shape.
 func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWithCursorParams) ([]GetSnapshotsWithCursorRow, error) {
 	rows, err := q.db.Query(ctx, getSnapshotsWithCursor,
 		arg.Limit,
@@ -363,47 +410,61 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 
 const getSnapshotsWithCursorAsc = `-- name: GetSnapshotsWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
-    eb.id AS build_id,
-    eb.vcpu AS build_vcpu,
-    eb.ram_mb AS build_ram_mb,
-    eb.total_disk_size_mb AS build_total_disk_size_mb,
-    eb.envd_version AS build_envd_version,
-    eb.created_at AS build_created_at
-FROM "public"."snapshots" s
-JOIN "public"."active_envs" e ON e.id = s.env_id
+    snap.created_at, snap.env_id, snap.sandbox_id, snap.id, snap.metadata, snap.base_env_id, snap.sandbox_started_at, snap.env_secure, snap.origin_node_id, snap.allow_internet_access, snap.auto_pause, snap.team_id, snap.config,
+    page.build_id,
+    page.build_vcpu,
+    page.build_ram_mb,
+    page.build_total_disk_size_mb,
+    page.build_envd_version,
+    page.build_created_at
+FROM (
+    SELECT
+        s.id,
+        s.sandbox_started_at,
+        s.sandbox_id,
+        eb.id AS build_id,
+        eb.vcpu AS build_vcpu,
+        eb.ram_mb AS build_ram_mb,
+        eb.total_disk_size_mb AS build_total_disk_size_mb,
+        eb.envd_version AS build_envd_version,
+        eb.created_at AS build_created_at
+    FROM "public"."snapshots" s
+    JOIN "public"."active_envs" e ON e.id = s.env_id
+    JOIN LATERAL (
+        SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+        FROM "public"."env_build_assignments" eba
+        JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+        WHERE
+            eba.env_id = s.env_id
+            AND eba.tag = 'default'
+            AND eb.status_group = 'ready'
+        ORDER BY eba.created_at DESC
+        LIMIT 1
+    ) eb ON TRUE
+    WHERE
+        s.team_id = $2
+        AND CASE
+            WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+                THEN TRUE
+            ELSE s.metadata @> $3
+        END
+        AND s.sandbox_started_at >= $4::timestamptz
+        -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
+        -- gives the planner an indexable starting point for the ascending scan.
+        AND s.sandbox_started_at >= $5
+        AND (s.sandbox_started_at > $5 OR s.sandbox_id < $6::text)
+    ORDER BY s.sandbox_started_at ASC, s.sandbox_id DESC
+    LIMIT $1
+) page
+JOIN "public"."snapshots" snap ON snap.id = page.id
 LEFT JOIN LATERAL (
     SELECT
         ARRAY_AGG(alias ORDER BY alias) AS aliases,
         ARRAY_AGG(CASE WHEN namespace IS NOT NULL THEN namespace || '/' || alias ELSE alias END ORDER BY alias) AS names
     FROM "public"."env_aliases"
-    WHERE env_id = s.base_env_id
+    WHERE env_id = snap.base_env_id
 ) ea ON TRUE
-JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
-    FROM "public"."env_build_assignments" eba
-    JOIN "public"."env_builds" eb ON eb.id = eba.build_id
-    WHERE
-        eba.env_id = s.env_id
-        AND eba.tag = 'default'
-        AND eb.status_group = 'ready'
-    ORDER BY eba.created_at DESC
-    LIMIT 1
-) eb ON TRUE
-WHERE
-    s.team_id = $2
-    AND CASE
-        WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
-            THEN TRUE
-        ELSE s.metadata @> $3
-    END
-    AND s.sandbox_started_at >= $4::timestamptz
-    -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
-    -- gives the planner an indexable starting point for the ascending scan.
-    AND s.sandbox_started_at >= $5
-    AND (s.sandbox_started_at > $5 OR s.sandbox_id < $6::text)
-ORDER BY s.sandbox_started_at ASC, s.sandbox_id DESC
-LIMIT $1
+ORDER BY page.sandbox_started_at ASC, page.sandbox_id DESC
 `
 
 type GetSnapshotsWithCursorAscParams struct {
