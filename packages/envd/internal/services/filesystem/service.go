@@ -11,6 +11,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/logs"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/legacy"
 	spec "github.com/e2b-dev/infra/packages/envd/internal/services/spec/filesystem/filesystemconnect"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/streaming"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -39,6 +40,7 @@ func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults) 
 	interceptors := connect.WithInterceptors(
 		logs.NewUnaryLogInterceptor(l),
 		legacy.Convert(),
+		streaming.DisableProxyBuffering(),
 	)
 
 	path, handler := spec.NewFilesystemHandler(service, interceptors)
