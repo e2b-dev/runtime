@@ -413,6 +413,8 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 		filterByLabels bool
 		pinnedModel    string
 		requiredLabels []string
+		checkedNodes   int
+		rejections     nodeRejectionCounts
 		wantContains   []string
 		wantNotContain string
 	}{
@@ -420,9 +422,13 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 			name:           "without label filtering",
 			filterByLabels: false,
 			requiredLabels: nil,
+			checkedNodes:   10,
+			rejections:     nodeRejectionCounts{cpuMismatch: 10},
 			wantContains: []string{
 				"no node available with required metadata",
 				fmt.Sprintf("machine=%v", machine),
+				"rejected 10 node(s)",
+				"10 cpu-incompatible",
 			},
 			wantNotContain: "labels=",
 		},
@@ -447,10 +453,15 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 			name:           "with label filtering",
 			filterByLabels: true,
 			requiredLabels: []string{"gpu", "fast-disk"},
+			checkedNodes:   5,
+			rejections:     nodeRejectionCounts{notAccepting: 2, labelMismatch: 3},
 			wantContains: []string{
 				"no node available with required metadata",
 				fmt.Sprintf("machine=%v", machine),
 				"labels=[gpu fast-disk]",
+				"rejected 5 node(s)",
+				"2 not-accepting",
+				"3 label-filtered",
 			},
 		},
 		{
@@ -481,6 +492,8 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 				filterByLabels: tt.filterByLabels,
 				requiredLabels: tt.requiredLabels,
 				cpu:            CPURequirement{Build: machine, PinnedModel: tt.pinnedModel},
+				checkedNodes:   tt.checkedNodes,
+				rejections:     tt.rejections,
 			}
 
 			msg := err.Error()
@@ -555,7 +568,7 @@ func TestBestOfK_Sample(t *testing.T) {
 	excludedNodes := make(map[string]struct{})
 
 	// Test sampling fewer nodes than available
-	sampled := algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
+	sampled, _ := algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
 	assert.LessOrEqual(t, len(sampled), 3)
 
 	// Check all sampled nodes are unique
@@ -568,12 +581,58 @@ func TestBestOfK_Sample(t *testing.T) {
 	// Test sampling with exclusions
 	excludedNodes["a"] = struct{}{}
 	excludedNodes["b"] = struct{}{}
-	sampled = algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
+	sampled, _ = algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
 
 	for _, n := range sampled {
 		assert.NotEqual(t, "a", n.ID)
 		assert.NotEqual(t, "b", n.ID)
 	}
+}
+
+// When every node is filtered out, sample() tallies the reason each was
+// dropped so FailedToPlaceSandboxError can report why placement found nothing.
+func TestBestOfK_Sample_CountsRejections(t *testing.T) {
+	t.Parallel()
+	config := BestOfKConfig{R: 10, Alpha: 0.5, K: 3}
+	algo := NewBestOfK(config).(*BestOfK)
+
+	// K is exhausted against a pool where no node survives, so every node is
+	// examined and counted: two excluded, two refusing new requests.
+	excludedA := nodemanager.NewTestNode("excluded-a", api.NodeStatusReady, 0, 4)
+	excludedB := nodemanager.NewTestNode("excluded-b", api.NodeStatusReady, 0, 4)
+	unhealthyA := nodemanager.NewTestNode("unhealthy-a", api.NodeStatusUnhealthy, 0, 4)
+	unhealthyB := nodemanager.NewTestNode("unhealthy-b", api.NodeStatusUnhealthy, 0, 4)
+	nodes := []*nodemanager.Node{excludedA, excludedB, unhealthyA, unhealthyB}
+
+	excludedNodes := map[string]struct{}{"excluded-a": {}, "excluded-b": {}}
+
+	sampled, rejections := algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
+	assert.Empty(t, sampled)
+	assert.Equal(t, 2, rejections.excluded)
+	assert.Equal(t, 2, rejections.notAccepting)
+}
+
+// chooseNode surfaces the rejection breakdown through the returned error so it
+// reaches the structured log and the internal Err field (never the client).
+func TestBestOfK_ChooseNode_ErrorCarriesRejectionBreakdown(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	algo := NewBestOfK(config).(*BestOfK)
+
+	unhealthy := nodemanager.NewTestNode("unhealthy", api.NodeStatusUnhealthy, 0, 4)
+	nodes := []*nodemanager.Node{unhealthy}
+	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512}
+
+	selected, err := algo.chooseNode(t.Context(), nodes, make(map[string]struct{}), resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+	require.Error(t, err)
+	assert.Nil(t, selected)
+
+	var placeErr FailedToPlaceSandboxError
+	require.ErrorAs(t, err, &placeErr)
+	assert.Equal(t, 1, placeErr.checkedNodes)
+	assert.Equal(t, 1, placeErr.rejections.notAccepting)
+	assert.Contains(t, err.Error(), "rejected 1 node(s)")
+	assert.Contains(t, err.Error(), "1 not-accepting")
 }
 
 func TestBestOfK_PowerOfKChoices(t *testing.T) {

@@ -127,7 +127,7 @@ func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, exclu
 	config := b.getConfig()
 
 	// Filter eligible nodes
-	candidates := b.sample(nodes, config, excludedNodes, cpu, features, filterByLabels, requiredLabels)
+	candidates, rejections := b.sample(nodes, config, excludedNodes, cpu, features, filterByLabels, requiredLabels)
 
 	// Find the best node among candidates
 	bestScore := math.MaxFloat64
@@ -148,10 +148,24 @@ func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, exclu
 			requiredLabels: requiredLabels,
 			cpu:            cpu,
 			features:       features,
+			checkedNodes:   len(nodes),
+			rejections:     rejections,
 		}
 	}
 
 	return bestNode, nil
+}
+
+// nodeRejectionCounts tracks how many nodes each filter stage in sample()
+// discarded during a single placement attempt. It answers "why was there no
+// candidate" for FailedToPlaceSandboxError, and is internal diagnostics only:
+// placementAPIError never forwards it to the client.
+type nodeRejectionCounts struct {
+	excluded        int
+	notAccepting    int
+	cpuMismatch     int
+	featureMismatch int
+	labelMismatch   int
 }
 
 type FailedToPlaceSandboxError struct {
@@ -159,6 +173,8 @@ type FailedToPlaceSandboxError struct {
 	requiredLabels []string
 	cpu            CPURequirement
 	features       FeatureRequirement
+	checkedNodes   int
+	rejections     nodeRejectionCounts
 }
 
 var _ error = FailedToPlaceSandboxError{}
@@ -178,13 +194,24 @@ func (e FailedToPlaceSandboxError) Error() string {
 		message += fmt.Sprintf(", features=%v, min_orchestrator_version=%s", e.features.FeatureNames(), e.features.MinVersion())
 	}
 
+	r := e.rejections
+	message += fmt.Sprintf(
+		"; rejected %d node(s): %d excluded, %d not-accepting, %d cpu-incompatible, %d feature-incompatible, %d label-filtered",
+		e.checkedNodes, r.excluded, r.notAccepting, r.cpuMismatch, r.featureMismatch, r.labelMismatch,
+	)
+
 	return message
 }
 
-// sample returns up to k items chosen uniformly from those passing ok.
-func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, excludedNodes map[string]struct{}, cpu CPURequirement, features FeatureRequirement, filterByLabels bool, requiredLabels []string) []*nodemanager.Node {
+// sample returns up to k items chosen uniformly from those passing ok, along
+// with a per-stage tally of the nodes it rejected. The tally is only complete
+// when no candidate is found: sampling stops early once K candidates are held,
+// so a successful call leaves later nodes uncounted (and the tally unused).
+func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, excludedNodes map[string]struct{}, cpu CPURequirement, features FeatureRequirement, filterByLabels bool, requiredLabels []string) ([]*nodemanager.Node, nodeRejectionCounts) {
+	var rejections nodeRejectionCounts
+
 	if config.K <= 0 || len(items) == 0 {
-		return nil
+		return nil, rejections
 	}
 
 	indices := make([]int, len(items))
@@ -208,31 +235,36 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 
 		// Excluded filter
 		if _, ok := excludedNodes[n.ID]; ok {
+			rejections.excluded++
 			continue
 		}
 
 		// If the node can't take new sandboxes, skip it
 		if !n.CanAcceptNewRequests() {
+			rejections.notAccepting++
 			continue
 		}
 
 		// Skip if node is not CPU compatible
 		if !NodeSatisfiesCPU(n, cpu) {
+			rejections.cpuMismatch++
 			continue
 		}
 
 		// Skip if the node's orchestrator predates a requested feature
 		if !NodeSatisfiesFeatures(n, features) {
+			rejections.featureMismatch++
 			continue
 		}
 
 		// Skip if node doesn't have the required labels
 		if filterByLabels && !isNodeLabelsCompatible(n, requiredLabels) {
+			rejections.labelMismatch++
 			continue
 		}
 
 		candidates = append(candidates, n)
 	}
 
-	return candidates
+	return candidates, rejections
 }
