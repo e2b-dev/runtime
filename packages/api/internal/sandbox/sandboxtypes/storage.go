@@ -45,4 +45,13 @@ type StateTransition struct {
 type ReservationStorage interface {
 	Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string, limit int) (finishStart func(Sandbox, error), waitForStart func(ctx context.Context) (Sandbox, error), err error)
 	Release(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+
+	// ClaimKill fences a paused sandbox's ID against a concurrent resume before
+	// its snapshot is deleted. Returns claimed=false when a resume is in flight
+	// or the sandbox is already running again, so the caller must not delete the
+	// snapshot and should surface a retryable conflict instead.
+	ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (claimed bool, err error)
+	// ReleaseKillClaim drops a claim taken by ClaimKill (best-effort cleanup on
+	// a failed delete; the claim also expires on its own).
+	ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 }
