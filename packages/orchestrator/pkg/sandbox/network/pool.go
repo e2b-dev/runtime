@@ -281,10 +281,24 @@ func (p *Pool) Get(ctx context.Context, network *orchestrator.SandboxNetworkConf
 			return nil, ErrClosed
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case s := <-p.newSlots:
+		case s, ok := <-p.newSlots:
+			if !ok {
+				// Populate closes this channel when it exits; a closed channel is
+				// not a new slot.
+				return nil, ErrClosed
+			}
+
 			newSlotsAvailableCounter.Add(ctx, -1)
 			acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "new")))
 			telemetry.ReportEvent(ctx, "new network slot")
+
+			slot = s
+		case s := <-p.reusedSlots:
+			// ReturnAsync may publish a reusable slot after the fast-path miss
+			// while this caller waits for new-slot production.
+			reusableSlotsAvailableCounter.Add(ctx, -1)
+			acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "reused")))
+			telemetry.ReportEvent(ctx, "reused network slot")
 
 			slot = s
 		}
