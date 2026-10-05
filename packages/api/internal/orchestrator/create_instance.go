@@ -142,6 +142,35 @@ func applyEgressProxy(dst *orchestrator.SandboxNetworkEgressConfig, src *types.S
 	dst.EgressProxyAddress = src.EgressProxyAddress
 	dst.EgressProxyUsername = src.EgressProxyUsername
 	dst.EgressProxyPassword = src.EgressProxyPassword
+
+	if t := src.EgressProxyTLS; t != nil && t.Enabled {
+		dst.EgressProxyTls = &orchestrator.SandboxNetworkEgressProxyTLS{
+			Enabled:    true,
+			ServerName: t.ServerName,
+			CaCert:     []byte(t.CACert),
+		}
+	}
+}
+
+// ApplyValidatedEgressProxy copies a validated BYOP config onto its stored
+// form. A nil src leaves dst untouched; on the PUT path that clears a proxy,
+// dst is already a fresh config carrying none.
+func ApplyValidatedEgressProxy(dst *types.SandboxNetworkEgressConfig, src *sandbox_network.EgressProxyConfig) {
+	if dst == nil || src == nil {
+		return
+	}
+
+	dst.EgressProxyAddress = src.Address
+	dst.EgressProxyUsername = src.Username
+	dst.EgressProxyPassword = src.Password
+
+	if t := src.TLS; t != nil && t.Enabled {
+		dst.EgressProxyTLS = &types.SandboxEgressProxyTLSConfig{
+			Enabled:    true,
+			ServerName: t.ServerName,
+			CACert:     t.CACert,
+		}
+	}
 }
 
 // buildNetworkConfig constructs the orchestrator network configuration from the input parameters
@@ -240,8 +269,7 @@ func (o *Orchestrator) CreateSandbox(
 		if err != nil {
 			logger.L().Warn(ctx, "Error waiting for sandbox to start", zap.Error(err), logger.WithSandboxID(sandboxID))
 
-			var apiErr *api.APIError
-			if errors.As(err, &apiErr) {
+			if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 				return sandbox.Sandbox{}, apiErr
 			}
 
@@ -368,9 +396,14 @@ func (o *Orchestrator) CreateSandbox(
 	// worth querying.
 	telemetry.SetAttributes(ctx, attribute.String("placement.cpu_model_pinned", cpuRequirement.PinnedModel))
 
+	hostIsolation := o.resolveHostIsolation(ctx, sandboxID, team, sbxData)
+
 	var node *nodemanager.Node
 
-	if isResume && sbxData.NodeID != nil {
+	// Only a resume is pinned to the node its snapshot was taken on; any other
+	// start from a snapshot (a fork) is placed like a new sandbox.
+	affinityRequested := isResume && sbxData.NodeID != nil
+	if affinityRequested {
 		telemetry.ReportEvent(ctx, "Placing sandbox on the node where the snapshot was taken")
 
 		clusterID := clusters.WithClusterFallback(team.ClusterID)
@@ -378,10 +411,30 @@ func (o *Orchestrator) CreateSandbox(
 		if node != nil && !node.CanAcceptNewRequests() {
 			node = nil
 		}
+		// Snapshot affinity skips the candidate filter below, and the origin node
+		// can drift off the snapshot's own side of the partition when a timed-out
+		// resume remaps it. Vetted here so it cannot outrank the partition.
+		if node != nil && !hostIsolation.Allows(node) {
+			node = nil
+		}
 	}
 
 	nodeClusterID := clusters.WithClusterFallback(team.ClusterID)
 	clusterNodes := o.GetClusterNodes(nodeClusterID)
+
+	if hostIsolation.Enabled() {
+		isolatedCandidates := hostIsolation.FilterNodes(clusterNodes)
+		// Recorded because the partition starving placement surfaces as an
+		// ordinary "no nodes available", which alone does not say the fence
+		// caused it.
+		telemetry.SetAttributes(ctx,
+			attribute.Bool("placement.host_isolation.isolated_origin", hostIsolation.IsolatedOrigin()),
+			attribute.Int("placement.host_isolation.nodes_before", len(clusterNodes)),
+			attribute.Int("placement.host_isolation.nodes_after", len(isolatedCandidates)),
+		)
+
+		clusterNodes = isolatedCandidates
+	}
 
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
@@ -405,8 +458,8 @@ func (o *Orchestrator) CreateSandbox(
 	// The sandbox was created successfully
 	attributes := []attribute.KeyValue{
 		attribute.Bool("is_resume", isResume),
-		attribute.Bool("node_affinity_requested", sbxData.NodeID != nil),
-		attribute.Bool("node_affinity_success", sbxData.NodeID != nil && node.ID == *sbxData.NodeID),
+		attribute.Bool("node_affinity_requested", affinityRequested),
+		attribute.Bool("node_affinity_success", affinityRequested && node.ID == *sbxData.NodeID),
 	}
 	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
 
@@ -477,7 +530,6 @@ func (o *Orchestrator) CreateSandbox(
 			sandbox.StateActionKill,
 			sandbox.KillReasonUnknown,
 			false, // kill: no snapshot
-			false,
 		)
 		if killErr != nil {
 			logger.L().Error(ctx, "Error removing memory-restored sandbox after unhonored filesystem-boot demand",
@@ -508,7 +560,6 @@ func (o *Orchestrator) CreateSandbox(
 				sandbox.StateActionKill,
 				sandbox.KillReasonUnknown,
 				false, // kill: no snapshot
-				false,
 			)
 			if killErr != nil {
 				logger.L().Error(ctx, "Error removing sandbox",
@@ -607,6 +658,22 @@ func (o *Orchestrator) resolveCPURequirement(ctx context.Context, sandboxID stri
 	)
 
 	return requirement
+}
+
+// resolveHostIsolation builds the host-partition constraint placement filters
+// candidates with. The origin is the build's cluster host: the node a template
+// build ran on, or — because a pause copies its origin node into the snapshot's
+// build row — the node a snapshot was taken on. A build with no recorded host
+// lands on the non-isolated side.
+func (o *Orchestrator) resolveHostIsolation(ctx context.Context, sandboxID string, team *teamtypes.Team, sbxData SandboxMetadata) placement.HostIsolation {
+	return placement.HostIsolation{
+		Hosts: featureflags.GetIsolatedSchedulingHosts(ctx, o.featureFlagsClient,
+			featureflags.TeamContext(team.ID.String()),
+			featureflags.SandboxContext(sandboxID),
+			featureflags.ClusterContext(clusters.WithClusterFallback(team.ClusterID)),
+		),
+		OriginHost: ut.FromPtr(sbxData.Build.ClusterNodeID),
+	}
 }
 
 func (o *Orchestrator) generateRequiredNodeLabels(ctx context.Context, sandboxID string, team *teamtypes.Team, sbxData SandboxMetadata) ([]string, bool) {

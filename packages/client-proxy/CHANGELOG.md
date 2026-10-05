@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 (2026-09-11)
+
+
+### Features
+
+* **local-dev:** support isolated worker execution (baa2a23)
+* **orchestrator:** publish sandbox routing record behind feature flags (3bc98a0)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.26.8 toolchain (e7116f5)
+* **deps:** update module github.com/stretchr/testify to v1.12.1 (a58bcb5)
+* **deps:** update module github.com/txn2/txeh to v1.8.1 (36a09d6)
+* **deps:** update module golang.org/x/oauth2 to v0.37.0 (92ca7bd)
+* **deps:** update module google.golang.org/api to v0.297.0 (852f328)
+* **deps:** update module google.golang.org/grpc to v1.83.1 [security] (27006d5)
+* **deps:** update module google.golang.org/grpc to v1.83.2 [security] (7123140)
+* **deps:** update opentelemetry (34ecda9)
+* **deps:** update testcontainers-go monorepo to v0.44.0 (5473119)
+* upgrade Alpine packages in every alpine runtime stage (5a61a32)
+
 ## 0.2.1 (2026-08-25)
 
 

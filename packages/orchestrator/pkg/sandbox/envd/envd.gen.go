@@ -188,17 +188,23 @@ type Metrics struct {
 	// MemTotal Total virtual memory in bytes
 	MemTotal int `json:"mem_total,omitempty"`
 
-	// MemTotalMib Total virtual memory in MiB
-	MemTotalMib int `json:"mem_total_mib,omitempty"`
-
 	// MemUsed Used virtual memory in bytes
 	MemUsed int `json:"mem_used,omitempty"`
 
-	// MemUsedMib Used virtual memory in MiB
-	MemUsedMib int `json:"mem_used_mib,omitempty"`
+	// OomKills The latest 32 out-of-memory kills since the guest booted, oldest first. Reading does not consume them. Empty when there are none. Omitted when not known (while envd is still reading the kernel log, when it can't be read or envd stopped reading it, and outside Firecracker).
+	OomKills *[]OOMKill `json:"oom_kills,omitempty"`
 
 	// Ts Unix timestamp in UTC for current sandbox time
 	Ts int64 `json:"ts,omitempty"`
+}
+
+// OOMKill A process the guest kernel killed for running out of memory
+type OOMKill struct {
+	// Process Name of the killed process, or Unknown if the record doesn't show it
+	Process string `json:"process"`
+
+	// Seq Kernel log sequence number of the kill record. It only grows, across pauses and envd restarts.
+	Seq int64 `json:"seq"`
 }
 
 // VolumeMount Volume mount configuration

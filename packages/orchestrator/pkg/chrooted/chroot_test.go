@@ -14,12 +14,8 @@ import (
 func TestFileSystemsAreIsolated(t *testing.T) {
 	t.Parallel()
 
-	if os.Geteuid() != 0 {
-		t.Skip("skipping test because it requires root privileges")
-	}
-
 	oneSrc := t.TempDir()
-	one, err := Chroot(t.Context(), oneSrc)
+	one, err := Chroot(oneSrc)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err := one.Close()
@@ -54,7 +50,7 @@ func TestFileSystemsAreIsolated(t *testing.T) {
 	assert.Equal(t, fileName, results[0].Name())
 
 	twoSrc := t.TempDir()
-	two, err := Chroot(t.Context(), twoSrc)
+	two, err := Chroot(twoSrc)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err := two.Close()

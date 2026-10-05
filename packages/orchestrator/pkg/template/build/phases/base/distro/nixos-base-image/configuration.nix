@@ -75,6 +75,13 @@
       OOMPolicy = "continue";
       OOMScoreAdjust = -1000;
       # Resource-control parity: reserve envd's memory and win CPU/IO contention.
+      # These are the unit's long-standing values, not the request the template
+      # build can render into envd.service. That request comes with a
+      # system.slice drop-in that makes it effective, and neither reaches this
+      # image: provisioning removes the baked /etc/systemd/system so activation
+      # can own it (InitNixOS in distro/init.go), so the slice request would
+      # have to be declared here. Until it is, system.slice requests nothing
+      # and envd's request is granted nothing.
       Delegate = true;
       MemoryMin = "50M";
       MemoryLow = "100M";

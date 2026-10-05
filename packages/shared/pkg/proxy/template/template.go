@@ -2,6 +2,7 @@ package template
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -13,6 +14,19 @@ import (
 )
 
 var browserRegex = regexp.MustCompile(`(?i)mozilla|chrome|safari|firefox|edge|opera|msie`)
+
+//go:embed browser_layout.html
+var browserLayoutHtml string
+
+// newBrowserPage parses a page into the shared browser layout. The page defines
+// the "title", "tone" and "body" blocks, and may define "actions".
+func newBrowserPage(name, page string) *template.Template {
+	layout := template.Must(template.New(name).
+		Funcs(template.FuncMap{"statusText": http.StatusText}).
+		Parse(browserLayoutHtml))
+
+	return template.Must(layout.Parse(page))
+}
 
 type jsonErrorMessage interface {
 	StatusCode() int

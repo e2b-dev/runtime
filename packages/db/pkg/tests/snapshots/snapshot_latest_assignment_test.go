@@ -1,10 +1,12 @@
 package snapshots
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +15,103 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
+
+func TestSnapshotCursorMetadataFilter(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+	team := testutils.CreateTestTeam(t, db)
+	template := testutils.CreateTestTemplate(t, db, team)
+	for _, owner := range []string{"alice", "bob"} {
+		id := "sandbox-" + owner
+		testutils.UpsertTestSnapshot(t, ctx, db, "snapshot-"+owner, id, team, template)
+		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
+			"UPDATE snapshots SET metadata=$2::jsonb WHERE sandbox_id=$1", id, types.JSONBStringMap{"owner": owner}))
+	}
+	// Legacy non-object values are allowed by the schema but cannot be decoded
+	// as JSONBStringMap; every cursor query must continue excluding them.
+	for _, metadata := range []string{`[]`, `[{"owner":"alice"}]`, `"legacy"`, `42`, `true`} {
+		id := uuid.NewString()
+		testutils.UpsertTestSnapshot(t, ctx, db, "snapshot-"+id, id, team, template)
+		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
+			"UPDATE snapshots SET metadata=$2::jsonb WHERE sandbox_id=$1", id, metadata))
+	}
+	config, err := pgx.ParseConfig(db.ConnStr())
+	require.NoError(t, err)
+	config.DefaultQueryExecMode = pgx.QueryExecModeExec
+
+	for _, tc := range []struct {
+		name     string
+		metadata types.JSONBStringMap
+		count    int
+	}{
+		{name: "nil", count: 2},
+		{name: "empty", metadata: types.JSONBStringMap{}, count: 2},
+		{name: "matching", metadata: types.JSONBStringMap{"owner": "alice"}, count: 1},
+		{name: "missing", metadata: types.JSONBStringMap{"owner": "nobody"}, count: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			conn, err := pgx.ConnectConfig(ctx, config)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, conn.Close(ctx)) }()
+
+			// Inspect the actual generated statements without pinning a scan type
+			// or timings: only empty filters should keep the object fast path.
+			q := queries.New(&snapshotMetadataPlan{DBTX: conn, t: t, filtered: len(tc.metadata) > 0})
+			end := pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true}
+			begin := pgtype.Timestamptz{Time: time.Time{}, Valid: true}
+			desc, err := q.GetSnapshotsWithCursor(ctx, queries.GetSnapshotsWithCursorParams{
+				TeamID: team, Metadata: tc.metadata, Limit: 10, CursorTime: end,
+			})
+			require.NoError(t, err)
+			require.Len(t, desc, tc.count)
+			asc, err := q.GetSnapshotsWithCursorAsc(ctx, queries.GetSnapshotsWithCursorAscParams{
+				TeamID: team, Metadata: tc.metadata, Limit: 10, CursorTime: begin,
+			})
+			require.NoError(t, err)
+			require.Len(t, asc, tc.count)
+			byTemplate, err := q.GetSnapshotsByTemplateWithCursor(ctx, queries.GetSnapshotsByTemplateWithCursorParams{
+				TeamID: team, TemplateID: template, Metadata: tc.metadata, Limit: 10, CursorTime: end,
+			})
+			require.NoError(t, err)
+			require.Len(t, byTemplate, tc.count)
+			byTemplateAsc, err := q.GetSnapshotsByTemplateWithCursorAsc(ctx, queries.GetSnapshotsByTemplateWithCursorAscParams{
+				TeamID: team, TemplateID: template, Metadata: tc.metadata, Limit: 10, CursorTime: begin,
+			})
+			require.NoError(t, err)
+			require.Len(t, byTemplateAsc, tc.count)
+			for _, row := range desc {
+				if len(tc.metadata) > 0 {
+					require.Equal(t, "alice", row.Snapshot.Metadata["owner"])
+				}
+			}
+		})
+	}
+}
+
+type snapshotMetadataPlan struct {
+	queries.DBTX
+
+	t        *testing.T
+	filtered bool
+}
+
+func (p *snapshotMetadataPlan) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	p.t.Helper()
+	var plan string
+	require.NoError(p.t, p.DBTX.QueryRow(ctx, "EXPLAIN (FORMAT JSON) "+sql, args...).Scan(&plan))
+	if p.filtered {
+		require.Contains(p.t, plan, "@>")
+		require.NotContains(p.t, plan, "jsonb_typeof", "nonempty filters must fold to containment")
+	} else {
+		require.Contains(p.t, plan, "CASE WHEN", "empty filters must retain the object fast path")
+		require.Contains(p.t, plan, "jsonb_typeof")
+	}
+
+	return p.DBTX.Query(ctx, sql, args...)
+}
 
 // TestGetLastSnapshot_ReturnsLatestAssignment verifies that GetLastSnapshot returns
 // the build from the most recent assignment (ordered by assignment created_at DESC).

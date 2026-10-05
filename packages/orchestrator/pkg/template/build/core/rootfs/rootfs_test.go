@@ -7,15 +7,16 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	containerregistry "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -24,74 +25,89 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 )
 
+// bakeLayers renders the additional OCI layers for a template with memoryMB of
+// RAM under the given rootfs options, against a throwaway envd and busybox.
+func bakeLayers(t *testing.T, memoryMB int64, opts buildcontext.RootfsOptions) []containerregistry.Layer {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	envdPath := filepath.Join(tempDir, "envd")
+	require.NoError(t, os.WriteFile(envdPath, []byte("echo hello"), 0o755))
+
+	busyboxVersion := "1.36.1"
+	busyboxDir := filepath.Join(tempDir, "busybox")
+	require.NoError(t, os.MkdirAll(filepath.Join(busyboxDir, busyboxVersion, runtime.GOARCH), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(busyboxDir, busyboxVersion, runtime.GOARCH, "busybox"), []byte("busybox-binary"), 0o755))
+
+	buildContext := buildcontext.BuildContext{
+		BuilderConfig: cfg.BuilderConfig{
+			HostEnvdPath:   envdPath,
+			HostBusyboxDir: busyboxDir,
+			BusyboxVersion: busyboxVersion,
+		},
+		Config: config.TemplateConfig{MemoryMB: memoryMB},
+		Rootfs: opts,
+	}
+
+	layers, err := additionalOCILayers(buildContext, "provision.sh", "provision.log", "provision.result")
+	require.NoError(t, err)
+	require.Len(t, layers, 2)
+
+	return layers
+}
+
+// tarEntries reads a layer and returns its regular files by path and its
+// symlinks by path, the latter mapped to their targets.
+func tarEntries(t *testing.T, layer containerregistry.Layer) (files, symlinks map[string]string) {
+	t.Helper()
+
+	reader, err := layer.Uncompressed()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, reader.Close())
+	})
+
+	files, symlinks = map[string]string{}, map[string]string{}
+	tarReader := tar.NewReader(reader)
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+
+		switch header.Typeflag {
+		case tar.TypeReg:
+			var buffer bytes.Buffer
+			count, err := io.CopyN(&buffer, tarReader, header.Size)
+			require.NoError(t, err)
+			assert.Equal(t, header.Size, count)
+			files[header.Name] = buffer.String()
+		case tar.TypeSymlink:
+			symlinks[header.Name] = header.Linkname
+		}
+	}
+
+	return files, symlinks
+}
+
+// bakedFiles is the files layer rendered for memoryMB under opts, by path.
+func bakedFiles(t *testing.T, memoryMB int64, opts buildcontext.RootfsOptions) map[string]string {
+	t.Helper()
+
+	files, _ := tarEntries(t, bakeLayers(t, memoryMB, opts)[0])
+
+	return files
+}
+
 func TestAdditionalOCILayers(t *testing.T) {
 	t.Parallel()
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
-		tempDir := t.TempDir()
 
-		envdPath := tempDir + "/envd"
-		err := os.WriteFile(envdPath, []byte("echo hello"), 0o755)
-		require.NoError(t, err)
-
-		busyboxVersion := "1.36.1"
-		busyboxDir := tempDir + "/busybox"
-		err = os.MkdirAll(filepath.Join(busyboxDir, busyboxVersion, runtime.GOARCH), 0o755)
-		require.NoError(t, err)
-		err = os.WriteFile(filepath.Join(busyboxDir, busyboxVersion, runtime.GOARCH, "busybox"), []byte("busybox-binary"), 0o755)
-		require.NoError(t, err)
-
-		buildContext := buildcontext.BuildContext{
-			BuilderConfig: cfg.BuilderConfig{
-				HostEnvdPath:   envdPath,
-				HostBusyboxDir: busyboxDir,
-				BusyboxVersion: busyboxVersion,
-			},
-			Config: config.TemplateConfig{
-				MemoryMB: 100,
-			},
-		}
-		provisionScript := "provision.sh"
-		provisionLogPrefix := "provision.log"
-		provisionResultPath := "provision.result"
-
-		layers, err := additionalOCILayers(buildContext, provisionScript, provisionLogPrefix, provisionResultPath)
-		require.NoError(t, err)
-
-		require.Len(t, layers, 2)
-		layer1 := layers[0]
-		filesLayer, err := layer1.Uncompressed()
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err = filesLayer.Close()
-			assert.NoError(t, err)
-		})
-
-		actualFiles := map[string]string{}
-		filesTarReader := tar.NewReader(filesLayer)
-		for {
-			header, err := filesTarReader.Next()
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			require.NoError(t, err)
-
-			if header.Typeflag != tar.TypeReg {
-				// we're only verifying files for now
-				continue
-			}
-
-			filename := header.Name
-			var buffer bytes.Buffer
-			count, err := io.CopyN(&buffer, filesTarReader, header.Size)
-			require.NoError(t, err)
-			assert.Equal(t, header.Size, count)
-			actualFiles[filename] = buffer.String()
-		}
-
-		keysIter := maps.Keys(actualFiles)
-		keys := slices.Collect(keysIter)
-		assert.Len(t, keys, 21)
+		layers := bakeLayers(t, 100, buildcontext.RootfsOptions{})
+		actualFiles, _ := tarEntries(t, layers[0])
+		assert.Len(t, actualFiles, 21)
 
 		// The provisioning boot must be self-contained on the baked busybox:
 		// minimal images (distroless) may have no /bin/sh, and busybox init
@@ -189,31 +205,107 @@ WatchdogSec=0`)
 		// A relative target resolves inside multi-user.target.wants/ and dangles,
 		// and provision.sh's offline `systemctl enable` prunes dangling .wants
 		// links — silently disabling envd autostart on e.g. Fedora.
-		symlinksLayer, err := layers[1].Uncompressed()
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err = symlinksLayer.Close()
-			assert.NoError(t, err)
-		})
-
-		actualSymlinks := map[string]string{}
-		symlinksTarReader := tar.NewReader(symlinksLayer)
-		for {
-			header, err := symlinksTarReader.Next()
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			require.NoError(t, err)
-
-			if header.Typeflag != tar.TypeSymlink {
-				continue
-			}
-			actualSymlinks[header.Name] = header.Linkname
-		}
-
+		_, actualSymlinks := tarEntries(t, layers[1])
 		envdWants := actualSymlinks["etc/systemd/system/multi-user.target.wants/envd.service"]
 		require.NotEmpty(t, envdWants, "envd autostart symlink must be present")
 		assert.Equal(t, "/etc/systemd/system/envd.service", envdWants,
 			"envd autostart symlink target must be absolute so it never dangles")
+	})
+}
+
+// hasLine reports whether s contains line as a whole line, so that
+// "MemoryMin=16M" does not match "MemoryMin=160M".
+func hasLine(s, line string) bool {
+	return slices.Contains(strings.Split(s, "\n"), line)
+}
+
+func TestEnvdMemoryProtectionRender(t *testing.T) {
+	t.Parallel()
+
+	const (
+		dropIn = "etc/systemd/system/system.slice.d/10-e2b-envd.conf"
+		unit   = "etc/systemd/system/envd.service"
+	)
+	off := buildcontext.RootfsOptions{}
+	on := buildcontext.RootfsOptions{EnvdMemoryProtection: true}
+
+	t.Run("off renders the unit byte for byte as before the option existed, and no drop-in", func(t *testing.T) {
+		t.Parallel()
+
+		// Captured from the render before the option existed, for a 4096 MB
+		// template. It changes only when what the unit renders for that
+		// template is changed on purpose, in envd.service.tpl or in the model
+		// values it reads (GOMEMLIMIT comes from MemoryLimit).
+		golden, err := os.ReadFile("testdata/envd.service.golden")
+		require.NoError(t, err)
+
+		files := bakedFiles(t, 4096, off)
+		assert.Equal(t, string(golden), files[unit])
+		assert.NotContains(t, files, dropIn)
+	})
+
+	t.Run("on requests the same protection on exactly the slice and the unit, whatever the RAM", func(t *testing.T) {
+		t.Parallel()
+
+		// The sizes in the design's table, plus one pathological value. The
+		// request is a constant, and the same two lines at every size is what
+		// keeps a coupling to the template's RAM from creeping back in; the
+		// lines are literals so that a changed constant fails here.
+		for _, memoryMB := range []int64{128, 512, 1024, 4096, 16384, 0} {
+			t.Run(strconv.FormatInt(memoryMB, 10), func(t *testing.T) {
+				t.Parallel()
+
+				files := bakedFiles(t, memoryMB, on)
+				require.Contains(t, files, dropIn)
+				assert.True(t, hasLine(files[dropIn], "[Slice]"), files[dropIn])
+
+				for _, path := range []string{dropIn, unit} {
+					for _, line := range []string{"MemoryMin=128M", "MemoryLow=256M"} {
+						assert.True(t, hasLine(files[path], line), "%s lacks %s:\n%s", path, line, files[path])
+					}
+				}
+
+				// No third file carries a request: a request placed elsewhere
+				// on the chain would change what the kernel grants.
+				for path, data := range files {
+					if path == dropIn || path == unit {
+						continue
+					}
+					assert.NotContains(t, data, "MemoryMin=", path)
+					assert.NotContains(t, data, "MemoryLow=", path)
+				}
+			})
+		}
+	})
+
+	t.Run("the option changes nothing but the drop-in and the unit's two request lines", func(t *testing.T) {
+		t.Parallel()
+
+		offFiles := bakedFiles(t, 4096, off)
+		onFiles := bakedFiles(t, 4096, on)
+
+		require.Contains(t, onFiles, dropIn)
+		delete(onFiles, dropIn)
+		require.Len(t, onFiles, len(offFiles))
+		for path, offData := range offFiles {
+			if path == unit {
+				continue
+			}
+			assert.Equal(t, offData, onFiles[path], path)
+		}
+
+		offLines := strings.Split(offFiles[unit], "\n")
+		onLines := strings.Split(onFiles[unit], "\n")
+		require.Len(t, onLines, len(offLines))
+		var changed []string
+		for i := range offLines {
+			if offLines[i] != onLines[i] {
+				changed = append(changed, offLines[i]+" -> "+onLines[i])
+			}
+		}
+		assert.Equal(t, []string{
+			"MemoryMin=50M -> MemoryMin=128M",
+			"MemoryLow=100M -> MemoryLow=256M",
+		}, changed)
 	})
 }

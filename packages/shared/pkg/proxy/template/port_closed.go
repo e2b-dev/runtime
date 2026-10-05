@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_port_closed.html
 var portClosedHtml string
-var portClosedHtmlTemplate = template.Must(template.New("portClosedHtml").Parse(portClosedHtml))
+var portClosedHtmlTemplate = newBrowserPage("portClosedHtml", portClosedHtml)
 
 type portClosedError struct {
 	SandboxId string `json:"sandboxId"`

@@ -127,8 +127,8 @@ func InstanceGroupContext(instanceGroupName string) ldcontext.Context {
 	return ldcontext.NewWithKind(InstanceGroupKind, instanceGroupName)
 }
 
-func deploymentContext(deploymentName string) ldcontext.Context {
-	return ldcontext.NewWithKind(deploymentKind, deploymentName)
+func DeploymentEnvironmentContext(name string) ldcontext.Context {
+	return ldcontext.NewWithKind(DeploymentEnvironmentKind, name)
 }
 
 func SandboxContext(sandboxID string) ldcontext.Context {
@@ -177,4 +177,9 @@ func CompressFileTypeContext(fileType string) ldcontext.Context {
 
 func CompressUseCaseContext(useCase string) ldcontext.Context {
 	return ldcontext.NewWithKind(CompressUseCaseKind, useCase)
+}
+
+// BatcherContext targets one named ClickHouse writer.
+func BatcherContext(name string) ldcontext.Context {
+	return ldcontext.NewWithKind(BatcherKind, name)
 }

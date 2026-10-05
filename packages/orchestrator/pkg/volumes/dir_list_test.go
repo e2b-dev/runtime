@@ -13,6 +13,38 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
 
+// TestListDir_SymlinksResolveInsideTheVolume gives a symlink the name of a
+// directory that exists on the host: its type and target must come from
+// the volume, and ListDir must agree with StatPath.
+func TestListDir_SymlinksResolveInsideTheVolume(t *testing.T) {
+	t.Parallel()
+
+	s, basePath, volumeInfo := setupTestService(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(basePath, "target.txt"), []byte("target"), 0o644))
+	require.NoError(t, os.Symlink("/target.txt", filepath.Join(basePath, "etc")))
+	require.NoError(t, os.Symlink("/nowhere", filepath.Join(basePath, "dangling")))
+	require.DirExists(t, "/etc", "the test needs a host directory sharing the link's name")
+
+	listed, err := s.ListDir(t.Context(), &orchestrator.ListDirRequest{Volume: volumeInfo, Path: "/"})
+	require.NoError(t, err)
+
+	byPath := make(map[string]*orchestrator.EntryInfo, len(listed.GetFiles()))
+	for _, item := range listed.GetFiles() {
+		byPath[item.GetEntry().GetPath()] = item.GetEntry()
+	}
+	require.Len(t, byPath, 3)
+
+	require.Equal(t, orchestrator.FileType_FILE_TYPE_FILE, byPath["/etc"].GetType())
+	require.Equal(t, "/target.txt", byPath["/etc"].GetSymlinkTarget())
+	require.Equal(t, orchestrator.FileType_FILE_TYPE_UNSPECIFIED, byPath["/dangling"].GetType())
+
+	stat, err := s.StatPath(t.Context(), &orchestrator.StatPathRequest{Volume: volumeInfo, Path: "/etc"})
+	require.NoError(t, err)
+	require.Equal(t, byPath["/etc"].GetType(), stat.GetEntry().GetType())
+	require.Equal(t, byPath["/etc"].GetSymlinkTarget(), stat.GetEntry().GetSymlinkTarget())
+}
+
 func TestListDir_Depth(t *testing.T) {
 	t.Parallel()
 

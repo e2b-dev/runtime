@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
@@ -37,18 +38,22 @@ func (o *Orchestrator) UpdateSandboxNetworkConfig(
 		DeniedAddresses:  deniedEntries,
 		Rules:            rules,
 	}
-	if egressProxy != nil {
-		egressConfig.EgressProxyAddress = egressProxy.Address
-		egressConfig.EgressProxyUsername = egressProxy.Username
-		egressConfig.EgressProxyPassword = egressProxy.Password
-	}
+	ApplyValidatedEgressProxy(egressConfig, egressProxy)
 	network := &types.SandboxNetworkConfig{Egress: egressConfig}
 	orchNetwork := buildNetworkConfig(network, allowInternetAccess, nil)
 	egress := orchNetwork.GetEgress()
+	features := placement.EgressUpdateFeatures(egress)
 
 	updateFunc := func(sbx sandbox.Sandbox) (sandbox.Sandbox, error) {
 		if sbx.State != sandbox.StateRunning {
 			return sbx, &sandbox.NotRunningError{SandboxID: sandboxID, State: sbx.State}
+		}
+
+		// Checked against the record being written, under its lock: a config
+		// the node cannot apply would otherwise be stored, and read back, as
+		// if it were in effect.
+		if apiErr := o.checkNodeSupportsEgress(sbx, features); apiErr != nil {
+			return sbx, apiErr
 		}
 
 		if sbx.Network == nil {
@@ -65,10 +70,13 @@ func (o *Orchestrator) UpdateSandboxNetworkConfig(
 	}
 
 	var sbxNotRunningErr *sandbox.NotRunningError
+	var apiErr *api.APIError
 
 	sbx, err := o.sandboxStore.Update(ctx, teamID, sandboxID, updateFunc)
 	if err != nil {
 		switch {
+		case errors.As(err, &apiErr):
+			return apiErr
 		case errors.As(err, &sbxNotRunningErr):
 			return &api.APIError{Code: http.StatusConflict, ClientMsg: utils.SandboxChangingStateMsg(sandboxID, sbxNotRunningErr.State), Err: err}
 		case errors.Is(err, sandbox.ErrNotFound):
@@ -80,6 +88,35 @@ func (o *Orchestrator) UpdateSandboxNetworkConfig(
 
 	// Apply the network update on the orchestrator node.
 	return o.updateSandboxNetworkOnNode(ctx, sbx, egress)
+}
+
+// checkNodeSupportsEgress refuses an egress config that needs a newer
+// orchestrator than the node running the sandbox. It runs under the store
+// lock, so it reads only the in-memory node cache.
+func (o *Orchestrator) checkNodeSupportsEgress(sbx sandbox.Sandbox, features placement.FeatureRequirement) *api.APIError {
+	if features.MinVersion() == "" {
+		return nil
+	}
+
+	node := o.GetNode(sbx.ClusterID, sbx.NodeID)
+	if node == nil {
+		return &api.APIError{
+			Code:      http.StatusServiceUnavailable,
+			ClientMsg: fmt.Sprintf("Node hosting sandbox '%s' is not available, try again later", sbx.SandboxID),
+			Err:       fmt.Errorf("node '%s' not in cache for cluster '%s'", sbx.NodeID, sbx.ClusterID),
+		}
+	}
+
+	if !placement.NodeSatisfiesFeatures(node, features) {
+		return &api.APIError{
+			Code:      http.StatusServiceUnavailable,
+			ErrorCode: errCodeFeatureUnsupported,
+			ClientMsg: fmt.Sprintf("Sandbox '%s' runs on an orchestrator older than version %s, which this network config requires", sbx.SandboxID, features.MinVersion()),
+			Err:       fmt.Errorf("node '%s' at version %q does not support %v", sbx.NodeID, node.Metadata().Version, features.FeatureNames()),
+		}
+	}
+
+	return nil
 }
 
 func (o *Orchestrator) updateSandboxNetworkOnNode(

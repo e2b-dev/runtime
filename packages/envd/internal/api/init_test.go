@@ -150,7 +150,7 @@ func newTestAPI(accessToken *SecureToken, mmdsClient MMDSClient) *API {
 	defaults := &execcontext.Defaults{
 		EnvVars: utils.NewEnvVars(),
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil)
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, nil)
 	if accessToken != nil {
 		api.accessToken.TakeFrom(accessToken)
 	}
@@ -745,7 +745,7 @@ func newAPIWithCgroupManager(mgr cgroups.Manager) *API {
 func newAPIWithCgroupManagerAndLogFlusher(mgr cgroups.Manager, logFlusher LogFlusher) *API {
 	logger := zerolog.Nop()
 
-	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), logFlusher)
+	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, logFlusher)
 }
 
 // newAPIWithCgroupManagerLogging is newAPIWithCgroupManager with the log output captured,
@@ -753,7 +753,7 @@ func newAPIWithCgroupManagerAndLogFlusher(mgr cgroups.Manager, logFlusher LogFlu
 func newAPIWithCgroupManagerLogging(mgr cgroups.Manager, out io.Writer) *API {
 	logger := zerolog.New(out)
 
-	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil)
+	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, nil)
 }
 
 func TestPostFreeze(t *testing.T) {

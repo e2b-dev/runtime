@@ -45,7 +45,7 @@ func newTestSlot(idx int) *Slot {
 // noopRelease satisfies returnSlot's ReleaseNotify parameter without doing
 // anything. Tests cover the cleanup path and don't care about the
 // network-release notification.
-func noopRelease(context.Context, string) {}
+func noopRelease(context.Context, string) error { return nil }
 
 // TestReturn_NoPanicDuringClose races Return against Close to guard
 // against regressions of the send-on-closed-channel panic.
@@ -191,4 +191,32 @@ func TestReturn_AfterClose_CleanupFailure_PreservesErrClosed(t *testing.T) {
 	err := pool.returnSlot(t.Context(), newTestSlot(1), noopRelease, 0)
 	require.ErrorIs(t, err, ErrClosed)
 	require.ErrorIs(t, err, boom)
+}
+
+// A failed release notification keeps the slot allocated and out of reuse on
+// the normal, canceled and closed paths. An async return still finishes, so
+// Close does not wait on it.
+func TestReturn_FailedReleaseRetainsSlot(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	failRelease := func(context.Context, string) error { return boom }
+	storage := &fakeStorage{}
+	pool := NewPool(2, 4, storage, Config{})
+	close(pool.newSlots)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.ErrorIs(t, pool.returnSlot(t.Context(), newTestSlot(1), failRelease, 0), boom)
+	err := pool.returnSlot(canceled, newTestSlot(2), failRelease, time.Hour)
+	require.ErrorIs(t, err, ErrSlotRetained)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, pool.ReturnAsync(t.Context(), newTestSlot(3), failRelease, time.Hour))
+	require.NoError(t, pool.Close(t.Context()))
+	err = pool.returnSlot(t.Context(), newTestSlot(4), failRelease, time.Hour)
+	require.ErrorIs(t, err, ErrSlotRetained)
+	require.ErrorIs(t, err, ErrClosed)
+
+	assert.Zero(t, storage.released.Load(), "a retained slot must not be released for reuse")
+	assert.Empty(t, pool.reusedSlots)
 }

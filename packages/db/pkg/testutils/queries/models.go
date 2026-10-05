@@ -50,6 +50,7 @@ type Addon struct {
 	ExtraEventsTtlDays            int64
 	ExtraMaxDiskSizeMb            pgtype.Int8
 	ExtraMaxFreeDiskSizeMb        pgtype.Int8
+	ExtraApiTeamRpsList           int64
 }
 
 type AuthUser struct {
@@ -145,6 +146,11 @@ type EnvBuildAssignment struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type EnvDefault struct {
+	EnvID       string
+	Description pgtype.Text
+}
+
 type ProjectLimit struct {
 	TeamID                   uuid.UUID
 	MaxLengthHours           int64
@@ -158,6 +164,7 @@ type ProjectLimit struct {
 	MaxDiskSizeMb            int64
 	UpdatedAt                time.Time
 	MaxFreeDiskSizeMb        pgtype.Int8
+	ApiTeamRpsList           int64
 }
 
 type ProjectionProjectLimit struct {
@@ -244,6 +251,7 @@ type TeamLimit struct {
 	DefaultFreeDiskSizeMb    int64
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        int64
+	ApiTeamRpsList           int64
 }
 
 type Tier struct {
@@ -261,6 +269,7 @@ type Tier struct {
 	DefaultFreeDiskSizeMb    int64
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        pgtype.Int8
+	ApiTeamRpsList           int64
 }
 
 type User struct {

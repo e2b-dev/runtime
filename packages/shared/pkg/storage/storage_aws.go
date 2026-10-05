@@ -36,6 +36,24 @@ type awsStorage struct {
 	presignClient *s3.PresignClient
 	bucketName    string
 	limiter       *limit.Limiter
+	sse           awsSSE
+}
+
+// awsSSE is the server-side encryption every write requests. Policies that
+// deny s3:PutObject without an x-amz-server-side-encryption header are not
+// satisfied by bucket default encryption, so the header must be on the request.
+type awsSSE struct {
+	algorithm types.ServerSideEncryption
+	kmsKeyID  *string
+}
+
+func newAWSSSE(spec Spec) awsSSE {
+	sse := awsSSE{algorithm: types.ServerSideEncryption(spec.ServerSideEncryption)}
+	if spec.SSEKMSKeyID != "" {
+		sse.kmsKeyID = aws.String(spec.SSEKMSKeyID)
+	}
+
+	return sse
 }
 
 var _ StorageProvider = (*awsStorage)(nil)
@@ -45,6 +63,7 @@ type awsObject struct {
 	path       string
 	bucketName string
 	limiter    *limit.Limiter
+	sse        awsSSE
 }
 
 var (
@@ -81,12 +100,13 @@ func newAWSStorage(ctx context.Context, spec Spec, limiter *limit.Limiter) (*aws
 		presignClient: presignClient,
 		bucketName:    spec.Bucket,
 		limiter:       limiter,
+		sse:           newAWSSSE(spec),
 	}, nil
 }
 
 func (s *awsStorage) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
-	if prefix == "" {
-		return errors.New("refusing to delete objects with an empty prefix")
+	if err := validateObjectPath(prefix); err != nil {
+		return err
 	}
 
 	// A large prefix spans many pages, so scope the timeout per round-trip
@@ -163,36 +183,65 @@ func (s *awsStorage) GetDetails() string {
 	return fmt.Sprintf("[AWS Storage, bucket set to %s]", s.bucketName)
 }
 
-func (s *awsStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error) {
+func (s *awsStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(s.bucketName),
-		Key:    aws.String(path),
+		Bucket:               aws.String(s.bucketName),
+		Key:                  aws.String(path),
+		ServerSideEncryption: s.sse.algorithm,
+		SSEKMSKeyId:          s.sse.kmsKeyID,
 	}
 	resp, err := s.presignClient.PresignPutObject(ctx, input, func(opts *s3.PresignOptions) {
 		opts.Expires = ttl
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to presign PUT URL: %w", err)
+		return UploadURL{}, fmt.Errorf("failed to presign PUT URL: %w", err)
 	}
 
-	return resp.URL, nil
+	// Signed headers (the SSE ones stay headers, never hoisted into the query)
+	// are part of the signature, so the client must send them on the PUT.
+	var headers map[string]string
+	for name, values := range resp.SignedHeader {
+		if strings.EqualFold(name, "Host") || len(values) == 0 {
+			continue
+		}
+		if headers == nil {
+			headers = make(map[string]string)
+		}
+		headers[name] = values[0]
+	}
+
+	return UploadURL{URL: resp.URL, Headers: headers}, nil
 }
 
 func (s *awsStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &awsObject{
 		client:     s.client,
 		bucketName: s.bucketName,
 		path:       path,
 		limiter:    s.limiter,
+		sse:        s.sse,
 	}, nil
 }
 
 func (s *awsStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &awsObject{
 		client:     s.client,
 		bucketName: s.bucketName,
 		path:       path,
 		limiter:    s.limiter,
+		sse:        s.sse,
 	}, nil
 }
 
@@ -205,8 +254,7 @@ func (o *awsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err er
 
 	resp, err := o.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &o.bucketName, Key: &o.path})
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) {
+		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return 0, ErrObjectNotExist
 		}
 
@@ -232,18 +280,13 @@ func (o *awsObject) StoreFile(ctx context.Context, path string, opts ...PutOptio
 	cfg := CompressConfigFromOpts(p)
 	if cfg.IsCompressionEnabled() {
 		return storeFileCompressed(ctx, path, cfg, o.limiter.MaxUploadTasks(ctx), p, func(metadata ObjectMetadata) (partUploader, error) {
-			return &awsPartUploader{client: o.client, bucketName: o.bucketName, objectName: o.path, metadata: metadata}, nil
+			return &awsPartUploader{client: o.client, bucketName: o.bucketName, objectName: o.path, metadata: metadata, sse: o.sse}, nil
 		})
 	}
 
-	// Inherit the caller's context for the multipart upload. The AWS SDK's
-	// manager.Uploader reuses the same ctx for CreateMultipartUpload, every
-	// UploadPart, and the final Complete/Abort —
-	// a tight static timeout here would cancel an in-flight multi-GB snapshot
-	// upload and surface as "S3: UploadPart ... StatusCode: 0, canceled,
-	// context deadline exceeded". The caller (pkg/server/sandboxes.go) already
-	// scopes a per-attempt deadline (uploadTimeout = 20m) with retry budget on
-	// top, matching the GCP path which also inherits the caller's ctx.
+	// The uploader uses ctx for the whole multipart upload, so a fixed timeout
+	// here would cancel a large upload mid-transfer. The caller sets the
+	// deadline for each attempt.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, [32]byte{}, fmt.Errorf("failed to open file %s: %w", path, err)
@@ -261,10 +304,12 @@ func (o *awsObject) StoreFile(ctx context.Context, path string, opts ...PutOptio
 	_, err = uploader.Upload(
 		ctx,
 		&s3.PutObjectInput{
-			Bucket:   &o.bucketName,
-			Key:      &o.path,
-			Body:     f,
-			Metadata: p.Metadata,
+			Bucket:               &o.bucketName,
+			Key:                  &o.path,
+			Body:                 f,
+			Metadata:             p.Metadata,
+			ServerSideEncryption: o.sse.algorithm,
+			SSEKMSKeyId:          o.sse.kmsKeyID,
 		},
 	)
 	if err == nil {
@@ -293,10 +338,12 @@ func (o *awsObject) Put(ctx context.Context, data []byte, opts ...PutOption) err
 	_, err := o.client.PutObject(
 		ctx,
 		&s3.PutObjectInput{
-			Bucket:   &o.bucketName,
-			Key:      &o.path,
-			Body:     bytes.NewReader(data),
-			Metadata: ApplyPutOptions(opts).Metadata,
+			Bucket:               &o.bucketName,
+			Key:                  &o.path,
+			Body:                 bytes.NewReader(data),
+			Metadata:             ApplyPutOptions(opts).Metadata,
+			ServerSideEncryption: o.sse.algorithm,
+			SSEKMSKeyId:          o.sse.kmsKeyID,
 		},
 	)
 	if err != nil {
@@ -349,8 +396,7 @@ func (o *awsObject) openRangeReader(ctx context.Context, off, length int64) (Ran
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", off, off+length-1)),
 	})
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) {
+		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return nil, ErrObjectNotExist
 		}
 
@@ -419,6 +465,7 @@ type awsPartUploader struct {
 	bucketName string
 	objectName string
 	metadata   ObjectMetadata
+	sse        awsSSE
 
 	mu       sync.Mutex
 	uploadID string
@@ -435,6 +482,10 @@ func (m *awsPartUploader) Start(ctx context.Context) error {
 		Bucket:   aws.String(m.bucketName),
 		Key:      aws.String(m.objectName),
 		Metadata: m.metadata,
+		// Encryption is declared once at initiation; UploadPart and Complete
+		// inherit it (only SSE-C would need it repeated per part).
+		ServerSideEncryption: m.sse.algorithm,
+		SSEKMSKeyId:          m.sse.kmsKeyID,
 		// The SDK's default integrity protections attach CRC32 checksums to
 		// UploadPart requests; S3 requires the algorithm to be declared at
 		// initiation and echoed per part in Complete. Declare it explicitly on

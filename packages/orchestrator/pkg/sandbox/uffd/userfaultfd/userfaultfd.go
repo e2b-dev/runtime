@@ -154,6 +154,11 @@ type Userfaultfd struct {
 	servedPages       atomic.Int64 // faults resolved (installed or already-present)
 	servedSourcePages atomic.Int64 // subset installed from the source (page_class=new)
 	servedBytes       atomic.Int64 // bytes installed into the guest (new + zero)
+	servedDeferred    atomic.Int64 // serve attempts deferred on EAGAIN
+	wpDeferred        atomic.Int64 // write-protect resolves deferred on EAGAIN
+
+	// mode is the BalloonMode the serve metrics carry; unknown until set.
+	mode atomic.Uint32
 
 	// genBucket tags this sandbox's serve/prefault metrics with its snapshot
 	// generation range, so fault latency can be cut by chain depth.
@@ -581,7 +586,7 @@ func (u *Userfaultfd) Serve(
 				result := faultResultInstalled
 				var servedBytes int64
 				defer func() {
-					sw.RecordRaw(ctx, servedBytes, serveAttrs[u.genBucket][pclass][result])
+					sw.RecordRaw(ctx, servedBytes, serveAttrs[u.balloonMode()][u.genBucket][pclass][result])
 					u.recordServeStats(pclass, result, servedBytes)
 				}()
 
@@ -735,7 +740,10 @@ func (u *Userfaultfd) Serve(
 func (u *Userfaultfd) resolveWriteProtect(ctx context.Context, addr uintptr, offset int64, onFailure func() error, start time.Time) error {
 	outcome := wpResolveOK
 	defer func() {
-		attrs := wpResolveAttrs[u.genBucket][outcome]
+		if outcome == wpResolveDeferred {
+			u.wpDeferred.Add(1)
+		}
+		attrs := wpResolveAttrs[u.balloonMode()][u.genBucket][outcome]
 		wpResolveDuration.Record(ctx, time.Since(start).Microseconds(), attrs)
 		wpResolveCount.Add(ctx, 1, attrs)
 	}()
@@ -1039,6 +1047,9 @@ func (u *Userfaultfd) faultPage(
 			joinedErr := errors.Join(dataErr, signalErr)
 
 			span.RecordError(joinedErr)
+			if ctx.Err() == nil {
+				memfileLegFaults.Add(ctx, 1, memfileLegFaultAttrs)
+			}
 			u.logger.Error(ctx, "UFFD serve data fetch error after retries",
 				zap.Int("attempts", attempt+1),
 				zap.Error(joinedErr),

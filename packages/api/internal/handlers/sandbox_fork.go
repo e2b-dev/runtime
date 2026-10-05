@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -19,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -31,7 +33,9 @@ const maxForkCount = 100
 // PostSandboxesSandboxIDFork forks a running sandbox: it checkpoints the
 // sandbox in place (snapshot it and resume it on its node, so the original
 // keeps running with its ID and expiration untouched) and creates count new
-// sandboxes from that snapshot under fresh IDs. Each fork succeeds or fails
+// sandboxes from that snapshot under fresh IDs. A fork starts as a new sandbox,
+// not a resume, so placement spreads the forks across the cluster instead of
+// pinning every one to the original's node. Each fork succeeds or fails
 // independently: the response carries one result per requested fork, holding
 // either the created sandbox or the error that prevented it from starting.
 func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.SandboxID) {
@@ -134,6 +138,11 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because its node is busy, please retry", sandboxID))
 
 		return
+	// The sandbox is untouched: another replica, or a retry here, can fork it.
+	case errors.Is(err, orchestrator.ErrDraining):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now, please retry", sandboxID))
+
+		return
 	default:
 		telemetry.ReportError(ctx, "error checkpointing sandbox for fork", err, telemetry.WithSandboxID(sandboxID))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error forking sandbox")
@@ -150,20 +159,21 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 	// All forks boot in parallel from the same immutable snapshot, each
 	// succeeding or failing independently.
 	results := make([]api.SandboxForkResult, forkCount)
+	forkNodeIDs := make([]string, forkCount)
 
 	wg := errgroup.Group{}
 	for i := range forkCount {
 		wg.Go(func() error {
 			forkedSandboxID := InstanceIDPrefix + id.Generate()
 
-			forkedSbx, createErr := a.startSandbox(
+			forkedSbx, createErr := a.startSandboxInternal(
 				ctx,
 				forkedSandboxID,
 				forkTimeout,
 				teamInfo,
 				a.buildResumeSandboxDataFromSnapshot(sandboxID, forkedSandboxID, nil, nil),
 				&c.Request.Header,
-				true,
+				false, // isResume
 				false,
 				nil, // mcp
 			)
@@ -175,14 +185,48 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 				return nil
 			}
 
-			results[i] = api.SandboxForkResult{Sandbox: forkedSbx}
+			results[i] = api.SandboxForkResult{Sandbox: forkedSbx.ToAPISandbox()}
+			forkNodeIDs[i] = forkedSbx.NodeID
 
 			return nil
 		})
 	}
 	_ = wg.Wait()
 
+	started, nodes := forkOutcome(results, forkNodeIDs)
+	telemetry.SetAttributes(ctx,
+		attribute.Int("fork.count", forkCount),
+		attribute.Int("fork.started", started),
+		attribute.Int("fork.failed", forkCount-started),
+		attribute.Int("fork.nodes", nodes),
+	)
+	logger.L().Info(ctx, "Forked sandbox",
+		logger.WithSandboxID(sandboxID),
+		logger.WithTeamID(teamID.String()),
+		logger.WithTemplateID(original.TemplateID),
+		zap.Int("fork_count", forkCount),
+		zap.Int("fork_started", started),
+		zap.Int("fork_failed", forkCount-started),
+		zap.Int("fork_nodes", nodes),
+	)
+
 	c.JSON(http.StatusCreated, results)
+}
+
+// forkOutcome counts the forks that started and the distinct nodes they started
+// on; nodeIDs is indexed like results.
+func forkOutcome(results []api.SandboxForkResult, nodeIDs []string) (started, nodes int) {
+	seen := make(map[string]struct{}, len(nodeIDs))
+	for i, result := range results {
+		if result.Sandbox == nil {
+			continue
+		}
+
+		started++
+		seen[nodeIDs[i]] = struct{}{}
+	}
+
+	return started, len(seen)
 }
 
 // forkHandleNotRunningSandbox classifies a fork request for a sandbox that is

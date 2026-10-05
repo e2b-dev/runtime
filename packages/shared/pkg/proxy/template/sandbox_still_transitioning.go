@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_sandbox_still_transitioning.html
 var sandboxStillTransitioningHTML string
-var sandboxStillTransitioningHTMLTemplate = template.Must(template.New("sandboxStillTransitioningHTML").Parse(sandboxStillTransitioningHTML))
+var sandboxStillTransitioningHTMLTemplate = newBrowserPage("sandboxStillTransitioningHTML", sandboxStillTransitioningHTML)
 
 type sandboxStillTransitioningData struct {
 	SandboxId string `json:"sandboxId"`

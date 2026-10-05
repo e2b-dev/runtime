@@ -7,20 +7,23 @@ package queries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const applyProjectLimitsProjection = `-- name: ApplyProjectLimitsProjection :one
 WITH changed AS (
-    INSERT INTO projection.project_limits (project_id, revision)
+    INSERT INTO projection.project_limits (project_id, revision, decided_at)
     VALUES (
         $1::uuid,
-        $2::bigint
+        $2::bigint,
+        $3::timestamptz
     )
     ON CONFLICT (project_id) DO UPDATE
     SET
         revision = EXCLUDED.revision,
+        decided_at = EXCLUDED.decided_at,
         updated_at = now()
     WHERE projection.project_limits.revision < EXCLUDED.revision
     RETURNING project_id
@@ -31,6 +34,7 @@ SELECT EXISTS (SELECT 1 FROM changed) AS applied
 type ApplyProjectLimitsProjectionParams struct {
 	ProjectID uuid.UUID
 	Revision  int64
+	DecidedAt *time.Time
 }
 
 // Advances the ledger that decides whether a delivery gets to write, and
@@ -46,7 +50,7 @@ type ApplyProjectLimitsProjectionParams struct {
 // the same project waits here and is compared against the winner's revision
 // rather than against what it read.
 func (q *Queries) ApplyProjectLimitsProjection(ctx context.Context, arg ApplyProjectLimitsProjectionParams) (bool, error) {
-	row := q.db.QueryRow(ctx, applyProjectLimitsProjection, arg.ProjectID, arg.Revision)
+	row := q.db.QueryRow(ctx, applyProjectLimitsProjection, arg.ProjectID, arg.Revision, arg.DecidedAt)
 	var applied bool
 	err := row.Scan(&applied)
 	return applied, err
@@ -80,6 +84,7 @@ INSERT INTO public.project_limits (
     default_free_disk_size_mb,
     max_disk_size_mb,
     max_free_disk_size_mb,
+    api_team_rps_list,
     updated_at
 ) VALUES (
     $1::uuid,
@@ -93,6 +98,7 @@ INSERT INTO public.project_limits (
     $9::bigint,
     $10::bigint,
     $10::bigint,
+    $11::bigint,
     now()
 )
 ON CONFLICT (team_id) DO UPDATE SET
@@ -106,6 +112,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     default_free_disk_size_mb  = EXCLUDED.default_free_disk_size_mb,
     max_disk_size_mb           = EXCLUDED.max_disk_size_mb,
     max_free_disk_size_mb      = EXCLUDED.max_free_disk_size_mb,
+    api_team_rps_list          = EXCLUDED.api_team_rps_list,
     updated_at                 = now()
 `
 
@@ -120,6 +127,7 @@ type UpsertProjectLimitsParams struct {
 	EventsTtlDays            int64
 	DefaultFreeDiskSizeMb    int64
 	MaxFreeDiskSizeMb        int64
+	ApiTeamRpsList           int64
 }
 
 // UpsertProjectLimits records a project's effective limits, which the
@@ -146,6 +154,7 @@ func (q *Queries) UpsertProjectLimits(ctx context.Context, arg UpsertProjectLimi
 		arg.EventsTtlDays,
 		arg.DefaultFreeDiskSizeMb,
 		arg.MaxFreeDiskSizeMb,
+		arg.ApiTeamRpsList,
 	)
 	return err
 }

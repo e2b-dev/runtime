@@ -1,0 +1,66 @@
+[Unit]
+Description=Env Daemon Service
+# Start as early as possible on cold boot: envd only needs journald's socket
+# and a writable rootfs; networking is configured by the kernel (ip=) before
+# userspace. Default dependencies would gate it on sysinit/basic.target
+# (~0.5s), and the previous After=multi-user.target on chrony-wait (~8s).
+DefaultDependencies=no
+# Order after /tmp is finalized so envd doesn't answer before it's safe to stage
+# files there: updateEnvd uploads an update binary to /tmp during early boot.
+# On our base images (Ubuntu/Debian) /tmp is a plain rootfs dir, not a tmpfs
+# mount, and systemd-tmpfiles-setup.service runs `systemd-tmpfiles --remove`
+# with a `D /tmp` rule that wipes /tmp's contents at boot. That service is only
+# ordered After=local-fs.target, so gating envd on local-fs.target alone leaves
+# them unordered and the upload races the wipe (chmod/mv then fail ENOENT).
+# Ordering after systemd-tmpfiles-setup.service closes that race.
+After=systemd-journald.socket systemd-remount-fs.service local-fs.target systemd-tmpfiles-setup.service
+Wants=systemd-journald.socket
+Conflicts=shutdown.target
+Before=shutdown.target
+# Disable rate limiting; retry forever
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+User=root
+Group=root
+Environment=GOTRACEBACK=all
+LimitCORE=infinity
+# Seed the tmpfs from the tar packed as the build's last guest step — after all
+# build steps, start_cmd, and ready_cmd, with update-ca-certificates run first
+# (one sequential read); fall back to copying the cert dir, then to regenerating.
+#
+# Contract: the tar is the regenerated trust store captured at the end of the
+# build, so it equals what update-ca-certificates would produce at boot —
+# including CAs added in user layers or start/ready, registered or not. Seeding
+# from it gives a complete ca-certificates.crt, so update-ca-certificates is
+# skipped on cold boot (its scattered rootfs reads are the cost we avoid). It
+# therefore does NOT re-merge a persisted egress-proxy CA
+# (/usr/local/share/ca-certificates/e2b-ca.crt) into the bundle at boot. That CA
+# is (re)installed by envd's POST /init for the current proxy, which runs before
+# the orchestrator marks the sandbox running/routable — so the egress CA is
+# guaranteed present for the sandbox's routable lifetime. The only gap is guest
+# units that auto-start and egress over TLS before /init; that is accepted
+# (revisit if a template needs boot-time egress).
+# The seeding logic is shared with the OpenRC service (Alpine) and never fails
+# the unit — a degraded trust store is recoverable, a dead envd is not.
+ExecStartPre=/usr/local/bin/e2b-seed-certs
+ExecStart=/usr/bin/envd
+Nice=-20
+IOSchedulingClass=realtime
+IOSchedulingPriority=4
+OOMPolicy=continue
+OOMScoreAdjust=-1000
+Environment="GOMEMLIMIT=512MiB"
+
+Delegate=yes
+MemoryMin=50M
+MemoryLow=100M
+CPUAccounting=yes
+CPUWeight=1000
+IOAccounting=yes
+IOWeight=10000
+
+[Install]
+WantedBy=multi-user.target

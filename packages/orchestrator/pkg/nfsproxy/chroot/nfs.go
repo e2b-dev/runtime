@@ -92,7 +92,10 @@ func NewNFSHandler(
 
 func (h *NFSHandler) OnInsert(_ context.Context, _ *sandbox.Sandbox) {}
 
-func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox) {
+// OnStopping is called when a sandbox leaves the live registry.
+func (h *NFSHandler) OnStopping(_ context.Context, _ *sandbox.Sandbox) {}
+
+func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox) error {
 	lifecycleID := sbx.LifecycleID
 
 	h.mu.Lock()
@@ -112,6 +115,8 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 		}
 		h.chrootUnmountsCounter.Add(ctx, 1)
 	}
+
+	return nil
 }
 
 func (h *NFSHandler) Mount(
@@ -173,7 +178,7 @@ func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request
 		return nil, ErrVolumeID
 	}
 
-	fs, err := h.builder.Chroot(ctx, volumeMount.Type, teamID, volumeMount.ID)
+	fs, err := h.builder.Chroot(volumeMount.Type, teamID, volumeMount.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mount %q: %w", volumeName, err)
 	}

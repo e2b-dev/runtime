@@ -115,6 +115,12 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because its node is busy, please retry", sandboxID))
 
 		return
+	// The sandbox is untouched: another replica, or a retry here, can pause it.
+	case errors.Is(err, orchestrator.ErrDraining):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonDraining, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because the server is shutting down, please retry", sandboxID))
+
+		return
 	default:
 		pause.LogFailure(ctx, sandboxID, teamID.String(), pause.ReasonRequest, filesystemOnly, err)
 		telemetry.ReportError(ctx, "error pausing sandbox", err)

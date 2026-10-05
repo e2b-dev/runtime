@@ -22,14 +22,14 @@ const (
 	volumeType = "test-vt"
 )
 
-func setupTestService(t *testing.T) (*Service, string, *orchestrator.VolumeInfo) {
-	t.Helper()
+func setupTestService(tb testing.TB) (*Service, string, *orchestrator.VolumeInfo) {
+	tb.Helper()
 
 	if os.Geteuid() != 0 {
-		t.Skip("Test requires root privileges")
+		tb.Skip("Test requires root privileges")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := tb.TempDir()
 	teamID := uuid.New()
 	volumeID := uuid.New()
 
@@ -48,11 +48,11 @@ func setupTestService(t *testing.T) (*Service, string, *orchestrator.VolumeInfo)
 		VolumeId:   volumeID.String(),
 	}
 
-	rootPath, err := s.getVolumeRootPath(t.Context(), volumeInfo)
-	require.NoError(t, err)
+	rootPath, err := s.getVolumeRootPath(tb.Context(), volumeInfo)
+	require.NoError(tb, err)
 
 	err = os.MkdirAll(rootPath, 0o755)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	return s, rootPath, volumeInfo
 }

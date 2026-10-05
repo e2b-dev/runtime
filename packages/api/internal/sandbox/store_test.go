@@ -55,21 +55,6 @@ func NewCallbackTracker(expectedCalls int) *CallbackTracker {
 	}
 }
 
-// Track returns a callback function that tracks invocations
-func (ct *CallbackTracker) Track(name string) InsertCallback {
-	return func(_ context.Context, sbx Sandbox) {
-		ct.mu.Lock()
-		ct.calls[name] = append(ct.calls[name], sbx)
-		ct.mu.Unlock()
-
-		if int(ct.actualCalls.Add(1)) >= ct.expectedCalls {
-			ct.closeOnce.Do(func() {
-				close(ct.done)
-			})
-		}
-	}
-}
-
 // TrackCreation returns a CreationCallback that tracks invocations.
 func (ct *CallbackTracker) TrackCreation(name string) CreationCallback {
 	return func(_ context.Context, sbx Sandbox, _ CreationMetadata) {
@@ -207,9 +192,8 @@ func TestAdd_NewSandbox(t *testing.T) {
 		storage := newTestStorage(t)
 		reservations := &NoOpReservationStorage{}
 
-		tracker := NewCallbackTracker(2) // Expect 2 callbacks
+		tracker := NewCallbackTracker(1) // Expect 1 callback
 		callbacks := Callbacks{
-			AddSandboxToRoutingTable: tracker.Track("AddSandboxToRoutingTable"),
 			AsyncNewlyCreatedSandbox: tracker.TrackCreation("AsyncNewlyCreatedSandbox"),
 		}
 
@@ -226,7 +210,6 @@ func TestAdd_NewSandbox(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify all callbacks called exactly once
-		tracker.AssertCallCount(t, "AddSandboxToRoutingTable", 1)
 		tracker.AssertCallCount(t, "AsyncNewlyCreatedSandbox", 1)
 
 		// Verify sandbox in storage
@@ -238,28 +221,32 @@ func TestAdd_NewSandbox(t *testing.T) {
 
 func TestAdd_NotNewlyCreated(t *testing.T) {
 	t.Parallel()
-	t.Run("not in cache - AddSandboxToRoutingTable called", func(t *testing.T) {
+	t.Run("not in cache - creation callback not called", func(t *testing.T) {
 		t.Parallel()
 		ctx := t.Context()
 
 		storage := newTestStorage(t)
 		reservations := &NoOpReservationStorage{}
 
-		// Add with newlyCreated=false, expect 1 callback
+		// Add with newlyCreated=false, expect 0 callbacks
 		tracker := NewCallbackTracker(1)
 		callbacks := Callbacks{
-			AddSandboxToRoutingTable: tracker.Track("AddSandboxToRoutingTable"),
 			AsyncNewlyCreatedSandbox: tracker.TrackCreation("AsyncNewlyCreatedSandbox"),
 		}
 		store := NewStore(storage, reservations, callbacks)
 		sbx := createTestSandbox()
 
 		err := store.Add(ctx, sbx, nil)
-		tracker.WaitForCalls(t, 2*time.Second)
-
 		require.NoError(t, err)
-		tracker.AssertCallCount(t, "AddSandboxToRoutingTable", 1)
+
+		// Give a small delay for any async callbacks (there should be none)
+		time.Sleep(100 * time.Millisecond)
+
 		tracker.AssertNotCalled(t, "AsyncNewlyCreatedSandbox")
+
+		stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
+		require.NoError(t, err)
+		assert.Equal(t, sbx.SandboxID, stored.SandboxID)
 	})
 }
 
@@ -279,7 +266,6 @@ func TestAdd_StorageErrors(t *testing.T) {
 		// Expect 0 callbacks since error should be returned immediately
 		tracker := NewCallbackTracker(1)
 		callbacks := Callbacks{
-			AddSandboxToRoutingTable: tracker.Track("AddSandboxToRoutingTable"),
 			AsyncNewlyCreatedSandbox: tracker.TrackCreation("AsyncNewlyCreatedSandbox"),
 		}
 		store := NewStore(mockStorage, reservations, callbacks)
@@ -295,7 +281,6 @@ func TestAdd_StorageErrors(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// No callbacks should have been called
-		tracker.AssertNotCalled(t, "AddSandboxToRoutingTable")
 		tracker.AssertNotCalled(t, "AsyncNewlyCreatedSandbox")
 	})
 }
@@ -310,10 +295,9 @@ func TestAdd_ConcurrentCalls(t *testing.T) {
 		reservations := &NoOpReservationStorage{}
 
 		numGoroutines := 100
-		tracker := NewCallbackTracker(numGoroutines * 2) // Each add calls 2 callbacks
+		tracker := NewCallbackTracker(numGoroutines) // Each add calls 1 callback
 
 		callbacks := Callbacks{
-			AddSandboxToRoutingTable: tracker.Track("AddSandboxToRoutingTable"),
 			AsyncNewlyCreatedSandbox: tracker.TrackCreation("AsyncNewlyCreatedSandbox"),
 		}
 		store := NewStore(storage, reservations, callbacks)
@@ -351,7 +335,6 @@ func TestAdd_ConcurrentCalls(t *testing.T) {
 		tracker.WaitForCalls(t, 5*time.Second)
 
 		// Verify all callbacks were called expected number of times
-		tracker.AssertCallCount(t, "AddSandboxToRoutingTable", numGoroutines)
 		tracker.AssertCallCount(t, "AsyncNewlyCreatedSandbox", numGoroutines)
 
 		// Verify all sandboxes are in storage

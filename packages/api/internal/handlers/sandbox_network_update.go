@@ -15,7 +15,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
-	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string) {
@@ -65,11 +64,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		canonical, err := sandbox_network.ValidateEgressProxy(ctx, &sandbox_network.EgressProxyConfig{
-			Address:  ep.Address,
-			Username: sharedUtils.DerefOrDefault(ep.Username, ""),
-			Password: sharedUtils.DerefOrDefault(ep.Password, ""),
-		}, nil)
+		canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
 		if err != nil {
 			telemetry.ReportError(ctx, "invalid egress proxy config", err)
 			a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))

@@ -121,6 +121,17 @@ runs:
         mkdir -p $SHARED_CHUNK_CACHE_PATH
         mkdir -p ~/logs
 
+        # In-test template builds resolve their kernel and firecracker
+        # through the build-kernel-version / build-firecracker-version
+        # flags, whose fallbacks read these envs. Converging them on the
+        # sandbox-template pins means host-init pulls exactly one version
+        # of each artifact. Exported only when the pin resolves; otherwise
+        # the code defaults apply and host-init pulled everything anyway.
+        pin_kernel=$(grep -oE 'KERNEL_VERSION: "[^"]+"' .github/actions/build-sandbox-template/action.yml | head -1 | cut -d'"' -f2 || true)
+        pin_fc=$(grep -oE 'FIRECRACKER_VERSION: "[^"]+"' .github/actions/build-sandbox-template/action.yml | head -1 | cut -d'"' -f2 || true)
+        [ -n "$pin_kernel" ] && export DEFAULT_KERNEL_VERSION="$pin_kernel"
+        [ -n "$pin_fc" ] && export DEFAULT_FIRECRACKER_VERSION="$pin_fc"
+
         echo "creating persistent volume mounts"
         test_volume_dir="$(realpath ${RUNNER_TEMP}/.e2b-test-volumes)"
         mkdir -p $test_volume_dir

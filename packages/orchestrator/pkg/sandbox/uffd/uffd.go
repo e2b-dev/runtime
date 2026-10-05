@@ -47,6 +47,9 @@ type Uffd struct {
 	memfd      atomic.Pointer[block.Memfd]
 	handler    utils.SetOnce[*userfaultfd.Userfaultfd]
 	fdExit     utils.SetOnce[*fdexit.FdExit]
+	// balloonMode is applied to the handler when it is created, or at once if
+	// it already exists; the read that sets it races FC connecting.
+	balloonMode atomic.Uint32
 
 	// logger carries the sandbox's identity (sandbox, template, team and
 	// build ids), so the serve loop and every component it hands the logger
@@ -242,6 +245,8 @@ func (u *Uffd) handle(ctx context.Context, fdExit *fdexit.FdExit) error {
 	}
 
 	u.handler.SetValue(uffd)
+	// Publish first: a label stored before this line lands here, one stored after it lands in SetBalloonMode.
+	uffd.SetBalloonMode(userfaultfd.BalloonMode(u.balloonMode.Load()))
 
 	u.readyOnce.Do(func() { close(u.readyCh) })
 
@@ -427,6 +432,16 @@ func (u *Uffd) EndCoWExport(w *userfaultfd.CoWWindow) {
 // swaps it out). The running VM keeps using it after an in-place snapshot.
 func (u *Uffd) PeekMemfd(_ context.Context) *block.Memfd {
 	return u.memfd.Load()
+}
+
+var _ BalloonModeLabeler = (*Uffd)(nil)
+
+// SetBalloonMode labels the serve metrics; it never blocks on the handler.
+func (u *Uffd) SetBalloonMode(mode userfaultfd.BalloonMode) {
+	u.balloonMode.Store(uint32(mode))
+	if handler, err := u.handler.Result(); err == nil {
+		handler.SetBalloonMode(mode)
+	}
 }
 
 // ServeStats returns a cumulative snapshot of demand faults served so far, or a

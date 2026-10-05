@@ -66,3 +66,9 @@ type MemoryBackend interface {
 	// needed to start.
 	ServeStats() userfaultfd.ServeSnapshot
 }
+
+// BalloonModeLabeler is implemented by backends whose serve metrics carry the
+// balloon's free-page mechanism once it has been read from Firecracker.
+type BalloonModeLabeler interface {
+	SetBalloonMode(mode userfaultfd.BalloonMode)
+}

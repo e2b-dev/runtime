@@ -5,8 +5,6 @@ const (
 
 	TemplateV2ReleaseVersion = "v2.1.0"
 	TemplateV2BetaVersion    = "v2.0.0"
-
-	TemplateV1Version = "v1.0.0"
 )
 
 const (

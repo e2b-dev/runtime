@@ -12,6 +12,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func recoverTestFactory(t *testing.T, flagOn bool) *Factory {
@@ -36,7 +37,7 @@ func recorder() (func(rootfs.RecoverOutcome), *[]rootfs.RecoverOutcome) {
 func TestFsRecoverPreBoot_Gating(t *testing.T) {
 	t.Parallel()
 
-	runtime := RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
+	runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
 
 	rec, got := recorder()
 	assert.Nil(t,
@@ -69,7 +70,7 @@ func TestFsRecoverPreBoot_Gating(t *testing.T) {
 func TestFsRecoverPreBoot_ClosurePropagatesFailure(t *testing.T) {
 	t.Parallel()
 
-	runtime := RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
+	runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
 	rec, got := recorder()
 	fn := recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, true, rec)
 	require.NotNil(t, fn)

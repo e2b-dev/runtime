@@ -20,14 +20,16 @@ import (
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/template/server")
 
 func (s *ServerStore) TemplateBuildDelete(ctx context.Context, in *templatemanager.TemplateBuildDeleteRequest) (*emptypb.Empty, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	done := s.info.TrackWork()
+	defer done()
+
 	ctx, childSpan := tracer.Start(ctx, "template-delete-request", trace.WithAttributes(
 		telemetry.WithTemplateID(in.GetTemplateID()),
 		telemetry.WithBuildID(in.GetBuildID()),
 	))
 	defer childSpan.End()
-
-	s.wg.Add(1)
-	defer s.wg.Done()
 
 	if in.GetTemplateID() == "" || in.GetBuildID() == "" {
 		return nil, errors.New("template id and build id are required fields")

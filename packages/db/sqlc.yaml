@@ -65,7 +65,6 @@ sql:
     schema:
       - "migrations"
       - "schema"
-      - "pkg/dashboard/migrations"
     gen:
       go:
         emit_pointers_for_null_types: true

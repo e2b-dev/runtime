@@ -3,6 +3,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,9 +25,228 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 const staleLogWarningMessage = "dropping envd log with a stale pre-resume timestamp"
+
+func TestAPIStoreLogsUsesSourceSandboxIdentity(t *testing.T) {
+	t.Parallel()
+
+	type collectorResult struct {
+		payload map[string]any
+		err     error
+	}
+
+	collectorResults := make(chan collectorResult, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := make(map[string]any)
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		collectorResults <- collectorResult{payload: payload, err: err}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(collector.Close)
+
+	hostIP := net.IPv4(127, 0, 0, 2)
+	sbx := &sandbox.Sandbox{
+		LifecycleStartedAt: time.Now().UTC().Add(-time.Minute),
+		Metadata: &sandbox.Metadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
+				SandboxID:  "sandbox-1",
+				TemplateID: "template-1",
+				TeamID:     "team-1",
+				BuildID:    "build-1",
+			},
+		},
+		Resources: &sandbox.Resources{
+			Slot: &network.Slot{HostIP: hostIP},
+		},
+	}
+	sandboxes := sandbox.NewSandboxesMap()
+	sandboxes.AssignNetwork(t.Context(), sbx)
+
+	store := NewHyperloopStore(logger.NewNopLogger(), sandboxes, collector.URL, nil)
+	router := gin.New()
+	router.POST("/logs", store.Logs)
+
+	payload := map[string]any{
+		"instanceID":  sbx.Runtime.SandboxID,
+		"sandboxID":   "untrusted-sandbox",
+		"sandbox_id":  "untrusted-sandbox",
+		"sandbox.id":  "untrusted-sandbox",
+		"envID":       "untrusted-template",
+		"env_id":      "untrusted-template",
+		"env.id":      "untrusted-template",
+		"templateID":  "untrusted-template",
+		"template_id": "untrusted-template",
+		"template.id": "untrusted-template",
+		"teamID":      "untrusted-team",
+		"team_id":     "untrusted-team",
+		"team.id":     "untrusted-team",
+		"buildID":     "untrusted-build",
+		"build_id":    "untrusted-build",
+		"build.id":    "untrusted-build",
+		"internal":    true,
+		"message":     "hello",
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/logs", strings.NewReader(string(body)))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = net.JoinHostPort(hostIP.String(), "4321")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	result := <-collectorResults
+	require.NoError(t, result.err)
+	assert.Equal(t, "hello", result.payload["message"])
+	assert.Equal(t, sbx.Runtime.SandboxID, result.payload["instanceID"])
+	assert.Equal(t, sbx.Runtime.TemplateID, result.payload["envID"])
+	assert.Equal(t, sbx.Runtime.TeamID, result.payload["teamID"])
+	assert.Equal(t, sbx.Runtime.BuildID, result.payload["buildID"])
+
+	for _, field := range []string{
+		"sandboxID", "sandbox_id", "sandbox.id",
+		"env_id", "env.id", "templateID", "template_id", "template.id",
+		"team_id", "team.id",
+		"build_id", "build.id",
+		"internal",
+	} {
+		assert.NotContains(t, result.payload, field)
+	}
+}
+
+func TestAPIStoreLogsOmitsUnknownBuildAndCountsMissingTeam(t *testing.T) { //nolint:paralleltest // swaps package-global metric instrument
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(t.Context())) })
+	testCounter, err := meterProvider.Meter(
+		"github.com/e2b-dev/infra/packages/orchestrator/pkg/hyperloopserver/handlers",
+	).Int64Counter(logForwardWriteCountName)
+	require.NoError(t, err)
+	previousCounter := logForwardWriteCount
+	logForwardWriteCount = testCounter
+	t.Cleanup(func() { logForwardWriteCount = previousCounter })
+
+	type collectorResult struct {
+		payload map[string]any
+		err     error
+	}
+
+	collectorResults := make(chan collectorResult, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := make(map[string]any)
+		err := json.NewDecoder(r.Body).Decode(&payload)
+		collectorResults <- collectorResult{payload: payload, err: err}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(collector.Close)
+
+	hostIP := net.IPv4(127, 0, 0, 4)
+	sbx := &sandbox.Sandbox{
+		LifecycleStartedAt: time.Now().UTC().Add(-time.Minute),
+		Metadata: &sandbox.Metadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
+				SandboxID:  "sandbox-1",
+				TemplateID: "template-1",
+			},
+		},
+		Resources: &sandbox.Resources{
+			Slot: &network.Slot{HostIP: hostIP},
+		},
+	}
+	sandboxes := sandbox.NewSandboxesMap()
+	sandboxes.AssignNetwork(t.Context(), sbx)
+
+	store := NewHyperloopStore(logger.NewNopLogger(), sandboxes, collector.URL, nil)
+	router := gin.New()
+	router.POST("/logs", store.Logs)
+
+	request := httptest.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		"/logs",
+		strings.NewReader(`{"instanceID":"sandbox-1","buildID":"untrusted-build","team_id":"untrusted-team","message":"hello"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = net.JoinHostPort(hostIP.String(), "4321")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	result := <-collectorResults
+	require.NoError(t, result.err)
+	assert.NotContains(t, result.payload, "buildID")
+	assert.NotContains(t, result.payload, "team_id")
+	assert.Empty(t, result.payload["teamID"])
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+	require.Len(t, metrics.ScopeMetrics, 1)
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 1)
+	sum, ok := metrics.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
+	require.True(t, ok)
+	degraded := attribute.NewSet(
+		attribute.String("route", "ingest"),
+		attribute.String("result", "degraded"),
+		attribute.String("reason", "missing_team_id"),
+	)
+	var degradedCount int64
+	for _, point := range sum.DataPoints {
+		if point.Attributes.Equals(&degraded) {
+			degradedCount = point.Value
+		}
+	}
+	assert.Equal(t, int64(1), degradedCount)
+}
+
+func TestAPIStoreLogsRejectsMismatchedInstanceIDBeforeReplacingIdentity(t *testing.T) {
+	t.Parallel()
+
+	var collectorRequests atomic.Int64
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		collectorRequests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(collector.Close)
+
+	hostIP := net.IPv4(127, 0, 0, 3)
+	sbx := &sandbox.Sandbox{
+		LifecycleStartedAt: time.Now().UTC().Add(-time.Minute),
+		Metadata: &sandbox.Metadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
+				SandboxID:  "sandbox-1",
+				TemplateID: "template-1",
+				TeamID:     "team-1",
+			},
+		},
+		Resources: &sandbox.Resources{
+			Slot: &network.Slot{HostIP: hostIP},
+		},
+	}
+	sandboxes := sandbox.NewSandboxesMap()
+	sandboxes.AssignNetwork(t.Context(), sbx)
+
+	store := NewHyperloopStore(logger.NewNopLogger(), sandboxes, collector.URL, nil)
+	router := gin.New()
+	router.POST("/logs", store.Logs)
+
+	request := httptest.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		"/logs",
+		strings.NewReader(`{"instanceID":"other-sandbox","sandbox.id":"sandbox-1","message":"hello"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = net.JoinHostPort(hostIP.String(), "4321")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Zero(t, collectorRequests.Load())
+}
 
 func TestLogForwardWriteCountName(t *testing.T) {
 	t.Parallel()
@@ -151,7 +371,7 @@ func TestAPIStoreLogsSamplesStaleTimestampWarning(t *testing.T) { //nolint:paral
 	sbx := &sandbox.Sandbox{
 		LifecycleStartedAt: lifecycleStart,
 		Metadata: &sandbox.Metadata{
-			Runtime: sandbox.RuntimeMetadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID:  "sandbox-1",
 				TemplateID: "template-1",
 				TeamID:     "team-1",

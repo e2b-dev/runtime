@@ -18,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -67,7 +68,7 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	const size = 10 * 1024 * 1024
@@ -88,6 +89,12 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	pool, err := NewDevicePool(1)
 	require.NoError(t, err, "failed to create device pool")
 
+	// Confine the pool to its own slot window: contention with parallel
+	// tests' pools otherwise burns the feeder's attempts on devices another
+	// pool connects first, and an exhausted feeder surfaces as ErrClosed in
+	// place of the cancellation under test.
+	claimSlotWindow(t, pool)
+
 	stop := make(chan struct{})
 	stopFeeder := sync.OnceFunc(func() { close(stop) })
 	t.Cleanup(stopFeeder)
@@ -101,7 +108,7 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	// from here on nothing else may take the slot whose release is under test, and nothing
 	// can, because the device is connected and so reads as in-use.
 	connected := DeviceSlot(math.MaxUint32)
-	mnt := NewDirectPathMount(overlay, pool, featureFlags,
+	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L(),
 		withAfterConnect(func(deviceIndex uint32) {
 			connected = deviceIndex
 			stopFeeder()

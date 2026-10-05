@@ -7,9 +7,12 @@ import (
 	"github.com/caarlos0/env/v11"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 type Config struct {
+	featureflags.Config
+
 	Port                        int                       `env:"PORT"                                         envDefault:"3010"`
 	PostgresConnectionString    string                    `env:"POSTGRES_CONNECTION_STRING,required,notEmpty"`
 	ClickhouseConnectionString  string                    `env:"CLICKHOUSE_CONNECTION_STRING"`
@@ -26,13 +29,8 @@ type Config struct {
 	RedisTLSEnabled  bool   `env:"REDIS_TLS_ENABLED"`
 	RedisPassword    string `env:"REDIS_PASSWORD"`
 
-	BillingServerURL      string `env:"BILLING_SERVER_URL"`
-	BillingServerAPIToken string `env:"BILLING_SERVER_API_TOKEN"`
-
 	OrySDKURL          string `env:"ORY_SDK_URL"`
 	OryProjectAPIToken string `env:"ORY_PROJECT_API_TOKEN,unset"`
-
-	DomainName string `env:"DOMAIN_NAME" envDefault:""`
 }
 
 type FailureCondition string
@@ -97,13 +95,28 @@ func Parse() (Config, error) {
 	return config, err
 }
 
+// validateOryConfig keeps the two Ory variables all-or-nothing. Setting
+// neither is a supported configuration: the service starts without an
+// identity provider, API-key flows are unaffected, and the endpoints that
+// need one answer 503. Setting exactly one is always a mistake.
 func validateOryConfig(config *Config) error {
+	if config.OrySDKURL == "" && config.OryProjectAPIToken == "" {
+		return nil
+	}
+
 	if config.OrySDKURL == "" {
-		return newFailureError(FailureConditionMissingOrySDKURL, "ORY_SDK_URL is required")
+		return newFailureError(FailureConditionMissingOrySDKURL, "ORY_SDK_URL is required when ORY_PROJECT_API_TOKEN is set")
 	}
 	if config.OryProjectAPIToken == "" {
-		return newFailureError(FailureConditionMissingOryProjectToken, "ORY_PROJECT_API_TOKEN is required")
+		return newFailureError(FailureConditionMissingOryProjectToken, "ORY_PROJECT_API_TOKEN is required when ORY_SDK_URL is set")
 	}
 
 	return nil
+}
+
+// IdentityProviderConfigured reports whether an identity provider is
+// configured. Parse guarantees both Ory variables are set when either is, so
+// one of them decides.
+func (c Config) IdentityProviderConfigured() bool {
+	return c.OrySDKURL != ""
 }

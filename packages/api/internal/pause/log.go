@@ -25,6 +25,9 @@ const (
 	// the removal, into a state pause cannot start from.
 	SkipReasonStateChanged     SkipReason = "state_changed"
 	SkipReasonAdmissionRefused SkipReason = "admission_refused"
+	// SkipReasonDraining: this replica is shutting down and stopped admitting
+	// pauses, so the sandbox is left running for a retry elsewhere.
+	SkipReasonDraining SkipReason = "draining"
 )
 
 // fsOnly rides on every pause event so the snapshot kind can be joined to the

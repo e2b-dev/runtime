@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -645,6 +646,64 @@ func TestOrchestrator_convertVolumeMounts(t *testing.T) {
 		assert.Equal(t, []*orchestrator.SandboxVolumeMount{
 			{Id: dbVolume.ID.String(), Name: "vol1", Path: "/vol1", Type: "local"},
 		}, actual)
+	})
+}
+
+func TestNewSandboxFromV2(t *testing.T) {
+	t.Parallel()
+
+	t.Run("v2 request has every NewSandbox field except secure", func(t *testing.T) {
+		t.Parallel()
+
+		v1Fields := map[string]reflect.Type{}
+		for f := range reflect.TypeFor[api.NewSandbox]().Fields() {
+			v1Fields[f.Name] = f.Type
+		}
+		delete(v1Fields, "Secure")
+
+		v2Fields := map[string]reflect.Type{}
+		for f := range reflect.TypeFor[api.NewSandboxV2]().Fields() {
+			v2Fields[f.Name] = f.Type
+		}
+
+		assert.Equal(t, v1Fields, v2Fields)
+	})
+
+	t.Run("forces secure and copies every field", func(t *testing.T) {
+		t.Parallel()
+
+		timeout := int32(60)
+		autoPause := true
+		autoPauseMemory := false
+		allowInternet := false
+		allowPublicTraffic := false
+
+		v2 := api.NewSandboxV2{
+			TemplateID:          "base",
+			Timeout:             &timeout,
+			AutoPause:           &autoPause,
+			AutoPauseMemory:     &autoPauseMemory,
+			AutoResume:          &api.SandboxAutoResumeConfig{Enabled: true},
+			AllowInternetAccess: &allowInternet,
+			Network:             &api.SandboxNetworkConfig{AllowPublicTraffic: &allowPublicTraffic},
+			Metadata:            &api.SandboxMetadata{"k": "v"},
+			EnvVars:             &api.EnvVars{"A": "1"},
+			Mcp:                 &api.Mcp{},
+			Iam:                 &api.SandboxIam{},
+			VolumeMounts:        &[]api.SandboxVolumeMount{{Name: "vol", Path: "/vol"}},
+		}
+
+		got := newSandboxFromV2(v2)
+
+		require.NotNil(t, got.Secure)
+		assert.True(t, *got.Secure)
+
+		got.Secure = nil
+		var want api.NewSandbox
+		raw, err := json.Marshal(v2)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(raw, &want))
+		assert.Equal(t, want, got)
 	})
 }
 

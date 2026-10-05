@@ -3,10 +3,18 @@ package batcher
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 func TestBatcherStartStop(t *testing.T) {
@@ -162,17 +170,17 @@ func TestBatcherConcurrentPush(t *testing.T) {
 func TestBatcherQueueSize(t *testing.T) {
 	t.Parallel()
 	ch := make(chan struct{})
+	entered := make(chan struct{}, 10)
+	completed := make(chan struct{}, 10)
 	n := 0
-	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
+	b, err := NewBatcher(func(_ context.Context, batch []int) error {
+		entered <- struct{}{}
 		<-ch
 		n += len(batch)
+		completed <- struct{}{}
 
 		return nil
-	}, BatcherOptions{
-		MaxDelay:     time.Hour,
-		MaxBatchSize: 3,
-		QueueSize:    10,
-	})
+	}, BatcherOptions{MaxDelay: time.Hour, MaxBatchSize: 3, QueueSize: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +192,7 @@ func TestBatcherQueueSize(t *testing.T) {
 			t.Fatalf("cannot add item %d to batch: %v", i, err)
 		}
 	}
-	time.Sleep(time.Millisecond)
+	<-entered
 	for i := range 10 {
 		if err := b.Push(i); err != nil {
 			t.Fatalf("cannot add item %d to batch: %v", i, err)
@@ -202,7 +210,10 @@ func TestBatcherQueueSize(t *testing.T) {
 	}
 
 	close(ch)
-	time.Sleep(time.Millisecond)
+	// Four completed batches leave at most one queued item.
+	for range 4 {
+		<-completed
+	}
 	for i := range 5 {
 		if err := b.Push(i); err != nil {
 			t.Fatalf("cannot add item %d to batch: %v", i, err)
@@ -220,7 +231,8 @@ func TestBatcherQueueSize(t *testing.T) {
 func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duration) {
 	t.Helper()
 
-	lastTime := time.Now()
+	startedAt := time.Now()
+	lastTime := startedAt
 	n := 0
 	nn := 0
 	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
@@ -253,8 +265,7 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 		t.Fatal(err)
 	}
 
-	batchSize := 1000 * maxDelay.Seconds()
-	expectedN := int(1.2 * (float64(itemsCount) + batchSize - 1) / batchSize)
+	expectedN := int(time.Since(startedAt)/maxDelay) + 2
 	if n > expectedN {
 		t.Fatalf("Unexpected number of batch func calls: %d. Expected no more than %d. itemsCount=%d, maxDelay=%s",
 			n, expectedN, itemsCount, maxDelay)
@@ -306,5 +317,100 @@ func testBatcherPushMaxBatchSize(t *testing.T, itemsCount, batchSize int) {
 	}
 	if nn != itemsCount {
 		t.Fatalf("Unexpected number of items in all batches: %d. Expected %d. batchSize=%d", nn, itemsCount, batchSize)
+	}
+}
+
+func TestBatcherRefreshesRunningLimits(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		source := ldtestdata.DataSource()
+		set := func(flag featureflags.IntFlag, value int) {
+			source.Update(source.Flag(flag.Key()).ValueForAll(ldvalue.Int(value)))
+		}
+		set(featureflags.ClickhouseBatcherMaxBatchSize, 3)
+		set(featureflags.ClickhouseBatcherMaxDelay, 3600000)
+		ff, err := featureflags.NewClientWithDatasource(source)
+		require.NoError(t, err)
+		defer ff.Close(context.WithoutCancel(t.Context()))
+		batches := make(chan int, 8)
+		b, err := NewBatcher(func(_ context.Context, items []int) error {
+			batches <- len(items)
+
+			return nil
+		}, BatcherOptions{Name: "live", FeatureFlags: ff, QueueSize: 7})
+		require.NoError(t, err)
+		require.NoError(t, b.Start(t.Context()))
+		defer b.Stop()
+		require.NoError(t, b.Push(1))
+		require.NoError(t, b.Push(2))
+		synctest.Wait()
+		require.Empty(t, batches)
+		set(featureflags.ClickhouseBatcherMaxBatchSize, 2)
+		set(featureflags.ClickhouseBatcherQueueSize, 1)
+		time.Sleep(31 * time.Second)
+		synctest.Wait()
+		require.Len(t, batches, 1)
+		require.Equal(t, 2, <-batches, "lowering the limit must flush the existing batch without another Push")
+		require.Equal(t, 7, b.QueueSize, "queue capacity stays at its startup option")
+		set(featureflags.ClickhouseBatcherMaxDelay, 1000)
+		require.NoError(t, b.Push(3))
+		time.Sleep(31 * time.Second)
+		synctest.Wait()
+		require.Len(t, batches, 1)
+		require.Equal(t, 1, <-batches, "new delay must flush a partial batch without restart")
+		set(featureflags.ClickhouseBatcherMaxBatchSize, 0)
+		set(featureflags.ClickhouseBatcherMaxDelay, math.MaxInt64/int(time.Millisecond)+1)
+		time.Sleep(31 * time.Second)
+		require.NoError(t, b.Push(4))
+		require.NoError(t, b.Push(5))
+		synctest.Wait()
+		require.Len(t, batches, 1)
+		require.Equal(t, 2, <-batches, "invalid updates retain the last valid size")
+		require.NoError(t, b.Push(6))
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		require.Len(t, batches, 1)
+		require.Equal(t, 1, <-batches, "overflowing updates retain the last valid delay")
+	})
+}
+
+func TestBatcherDelayRefreshKeepsBatchAge(t *testing.T) {
+	t.Parallel()
+	for _, queuedAt := range []time.Duration{5 * time.Second, 25 * time.Second} {
+		t.Run(queuedAt.String(), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				source := ldtestdata.DataSource()
+				source.Update(source.Flag(featureflags.ClickhouseBatcherMaxDelay.Key()).ValueForAll(ldvalue.Int(3600000)))
+				ff, err := featureflags.NewClientWithDatasource(source)
+				require.NoError(t, err)
+				defer ff.Close(context.WithoutCancel(t.Context()))
+				flushed := make(chan struct{}, 1)
+				b, err := NewBatcher(func(context.Context, []int) error {
+					flushed <- struct{}{}
+
+					return nil
+				}, BatcherOptions{FeatureFlags: ff})
+				require.NoError(t, err)
+				require.NoError(t, b.Start(t.Context()))
+				defer b.Stop()
+				time.Sleep(queuedAt)
+				require.NoError(t, b.Push(1))
+				synctest.Wait()
+				source.Update(source.Flag(featureflags.ClickhouseBatcherMaxDelay.Key()).ValueForAll(ldvalue.Int(10000)))
+				time.Sleep(30*time.Second - queuedAt)
+				synctest.Wait()
+				remaining := queuedAt + 10*time.Second - 30*time.Second
+				if remaining > 0 {
+					require.Empty(t, flushed)
+					time.Sleep(remaining - time.Nanosecond)
+					synctest.Wait()
+					require.Empty(t, flushed)
+					time.Sleep(time.Nanosecond)
+					synctest.Wait()
+				}
+				require.Len(t, flushed, 1, "refresh must honor elapsed batch age")
+			})
+		})
 	}
 }

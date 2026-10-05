@@ -3,7 +3,6 @@
 package chrooted
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -23,13 +22,13 @@ func NewBuilder(config cfg.Config) *Builder {
 	return &Builder{config: config}
 }
 
-func (b *Builder) Chroot(ctx context.Context, volumeType string, teamID, volumeID uuid.UUID) (*Chrooted, error) {
+func (b *Builder) Chroot(volumeType string, teamID, volumeID uuid.UUID) (*Chrooted, error) {
 	fullPath, err := b.BuildVolumePath(volumeType, teamID, volumeID)
 	if err != nil {
 		return nil, err
 	}
 
-	fs, err := Chroot(ctx, fullPath, WithMetadata("volume-id", volumeID.String()))
+	fs, err := Chroot(fullPath, WithMetadata("volume-id", volumeID.String()))
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // TestFirecrackerSupports pins what the wrapper adds over the fcversion
@@ -25,7 +26,7 @@ func TestFirecrackerSupports(t *testing.T) {
 			Config: sandbox.NewConfig(sandbox.Config{
 				FirecrackerConfig: fc.Config{FirecrackerVersion: version},
 			}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: "test-sbx"},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "test-sbx"},
 		}}
 	}
 

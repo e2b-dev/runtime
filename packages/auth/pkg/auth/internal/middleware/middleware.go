@@ -128,8 +128,7 @@ func (a *commonAuthenticator[T]) Authenticate(ctx context.Context, ginCtx *gin.C
 		ginCtx.Status(validationError.Code)
 		ginCtx.Set(authFailureStatusContextKey, struct{}{})
 
-		var forbiddenError *internalauthteam.ForbiddenError
-		if errors.As(validationError.Err, &forbiddenError) {
+		if _, ok := errors.AsType[*internalauthteam.ForbiddenError](validationError.Err); ok {
 			return validationError.Err
 		}
 
@@ -261,24 +260,26 @@ func NewAuthProviderTeamAuthenticator(validationFunc func(ctx context.Context, g
 
 // NewAdminJWTAuthenticator creates an authenticator for the AdminJWTAuth security scheme.
 func NewAdminJWTAuthenticator(verifier *token.JWKSVerifier) Authenticator {
-	return &commonAuthenticator[struct{}]{
+	return &commonAuthenticator[string]{
 		schemeName: "AdminJWTAuth",
 		header: headerKey{
 			name:         HeaderAuthorization,
 			removePrefix: PrefixBearer,
 		},
-		validationFunc: func(ctx context.Context, _ *gin.Context, token string) (struct{}, *APIError) {
-			if _, err := verifier.Verify(ctx, token); err != nil {
-				return struct{}{}, &APIError{
-					Code:      http.StatusUnauthorized,
-					Err:       err,
-					ClientMsg: "Invalid service token.",
-				}
+		validationFunc: func(ctx context.Context, _ *gin.Context, token string) (string, *APIError) {
+			claims, err := verifier.Verify(ctx, token)
+			if err != nil {
+				return "", &APIError{Code: http.StatusUnauthorized, Err: err, ClientMsg: "Invalid service token."}
+			}
+			issuer, err := claims.GetIssuer()
+			if err != nil {
+				return "", &APIError{Code: http.StatusUnauthorized, Err: err, ClientMsg: "Invalid service token."}
 			}
 
-			return struct{}{}, nil
+			return issuer, nil
 		},
-		errorMessage: "Invalid service token.",
+		setContextFunc: authcontext.SetServiceIssuer,
+		errorMessage:   "Invalid service token.",
 	}
 }
 

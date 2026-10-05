@@ -127,9 +127,12 @@ type SwapResult struct {
 
 // SwapEnvdBinary replaces /usr/bin/envd inside an unmounted ext4 rootfs device
 // with the binary at srcPath, entirely in userspace via debugfs (libext2fs) —
-// never a host-kernel mount of the tenant image. Intended to run in the reboot
-// PreBootFn, before Firecracker boots, so a filesystem-only snapshot cold-boots
-// onto a newer envd. The device must not be mounted or written concurrently.
+// never a host-kernel mount of the tenant image. stageRoot must be the same
+// host-backed path in the pod and host mount namespaces because the jailed
+// debugfs unit bind-mounts the staged files by their absolute path. Intended to
+// run in the reboot PreBootFn, before Firecracker boots, so a filesystem-only
+// snapshot cold-boots onto a newer envd. The device must not be mounted or
+// written concurrently.
 //
 // The swap is transactional against the "never brick a sandbox" guarantee:
 // debugfs runs a script of commands and exits 0 even if an individual command
@@ -153,18 +156,21 @@ type SwapResult struct {
 // give it EnvdSwapBudget. Steps 4-5 decide the outcome and run on their own budgets,
 // so a spent ctx cannot make the rootfs state unknowable and fail an otherwise fine
 // boot.
-func SwapEnvdBinary(ctx context.Context, devicePath, srcPath string) (SwapResult, error) {
+func SwapEnvdBinary(ctx context.Context, devicePath, srcPath, stageRoot string) (SwapResult, error) {
 	ctx, span := tracer.Start(ctx, "envd-binary-swap", trace.WithAttributes(
 		attribute.String("device", devicePath),
 		attribute.String("src", srcPath),
 	))
 	defer span.End()
+	if !filepath.IsAbs(stageRoot) {
+		return SwapResult{}, fmt.Errorf("envd swap stage root must be absolute: %q", stageRoot)
+	}
 
 	// Stage the new binary and the debugfs command/dump files in a private
 	// directory bound into the jail. The target's real home (/fc-envd) is a
 	// gcsfuse mount that need not propagate into the unit's private mount
 	// namespace, so copy it onto local disk first.
-	stage, err := os.MkdirTemp("", "envd-swap-*")
+	stage, err := os.MkdirTemp(stageRoot, ".envd-swap-")
 	if err != nil {
 		return SwapResult{}, fmt.Errorf("create swap stage dir: %w", err)
 	}

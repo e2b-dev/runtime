@@ -37,6 +37,27 @@ func TestDirCreate(t *testing.T) {
 		require.True(t, fi.IsDir())
 	})
 
+	t.Run("create root", func(t *testing.T) {
+		t.Parallel()
+
+		for _, path := range []string{"/", "", ".", "//"} {
+			_, err := s.CreateDir(t.Context(), &orchestrator.CreateDirRequest{
+				Volume: volumeInfo,
+				Path:   path,
+			})
+			requireGRPCError(t, err, codes.AlreadyExists, orchestrator.UserErrorCode_PATH_ALREADY_EXISTS)
+
+			resp, err := s.CreateDir(t.Context(), &orchestrator.CreateDirRequest{
+				Volume:        volumeInfo,
+				Path:          path,
+				CreateParents: true,
+			})
+			require.NoError(t, err)
+			require.Equal(t, "/", resp.GetEntry().GetPath())
+			require.Equal(t, orchestrator.FileType_FILE_TYPE_DIRECTORY, resp.GetEntry().GetType())
+		}
+	})
+
 	t.Run("create nested dir with CreateParents=true", func(t *testing.T) {
 		t.Parallel()
 

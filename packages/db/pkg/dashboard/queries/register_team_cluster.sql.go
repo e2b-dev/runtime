@@ -13,43 +13,56 @@ import (
 
 const assignTeamCluster = `-- name: AssignTeamCluster :one
 WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
+    SELECT cluster_id,
+           POSITION('enterprise' IN LOWER(tier)) > 0 AS enterprise_eligible
     FROM public.teams
-    WHERE id = $1::uuid
+    WHERE id = $2::uuid
     FOR UPDATE
 ),
 assigned AS (
     UPDATE public.teams AS team
-    SET cluster_id = $2::uuid
+    SET cluster_id = $1::uuid
     FROM locked_team
-    WHERE team.id = $1::uuid
+    WHERE team.id = $2::uuid
       AND (
-          NOT $3::boolean
-          OR locked_team.cluster_id IS NULL
-          OR locked_team.cluster_id = $2::uuid
+          locked_team.cluster_id IS NOT DISTINCT FROM $1::uuid
+          OR (
+              locked_team.enterprise_eligible
+              AND (
+                  NOT $3::boolean
+                  OR locked_team.cluster_id IS NULL
+              )
+          )
       )
     RETURNING TRUE
 )
 SELECT locked_team.cluster_id,
+       EXISTS (
+           SELECT
+           FROM locked_team AS eligible_team
+           WHERE eligible_team.enterprise_eligible
+              OR eligible_team.cluster_id IS NOT DISTINCT FROM $1::uuid
+       ) AS assignment_eligible,
        EXISTS (SELECT FROM assigned) AS assigned
 FROM locked_team
 `
 
 type AssignTeamClusterParams struct {
-	TeamID           uuid.UUID
 	ClusterID        uuid.UUID
+	TeamID           uuid.UUID
 	PreserveExisting bool
 }
 
 type AssignTeamClusterRow struct {
-	ClusterID *uuid.UUID
-	Assigned  bool
+	ClusterID          *uuid.UUID
+	AssignmentEligible bool
+	Assigned           bool
 }
 
 func (q *Queries) AssignTeamCluster(ctx context.Context, arg AssignTeamClusterParams) (AssignTeamClusterRow, error) {
-	row := q.db.QueryRow(ctx, assignTeamCluster, arg.TeamID, arg.ClusterID, arg.PreserveExisting)
+	row := q.db.QueryRow(ctx, assignTeamCluster, arg.ClusterID, arg.TeamID, arg.PreserveExisting)
 	var i AssignTeamClusterRow
-	err := row.Scan(&i.ClusterID, &i.Assigned)
+	err := row.Scan(&i.ClusterID, &i.AssignmentEligible, &i.Assigned)
 	return i, err
 }
 

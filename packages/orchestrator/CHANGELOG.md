@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.16.1 (2026-09-10)
+
+
+### Bug Fixes
+
+* **clean-nfs-cache:** install CA certificates (ec5bb0c)
+
+## 0.16.0 (2026-09-10)
+
+
+### Features
+
+* **orchestrator:** expose sandbox limit metric (e567524)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.26.8 toolchain (e7116f5)
+* **deps:** update module github.com/stretchr/testify to v1.12.1 (a58bcb5)
+* **deps:** update module github.com/txn2/txeh to v1.8.1 (36a09d6)
+* **deps:** update module golang.org/x/oauth2 to v0.37.0 (92ca7bd)
+* **deps:** update module google.golang.org/api to v0.297.0 (852f328)
+* **deps:** update module google.golang.org/grpc to v1.83.2 [security] (7123140)
+* **deps:** update opentelemetry (34ecda9)
+* **deps:** update testcontainers-go monorepo to v0.44.0 (5473119)
+* **orchestrator:** bound sandbox proxy shutdown (ef855d0)
+* **orchestrator:** label a journal replay from the superblock, not e2fsck's exit code (949045d)
+
+
+### Performance Improvements
+
+* **orchestrator:** confine volume filesystems with openat2 instead of mount namespaces (358f142)
+
+## 0.15.0 (2026-09-10)
+
+
+### Features
+
+* **orchestrator:** publish sandbox routing record behind feature flags (3bc98a0)
+* **orch:** grant envd's memory protection through a system.slice drop-in (90bf96d)
+* **orch:** report and record the memory protection on envd's cgroup chain per start (8a1809e)
+
+## 0.14.0 (2026-09-09)
+
+
+### Features
+
+* **orchestrator:** add shutting-down status (c7bb7eb)
+* **orchestrator:** report outstanding work (b51e116)
+
+
+### Bug Fixes
+
+* **deps:** update module google.golang.org/grpc to v1.83.1 [security] (27006d5)
+* **orchestrator:** bound peer blob sends below the receive limit (4e98e00)
+
+
+### Code Refactoring
+
+* **orchestrator:** track outstanding node work (ffab524)
+
 ## 0.13.0 (2026-09-07)
 
 

@@ -87,6 +87,16 @@ func dbNetworkConfigToAPI(network *dbtypes.SandboxNetworkConfig) *api.SandboxNet
 				username := egress.EgressProxyUsername
 				proxyCfg.Username = &username
 			}
+			// The CA bundle is omitted too: the caller supplied it, and it is
+			// multi-kilobyte.
+			if t := egress.EgressProxyTLS; t != nil && t.Enabled {
+				tlsCfg := &api.SandboxEgressProxyTLSConfig{Enabled: true}
+				if t.ServerName != "" {
+					serverName := t.ServerName
+					tlsCfg.ServerName = &serverName
+				}
+				proxyCfg.Tls = tlsCfg
+			}
 			result.EgressProxy = proxyCfg
 		}
 	}

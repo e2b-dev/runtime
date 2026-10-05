@@ -73,10 +73,10 @@ func TestSandboxWithEnabledTrafficAccessTokenButMissingHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	assert.True(t, strings.HasPrefix(string(body), "<html"))
-	assert.Contains(t, string(body), "Missing Traffic Access Token")
+	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
+	assert.Contains(t, string(body), "Missing traffic access token")
 	assert.Contains(t, string(body), sbx.SandboxID)
-	assert.True(t, strings.HasSuffix(string(body), "</html>"))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(string(body)), "</html>"))
 }
 
 func TestSandboxWithEnabledTrafficAccessTokenButInvalidHeader(t *testing.T) {
@@ -131,10 +131,10 @@ func TestSandboxWithEnabledTrafficAccessTokenButInvalidHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	assert.True(t, strings.HasPrefix(string(body), "<html"))
-	assert.Contains(t, string(body), "Invalid Traffic Access Token")
+	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
+	assert.Contains(t, string(body), "Invalid traffic access token")
 	assert.Contains(t, string(body), sbx.SandboxID)
-	assert.True(t, strings.HasSuffix(string(body), "</html>"))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(string(body)), "</html>"))
 }
 
 func TestSandboxWithEnabledTrafficAccessToken(t *testing.T) {

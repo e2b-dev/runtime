@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
@@ -25,9 +26,11 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -113,6 +116,7 @@ func admissionTestServer(t *testing.T, graceMs *int) *Server {
 	meter := noop.NewMeterProvider().Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
 
 	return &Server{
+		info:                       &service.ServiceInfo{},
 		sandboxFactory:             &sandbox.Factory{Sandboxes: sandbox.NewSandboxesMap()},
 		startingSandboxes:          utils.Must(utils.NewAdjustableSemaphore(1)),
 		sandboxPauseDuration:       utils.Must(telemetry.GetHistogram(meter, telemetry.PauseDurationHistogramName)),
@@ -136,7 +140,7 @@ func admissionTestSandbox(t *testing.T, sandboxID string, slotIdx int, durable *
 				Envd:              sandbox.EnvdMetadata{Version: "9.9.9"},
 				FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.14.1", KernelVersion: "vmlinux-6.1"},
 			}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: sandboxID},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 		Template:  admissionTestTemplate{memfile: &admissionRODevice{durable: durable, waiting: make(chan struct{})}},
@@ -311,10 +315,12 @@ func TestPause_AdmissionCallerCancelIsNotARefusal(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		<-admissionWaitBegun(sbx)
+		assert.Equal(t, int64(1), s.info.OutstandingWork())
 		cancel()
 	}()
 
 	_, pauseErr := s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-cancel"})
+	assert.Zero(t, s.info.OutstandingWork())
 
 	require.Error(t, pauseErr)
 	st, ok := status.FromError(pauseErr)
@@ -386,10 +392,12 @@ func TestCheckpoint_AdmissionCallerCancelIsNotARefusal(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		<-admissionWaitBegun(sbx)
+		assert.Equal(t, int64(1), s.info.OutstandingWork())
 		cancel()
 	}()
 
 	_, ckptErr := s.Checkpoint(ctx, &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-admission-ckpt-cancel"})
+	assert.Zero(t, s.info.OutstandingWork())
 
 	require.Error(t, ckptErr)
 	st, ok := status.FromError(ckptErr)
@@ -451,6 +459,7 @@ func admissionMetricsServer(t *testing.T, graceMs int) (*Server, *sdkmetric.Manu
 	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
 
 	return &Server{
+		info:                       &service.ServiceInfo{},
 		sandboxFactory:             &sandbox.Factory{Sandboxes: sandbox.NewSandboxesMap()},
 		sandboxPauseDuration:       utils.Must(telemetry.GetHistogram(meter, telemetry.PauseDurationHistogramName)),
 		pauseAdmissionCounter:      utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorSandboxPauseAdmissionCounterName)),
@@ -519,24 +528,26 @@ func TestPauseAdmissionMetrics_RefusedPause(t *testing.T) {
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, 30)
-	sbx := admissionTestSandbox(t, "sbx-metrics-refused", 21, utils.NewSetOnce[*header.Header]())
-	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+	synctest.Test(t, func(t *testing.T) {
+		sbx := admissionTestSandbox(t, "sbx-metrics-refused", 21, utils.NewSetOnce[*header.Header]())
+		s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
 
-	_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-refused"})
-	require.Error(t, pauseErr)
+		_, pauseErr := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-refused"})
+		require.Error(t, pauseErr)
 
-	points := admissionCounterPoints(t, reader)
-	require.Len(t, points, 1)
-	assert.EqualValues(t, 1, points[0].Value)
-	assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes),
-		"counter attributes must be exactly outcome+rpc")
+		points := admissionCounterPoints(t, reader)
+		require.Len(t, points, 1)
+		assert.EqualValues(t, 1, points[0].Value)
+		assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes),
+			"counter attributes must be exactly outcome+rpc")
 
-	waits := admissionWaitPoints(t, reader)
-	require.Len(t, waits, 1)
-	require.EqualValues(t, 1, waits[0].Count)
-	assert.Equal(t, map[string]string{"outcome": "refused"}, attrsAsMap(t, waits[0].Attributes),
-		"wait histogram attribute must be exactly outcome")
-	assert.GreaterOrEqual(t, waits[0].Sum, int64(30))
+		waits := admissionWaitPoints(t, reader)
+		require.Len(t, waits, 1)
+		require.EqualValues(t, 1, waits[0].Count)
+		assert.Equal(t, map[string]string{"outcome": "refused"}, attrsAsMap(t, waits[0].Attributes),
+			"wait histogram attribute must be exactly outcome")
+		assert.Equal(t, int64(30), waits[0].Sum)
+	})
 }
 
 func TestPauseAdmissionMetrics_RefusedCheckpoint(t *testing.T) {
@@ -606,10 +617,9 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 			_, _ = s.Pause(context.WithoutCancel(t.Context()), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-metrics-raw"})
 		}()
 
+		// The paused state follows completion of admission metric recording.
 		require.Eventually(t, func() bool {
-			points := admissionCounterPoints(t, reader)
-
-			return len(points) == 1
+			return sbx.GetStopReason() == sandbox.StopReasonPaused
 		}, 5*time.Second, 5*time.Millisecond)
 
 		points := admissionCounterPoints(t, reader)
@@ -639,11 +649,62 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 		}()
 
 		require.Eventually(t, func() bool {
-			return len(admissionCounterPoints(t, reader)) == 1
+			return sbx.GetStopReason() == sandbox.StopReasonPaused
 		}, 5*time.Second, 5*time.Millisecond)
 
 		points := admissionCounterPoints(t, reader)
+		require.Len(t, points, 1)
 		assert.Equal(t, map[string]string{"outcome": "ready", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes))
 		assert.Empty(t, admissionWaitPoints(t, reader), "a no-wait admission must not sample the wait histogram")
 	})
+}
+
+// A filesystem-only checkpoint has no resume-fresh fallback: with its flag
+// off it is refused with FailedPrecondition before any destructive step, so
+// the API restores the sandbox to Running.
+func TestCheckpoint_FilesystemOnlyRefusedWithoutItsFlag(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	sbx := admissionTestSandbox(t, "sbx-ckpt-fs-only-off", 27, utils.NewSetOnce[*header.Header]())
+	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+
+	_, ckptErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-off", FilesystemOnly: true})
+
+	require.Error(t, ckptErr)
+	st, ok := status.FromError(ckptErr)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+
+	_, live := s.sandboxFactory.Sandboxes.Get("sbx-ckpt-fs-only-off")
+	assert.True(t, live, "a refused checkpoint must leave the sandbox live")
+	assert.Equal(t, sandbox.StopReasonCrashed, sbx.GetStopReason(), "no stop reason may be set by a refusal")
+	assert.True(t, s.sandboxFactory.Sandboxes.MarkStopping(t.Context(), "sbx-ckpt-fs-only-off", "lifecycle-1"),
+		"the sandbox must still be markable after a refusal")
+}
+
+// The admission pre-flight waits for the parent memfile header only when a
+// memory snapshot is taken. With the header still deduplicating past the
+// grace, a memory checkpoint refuses retryably while a filesystem-only one
+// passes admission and reaches its own flag instead; the status split is the
+// proof, no clock is measured.
+func TestCheckpoint_FilesystemOnlySkipsMemoryAdmission(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, new(40))
+	sbx := admissionTestSandbox(t, "sbx-ckpt-fs-only-admission", 28, utils.NewSetOnce[*header.Header]())
+	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+
+	_, memErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-admission"})
+	require.Error(t, memErr)
+	memSt, ok := status.FromError(memErr)
+	require.True(t, ok)
+	require.Equal(t, codes.ResourceExhausted, memSt.Code())
+
+	_, fsErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-admission", FilesystemOnly: true})
+
+	require.Error(t, fsErr)
+	fsSt, ok := status.FromError(fsErr)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, fsSt.Code(), "fs-only must pass admission and be refused by its own flag; the memory call's ResourceExhausted above shows the grace was live")
 }

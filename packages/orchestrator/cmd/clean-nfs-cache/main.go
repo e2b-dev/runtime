@@ -7,12 +7,14 @@ import (
 	"os"
 	"time"
 
+	envconfig "github.com/caarlos0/env/v11"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/cmd/clean-nfs-cache/cleaner"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/version"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -21,10 +23,11 @@ import (
 )
 
 const (
-	serviceName    = "clean-nfs-cache"
-	commitSHA      = ""
-	serviceVersion = "0.1.0"
+	serviceName = "clean-nfs-cache"
+	commitSHA   = ""
 )
+
+var serviceVersion = version.Version
 
 func main() {
 	ctx := context.Background()
@@ -114,7 +117,12 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 	}
 	opts.Path = args[0]
 
-	ffc, err := featureflags.NewClient()
+	ffConfig, err := envconfig.ParseAs[featureflags.Config]()
+	if err != nil {
+		return opts, nil, nil, nil, nil, fmt.Errorf("could not parse feature flags config: %w", err)
+	}
+
+	ffc, err := featureflags.NewClient(ffConfig.DeploymentEnvironment, serviceName)
 	if err != nil {
 		return opts, nil, nil, nil, nil, err
 	}

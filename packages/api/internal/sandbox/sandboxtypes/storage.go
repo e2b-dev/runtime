@@ -29,9 +29,15 @@ type Storage interface {
 // StateTransitions is the removal state machine: start a transition, undo one
 // the node refused, or wait one out.
 type StateTransitions interface {
-	StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (Sandbox, bool, func(context.Context, error), error)
-	RestoreRunning(ctx context.Context, teamID uuid.UUID, sandboxID string, fromState State, retryAfter time.Duration) (Sandbox, error)
+	StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error)
+	RestoreRunning(ctx context.Context, transition StateTransition, retryAfter time.Duration) (Sandbox, error)
 	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+}
+
+type StateTransition struct {
+	Sandbox Sandbox
+	// Only the caller that starts the transition owns its pre-clamp expiry.
+	OriginalEndTime *time.Time
 }
 
 // ReservationStorage tracks per-team sandbox-start reservations to enforce

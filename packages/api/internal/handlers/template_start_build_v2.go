@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,9 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/posthog/posthog-go"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
@@ -36,6 +40,54 @@ type dockerfileStore struct {
 	Steps        *[]api.TemplateStep `json:"steps"`
 }
 
+// CheckAndCancelConcurrentBuilds checks for concurrent builds and cancels them if found
+func (a *APIStore) CheckAndCancelConcurrentBuilds(ctx context.Context, templateID api.TemplateID, buildID uuid.UUID, teamClusterID uuid.UUID) error {
+	concurrentBuilds, err := a.sqlcDB.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
+		TemplateID:     templateID,
+		CurrentBuildID: buildID,
+	})
+	if err != nil {
+		telemetry.ReportErrorByCode(ctx, http.StatusInternalServerError, "Error when getting running builds", err, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID.String()))
+
+		return fmt.Errorf("error when getting running builds: %w", err)
+	}
+
+	// make sure there is no other build in progress for the same template
+	if len(concurrentBuilds) > 0 {
+		concurrentRunningBuilds := utils.Filter(concurrentBuilds, func(b queries.EnvBuild) bool {
+			return b.StatusGroup == types.BuildStatusGroupInProgress
+		})
+		buildIDs := make([]templatemanager.DeleteBuild, 0, len(concurrentRunningBuilds))
+		for _, b := range concurrentRunningBuilds {
+			clusterNodeID := b.ClusterNodeID
+			if clusterNodeID == nil {
+				continue
+			}
+
+			buildIDs = append(buildIDs, templatemanager.DeleteBuild{
+				TemplateID: templateID,
+				BuildID:    b.ID,
+				ClusterID:  teamClusterID,
+				NodeID:     *clusterNodeID,
+			})
+		}
+		telemetry.ReportEvent(ctx, "canceling running builds", attribute.StringSlice("ids", utils.Map(buildIDs, func(b templatemanager.DeleteBuild) string {
+			return fmt.Sprintf("%s/%s", b.TemplateID, b.BuildID)
+		})))
+
+		deleteJobErr := a.templateManager.DeleteBuilds(ctx, buildIDs)
+		if deleteJobErr != nil {
+			telemetry.ReportErrorByCode(ctx, http.StatusInternalServerError, "Error when canceling running build", deleteJobErr, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID.String()))
+
+			return fmt.Errorf("error when canceling running build: %w", deleteJobErr)
+		}
+
+		telemetry.ReportEvent(ctx, "canceled running builds")
+	}
+
+	return nil
+}
+
 // PostV2TemplatesTemplateIDBuildsBuildID triggers a new build
 func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID api.TemplateID, buildID api.BuildID) {
 	ctx := c.Request.Context()
@@ -53,6 +105,20 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid build ID: %s", buildID))
 
 		telemetry.ReportCriticalError(ctx, "invalid build ID", err)
+
+		return
+	}
+
+	hasImage := body.FromImage != nil && *body.FromImage != ""
+	hasTemplate := body.FromTemplate != nil && *body.FromTemplate != ""
+	if hasImage == hasTemplate {
+		message := "must specify either fromImage or fromTemplate"
+		if hasImage {
+			message = "cannot specify both fromImage and fromTemplate"
+		}
+
+		a.sendAPIStoreError(c, http.StatusBadRequest, message)
+		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "template build source rejected", errors.New(message), telemetry.WithTemplateID(templateID))
 
 		return
 	}
@@ -88,6 +154,22 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		return
 	}
 
+	currentCluster, err := a.sqlcDB.GetTeamClusterForTemplateBuild(ctx, team.ID)
+	if err != nil {
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when checking the team's cluster")
+		telemetry.ReportCriticalError(ctx, "error when getting team cluster", err)
+
+		return
+	}
+	clusterID := clusters.WithClusterFallback(templateBuildDB.ActiveEnv.ClusterID)
+	if clusterID != clusters.WithClusterFallback(currentCluster) {
+		apiErr := templatecache.ErrorToAPIError(templatecache.ErrClusterMismatch, templateID)
+		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+		telemetry.ReportErrorByCode(ctx, apiErr.Code, "template build start cluster mismatch", apiErr.Err, telemetry.WithTemplateID(templateID))
+
+		return
+	}
+
 	telemetry.SetAttributes(ctx,
 		telemetry.WithTeamID(team.ID.String()),
 		telemetry.WithTemplateID(templateID),
@@ -97,7 +179,7 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 	ctx = featureflags.AddToContext(ctx, featureflags.TemplateContext(templateID))
 
 	// Check and cancel concurrent builds
-	if err := a.CheckAndCancelConcurrentBuilds(ctx, templateID, buildUUID, clusters.WithClusterFallback(team.ClusterID)); err != nil {
+	if err := a.CheckAndCancelConcurrentBuilds(ctx, templateID, buildUUID, clusterID); err != nil {
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error during template build request")
 
 		return
@@ -134,7 +216,7 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		return
 	}
 
-	builderNode, err := a.templateManager.GetAvailableBuildClient(ctx, clusters.WithClusterFallback(team.ClusterID))
+	builderNode, err := a.templateManager.GetAvailableBuildClient(ctx, clusterID)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Error when getting available build client")
 		telemetry.ReportCriticalError(ctx, "error when getting available build client", err, telemetry.WithTemplateID(templateID))
@@ -182,7 +264,7 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		body.FromImageRegistry,
 		body.Force,
 		body.Steps,
-		clusters.WithClusterFallback(team.ClusterID),
+		clusterID,
 		builderNode.NodeID,
 		version,
 	)

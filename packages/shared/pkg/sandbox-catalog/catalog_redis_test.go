@@ -77,6 +77,23 @@ func TestRedisSandboxCatalog(t *testing.T) {
 
 		require.NoError(t, catalog.DeleteSandbox(ctx, "sbx-never-stored", "exec-1"))
 	})
+
+	t.Run("keys live under the routing prefix", func(t *testing.T) {
+		t.Parallel()
+
+		require.Equal(t, "sandbox:routing:sbx-1", catalog.getCatalogKey("sbx-1"))
+	})
+}
+
+func TestDeleteSandboxReturnsRedisError(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	require.NoError(t, client.Close())
+	broken := NewRedisSandboxCatalog(client)
+	ctx := t.Context()
+
+	require.Error(t, broken.DeleteSandbox(ctx, "sbx-closed", "exec-1"))
 }
 
 func TestDeleteIfSameExecutionOutcomes(t *testing.T) {

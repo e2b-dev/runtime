@@ -1,0 +1,35 @@
+# The built-in OpenTelemetry collector, compose's otel-collector service: off
+# until the commented `patches:` line in ../kustomization.yaml is uncommented,
+# and fed once the e2b-settings literal there is 127.0.0.1:4317. It receives
+# OTLP/gRPC on 127.0.0.1:4317 and writes the e2b.* metrics into the pod's
+# ClickHouse; ../config/otel-collector.yaml, the otel-config ConfigMap, says
+# what it keeps.
+#
+# A JSON patch rather than a strategic-merge one because it has to append:
+# kustomize puts a container a strategic-merge patch adds at the front of the
+# list, where it would start before the stores. Appended after the dashboard
+# pair, neither the base template nor the dashboard waits for it. As a native
+# sidecar its startup probe still gates the next container, which here is
+# `ready`: a collector that never answers keeps the pod unready, where
+# compose, with no healthcheck to wait on, starts `ready` regardless. The
+# image has no shell, so the probe is HTTP, on the health check's loopback
+# port.
+- op: add
+  path: /spec/template/spec/initContainers/-
+  value:
+    name: otel-collector
+    image: otel/opentelemetry-collector-contrib:0.146.0
+    restartPolicy: Always
+    args: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumeMounts:
+      - { name: otel-config, mountPath: /etc/otelcol-contrib/config.yaml, subPath: config.yaml }
+    startupProbe:
+      httpGet: { host: 127.0.0.1, port: 13133, path: / }
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 12
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: otel-config
+    configMap: { name: otel-config }

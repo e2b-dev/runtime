@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/management"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
@@ -77,7 +78,7 @@ func newMembershipStore(db *testutils.Database) *APIStore {
 	return &APIStore{
 		authDB:            db.AuthDB,
 		authService:       auth,
-		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth),
+		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider()),
 	}
 }
 

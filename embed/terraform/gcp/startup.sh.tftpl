@@ -1,0 +1,60 @@
+#!/bin/bash
+# First boot: install Docker, materialize the two shipped files, bring the
+# stack up. Later boots: only `up -d --wait`, which re-adds the two host
+# mutations that do not survive a reboot (the TCP MSS clamp and
+# /var/run/netns). The files are written once; upgrades are explicit.
+# Everything this script prints goes to the google-startup-scripts journal
+# and the serial console, so it never prints the secrets it writes.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+MD=http://169.254.169.254/computeMetadata/v1/instance/attributes
+
+if ! command -v docker >/dev/null 2>&1; then
+  # Ubuntu's own apt-daily/unattended-upgrades can hold the dpkg lock on a
+  # first boot; wait for it instead of aborting under set -e.
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  # These are the host tools `preflight` checks, so a minimal image
+  # (ubuntu-minimal-2404-lts-amd64) boots too.
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq ca-certificates curl iptables rsync e2fsprogs iproute2
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  systemctl enable --now docker
+fi
+
+install -d -m 0755 /opt/e2b
+cd /opt/e2b
+if [ ! -f compose.yaml ]; then
+  if [ -n "${compose_base_url}" ]; then
+    curl -fsSL -o compose.yaml "${compose_base_url}/compose.yaml"
+  else
+    curl -fsS -H 'Metadata-Flavor: Google' "$MD/e2b-compose-yaml" -o compose.yaml
+  fi
+fi
+if [ ! -f .env ]; then
+  if [ -n "${compose_base_url}" ]; then
+    curl -fsSL -o .env "${compose_base_url}/.env"
+  else
+    curl -fsS -H 'Metadata-Flavor: Google' "$MD/e2b-dot-env" -o .env
+  fi
+  sed -i -E '/^#?(ADMIN_TOKEN|SANDBOX_ACCESS_TOKEN_HASH_SEED|TEAM_API_KEY|HUGEPAGES|E2B_DASHBOARD_HOST|E2B_OTEL_COLLECTOR_GRPC_ENDPOINT|COMPOSE_PROFILES)=/d' .env
+  cat >> .env <<EOF
+ADMIN_TOKEN=${admin_token}
+SANDBOX_ACCESS_TOKEN_HASH_SEED=${sandbox_access_token_hash_seed}
+TEAM_API_KEY=${team_api_key}
+HUGEPAGES=${hugepages}
+E2B_DASHBOARD_HOST=${dashboard_host}
+E2B_OTEL_COLLECTOR_GRPC_ENDPOINT=${otel_endpoint}
+COMPOSE_PROFILES=${compose_profiles}
+EOF
+  chmod 0600 .env
+fi
+
+systemctl start docker   # idempotent; a reboot never races dockerd
+docker compose up -d --wait
+# The ready service's log is deliberately not printed here: it carries the
+# team API key. Read the key with `terraform output -raw e2b_api_key`.

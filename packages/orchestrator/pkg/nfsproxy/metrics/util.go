@@ -19,9 +19,12 @@ var (
 	callsCounter = utils.Must(meter.Int64Counter("orchestrator.nfsproxy.calls.total",
 		metric.WithDescription("Total number of calls to the NFS proxy"),
 		metric.WithUnit("1")))
+	// Microseconds: the confinement layer serves the hottest calls (Lstat,
+	// Stat) in tens of microseconds, and a millisecond histogram rounds a
+	// regression back to that scale, or the win that removed it, to zero.
 	durationRecorder = utils.Must(meter.Int64Histogram("orchestrator.nfsproxy.call.duration",
 		metric.WithDescription("Duration of calls to the NFS proxy"),
-		metric.WithUnit("ms")))
+		metric.WithUnit("us")))
 )
 
 var (
@@ -42,7 +45,7 @@ func recordCall(ctx context.Context, operation string) finishFunc {
 
 	return func(err error) {
 		result := classifyResult(err)
-		durationMs := time.Since(start).Milliseconds()
+		durationUs := time.Since(start).Microseconds()
 
 		attrs := metric.WithAttributes(
 			operationKey.String(operation),
@@ -50,7 +53,7 @@ func recordCall(ctx context.Context, operation string) finishFunc {
 		)
 
 		callsCounter.Add(ctx, 1, attrs)
-		durationRecorder.Record(ctx, durationMs, attrs)
+		durationRecorder.Record(ctx, durationUs, attrs)
 	}
 }
 

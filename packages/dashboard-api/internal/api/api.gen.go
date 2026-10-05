@@ -42,6 +42,39 @@ func (e BuildStatus) Valid() bool {
 	}
 }
 
+// Defines values for ErrorCode.
+const (
+	ClusterAssignmentAlreadyAssigned    ErrorCode = "cluster_assignment_already_assigned"
+	ClusterAssignmentClusterNotFound    ErrorCode = "cluster_assignment_cluster_not_found"
+	ClusterAssignmentInvalid            ErrorCode = "cluster_assignment_invalid"
+	ClusterAssignmentProjectNotFound    ErrorCode = "cluster_assignment_project_not_found"
+	ClusterAssignmentRequiresEnterprise ErrorCode = "cluster_assignment_requires_enterprise"
+	ClusterRegistrationConflict         ErrorCode = "cluster_registration_conflict"
+	ClusterRegistrationInvalid          ErrorCode = "cluster_registration_invalid"
+)
+
+// Valid indicates whether the value is a known member of the ErrorCode enum.
+func (e ErrorCode) Valid() bool {
+	switch e {
+	case ClusterAssignmentAlreadyAssigned:
+		return true
+	case ClusterAssignmentClusterNotFound:
+		return true
+	case ClusterAssignmentInvalid:
+		return true
+	case ClusterAssignmentProjectNotFound:
+		return true
+	case ClusterAssignmentRequiresEnterprise:
+		return true
+	case ClusterRegistrationConflict:
+		return true
+	case ClusterRegistrationInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TagGroupsSort.
 const (
 	TagGroupsSortLatestAsc  TagGroupsSort = "latest_asc"
@@ -138,11 +171,6 @@ func (e GetTemplatesTemplateIDTagsGroupsParamsSort) Valid() bool {
 	}
 }
 
-// AddTeamMemberRequest defines model for AddTeamMemberRequest.
-type AddTeamMemberRequest struct {
-	Email openapi_types.Email `json:"email"`
-}
-
 // AdminAuthProviderProfile defines model for AdminAuthProviderProfile.
 type AdminAuthProviderProfile struct {
 	// Email Email address from the configured auth provider.
@@ -165,16 +193,6 @@ type AdminAuthProviderProfilesResolveRequest struct {
 // AdminAuthProviderProfilesResponse defines model for AdminAuthProviderProfilesResponse.
 type AdminAuthProviderProfilesResponse struct {
 	Profiles []AdminAuthProviderProfile `json:"profiles"`
-}
-
-// AdminAuthProviderUserBootstrapRequest defines model for AdminAuthProviderUserBootstrapRequest.
-type AdminAuthProviderUserBootstrapRequest struct {
-	OidcIssuer      string              `json:"oidc_issuer"`
-	OidcUserEmail   openapi_types.Email `json:"oidc_user_email"`
-	OidcUserId      string              `json:"oidc_user_id"`
-	OidcUserName    *string             `json:"oidc_user_name,omitempty"`
-	SignupIp        *string             `json:"signup_ip,omitempty"`
-	SignupUserAgent *string             `json:"signup_user_agent,omitempty"`
 }
 
 // AdminClusterCreateRequest defines model for AdminClusterCreateRequest.
@@ -208,14 +226,6 @@ type AdminTeamBootstrapRequest struct {
 
 	// Name Team name.
 	Name string `json:"name"`
-}
-
-// AdminTeamClusterAssignmentRequest defines model for AdminTeamClusterAssignmentRequest.
-type AdminTeamClusterAssignmentRequest struct {
-	ClusterId openapi_types.UUID `json:"cluster_id"`
-
-	// PreserveExisting Assign only when the team is unassigned or already assigned to cluster_id.
-	PreserveExisting *bool `json:"preserve_existing,omitempty"`
 }
 
 // AdminTeamClusterAssignmentResponse defines model for AdminTeamClusterAssignmentResponse.
@@ -276,11 +286,6 @@ type BuildsStatusesResponse struct {
 // CPUCount CPU cores for the sandbox
 type CPUCount = int64
 
-// CreateTeamRequest defines model for CreateTeamRequest.
-type CreateTeamRequest struct {
-	Name string `json:"name"`
-}
-
 // DefaultTemplate defines model for DefaultTemplate.
 type DefaultTemplate struct {
 	Aliases         []DefaultTemplateAlias `json:"aliases"`
@@ -315,9 +320,15 @@ type Error struct {
 	// Code Error code.
 	Code int32 `json:"code"`
 
+	// ErrorCode Stable machine-readable reason for an API error. New codes may be added as other errors adopt this contract. Clients must handle absent or unknown codes without interpreting the human-readable message.
+	ErrorCode *ErrorCode `json:"error_code,omitempty"`
+
 	// Message Error message.
 	Message string `json:"message"`
 }
+
+// ErrorCode Stable machine-readable reason for an API error. New codes may be added as other errors adopt this contract. Clients must handle absent or unknown codes without interpreting the human-readable message.
+type ErrorCode string
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
@@ -371,6 +382,9 @@ type ManagementClusterRegistrationRequest struct {
 	Token              string  `json:"token"`
 }
 
+// ManagementDecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+type ManagementDecidedAt = time.Time
+
 // ManagementProject defines model for ManagementProject.
 type ManagementProject struct {
 	// Email Contact address recorded on the project.
@@ -382,14 +396,34 @@ type ManagementProject struct {
 	Slug string `json:"slug"`
 }
 
+// ManagementProjectBlockRequest Desired project block state. A newer revision replaces the state, including any intervening manual block or unblock.
+type ManagementProjectBlockRequest struct {
+	// Blocked Whether the project is refused billable work.
+	Blocked bool `json:"blocked"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
+
+	// Reason Reason included in blocked-request errors. Cleared when blocked is false.
+	Reason *string `json:"reason,omitempty"`
+
+	// Revision Monotonic per-project revision. Older or duplicate revisions succeed without changing stored state.
+	Revision int64 `json:"revision"`
+}
+
 // ManagementProjectLimits A project's effective limits, already resolved by the caller. Every field is absolute: this side stores what it is given and performs no arithmetic of its own.
 //
 // The minimums below track the CHECK constraints on tiers, which is the contract for what a limit may be. project_limits stores the same values under looser constraints on purpose — it is a push target, and a floor that only rejects the impossible keeps a future decision about what is allowed a change to this schema rather than a migration.
 //
 // `max_disk_size_mb` and `max_free_disk_size_mb` are one ceiling under two names, and either name alone carries it. A caller that sends both must send them equal; a caller that sends neither is refused. Sending both is what a caller does while receivers older than the second name are still running.
 type ManagementProjectLimits struct {
+	// ApiTeamRpsList Requests per second a project may make to each list endpoint. Zero disables the limit.
+	ApiTeamRpsList           int64 `json:"api_team_rps_list"`
 	ConcurrentSandboxes      int32 `json:"concurrent_sandboxes"`
 	ConcurrentTemplateBuilds int32 `json:"concurrent_template_builds"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
 
 	// DefaultFreeDiskSizeMb The default free-space growth target when a template build request omits one. May sit anywhere at or below the maximum free-space growth target, and usually sits well below it; a delivery whose default exceeds the maximum is rejected.
 	DefaultFreeDiskSizeMb int64 `json:"default_free_disk_size_mb"`
@@ -662,35 +696,6 @@ type TemplateTagsCountResponse struct {
 	Total int64 `json:"total"`
 }
 
-// UpdateTeamRequest defines model for UpdateTeamRequest.
-type UpdateTeamRequest struct {
-	Name              *string `json:"name,omitempty"`
-	ProfilePictureUrl *string `json:"profilePictureUrl,omitempty"`
-}
-
-// UpdateTeamResponse defines model for UpdateTeamResponse.
-type UpdateTeamResponse struct {
-	Id                openapi_types.UUID `json:"id"`
-	Name              string             `json:"name"`
-	ProfilePictureUrl *string            `json:"profilePictureUrl,omitempty"`
-}
-
-// UserTeam defines model for UserTeam.
-type UserTeam struct {
-	BlockedReason     *string            `json:"blockedReason"`
-	CreatedAt         time.Time          `json:"createdAt"`
-	Email             string             `json:"email"`
-	Id                openapi_types.UUID `json:"id"`
-	IsBanned          bool               `json:"isBanned"`
-	IsBlocked         bool               `json:"isBlocked"`
-	IsDefault         bool               `json:"isDefault"`
-	Limits            UserTeamLimits     `json:"limits"`
-	Name              string             `json:"name"`
-	ProfilePictureUrl *string            `json:"profilePictureUrl"`
-	Slug              string             `json:"slug"`
-	Tier              string             `json:"tier"`
-}
-
 // UserTeamLimits defines model for UserTeamLimits.
 type UserTeamLimits struct {
 	ConcurrentSandboxes      int64 `json:"concurrentSandboxes"`
@@ -700,11 +705,6 @@ type UserTeamLimits struct {
 	MaxLengthHours           int64 `json:"maxLengthHours"`
 	MaxRamMb                 int64 `json:"maxRamMb"`
 	MaxVcpu                  int64 `json:"maxVcpu"`
-}
-
-// UserTeamsResponse defines model for UserTeamsResponse.
-type UserTeamsResponse struct {
-	Teams []UserTeam `json:"teams"`
 }
 
 // BuildId defines model for build_id.
@@ -806,17 +806,11 @@ type N404 = Error
 // N409 defines model for 409.
 type N409 = Error
 
-// N412 defines model for 412.
-type N412 = Error
-
 // N500 defines model for 500.
 type N500 = Error
 
 // N501 defines model for 501.
 type N501 = Error
-
-// N502 defines model for 502.
-type N502 = Error
 
 // GetBuildsParams defines parameters for GetBuilds.
 type GetBuildsParams struct {
@@ -906,13 +900,12 @@ type GetTemplatesTemplateIDTagsTagAssignmentsParams struct {
 type PostAdminClustersJSONRequestBody = AdminClusterCreateRequest
 
 // PostAdminTeamsBootstrapJSONRequestBody defines body for PostAdminTeamsBootstrap for application/json ContentType.
+//
+// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type PostAdminTeamsBootstrapJSONRequestBody = AdminTeamBootstrapRequest
 
 // PutAdminTeamsTeamIDBlockJSONRequestBody defines body for PutAdminTeamsTeamIDBlock for application/json ContentType.
 type PutAdminTeamsTeamIDBlockJSONRequestBody = AdminTeamBlockRequest
-
-// PutAdminTeamsTeamIDClusterJSONRequestBody defines body for PutAdminTeamsTeamIDCluster for application/json ContentType.
-type PutAdminTeamsTeamIDClusterJSONRequestBody = AdminTeamClusterAssignmentRequest
 
 // PostAdminUserProfilesByEmailJSONRequestBody defines body for PostAdminUserProfilesByEmail for application/json ContentType.
 type PostAdminUserProfilesByEmailJSONRequestBody = AdminAuthProviderProfilesLookupEmailRequest
@@ -920,23 +913,14 @@ type PostAdminUserProfilesByEmailJSONRequestBody = AdminAuthProviderProfilesLook
 // PostAdminUserProfilesResolveJSONRequestBody defines body for PostAdminUserProfilesResolve for application/json ContentType.
 type PostAdminUserProfilesResolveJSONRequestBody = AdminAuthProviderProfilesResolveRequest
 
-// PostAdminUsersBootstrapJSONRequestBody defines body for PostAdminUsersBootstrap for application/json ContentType.
-type PostAdminUsersBootstrapJSONRequestBody = AdminAuthProviderUserBootstrapRequest
-
-// PostTeamsJSONRequestBody defines body for PostTeams for application/json ContentType.
-type PostTeamsJSONRequestBody = CreateTeamRequest
-
-// PatchTeamsTeamIDJSONRequestBody defines body for PatchTeamsTeamID for application/json ContentType.
-type PatchTeamsTeamIDJSONRequestBody = UpdateTeamRequest
-
-// PostTeamsTeamIDMembersJSONRequestBody defines body for PostTeamsTeamIDMembers for application/json ContentType.
-type PostTeamsTeamIDMembersJSONRequestBody = AddTeamMemberRequest
-
 // ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
 type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
 
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
+
+// ManagementApplyProjectBlockJSONRequestBody defines body for ManagementApplyProjectBlock for application/json ContentType.
+type ManagementApplyProjectBlockJSONRequestBody = ManagementProjectBlockRequest
 
 // ManagementUpsertProjectLimitsJSONRequestBody defines body for ManagementUpsertProjectLimits for application/json ContentType.
 type ManagementUpsertProjectLimitsJSONRequestBody = ManagementProjectLimits
@@ -1009,6 +993,11 @@ func (t ManagementProjectLimits) MarshalJSON() ([]byte, error) {
 		}
 	}
 
+	object["api_team_rps_list"], err = json.Marshal(t.ApiTeamRpsList)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'api_team_rps_list': %w", err)
+	}
+
 	object["concurrent_sandboxes"], err = json.Marshal(t.ConcurrentSandboxes)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'concurrent_sandboxes': %w", err)
@@ -1017,6 +1006,13 @@ func (t ManagementProjectLimits) MarshalJSON() ([]byte, error) {
 	object["concurrent_template_builds"], err = json.Marshal(t.ConcurrentTemplateBuilds)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'concurrent_template_builds': %w", err)
+	}
+
+	if t.DecidedAt != nil {
+		object["decided_at"], err = json.Marshal(t.DecidedAt)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'decided_at': %w", err)
+		}
 	}
 
 	object["default_free_disk_size_mb"], err = json.Marshal(t.DefaultFreeDiskSizeMb)
@@ -1083,6 +1079,13 @@ func (t *ManagementProjectLimits) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
+	if raw, found := object["api_team_rps_list"]; found {
+		err = json.Unmarshal(raw, &t.ApiTeamRpsList)
+		if err != nil {
+			return fmt.Errorf("error reading 'api_team_rps_list': %w", err)
+		}
+	}
+
 	if raw, found := object["concurrent_sandboxes"]; found {
 		err = json.Unmarshal(raw, &t.ConcurrentSandboxes)
 		if err != nil {
@@ -1094,6 +1097,13 @@ func (t *ManagementProjectLimits) UnmarshalJSON(b []byte) error {
 		err = json.Unmarshal(raw, &t.ConcurrentTemplateBuilds)
 		if err != nil {
 			return fmt.Errorf("error reading 'concurrent_template_builds': %w", err)
+		}
+	}
+
+	if raw, found := object["decided_at"]; found {
+		err = json.Unmarshal(raw, &t.DecidedAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'decided_at': %w", err)
 		}
 	}
 
@@ -1171,8 +1181,10 @@ type ServerInterface interface {
 	// DeleteAdminClustersClusterID Delete an unreferenced cluster
 	// (DELETE /admin/clusters/{clusterID})
 	DeleteAdminClustersClusterID(c *gin.Context, clusterID ClusterID)
-	// PostAdminTeamsBootstrap Bootstrap team
+	// PostAdminTeamsBootstrap Bootstrap team (retired)
 	// (POST /admin/teams/bootstrap)
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PostAdminTeamsBootstrap(c *gin.Context)
 	// DeleteAdminTeamsTeamIDBan Unban a team
 	// (DELETE /admin/teams/{teamID}/ban)
@@ -1189,12 +1201,6 @@ type ServerInterface interface {
 	// GetAdminTeamsTeamIDCluster Get a team's assigned cluster
 	// (GET /admin/teams/{teamID}/cluster)
 	GetAdminTeamsTeamIDCluster(c *gin.Context, teamID TeamID)
-	// PutAdminTeamsTeamIDCluster Assign a cluster to a team
-	// (PUT /admin/teams/{teamID}/cluster)
-	PutAdminTeamsTeamIDCluster(c *gin.Context, teamID TeamID)
-	// DeleteAdminTeamsTeamIDClusterClusterID Detach a cluster from a team
-	// (DELETE /admin/teams/{teamID}/cluster/{clusterID})
-	DeleteAdminTeamsTeamIDClusterClusterID(c *gin.Context, teamID TeamID, clusterID ClusterID)
 	// PostAdminUserProfilesByEmail Lookup user profiles by email
 	// (POST /admin/user-profiles/by-email)
 	PostAdminUserProfilesByEmail(c *gin.Context)
@@ -1204,12 +1210,6 @@ type ServerInterface interface {
 	// GetAdminUserProfilesUserId User profile
 	// (GET /admin/user-profiles/{userId})
 	GetAdminUserProfilesUserId(c *gin.Context, userId UserId)
-	// PostAdminUsersBootstrap Bootstrap auth provider user
-	// (POST /admin/users/bootstrap)
-	PostAdminUsersBootstrap(c *gin.Context)
-	// DeleteAdminUsersUserId Delete user
-	// (DELETE /admin/users/{userId})
-	DeleteAdminUsersUserId(c *gin.Context, userId UserId)
 	// GetBuilds List team builds
 	// (GET /builds)
 	GetBuilds(c *gin.Context, params GetBuildsParams)
@@ -1225,30 +1225,15 @@ type ServerInterface interface {
 	// GetSandboxesSandboxIDRecord Sandbox record
 	// (GET /sandboxes/{sandboxID}/record)
 	GetSandboxesSandboxIDRecord(c *gin.Context, sandboxID SandboxID)
-	// GetTeams List user teams
-	// (GET /teams)
-	GetTeams(c *gin.Context)
-	// PostTeams Create team
-	// (POST /teams)
-	PostTeams(c *gin.Context)
 	// GetTeamsResolve Resolve team identity
 	// (GET /teams/resolve)
 	GetTeamsResolve(c *gin.Context, params GetTeamsResolveParams)
-	// PatchTeamsTeamID Update team
-	// (PATCH /teams/{teamID})
-	PatchTeamsTeamID(c *gin.Context, teamID TeamID)
 	// GetTeamsTeamIDLimits Get team limits
 	// (GET /teams/{teamID}/limits)
 	GetTeamsTeamIDLimits(c *gin.Context, teamID TeamID)
 	// GetTeamsTeamIDMembers List team members
 	// (GET /teams/{teamID}/members)
 	GetTeamsTeamIDMembers(c *gin.Context, teamID TeamID)
-	// PostTeamsTeamIDMembers Add team member
-	// (POST /teams/{teamID}/members)
-	PostTeamsTeamIDMembers(c *gin.Context, teamID TeamID)
-	// DeleteTeamsTeamIDMembersUserId Remove team member
-	// (DELETE /teams/{teamID}/members/{userId})
-	DeleteTeamsTeamIDMembersUserId(c *gin.Context, teamID TeamID, userId UserId)
 	// GetTeamsTeamIDStatus Get team access status
 	// (GET /teams/{teamID}/status)
 	GetTeamsTeamIDStatus(c *gin.Context, teamID TeamID)
@@ -1288,6 +1273,9 @@ type ServerInterface interface {
 	// ManagementUpsertProject Create or reconcile a project (v1).
 	// (PUT /v1/management/projects/{projectID})
 	ManagementUpsertProject(c *gin.Context, projectID ProjectID)
+	// ManagementApplyProjectBlock Apply a project's block state (v1).
+	// (PUT /v1/management/projects/{projectID}/block)
+	ManagementApplyProjectBlock(c *gin.Context, projectID ProjectID)
 	// ManagementDetachProjectCluster Detach a cluster assignment from a project (v1).
 	// (DELETE /v1/management/projects/{projectID}/cluster/{clusterID})
 	ManagementDetachProjectCluster(c *gin.Context, projectID ProjectID, clusterID ClusterID)
@@ -1487,65 +1475,6 @@ func (siw *ServerInterfaceWrapper) GetAdminTeamsTeamIDCluster(c *gin.Context) {
 	siw.Handler.GetAdminTeamsTeamIDCluster(c, teamID)
 }
 
-// PutAdminTeamsTeamIDCluster operation middleware
-func (siw *ServerInterfaceWrapper) PutAdminTeamsTeamIDCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PutAdminTeamsTeamIDCluster(c, teamID)
-}
-
-// DeleteAdminTeamsTeamIDClusterClusterID operation middleware
-func (siw *ServerInterfaceWrapper) DeleteAdminTeamsTeamIDClusterClusterID(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.DeleteAdminTeamsTeamIDClusterClusterID(c, teamID, clusterID)
-}
-
 // PostAdminUserProfilesByEmail operation middleware
 func (siw *ServerInterfaceWrapper) PostAdminUserProfilesByEmail(c *gin.Context) {
 
@@ -1595,44 +1524,6 @@ func (siw *ServerInterfaceWrapper) GetAdminUserProfilesUserId(c *gin.Context) {
 	}
 
 	siw.Handler.GetAdminUserProfilesUserId(c, userId)
-}
-
-// PostAdminUsersBootstrap operation middleware
-func (siw *ServerInterfaceWrapper) PostAdminUsersBootstrap(c *gin.Context) {
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostAdminUsersBootstrap(c)
-}
-
-// DeleteAdminUsersUserId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteAdminUsersUserId(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "userId" -------------
-	var userId UserId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "userId", c.Param("userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter userId: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.DeleteAdminUsersUserId(c, userId)
 }
 
 // GetBuilds operation middleware
@@ -1776,32 +1667,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDRecord(c *gin.Context) {
 	siw.Handler.GetSandboxesSandboxIDRecord(c, sandboxID)
 }
 
-// GetTeams operation middleware
-func (siw *ServerInterfaceWrapper) GetTeams(c *gin.Context) {
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetTeams(c)
-}
-
-// PostTeams operation middleware
-func (siw *ServerInterfaceWrapper) PostTeams(c *gin.Context) {
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostTeams(c)
-}
-
 // GetTeamsResolve operation middleware
 func (siw *ServerInterfaceWrapper) GetTeamsResolve(c *gin.Context) {
 
@@ -1827,31 +1692,6 @@ func (siw *ServerInterfaceWrapper) GetTeamsResolve(c *gin.Context) {
 	}
 
 	siw.Handler.GetTeamsResolve(c, params)
-}
-
-// PatchTeamsTeamID operation middleware
-func (siw *ServerInterfaceWrapper) PatchTeamsTeamID(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PatchTeamsTeamID(c, teamID)
 }
 
 // GetTeamsTeamIDLimits operation middleware
@@ -1902,65 +1742,6 @@ func (siw *ServerInterfaceWrapper) GetTeamsTeamIDMembers(c *gin.Context) {
 	}
 
 	siw.Handler.GetTeamsTeamIDMembers(c, teamID)
-}
-
-// PostTeamsTeamIDMembers operation middleware
-func (siw *ServerInterfaceWrapper) PostTeamsTeamIDMembers(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostTeamsTeamIDMembers(c, teamID)
-}
-
-// DeleteTeamsTeamIDMembersUserId operation middleware
-func (siw *ServerInterfaceWrapper) DeleteTeamsTeamIDMembersUserId(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "userId" -------------
-	var userId UserId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "userId", c.Param("userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter userId: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.DeleteTeamsTeamIDMembersUserId(c, teamID, userId)
 }
 
 // GetTeamsTeamIDStatus operation middleware
@@ -2392,6 +2173,31 @@ func (siw *ServerInterfaceWrapper) ManagementUpsertProject(c *gin.Context) {
 	siw.Handler.ManagementUpsertProject(c, projectID)
 }
 
+// ManagementApplyProjectBlock operation middleware
+func (siw *ServerInterfaceWrapper) ManagementApplyProjectBlock(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID ProjectID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementApplyProjectBlock(c, projectID)
+}
+
 // ManagementDetachProjectCluster operation middleware
 func (siw *ServerInterfaceWrapper) ManagementDetachProjectCluster(c *gin.Context) {
 
@@ -2551,16 +2357,11 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/builds/statuses", wrapper.GetBuildsStatuses)
 	router.GET(options.BaseURL+"/builds/:build_id", wrapper.GetBuildsBuildId)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/record", wrapper.GetSandboxesSandboxIDRecord)
-	router.GET(options.BaseURL+"/teams", wrapper.GetTeams)
-	router.POST(options.BaseURL+"/teams", wrapper.PostTeams)
-	router.POST(options.BaseURL+"/admin/users/bootstrap", wrapper.PostAdminUsersBootstrap)
 	router.POST(options.BaseURL+"/admin/teams/bootstrap", wrapper.PostAdminTeamsBootstrap)
 	router.POST(options.BaseURL+"/admin/clusters", wrapper.PostAdminClusters)
 	router.DELETE(options.BaseURL+"/admin/clusters/:clusterID", wrapper.DeleteAdminClustersClusterID)
 	router.GET(options.BaseURL+"/v1/management/clusters/:clusterID/destroy-readiness", wrapper.ManagementClusterDestroyReadiness)
 	router.GET(options.BaseURL+"/admin/teams/:teamID/cluster", wrapper.GetAdminTeamsTeamIDCluster)
-	router.PUT(options.BaseURL+"/admin/teams/:teamID/cluster", wrapper.PutAdminTeamsTeamIDCluster)
-	router.DELETE(options.BaseURL+"/admin/teams/:teamID/cluster/:clusterID", wrapper.DeleteAdminTeamsTeamIDClusterClusterID)
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/ban", wrapper.DeleteAdminTeamsTeamIDBan)
 	router.PUT(options.BaseURL+"/admin/teams/:teamID/ban", wrapper.PutAdminTeamsTeamIDBan)
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/block", wrapper.DeleteAdminTeamsTeamIDBlock)
@@ -2568,14 +2369,10 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/admin/user-profiles/resolve", wrapper.PostAdminUserProfilesResolve)
 	router.POST(options.BaseURL+"/admin/user-profiles/by-email", wrapper.PostAdminUserProfilesByEmail)
 	router.GET(options.BaseURL+"/admin/user-profiles/:userId", wrapper.GetAdminUserProfilesUserId)
-	router.DELETE(options.BaseURL+"/admin/users/:userId", wrapper.DeleteAdminUsersUserId)
 	router.GET(options.BaseURL+"/teams/resolve", wrapper.GetTeamsResolve)
-	router.PATCH(options.BaseURL+"/teams/:teamID", wrapper.PatchTeamsTeamID)
 	router.GET(options.BaseURL+"/teams/:teamID/status", wrapper.GetTeamsTeamIDStatus)
 	router.GET(options.BaseURL+"/teams/:teamID/limits", wrapper.GetTeamsTeamIDLimits)
 	router.GET(options.BaseURL+"/teams/:teamID/members", wrapper.GetTeamsTeamIDMembers)
-	router.POST(options.BaseURL+"/teams/:teamID/members", wrapper.PostTeamsTeamIDMembers)
-	router.DELETE(options.BaseURL+"/teams/:teamID/members/:userId", wrapper.DeleteTeamsTeamIDMembersUserId)
 	router.GET(options.BaseURL+"/templates", wrapper.GetTemplates)
 	router.GET(options.BaseURL+"/templates/defaults", wrapper.GetTemplatesDefaults)
 	router.GET(options.BaseURL+"/templates/:templateID", wrapper.GetTemplatesTemplateID)
@@ -2587,6 +2384,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.PUT(options.BaseURL+"/v1/management/projects/:projectID", wrapper.ManagementUpsertProject)
 	router.PUT(options.BaseURL+"/v1/management/projects/:projectID/members/:userID", wrapper.ManagementApplyProjectMember)
 	router.PUT(options.BaseURL+"/v1/management/projects/:projectID/limits", wrapper.ManagementUpsertProjectLimits)
+	router.PUT(options.BaseURL+"/v1/management/projects/:projectID/block", wrapper.ManagementApplyProjectBlock)
 	router.DELETE(options.BaseURL+"/v1/management/clusters/:clusterID", wrapper.ManagementDeleteCluster)
 	router.PUT(options.BaseURL+"/v1/management/clusters/:clusterID", wrapper.ManagementRegisterCluster)
 	router.DELETE(options.BaseURL+"/v1/management/projects/:projectID/cluster/:clusterID", wrapper.ManagementDetachProjectCluster)
@@ -2598,160 +2396,159 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"U9YXCv5oX31U/uAjVHe/3f3/AAAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

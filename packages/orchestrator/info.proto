@@ -30,7 +30,6 @@ message DiskMetrics {
   uint64 total_bytes = 5;
 }
 
-
 message MachineInfo {
   string cpu_architecture = 1;
   string cpu_family = 2;
@@ -51,6 +50,12 @@ message ServiceInfoResponse {
   MachineInfo machine_info = 54;
   repeated string labels = 55;
   google.protobuf.Timestamp service_status_changed_at = 56;
+
+  // Overlapping work holds, not distinct sandboxes or builds. Zero is idle.
+  uint64 outstanding_work = 58;
+
+  // Nonpositive values reject sandbox creation.
+  int64 max_sandboxes = 59;
 
   int64 metric_vcpu_used = 101 [deprecated = true];
   int64 metric_memory_used_mb = 102 [deprecated = true];

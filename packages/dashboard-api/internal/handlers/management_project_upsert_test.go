@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/management"
@@ -242,7 +243,7 @@ func (p projectFixture) request() api.ManagementProjectUpsertRequest {
 func newUpsertStore(db *testutils.Database) (*APIStore, *recordingCacheAuthService) {
 	auth := &recordingCacheAuthService{}
 
-	return &APIStore{managementService: management.NewService(db.AuthDB, db.SqlcClient, auth)}, auth
+	return &APIStore{managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider())}, auth
 }
 
 func callUpsertProject(t *testing.T, store *APIStore, projectID uuid.UUID, request api.ManagementProjectUpsertRequest) *httptest.ResponseRecorder {

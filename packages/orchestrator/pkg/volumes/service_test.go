@@ -162,16 +162,14 @@ func TestRelPath(t *testing.T) {
 func TestEnsureParentDirs(t *testing.T) {
 	t.Parallel()
 
-	// These tests require sudo to run as they use mount namespaces via Chrooted.
-	// Since we are instructed not to run them, this is a skeleton for the requested verification.
+	// ensureDirs chowns the directories it creates, which needs root.
 	if os.Geteuid() != 0 {
 		t.Skip("skipping test that requires root privileges")
 	}
 
 	tmpDir := t.TempDir()
 
-	ctx := t.Context()
-	fs, err := chrooted.Chroot(ctx, tmpDir)
+	fs, err := chrooted.Chroot(tmpDir)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err = fs.Close()

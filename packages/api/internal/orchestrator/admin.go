@@ -24,6 +24,7 @@ func (o *Orchestrator) AdminNodes(clusterID uuid.UUID) ([]*api.Node, error) {
 
 		meta := n.Metadata()
 		metrics := n.GetAPIMetric()
+		nodeMetrics := n.Metrics()
 		machineInfo := n.MachineInfo()
 		statusInfo := n.StatusInfo()
 		result = append(result, &api.Node{
@@ -41,7 +42,9 @@ func (o *Orchestrator) AdminNodes(clusterID uuid.UUID) ([]*api.Node, error) {
 			CreateSuccesses:      n.PlacementMetrics.SuccessCount(),
 			CreateFails:          n.PlacementMetrics.FailsCount(),
 			SandboxStartingCount: int(n.PlacementMetrics.InProgressCount()),
-			SandboxCount:         n.Metrics().SandboxCount,
+			SandboxCount:         nodeMetrics.SandboxCount,
+			MaxSandboxes:         nodeMetrics.MaxSandboxes,
+			OutstandingWork:      nodeMetrics.OutstandingWork,
 			Version:              meta.Version,
 			Commit:               meta.Commit,
 			Metrics:              metrics,
@@ -63,6 +66,7 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 
 	meta := n.Metadata()
 	metrics := n.GetAPIMetric()
+	nodeMetrics := n.Metrics()
 	machineInfo := n.MachineInfo()
 	statusInfo := n.StatusInfo()
 
@@ -80,7 +84,9 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 		StatusChangedAt: statusInfo.ChangedAt,
 		CreateSuccesses: n.PlacementMetrics.SuccessCount(),
 		CreateFails:     n.PlacementMetrics.FailsCount(),
-		SandboxCount:    n.Metrics().SandboxCount,
+		SandboxCount:    nodeMetrics.SandboxCount,
+		MaxSandboxes:    nodeMetrics.MaxSandboxes,
+		OutstandingWork: nodeMetrics.OutstandingWork,
 		Version:         meta.Version,
 		Commit:          meta.Commit,
 		Metrics:         metrics,

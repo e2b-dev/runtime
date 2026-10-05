@@ -15,6 +15,10 @@ const createSnapshotTemplateEnv = `-- name: CreateSnapshotTemplateEnv :one
 WITH new_env AS (
     INSERT INTO "public"."envs" (id, public, created_by, team_id, updated_at, source, cluster_id)
     VALUES ($1, FALSE, NULL, $2, now(), 'snapshot_template', $3)
+    ON CONFLICT (id) DO UPDATE SET updated_at = now()
+    WHERE envs.team_id = $2
+      AND envs.source = 'snapshot_template'
+      AND envs.deleted_at IS NULL
     RETURNING id
 ),
 
@@ -26,19 +30,17 @@ snapshot_template AS (
         $5,
         $6
     )
+    ON CONFLICT (env_id) DO NOTHING
+    RETURNING env_id
 ),
 
 build_assignment AS (
     INSERT INTO "public"."env_build_assignments" (env_id, build_id, tag)
-    VALUES (
-        (SELECT id FROM new_env),
-        $6,
-        $7
-    )
-    RETURNING env_id as snapshot_id
+    SELECT env_id, $6, $7
+    FROM snapshot_template
 )
 
-SELECT snapshot_id FROM build_assignment
+SELECT id AS snapshot_id FROM new_env
 `
 
 type CreateSnapshotTemplateEnvParams struct {
@@ -53,6 +55,10 @@ type CreateSnapshotTemplateEnvParams struct {
 
 // Creates a snapshot_template env entry with source='snapshot_template' and links it to an existing build
 // This is used after UpsertSnapshot to create a persistent snapshot template
+//
+// The caller generates snapshot_id outside the pool's retry loop, so a replay
+// reuses it. The conflict guards match only a row this statement could have
+// written; anything else returns no row, which fails the dependent inserts.
 func (q *Queries) CreateSnapshotTemplateEnv(ctx context.Context, arg CreateSnapshotTemplateEnvParams) (string, error) {
 	row := q.db.QueryRow(ctx, createSnapshotTemplateEnv,
 		arg.SnapshotID,

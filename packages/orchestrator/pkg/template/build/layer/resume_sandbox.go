@@ -13,6 +13,7 @@ import (
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // ResumeSandbox creates sandboxes for resuming existing templates
@@ -37,13 +38,13 @@ func (rs *ResumeSandbox) Sandbox(
 		ctx,
 		template,
 		rs.config,
-		sandbox.RuntimeMetadata{
+		sandboxtypes.RuntimeMetadata{
 			TemplateID:  layerExecutor.Config.TemplateID,
 			SandboxID:   config.InstanceBuildPrefix + id.Generate(),
 			ExecutionID: uuid.NewString(),
 			TeamID:      layerExecutor.Config.TeamID,
 			BuildID:     layerExecutor.Template.BuildID,
-			SandboxType: sandbox.SandboxTypeBuild,
+			SandboxType: sandboxtypes.SandboxTypeBuild,
 		},
 		time.Now(),
 		time.Now().Add(rs.timeout),

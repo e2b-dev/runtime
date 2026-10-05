@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -25,7 +27,6 @@ import (
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
-	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -34,7 +35,19 @@ import (
 
 const statusLogInterval = time.Second * 20
 
+// trackedWorkBound is the longest a tracked pause can hold its count: the
+// pause budget, then the terminal build-status write, which opens a fresh
+// budget once the pause context has expired.
+const trackedWorkBound = pauseTimeout + buildStatusWriteTimeout
+
+// workDrainGrace pads trackedWorkBound so the drain outlasts the work.
+const workDrainGrace = 5 * time.Second
+
 var ErrNodeNotFound = errors.New("node not found")
+
+// ErrDraining is defined in the sandbox package so the evictor can classify it
+// without an import cycle.
+var ErrDraining = sandbox.ErrDraining
 
 // SnapshotCacheInvalidator invalidates cached snapshot entries.
 type SnapshotCacheInvalidator interface {
@@ -50,7 +63,6 @@ type Orchestrator struct {
 	featureFlagsClient            *featureflags.Client
 	analytics                     *analyticscollector.Analytics
 	posthogClient                 *analyticscollector.PosthogClient
-	routingCatalog                e2bcatalog.SandboxesCatalog
 	sqlcDB                        *sqlcdb.Client
 	tel                           *telemetry.Client
 	clusters                      *clusters.Pool
@@ -66,6 +78,14 @@ type Orchestrator struct {
 
 	snapshotUpsertSem *utils.AdjustableSemaphore
 	redisStorage      *redisbackend.Storage
+
+	// work tracks operations that continue after their caller is gone, so a
+	// drain waits for them instead of killing them mid-write.
+	work            sync.WaitGroup
+	outstandingWork atomic.Int64
+	drainMu         sync.RWMutex
+	draining        bool
+	scoreHugepages  bool
 
 	// localClusterOwnsOrchestrators makes connectToClusterNode register
 	// local-cluster instances that report the Orchestrator role as nodes.
@@ -96,6 +116,8 @@ type Orchestrator struct {
 	// same string, and nesting Do calls for the same key on the same Group would
 	// block forever.
 	discoveryGroup singleflight.Group
+
+	startup *startupGate
 }
 
 func New(
@@ -125,8 +147,6 @@ func New(
 	}
 	analyticsInstance.Init(ctx)
 
-	routingCatalog := e2bcatalog.NewRedisSandboxCatalog(redisClient)
-
 	// We will need to either use Redis or Consul's KV for storing active sandboxes to keep everything in sync,
 	// right now we load them from Orchestrator
 	meter := tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator")
@@ -142,7 +162,7 @@ func New(
 		Timeout: nodeHealthCheckTimeout,
 	}
 
-	bestOfKAlgorithm := placement.NewBestOfK(getBestOfKConfig(ctx, featureFlags)).(*placement.BestOfK)
+	bestOfKAlgorithm := placement.NewBestOfK(getBestOfKConfig(ctx, featureFlags, config.BestOfKHugepageMemory)).(*placement.BestOfK)
 
 	redisStorage, err := redisbackend.NewStorage(redisClient, tel.MeterProvider, featureFlags)
 	if err != nil {
@@ -165,9 +185,9 @@ func New(
 		nodeDiscovery:        nodeDiscovery,
 		nodes:                smap.New[*nodemanager.Node](),
 		placementAlgorithm:   bestOfKAlgorithm,
+		scoreHugepages:       config.BestOfKHugepageMemory,
 		featureFlagsClient:   featureFlags,
 		accessTokenGenerator: accessTokenGenerator,
-		routingCatalog:       routingCatalog,
 		sqlcDB:               sqlcDB,
 		snapshotCache:        snapshotCache,
 		tel:                  tel,
@@ -187,11 +207,12 @@ func New(
 		redisStorage,
 		redisreservations.NewReservationStorage(redisClient, redisStorage.Notifier()),
 		sandbox.Callbacks{
-			AddSandboxToRoutingTable: o.addSandboxToRoutingTableOrLog,
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
 		},
 	)
+
+	o.startup = newStartupGate(ctx, clusters.StartupReady(), o.syncClusterDiscoveredNodes)
 
 	// Evict old sandboxes
 	sandboxEvictor, err := evictor.New(ctx, o.sandboxStore, o.RemoveSandbox, o.featureFlagsClient, meter)
@@ -221,6 +242,12 @@ func New(
 	go o.updateBestOfKConfig(ctx)
 
 	return &o, nil
+}
+
+// StartupReady closes once startup has observed a local node, completed the
+// initial cluster registry gate, and projected those snapshots into placement.
+func (o *Orchestrator) StartupReady() <-chan struct{} {
+	return o.startup.Ready()
 }
 
 func (o *Orchestrator) startStatusLogging(ctx context.Context) {
@@ -273,6 +300,54 @@ func (o *Orchestrator) startStatusLogging(ctx context.Context) {
 	}
 }
 
+// TrackWork registers an operation that outlives its caller. It reports false
+// once the drain has started, so new work cannot be admitted behind a drain
+// that already stopped waiting.
+func (o *Orchestrator) TrackWork() (func(), bool) {
+	o.drainMu.RLock()
+	defer o.drainMu.RUnlock()
+
+	if o.draining {
+		return nil, false
+	}
+
+	o.work.Add(1)
+	o.outstandingWork.Add(1)
+
+	return func() {
+		o.outstandingWork.Add(-1)
+		o.work.Done()
+	}, true
+}
+
+func (o *Orchestrator) OutstandingWork() int64 {
+	return o.outstandingWork.Load()
+}
+
+// Drain stops admitting tracked work and waits for what is in flight, bounded
+// by the budget that work stops itself at.
+func (o *Orchestrator) Drain(ctx context.Context) error {
+	o.drainMu.Lock()
+	o.draining = true
+	o.drainMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, trackedWorkBound+workDrainGrace)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		o.work.Wait()
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (o *Orchestrator) Close(ctx context.Context) error {
 	var errs []error
 
@@ -307,10 +382,6 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 
-	if err := o.routingCatalog.Close(ctx); err != nil {
-		errs = append(errs, err)
-	}
-
 	o.redisStorage.Close(ctx)
 
 	return errors.Join(errs...)
@@ -326,7 +397,7 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			config := getBestOfKConfig(ctx, o.featureFlagsClient)
+			config := getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages)
 
 			// Update the config
 			o.placementAlgorithm.UpdateConfig(config)
@@ -334,7 +405,7 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 	}
 }
 
-func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Client) placement.BestOfKConfig {
+func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Client, scoreHugepages bool) placement.BestOfKConfig {
 	k := featureFlagsClient.IntFlag(ctx, featureflags.BestOfKSampleSize)
 
 	maxOvercommitPercent := featureFlagsClient.IntFlag(ctx, featureflags.BestOfKMaxOvercommit)
@@ -346,8 +417,9 @@ func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Clie
 	maxOvercommit := float64(maxOvercommitPercent) / 100.0
 
 	return placement.BestOfKConfig{
-		R:     maxOvercommit,
-		K:     k,
-		Alpha: alpha,
+		R:              maxOvercommit,
+		K:              k,
+		Alpha:          alpha,
+		ScoreHugepages: scoreHugepages,
 	}
 }

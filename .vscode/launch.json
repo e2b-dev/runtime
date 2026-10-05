@@ -1,66 +1,6 @@
 {
   "version": "0.2.0",
-  "inputs": [
-    {
-      "id": "buildID",
-      "type": "promptString",
-      "description": "Build ID",
-      "default": "9dc30023-c2e5-4cb7-8f4d-5ae196627abd"
-    },
-    {
-      "id": "templateID",
-      "type": "promptString",
-      "description": "Template ID",
-      "default": "0x5brrleaeg0pxeon4uh"
-    },
-    {
-      "id": "sandboxID",
-      "type": "promptString",
-      "description": "Sandbox ID",
-      "default": "test-instance-1"
-    }
-  ],
   "configurations": [
-    {
-      "name": "Debug NBD test",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "buildFlags": "-race",
-      "program": "${workspaceFolder}/packages/block-storage/cmd/mock-nbd-overlay/main.go",
-      "console": "integratedTerminal",
-      "asRoot": true,
-      "args": [
-        "-file",
-        "${workspaceFolder}/packages/block-storage/.test/test.ext4"
-      ],
-    },
-    {
-      "name": "Debug orchestrastor test",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "buildFlags": "-race",
-      "program": "${workspaceFolder}/packages/orchestrator/cmd/mock-sandbox/mock.go",
-      "env": {
-        "NODE_ID": "test-client",
-        "TEMPLATE_BUCKET_NAME": "e2b-dev-fc-templates"
-      },
-      "args": [
-        "-template",
-        "${input:templateID}",
-        "-sandbox",
-        "${input:sandboxID}",
-        "-build",
-        "${input:buildID}",
-        "-alive",
-        "5",
-        "-count",
-        "2"
-      ],
-      "console": "integratedTerminal",
-      "asRoot": true
-    },
     {
       "name": "Debug api",
       "type": "go",

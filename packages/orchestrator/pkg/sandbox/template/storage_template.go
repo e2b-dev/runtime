@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -34,18 +36,32 @@ type storageTemplate struct {
 	snapfile *utils.SetOnce[File]
 	metafile *utils.SetOnce[File]
 
-	memfileHeader *utils.SetOnce[*header.Header]
+	// memfileHeader is atomic because the footprint gauge reads it from the
+	// metrics goroutine without a lock.
+	memfileHeader atomic.Pointer[utils.SetOnce[*header.Header]]
 	rootfsHeader  *utils.SetOnce[*header.Header]
 	// durableMemfileHeader, when non-nil, is the header the memfile will settle
 	// on (the deduped header while a provisional header is served); Fetch wires
 	// it into the memfile device as its durable header before publishing the
 	// device, so a pause parents off it rather than the provisional header.
 	durableMemfileHeader *utils.SetOnce[*header.Header]
-	localSnapfile        File
-	localMetafile        File
+	// dropProvisionalHeader, set only on a template built from a provisional
+	// memfile header, tells Fetch to clear the holder once it has read the
+	// header.
+	dropProvisionalHeader bool
+	localSnapfile         File
+	localMetafile         File
 
 	metrics     blockmetrics.Metrics
 	persistence storage.StorageProvider
+
+	// kind is set before the template is admitted and never changes after.
+	kind layerKind
+	// layerMark is guarded by the cache's extendMu.
+	layerMark layerMark
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func newTemplateFromStorage(
@@ -66,20 +82,23 @@ func newTemplateFromStorage(
 		return nil, fmt.Errorf("failed to create cache paths: %w", err)
 	}
 
-	return &storageTemplate{
+	t := &storageTemplate{
 		paths:                paths,
 		localSnapfile:        localSnapfile,
 		localMetafile:        localMetafile,
-		memfileHeader:        memfileHeader,
 		rootfsHeader:         rootfsHeader,
 		durableMemfileHeader: durableMemfileHeader,
 		metrics:              metrics,
 		persistence:          persistence,
+		kind:                 layerKindFetched,
 		memfile:              utils.NewSetOnce[block.ReadonlyDevice](),
 		rootfs:               utils.NewSetOnce[block.ReadonlyDevice](),
 		snapfile:             utils.NewSetOnce[File](),
 		metafile:             utils.NewSetOnce[File](),
-	}, nil
+	}
+	t.memfileHeader.Store(memfileHeader)
+
+	return t, nil
 }
 
 func (t *storageTemplate) Fetch(ctx context.Context, buildStore *build.DiffStore) {
@@ -181,7 +200,20 @@ func (t *storageTemplate) Fetch(ctx context.Context, buildStore *build.DiffStore
 	})
 
 	wg.Go(func() error {
-		memHdr, hdrErr := t.memfileHeader.WaitWithContext(ctx)
+		holder := t.memfileHeader.Load()
+		if holder == nil {
+			// Only a Fetch after the one that dropped the holder gets here.
+			errMsg := errors.New("memfile header holder already dropped")
+			if err := t.memfile.SetError(errMsg); err != nil {
+				return fmt.Errorf("failed to set memfile error: %w", errors.Join(errMsg, err))
+			}
+
+			return nil
+		}
+		memHdr, hdrErr := holder.WaitWithContext(ctx)
+		// Before the device is published, so a caller that has the memfile
+		// also observes the drop.
+		t.dropProvisionalMemfileHeader(ctx, memHdr)
 		if hdrErr != nil {
 			errMsg := fmt.Errorf("failed to resolve memfile header: %w", hdrErr)
 			if err := t.memfile.SetError(errMsg); err != nil {
@@ -289,8 +321,59 @@ func (t *storageTemplate) Fetch(ctx context.Context, buildStore *build.DiffStore
 	}
 }
 
+// dropProvisionalMemfileHeader clears the holder of a provisional memfile
+// header once Fetch has read the header h from it, and records the outcome.
+// Fetch builds the memfile device from h, and the device keeps it until the
+// deduped or the published header replaces it; headerFootprint is the
+// holder's only other reader. Only AddSnapshot builds a template from a
+// provisional header, and only it sets durableMemfileHeader.
+func (t *storageTemplate) dropProvisionalMemfileHeader(ctx context.Context, h *header.Header) {
+	if t.durableMemfileHeader == nil {
+		deadStructureOutcomeMetric.Add(ctx, 1, attrTemplateProvisionalHeaderNone)
+
+		return
+	}
+
+	var size int64
+	if h != nil {
+		size = int64(h.Mapping.ByteSize())
+	}
+	if !t.dropProvisionalHeader {
+		deadStructureOutcomeMetric.Add(ctx, 1, attrTemplateProvisionalHeaderFlagOff)
+		deadStructureBytesMetric.Add(ctx, size, attrTemplateProvisionalHeaderFlagOff)
+
+		return
+	}
+
+	t.memfileHeader.Store(nil)
+	deadStructureOutcomeMetric.Add(ctx, 1, attrTemplateProvisionalHeaderDropped)
+	deadStructureBytesMetric.Add(ctx, size, attrTemplateProvisionalHeaderDropped)
+}
+
+// Close is idempotent and safe to call concurrently. The cache can reach one
+// instance from more than one close path — a retired entry's last release and
+// an eviction callback queued by Invalidate — so the teardown runs once and
+// every caller gets its result.
 func (t *storageTemplate) Close(ctx context.Context) error {
-	return closeTemplate(ctx, t)
+	t.closeOnce.Do(func() { t.closeErr = t.close(ctx) })
+
+	return t.closeErr
+}
+
+func (t *storageTemplate) close(ctx context.Context) error {
+	err := closeTemplate(ctx, t)
+
+	// closeTemplate only removes the files it holds handles for, which leaves the
+	// metafile and the directory itself behind; nothing else reclaims them, since
+	// the startup sweep covers DefaultCacheDir and these live under
+	// TemplateCacheDir. The directory is private to this instance — CachePaths
+	// mints a fresh identifier per template — so removing it cannot touch another
+	// instance's files.
+	if pathsErr := t.paths.Close(); pathsErr != nil {
+		err = errors.Join(err, fmt.Errorf("failed to remove template cache dir: %w", pathsErr))
+	}
+
+	return err
 }
 
 func (t *storageTemplate) Files() storage.CachePaths {
@@ -338,6 +421,101 @@ func (t *storageTemplate) SchedulingMetadata(ctx context.Context) *orchestrator.
 	}
 
 	return scheduling.FromHeaders(rh.Metadata.BuildId, mh, rh, 0)
+}
+
+// headerFootprint reports the mapping entry count and approximate heap bytes
+// held by this template's resolved headers. It never blocks: the headers live
+// on the memfile/rootfs devices (the header holders stay unset for templates
+// loaded from storage — see SchedulingMetadata), and a device whose SetOnce has
+// not resolved yet is skipped. The gauge therefore undercounts still-fetching
+// templates rather than stalling the metrics callback on them.
+func (t *storageTemplate) headerFootprint() (entries int, bytes int) {
+	// Deduplicated by the mapping's backing storage rather than by header
+	// identity, because one allocation reaches this function by two routes. The
+	// holders below usually resolve to the very headers the devices carry; and
+	// once a snapshot's upload publishes, the device carries a CloneForUpload
+	// while the holder still carries the source — two distinct *Header sharing
+	// one Mapping, since the clone copies the struct and the copy shares its
+	// slices. Counting that allocation twice would overstate the number this
+	// gauge exists to make trustworthy, and it would do so as uploads land,
+	// which reads like retention growth rather than a counting artifact.
+	seen := make(map[*header.Header]struct{}, 4)
+	counted := make([]header.Mapping, 0, 4)
+
+	add := func(h *header.Header) {
+		if h == nil {
+			return
+		}
+		if _, dup := seen[h]; dup {
+			return
+		}
+		seen[h] = struct{}{}
+
+		for _, m := range counted {
+			if m.SharesStorageWith(h.Mapping) {
+				return
+			}
+		}
+		counted = append(counted, h.Mapping)
+
+		entries += h.Mapping.Len()
+		bytes += h.Mapping.ByteSize()
+	}
+
+	if dev, err := t.memfile.Result(); err == nil && dev != nil {
+		add(dev.Header())
+	}
+
+	if dev, err := t.rootfs.Result(); err == nil && dev != nil {
+		add(dev.Header())
+	}
+
+	// The holders are not always the headers the devices ended up on, and the
+	// difference is retained memory. A template built from a provisional memfile
+	// header keeps that header alive in memfileHeader after SwapHeaderIfCurrent
+	// has moved the device on to the deduped one, unless Fetch dropped the
+	// holder, so a paused-and-deduped template can hold two distinct mappings
+	// while the device reports one. Count every distinct header the template
+	// still references.
+	for _, holder := range []*utils.SetOnce[*header.Header]{t.memfileHeader.Load(), t.rootfsHeader, t.durableMemfileHeader} {
+		if holder == nil {
+			continue
+		}
+
+		if h, err := holder.Result(); err == nil {
+			add(h)
+		}
+	}
+
+	return entries, bytes
+}
+
+// generation is the chain generation of the template's headers, read without
+// blocking: from the memfile or rootfs device once resolved, else from the
+// header it was built from, else 0 while none has resolved.
+func (t *storageTemplate) generation() uint64 {
+	var headers []*header.Header
+	for _, s := range []*utils.SetOnce[block.ReadonlyDevice]{t.memfile, t.rootfs} {
+		if dev, err := s.Result(); err == nil && dev != nil {
+			headers = append(headers, dev.Header())
+		}
+	}
+	for _, holder := range []*utils.SetOnce[*header.Header]{t.memfileHeader.Load(), t.rootfsHeader} {
+		if holder == nil {
+			continue
+		}
+		if h, err := holder.Result(); err == nil {
+			headers = append(headers, h)
+		}
+	}
+
+	for _, h := range headers {
+		if h != nil && h.Metadata != nil {
+			return h.Metadata.Generation
+		}
+	}
+
+	return 0
 }
 
 func (t *storageTemplate) Memfile(ctx context.Context) (block.ReadonlyDevice, error) {

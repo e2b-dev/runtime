@@ -220,16 +220,9 @@ func (e *Evictor) evictSandbox(ctx context.Context, sbx sandbox.Sandbox) {
 	}
 	if err != nil {
 		if action == sandbox.StateActionPause {
-			switch {
-			case errors.Is(err, sandbox.PauseQueueExhaustedError{}):
-				pause.LogSkipped(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, pause.SkipReasonAdmissionRefused, opts.FilesystemOnly)
-			case isNotEvictableError(err):
-				pause.LogSkipped(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, pause.SkipReasonNotEvictable, opts.FilesystemOnly)
-			case isGone(err):
-				pause.LogSkipped(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, pause.SkipReasonNotFound, opts.FilesystemOnly)
-			case isStaleDecision(err, sbx.State):
-				pause.LogSkipped(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, pause.SkipReasonStateChanged, opts.FilesystemOnly)
-			default:
+			if skip, ok := pauseSkipReason(err, sbx.State); ok {
+				pause.LogSkipped(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, skip, opts.FilesystemOnly)
+			} else {
 				pause.LogFailure(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, opts.FilesystemOnly, err)
 			}
 		} else if !isKnownEvictionError(err, sbx.State) {
@@ -258,6 +251,25 @@ const (
 	degradeCauseRefused  = "admission_refused"
 	degradeCauseOverstay = "overstay_budget"
 )
+
+// pauseSkipReason classifies a pause error that left the sandbox running for
+// a later sweep. Anything else is a failure.
+func pauseSkipReason(err error, state sandbox.State) (pause.SkipReason, bool) {
+	switch {
+	case errors.Is(err, sandbox.PauseQueueExhaustedError{}):
+		return pause.SkipReasonAdmissionRefused, true
+	case errors.Is(err, sandbox.ErrDraining):
+		return pause.SkipReasonDraining, true
+	case isNotEvictableError(err):
+		return pause.SkipReasonNotEvictable, true
+	case isGone(err):
+		return pause.SkipReasonNotFound, true
+	case isStaleDecision(err, state):
+		return pause.SkipReasonStateChanged, true
+	default:
+		return "", false
+	}
+}
 
 func canTake(state sandbox.State, action sandbox.StateAction) bool {
 	return state == action.TargetState || sandbox.AllowedTransitions[state][action.TargetState]

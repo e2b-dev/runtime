@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -314,7 +315,7 @@ func TestAzureIntegration(t *testing.T) {
 			putBlob(path)
 		}
 
-		require.NoError(t, provider.DeleteObjectsWithPrefix(ctx, "prefix-del/"))
+		require.NoError(t, provider.DeleteObjectsWithPrefix(ctx, "prefix-del"))
 
 		for _, path := range doomed {
 			blob, err := provider.OpenBlob(ctx, path)
@@ -332,15 +333,32 @@ func TestAzureIntegration(t *testing.T) {
 		}
 
 		// An empty prefix would delete the entire container; it must error out.
-		require.ErrorContains(t, provider.DeleteObjectsWithPrefix(ctx, ""), "empty prefix")
+		require.ErrorIs(t, provider.DeleteObjectsWithPrefix(ctx, ""), errInvalidObjectPath)
 	})
 
-	t.Run("UploadSignedURLIsRefused", func(t *testing.T) {
-		// The interface method must fail loudly rather than return a URL an external
-		// client cannot use; see its doc comment.
-		_, err := provider.UploadSignedURL(ctx, "signed/refused.bin", time.Hour)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "x-ms-blob-type")
+	t.Run("UploadSignedURLRequiresTheReturnedHeaders", func(t *testing.T) {
+		path := "signed/upload.bin"
+		body := []byte("signed-upload-body")
+
+		upload, err := provider.UploadSignedURL(ctx, path, time.Hour)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"x-ms-blob-type": "BlockBlob"}, upload.Headers)
+
+		// Azurite rejects the header-less PUT with a bare 400 where real Azure names MissingRequiredHeader.
+		status, _, err := putSignedURL(ctx, t, upload.URL, nil, body)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, status)
+
+		status, responseBody, err := putSignedURL(ctx, t, upload.URL, upload.Headers, body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, status, responseBody)
+
+		object, err := provider.OpenBlob(ctx, path)
+		require.NoError(t, err)
+		var read bytes.Buffer
+		_, err = object.WriteTo(ctx, &read)
+		require.NoError(t, err)
+		assert.Equal(t, body, read.Bytes())
 	})
 
 	t.Run("DeleteNonexistentIsIdempotent", func(t *testing.T) {
@@ -399,4 +417,32 @@ func TestAzureIntegrationMissingContainerIsNotObjectNotExist(t *testing.T) {
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, ErrObjectNotExist)
 	})
+}
+
+// putSignedURL PUTs body to a signed upload URL with exactly the given headers.
+func putSignedURL(ctx context.Context, t *testing.T, url string, headers map[string]string, body []byte) (int, string, error) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, "", err
+	}
+
+	req.ContentLength = int64(len(body))
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return 0, "", err
+	}
+
+	return res.StatusCode, string(responseBody), nil
 }

@@ -1,3 +1,0 @@
-variable "prefix" {
-  type = string
-}

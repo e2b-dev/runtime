@@ -3,11 +3,14 @@
 package sandbox
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd"
 )
 
 func TestSetStopReasonFirstCallWins(t *testing.T) {
@@ -98,4 +101,25 @@ func TestExecutionDuration(t *testing.T) {
 			assert.Equal(t, tt.want, duration)
 		})
 	}
+}
+
+// A memory handler that exits with an error is what crash reporting needs to
+// see; one that has not exited, exited cleanly, or never existed reads nil.
+func TestMemoryHandlerErr(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, (&Sandbox{}).MemoryHandlerErr(), "no resources")
+	require.NoError(t, (&Sandbox{Resources: &Resources{}}).MemoryHandlerErr(), "no memory backend")
+
+	running := uffd.NewNoopMemory(4096, 4096)
+	require.NoError(t, (&Sandbox{Resources: &Resources{memory: running}}).MemoryHandlerErr(), "not exited")
+
+	stopped := uffd.NewNoopMemory(4096, 4096)
+	require.NoError(t, stopped.Stop())
+	require.NoError(t, (&Sandbox{Resources: &Resources{memory: stopped}}).MemoryHandlerErr(), "exited cleanly")
+
+	failed := uffd.NewNoopMemory(4096, 4096)
+	handlerErr := errors.New("uffdio copy: cannot allocate memory")
+	require.NoError(t, failed.Exit().SetError(handlerErr))
+	assert.ErrorIs(t, (&Sandbox{Resources: &Resources{memory: failed}}).MemoryHandlerErr(), handlerErr)
 }

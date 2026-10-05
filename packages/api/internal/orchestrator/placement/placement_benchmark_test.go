@@ -66,12 +66,38 @@ type NodeSimulator interface {
 // NodeFactory defines the function signature for creating simulated nodes
 type NodeFactory func(id string, config BenchmarkConfig) NodeSimulator
 
+// Simulated nodes back sandbox memory with 2 MiB hugepages, as the fleet does.
+const benchHugePageBytes = 2 * 1024 * 1024
+
+// hugepagePool renders a node's memory as the kernel's hugepage counters: the
+// whole capacity is the pool, faulted-in bytes are used pages, committed but
+// untouched bytes are reserved pages.
+func hugepagePool(capacityBytes, allocatedBytes, usedBytes uint64) (total, used, reserved uint64) {
+	total = capacityBytes / benchHugePageBytes
+	used = usedBytes / benchHugePageBytes
+	if allocatedBytes > usedBytes {
+		reserved = (allocatedBytes - usedBytes) / benchHugePageBytes
+	}
+
+	return total, used, reserved
+}
+
 // StandardNode implements the original SimulatedNode logic (real-time metric synchronization)
 type StandardNode struct {
 	*nodemanager.Node
 
-	mu                 sync.RWMutex
-	sandboxes          map[string]*LiveSandbox
+	memCapacity uint64 // hugepage pool in bytes; 0 reports no pool
+	mu          sync.RWMutex
+	sandboxes   map[string]*LiveSandbox
+
+	// The node's real state, published by report(). Never read back from the
+	// Node metrics: the algorithm's OptimisticAdd has already bumped those,
+	// and a heartbeat overwrites that bump rather than stacking on it.
+	cpuAllocated uint32
+	cpuUsed      float64 // cores
+	memAllocated uint64
+	memUsed      uint64
+
 	totalPlacements    atomic.Int64
 	rejectedPlacements atomic.Int64 // counts failed placements due to capacity
 }
@@ -80,7 +106,7 @@ type StandardNode struct {
 var _ NodeSimulator = &StandardNode{}
 
 func NewStandardNode(id string, config BenchmarkConfig) NodeSimulator {
-	return &StandardNode{
+	n := &StandardNode{
 		Node: nodemanager.NewTestNode(
 			id,
 			api.NodeStatusReady,
@@ -88,38 +114,82 @@ func NewStandardNode(id string, config BenchmarkConfig) NodeSimulator {
 			config.NodeCPUCapacity,
 			nodemanager.WithSandboxSleepingClient(config.SandboxCreateDuration),
 		),
-		sandboxes: make(map[string]*LiveSandbox),
+		memCapacity: config.NodeMemoryCapacity,
+		sandboxes:   make(map[string]*LiveSandbox),
 	}
+	n.report()
+
+	return n
 }
 
 func (n *StandardNode) GetNode() *nodemanager.Node {
 	return n.Node
 }
 
-func (n *StandardNode) PlaceSandbox(sbx *LiveSandbox) bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+// report publishes the real state the way an orchestrator heartbeat does.
+func (n *StandardNode) report() {
+	total, used, reserved := hugepagePool(n.memCapacity, n.memAllocated, n.memUsed)
 
-	metrics := n.Metrics()
-	// Check capacity with overcommit (Original Logic)
-	if metrics.CpuAllocated+uint32(sbx.RequestedCPU) > metrics.CpuCount*4 {
+	n.UpdateMetricsFromServiceInfoResponse(&orchestrator.ServiceInfoResponse{
+		MetricSandboxesRunning:     uint32(len(n.sandboxes)),
+		MetricCpuPercent:           uint32(n.cpuUsed * 100),
+		MetricCpuAllocated:         n.cpuAllocated,
+		MetricCpuCount:             n.Metrics().CpuCount,
+		MetricMemoryUsedBytes:      n.memUsed,
+		MetricMemoryAllocatedBytes: n.memAllocated,
+		MetricMemoryTotalBytes:     n.memCapacity,
+		MetricHugepagesTotal:       total,
+		MetricHugepagesUsed:        used,
+		MetricHugepagesReserved:    reserved,
+		MetricHugepageSizeBytes:    benchHugePageBytes,
+	})
+}
+
+// admit takes the sandbox into the real state, or refuses it. CPU is
+// over-committed; the hugepage pool is physical and refuses past its size.
+func (n *StandardNode) admit(sbx *LiveSandbox) bool {
+	requestedMem := uint64(sbx.RequestedMemory) * 1024 * 1024
+
+	if n.cpuAllocated+uint32(sbx.RequestedCPU) > n.Metrics().CpuCount*4 ||
+		(n.memCapacity > 0 && n.memAllocated+requestedMem > n.memCapacity) {
 		n.rejectedPlacements.Add(1)
 
 		return false
 	}
 
-	// Real-time update: directly modify Node Metrics
-	n.UpdateMetricsFromServiceInfoResponse(&orchestrator.ServiceInfoResponse{
-		MetricSandboxesRunning:     uint32(len(n.sandboxes)) + 1,
-		MetricCpuPercent:           metrics.CpuPercent + uint32(sbx.ActualCPUUsage*100),
-		MetricMemoryUsedBytes:      metrics.MemoryUsedBytes + uint64(sbx.ActualMemUsage),
-		MetricCpuCount:             metrics.CpuCount,
-		MetricMemoryTotalBytes:     metrics.MemoryTotalBytes,
-		MetricCpuAllocated:         metrics.CpuAllocated + uint32(sbx.RequestedCPU),
-		MetricMemoryAllocatedBytes: metrics.MemoryAllocatedBytes + uint64(sbx.RequestedMemory)*1024*1024,
-	})
 	n.sandboxes[sbx.ID] = sbx
+	n.cpuAllocated += uint32(sbx.RequestedCPU)
+	n.cpuUsed += sbx.ActualCPUUsage
+	n.memAllocated += requestedMem
+	n.memUsed += uint64(sbx.ActualMemUsage)
 	n.totalPlacements.Add(1)
+
+	return true
+}
+
+// release drops the sandbox from the real state.
+func (n *StandardNode) release(sandboxID string) {
+	sbx, exists := n.sandboxes[sandboxID]
+	if !exists {
+		return
+	}
+
+	delete(n.sandboxes, sandboxID)
+	n.cpuAllocated -= uint32(sbx.RequestedCPU)
+	n.cpuUsed -= sbx.ActualCPUUsage
+	n.memAllocated -= uint64(sbx.RequestedMemory) * 1024 * 1024
+	n.memUsed -= uint64(sbx.ActualMemUsage)
+}
+
+func (n *StandardNode) PlaceSandbox(sbx *LiveSandbox) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if !n.admit(sbx) {
+		return false
+	}
+
+	n.report()
 
 	return true
 }
@@ -128,19 +198,8 @@ func (n *StandardNode) RemoveSandbox(sandboxID string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	metrics := n.Metrics()
-	if sbx, exists := n.sandboxes[sandboxID]; exists {
-		n.UpdateMetricsFromServiceInfoResponse(&orchestrator.ServiceInfoResponse{
-			MetricSandboxesRunning:     uint32(len(n.sandboxes)) - 1,
-			MetricCpuPercent:           metrics.CpuPercent - uint32(sbx.ActualCPUUsage*100),
-			MetricMemoryUsedBytes:      metrics.MemoryUsedBytes - uint64(sbx.ActualMemUsage),
-			MetricCpuAllocated:         metrics.CpuAllocated - uint32(sbx.RequestedCPU),
-			MetricMemoryAllocatedBytes: metrics.MemoryAllocatedBytes - uint64(sbx.RequestedMemory)*1024*1024,
-			MetricCpuCount:             metrics.CpuCount,
-			MetricMemoryTotalBytes:     metrics.MemoryTotalBytes,
-		})
-		delete(n.sandboxes, sandboxID)
-	}
+	n.release(sandboxID)
+	n.report()
 }
 
 func (n *StandardNode) GetUtilization() (float64, float64) {
@@ -170,11 +229,6 @@ func (n *StandardNode) GetSandboxCount() int {
 // Real state is only synced to Node Metrics when SyncMetrics() is called.
 type LaggyNode struct {
 	*StandardNode // Embed StandardNode to reuse logic
-
-	// Internal resource state (hidden from Orchestrator until SyncMetrics is called)
-	realCpuAllocated     uint32
-	realMemAllocated     uint64
-	realSandboxesRunning uint32
 }
 
 func NewLaggyNode(id string, config BenchmarkConfig) NodeSimulator {
@@ -190,38 +244,16 @@ func (n *LaggyNode) PlaceSandbox(sbx *LiveSandbox) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// 1. Admission control based on real capacity (simulating node-side rejection)
-	// Note: we use realCpuAllocated for the check
-	metrics := n.Node.Metrics()
-	if n.realCpuAllocated+uint32(sbx.RequestedCPU) > metrics.CpuCount*4 {
-		n.rejectedPlacements.Add(1)
-
-		return false
-	}
-
-	// 2. Update real state
-	n.sandboxes[sbx.ID] = sbx
-	n.realSandboxesRunning++
-	n.realCpuAllocated += uint32(sbx.RequestedCPU)
-	n.realMemAllocated += uint64(sbx.RequestedMemory) * 1024 * 1024
-
-	n.totalPlacements.Add(1)
-
-	// Key: intentionally do NOT call UpdateMetricsFromServiceInfoResponse
+	// Key: intentionally do NOT report.
 	// The metrics visible to Orchestrator remain unchanged until SyncMetrics is called
-	return true
+	return n.admit(sbx)
 }
 
 func (n *LaggyNode) RemoveSandbox(sandboxID string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if sbx, exists := n.sandboxes[sandboxID]; exists {
-		n.realSandboxesRunning--
-		n.realCpuAllocated -= uint32(sbx.RequestedCPU)
-		n.realMemAllocated -= uint64(sbx.RequestedMemory) * 1024 * 1024
-		delete(n.sandboxes, sandboxID)
-	}
+	n.release(sandboxID)
 }
 
 // SyncMetrics simulates heartbeat reporting, syncing real state to Orchestrator
@@ -229,27 +261,7 @@ func (n *LaggyNode) SyncMetrics() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	metrics := n.Node.Metrics()
-
-	// Calculate real CPU usage (simplified as linear accumulation here, may be more complex in production)
-	var totalActualCpuUsage float64
-	var totalActualMemUsage float64
-	for _, sbx := range n.sandboxes {
-		totalActualCpuUsage += sbx.ActualCPUUsage
-		totalActualMemUsage += sbx.ActualMemUsage
-	}
-
-	n.UpdateMetricsFromServiceInfoResponse(&orchestrator.ServiceInfoResponse{
-		MetricSandboxesRunning:     n.realSandboxesRunning,
-		MetricCpuPercent:           uint32(totalActualCpuUsage * 100),
-		MetricMemoryUsedBytes:      uint64(totalActualMemUsage),
-		MetricCpuAllocated:         n.realCpuAllocated,
-		MetricMemoryAllocatedBytes: n.realMemAllocated,
-
-		// Static fields remain unchanged
-		MetricCpuCount:         metrics.CpuCount,
-		MetricMemoryTotalBytes: metrics.MemoryTotalBytes,
-	})
+	n.report()
 }
 
 // BenchmarkMetrics contains detailed metrics from the benchmark
@@ -551,8 +563,9 @@ func calculateFinalMetrics(metrics *BenchmarkMetrics, nodes []NodeSimulator, pla
 }
 
 // BenchmarkPlacementComparison runs comprehensive comparison with lifecycle tracking
+// Run command: go test -v -bench=BenchmarkPlacementComparison -run=^$ -benchtime=1x ./internal/orchestrator/placement
 func BenchmarkPlacementComparison(t *testing.B) {
-	config := BenchmarkConfig{
+	cpuBound := BenchmarkConfig{
 		NumNodes:              50,
 		SandboxStartRate:      30,
 		AvgSandboxCPU:         4,
@@ -565,7 +578,27 @@ func BenchmarkPlacementComparison(t *testing.B) {
 		DurationVariance:      5,
 		BenchmarkDuration:     time.Minute,
 		NodeCPUCapacity:       32,
+		NodeMemoryCapacity:    128 * 1024 * 1024 * 1024,
 		SandboxCreateDuration: time.Millisecond * 0,
+	}
+
+	// vCPU and RAM vary independently, so sandboxes equal in vCPU span 1 GiB
+	// to 15 GiB, and the pool fills at ~2/3 average while CPU stays near idle.
+	memorySkewed := cpuBound
+	memorySkewed.SandboxStartRate = 40
+	memorySkewed.AvgSandboxCPU = 2
+	memorySkewed.AvgSandboxMemory = 8 * 1024
+	memorySkewed.CPUVariance = 0.5
+	memorySkewed.MemoryVariance = 0.9
+	memorySkewed.DurationVariance = 0.5
+	memorySkewed.NodeMemoryCapacity = 48 * 1024 * 1024 * 1024
+
+	scenarios := []struct {
+		name   string
+		config BenchmarkConfig
+	}{
+		{"cpu-bound", cpuBound},
+		{"memory-skewed", memorySkewed},
 	}
 
 	algorithms := []struct {
@@ -576,36 +609,38 @@ func BenchmarkPlacementComparison(t *testing.B) {
 		{"BestOfK_K5", NewBestOfK(BestOfKConfig{R: 4, K: 5, Alpha: 0.5})},
 	}
 
-	for _, alg := range algorithms {
-		t.Run(alg.name, func(t *testing.B) {
-			metrics := runBenchmark(t, alg.algo, config, NewStandardNode)
+	for _, scenario := range scenarios {
+		for _, alg := range algorithms {
+			t.Run(scenario.name+"/"+alg.name, func(t *testing.B) {
+				metrics := runBenchmark(t, alg.algo, scenario.config, NewStandardNode)
 
-			t.Logf("\n=== %s Results ===", alg.name)
-			t.Logf("Placement Performance:")
-			t.Logf("  Total: %d, Success: %d (%.1f%%), Failed: %d",
-				metrics.TotalPlacements,
-				metrics.SuccessfulPlacements,
-				float64(metrics.SuccessfulPlacements)/float64(metrics.TotalPlacements)*100,
-				metrics.FailedPlacements)
-			t.Logf("  Latency - Avg: %v, P50: %v, P95: %v, P99: %v",
-				metrics.AvgPlacementTime,
-				metrics.P50PlacementTime,
-				metrics.P95PlacementTime,
-				metrics.P99PlacementTime)
+				t.Logf("\n=== %s / %s Results ===", scenario.name, alg.name)
+				t.Logf("Placement Performance:")
+				t.Logf("  Total: %d, Success: %d (%.1f%%), Failed: %d",
+					metrics.TotalPlacements,
+					metrics.SuccessfulPlacements,
+					float64(metrics.SuccessfulPlacements)/float64(metrics.TotalPlacements)*100,
+					metrics.FailedPlacements)
+				t.Logf("  Latency - Avg: %v, P50: %v, P95: %v, P99: %v",
+					metrics.AvgPlacementTime,
+					metrics.P50PlacementTime,
+					metrics.P95PlacementTime,
+					metrics.P99PlacementTime)
 
-			t.Logf("\nNode Utilization:")
-			t.Logf("  CPU - Avg: %.1f%%, Min: %.1f%%, Max: %.1f%%, StdDev: %.1f%%",
-				metrics.AvgNodeCPUUtilization,
-				metrics.MinNodeCPUUtilization,
-				metrics.MaxNodeCPUUtilization,
-				metrics.CPULoadStdDev)
-			t.Logf("  Memory - Avg: %.1f%%, Min: %.1f%%, Max: %.1f%%, StdDev: %.1f%%",
-				metrics.AvgNodeMemUtilization,
-				metrics.MinNodeMemUtilization,
-				metrics.MaxNodeMemUtilization,
-				metrics.MemLoadStdDev)
-			t.Logf("  Load Imbalance Coefficient: %.3f", metrics.LoadImbalanceCoefficient)
-		})
+				t.Logf("\nNode Utilization:")
+				t.Logf("  CPU - Avg: %.1f%%, Min: %.1f%%, Max: %.1f%%, StdDev: %.1f%%",
+					metrics.AvgNodeCPUUtilization,
+					metrics.MinNodeCPUUtilization,
+					metrics.MaxNodeCPUUtilization,
+					metrics.CPULoadStdDev)
+				t.Logf("  Memory - Avg: %.1f%%, Min: %.1f%%, Max: %.1f%%, StdDev: %.1f%%",
+					metrics.AvgNodeMemUtilization,
+					metrics.MinNodeMemUtilization,
+					metrics.MaxNodeMemUtilization,
+					metrics.MemLoadStdDev)
+				t.Logf("  Load Imbalance Coefficient: %.3f", metrics.LoadImbalanceCoefficient)
+			})
+		}
 	}
 }
 
@@ -658,8 +693,8 @@ func BenchmarkPlacementDistribution(b *testing.B) {
 			for _, n := range simNodes {
 				nodeMap[n.GetNode().ID] = n
 				if ln, ok := n.(*LaggyNode); ok {
-					ln.realCpuAllocated = uint32(rng.Intn(5)) // 0-4 CPU random baseline noise
-					ln.SyncMetrics()                          // Initial sync once
+					ln.cpuAllocated = uint32(rng.Intn(5)) // 0-4 CPU random baseline noise
+					ln.SyncMetrics()                      // Initial sync once
 				}
 			}
 

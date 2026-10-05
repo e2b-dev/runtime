@@ -17,6 +17,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/e2b-dev/infra/packages/api/internal/pause"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -30,7 +31,7 @@ func TestEvictSandbox_ReasonByAction(t *testing.T) {
 	// Offline flags client: resolution falls back to the built-in
 	// FirecrackerVersionMap, so each declared version resolves within its
 	// own line — exactly the degrade semantics under test.
-	flags, err := featureflags.NewClientWithLogLevel(ldlog.Error)
+	flags, err := featureflags.NewClientWithLogLevel("", "", ldlog.Error)
 	require.NoError(t, err)
 
 	counter, err := telemetry.GetCounter(noop.NewMeterProvider().Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/evictor"), telemetry.ApiEvictorFsOnlyAutoPause)
@@ -231,6 +232,36 @@ func TestIsGone(t *testing.T) {
 	assert.False(t, isGone(sandbox.ErrEvictionNotNeeded))
 }
 
+// Every error that leaves the sandbox running for a later sweep is a skip
+// with its own reason; only a genuine failure logs as one. A draining
+// replica's refusal reaches the sweep wrapped, and must not read as a
+// failure on every tick of the shutdown.
+func TestPauseSkipReason(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		err  error
+		want pause.SkipReason
+		skip bool
+	}{
+		"node refused":       {err: fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseQueueExhaustedError{}), want: pause.SkipReasonAdmissionRefused, skip: true},
+		"replica draining":   {err: fmt.Errorf("remove: %w", sandbox.ErrDraining), want: pause.SkipReasonDraining, skip: true},
+		"eviction in flight": {err: sandbox.ErrEvictionInProgress, want: pause.SkipReasonNotEvictable, skip: true},
+		"sandbox gone":       {err: sandbox.ErrNotFound, want: pause.SkipReasonNotFound, skip: true},
+		"state moved":        {err: &sandbox.InvalidStateTransitionError{CurrentState: sandbox.StateKilling, TargetState: sandbox.StatePausing}, want: pause.SkipReasonStateChanged, skip: true},
+		"real failure":       {err: errors.New("node exploded")},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := pauseSkipReason(tc.err, sandbox.StateRunning)
+			assert.Equal(t, tc.skip, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // With no retry budget a node's refusal degrades on the spot: the very next
 // request asks for a filesystem-only snapshot, which the node cannot refuse
 // for a pending memory parent, and the degrade is counted once it lands.
@@ -277,7 +308,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		var flags *featureflags.Client
 		if sw.budgetMs == nil {
-			flags, err = featureflags.NewClientWithLogLevel(ldlog.Error)
+			flags, err = featureflags.NewClientWithLogLevel("", "", ldlog.Error)
 		} else {
 			td := ldtestdata.DataSource()
 			td.Update(td.Flag(featureflags.AutoPauseOverstayBudgetMs.Key()).ValueForAll(ldvalue.Int(*sw.budgetMs)))

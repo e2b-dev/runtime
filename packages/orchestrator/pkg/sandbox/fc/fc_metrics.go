@@ -59,6 +59,11 @@ var (
 	fcBlockFails         = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCBlockFails))
 	fcBlockNoAvailBuffer = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCBlockNoAvailBuffer))
 
+	// Refused snapshot loads, by reason. Recorded from the API error rather
+	// than from the metrics FIFO: a refused load stops the Firecracker process
+	// before it flushes, so its own metrics never carry the failure.
+	fcSnapshotLoadFailures = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCSnapshotLoadFailures))
+
 	// Block histograms.
 	fcBlockBytes                 = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCBlockBytes))
 	fcBlockCount                 = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCBlockCount))
@@ -185,9 +190,12 @@ type firecrackerBalloonMetrics struct {
 
 // firecrackerMetrics is the top-level structure of one Firecracker metrics JSON line.
 type firecrackerMetrics struct {
-	Net     firecrackerNetMetrics     `json:"net"`
-	Block   firecrackerBlockMetrics   `json:"block"`
-	Balloon firecrackerBalloonMetrics `json:"balloon"`
+	// UtcTimestampMs is when FC serialized the line; a flush requested at time
+	// T produces a line stamped at or after T.
+	UtcTimestampMs int64                     `json:"utc_timestamp_ms"`
+	Net            firecrackerNetMetrics     `json:"net"`
+	Block          firecrackerBlockMetrics   `json:"block"`
+	Balloon        firecrackerBalloonMetrics `json:"balloon"`
 }
 
 // BalloonMetricsSnapshot is the cumulative-since-FC-start view of
@@ -240,27 +248,39 @@ func (p *Process) FlushMetrics(ctx context.Context) error {
 	return p.client.flushMetrics(ctx)
 }
 
-// FlushAndReadBalloonMetrics flushes and waits for the reader to ingest the
-// resulting line, returning the updated cumulative snapshot. On flush error
-// (e.g. FC already torn down) returns the last observed snapshot.
+// FlushAndReadBalloonMetrics flushes and waits for the reader to ingest a
+// line FC serialized at or after the request, returning the updated cumulative
+// snapshot. The periodic flusher runs concurrently, so "the accumulator moved"
+// is not enough: the line that moved it may predate this request and leave the
+// caller's own discards for the next reader. On flush error (e.g. FC already
+// torn down) returns the last observed snapshot.
 func (p *Process) FlushAndReadBalloonMetrics(ctx context.Context) (BalloonMetricsSnapshot, error) {
-	pre := p.balloonAccum.Load()
+	sinceMs := time.Now().UnixMilli()
 	if err := p.client.flushMetrics(ctx); err != nil {
 		return p.BalloonMetrics(), fmt.Errorf("flush metrics: %w", err)
 	}
+	if err := p.waitMetricsLineSince(ctx, sinceMs); err != nil {
+		return p.BalloonMetrics(), err
+	}
 
+	return p.BalloonMetrics(), nil
+}
+
+// waitMetricsLineSince blocks until the reader has ingested a metrics line
+// stamped at or after sinceMs, fphFlushReadTimeout at most.
+func (p *Process) waitMetricsLineSince(ctx context.Context, sinceMs int64) error {
 	deadline := time.Now().Add(fphFlushReadTimeout)
 	for {
-		if cur := p.balloonAccum.Load(); cur != pre {
-			return p.BalloonMetrics(), nil
+		if p.metricsLineMs.Load() >= sinceMs {
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return p.BalloonMetrics(), errors.New("timeout waiting for fresh balloon metrics line")
+			return errors.New("timeout waiting for fresh balloon metrics line")
 		}
 		select {
 		case <-time.After(5 * time.Millisecond):
 		case <-ctx.Done():
-			return p.BalloonMetrics(), ctx.Err()
+			return ctx.Err()
 		}
 	}
 }
@@ -451,9 +471,12 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 				fcBlockNoAvailBuffer.Add(ctx, int64(b.NoAvailBuffer))
 			}
 
-			// Balloon: SharedIncMetric resets on flush, so accumulate.
+			// Balloon: SharedIncMetric resets on flush, so accumulate. The
+			// stamp goes last so a waiter that sees it also sees the balloon
+			// counters of that line.
 			next := accumulateBalloon(p.balloonAccum.Load(), m.Balloon)
 			p.balloonAccum.Store(&next)
+			p.metricsLineMs.Store(m.UtcTimestampMs)
 		}
 
 		if err := scanner.Err(); err != nil {

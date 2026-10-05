@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 (2026-09-10)
+
+
+### Features
+
+* **orch:** report and record the memory protection on envd's cgroup chain per start (8a1809e)
+
+
+### Bug Fixes
+
+* **deps:** update module google.golang.org/grpc to v1.83.2 [security] (7123140)
+
 ## 0.8.0 (2026-09-07)
 
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // slotForwardAccepts builds the slot's iptables FORWARD accept pair,
@@ -235,7 +236,7 @@ func createNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 
 	// Slots are pooled: seed the untenanted (regular-sandbox) class; the pool
 	// re-stamps per tenant on Get and restores it on recycle.
-	if err := SetupEgressDSCP(nsConn, nsTable, slot.VpeerName(), hf.config.EgressDSCP(network.EgressClassSandbox)); err != nil {
+	if err := SetupEgressDSCP(nsConn, nsTable, slot.VpeerName(), hf.config.EgressDSCP(sandboxtypes.EgressClassSandbox)); err != nil {
 		nsConn.CloseLasting()
 
 		return fmt.Errorf("setup egress DSCP: %w", err)

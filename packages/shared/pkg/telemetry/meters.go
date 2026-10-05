@@ -19,11 +19,14 @@ type (
 )
 
 const (
+	ApiRateLimitRequests                 CounterType = "api.rate_limit.requests"
 	ApiOrchestratorCreatedSandboxes      CounterType = "api.orchestrator.created_sandboxes"
 	ApiOrchestratorResumeOriginNodeRemap CounterType = "api.orchestrator.resume_origin_node_remapped"
 	// ApiOrchestratorPauseRefusalRestore counts what became of a pause the
 	// node refused retryably: outcome restored | restore_failed |
-	// route_restore_failed, caller request | eviction.
+	// route_restore_failed | superseded, caller request | eviction.
+	// superseded: the ID was reclaimed by a new incarnation meanwhile; nothing
+	// was restored, removed, or killed.
 	ApiOrchestratorPauseRefusalRestore CounterType = "api.orchestrator.pause_refusal_restore"
 	// ApiEvictorFsOnlyAutoPause counts timeout auto-pauses whose policy asked
 	// for a filesystem-only snapshot. Unlabeled since the fs-only version
@@ -51,6 +54,14 @@ const (
 	OrchestratorHostBalanceDirtyPagesThreads CounterType = "orchestrator.host.balance_dirty_pages.threads"
 
 	OrchestratorSandboxKilledCounterName CounterType = "orchestrator.sandbox.killed"
+	// OrchestratorSandboxCrashedCounterName counts sandbox executions that
+	// ended with no recorded stop reason, labeled by cause. external_signal,
+	// a kill the orchestrator did not send, is the one to alert on.
+	// memory_handler_failed is a resumed sandbox whose memory could not be
+	// served, hugepage exhaustion included; fault is Firecracker faulting.
+	// clean_exit is usually the guest shutting down, but also covers guest
+	// kernel panics, which the host cannot tell apart.
+	OrchestratorSandboxCrashedCounterName CounterType = "orchestrator.sandbox.crashed"
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
@@ -67,11 +78,45 @@ const (
 	// is lasting per-sandbox host-memory retention and the alertable signal
 	// for a leaked pause.
 	OrchestratorFPRResumeCounterName CounterType = "orchestrator.sandbox.fpr_resume"
+	// Free-page-hinting drains and runs by phase (pre-pause, periodic) and outcome.
+	OrchestratorFPHRunCounterName CounterType = "orchestrator.sandbox.fph.run"
+	// Stops of hinting cycles the host stopped waiting for, by outcome.
+	OrchestratorFPHStopCounterName CounterType = "orchestrator.sandbox.fph.stop"
+	// Bytes FC discarded across completed drains and runs, by phase.
+	OrchestratorFPHFreedCounterName CounterType = "orchestrator.sandbox.fph.freed_bytes"
+	// Guests the periodic hinter latched as unable to hint, and released.
+	OrchestratorFPHLatchCounterName CounterType = "orchestrator.sandbox.fph.latch"
 
 	// OrchestratorSnapshotUploadFailedCounterName counts pause-snapshot uploads
 	// that never landed durably (budget exhausted or a non-retryable error).
 	// A non-zero rate means lost snapshots.
 	OrchestratorSnapshotUploadFailedCounterName CounterType = "orchestrator.snapshot.upload.failed"
+
+	// OrchestratorTemplateCacheAncestorResolutionsCounterName counts each
+	// ancestor build once per ancestor walk, by the path that resolved it
+	// (verdict) and what landed in the child header's Builds map (resolution).
+	// The memfile and rootfs mappings are walked separately, on each upload
+	// attempt that reaches its header stage.
+	OrchestratorTemplateCacheAncestorResolutionsCounterName CounterType = "orchestrator.templates.cache.ancestor_resolutions"
+
+	// OrchestratorDeadStructureOutcomeCounterName counts every pass through
+	// the drop site of a per-pause structure that outlives its readers, labeled
+	// by structure and outcome: dropped (the flag cleared it), flag_off (the
+	// flag kept it), none (there was nothing to drop) or, for the upload's
+	// provisional header, misordered (the upload was created before the
+	// snapshot was cached). Because every pass counts, a site that ran reads
+	// nonzero whatever its flag says. The provisional header has two holders,
+	// each with its own structure value. Templates and uploads with no
+	// provisional header count none too, so none is not a per-pause count.
+	OrchestratorDeadStructureOutcomeCounterName CounterType = "orchestrator.sandbox.snapshot.dead_structure_outcome"
+
+	// OrchestratorDeadStructureBytesCounterName adds the size of a dropped
+	// per-pause structure, or of one its flag kept, labeled by structure and
+	// outcome: removed from its holder on dropped, kept on flag_off. It is not
+	// the heap the drop saves, which also depends on how long the holder would
+	// have kept it. upload_provisional_header adds none: its allocation is the
+	// one template_provisional_header counts.
+	OrchestratorDeadStructureBytesCounterName CounterType = "orchestrator.sandbox.snapshot.dead_structure_bytes"
 
 	// SandboxPauseFsQuiescedCounterName counts filesystem-only pauses by whether
 	// the captured rootfs was frozen (quiesced=true, crash-consistent) vs a plain
@@ -79,6 +124,19 @@ const (
 	// minted fs-only snapshots that are safe to cold-boot / rewrite — the eligible
 	// population for the offline envd upgrade built on top of this flag.
 	SandboxPauseFsQuiescedCounterName CounterType = "orchestrator.sandbox.pause.fs_quiesced"
+
+	// SandboxLifecycleUnstoppedCounterName counts sandbox lifecycles whose live-map
+	// entry was reclaimed by the teardown cleanup chain rather than by an operation:
+	// nobody marked the lifecycle stopping before the chain ran. Three teardowns
+	// reach it — a guest exit or Firecracker death with no API teardown, a build
+	// layer's bare deferred close, and an in-place checkpoint whose resume failed
+	// and tore the sandbox down itself. Split by sandbox_type rather than filtered
+	// to sandbox, because every successful build layer takes the same branch and
+	// would otherwise dominate the bucket; dropping builds instead would make "the
+	// build tree stopped reaching this" indistinguishable from "the build tree is
+	// fine". It is a lower bound, never a total: the live map is in-process, so a
+	// lifecycle spanning an orchestrator restart is never counted.
+	SandboxLifecycleUnstoppedCounterName CounterType = "orchestrator.sandbox.lifecycle.unstopped"
 
 	// SandboxResumeWPModeCounterName counts sandbox resumes by the write-protect
 	// tracking mode the resume chose (mode=sync|async, the use-sync-wp flag
@@ -192,6 +250,8 @@ const (
 	//	    already on the target
 	//	not_staged | downgrade | invalid_target | getversion_failed | binary_not_cached
 	//	    the resolver refused or deferred the configured target
+	//	source_stalled
+	//	    the host mount did not answer the target's stat in time
 	//	copy_vanished
 	//	    a version was resolved and the copy carrying it was then retired, before
 	//	    anything was written to the rootfs
@@ -219,7 +279,10 @@ const (
 	//	replayed
 	//	    the journal was replayed (or regenerated, or there was nothing to do);
 	//	    the fs is mountable and the boot proceeded — the expected outcome for
-	//	    the admitted population, NOT a corruption signal.
+	//	    the admitted population, NOT a corruption signal. The reason label
+	//	    splits it: journal_replayed (the superblock's needs_recovery bit was
+	//	    set before the run, or e2fsck applied a repair), nothing_to_do (the
+	//	    bit was clear), replay_unknown (the superblock could not be read).
 	//	failed_operational
 	//	    the run did not complete a clean replay AND e2fsck may have opened the
 	//	    device (an e2fsck non-replay exit, or a timeout that could have killed it
@@ -277,6 +340,11 @@ const (
 	// than as the parameters that were asked for.
 	TemplateBuildCmdlineArgs CounterType = "orchestrator.template.build.cmdline_args"
 
+	// TemplateBuildCPUTemplate counts template builds by the digest of the CPU template
+	// applied (empty for none) and by result: applied, rejected (the flag's template was
+	// unusable and the build fell back to none) or none (the flag sets no template).
+	TemplateBuildCPUTemplate CounterType = "orchestrator.template.build.cpu_template"
+
 	// PauseResumePrefetchHarvestAttempts counts pause-resume prefetch harvest
 	// attempts, by result (success|resume_failed|collect_failed|skipped). The
 	// throwaway is absent from Prometheus otherwise (registration-skip), so this
@@ -331,6 +399,9 @@ const (
 
 const (
 	// Build timing histograms
+	FPHRunDurationName              HistogramType = "orchestrator.sandbox.fph.duration"
+	FPHStopDurationName             HistogramType = "orchestrator.sandbox.fph.stop.duration"
+	FPHRunFaultsName                HistogramType = "orchestrator.sandbox.fph.run.faults"
 	BuildDurationHistogramName      HistogramType = "template.build.duration"
 	BuildPhaseDurationHistogramName HistogramType = "template.build.phase.duration"
 	BuildStepDurationHistogramName  HistogramType = "template.build.step.duration"
@@ -344,6 +415,7 @@ const (
 	SnapshotProcessRootfsDurationName     HistogramType = "orchestrator.sandbox.snapshot.process_rootfs.duration"
 	SnapshotRootfsSealDurationName        HistogramType = "orchestrator.sandbox.snapshot.rootfs_seal.duration"
 	SnapshotGuestFreezeDurationName       HistogramType = "orchestrator.sandbox.snapshot.guest_freeze.duration"
+	CheckpointDurationName                HistogramType = "orchestrator.sandbox.checkpoint.duration"
 	SnapshotMemorySealDurationName        HistogramType = "orchestrator.sandbox.snapshot.memory_seal.duration"
 
 	// OrchestratorSandboxExecutionDurationName is one sample per Firecracker
@@ -370,6 +442,12 @@ const (
 	// pathological rewrites; the swap runs in the cold-boot PreBootFn, so it adds
 	// directly to resume latency.
 	OrchestratorEnvdOfflineUpgradeDurationName HistogramType = "orchestrator.envd.offline_upgrade.duration"
+
+	// OrchestratorEnvdBinaryCacheSourceStatDurationName is the wall-time of the
+	// resume path's stat of the host envd binary on its mount, recorded when the
+	// stat returns -- healthy or not, and including stats every lookup had already
+	// given up on. Its tail is what the lookup's stat budget is set against.
+	OrchestratorEnvdBinaryCacheSourceStatDurationName HistogramType = "orchestrator.envd.binary_cache.source_stat.duration"
 
 	// OrchestratorFsRecoveryDurationName is the wall-time of the jailed pre-boot
 	// journal-replay run on a cold boot, recorded for every outcome the run reaches
@@ -409,13 +487,28 @@ const (
 	// needed to reach a successful envd init, recorded once per start. Sampled
 	// per start (not per fault), so histogram_quantile yields per-sandbox
 	// percentiles.
-	EnvdFreezeDurationHistogramName     HistogramType = "orchestrator.sandbox.envd.freeze.duration"
-	EnvdFreezeSweepHistogramName        HistogramType = "orchestrator.sandbox.envd.freeze.sweep"
-	EnvdFreezeWaitHistogramName         HistogramType = "orchestrator.sandbox.envd.freeze.wait"
-	EnvdFreezeVisitedHistogramName      HistogramType = "orchestrator.sandbox.envd.freeze.visited"
-	EnvdFreezeAuditHistogramName        HistogramType = "orchestrator.sandbox.envd.freeze.audit"
-	EnvdFreezeCgroupsHistogramName      HistogramType = "orchestrator.sandbox.envd.freeze.cgroups"
-	EnvdUnfreezeDurationHistogramName   HistogramType = "orchestrator.sandbox.envd.unfreeze.duration"
+	EnvdFreezeDurationHistogramName   HistogramType = "orchestrator.sandbox.envd.freeze.duration"
+	EnvdFreezeSweepHistogramName      HistogramType = "orchestrator.sandbox.envd.freeze.sweep"
+	EnvdFreezeWaitHistogramName       HistogramType = "orchestrator.sandbox.envd.freeze.wait"
+	EnvdFreezeVisitedHistogramName    HistogramType = "orchestrator.sandbox.envd.freeze.visited"
+	EnvdFreezeAuditHistogramName      HistogramType = "orchestrator.sandbox.envd.freeze.audit"
+	EnvdFreezeCgroupsHistogramName    HistogramType = "orchestrator.sandbox.envd.freeze.cgroups"
+	EnvdUnfreezeDurationHistogramName HistogramType = "orchestrator.sandbox.envd.unfreeze.duration"
+	// EnvdFsthawDurationHistogramName is one sample per thaw attempt after an
+	// in-place resume of a filesystem-only checkpoint; the last failed attempt
+	// is followed by the sandbox being torn down.
+	EnvdFsthawDurationHistogramName HistogramType = "orchestrator.sandbox.envd.fsthaw.duration"
+	// Memory protection configured on the guest envd's cgroup chain, as envd reports it
+	// on /init, recorded at most once per start (when the first /init's header decodes):
+	// kind=request is envd's own memory.min, kind=floor the minimum over the chain below
+	// the root. In MiB, the unit the template renders the protection in, so the two compare
+	// without conversion; the truncation that costs is a setting below 1 MiB, which records
+	// as 0. Capped at the sandbox's RAM, so that one unbounded request cannot cost the whole
+	// series its bucket resolution: the exporter aggregates every histogram as base-2
+	// exponential at a scale it lowers only to fit the observed range, and discards
+	// per-instrument boundaries, so the range the series spans is the resolution every
+	// sample in it gets.
+	EnvdMemoryProtectionHistogramName   HistogramType = "orchestrator.sandbox.envd.memory.protection"
 	UffdStartupPagesHistogramName       HistogramType = "orchestrator.sandbox.uffd.startup.pages"
 	UffdStartupSourcePagesHistogramName HistogramType = "orchestrator.sandbox.uffd.startup.source_pages"
 	UffdStartupBytesHistogramName       HistogramType = "orchestrator.sandbox.uffd.startup.bytes"
@@ -445,6 +538,10 @@ const (
 	// cmux counters
 	CmuxErrorsTotal CounterType = "orchestrator.cmux.errors.total"
 
+	// Sandbox routing record counters (result=ok/error)
+	RoutingPublishTotal CounterType = "orchestrator.routing.publish.total"
+	RoutingDeleteTotal  CounterType = "orchestrator.routing.delete.total"
+
 	// Firecracker net counters — global totals, no sandbox_id (low cardinality).
 	// All carry a direction=tx/rx attribute. Per-sandbox distributions are histograms below.
 	SandboxFCNetFails         CounterType = "orchestrator.sandbox.fc.net.fails"
@@ -455,6 +552,50 @@ const (
 	// Carry a direction=read/write attribute where applicable.
 	SandboxFCBlockFails         CounterType = "orchestrator.sandbox.fc.block.fails"
 	SandboxFCBlockNoAvailBuffer CounterType = "orchestrator.sandbox.fc.block.no_avail_buffer"
+
+	// SandboxFCSnapshotLoadFailures counts snapshot loads Firecracker refused,
+	// by reason. A refused load makes its template unusable rather than slow:
+	// the sandbox cannot start on any host that reads the same snapshot, so
+	// every attempt fails and the caller sees an error. Until this counter,
+	// such a failure was visible only as success=false on
+	// orchestrator.sandbox.create.duration, indistinguishable from an envd
+	// timeout, and otherwise only in the Firecracker log line.
+	//
+	// reason is bounded and never carries the fault text itself, which is
+	// influenced by snapshot contents:
+	//   vcpu_msr        the snapshot carries an MSR the reading host's kernel
+	//                   will not accept — a kernel difference, not a CPU one.
+	//   vcpu_other      vCPU restore failed for any other reason.
+	//   missing_file    a file the load opens does not exist (ENOENT): the
+	//                   snapshot file removed under a starting sandbox, or a
+	//                   memory backing file.
+	//   bad_request     every other refusal, and where an unclassified fault
+	//                   lands: memory backend, snapshot version, a snapshot
+	//                   file that exists but cannot be read, or a fault a
+	//                   later Firecracker words differently.
+	//   unavailable     the API answered a non-400 status, so the load never
+	//                   reached the snapshot.
+	//   transport       the API socket could not be reached or replied
+	//                   unintelligibly; says nothing about the snapshot.
+	//   timeout         no answer before the request deadline; the load
+	//                   overran and the sandbox never resumed, so it counts.
+	//   canceled        the caller went away mid-load; not a broken snapshot.
+	//
+	// Alert on the total excluding canceled rather than on one reason: a
+	// failure mode we have not seen still counts, under bad_request, and the
+	// breakdown is for reading afterwards.
+	//
+	// cpu_template is the digest of the CPU template the snapshot's build booted with,
+	// empty for none, so failures split by build cohort.
+	SandboxFCSnapshotLoadFailures CounterType = "orchestrator.sandbox.fc.snapshot_load.failures"
+
+	// SandboxTemplateLegFaults counts a running sandbox's reads and writes that
+	// its template's backing device failed, by leg (memfile|rootfs): the
+	// memfile's page-fault data fetch, and the rootfs's NBD read, write and
+	// punch. Both legs are served for the sandbox's whole life, so a device
+	// closed under a live sandbox surfaces here rather than at snapshot load.
+	// A failure while the serving context is already done is not counted.
+	SandboxTemplateLegFaults CounterType = "orchestrator.sandbox.template_leg_faults"
 )
 
 const (
@@ -491,8 +632,19 @@ const (
 )
 
 const (
-	ApiOrchestratorCountMeterName GaugeIntType = "api.orchestrator.status"
-	OrchestratorStatusGaugeName   GaugeIntType = "orchestrator.status"
+	ApiOrchestratorCountMeterName        GaugeIntType = "api.orchestrator.status"
+	OrchestratorStatusGaugeName          GaugeIntType = "orchestrator.status"
+	OrchestratorSandboxLimitGaugeName    GaugeIntType = "orchestrator.sandbox.limit"
+	FirecrackerProcesses                 GaugeIntType = "orchestrator.firecracker.processes"
+	FirecrackerProcessesUntracked        GaugeIntType = "orchestrator.firecracker.processes.untracked"
+	FirecrackerProcessesOverMaxLength    GaugeIntType = "orchestrator.firecracker.processes.over_max_length"
+	FirecrackerProcessesUnknownMaxLength GaugeIntType = "orchestrator.firecracker.processes.unknown_max_length"
+	FirecrackerTrackerSuccess            GaugeIntType = "orchestrator.firecracker.tracker.success"
+	FirecrackerTrackerLastSuccessAge     GaugeIntType = "orchestrator.firecracker.tracker.last_success_age"
+	// OrchestratorGOGCOutcomeGaugeName reports the GC percent controller's
+	// outcome as a state set: every outcome (applied|disabled|refused|error)
+	// on every collection, 1 for the current one and 0 for the rest.
+	OrchestratorGOGCOutcomeGaugeName GaugeIntType = "orchestrator.go.gogc.outcome"
 
 	// Orchestrator node resources allocated to running sandboxes (sum across running sandboxes)
 	OrchestratorCpuAllocatedGaugeName    GaugeIntType = "orchestrator.sandbox.cpu.allocated"
@@ -507,6 +659,20 @@ const (
 	SandboxDiskUsedGaugeName  GaugeIntType = "e2b.sandbox.disk.used"
 	SandboxDiskTotalGaugeName GaugeIntType = "e2b.sandbox.disk.total"
 
+	// Template cache residency. mapping_bytes is the load-bearing one: a
+	// Header's compact Mapping is the largest long-lived allocation the
+	// orchestrator holds, and entry count alone hides its growth because
+	// headers differ in size by orders of magnitude.
+	OrchestratorTemplateCacheEntriesGaugeName           GaugeIntType = "orchestrator.templates.cache.entries"
+	OrchestratorTemplateCachePinnedGaugeName            GaugeIntType = "orchestrator.templates.cache.pinned"
+	OrchestratorTemplateCacheMappingEntriesGaugeName    GaugeIntType = "orchestrator.templates.cache.mapping_entries"
+	OrchestratorTemplateCacheMappingBytesGaugeName      GaugeIntType = "orchestrator.templates.cache.mapping_bytes"
+	OrchestratorTemplateCachePinnedRefsGaugeName        GaugeIntType = "orchestrator.templates.cache.pinned_refs"
+	OrchestratorTemplateCacheOldestPinAgeGaugeName      GaugeIntType = "orchestrator.templates.cache.pinned_oldest_age"
+	OrchestratorTemplateCacheLayerEntriesGaugeName      GaugeIntType = "orchestrator.templates.cache.layer_entries"
+	OrchestratorTemplateCacheLayerMappingBytesGaugeName GaugeIntType = "orchestrator.templates.cache.layer_mapping_bytes"
+	OrchestratorTemplateCacheLayersUnlandedGaugeName    GaugeIntType = "orchestrator.templates.cache.snapshot_layers_unlanded"
+
 	// Team metrics
 	TeamSandboxRunningGaugeName GaugeIntType = "e2b.team.sandbox.running"
 
@@ -517,6 +683,7 @@ const (
 )
 
 var counterDesc = map[CounterType]string{
+	ApiRateLimitRequests:                         "Number of API group rate-limit checks, by team, group, mode, and decision",
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
@@ -530,11 +697,19 @@ var counterDesc = map[CounterType]string{
 	EnvdInitCalls:                                "Number of envd initialization calls",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
+	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown)",
 	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error) and rpc (pause/checkpoint)",
-	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place and success",
-	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned)",
+	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
+	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
+	OrchestratorFPHRunCounterName:                "Free-page-hinting drains and runs, labeled by phase (pre-pause, periodic) and outcome (ok, not-configured, refused, timeout, timeout-guest-silent, failed, cancelled, skipped-<reason> incl. skipped-host-busy)",
+	OrchestratorFPHStopCounterName:               "Stops of hinting cycles the host stopped waiting for, labeled by outcome (ok, unacked, failed, skipped-exited, skipped-disabled)",
+	OrchestratorFPHFreedCounterName:              "Bytes discarded by completed free-page-hinting drains and runs (FC free_page_hint_freed before the drain and after a metrics flush that follows it), labeled by phase",
+	OrchestratorFPHLatchCounterName:              "Guests the periodic hinter latched as unable to hint after consecutive sat-out runs, released by a completed run, or dropped with the loop that held the latch (state: latched, released, dropped)",
 	OrchestratorSnapshotUploadFailedCounterName:  "Number of pause-snapshot uploads that never landed durably",
+	OrchestratorDeadStructureOutcomeCounterName:  "Passes through a per-pause structure's drop site, by structure and outcome",
+	OrchestratorDeadStructureBytesCounterName:    "Bytes of per-pause structures dropped or kept at their drop site, by structure and outcome",
 	SandboxPauseFsQuiescedCounterName:            "Filesystem-only pauses by whether the rootfs was frozen (quiesced) vs sync fallback",
+	SandboxLifecycleUnstoppedCounterName:         "Sandbox lifecycles whose live-map entry the teardown chain reclaimed because no operation marked them stopping, by sandbox type",
 	SandboxResumeWPModeCounterName:               "Sandbox resumes by write-protect tracking mode (sync|async)",
 	EnvdDefaultsApplied:                          "Memory resumes by where the envd default user the orchestrator sent was derived from, and sandbox type",
 	EnvdDefaultsMismatch:                         "/init responses where envd's effective defaults differ from what was sent, by field",
@@ -545,18 +720,24 @@ var counterDesc = map[CounterType]string{
 	OrchestratorFsRecoveryRuns:                   "Pre-boot filesystem-recovery decisions on cold boots, by result and trigger",
 	OrchestratorFsRecoveryToolingUnsupported:     "Fires once per process when the host e2fsck rejects -E journal_only",
 	TemplateBuildCmdlineArgs:                     "Template builds by the guest kernel cmdline parameters applied",
+	TemplateBuildCPUTemplate:                     "Template builds by the digest of the custom Firecracker CPU template applied and by result (result=applied|rejected|none|malformed)",
 	OrchestratorEnvdUpgradeGated:                 "Resumes where the envd-upgrade-target flag named a target but a gate declined the upgrade, by reason",
-	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss) and upgrade path",
+	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss), upgrade path, and on a miss its cause (not_warmed|stalled|cancelled|unreadable|no_cache)",
 	OrchestratorEnvdBinaryCacheDeliveries:        "Host envd binary reads at delivery time, by outcome (copy|stale) and upgrade path",
 	OrchestratorEnvdBinaryCacheWarms:             "Host envd binary cache warms, by result (ok|superseded|suppressed|pinned|already_warming|bad_target|failed)",
 	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher) and result (ok|failed)",
-	PauseResumePrefetchHarvestAttempts:           "Pause-resume prefetch harvest attempts, by result",
+	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | persist_deadline) and path (pause | checkpoint)",
 	TCPFirewallConnectionsTotal:                  "Total number of TCP firewall connections processed",
 	TCPFirewallErrorsTotal:                       "Total number of TCP firewall errors",
 	TCPFirewallDecisionsTotal:                    "Total number of TCP firewall allow/block decisions",
 
+	OrchestratorTemplateCacheAncestorResolutionsCounterName: "Ancestor builds resolved by snapshot uploads, labeled by verdict and resolution",
+
 	IngressProxyConnectionsBlockedTotal: "Total number of ingress proxy connections blocked by connection limit",
 	CmuxErrorsTotal:                     "Total number of cmux connection multiplexer errors",
+
+	RoutingPublishTotal: "Total number of sandbox routing record writes on MarkRunning (result=ok/error)",
+	RoutingDeleteTotal:  "Total number of sandbox routing record deletes on MarkStopping (result=ok/error)",
 
 	SandboxFCNetFails:         "Total Firecracker VMM errors transmitting or receiving data (direction=tx/rx)",
 	SandboxFCNetNoAvailBuffer: "Total Firecracker VMM events where no virtqueue buffer was available (direction=tx/rx)",
@@ -564,6 +745,9 @@ var counterDesc = map[CounterType]string{
 
 	SandboxFCBlockFails:         "Total Firecracker VMM block device execution/event failures",
 	SandboxFCBlockNoAvailBuffer: "Total Firecracker VMM block events where no virtqueue buffer was available",
+
+	SandboxFCSnapshotLoadFailures: "Total snapshot loads refused by Firecracker (reason=vcpu_msr|vcpu_other|missing_file|bad_request|unavailable|transport|timeout|canceled), by the digest of the CPU template the snapshot was built with (cpu_template)",
+	SandboxTemplateLegFaults:      "Sandbox reads and writes its template's backing device failed (leg=memfile|rootfs)",
 
 	ApiRedisStoragePublisherPublished: "Total Redis PUBLISH calls completed by the storage publisher (result=success|failure)",
 	ApiRedisStoragePublisherDropped:   "Total storage notifications dropped before reaching Redis (reason=queue_full|closed)",
@@ -574,6 +758,7 @@ var counterDesc = map[CounterType]string{
 }
 
 var counterUnits = map[CounterType]string{
+	ApiRateLimitRequests:                         "{request}",
 	SandboxCreateMeterName:                       "{sandbox}",
 	ApiOrchestratorCreatedSandboxes:              "{sandbox}",
 	ApiEvictorFsOnlyAutoPause:                    "{pause}",
@@ -587,11 +772,19 @@ var counterUnits = map[CounterType]string{
 	EnvdInitCalls:                                "1",
 	EnvdCollapseChunks:                           "{chunk}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
+	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
 	OrchestratorSandboxPauseAdmissionCounterName: "{decision}",
 	OrchestratorSandboxCheckpointCounterName:     "{checkpoint}",
 	OrchestratorFPRResumeCounterName:             "{resume}",
+	OrchestratorFPHRunCounterName:                "{run}",
+	OrchestratorFPHStopCounterName:               "{stop}",
+	OrchestratorFPHFreedCounterName:              "By",
+	OrchestratorFPHLatchCounterName:              "{transition}",
 	OrchestratorSnapshotUploadFailedCounterName:  "{snapshot}",
+	OrchestratorDeadStructureOutcomeCounterName:  "{pass}",
+	OrchestratorDeadStructureBytesCounterName:    "By",
 	SandboxPauseFsQuiescedCounterName:            "{snapshot}",
+	SandboxLifecycleUnstoppedCounterName:         "{sandbox}",
 	SandboxResumeWPModeCounterName:               "{resume}",
 	EnvdDefaultsApplied:                          "{resume}",
 	EnvdDefaultsMismatch:                         "{mismatch}",
@@ -602,6 +795,7 @@ var counterUnits = map[CounterType]string{
 	OrchestratorFsRecoveryRuns:                   "{run}",
 	OrchestratorFsRecoveryToolingUnsupported:     "{probe}",
 	TemplateBuildCmdlineArgs:                     "{build}",
+	TemplateBuildCPUTemplate:                     "{build}",
 	OrchestratorEnvdUpgradeGated:                 "{sandbox}",
 	OrchestratorEnvdBinaryCacheReads:             "{read}",
 	OrchestratorEnvdBinaryCacheWarms:             "{warm}",
@@ -612,8 +806,13 @@ var counterUnits = map[CounterType]string{
 	TCPFirewallErrorsTotal:                       "{error}",
 	TCPFirewallDecisionsTotal:                    "{decision}",
 
+	OrchestratorTemplateCacheAncestorResolutionsCounterName: "{ancestor}",
+
 	IngressProxyConnectionsBlockedTotal: "{connection}",
 	CmuxErrorsTotal:                     "{error}",
+
+	RoutingPublishTotal: "{record}",
+	RoutingDeleteTotal:  "{record}",
 
 	SandboxFCNetFails:         "{error}",
 	SandboxFCNetNoAvailBuffer: "{event}",
@@ -621,6 +820,9 @@ var counterUnits = map[CounterType]string{
 
 	SandboxFCBlockFails:         "{error}",
 	SandboxFCBlockNoAvailBuffer: "{event}",
+
+	SandboxFCSnapshotLoadFailures: "{failure}",
+	SandboxTemplateLegFaults:      "{fault}",
 
 	ApiRedisStoragePublisherPublished: "{notification}",
 	ApiRedisStoragePublisherDropped:   "{notification}",
@@ -681,8 +883,16 @@ var gaugeFloatUnits = map[GaugeFloatType]string{
 }
 
 var gaugeIntDesc = map[GaugeIntType]string{
+	OrchestratorGOGCOutcomeGaugeName:     "1 for the GC percent controller's current outcome and 0 for the other three; go.config.gogc is the percent in force.",
+	FirecrackerProcesses:                 "Non-exited Firecracker OS processes in the tracker's last complete scan.",
+	FirecrackerProcessesUntracked:        "Firecracker processes older than five minutes and absent from lifecycle tracking.",
+	FirecrackerProcessesOverMaxLength:    "Customer Firecracker processes beyond their known sandbox start plus maximum length; excludes builds and temporary VMs.",
+	FirecrackerProcessesUnknownMaxLength: "Firecracker processes whose customer maximum length cannot be determined; excludes known builds and temporary VMs.",
+	FirecrackerTrackerSuccess:            "Whether the latest Firecracker process tracker scan completed successfully (1 or 0).",
+	FirecrackerTrackerLastSuccessAge:     "Seconds since the last complete Firecracker tracker scan, computed at collection time; omitted before the first success.",
 	ApiOrchestratorCountMeterName:        "Counter of running orchestrators.",
 	OrchestratorStatusGaugeName:          "Self-reported orchestrator status (always 1, labelled with status and version).",
+	OrchestratorSandboxLimitGaugeName:    "Configured maximum number of running sandboxes on the orchestrator node.",
 	OrchestratorCpuAllocatedGaugeName:    "Total vCPUs allocated to running sandboxes on the orchestrator node.",
 	OrchestratorMemoryAllocatedGaugeName: "Total memory allocated to running sandboxes on the orchestrator node.",
 	OrchestratorDiskAllocatedGaugeName:   "Total disk space allocated to running sandboxes on the orchestrator node.",
@@ -694,11 +904,29 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	SandboxDiskTotalGaugeName:            "Amount of disk space available to the sandbox.",
 	TeamSandboxRunningGaugeName:          "The number of sandboxes running for the team in the interval.",
 	SandboxCountGaugeName:                "Number of running sandbox instances per team.",
+
+	OrchestratorTemplateCacheEntriesGaugeName:           "Templates currently resident in the orchestrator's template cache.",
+	OrchestratorTemplateCachePinnedGaugeName:            "Resident templates pinned by at least one live sandbox, and so exempt from eviction.",
+	OrchestratorTemplateCacheMappingEntriesGaugeName:    "Total header mapping entries held by resident templates.",
+	OrchestratorTemplateCacheMappingBytesGaugeName:      "Approximate heap bytes held by resident templates' header mappings.",
+	OrchestratorTemplateCachePinnedRefsGaugeName:        "Outstanding template pins, one per holder, so shared builds and leak magnitude are visible.",
+	OrchestratorTemplateCacheOldestPinAgeGaugeName:      "Age of the oldest outstanding template pin. A pin never ages out on its own.",
+	OrchestratorTemplateCacheLayerEntriesGaugeName:      "Templates resident in the template cache, by how they were inserted (kind). Sums to entries.",
+	OrchestratorTemplateCacheLayerMappingBytesGaugeName: "Approximate heap bytes held by resident templates' header mappings, by kind and chain generation band. Sums to mapping_bytes.",
+	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "Resident pause layers whose own upload failed for good, so this node holds the only copy. Read against orchestrator.snapshot.upload.failed.",
 }
 
 var gaugeIntUnits = map[GaugeIntType]string{
+	OrchestratorGOGCOutcomeGaugeName:     "1",
+	FirecrackerProcesses:                 "{process}",
+	FirecrackerProcessesUntracked:        "{process}",
+	FirecrackerProcessesOverMaxLength:    "{process}",
+	FirecrackerProcessesUnknownMaxLength: "{process}",
+	FirecrackerTrackerSuccess:            "1",
+	FirecrackerTrackerLastSuccessAge:     "s",
 	ApiOrchestratorCountMeterName:        "{orchestrator}",
 	OrchestratorStatusGaugeName:          "{orchestrator}",
+	OrchestratorSandboxLimitGaugeName:    "{sandbox}",
 	OrchestratorCpuAllocatedGaugeName:    "{count}",
 	OrchestratorMemoryAllocatedGaugeName: "{By}",
 	OrchestratorDiskAllocatedGaugeName:   "{By}",
@@ -710,6 +938,16 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	SandboxDiskTotalGaugeName:            "{By}",
 	TeamSandboxRunningGaugeName:          "{sandbox}",
 	SandboxCountGaugeName:                "{sandbox}",
+
+	OrchestratorTemplateCacheEntriesGaugeName:           "{template}",
+	OrchestratorTemplateCachePinnedGaugeName:            "{template}",
+	OrchestratorTemplateCacheMappingEntriesGaugeName:    "{entry}",
+	OrchestratorTemplateCacheMappingBytesGaugeName:      "{By}",
+	OrchestratorTemplateCachePinnedRefsGaugeName:        "{pin}",
+	OrchestratorTemplateCacheOldestPinAgeGaugeName:      "s",
+	OrchestratorTemplateCacheLayerEntriesGaugeName:      "{template}",
+	OrchestratorTemplateCacheLayerMappingBytesGaugeName: "{By}",
+	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "{layer}",
 }
 
 func GetCounter(meter metric.Meter, name CounterType) (metric.Int64Counter, error) {
@@ -767,6 +1005,9 @@ func GetGaugeInt(meter metric.Meter, name GaugeIntType) (metric.Int64ObservableG
 var histogramDesc = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 
+	FPHRunDurationName:                                "Duration of a completed free-page-hinting drain or run, labeled by phase",
+	FPHStopDurationName:                               "Duration of the stop of an abandoned hinting cycle, acknowledgement wait included",
+	FPHRunFaultsName:                                  "Demand faults the serve loop resolved for one sandbox across a periodic hinting attempt (window=run) and over the interval that followed a tick (window=interval), labeled by kind (served pages, deferred installs, wp faults, deferred wp resolves) and outcome: the attempt's run outcome, or for a tick that attempted nothing the skip reason or observe-only, which is the baseline an attempt is read against",
 	BuildDurationHistogramName:                        "Time taken to build a template",
 	BuildPhaseDurationHistogramName:                   "Time taken to build each phase of a template",
 	BuildStepDurationHistogramName:                    "Time taken to build each step of a template",
@@ -779,19 +1020,21 @@ var histogramDesc = map[HistogramType]string{
 	EnvdCollapseDurationHistogramName:                 "Time taken for the pre-pause envd heap collapse round-trip",
 	GuestSyncDurationHistogramName:                    "Time taken for the mandatory pre-pause guest sync (filesystem-only pause)",
 	PauseDurationHistogramName:                        "Time taken to pause a sandbox, labeled by fs_only (filesystem-only vs memory) and success",
-	SnapshotProcessMemoryDurationName:                 "Time to export+diff the memory file during a pause snapshot (memory pauses only), labeled by success",
+	SnapshotProcessMemoryDurationName:                 "Time to export+diff the memory file during a pause snapshot (memory pauses only), labeled by in_place, deferred, balloon_mode and success",
 	SnapshotProcessRootfsDurationName:                 "Time to export+diff the rootfs during a pause snapshot, labeled by fs_only and success",
 	SnapshotRootfsSealDurationName:                    "Time for the background deferred rootfs reflink seal (off the pause critical path), labeled by in_place and success",
-	SnapshotGuestFreezeDurationName:                   "Wall time the guest is frozen during an in-place checkpoint, from the FC pause call to the in-place resume; success=false means the resume ran on the pause-failure cleanup path",
+	SnapshotGuestFreezeDurationName:                   "Wall time the guest is frozen during an in-place checkpoint, from the FC pause call to the in-place resume, labeled by deferred, fs_only (filesystem-only, no memory export), balloon_mode and success; success=false means the resume ran on the pause-failure cleanup path",
+	CheckpointDurationName:                            "Wall time of one Checkpoint RPC from the route decision to the reply, labeled by in_place, fs_only, route, balloon_mode, deferred and success: the per-route latency the checkpoint counter only counts, with deferred separating the CoW-window and synchronous-copy arms of an in-place reporting checkpoint",
 	SnapshotMemorySealDurationName:                    "Time for the background CoW-window memory capture (off the in-place resume critical path), labeled by success",
 	OrchestratorSandboxMemfileDedupDurationName:       "Background memfile dedup latency, from the provisional header's creation at pause to the durable-header swap",
 	OrchestratorSandboxPauseAdmissionWaitDurationName: "Time snapshot admission waited on the durable parent header whenever it waited, labeled by outcome (ready_after_wait/refused)",
 	OrchestratorEnvdOfflineUpgradeDurationName:        "Wall-time of the offline cold-boot envd rootfs swap (jailed debugfs)",
+	OrchestratorEnvdBinaryCacheSourceStatDurationName: "Wall-time of the resume path's stat of the host envd binary on its mount, by result (ok|error)",
 	OrchestratorFsRecoveryDurationName:                "Wall-time of the jailed pre-boot e2fsck run on a cold boot",
 
-	PauseResumePrefetchHarvestDurationName:     "Time the pause-resume prefetch harvest held a start slot (throwaway resume, trace collection, reap)",
-	PauseResumePrefetchHarvestPagesName:        "Harvested resume-prefetch trace size in 2 MiB blocks, per successful harvest",
-	PauseResumePrefetchSealWaitDurationName:    "Time the prefetch harvest waited for the deferred rootfs seal before its warm resume",
+	PauseResumePrefetchHarvestDurationName:     "Time the resume prefetch harvest held a start slot (throwaway resume, trace collection, reap), by result and path",
+	PauseResumePrefetchHarvestPagesName:        "Harvested resume-prefetch trace size in 2 MiB blocks, per successful harvest, by path (pause | checkpoint)",
+	PauseResumePrefetchSealWaitDurationName:    "Time the prefetch harvest waited for the deferred seals (in-place memfile, then rootfs) before its warm resume, by result and path",
 	PauseResumePrefetchPersistWaitDurationName: "Time the prefetch harvest waited for the in-flight snapshot upload before persisting the mapping",
 
 	EnvdFreezeDurationHistogramName:     "Round-trip duration of the pre-pause workload freeze call, per pause",
@@ -801,6 +1044,8 @@ var histogramDesc = map[HistogramType]string{
 	EnvdFreezeAuditHistogramName:        "Resume-time audit of the frozen cgroup set, by kind: escaped (ran through the snapshot, whether created after the sweep or missed by a truncated or failed one -- read alongside freeze.truncated and the failed outcome) and violations (a cgroup the resume depends on was frozen -- a bug, expected to be zero)",
 	EnvdFreezeCgroupsHistogramName:      "Cgroups affected by a pre-pause freeze, per pause, split by outcome",
 	EnvdUnfreezeDurationHistogramName:   "Round-trip duration of the pause-rollback workload thaw call, per rollback",
+	EnvdFsthawDurationHistogramName:     "Round-trip duration of a rootfs thaw attempt after an in-place resume of a filesystem-only checkpoint (native /fsthaw or fsfreeze -u via exec), labeled by attempt and success; a final failure tears the sandbox down",
+	EnvdMemoryProtectionHistogramName:   "Memory protection configured on envd's cgroup chain as the guest reports it on /init, at most once per start (when the first /init's header decodes), by kind: request (envd's own memory.min) and floor (the minimum of memory.min over the chain below the root, envd's own cgroup included; 0 means some level carries none, there is no level at all because envd is in the root cgroup, or a value could not be read -- the init instruments' protection attribute is what tells the unreadable case apart, as unknown rather than unprotected). Values are truncated to MiB, so a setting below 1 MiB records as 0, and capped at the sandbox's own RAM, since nothing can protect more memory than the guest has: a sample equal to the sandbox's RAM means at least that, and an unbounded request (memory.min = max) is the extreme case that reaches it, though any request above the guest's RAM does; a sandbox whose RAM the recording does not know records the value uncapped. The exact byte count is on the envd-init span",
 	UffdStartupPagesHistogramName:       "Demand-fault pages a guest needed to reach a successful envd init, per start",
 	UffdStartupSourcePagesHistogramName: "Subset of startup demand-fault pages pulled from the source (e.g. GCS), per start",
 	UffdStartupBytesHistogramName:       "Bytes faulted into a guest to reach a successful envd init, per start",
@@ -840,6 +1085,9 @@ var histogramDesc = map[HistogramType]string{
 var histogramUnits = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "ms",
 
+	FPHRunDurationName:                                "ms",
+	FPHStopDurationName:                               "ms",
+	FPHRunFaultsName:                                  "{fault}",
 	BuildDurationHistogramName:                        "ms",
 	BuildPhaseDurationHistogramName:                   "ms",
 	BuildStepDurationHistogramName:                    "ms",
@@ -849,6 +1097,7 @@ var histogramUnits = map[HistogramType]string{
 	OrchestratorEnvdUpgradeDurationName:               "ms",
 	OrchestratorEnvdUpgradePhaseDurationName:          "ms",
 	OrchestratorEnvdOfflineUpgradeDurationName:        "ms",
+	OrchestratorEnvdBinaryCacheSourceStatDurationName: "ms",
 	OrchestratorFsRecoveryDurationName:                "ms",
 	WaitForEnvdDurationHistogramName:                  "ms",
 	EnvdCollapseDurationHistogramName:                 "ms",
@@ -858,6 +1107,7 @@ var histogramUnits = map[HistogramType]string{
 	SnapshotProcessRootfsDurationName:                 "ms",
 	SnapshotRootfsSealDurationName:                    "ms",
 	SnapshotGuestFreezeDurationName:                   "ms",
+	CheckpointDurationName:                            "ms",
 	SnapshotMemorySealDurationName:                    "ms",
 	OrchestratorSandboxMemfileDedupDurationName:       "ms",
 	OrchestratorSandboxPauseAdmissionWaitDurationName: "ms",
@@ -872,6 +1122,8 @@ var histogramUnits = map[HistogramType]string{
 	EnvdFreezeAuditHistogramName:                      "{cgroup}",
 	EnvdFreezeCgroupsHistogramName:                    "{cgroup}",
 	EnvdUnfreezeDurationHistogramName:                 "ms",
+	EnvdFsthawDurationHistogramName:                   "ms",
+	EnvdMemoryProtectionHistogramName:                 "MiBy",
 	UffdStartupPagesHistogramName:                     "{page}",
 	UffdStartupSourcePagesHistogramName:               "{page}",
 	UffdStartupBytesHistogramName:                     "{By}",

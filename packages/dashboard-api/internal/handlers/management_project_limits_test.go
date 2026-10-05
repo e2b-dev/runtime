@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/management"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
@@ -27,6 +28,7 @@ const validLimitsBody = `{
 	"concurrent_template_builds": 30,
 	"events_ttl_days": 14,
 	"default_free_disk_size_mb": 10240,
+	"api_team_rps_list": 60,
 	"max_disk_size_mb": 51200
 }`
 
@@ -126,6 +128,41 @@ func TestUpsertProjectLimitsRejectsFreeDiskAboveTheCeiling(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+func TestUpsertProjectLimitsCarriesTheListRateToTheView(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	teamID := testutils.CreateTestTeam(t, db)
+	store, _ := newLimitsStore(db)
+
+	body := strings.Replace(validLimitsBody, `"api_team_rps_list": 60`, `"api_team_rps_list": 33`, 1)
+	recorder := callUpsertProjectLimits(t, store, teamID, body)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+
+	var rate int64
+	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(),
+		"SELECT api_team_rps_list FROM public.team_limits WHERE id = $1",
+		func(rows pgx.Rows) error {
+			rows.Next()
+
+			return rows.Scan(&rate)
+		}, teamID))
+	require.EqualValues(t, 33, rate)
+}
+
+func TestUpsertProjectLimitsRejectsANegativeListRate(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	teamID := testutils.CreateTestTeam(t, db)
+	store, auth := newLimitsStore(db)
+
+	body := strings.Replace(validLimitsBody, `"api_team_rps_list": 60`, `"api_team_rps_list": -1`, 1)
+	recorder := callUpsertProjectLimits(t, store, teamID, body)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Empty(t, auth.invalidated)
+}
+
 func TestUpsertProjectLimitsRejectsAMalformedBody(t *testing.T) {
 	t.Parallel()
 
@@ -154,7 +191,7 @@ func newLimitsStore(db *testutils.Database) (*APIStore, *recordingCacheAuthServi
 	return &APIStore{
 		db:                db.SqlcClient,
 		authService:       auth,
-		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth),
+		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider()),
 	}, auth
 }
 

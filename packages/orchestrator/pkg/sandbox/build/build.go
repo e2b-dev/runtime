@@ -210,8 +210,7 @@ func (b *File) readAt(ctx context.Context, p []byte, off int64) (int, error) {
 		// A Diff can be evicted and closed between planning and reading. Re-plan
 		// the whole read; reads are idempotent, so re-filling already-written
 		// regions is safe and getBuild re-resolves the closed Diff.
-		var closed *block.CacheClosedError
-		if errors.As(err, &closed) {
+		if _, ok := errors.AsType[*block.CacheClosedError](err); ok {
 			continue
 		}
 
@@ -256,8 +255,7 @@ func (b *File) readSegments(ctx context.Context, p []byte, segments []readSegmen
 // into errors, so a bad disk block fails one read, not the process.
 func (b *File) readSegmentFaultSafe(ctx context.Context, p []byte, s readSegment) error {
 	err := block.RunFaultSafe(ctx, func() error { return b.readSegment(ctx, p, s) })
-	var faultErr *block.MemoryFaultError
-	if errors.As(err, &faultErr) {
+	if faultErr, ok := errors.AsType[*block.MemoryFaultError](err); ok {
 		cacheKey := string(s.diff.CacheKey())
 		logger.L().Error(ctx, "memory fault reading build segment; local disk under the cache is likely failing",
 			zap.Error(err),

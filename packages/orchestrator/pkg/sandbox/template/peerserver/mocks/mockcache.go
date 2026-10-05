@@ -7,6 +7,8 @@
 package peerservermocks
 
 import (
+	"context"
+
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	mock "github.com/stretchr/testify/mock"
@@ -37,68 +39,6 @@ type MockCache_Expecter struct {
 
 func (_m *MockCache) EXPECT() *MockCache_Expecter {
 	return &MockCache_Expecter{mock: &_m.Mock}
-}
-
-// GetCachedTemplate provides a mock function for the type MockCache
-func (_mock *MockCache) GetCachedTemplate(buildID string) (template.Template, bool) {
-	ret := _mock.Called(buildID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetCachedTemplate")
-	}
-
-	var r0 template.Template
-	var r1 bool
-	if returnFunc, ok := ret.Get(0).(func(string) (template.Template, bool)); ok {
-		return returnFunc(buildID)
-	}
-	if returnFunc, ok := ret.Get(0).(func(string) template.Template); ok {
-		r0 = returnFunc(buildID)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(template.Template)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(string) bool); ok {
-		r1 = returnFunc(buildID)
-	} else {
-		r1 = ret.Get(1).(bool)
-	}
-	return r0, r1
-}
-
-// MockCache_GetCachedTemplate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetCachedTemplate'
-type MockCache_GetCachedTemplate_Call struct {
-	*mock.Call
-}
-
-// GetCachedTemplate is a helper method to define mock.On call
-//   - buildID string
-func (_e *MockCache_Expecter) GetCachedTemplate(buildID interface{}) *MockCache_GetCachedTemplate_Call {
-	return &MockCache_GetCachedTemplate_Call{Call: _e.mock.On("GetCachedTemplate", buildID)}
-}
-
-func (_c *MockCache_GetCachedTemplate_Call) Run(run func(buildID string)) *MockCache_GetCachedTemplate_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 string
-		if args[0] != nil {
-			arg0 = args[0].(string)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *MockCache_GetCachedTemplate_Call) Return(template1 template.Template, b bool) *MockCache_GetCachedTemplate_Call {
-	_c.Call.Return(template1, b)
-	return _c
-}
-
-func (_c *MockCache_GetCachedTemplate_Call) RunAndReturn(run func(buildID string) (template.Template, bool)) *MockCache_GetCachedTemplate_Call {
-	_c.Call.Return(run)
-	return _c
 }
 
 // LookupDiff provides a mock function for the type MockCache
@@ -165,6 +105,82 @@ func (_c *MockCache_LookupDiff_Call) Return(diff build.Diff, b bool) *MockCache_
 }
 
 func (_c *MockCache_LookupDiff_Call) RunAndReturn(run func(buildID string, diffType build.DiffType) (build.Diff, bool)) *MockCache_LookupDiff_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LookupPinned provides a mock function for the type MockCache
+func (_mock *MockCache) LookupPinned(ctx context.Context, buildID string) (template.Template, func(), bool) {
+	ret := _mock.Called(ctx, buildID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LookupPinned")
+	}
+
+	var r0 template.Template
+	var r1 func()
+	var r2 bool
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (template.Template, func(), bool)); ok {
+		return returnFunc(ctx, buildID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) template.Template); ok {
+		r0 = returnFunc(ctx, buildID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(template.Template)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) func()); ok {
+		r1 = returnFunc(ctx, buildID)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(func())
+		}
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string) bool); ok {
+		r2 = returnFunc(ctx, buildID)
+	} else {
+		r2 = ret.Get(2).(bool)
+	}
+	return r0, r1, r2
+}
+
+// MockCache_LookupPinned_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LookupPinned'
+type MockCache_LookupPinned_Call struct {
+	*mock.Call
+}
+
+// LookupPinned is a helper method to define mock.On call
+//   - ctx context.Context
+//   - buildID string
+func (_e *MockCache_Expecter) LookupPinned(ctx interface{}, buildID interface{}) *MockCache_LookupPinned_Call {
+	return &MockCache_LookupPinned_Call{Call: _e.mock.On("LookupPinned", ctx, buildID)}
+}
+
+func (_c *MockCache_LookupPinned_Call) Run(run func(ctx context.Context, buildID string)) *MockCache_LookupPinned_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockCache_LookupPinned_Call) Return(template1 template.Template, fn func(), b bool) *MockCache_LookupPinned_Call {
+	_c.Call.Return(template1, fn, b)
+	return _c
+}
+
+func (_c *MockCache_LookupPinned_Call) RunAndReturn(run func(ctx context.Context, buildID string) (template.Template, func(), bool)) *MockCache_LookupPinned_Call {
 	_c.Call.Return(run)
 	return _c
 }

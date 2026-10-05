@@ -49,7 +49,6 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 
 		return nil
 	}
-
 	// Determine the input based on which field is provided
 	var input string
 	switch {
@@ -92,17 +91,31 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		return nil
 	}
 
+	currentCluster, err := a.sqlcDB.GetTeamClusterForTemplateBuild(ctx, team.ID)
+	if err != nil {
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when checking the team's cluster")
+		telemetry.ReportCriticalError(ctx, "error when getting team cluster", err)
+
+		return nil
+	}
+	clusterID := clusters.WithClusterFallback(currentCluster)
 	findTemplateCtx, span := tracer.Start(ctx, "find-template-alias")
 	defer span.End()
 	templateID := id.Generate()
 	public := false
+	replacesTemplateID := ""
 
 	aliasInfo, metadata, err := a.templateCache.ResolveAliasWithMetadata(findTemplateCtx, identifier, team.Slug)
 	switch {
 	case err == nil && aliasInfo.TeamID == team.ID:
-		// Template exists and is owned by this team - update it
-		templateID = aliasInfo.TemplateID
 		public = metadata.Public
+		if metadata.ClusterID != clusterID {
+			if aliasInfo.MatchedIdentifier == id.WithNamespace(team.Slug, id.ExtractAlias(identifier)) {
+				replacesTemplateID = aliasInfo.TemplateID
+			}
+		} else {
+			templateID = aliasInfo.TemplateID
+		}
 	case err == nil || errors.Is(err, templatecache.ErrTemplateNotFound):
 		// Either alias not found, or found but owned by different team (e.g. promoted template)
 		// Team can create their own template with this alias in their namespace
@@ -121,7 +134,9 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 	firecrackerVersion := a.featureFlags.StringFlag(ctx, featureflags.BuildFirecrackerVersion)
 	kernelVersion := a.featureFlags.StringFlag(ctx, featureflags.BuildKernelVersion)
 	buildReq := template.RegisterBuildData{
-		ClusterID:          clusters.WithClusterFallback(team.ClusterID),
+		ReplacesTemplateID: replacesTemplateID,
+		Public:             public,
+		ClusterID:          clusterID,
 		TemplateID:         templateID,
 		UserID:             nil,
 		Team:               team,
@@ -129,7 +144,7 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Tags:               tags,
 		CpuCount:           body.CpuCount,
 		MemoryMB:           body.MemoryMB,
-		FreeDiskSpaceMB:    body.FreeDiskSpaceMB,
+		MinFreeDiskMb:      body.MinFreeDiskMb,
 		Version:            templates.TemplateV2LatestVersion,
 		KernelVersion:      kernelVersion,
 		FirecrackerVersion: firecrackerVersion,
@@ -137,6 +152,9 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 
 	template, apiError := template.RegisterBuild(ctx, a.templateCache, a.sqlcDB, buildReq)
 	if apiError != nil {
+		if replacesTemplateID != "" {
+			a.templateCache.InvalidateAlias(context.WithoutCancel(ctx), &team.Slug, id.ExtractAlias(identifier))
+		}
 		a.sendAPIStoreError(c, apiError.Code, apiError.ClientMsg)
 		telemetry.ReportErrorByCode(ctx, apiError.Code, "error when requesting template build", apiError.Err, telemetry.WithTemplateID(templateID))
 
@@ -166,6 +184,6 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Aliases:    template.Aliases,
 		Names:      template.Names,
 		Tags:       template.Tags,
-		Public:     public,
+		Public:     template.Public,
 	}
 }

@@ -50,7 +50,7 @@ func PlaceSandbox(
 	labelFilteringEnabled bool,
 	requiredLabels []string,
 ) (PlacementResult, error) {
-	return placeSandbox(ctx, algorithm, clusterNodes, preferredNode, sbxRequest, cpu, requiredFeatures(sbxRequest), labelFilteringEnabled, requiredLabels)
+	return placeSandbox(ctx, algorithm, clusterNodes, preferredNode, sbxRequest, cpu, requiredFeatures(sbxRequest), labelFilteringEnabled, requiredLabels, defaultRefusalBackoff)
 }
 
 func placeSandbox(
@@ -63,12 +63,15 @@ func placeSandbox(
 	features FeatureRequirement,
 	labelFilteringEnabled bool,
 	requiredLabels []string,
+	backoff refusalBackoff,
 ) (PlacementResult, error) {
 	ctx, span := tracer.Start(ctx, "place-sandbox")
 	defer span.End()
 
 	nodesExcluded := make(map[string]struct{})
 	var err error
+
+	resources := nodemanager.SandboxResources{CPUs: sbxRequest.GetSandbox().GetVcpu(), MiBMemory: sbxRequest.GetSandbox().GetRamMb()}
 
 	var node *nodemanager.Node
 	// Vetted here rather than trusted: the preferred node skips chooseNode, so
@@ -139,7 +142,7 @@ func placeSandbox(
 				return failed(NoNodesAvailableError{})
 			}
 
-			node, err = algorithm.chooseNode(ctx, clusterNodes, nodesExcluded, nodemanager.SandboxResources{CPUs: sbxRequest.GetSandbox().GetVcpu(), MiBMemory: sbxRequest.GetSandbox().GetRamMb()}, cpu, features, labelFilteringEnabled, requiredLabels)
+			node, err = algorithm.chooseNode(ctx, clusterNodes, nodesExcluded, resources, cpu, features, labelFilteringEnabled, requiredLabels)
 			if err != nil {
 				// A create was already attempted: its error explains the failure
 				// better than the empty candidate set it caused.
@@ -153,10 +156,7 @@ func placeSandbox(
 			telemetry.ReportEvent(ctx, "Placing sandbox on the node", telemetry.WithNodeID(node.ID))
 		}
 
-		node.PlacementMetrics.StartPlacing(sbxRequest.GetSandbox().GetSandboxId(), nodemanager.SandboxResources{
-			CPUs:      sbxRequest.GetSandbox().GetVcpu(),
-			MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
-		})
+		node.PlacementMetrics.StartPlacing(sbxRequest.GetSandbox().GetSandboxId(), resources)
 
 		ctx, span := tracer.Start(ctx, "create-sandbox")
 		span.SetAttributes(
@@ -171,10 +171,7 @@ func placeSandbox(
 			// Optimistic update: assume resources are occupied after successful creation.
 			// Manually update node.metrics with the newly allocated resources.
 			// This will be overwritten by the next real Metrics report for auto-correction.
-			node.OptimisticAdd(nodemanager.SandboxResources{
-				CPUs:      sbxRequest.GetSandbox().GetVcpu(),
-				MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
-			})
+			node.OptimisticAdd(resources)
 
 			return PlacementResult{Node: node, Response: resp}, nil
 		}
@@ -198,7 +195,12 @@ func placeSandbox(
 		case codes.ResourceExhausted:
 			refusals++
 			failedNode.PlacementMetrics.Skip(sbxRequest.GetSandbox().GetSandboxId())
-			logger.L().Warn(ctx, "Node exhausted, trying another node", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithNodeID(failedNode.ID), zap.Error(utils.UnwrapGRPCError(err)))
+
+			delay := backoff.delay(refusals)
+			logger.L().Warn(ctx, "Node exhausted, trying another node", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithNodeID(failedNode.ID), zap.Int("refusals", refusals), zap.Duration("retry_in", delay), zap.Error(utils.UnwrapGRPCError(err)))
+			if !sleep(ctx, delay) {
+				return deadline()
+			}
 		default:
 			nodesExcluded[failedNode.ID] = struct{}{}
 			failedNode.PlacementMetrics.Fail(sbxRequest.GetSandbox().GetSandboxId())

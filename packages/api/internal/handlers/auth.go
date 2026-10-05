@@ -15,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
 // applyTeamAccessCheck maps a team-access denial to a 403 *api.APIError.
@@ -83,7 +84,7 @@ func (a *APIStore) GetTeam(
 
 func findTeam(teams []*types.TeamWithDefault, teamID *string) (*types.Team, error) {
 	if teamID != nil {
-		teamUUID, err := uuid.Parse(*teamID)
+		teamUUID, err := id.ParseTeamID(*teamID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid team ID: %s", *teamID)
 		}
@@ -104,6 +105,14 @@ func findTeam(teams []*types.TeamWithDefault, teamID *string) (*types.Team, erro
 	}
 
 	return nil, errors.New("default team not found")
+}
+
+// teamIDMatches reports whether candidate names teamID, as a UUID or as its
+// public project ID.
+func teamIDMatches(teamID uuid.UUID, candidate string) bool {
+	parsed, err := id.ParseTeamID(candidate)
+
+	return err == nil && parsed == teamID
 }
 
 func (a *APIStore) getUserTeams(ctx context.Context, userID uuid.UUID) ([]*types.TeamWithDefault, *api.APIError) {

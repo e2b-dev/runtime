@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -73,7 +74,7 @@ func TestRunDeferredMemoryExport_FailureSparesSandbox(t *testing.T) {
 
 	// The runner's failure logs carry sandbox identity, so the test Sandbox
 	// needs Metadata for sbxlogger.
-	s := &Sandbox{Metadata: &Metadata{Runtime: RuntimeMetadata{SandboxID: "test-sbx"}}}
+	s := &Sandbox{Metadata: &Metadata{Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "test-sbx"}}}
 	ce := &stubCoWExporter{}
 	diffPromise := utils.NewSetOnce[build.Diff]()
 	sealDone := utils.NewSetOnce[struct{}]()

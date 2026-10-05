@@ -25,6 +25,13 @@ const (
 	DefaultStorageProvider Provider = GCPStorageProvider
 )
 
+// Server-side encryption values accepted in a storage URL's ssetype parameter
+// (the names follow gocloud.dev's s3blob URL dialect).
+const (
+	SSEAES256 = "AES256"
+	SSEAWSKMS = "aws:kms"
+)
+
 // Spec is a fully resolved storage destination, produced from a
 // storage URL (see ParseStorageURL).
 type Spec struct {
@@ -41,6 +48,13 @@ type Spec struct {
 	UsePathStyle bool
 	// Region overrides the S3 region; empty defers to the AWS SDK (AWS_REGION et al.).
 	Region string
+	// ServerSideEncryption is sent as x-amz-server-side-encryption on every S3
+	// write ("AES256" or "aws:kms"); empty sends no header and leaves the
+	// bucket's default encryption in charge.
+	ServerSideEncryption string
+	// SSEKMSKeyID names the KMS key for "aws:kms"; empty uses the AWS-managed
+	// aws/s3 key, not the bucket's default key.
+	SSEKMSKeyID string
 }
 
 // ParseStorageURL parses a storage URL into a Spec, following the
@@ -49,6 +63,7 @@ type Spec struct {
 //	gs://bucket                                                    Google Cloud Storage
 //	s3://bucket?endpoint=http://host:port/s3&s3ForcePathStyle=true S3 / S3-compatible
 //	s3://bucket?region=us-east-1                                   plain AWS S3
+//	s3://bucket?ssetype=aws:kms&kmskeyid=arn:aws:kms:…             S3 with server-side encryption
 //	azblob://container                                             Azure Blob Storage
 //	file:///var/lib/storage                                        local filesystem
 //	file:relative/path                                             local filesystem (relative)
@@ -62,8 +77,7 @@ func ParseStorageURL(raw string) (Spec, error) {
 	if err != nil {
 		// Do not echo the raw URL: it may carry credentials. url.Error also
 		// embeds the URL, so unwrap it and keep only the underlying cause.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
 			err = urlErr.Err
 		}
 
@@ -145,9 +159,20 @@ func parseBucketURL(u *url.URL, provider Provider) (Spec, error) {
 			spec.UsePathStyle = pathStyle
 		case "region":
 			spec.Region = value
+		case "ssetype":
+			if value != SSEAES256 && value != SSEAWSKMS {
+				return Spec{}, fmt.Errorf("storage URL %q: invalid ssetype %q (want %s or %s)", redactedURL(u), value, SSEAES256, SSEAWSKMS)
+			}
+			spec.ServerSideEncryption = value
+		case "kmskeyid":
+			spec.SSEKMSKeyID = value
 		default:
-			return Spec{}, fmt.Errorf("storage URL %q: unsupported query parameter %q (want endpoint, s3ForcePathStyle, or region)", redactedURL(u), key)
+			return Spec{}, fmt.Errorf("storage URL %q: unsupported query parameter %q (want endpoint, s3ForcePathStyle, region, ssetype, or kmskeyid)", redactedURL(u), key)
 		}
+	}
+
+	if spec.SSEKMSKeyID != "" && spec.ServerSideEncryption != SSEAWSKMS {
+		return Spec{}, fmt.Errorf("storage URL %q: kmskeyid requires ssetype=%s", redactedURL(u), SSEAWSKMS)
 	}
 
 	return spec, nil

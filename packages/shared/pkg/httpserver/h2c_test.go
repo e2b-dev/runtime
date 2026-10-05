@@ -1,8 +1,10 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +16,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 )
+
+func TestConfigureH2CRejectsIncompleteOversizedUpgrade(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("oversized upgrade reached the application handler")
+	}))
+	ConfigureH2C(server.Config)
+	server.Start()
+	t.Cleanup(server.Close)
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(t.Context(), "tcp", server.Listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err = fmt.Fprintf(conn, "POST /upload HTTP/1.1\r\nHost: sandbox.test\r\nConnection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQAAP__\r\nContent-Length: %d\r\n\r\n", h2cUpgradeBodyLimit+2)
+	require.NoError(t, err)
+	_, err = io.WriteString(conn, strings.Repeat("x", h2cUpgradeBodyLimit+1))
+	require.NoError(t, err)
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	require.True(t, resp.Close)
+}
 
 func TestConfigureH2CAcceptsHTTP2AndHTTP1(t *testing.T) {
 	t.Parallel()

@@ -47,7 +47,7 @@ func (n *Node) GetOrphanCandidates(ctx context.Context) ([]sandbox.NodeSandbox, 
 	for _, sbx := range sandboxes {
 		// config is deprecated and only read as a fallback for orchestrators
 		// that predate the scalar fields. Proto getters are nil-safe.
-		config := sbx.GetConfig() //nolint:staticcheck // rollout fallback
+		config := sbx.GetConfig()
 
 		sandboxID := cmp.Or(sbx.GetSandboxId(), config.GetSandboxId())
 		rawTeamID := cmp.Or(sbx.GetTeamId(), config.GetTeamId())

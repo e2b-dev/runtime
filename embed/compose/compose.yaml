@@ -1,0 +1,1019 @@
+# The install is this file plus .env, side by side, and nothing else.
+#
+# Everything .env pins is interpolated as ${VAR:?...}, so a missing or partial
+# .env fails `docker compose config` and `up` at parse time, naming the
+# variable. Without it Compose renders a blank image name or a blank kernel
+# version and only warns, and the operator meets either a confusing "neither
+# an image nor a build context" error or a fetch-artifacts failure after the
+# host has already been mutated. The nine knobs that are genuinely optional and
+# are absent from .env (TEAM_API_KEY, ADMIN_TOKEN, SANDBOX_ACCESS_TOKEN_HASH_SEED,
+# E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT only as commented
+# lines) keep the ${VAR:-...} form: HUGEPAGES, NBDS_MAX, PF_MIN_FREE_GIB,
+# FORCE_REBUILD, E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT carry a
+# working default (the last an empty one, which exports no telemetry), while
+# TEAM_API_KEY, ADMIN_TOKEN and SANDBOX_ACCESS_TOKEN_HASH_SEED carry none — the
+# stack generates all three per install (seed for the key, api-secrets for the
+# api's two), and a value set in .env or the shell overrides the generated one.
+name: e2b
+
+x-tools: &tools
+  image: ${E2B_TOOLS_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+
+x-node-e2b: &node-e2b
+  image: ${E2B_NODE_E2B_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+
+# Docker's json-file driver keeps a container's log forever by default. On a
+# full disk a service that fails on every write, ClickHouse above all, writes
+# error output faster than anything frees space, and the disk stays full until
+# someone steps in. Every service aliases this cap: five files of 50 MiB,
+# 250 MiB a service, and `docker compose logs` reads the rotated files as
+# before. The driver is named so the options are valid on a daemon whose
+# default driver is another one.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  postgres:
+    logging: *logging
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/18/docker
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    logging: *logging
+    image: redis:7.4.6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    logging: *logging
+    image: clickhouse/clickhouse-server:25.8.30.16
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      # sha256 of config/clickhouse/config.xml, same purpose as
+      # VECTOR_CONFIG_SHA256 on the vector service.
+      CLICKHOUSE_CONFIG_SHA256: 48f50a1778bd986fdfb74c3f1e796816dbaa78d56c26443b604cbba205504f83
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:8123:8123"
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+    configs:
+      - source: clickhouse-config
+        target: /etc/clickhouse-server/config.d/config.xml
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user clickhouse --password clickhouse --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  vector:
+    logging: *logging
+    image: timberio/vector:0.51.1-alpine
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      VECTOR_CONFIG: /etc/vector/vector.toml
+      VECTOR_LOG: warn
+      # sha256 of config/vector/vector.toml. Inert for Vector; it makes the
+      # service hash change with the inline config so `up` recreates the
+      # container (compose does not hash `configs:` content). Kept in step by
+      # tests/config-hashes.bats.
+      VECTOR_CONFIG_SHA256: a4ca48367c4ae06f81fa08d9f8cbcace70f25a631f00496a44d96282e469b7a3
+    ports:
+      - "127.0.0.1:30006:30006"
+    configs:
+      - source: vector-config
+        target: /etc/vector/vector.toml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:44313/health >/dev/null"]
+      interval: 10s
+      timeout: 2s
+      retries: 12
+
+  # The built-in OpenTelemetry collector, run only with the otel profile:
+  # COMPOSE_PROFILES=otel in .env, which Compose reads itself. It receives
+  # OTLP/gRPC on 127.0.0.1:4317, the address to give
+  # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and writes the e2b.* metrics into
+  # ClickHouse (config/otel/otel-collector.yaml says what it keeps). The image
+  # has no shell, so there is no healthcheck; `curl -s 127.0.0.1:13133` on the
+  # host is the check. No service depends on it, `ready` included.
+  otel-collector:
+    logging: *logging
+    image: otel/opentelemetry-collector-contrib:0.146.0
+    profiles: [otel]
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      clickhouse-migrator:
+        condition: service_completed_successfully
+    environment:
+      # sha256 of config/otel/otel-collector.yaml, same purpose as
+      # VECTOR_CONFIG_SHA256 on the vector service.
+      OTEL_CONFIG_SHA256: 96621f22e4e8ab2b420a6bc659c0b47239535f90627951aba449a309f614ce5f
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: otel-collector-config
+        target: /etc/otelcol-contrib/config.yaml
+
+  db-migrator:
+    logging: *logging
+    image: ${E2B_DB_MIGRATOR_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+
+  clickhouse-migrator:
+    logging: *logging
+    image: ${E2B_CLICKHOUSE_MIGRATOR_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      GOOSE_DBSTRING: clickhouse://clickhouse:clickhouse@clickhouse:9000/default
+
+  seed:
+    logging: *logging
+    image: ${E2B_SEED_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: "no"
+    depends_on:
+      db-migrator:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      OIDC_ISSUER: http://localhost:4444/
+      OIDC_SUBJECT: local-dev-user
+      # The team API key is per install. The seed generates one on the first
+      # run and keeps it in the seed-state volume, where a re-run finds it again
+      # and base-template, smoke and ready read it. TEAM_API_KEY in .env or the
+      # shell (e2b_ plus at least 32 hex characters) pins it instead, and
+      # changing it later rotates: the next up inserts the new key and revokes
+      # the seed's earlier one (the api's team-auth cache keeps the old key
+      # working for up to five minutes). Removing the key file, or `down -v`,
+      # which drops the volume with the databases, makes the next up generate
+      # a fresh key the same way.
+      SEED_TEAM_API_KEY: ${TEAM_API_KEY:-random}
+      SEED_TEAM_API_KEY_FILE: /run/e2b/team-api-key
+    volumes:
+      - seed-state:/run/e2b
+
+  preflight:
+    <<: *tools
+    logging: *logging
+    restart: "no"
+    network_mode: host
+    pid: host
+    privileged: true
+    environment:
+      PF_MIN_FREE_GIB: ${PF_MIN_FREE_GIB:-20}
+    command: ["/bin/sh", "-c", "exec nsenter -t 1 -m -u -i -n -p -- /bin/bash -s < /opt/e2b/scripts/preflight.sh"]
+
+  host-setup:
+    <<: *tools
+    logging: *logging
+    restart: "no"
+    network_mode: host
+    pid: host
+    privileged: true
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    environment:
+      HUGEPAGES: ${HUGEPAGES:-2048}
+      NBDS_MAX: ${NBDS_MAX:-64}
+    command: ["/bin/sh", "-c", "exec nsenter -t 1 -m -u -i -n -p -- /bin/bash -s < /opt/e2b/scripts/host-setup.sh"]
+
+  fetch-artifacts:
+    <<: *tools
+    logging: *logging
+    restart: "no"
+    network_mode: host
+    depends_on:
+      host-setup:
+        condition: service_completed_successfully
+    environment:
+      HOST_ROOT: /host
+      E2B_ORCHESTRATOR_VERSION: ${E2B_ORCHESTRATOR_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      E2B_ENVD_VERSION: ${E2B_ENVD_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      E2B_KERNEL_VERSION: ${E2B_KERNEL_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      E2B_FIRECRACKER_VERSION: ${E2B_FIRECRACKER_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      E2B_BUSYBOX_VERSION: ${E2B_BUSYBOX_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+    volumes:
+      - /:/host
+    command: ["/bin/bash", "/opt/e2b/scripts/fetch-artifacts.sh"]
+
+  # The api's two secrets are per install, the way the team API key is. This
+  # generates both on the first start and keeps them in the seed-state volume,
+  # where a re-run finds them again and the api's entrypoint reads them.
+  # ADMIN_TOKEN or SANDBOX_ACCESS_TOKEN_HASH_SEED in .env or the shell
+  # overrides one of them without touching the other. Removing the file, or
+  # `down -v`, which drops the volume with the databases, makes the next up
+  # generate a fresh pair: a new hash seed invalidates the tokens of running
+  # `secure` sandboxes and a new admin token invalidates admin clients.
+  # preflight is the only gate — nothing here touches the host, so the pair is
+  # written long before the api needs it — and the values are never printed.
+  api-secrets:
+    <<: *tools
+    logging: *logging
+    restart: "no"
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    volumes:
+      - seed-state:/run/e2b
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ -s /run/e2b/api.env ]; then
+          echo "api-secrets: reusing /run/e2b/api.env"
+          exit 0
+        fi
+        umask 077
+        hex() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+        tmp=/run/e2b/api.env.tmp
+        printf 'GEN_ADMIN_TOKEN=%s\nGEN_SANDBOX_ACCESS_TOKEN_HASH_SEED=%s\n' \
+          "$$(hex)" "$$(hex)" > "$$tmp"
+        chmod 600 "$$tmp"
+        mv "$$tmp" /run/e2b/api.env
+        echo "api-secrets: generated /run/e2b/api.env"
+
+  orchestrator:
+    <<: *tools
+    logging: *logging
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    cgroup: host
+    privileged: true
+    environment:
+      ORCHESTRATOR_SERVICES: orchestrator,template-manager
+      NODE_ID: orchestrator
+      NODE_IP: 127.0.0.1
+      ENVIRONMENT: local
+      GRPC_PORT: "5008"
+      PROXY_PORT: "5007"
+      PPROF_PORT: "6061"
+      REDIS_URL: 127.0.0.1:6379
+      CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
+      LOGS_COLLECTOR_ADDRESS: http://127.0.0.1:30006
+      # Where this service and api, client-proxy and dashboard-api export their
+      # metrics, traces and logs over OTLP/gRPC. Empty unless .env sets
+      # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and empty exports nothing.
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
+      TEMPLATE_STORAGE_URL: file:///var/lib/e2b/storage/templates
+      BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
+      ARTIFACTS_REGISTRY_PROVIDER: Local
+      LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008
+      FIRECRACKER_VERSIONS_DIR: /fc-versions
+      HOST_KERNELS_DIR: /fc-kernels
+      HOST_BUSYBOX_DIR: /fc-busybox
+      BUSYBOX_VERSION: ${E2B_BUSYBOX_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      HOST_ENVD_PATH: /fc-envd/envd
+      ORCHESTRATOR_BASE_PATH: /orchestrator
+      SANDBOX_DIR: /fc-vm
+      # Warm-device buffer, kept below NBDS_MAX: at parity the refill loop spins and warns.
+      NBD_POOL_SIZE: "32"
+      NETWORK_VERSION: "1"
+      DEFAULT_KERNEL_VERSION: ${E2B_KERNEL_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      DEFAULT_FIRECRACKER_VERSION: ${E2B_FIRECRACKER_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+    depends_on:
+      fetch-artifacts:
+        condition: service_completed_successfully
+      clickhouse-migrator:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      vector:
+        condition: service_healthy
+    # orchestrator-launch.sh is PID 1: it sweeps sandbox cgroups on SIGTERM,
+    # because Compose pre_stop hooks do not fire and the orchestrator itself
+    # only drains. It sweeps again when the binary dies on its own, so the
+    # restart policy above cannot bring up a fresh orchestrator beside a
+    # crashed one's Firecrackers. See scripts/orchestrator-launch.sh.
+    command: ["/bin/bash", "/opt/e2b/scripts/orchestrator-launch.sh"]
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --max-time 2 http://127.0.0.1:5008/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  api:
+    logging: *logging
+    image: ${E2B_API_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Empty means the operator set neither: api-secrets generated a value
+      # per install for each and the entrypoint below fills it in. A value in
+      # .env or the shell arrives here and wins, one variable at a time. The
+      # team API key is per install the same way (seed service above).
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      SANDBOX_ACCESS_TOKEN_HASH_SEED: ${SANDBOX_ACCESS_TOKEN_HASH_SEED:-}
+      NODE_ID: api
+      ENVIRONMENT: local
+      SERVICE_DISCOVERY_PROVIDER: local
+      LOCAL_ORCHESTRATOR_ADDRESS: 127.0.0.1:5008
+      POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      REDIS_URL: 127.0.0.1:6379
+      CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
+      # Sandbox and build logs are read from ClickHouse.
+      # LOGS_READ_CONFIG fixes the api's logs-read-config flag, which has no
+      # LaunchDarkly to come from here, and the api runs without LOKI_URL.
+      # Both arrived with api v0.11.0; v0.8.0 exits on the missing
+      # LOKI_URL, and tests/pins.bats refuses that pin.
+      LOGS_READ_CONFIG: "true"
+      # A pause the node refuses — it is still persisting the sandbox's parent
+      # — keeps the sandbox running and answers 503 to retry, instead of
+      # killing it. This is the api's
+      # pause-refusal-restore flag, which has no LaunchDarkly to come from
+      # here; api releases that predate the knob ignore it, so this takes
+      # effect with the first api pin that reads it.
+      PAUSE_REFUSAL_RESTORE: "true"
+      LOGS_COLLECTOR_ADDRESS: http://127.0.0.1:30006
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
+      API_INTERNAL_GRPC_PORT: "5009"
+      API_EDGE_GRPC_PORT: "5109"
+      PPROF_PORT: "6060"
+      VOLUME_TOKEN_ENABLED: "false"
+      AUTH_PROVIDER_CONFIG: '{"jwt":[]}'
+      DEFAULT_KERNEL_VERSION: ${E2B_KERNEL_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+      DEFAULT_FIRECRACKER_VERSION: ${E2B_FIRECRACKER_VERSION:?fetch the .env that ships beside compose.yaml (README, Install)}
+    env_file:
+      # optional additional api variables (git-ignored); keys already set above
+      # cannot be overridden here — change them in compose.yaml, or for
+      # ADMIN_TOKEN / SANDBOX_ACCESS_TOKEN_HASH_SEED in .env or the shell
+      # (both are generated per install when unset).
+      #
+      # Do not simplify this to the short `- env/api.local.env` form. The long
+      # `path:`/`required:` syntax is the file's own enforcement of the Compose
+      # 2.24 floor: 2.23 and older reject `required:` at
+      # parse time, before anything starts, which turns the documented floor
+      # into an error message instead of a silent misbehaviour in `--wait`.
+      # The short form would also make the file mandatory, so a two-file
+      # install with no env/ directory would fail on every `up`.
+      - path: env/api.local.env
+        required: false
+    volumes:
+      - seed-state:/run/e2b:ro
+    # The image's entrypoint is ./api; this wrapper runs it with whichever of
+    # the two secrets the operator left unset filled in from the file
+    # api-secrets wrote, which Compose cannot read into a variable itself.
+    # `sh -c` takes the word after the script as $0, hence the "api"
+    # placeholder at the end: without it the first word of `command:` below
+    # would become $0 and never reach the binary. `exec` keeps the api as
+    # PID 1, so signals and its exit code pass through. Debugging with a
+    # shell now needs the entrypoint named explicitly, as in
+    # `docker compose run --rm --entrypoint sh api`.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        test -s /run/e2b/api.env || {
+          echo "api: api-secrets left no /run/e2b/api.env" >&2
+          echo "FIX: run docker compose up api-secrets and read its output" >&2
+          exit 1
+        }
+        . /run/e2b/api.env
+        [ -n "$${GEN_ADMIN_TOKEN:-}" ] && [ -n "$${GEN_SANDBOX_ACCESS_TOKEN_HASH_SEED:-}" ] || {
+          echo "api: /run/e2b/api.env is incomplete" >&2
+          echo "FIX: docker compose run --rm --no-deps --entrypoint rm api-secrets /run/e2b/api.env, then docker compose up -d" >&2
+          exit 1
+        }
+        export ADMIN_TOKEN="$${ADMIN_TOKEN:-$$GEN_ADMIN_TOKEN}"
+        export SANDBOX_ACCESS_TOKEN_HASH_SEED="$${SANDBOX_ACCESS_TOKEN_HASH_SEED:-$$GEN_SANDBOX_ACCESS_TOKEN_HASH_SEED}"
+        exec ./api "$$@"
+      - api
+    command: ["--port", "3000"]
+    depends_on:
+      api-secrets:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  # The dashboard's backend. It reads the same databases as the api and the
+  # same admin token: the wrapper below is the api's, reading GEN_ADMIN_TOKEN
+  # from the file api-secrets writes, so both processes hold the one token
+  # this install generated. It starts without an identity provider; the
+  # /v1/management routes then answer 401, and nothing here calls them.
+  dashboard-api:
+    logging: *logging
+    image: ${E2B_DASHBOARD_API_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      PORT: "3010"
+      NODE_ID: dashboard-api
+      ENVIRONMENT: local
+      POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      REDIS_URL: 127.0.0.1:6379
+      CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
+      AUTH_PROVIDER_CONFIG: '{"jwt":[]}'
+    volumes:
+      - seed-state:/run/e2b:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        test -s /run/e2b/api.env || {
+          echo "dashboard-api: api-secrets left no /run/e2b/api.env" >&2
+          echo "FIX: run docker compose up api-secrets and read its output" >&2
+          exit 1
+        }
+        . /run/e2b/api.env
+        [ -n "$${GEN_ADMIN_TOKEN:-}" ] || {
+          echo "dashboard-api: /run/e2b/api.env is incomplete" >&2
+          echo "FIX: docker compose run --rm --no-deps --entrypoint rm api-secrets /run/e2b/api.env, then docker compose up -d" >&2
+          exit 1
+        }
+        export ADMIN_TOKEN="$${ADMIN_TOKEN:-$$GEN_ADMIN_TOKEN}"
+        exec ./dashboard-api "$$@"
+      - dashboard-api
+    depends_on:
+      api-secrets:
+        condition: service_completed_successfully
+      db-migrator:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3010/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  # The web UI. A browser signs in with this install's team API key, which
+  # lands in an httpOnly cookie; DASHBOARD_COOKIE_SECURE=false keeps that
+  # cookie over plain http. The server reaches the two APIs on loopback; the
+  # browser reaches sandboxes at PUBLIC_SANDBOX_URL, so that address has to be
+  # one the browser can open, which is what the E2B_DASHBOARD_HOST knob sets.
+  # PUBLIC_E2B_DOMAIN is required by the image and only feeds SDK domain
+  # routing, which PUBLIC_SANDBOX_URL overrides here. The image refuses to
+  # start on E2B_SANDBOX_URL or any NEXT_PUBLIC_* variable, so none is set.
+  # /api/health is 503 until dashboard-api answers, which makes it the right
+  # readiness for `up --wait`; the image has node but no wget or curl.
+  dashboard:
+    logging: *logging
+    image: ${E2B_DASHBOARD_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: "3001"
+      HOSTNAME: 0.0.0.0
+      PUBLIC_E2B_DOMAIN: localhost
+      E2B_INFRA_API_URL: http://127.0.0.1:3000
+      E2B_DASHBOARD_API_URL: http://127.0.0.1:3010
+      PUBLIC_SANDBOX_URL: http://${E2B_DASHBOARD_HOST:-localhost}:3002
+      DASHBOARD_COOKIE_SECURE: "false"
+    depends_on:
+      api:
+        condition: service_healthy
+      dashboard-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  client-proxy:
+    logging: *logging
+    image: ${E2B_CLIENT_PROXY_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      NODE_ID: client-proxy
+      ENVIRONMENT: local
+      REDIS_URL: 127.0.0.1:6379
+      API_INTERNAL_GRPC_ADDRESS: 127.0.0.1:5009
+      PROXY_PORT: "3002"
+      HEALTH_PORT: "3003"
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 90s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3003/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # Starts once the base template exists and client-proxy is healthy, prints the
+  # SDK variables and idles. It is the always-on dependent that makes
+  # `docker compose up -d --wait` wait for the template build (Compose waits
+  # for a one-shot as "completed" only when an active service depends on it),
+  # and the one service whose presence means "the stack is usable".
+  ready:
+    <<: *tools
+    logging: *logging
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      base-template:
+        condition: service_completed_successfully
+      client-proxy:
+        condition: service_healthy
+      dashboard:
+        condition: service_healthy
+    volumes:
+      - seed-state:/run/e2b
+    # /run/e2b/sdk.env holds the four exports for this install, so a shell
+    # can take them with: eval "$(docker compose exec ready cat /run/e2b/sdk.env)"
+    # It is re-rendered whenever the seed rotates the key (TEAM_API_KEY changed
+    # or the key file removed, then `up`): `up` re-runs the seed but does not
+    # recreate this service, so a one-shot render would go stale.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        E2B_HOST=localhost
+        LOG_HINT='docker compose logs seed'
+        EPILOGUE='Same, in one line:  eval "$$(docker compose exec ready cat /run/e2b/sdk.env)"
+        Smoke test:  docker compose --profile test run --rm smoke
+        Tear down, in this order:
+          1. docker compose down       (keeps data and /var/lib/e2b)
+          2. docker compose down -v    (also drops the databases)
+          3. then and only then, to undo the host changes:
+             docker compose --profile purge run --rm host-teardown
+             (refuses to run while the orchestrator is up, so it needs step 2 first)'
+        test -s /run/e2b/team-api-key || {
+          echo "ready: the seed left no /run/e2b/team-api-key" >&2
+          echo "FIX: E2B_SEED_IMAGE must be a release whose seed knows SEED_TEAM_API_KEY_FILE (the published seed images do); run $$LOG_HINT" >&2
+          exit 1
+        }
+        last=""
+        while :; do
+          key="$$(cat /run/e2b/team-api-key 2>/dev/null)"
+          if [ -n "$$key" ] && [ "$$key" != "$$last" ]; then
+            printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\nexport E2B_DASHBOARD_URL=http://%s:3001\n' "$$key" "$$E2B_HOST" "$$E2B_HOST" "$$E2B_HOST" > /run/e2b/sdk.env
+            if [ -z "$$last" ]; then
+              echo "E2B stack is up. Point the SDK at it (this install's own key). Open E2B_DASHBOARD_URL in a browser and paste E2B_API_KEY into its key form."
+            else
+              echo "Team API key rotated; the earlier key stops working within five minutes. The SDK variables are now:"
+            fi
+            sed 's/^/  /' /run/e2b/sdk.env
+            if [ -z "$$last" ]; then
+              printf '%s\n' "$$EPILOGUE"
+            fi
+            last="$$key"
+          fi
+          sleep 5
+        done
+
+  base-template:
+    <<: *node-e2b
+    logging: *logging
+    restart: "no"
+    network_mode: host
+    environment:
+      E2B_API_URL: http://127.0.0.1:3000
+      FORCE_REBUILD: ${FORCE_REBUILD:-0}
+    volumes:
+      - seed-state:/run/e2b
+    depends_on:
+      api:
+        condition: service_healthy
+      # Direct, not only through api: on a rotation `up` api is already healthy,
+      # and without this edge base-template would race the re-run seed for the
+      # key file and fail with the message meant for an old seed image.
+      seed:
+        condition: service_completed_successfully
+    command:
+      - /bin/sh
+      - -c
+      - |
+        test -s /run/e2b/team-api-key || {
+          echo "build-base-template: the seed left no /run/e2b/team-api-key" >&2
+          echo "FIX: E2B_SEED_IMAGE must be a release whose seed knows SEED_TEAM_API_KEY_FILE (the published seed images do); run docker compose logs seed" >&2
+          exit 2
+        }
+        E2B_API_KEY="$$(cat /run/e2b/team-api-key)" exec node /app/build-base-template.mjs
+
+  smoke:
+    <<: *node-e2b
+    logging: *logging
+    profiles: [test]
+    restart: "no"
+    network_mode: host
+    environment:
+      E2B_API_URL: http://127.0.0.1:3000
+      E2B_SANDBOX_URL: http://127.0.0.1:3002
+    volumes:
+      - seed-state:/run/e2b
+    depends_on:
+      base-template:
+        condition: service_completed_successfully
+      client-proxy:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        test -s /run/e2b/team-api-key || {
+          echo "smoke: the seed left no /run/e2b/team-api-key" >&2
+          echo "FIX: E2B_SEED_IMAGE must be a release whose seed knows SEED_TEAM_API_KEY_FILE (the published seed images do); run docker compose logs seed" >&2
+          exit 2
+        }
+        E2B_API_KEY="$$(cat /run/e2b/team-api-key)" exec node /app/smoke.mjs
+
+  host-teardown:
+    <<: *tools
+    logging: *logging
+    profiles: [purge]
+    restart: "no"
+    network_mode: host
+    pid: host
+    cgroup: host
+    privileged: true
+    command: ["/bin/sh", "-c", "exec nsenter -t 1 -m -u -i -n -p -C -- /bin/bash -s < /opt/e2b/scripts/host-teardown.sh"]
+
+volumes:
+  postgres:
+  # Only the five-minute team cache lives here, so nothing is lost either way.
+  # The name is what makes `down -v` collect it: the image declares
+  # VOLUME /data, so without one every container takes an anonymous volume,
+  # and `down` before `down -v` strands one of those per install-remove cycle.
+  redis:
+  clickhouse:
+  # The seed's team API key, the api secrets api-secrets writes beside it and
+  # ready's sdk.env derived from the key. `down -v` drops it together with the
+  # databases, so the secrets and the database stay in step.
+  seed-state:
+
+configs:
+  clickhouse-config:
+    content: |-
+      <?xml version="1.0"?>
+      <clickhouse>
+          <!-- this is undocumented but needed to enable waiting for for shutdown for a custom amount of time  -->
+          <!-- see https://github.com/ClickHouse/ClickHouse/pull/77515 for more details  -->
+          <shutdown_wait_unfinished>60</shutdown_wait_unfinished>
+          <shutdown_wait_unfinished_queries>1</shutdown_wait_unfinished_queries>
+
+          <!-- Use up 80% of available RAM to be on the safer side, default is 90% -->
+          <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+
+          <default_replica_path>/var/lib/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>
+
+          <remote_servers replace="true">
+              <cluster>
+                  <shard>
+                      <replica>
+                          <host>localhost</host>
+                          <port>9000</port>
+                          <user>clickhouse</user>
+                          <password>clickhouse</password>
+                      </replica>
+                  </shard>
+              </cluster>
+          </remote_servers>
+
+          <listen_host>0.0.0.0</listen_host>
+
+          <tcp_port>9000</tcp_port>
+      </clickhouse>
+  vector-config:
+    content: |
+      data_dir = "alloc/data/vector/"
+
+      [api]
+      enabled = true
+      address = "0.0.0.0:44313"
+
+      [sources.http_server]
+      type = "http_server"
+      address = "0.0.0.0:30006"
+      encoding = "ndjson"
+      path_key = "_path"
+
+      [transforms.add_source_http_server]
+      type = "remap"
+      inputs = ["http_server"]
+      source = """
+      del(."_path")
+      if (!exists(.sandboxID) || .sandboxID == null) && exists(.instanceID) && .instanceID != null {
+        .sandboxID = .instanceID
+      }
+      .timestamp = parse_timestamp(.timestamp, format: "%+") ?? now()
+      # Normalize keys
+      if exists(.sandbox_id) {
+        .sandboxID = .sandbox_id
+      }
+      if exists(.build_id) {
+        .buildID = .build_id
+      }
+      if exists(.env_id) {
+        .envID = .env_id
+      }
+      if exists(.team_id) {
+        .teamID = .team_id
+      }
+      if exists(."template.id") {
+        .templateID = ."template.id"
+        del(."template.id")
+      }
+      if exists(."sandbox.id") {
+        .sandboxID = ."sandbox.id"
+        del(."sandbox.id")
+      }
+      if exists(."build.id") {
+        .buildID = ."build.id"
+        del(."build.id")
+      }
+      if exists(."env.id") {
+        .envID = ."env.id"
+        del(."env.id")
+      }
+      if exists(."team.id") {
+        .teamID = ."team.id"
+        del(."team.id")
+      }
+
+      # Apply defaults if not already set
+      if !exists(.envID) {
+        .envID = "unknown"
+      }
+      if !exists(.category) {
+        .category = "default"
+      }
+      if !exists(.teamID) {
+        .teamID = "unknown"
+      }
+      if !exists(.sandboxID) {
+        .sandboxID = "unknown"
+      }
+      if !exists(.buildID) {
+        .buildID = "unknown"
+      }
+      if !exists(.service) {
+        if exists(.service_name) && .service_name != null {
+          .service = .service_name
+        } else {
+          .service = "envd"
+        }
+      }
+      """
+
+      [transforms.internal_routing]
+      type = "route"
+      inputs = [ "add_source_http_server" ]
+
+      [transforms.internal_routing.route]
+      internal = '.internal == true'
+
+      [transforms.remove_internal]
+      type = "remap"
+      inputs = [ "internal_routing._unmatched" ]
+      source = '''
+      del(.internal)
+      '''
+
+      # Enable debugging of logs to the console
+      # [sinks.console_logs]
+      # type = "console"
+      # inputs = ["remove_internal"]
+      # encoding.codec = "json"
+
+      # One row of the ClickHouse `sandbox_logs` table per line, the same eleven
+      # columns and the same rules as the collector that writes it in E2B's own
+      # deployments. The api reads this table for sandbox and template-build logs
+      # (LOGS_READ_CONFIG=true); there is no Loki in this stack.
+      # Rows are dropped when the team id is not a UUID, or when a line has no
+      # sandbox id unless it is a template-manager build line, which the api looks
+      # up by template and build id and stores under the "unknown" sandbox.
+      [transforms.sandbox_logs_rows]
+      type = "remap"
+      inputs = [ "remove_internal" ]
+      drop_on_error = true
+      drop_on_abort = true
+      source = '''
+      raw = encode_json(.)
+
+      # A UUID, or the row is dropped. The regex has no end anchor on purpose: compose
+      # interpolation would need that character doubled in the inline copy of this
+      # file, so the length check closes the match instead.
+      team_id = string(.teamID) ?? ""
+      if length(team_id) != 36 || !match(team_id, r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
+        abort
+      }
+
+      service = string(.service) ?? ""
+      if service == "" { service = string(.service_name) ?? "" }
+      if service == "" { service = "envd" }
+      category = string(.category) ?? ""
+      if category == "" { category = "default" }
+
+      template_id = string(.template_id) ?? ""
+      if template_id == "" { template_id = string(.templateID) ?? "" }
+      if template_id == "" { template_id = string(.envID) ?? "" }
+      if template_id == "unknown" { template_id = "" }
+      build_id = string(.buildID) ?? ""
+      if build_id == "unknown" { build_id = "" }
+
+      sandbox_id = string(.sandbox_id) ?? ""
+      if sandbox_id == "" { sandbox_id = string(.sandboxID) ?? "" }
+      if sandbox_id == "" { sandbox_id = string(.instanceID) ?? "" }
+      if sandbox_id == "" || sandbox_id == "unknown" {
+        if service != "template-manager" || build_id == "" { abort }
+        sandbox_id = "unknown"
+      }
+
+      message = string(.message) ?? ""
+      if message == "" { message = raw }
+      level = downcase(string(.level) ?? "")
+      # sandbox_logs.timestamp is DateTime64(9), 1900-01-01 to 2262-04-11. A producer
+      # clock outside that range would make ClickHouse reject the whole batch, which
+      # the sink retries forever and every later line waits behind; such a line keeps
+      # its content and takes the collector's time.
+      ts = timestamp(.timestamp) ?? now()
+      secs = to_unix_timestamp(ts)
+      if secs > 9223372036 || secs < -2208988800 {
+        ts = now()
+      }
+
+      promoted = ["timestamp", "message", "level", "team_id", "teamID", "sandbox_id", "sandboxID", "instanceID",
+                  "template_id", "templateID", "envID", "env_id", "build_id", "buildID", "service", "service_name", "category"]
+      fields = {}
+      for_each(object(.)) -> |key, value| {
+        if !includes(promoted, key) {
+          fields = set!(fields, [key], to_string(value) ?? encode_json(value))
+        }
+      }
+
+      . = {
+        "timestamp": ts,
+        "team_id": team_id,
+        "sandbox_id": sandbox_id,
+        "template_id": template_id,
+        "build_id": build_id,
+        "service": service,
+        "category": category,
+        "level": level,
+        "message": message,
+        "raw": raw,
+        "fields": encode_json(fields),
+      }
+      '''
+
+      [sinks.clickhouse_sandbox_logs]
+      type = "clickhouse"
+      inputs = [ "sandbox_logs_rows" ]
+      endpoint = "http://clickhouse:8123"
+      database = "default"
+      table = "sandbox_logs"
+      auth.strategy = "basic"
+      auth.user = "clickhouse"
+      auth.password = "clickhouse"
+      # The row carries an RFC 3339 timestamp; ClickHouse parses it into
+      # DateTime64(9) with best-effort date/time input. Unknown keys are refused by
+      # design (the remap emits exactly the table's columns), so skipping them would
+      # only hide a bug.
+      date_time_best_effort = true
+      skip_unknown_fields = false
+      compression = "gzip"
+      batch.timeout_secs = 1
+  otel-collector-config:
+    content: |
+      # The built-in OpenTelemetry collector. The services export to it once their
+      # collector endpoint is 127.0.0.1:4317. It keeps the e2b.* metrics and writes
+      # them into the stack's own ClickHouse, into the metrics_gauge and metrics_sum
+      # tables the clickhouse-migrator creates; the api's metrics endpoints read
+      # what those two feed. Traces, logs and the other metrics are dropped; the
+      # commented otlp/upstream exporter below forwards traces and logs instead.
+      # Every listener binds loopback: the collector shares the machine's network
+      # with the services, and nothing off the machine has a reason to reach it.
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 127.0.0.1:4317
+              max_recv_msg_size_mib: 100
+
+      processors:
+        # Batches traces and logs on their way to nop, or to otlp/upstream once
+        # that forwards them.
+        batch:
+          timeout: 5s
+
+        batch/clickhouse:
+          timeout: 5s
+          send_batch_size: 50000
+
+        filter/external_metrics:
+          metrics:
+            include:
+              match_type: regexp
+              metric_names:
+                - "e2b.*"
+
+      extensions:
+        # `curl -s 127.0.0.1:13133` on the machine answers while the collector runs.
+        # The image has no shell, so there is nothing to check from inside it.
+        health_check:
+          endpoint: 127.0.0.1:13133
+
+      exporters:
+        clickhouse:
+          endpoint: tcp://127.0.0.1:9000
+          database: default
+          username: clickhouse
+          password: clickhouse
+          async_insert: true
+          create_schema: false
+          metrics_tables:
+            gauge:
+              name: metrics_gauge
+            sum:
+              name: metrics_sum
+
+        # Accepts traces and logs and discards them. Without a pipeline for them the
+        # receiver would answer Unimplemented, and every service would log each
+        # batch it refused.
+        nop:
+
+        # To forward traces and logs to a collector of your own, uncomment this
+        # exporter, put that collector's OTLP/gRPC address in its endpoint, and
+        # name it in place of nop in the traces and logs pipelines at the end.
+        # otlp/upstream:
+        #   endpoint: collector.example.com:4317
+        #   tls:
+        #     insecure: true
+
+      service:
+        telemetry:
+          logs:
+            level: warn
+          # No internal metrics: by default the collector serves its own on
+          # 127.0.0.1:8888, one more listener on the machine, and refuses to start
+          # when something else holds that port.
+          metrics:
+            level: none
+        extensions: [health_check]
+        pipelines:
+          metrics/external:
+            receivers: [otlp]
+            processors: [filter/external_metrics, batch/clickhouse]
+            exporters: [clickhouse]
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [nop]
+          logs:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [nop]

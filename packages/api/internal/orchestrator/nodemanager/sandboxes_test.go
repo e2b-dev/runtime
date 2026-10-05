@@ -82,7 +82,7 @@ func TestGetOrphanCandidates_FallsBackToDeprecatedConfig(t *testing.T) {
 	node := newTestNodeWithList(t, &orchestrator.RunningSandbox{
 		StartTime: timestamppb.New(now),
 		EndTime:   timestamppb.New(now.Add(time.Hour)),
-		Config: &orchestrator.SandboxConfig{ //nolint:staticcheck // exercising the rollout fallback
+		Config: &orchestrator.SandboxConfig{
 			SandboxId:   "sbx-legacy",
 			TeamId:      teamID.String(),
 			ExecutionId: "exec-legacy",
@@ -118,7 +118,7 @@ func TestGetOrphanCandidates_PrefersScalarFieldsOverConfig(t *testing.T) {
 		ExecutionId: "exec-scalar",
 		Vcpu:        2,
 		RamMb:       512,
-		Config: &orchestrator.SandboxConfig{ //nolint:staticcheck // exercising the rollout fallback
+		Config: &orchestrator.SandboxConfig{
 			SandboxId:   "sbx-config",
 			TeamId:      uuid.NewString(),
 			ExecutionId: "exec-config",

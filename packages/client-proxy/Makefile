@@ -38,11 +38,16 @@ E2B_ARTIFACTS_REGISTRY ?= us-docker.pkg.dev/e2b-artifacts/client-proxy/client-pr
 # command-line value always wins over the env file.
 CLIENT_PROXY_VERSION := $(strip $(subst ",,$(CLIENT_PROXY_VERSION)))
 
+VERSION_LDFLAGS :=
+ifneq ($(strip $(VERSION)),)
+VERSION_LDFLAGS := -X=main.version=$(VERSION)
+endif
+
 .PHONY: build
 build:
 	# Allow for passing commit sha directly for docker builds
 	$(eval COMMIT_SHA ?= $(shell git rev-parse --short HEAD))
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILD_ARCH) go build -o bin/client-proxy -ldflags "-X=main.commitSHA=$(COMMIT_SHA)" .
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILD_ARCH) go build -o bin/client-proxy -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS)" .
 
 # Compiler flags for debug builds. The default disables optimizations and
 # inlining so binaries are debugger-friendly. CI overrides this with an empty
@@ -50,17 +55,21 @@ build:
 # every integration test at runtime.
 DEBUG_GCFLAGS ?= -gcflags=all="-N -l"
 
+# Race instrumentation of the debug build, overridable (RACE_FLAG="") so CI
+# can run some suite configurations against uninstrumented binaries.
+RACE_FLAG ?= -race
+
 .PHONY: build-debug
 build-debug:
 	$(eval COMMIT_SHA ?= $(shell git rev-parse --short HEAD))
-	CGO_ENABLED=1 go build -race $(DEBUG_GCFLAGS) -o bin/client-proxy -ldflags "-X=main.commitSHA=$(COMMIT_SHA)" .
+	CGO_ENABLED=1 go build $(RACE_FLAG) $(DEBUG_GCFLAGS) -o bin/client-proxy -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS)" .
 
 .PHONY: build-and-upload
 build-and-upload:
 ifeq ($(strip $(CLIENT_PROXY_VERSION)),)
 	# Existing flow: build from source and push to the client's own core repo.
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
-	@docker buildx build --platform $(BUILD_PLATFORM) --tag $(IMAGE_REGISTRY) --tag $(IMAGE_REGISTRY):$(COMMIT_SHA) --push --build-arg COMMIT_SHA="$(COMMIT_SHA)" -f ./Dockerfile ..
+	@docker buildx build --platform $(BUILD_PLATFORM) --tag $(IMAGE_REGISTRY) --push --build-arg COMMIT_SHA="$(COMMIT_SHA)" -f ./Dockerfile ..
 else
 	# Released-image flow: pull the prebuilt, versioned image from the E2B
 	# artifacts registry and retag/push it into the client's own core repo.

@@ -31,7 +31,7 @@ type Header struct {
 	// RPC and reads uncompressed data when nil.
 	Builds map[uuid.UUID]BuildData
 
-	// Mapping is the per-block source map. Stored compactly (~14 B/entry vs 40
+	// Mapping is the per-block source map. Stored compactly (9-10 B/entry vs 40
 	// for a BuildMap) so long-lived cached headers don't dominate orchestrator
 	// heap. Read via At / All / Slice / Len, not indexing.
 	Mapping Mapping

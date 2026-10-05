@@ -121,7 +121,7 @@ func TestGetV2Sandboxes_RejectsUnknownOrder(t *testing.T) {
 	recorder, ginCtx := newSandboxListRequest(t, teamID, teamSlug)
 
 	bogus := api.OrderDirection("dsc")
-	//nolint:contextcheck // GetV2Sandboxes reads ctx from ginCtx.Request.Context().
+
 	store.GetV2Sandboxes(ginCtx, api.GetV2SandboxesParams{Order: &bogus})
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
@@ -153,7 +153,7 @@ func TestGetV2Sandboxes_UnknownTemplate(t *testing.T) {
 
 		template := "no-such-template"
 		states := []api.SandboxState{api.Running}
-		//nolint:contextcheck // GetV2Sandboxes reads ctx from ginCtx.Request.Context().
+
 		store.GetV2Sandboxes(ginCtx, api.GetV2SandboxesParams{Template: &template, State: &states})
 
 		assertEmptyList(t, recorder)
@@ -168,7 +168,7 @@ func TestGetV2Sandboxes_UnknownTemplate(t *testing.T) {
 
 		template := "no-such-template"
 		states := []api.SandboxState{api.Paused}
-		//nolint:contextcheck // GetV2Sandboxes reads ctx from ginCtx.Request.Context().
+
 		store.GetV2Sandboxes(ginCtx, api.GetV2SandboxesParams{Template: &template, State: &states})
 
 		assertEmptyList(t, recorder)
@@ -183,7 +183,7 @@ func TestGetV2Sandboxes_UnknownTemplate(t *testing.T) {
 		recorder, ginCtx := newSandboxListRequest(t, teamID, teamSlug)
 
 		template := "no-such-template:v2"
-		//nolint:contextcheck // GetV2Sandboxes reads ctx from ginCtx.Request.Context().
+
 		store.GetV2Sandboxes(ginCtx, api.GetV2SandboxesParams{Template: &template})
 
 		require.Equal(t, http.StatusBadRequest, recorder.Code)

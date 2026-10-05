@@ -49,7 +49,10 @@ func newFileSystemStorage(basePath, uploadBaseURL string, hmacKey []byte) *fsSto
 }
 
 func (s *fsStorage) DeleteObjectsWithPrefix(_ context.Context, prefix string) error {
-	filePath := s.getPath(prefix)
+	filePath, err := s.getPath(prefix)
+	if err != nil {
+		return err
+	}
 
 	return os.RemoveAll(filePath)
 }
@@ -58,9 +61,13 @@ func (s *fsStorage) GetDetails() string {
 	return fmt.Sprintf("[Local file storage, base path set to %s]", s.basePath)
 }
 
-func (s *fsStorage) UploadSignedURL(_ context.Context, path string, ttl time.Duration) (string, error) {
+func (s *fsStorage) UploadSignedURL(_ context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	if s.uploadURL == "" || s.hmacKey == nil {
-		return "", errors.New("file system storage does not support signed URLs (no local upload endpoint configured)")
+		return UploadURL{}, errors.New("file system storage does not support signed URLs (no local upload endpoint configured)")
 	}
 
 	expiresSec := time.Now().Add(ttl).Unix()
@@ -69,36 +76,50 @@ func (s *fsStorage) UploadSignedURL(_ context.Context, path string, ttl time.Dur
 	u := fmt.Sprintf("%s/upload?path=%s&expires=%d&token=%s",
 		s.uploadURL, url.QueryEscape(path), expiresSec, url.QueryEscape(token))
 
-	return u, nil
+	return UploadURL{URL: u}, nil
 }
 
 func (s *fsStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
-	dir := filepath.Dir(s.getPath(path))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	fullPath, err := s.getPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return nil, err
 	}
 
 	objType, _ := seekableObjectType(path)
 
 	return &fsObject{
-		path:    s.getPath(path),
+		path:    fullPath,
 		objType: objType,
 	}, nil
 }
 
 func (s *fsStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
-	dir := filepath.Dir(s.getPath(path))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	fullPath, err := s.getPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return nil, err
 	}
 
 	return &fsObject{
-		path: s.getPath(path),
+		path: fullPath,
 	}, nil
 }
 
-func (s *fsStorage) getPath(path string) string {
-	return filepath.Join(s.basePath, path)
+// getPath resolves an object path under basePath, refusing any path
+// validateObjectPath rejects, so none can climb out of basePath.
+func (s *fsStorage) getPath(path string) (string, error) {
+	if err := validateObjectPath(path); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(s.basePath, path), nil
 }
 
 func (o *fsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err error) {
@@ -118,13 +139,7 @@ func (o *fsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err err
 }
 
 func (o *fsObject) Put(_ context.Context, data []byte, _ ...PutOption) error {
-	handle, err := o.getHandle(false)
-	if err != nil {
-		return err
-	}
-	defer handle.Close()
-
-	_, err = io.Copy(handle, bytes.NewReader(data))
+	_, err := o.replaceFrom(bytes.NewReader(data))
 
 	return err
 }
@@ -155,23 +170,27 @@ func (o *fsObject) StoreFile(ctx context.Context, path string, opts ...PutOption
 	}
 	defer r.Close()
 
-	handle, err := o.getHandle(false)
+	srcInfo, err := r.Stat()
+	if err != nil {
+		return nil, [32]byte{}, fmt.Errorf("failed to stat file %s: %w", path, err)
+	}
+	if dstInfo, statErr := os.Stat(o.path); statErr == nil && os.SameFile(srcInfo, dstInfo) {
+		return nil, [32]byte{}, nil
+	}
+
+	n, err := o.replaceFrom(r)
 	if err != nil {
 		return nil, [32]byte{}, err
 	}
-	defer handle.Close()
 
-	n, err := io.Copy(handle, r)
-	if err == nil {
-		logger.L().Debug(ctx, "Stored file to filesystem",
-			zap.String("object", o.path),
-			zap.String("source", path),
-			zap.Int64("size_uncompressed", n),
-			zap.String("compression", "none"),
-		)
-	}
+	logger.L().Debug(ctx, "Stored file to filesystem",
+		zap.String("object", o.path),
+		zap.String("source", path),
+		zap.Int64("size_uncompressed", n),
+		zap.String("compression", "none"),
+	)
 
-	return nil, [32]byte{}, err
+	return nil, [32]byte{}, nil
 }
 
 func (o *fsObject) storeFileCompressed(ctx context.Context, localPath string, cfg CompressConfig, sink FrameSink) (*FullFrameTable, [32]byte, error) {
@@ -298,6 +317,60 @@ func (o *fsObject) getHandle(checkExistence bool) (*os.File, error) {
 	return handle, nil
 }
 
+func replaceFile(path string, r io.Reader) (int64, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return 0, err
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return 0, err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+
+		return 0, err
+	}
+
+	n, err := io.Copy(tmp, r)
+	if err != nil {
+		tmp.Close()
+
+		return n, err
+	}
+	if err := tmp.Close(); err != nil {
+		return n, err
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return n, err
+	}
+
+	return n, nil
+}
+
+func (o *fsObject) replaceFrom(r io.Reader) (int64, error) {
+	n, err := replaceFile(o.path, r)
+	if err != nil {
+		return n, err
+	}
+
+	return n, o.clearSizeSidecar()
+}
+
+func (o *fsObject) clearSizeSidecar() error {
+	err := os.Remove(SizeSidecar(o.path))
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+
+	return fmt.Errorf("failed to remove uncompressed-size sidecar for %s: %w", o.path, err)
+}
+
 // fsPartUploader implements partUploader for local filesystem.
 // Embeds memPartUploader for concurrent-safe part collection,
 // then writes atomically on Complete.
@@ -312,7 +385,9 @@ func (u *fsPartUploader) Complete(_ context.Context) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	return os.WriteFile(u.fullPath, u.Assemble(), 0o644)
+	_, err := replaceFile(u.fullPath, bytes.NewReader(u.Assemble()))
+
+	return err
 }
 
 func (o *fsObject) OpenRangeReader(ctx context.Context, offsetU int64, length int64, frameTable *FrameTable) (_ RangeReader, _ Source, err error) {

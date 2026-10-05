@@ -32,7 +32,9 @@ type ActionExecutor interface {
 
 // SourceTemplateProvider provides the source template for the layer build
 type SourceTemplateProvider interface {
-	Get(ctx context.Context, templateCache *sbxtemplate.Cache) (sbxtemplate.Template, error)
+	// Get returns the source template and the release of the pin the caller
+	// holds on it, which must be called once the layer no longer reads it.
+	Get(ctx context.Context, templateCache *sbxtemplate.Cache) (sbxtemplate.Template, func(), error)
 }
 
 // LayerBuildCommand encapsulates all parameters needed for building a layer

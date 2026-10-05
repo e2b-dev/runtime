@@ -39,26 +39,32 @@ func ResolveSeekable(cache Cache, buildID, fileName string) (SeekableSource, err
 // Supported file names: snapfile, metadata.json, memfile.header, rootfs.ext4.header.
 // Returns ErrNotAvailable when the build is not in the local cache.
 // Returns ErrUnknownFile for unrecognised file names.
-func ResolveBlob(cache Cache, buildID, fileName string) (BlobSource, error) {
-	t, ok := cache.GetCachedTemplate(buildID)
+//
+// The source reads the cached template, which is pinned until the returned
+// release is called; the caller releases it once it is done with the source,
+// on every path. release is never nil.
+func ResolveBlob(ctx context.Context, cache Cache, buildID, fileName string) (BlobSource, func(), error) {
+	t, release, ok := cache.LookupPinned(ctx, buildID)
 	if !ok {
-		return nil, ErrNotAvailable
+		return nil, release, ErrNotAvailable
 	}
 
 	switch fileName {
 	case storage.SnapfileName:
-		return &fileSource{getFile: t.Snapfile}, nil
+		return &fileSource{getFile: t.Snapfile}, release, nil
 
 	case storage.MetadataName:
-		return &metadataSource{getMetadata: t.Metadata}, nil
+		return &metadataSource{getMetadata: t.Metadata}, release, nil
 
 	case storage.MemfileName + storage.HeaderSuffix:
-		return &headerSource{getDevice: t.Memfile}, nil
+		return &headerSource{getDevice: t.Memfile}, release, nil
 
 	case storage.RootfsName + storage.HeaderSuffix:
-		return &headerSource{getDevice: func(_ context.Context) (block.ReadonlyDevice, error) { return t.Rootfs() }}, nil
+		return &headerSource{getDevice: func(_ context.Context) (block.ReadonlyDevice, error) { return t.Rootfs() }}, release, nil
 
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrUnknownFile, fileName)
+		release()
+
+		return nil, func() {}, fmt.Errorf("%w: %q", ErrUnknownFile, fileName)
 	}
 }

@@ -20,6 +20,13 @@ var meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandb
 // bytes / fault count are reported (a TimerFactory triplet).
 const serveMetricName = "orchestrator.sandbox.uffd.serve"
 
+// The UFFD handler serves a template's memfile leg; a data fetch that fails
+// after its retries is a fault on that leg.
+var (
+	memfileLegFaults     = utils.Must(telemetry.GetCounter(meter, telemetry.SandboxTemplateLegFaults))
+	memfileLegFaultAttrs = metric.WithAttributeSet(attribute.NewSet(attribute.String("leg", "memfile")))
+)
+
 // serveTimer records, per served UFFD demand fault, the serve latency (ms
 // histogram), bytes installed into the guest by this serve (counter) and the
 // serve-attempt count (counter) under serveMetricName. It is always on: the
@@ -31,6 +38,7 @@ const serveMetricName = "orchestrator.sandbox.uffd.serve"
 // the install race to a concurrent worker or prefault is recorded as
 // result="present" with zero bytes, so the bytes counter only ever counts
 // pages this serve actually copied.
+
 var serveTimer = utils.Must(telemetry.NewTimerFactory(
 	meter,
 	serveMetricName,
@@ -116,13 +124,52 @@ func bucketForGeneration(generation uint64) generationBucket {
 	}
 }
 
+// BalloonMode is the free-page mechanism the sandbox's balloon runs. It is
+// baked into the template at build time and travels with the snapshot, so it
+// is read from Firecracker after start and is unknown until then. Serve and
+// write-protect metrics carry it so a REMOVE stall can be read per cohort.
+type BalloonMode uint8
+
+const (
+	BalloonModeUnknown BalloonMode = iota
+	BalloonModeNone
+	BalloonModeReporting
+	BalloonModeHinting
+	numBalloonMode
+)
+
+var balloonModeNames = [numBalloonMode]string{
+	BalloonModeUnknown:   "unknown",
+	BalloonModeNone:      "none",
+	BalloonModeReporting: "reporting",
+	BalloonModeHinting:   "hinting",
+}
+
+func (m BalloonMode) String() string {
+	if m >= numBalloonMode {
+		return balloonModeNames[BalloonModeUnknown]
+	}
+
+	return balloonModeNames[m]
+}
+
+// SetBalloonMode labels this handler's serve and write-protect metrics from
+// here on; faults served before the mode was read carry unknown.
+func (u *Userfaultfd) SetBalloonMode(m BalloonMode) {
+	u.mode.Store(uint32(m))
+}
+
+func (u *Userfaultfd) balloonMode() BalloonMode {
+	return BalloonMode(u.mode.Load())
+}
+
 // serveAttrs holds a precomputed metric.MeasurementOption per
-// (generationBucket, pageClass, faultResult) combination so the per-fault hot
-// path allocates no attributes (mirrors the precomputed attrs in
-// block/streaming_chunk.go).
+// (balloonMode, generationBucket, pageClass, faultResult) combination so the
+// per-fault hot path allocates no attributes (mirrors the precomputed attrs
+// in block/streaming_chunk.go).
 var serveAttrs = buildServeAttrs()
 
-func buildServeAttrs() [numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption {
+func buildServeAttrs() [numBalloonMode][numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption {
 	classNames := [numPageClass]string{
 		pageClassNew:      "new",
 		pageClassZero:     "zero",
@@ -130,15 +177,18 @@ func buildServeAttrs() [numGenerationBucket][numPageClass][numFaultResult]metric
 		pageClassUnknown:  "unknown",
 	}
 
-	var t [numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption
-	for g := range generationBucketNames {
-		for c := range classNames {
-			for r := range resultNames {
-				t[g][c][r] = telemetry.PrecomputeAttrs(
-					attribute.String("generation_bucket", generationBucketNames[g]),
-					attribute.String("page_class", classNames[c]),
-					attribute.String("result", resultNames[r]),
-				)
+	var t [numBalloonMode][numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for c := range classNames {
+				for r := range resultNames {
+					t[m][g][c][r] = telemetry.PrecomputeAttrs(
+						attribute.String("balloon_mode", balloonModeNames[m]),
+						attribute.String("generation_bucket", generationBucketNames[g]),
+						attribute.String("page_class", classNames[c]),
+						attribute.String("result", resultNames[r]),
+					)
+				}
 			}
 		}
 	}
@@ -215,11 +265,11 @@ const (
 )
 
 // wpResolveAttrs holds a precomputed metric.MeasurementOption per
-// (generationBucket, wpResolveOutcome) so the per-fault hot path allocates no
-// attributes.
+// (balloonMode, generationBucket, wpResolveOutcome) so the per-fault hot path
+// allocates no attributes.
 var wpResolveAttrs = buildWPResolveAttrs()
 
-func buildWPResolveAttrs() [numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption {
+func buildWPResolveAttrs() [numBalloonMode][numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption {
 	outcomeNames := [numWPResolveOutcome]string{
 		wpResolveOK:       "resolved",
 		wpResolveOKCoW:    "resolved_cow",
@@ -229,13 +279,16 @@ func buildWPResolveAttrs() [numGenerationBucket][numWPResolveOutcome]metric.Meas
 		wpResolveStale:    "stale_removed",
 	}
 
-	var t [numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption
-	for g := range generationBucketNames {
-		for o := range outcomeNames {
-			t[g][o] = telemetry.PrecomputeAttrs(
-				attribute.String("generation_bucket", generationBucketNames[g]),
-				attribute.String("result", outcomeNames[o]),
-			)
+	var t [numBalloonMode][numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for o := range outcomeNames {
+				t[m][g][o] = telemetry.PrecomputeAttrs(
+					attribute.String("balloon_mode", balloonModeNames[m]),
+					attribute.String("generation_bucket", generationBucketNames[g]),
+					attribute.String("result", outcomeNames[o]),
+				)
+			}
 		}
 	}
 
@@ -328,6 +381,11 @@ type ServeSnapshot struct {
 	// (guest writes to protected pages). Zero under WP_ASYNC guests. Sampled
 	// per interval it approximates the dirty-set growth at 2 MiB granularity.
 	WPFaults int64
+	// Deferred is the number of serve attempts that hit EAGAIN and were
+	// re-served later; each is a REMOVE or a mapping change racing the
+	// install. WPDeferred is the same for write-protect resolves.
+	Deferred   int64
+	WPDeferred int64
 }
 
 // ServeStats returns a cumulative snapshot of the demand faults served so far.
@@ -337,6 +395,8 @@ func (u *Userfaultfd) ServeStats() ServeSnapshot {
 		SourcePages: u.servedSourcePages.Load(),
 		Bytes:       u.servedBytes.Load(),
 		WPFaults:    u.wpFaultsResolved.Load(),
+		Deferred:    u.servedDeferred.Load(),
+		WPDeferred:  u.wpDeferred.Load(),
 	}
 }
 
@@ -354,6 +414,8 @@ func (u *Userfaultfd) recordServeStats(pclass pageClass, result faultResult, ser
 				u.servedSourcePages.Add(1)
 			}
 		}
+	case faultResultDeferred:
+		u.servedDeferred.Add(1)
 	}
 }
 

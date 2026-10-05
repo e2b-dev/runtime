@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
 	ory "github.com/ory/client-go"
 )
 
@@ -66,26 +65,6 @@ func (d *oryDirectory) authCtx(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ory.ContextAccessToken, d.token)
 }
 
-func (d *oryDirectory) GetIdentity(ctx context.Context, subject string) (Identity, error) {
-	subject = strings.TrimSpace(subject)
-	if subject == "" {
-		return Identity{}, errors.New("ory identity subject is required")
-	}
-
-	oryIdentity, resp, err := d.identities.GetIdentityExecute(
-		d.identities.GetIdentity(d.authCtx(ctx), subject).
-			IncludeCredential(oryProfileCredentialTypes),
-	)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	if err != nil {
-		return Identity{}, fmt.Errorf("ory get identity: %w", err)
-	}
-
-	return identityFromOry(*oryIdentity)
-}
-
 func (d *oryDirectory) ListIdentities(ctx context.Context, subjects []string) ([]Identity, error) {
 	identities := make([]Identity, 0, len(subjects))
 	for batchSubjects := range slices.Chunk(subjects, oryListIDsBatchSize) {
@@ -102,11 +81,7 @@ func (d *oryDirectory) ListIdentities(ctx context.Context, subjects []string) ([
 		}
 
 		for _, oryIdentity := range batch {
-			id, err := identityFromOry(oryIdentity)
-			if err != nil {
-				return nil, err
-			}
-			identities = append(identities, id)
+			identities = append(identities, identityFromOry(oryIdentity))
 		}
 	}
 
@@ -133,74 +108,14 @@ func (d *oryDirectory) SearchByEmail(ctx context.Context, email string) ([]Ident
 
 	identities := make([]Identity, 0, len(oryIdentities))
 	for _, oryIdentity := range oryIdentities {
-		id, err := identityFromOry(oryIdentity)
-		if err != nil {
-			return nil, err
-		}
-		identities = append(identities, id)
+		identities = append(identities, identityFromOry(oryIdentity))
 	}
 
 	return identities, nil
 }
 
-func (d *oryDirectory) SetExternalID(ctx context.Context, subject string, externalID uuid.UUID) error {
-	subject = strings.TrimSpace(subject)
-	if subject == "" {
-		return errors.New("ory identity subject is required")
-	}
-	if externalID == uuid.Nil {
-		return errors.New("external id is required")
-	}
-
-	// "add" (not "replace") so the patch succeeds even when the identity has no
-	// external_id yet: Ory serializes external_id with omitempty, so an unset
-	// value is absent from the document and RFC 6902 "replace" would fail with a
-	// path-not-found error. "add" creates the member if missing and replaces it
-	// if present, making the operation idempotent across re-bootstraps.
-	patch := []ory.JsonPatch{{Op: "add", Path: "/external_id", Value: externalID.String()}}
-	_, resp, err := d.identities.PatchIdentityExecute(
-		d.identities.PatchIdentity(d.authCtx(ctx), subject).JsonPatch(patch),
-	)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	if err != nil {
-		return fmt.Errorf("ory patch identity external id: %w", err)
-	}
-
-	return nil
-}
-
-func (d *oryDirectory) DeleteIdentity(ctx context.Context, subject string) error {
-	subject = strings.TrimSpace(subject)
-	if subject == "" {
-		return errors.New("ory identity subject is required")
-	}
-
-	resp, err := d.identities.DeleteIdentityExecute(
-		d.identities.DeleteIdentity(d.authCtx(ctx), subject),
-	)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	if err != nil {
-		return fmt.Errorf("delete ory identity %s: %w", subject, err)
-	}
-
-	return nil
-}
-
-func identityFromOry(oryIdentity ory.Identity) (Identity, error) {
+func identityFromOry(oryIdentity ory.Identity) Identity {
 	traits, _ := oryIdentity.Traits.(map[string]any)
-
-	organizationID := uuid.Nil
-	if rawOrgID := strings.TrimSpace(oryIdentity.GetOrganizationId()); rawOrgID != "" {
-		parsed, err := uuid.Parse(rawOrgID)
-		if err != nil {
-			return Identity{}, fmt.Errorf("parse ory organization_id %q: %w", rawOrgID, err)
-		}
-		organizationID = parsed
-	}
 
 	return Identity{
 		Subject:           oryIdentity.Id,
@@ -208,59 +123,9 @@ func identityFromOry(oryIdentity ory.Identity) (Identity, error) {
 		Name:              metadataString(traits, "name"),
 		ProfilePictureURL: metadataString(oryIdentity.MetadataPublic, "picture"),
 		Providers:         oryLinkedProviders(oryIdentity),
-		OrganizationID:    organizationID,
-		SignupIP:          metadataString(oryIdentity.MetadataAdmin, signupIPMetadataKey),
-		SignupUserAgent:   metadataString(oryIdentity.MetadataAdmin, signupUserAgentMetadataKey),
-		AuthMethod:        authMethodFromProviderNames(providerNamesFromOryIdentity(oryIdentity)),
-	}, nil
+	}
 }
 
-func providerNamesFromOryIdentity(identity ory.Identity) []string {
-	if identity.Credentials == nil {
-		return nil
-	}
-
-	credentials := *identity.Credentials
-	providers := make([]string, 0, 3)
-	if _, ok := credentials[oryCredentialPassword]; ok {
-		providers = append(providers, authProviderEmail)
-	}
-
-	oidc, ok := credentials[oryCredentialOIDC]
-	if !ok {
-		return providers
-	}
-	oidcProviderCount := 0
-
-	if entries, ok := oidc.Config["providers"].([]any); ok {
-		for _, entry := range entries {
-			obj, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			if name, ok := obj["provider"].(string); ok {
-				providers = append(providers, name)
-				oidcProviderCount++
-			}
-		}
-	}
-
-	for _, identifier := range oidc.Identifiers {
-		if provider, _, found := strings.Cut(identifier, ":"); found {
-			providers = append(providers, provider)
-			oidcProviderCount++
-		}
-	}
-
-	if oidcProviderCount == 0 {
-		providers = append(providers, oryCredentialOIDC)
-	}
-
-	return providers
-}
-
-// OIDC provider names can appear either in config.providers or as the
-// "provider:subject" prefix of identifiers, depending on the response shape.
 func oryLinkedProviders(identity ory.Identity) []string {
 	if identity.Credentials == nil {
 		return nil

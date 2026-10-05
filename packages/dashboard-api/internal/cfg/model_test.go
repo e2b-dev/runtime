@@ -168,3 +168,27 @@ func TestParseFailureCondition(t *testing.T) {
 		})
 	}
 }
+
+func TestParseWithoutOryStartsWithoutIdentityProvider(t *testing.T) {
+	t.Setenv("POSTGRES_CONNECTION_STRING", "postgres://example")
+	t.Setenv("ADMIN_TOKEN", "admin-token")
+	t.Setenv("REDIS_URL", "redis://example")
+	t.Setenv("ORY_SDK_URL", "")
+	t.Setenv("ORY_PROJECT_API_TOKEN", "")
+
+	config, err := Parse()
+	require.NoError(t, err)
+	require.False(t, config.IdentityProviderConfigured())
+}
+
+func TestParseWithOryReportsIdentityProviderConfigured(t *testing.T) {
+	t.Setenv("POSTGRES_CONNECTION_STRING", "postgres://example")
+	t.Setenv("ADMIN_TOKEN", "admin-token")
+	t.Setenv("REDIS_URL", "redis://example")
+	t.Setenv("ORY_SDK_URL", "https://tenant.projects.oryapis.com")
+	t.Setenv("ORY_PROJECT_API_TOKEN", "pat")
+
+	config, err := Parse()
+	require.NoError(t, err)
+	require.True(t, config.IdentityProviderConfigured())
+}

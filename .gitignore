@@ -1,17 +1,8 @@
-.terraform
 .idea
 .DS_Store
 .env*
-!.env.aws.template
-!.env.gcp.template
 !/.envrc
 .last_used_env
-.tfplan.*
-*.tfvars
-terraform.tfstate
-terraform.tfstate.backup
-**/.tfplan.*
-tests/periodic-test/build-template/e2b.toml
 .air
 go.work.sum
 .infisical.json

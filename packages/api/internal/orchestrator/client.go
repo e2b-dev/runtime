@@ -101,6 +101,9 @@ func (o *Orchestrator) connectToClusterNode(ctx context.Context, cluster *cluste
 func (o *Orchestrator) registerNode(node *nodemanager.Node) {
 	scopedKey := o.scopedNodeID(node.ClusterID, node.ID)
 	o.nodes.Insert(scopedKey, node)
+	if node.ClusterID == consts.LocalClusterID && o.startup != nil {
+		o.startup.signalLocalNode()
+	}
 }
 
 func (o *Orchestrator) deregisterNode(node *nodemanager.Node) {

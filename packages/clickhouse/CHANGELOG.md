@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1 (2026-09-11)
+
+
+### Bug Fixes
+
+* **clickhouse-migrator:** bump goose to v3.28.0 and upgrade Alpine packages (dadae1b)
+* **deps:** move the workspace to the Go 1.26.8 toolchain (e7116f5)
+* **deps:** update module github.com/stretchr/testify to v1.12.1 (a58bcb5)
+* **deps:** update module google.golang.org/api to v0.297.0 (852f328)
+* **deps:** update module google.golang.org/grpc to v1.83.1 [security] (27006d5)
+* **deps:** update module google.golang.org/grpc to v1.83.2 [security] (7123140)
+* **deps:** update opentelemetry (34ecda9)
+
 ## 0.4.0 (2026-08-21)
 
 

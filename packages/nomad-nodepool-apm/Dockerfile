@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.26.6
+ARG GOLANG_VERSION=1.26.8
 ARG ALPINE_VERSION=3.24
 
 # Build stage
@@ -10,16 +10,21 @@ WORKDIR /app
 COPY go.mod go.sum ./
 
 # Download dependencies
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # Copy source code
 COPY . .
 
 # Build the plugin
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /nomad-nodepool-apm .
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /nomad-nodepool-apm .
 
 # Final stage - minimal image, but shared with builder
 FROM alpine:${ALPINE_VERSION}
+# Bump this date to force a rebuild from here down, so the upgrade below
+# resolves against the current Alpine package index. Nothing reads the value.
+ENV LAST_FORCED_UPDATE=2026-09-11
+
+RUN apk upgrade --no-cache
 
 COPY --from=builder /nomad-nodepool-apm /nomad-nodepool-apm
 

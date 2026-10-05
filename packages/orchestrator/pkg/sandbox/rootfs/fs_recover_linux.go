@@ -5,9 +5,11 @@ package rootfs
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -82,9 +84,15 @@ const (
 type RecoverReason string
 
 const (
-	// replayed sub-reasons.
-	RecoverReasonNothingToDo     RecoverReason = "nothing_to_do"    // rc 0: clean, no replay needed
-	RecoverReasonJournalReplayed RecoverReason = "journal_replayed" // rc 1..3: journal applied
+	// replayed sub-reasons. e2fsck's exit code alone cannot tell them apart: under
+	// -p -E journal_only a replay that needs no further repair exits 0 exactly like
+	// a clean journal (the kernel keeps the superblock's valid-fs bit set while a
+	// journaled filesystem is mounted, and a replay is not a "fixed problem"). The
+	// superblock's needs_recovery bit, read before the run, is what says whether
+	// there was a journal to replay.
+	RecoverReasonNothingToDo     RecoverReason = "nothing_to_do"    // journal was clean; rc 0
+	RecoverReasonJournalReplayed RecoverReason = "journal_replayed" // needs_recovery was set and rc 0, or rc 1..3
+	RecoverReasonReplayUnknown   RecoverReason = "replay_unknown"   // rc 0 but the superblock could not be read before the run
 	// failed_operational sub-reasons (fail closed — e2fsck may have opened the device).
 	RecoverReasonTimeout     RecoverReason = "timeout"      // Go deadline fired: e2fsck may have been killed mid-replay
 	RecoverReasonKilled      RecoverReason = "killed"       // unit signalled (OOM, RuntimeMaxSec, external stop): mid-replay kill, NOT a launch failure
@@ -143,8 +151,16 @@ func e2fsckRC(rcOut []byte) (int, bool) {
 //
 // Cancel-free by construction: request cancellation must not kill e2fsck mid-write
 // (a torn replay would be served to the boot that follows), so the run detaches
-// from the caller's cancellation and is bounded by FsRecoverTimeout alone.
+// from the caller's cancellation and is bounded by FsRecoverTimeout alone, plus
+// the separately bounded superblock probe that precedes it (ext4ProbeTimeout).
 func RecoverFilesystem(ctx context.Context, devicePath string) (RecoverOutcome, RecoverReason, error) {
+	// Read before e2fsck runs (a successful replay clears the bit) and before the
+	// replay budget starts, so a stalled probe costs at most its own bound.
+	journal := journalUnknown
+	if nbdDevicePath.MatchString(devicePath) {
+		journal = ext4JournalState(devicePath)
+	}
+
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), FsRecoverTimeout)
 	defer cancel()
 
@@ -154,7 +170,81 @@ func RecoverFilesystem(ctx context.Context, devicePath string) (RecoverOutcome, 
 	// been killed mid-replay, which the classifier must fail closed.
 	timedOut := rctx.Err() != nil
 
-	return classifyE2fsckResult(runErr, rcOut, timedOut)
+	return classifyE2fsckResult(runErr, rcOut, timedOut, journal)
+}
+
+// journalState is what the ext4 superblock said about the journal before the run.
+type journalState int
+
+const (
+	journalUnknown journalState = iota // superblock unreadable or not ext4
+	journalClean                       // needs_recovery clear: nothing to replay
+	journalDirty                       // needs_recovery set: a replay is pending
+)
+
+// ext4 superblock layout (fs/ext4/ext4.h): 1 KiB in, magic at 0x38,
+// s_feature_incompat at 0x60; INCOMPAT_RECOVER marks a journal that still needs
+// replaying.
+const (
+	ext4SuperblockOffset = 1024
+	ext4SuperblockSize   = 1024
+	ext4MagicOffset      = 0x38
+	ext4Magic            = 0xEF53
+	ext4IncompatOffset   = 0x60
+	ext4IncompatRecover  = 0x0004
+)
+
+// ext4ProbeTimeout bounds the superblock read. A cold first chunk over the
+// COW/object-store chain can take seconds; past this the label degrades to
+// unknown and the replay proceeds on its own budget.
+const ext4ProbeTimeout = 3 * time.Second
+
+// ext4JournalState reads the needs_recovery bit off the device's primary
+// superblock. Read-only, one block, no jail: it reads fixed offsets and parses two
+// integers, never tenant-influenced content. Any failure or a read past
+// ext4ProbeTimeout is journalUnknown — the label degrades, the boot decision does
+// not depend on it. The blocking syscalls run in their own goroutine because a
+// stalled block device cannot be interrupted; on timeout that goroutine finishes
+// (and closes the file) whenever the device answers.
+func ext4JournalState(devicePath string) journalState {
+	result := make(chan journalState, 1)
+	go func() { result <- readExt4JournalState(devicePath) }()
+
+	timer := time.NewTimer(ext4ProbeTimeout)
+	defer timer.Stop()
+
+	select {
+	case state := <-result:
+		return state
+	case <-timer.C:
+		return journalUnknown
+	}
+}
+
+func readExt4JournalState(devicePath string) journalState {
+	f, err := os.Open(devicePath)
+	if err != nil {
+		return journalUnknown
+	}
+	defer f.Close()
+
+	sb := make([]byte, ext4SuperblockSize)
+	if _, err := f.ReadAt(sb, ext4SuperblockOffset); err != nil {
+		return journalUnknown
+	}
+
+	return parseExt4JournalState(sb)
+}
+
+func parseExt4JournalState(sb []byte) journalState {
+	if len(sb) < ext4SuperblockSize || binary.LittleEndian.Uint16(sb[ext4MagicOffset:]) != ext4Magic {
+		return journalUnknown
+	}
+	if binary.LittleEndian.Uint32(sb[ext4IncompatOffset:])&ext4IncompatRecover != 0 {
+		return journalDirty
+	}
+
+	return journalClean
 }
 
 // classifyE2fsckResult maps a jailed journal-replay run to an outcome, keyed on
@@ -165,7 +255,7 @@ func RecoverFilesystem(ctx context.Context, devicePath string) (RecoverOutcome, 
 // clean replay (rc < bit 4) boots; every other exit is retryable/operational,
 // because journal replay cannot tell an unmountable filesystem apart from a
 // transient fault (see ErrRecoveryFailed).
-func classifyE2fsckResult(runErr error, rcOut []byte, timedOut bool) (RecoverOutcome, RecoverReason, error) {
+func classifyE2fsckResult(runErr error, rcOut []byte, timedOut bool, journal journalState) (RecoverOutcome, RecoverReason, error) {
 	rc, ok := e2fsckRC(rcOut)
 	if !ok {
 		// No result — fail CLOSED by default; only a positively-identified launch
@@ -210,10 +300,16 @@ func classifyE2fsckResult(runErr error, rcOut []byte, timedOut bool) (RecoverOut
 
 	if rc < e2fsckReplayedMax {
 		// Below bit 4: journal replayed, regenerated, or nothing to do — mountable.
-		// rc 0 needed no replay; 1..3 applied one — the feature's efficacy split.
+		// 1..3 always applied a repair; 0 is a replay or a no-op depending on what
+		// the superblock said before the run — the feature's efficacy split.
 		reason := RecoverReasonJournalReplayed
 		if rc == 0 {
-			reason = RecoverReasonNothingToDo
+			switch journal {
+			case journalClean:
+				reason = RecoverReasonNothingToDo
+			case journalUnknown:
+				reason = RecoverReasonReplayUnknown
+			}
 		}
 
 		return RecoverOutcomeReplayed, reason, nil

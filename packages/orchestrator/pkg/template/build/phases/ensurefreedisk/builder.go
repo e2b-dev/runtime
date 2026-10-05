@@ -144,7 +144,8 @@ func (b *EnsureFreeDiskBuilder) Build(
 	defer cancel()
 
 	// Load the last user-step rootfs as the immutable parent of the resized layer.
-	sourceTemplate, err := b.templateCache.GetTemplate(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	sourceTemplate, releaseTemplate, err := b.templateCache.GetTemplatePinned(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	defer releaseTemplate()
 	if err != nil {
 		return phases.LayerResult{}, fmt.Errorf("get source template: %w", err)
 	}

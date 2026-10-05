@@ -1,4 +1,4 @@
-FROM golang:1.26.6
+FROM golang:1.26.8
 
 ARG DEBIAN_FRONTEND=noninteractive
 

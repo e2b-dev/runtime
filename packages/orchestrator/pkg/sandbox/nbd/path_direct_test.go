@@ -27,7 +27,7 @@ import (
 func TestPathDirect_Direct4MBWrite(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 	size := int64(10 * 1024 * 1024)
 
@@ -58,7 +58,7 @@ func TestPathDirect_Direct4MBWrite(t *testing.T) {
 func TestPathDirect_Direct32MBWrite(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 	size := int64(256 * 1024 * 1024)
 
@@ -86,7 +86,7 @@ func TestPathDirect_Direct32MBWrite(t *testing.T) {
 func TestPathDirect_Write(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	size := int64(5 * 1024 * 1024)
@@ -112,7 +112,7 @@ func TestPathDirect_Write(t *testing.T) {
 func TestPathDirect_WriteAtOffset(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 	size := int64(5 * 1024 * 1024)
 
@@ -138,7 +138,7 @@ func TestPathDirect_WriteAtOffset(t *testing.T) {
 func TestPathDirect_LargeWrite(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	size := int64(1200 * 1024 * 1024)
@@ -157,7 +157,7 @@ func TestPathDirect_LargeWrite(t *testing.T) {
 func TestPathLargeRead(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	size := int64(1200 * 1024 * 1024)
@@ -187,7 +187,7 @@ func TestPathDirect_HolePunchOnDiscardAndZeroOut(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			featureFlags, err := featureflags.NewClient()
+			featureFlags, err := featureflags.NewClient("", "")
 			require.NoError(t, err)
 
 			const size = 16 * 1024 * 1024
@@ -268,11 +268,7 @@ func setupNBDDevice(t *testing.T, featureFlags *featureflags.Client, size int64,
 		overlay.Close()
 	})
 
-	devicePath, deviceCleanup, err := GetNBDDevice(t.Context(), overlay, featureFlags)
-	t.Cleanup(func() {
-		deviceCleanup.Run(t.Context(), 30*time.Second)
-	})
-	require.NoError(t, err, "failed to get nbd device")
+	_, devicePath := setupNBDMount(t, featureFlags, overlay)
 
 	t.Logf("NBD device path: %s", devicePath)
 

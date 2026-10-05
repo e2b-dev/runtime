@@ -48,7 +48,7 @@ Keep PRs focused — one concern per PR. Smaller PRs get reviewed faster.
 
 ## Development Setup
 
-See [DEV.md](./DEV.md) and [CLAUDE.md](./CLAUDE.md) for setup instructions.
+See [CLAUDE.md](./CLAUDE.md) and [DEV-LOCAL.md](./DEV-LOCAL.md) for setup instructions.
 
 ## Code of Conduct
 

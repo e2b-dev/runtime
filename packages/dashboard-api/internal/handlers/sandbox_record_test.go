@@ -66,15 +66,15 @@ type recordRow struct {
 // Scan fills the destinations in the exact order produced by the generated
 // GetSandboxRecordByTeamAndSandboxID query.
 func (r recordRow) Scan(dest ...any) error {
-	*(dest[0].(*string)) = "sbx_1"         // sandbox_id
-	*(dest[1].(*string)) = "tmpl_1"        // template_id
-	*(dest[2].(*int64)) = 1                // vcpu
-	*(dest[3].(*int64)) = 512              // ram_mb
-	*(dest[4].(*int64)) = 1024             // total_disk_size_mb
-	*(dest[5].(*time.Time)) = time.Now()   // started_at
-	*(dest[6].(**time.Time)) = r.stoppedAt // stopped_at
-	*(dest[7].(**string)) = nil            // domain
-	*(dest[8].(*string)) = ""              // alias
+	*dest[0].(*string) = "sbx_1"         // sandbox_id
+	*dest[1].(*string) = "tmpl_1"        // template_id
+	*dest[2].(*int64) = 1                // vcpu
+	*dest[3].(*int64) = 512              // ram_mb
+	*dest[4].(*int64) = 1024             // total_disk_size_mb
+	*dest[5].(*time.Time) = time.Now()   // started_at
+	*dest[6].(**time.Time) = r.stoppedAt // stopped_at
+	*dest[7].(**string) = nil            // domain
+	*dest[8].(*string) = ""              // alias
 
 	return nil
 }

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // ctrlConn is a fake NBD socket driving the real Dispatch.Handle loop.
@@ -136,7 +138,7 @@ func TestDispatchWriteZeroesReadLoopStall(t *testing.T) {
 				firstWrite: make(chan struct{}),
 			}
 			prov := &stallProv{seen: map[int64]bool{}, wz: make(chan struct{})}
-			d := NewDispatch(conn, prov, tc.asyncWriteZeroes)
+			d := NewDispatch(conn, prov, tc.asyncWriteZeroes, logger.L())
 
 			done := make(chan struct{})
 			go func() {

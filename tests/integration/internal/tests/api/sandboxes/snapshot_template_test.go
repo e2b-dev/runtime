@@ -19,12 +19,13 @@ import (
 func createSnapshotTemplate(t *testing.T, c *api.ClientWithResponses, sbxId string, name *string) *api.PostSandboxesSandboxIDSnapshotsResponse {
 	t.Helper()
 
-	resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(
-		t.Context(),
-		sbxId,
-		api.PostSandboxesSandboxIDSnapshotsJSONRequestBody{Name: name},
-		setup.WithAPIKey(),
-	)
+	return createSnapshotTemplateWithBody(t, c, sbxId, api.PostSandboxesSandboxIDSnapshotsJSONRequestBody{Name: name})
+}
+
+func createSnapshotTemplateWithBody(t *testing.T, c *api.ClientWithResponses, sbxId string, body api.PostSandboxesSandboxIDSnapshotsJSONRequestBody) *api.PostSandboxesSandboxIDSnapshotsResponse {
+	t.Helper()
+
+	resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(t.Context(), sbxId, body, setup.WithAPIKey())
 	require.NoError(t, err)
 
 	return resp
@@ -420,6 +421,60 @@ func TestSnapshotTemplateCreateSandbox(t *testing.T) {
 		require.NoError(t, err, "marker file missing: sandbox was likely created from stale cached build")
 		assert.Equal(t, "snapshot-v2\n", output)
 	})
+}
+
+// A filesystem-only snapshot template keeps the source sandbox running
+// without a reboot, persists the files written before it was taken, and
+// cold-boots the sandboxes created from it.
+func TestSnapshotTemplateFilesystemOnly(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+	ctx := t.Context()
+	envdClient := setup.GetEnvdClient(t, ctx)
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(false))
+
+	bootID := func(target *api.Sandbox) string {
+		out, err := utils.ExecCommandWithOutput(t, ctx, target, envdClient, nil, "user", "cat", "/proc/sys/kernel/random/boot_id")
+		require.NoError(t, err)
+		require.NotEmpty(t, strings.TrimSpace(out))
+
+		return out
+	}
+	sourceBoot := bootID(sbx)
+
+	err := utils.ExecCommand(t, ctx, sbx, envdClient, "/bin/sh", "-c", "echo fs-only > /tmp/fs-only-marker")
+	require.NoError(t, err)
+
+	memory := false
+	resp := createSnapshotTemplateWithBody(t, c, sbx.SandboxID, api.PostSandboxesSandboxIDSnapshotsJSONRequestBody{Memory: &memory})
+	if resp.StatusCode() == http.StatusBadRequest && resp.JSON400 != nil && resp.JSON400.ErrorCode != nil && *resp.JSON400.ErrorCode == "snapshot_filesystem_only_disabled" {
+		t.Skip("filesystem-only snapshots are disabled in this environment (filesystem-only-checkpoint flag)")
+	}
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+	snapshot := resp.JSON201
+	t.Cleanup(func() {
+		c.DeleteTemplatesTemplateIDWithResponse(t.Context(), snapshot.SnapshotID, setup.WithAPIKey())
+	})
+
+	// The source sandbox is still running in the same boot: the checkpoint was
+	// taken in place, not by rebooting it.
+	res, err := c.GetSandboxesSandboxIDWithResponse(ctx, sbx.SandboxID, setup.WithAPIKey())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, res.StatusCode())
+	require.NotNil(t, res.JSON200)
+	assert.Equal(t, api.Running, res.JSON200.State)
+	assert.Equal(t, sourceBoot, bootID(sbx), "the source sandbox must not reboot for a filesystem-only snapshot")
+
+	// A sandbox created from the template has the files, in a fresh boot.
+	newSbx := utils.SetupSandboxWithCleanup(t, c,
+		utils.WithTemplateID(snapshot.SnapshotID),
+		utils.WithAutoPause(false),
+	)
+	output, err := utils.ExecCommandWithOutput(t, ctx, newSbx, envdClient, nil, "user", "cat", "/tmp/fs-only-marker")
+	require.NoError(t, err)
+	assert.Equal(t, "fs-only\n", output)
+	assert.NotEqual(t, sourceBoot, bootID(newSbx), "a sandbox created from a filesystem-only snapshot must cold-boot")
 }
 
 func findDefaultTagBuildID(t *testing.T, tags []api.TemplateTag) openapi_types.UUID {

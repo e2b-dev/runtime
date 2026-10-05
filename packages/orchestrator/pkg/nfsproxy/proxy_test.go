@@ -28,6 +28,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func createVolumeDir(t *testing.T, builder *chrooted.Builder, volumeType string, teamID, volumeID uuid.UUID) {
@@ -90,7 +91,7 @@ func TestRoundTrip(t *testing.T) {
 					{ID: volID2, Name: volName2, Path: "/mnt/vol2", Type: volType2},
 				},
 			}),
-			Runtime: sandbox.RuntimeMetadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID: sandboxID,
 				TeamID:    teamID.String(),
 			},

@@ -25,7 +25,7 @@ const metricExportPeriod = 15 * time.Second
 type Client struct {
 	MetricExporter  sdkmetric.Exporter
 	MeterProvider   metric.MeterProvider
-	forceFlush      func(ctx context.Context) error
+	shutdownMeters  func(ctx context.Context) error
 	SpanExporter    sdktrace.SpanExporter
 	TracerProvider  trace.TracerProvider
 	TracePropagator propagation.TextMapPropagator
@@ -99,7 +99,7 @@ func New(ctx context.Context, nodeID, serviceName, serviceCommit, serviceVersion
 	return &Client{
 		MetricExporter:  metricsExporter,
 		MeterProvider:   meterProvider,
-		forceFlush:      meterProvider.ForceFlush,
+		shutdownMeters:  meterProvider.Shutdown,
 		SpanExporter:    spanExporter,
 		TracerProvider:  tracerProvider,
 		TracePropagator: propagator,
@@ -124,16 +124,12 @@ func NewAnonymous(ctx context.Context, serviceName string) (*Client, error) {
 func (t *Client) Shutdown(ctx context.Context) error {
 	var errs []error
 
-	// Flush before the exporter is torn down: shutting it down first would
-	// leave the reader's pending batch with nowhere to go.
-	if err := t.forceFlush(ctx); err != nil {
+	// The provider's shutdown cancels an export already in flight, then collects
+	// and exports once more under ctx before closing the exporter. ForceFlush
+	// exports on the reader's own context instead, and the exporter's Shutdown
+	// waits for that export, so neither would be bounded by ctx.
+	if err := t.shutdownMeters(ctx); err != nil {
 		errs = append(errs, err)
-	}
-
-	if t.MetricExporter != nil {
-		if err := t.MetricExporter.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
-		}
 	}
 	if t.SpanExporter != nil {
 		if err := t.SpanExporter.Shutdown(ctx); err != nil {
@@ -153,7 +149,7 @@ func NewNoopClient() *Client {
 	return &Client{
 		MetricExporter:  &noopMetricExporter{},
 		MeterProvider:   noopMetric.MeterProvider{},
-		forceFlush:      func(context.Context) error { return nil },
+		shutdownMeters:  func(context.Context) error { return nil },
 		SpanExporter:    &noopSpanExporter{},
 		TracerProvider:  noopTrace.NewTracerProvider(),
 		TracePropagator: propagation.NewCompositeTextMapPropagator(),

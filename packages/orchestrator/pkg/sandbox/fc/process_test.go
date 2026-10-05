@@ -15,9 +15,26 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
+
+func TestValidateFirecrackerBinaryReportsBothMissingPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	config := cfg.BuilderConfig{FirecrackerVersionsDir: dir}
+	versions := Config{FirecrackerVersion: "v1.14.1_431f1fc"}
+	archPath, legacyPath := versions.firecrackerPaths(config)
+
+	err := validateFirecrackerBinary(versions, config)
+
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorContains(t, err, "firecracker binary not found; checked architecture-specific path")
+	require.ErrorContains(t, err, archPath)
+	require.ErrorContains(t, err, legacyPath)
+}
 
 func TestProcessStopIsIdempotent(t *testing.T) {
 	t.Parallel()

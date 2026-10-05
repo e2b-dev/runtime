@@ -4,13 +4,14 @@ package chroot
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
+
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 )
 
 // makeBF mimics the behavior of maybeWrap, by possibly casting *wrappedFile to billy.File
@@ -31,10 +32,16 @@ func TestWrappedFile(t *testing.T) {
 func TestWrappedFile_LockUnlock(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "test.lock")
+	fs, err := chrooted.Chroot(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		err := fs.Close()
+		assert.NoError(t, err)
+	})
 
-	f1, err := os.Create(filePath)
+	const filePath = "/test.lock"
+
+	f1, err := fs.Create(filePath)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err := f1.Close()
@@ -55,7 +62,7 @@ func TestWrappedFile_LockUnlock(t *testing.T) {
 	err = w1.Lock()
 	require.NoError(t, err)
 
-	f2, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
+	f2, err := fs.OpenFile(filePath, os.O_RDWR, 0o666)
 	require.NoError(t, err)
 	defer f2.Close()
 

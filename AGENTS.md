@@ -25,5 +25,5 @@ Output style rules (strict, override any defaults):
 ## Scope
 
 - Skip style/nit comments — `golangci-lint` covers those.
-- Skip test-coverage comments — Codecov covers those.
+- Skip test-coverage comments.
 - Focus on: race conditions, nil-deref, error handling, auth/authz, request routing, resource leaks, SQL/migration correctness, and gRPC/proto compatibility.

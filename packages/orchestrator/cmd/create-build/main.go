@@ -32,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
@@ -40,7 +41,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -85,6 +85,7 @@ func main() {
 	startCmd := flag.String("start-cmd", "", "start command")
 	setupCmd := flag.String("setup-cmd", "", "setup command to run during build (e.g., install deps)")
 	readyCmd := flag.String("ready-cmd", "", "ready check command")
+	cpuTemplateFile := flag.String("cpu-template", "", "path to a custom Firecracker CPU template JSON file to be used for boot every layer with (empty = none)")
 	timeout := flag.Int("timeout", 5, "build timeout in minutes")
 	verbose := flag.Bool("v", false, "verbose output")
 	flag.Parse()
@@ -101,6 +102,19 @@ func main() {
 
 	if *toBuild == "" {
 		log.Fatal("-to-build required")
+	}
+
+	var cpuTmpl *cputemplate.Template
+	if *cpuTemplateFile != "" {
+		raw, err := os.ReadFile(*cpuTemplateFile)
+		if err != nil {
+			log.Fatalf("read -cpu-template: %v", err)
+		}
+
+		cpuTmpl, err = cputemplate.Parse(raw)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// FPH must be installed at boot — flag is read by Create, not Resume.
@@ -134,7 +148,7 @@ func main() {
 		log.Fatalf("network config: %v", err)
 	}
 
-	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *memory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, localMode, *verbose, *timeout, builderConfig, networkConfig)
+	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *memory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, cpuTmpl, localMode, *verbose, *timeout, builderConfig, networkConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -233,6 +247,7 @@ func doBuild(
 	vcpu, memory, disk int,
 	hugePages bool,
 	startCmd, setupCmd, readyCmd string,
+	cpuTemplate *cputemplate.Template,
 	localMode, verbose bool,
 	timeout int,
 	builderConfig cfg.BuilderConfig,
@@ -275,7 +290,7 @@ func doBuild(
 	if verbose {
 		logLevel = ldlog.Info
 	}
-	featureFlags, _ := featureflags.NewClientWithLogLevel(logLevel)
+	featureFlags, _ := featureflags.NewClientWithLogLevel(builderConfig.DeploymentEnvironment, "", logLevel)
 
 	sandboxes := sandbox.NewSandboxesMap()
 
@@ -337,11 +352,6 @@ func doBuild(
 	go networkPool.Populate(ctx)
 	defer networkPool.Close(parentCtx)
 
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(ctx)
-	if err != nil {
-		return fmt.Errorf("artifacts registry: %w", err)
-	}
-
 	dockerhubRepo, err := dockerhub.GetRemoteRepository(ctx)
 	if err != nil {
 		return fmt.Errorf("dockerhub: %w", err)
@@ -362,12 +372,12 @@ func doBuild(
 	// their parents' header finalization. Redis is nil (CLI is single-host —
 	// no cross-orch signaling needed); local same-orch coordination via
 	// futures is what matters here.
-	uploads := sandbox.NewUploads(templateCache, persistenceTemplate, peerclient.NopResolver(), nil)
+	uploads := sandbox.NewUploads(templateCache, persistenceTemplate, peerclient.NopResolver(), nil, featureFlags)
 	defer uploads.Stop()
 
 	builder := build.NewBuilder(
 		builderConfig, l, featureFlags, sandboxFactory,
-		persistenceTemplate, persistenceBuild, artifactRegistry,
+		persistenceTemplate, persistenceBuild,
 		dockerhubRepo, sandboxProxy, sandboxes, templateCache, buildMetrics,
 		uploads,
 	)
@@ -394,6 +404,14 @@ func doBuild(
 		return fmt.Errorf("invalid firecracker version %q: %w", fc, err)
 	}
 
+	// Warn only, so a template can be tried against a debug Firecracker that supports it;
+	// an unsupported one still fails the boot when Firecracker rejects PUT /cpu-config.
+	if cpuTemplate != nil {
+		if err := cpuTemplate.Validate(fcInfo); err != nil {
+			fmt.Printf("firecracker %s: %v; sending it anyway\n", fc, err)
+		}
+	}
+
 	tmpl := config.TemplateConfig{
 		Version:            templates.TemplateV2LatestVersion,
 		TemplateID:         templateID,
@@ -411,6 +429,11 @@ func doBuild(
 		FreePageHinting:    fcInfo.HasFreePageHinting(),
 		TeamID:             "local",
 		Steps:              steps,
+		CPUTemplate:        cpuTemplate,
+	}
+
+	if cpuTemplate != nil {
+		fmt.Printf("CPU template: %s (%s)\n", cpuTemplate.Digest(), cpuTemplate.String())
 	}
 
 	pageSizeStr := "2MB (hugepages)"

@@ -1,0 +1,6 @@
+.git
+.venv
+.idea
+**/node_modules
+scripts/dev
+env/*.local.env

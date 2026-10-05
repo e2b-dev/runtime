@@ -15,11 +15,13 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/filesystem"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 )
@@ -130,7 +132,7 @@ func (b *EnsureFreeDiskBuilder) measureFree(
 	}
 	defer func() { e = errors.Join(e, cache.Close()) }()
 
-	device, err := b.openOfflineDevice(ctx, block.NewOverlay(source, cache))
+	device, err := b.openOfflineDevice(ctx, block.NewOverlay(source, cache), buildID)
 	if err != nil {
 		return 0, err
 	}
@@ -177,7 +179,7 @@ func (b *EnsureFreeDiskBuilder) resizeAndExport(
 		return nil, nil, 0, fmt.Errorf("zero-fill grown tail: %w", err)
 	}
 
-	freeAfter, err = b.resizeOffline(ctx, block.NewOverlay(source, cache), newSize)
+	freeAfter, err = b.resizeOffline(ctx, block.NewOverlay(source, cache), buildID, newSize)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -224,6 +226,7 @@ func (b *EnsureFreeDiskBuilder) resizeAndExport(
 func (b *EnsureFreeDiskBuilder) resizeOffline(
 	ctx context.Context,
 	backend block.Device,
+	layerBuildID uuid.UUID,
 	newSize int64,
 ) (freeAfter int64, e error) {
 	// Group the two e2fsck runs and the resize2fs so the grow target and result
@@ -239,7 +242,7 @@ func (b *EnsureFreeDiskBuilder) resizeOffline(
 	}()
 
 	// Expose the detached overlay as a normal host block device for e2fsprogs.
-	device, err := b.openOfflineDevice(ctx, backend)
+	device, err := b.openOfflineDevice(ctx, backend, layerBuildID)
 	if err != nil {
 		return 0, err
 	}
@@ -274,8 +277,22 @@ type offlineDevice struct {
 	path string
 }
 
-func (b *EnsureFreeDiskBuilder) openOfflineDevice(ctx context.Context, backend block.Device) (*offlineDevice, error) {
-	mnt := b.sandboxFactory.NewDirectPathMount(backend)
+// offlineDeviceRuntime is the identity the phase's mounts log under. The phase
+// runs no sandbox, so they are attributed to the build being built — the one
+// every build sandbox reports, not the layer artifact this phase produces.
+func (b *EnsureFreeDiskBuilder) offlineDeviceRuntime() sandboxtypes.RuntimeMetadata {
+	return sandboxtypes.RuntimeMetadata{
+		TemplateID: b.Config.TemplateID,
+		TeamID:     b.Config.TeamID,
+		BuildID:    b.Template.BuildID,
+	}
+}
+
+func (b *EnsureFreeDiskBuilder) openOfflineDevice(ctx context.Context, backend block.Device, layerBuildID uuid.UUID) (*offlineDevice, error) {
+	lg := b.offlineDeviceRuntime().Logger().
+		With(zap.String("layer_build_id", layerBuildID.String()))
+
+	mnt := b.sandboxFactory.NewDirectPathMount(backend, lg)
 	idx, err := mnt.Open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open NBD device: %w", err)

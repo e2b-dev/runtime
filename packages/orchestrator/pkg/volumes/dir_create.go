@@ -51,7 +51,15 @@ func (s *Service) CreateDir(ctx context.Context, request *orchestrator.CreateDir
 
 	updateDir := true
 
-	if err = fs.Mkdir(path, mode); err != nil {
+	// The root always exists: creating it is a conflict, and with
+	// create_parents it is the no-op MkdirAll semantics promise.
+	if s.isRoot(path) {
+		if !request.GetCreateParents() {
+			return nil, processError(ctx, "failed to create directory", pathExists(path))
+		}
+
+		updateDir = false
+	} else if err = fs.Mkdir(path, mode); err != nil {
 		if !request.GetCreateParents() || !errors.Is(err, os.ErrExist) {
 			return nil, processError(ctx, "failed to create directory", err)
 		}
@@ -83,9 +91,13 @@ func (s *Service) CreateDir(ctx context.Context, request *orchestrator.CreateDir
 		return nil, fmt.Errorf("failed to stat directory: %w", err)
 	}
 
-	entry := toEntry(path, stat)
+	entry := toEntry(fs, path, stat)
 
 	return &orchestrator.CreateDirResponse{Entry: entry}, nil
+}
+
+func pathExists(path string) error {
+	return &os.PathError{Op: "mkdir", Path: path, Err: os.ErrExist}
 }
 
 func processError(ctx context.Context, s string, err error) error {
@@ -103,6 +115,12 @@ func processError(ctx context.Context, s string, err error) error {
 	// letting it fall through to a generic 500.
 	if errors.Is(err, syscall.ENOTDIR) {
 		return newAPIError(ctx, codes.InvalidArgument, http.StatusBadRequest, orchestrator.UserErrorCode_INVALID_REQUEST, "%s: a component of the path is a file, but must be a directory", s).Err()
+	}
+
+	// The confined filesystem refuses an entry named "." or "..", as the
+	// kernel does for create, unlink and rename.
+	if errors.Is(err, syscall.EINVAL) {
+		return newAPIError(ctx, codes.InvalidArgument, http.StatusBadRequest, orchestrator.UserErrorCode_INVALID_REQUEST, "%s: invalid path", s).Err()
 	}
 
 	return fmt.Errorf("%s: %w", s, err)

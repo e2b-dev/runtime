@@ -121,3 +121,34 @@ func TestTemplateBuildUnsupportedDistro(t *testing.T) {
 	assert.Contains(t, outcome.reason, "ID='ol' is not supported")
 	assert.Contains(t, outcome.reason, "Sandboxes boot E2B's kernel")
 }
+
+// The guest kernel builds SELinux in as the default LSM and the rootfs is
+// unlabeled OCI layers, so an image that carries a policy with
+// SELINUX=enforcing boots systemd enforcing over an unlabeled tree, PID 1
+// freezes, and envd never starts. The policy is installed in a step, not the
+// base image: that covers the base image case (the finalize boot carries it)
+// and the customer-Dockerfile case that a provisioning-time fix would miss.
+func TestTemplateBuildSELinuxPolicyImage(t *testing.T) {
+	t.Parallel()
+
+	buildConfig := api.TemplateBuildStartV2{
+		Force:     new(ForceBaseBuild),
+		FromImage: new("fedora:44"),
+		Steps: new([]api.TemplateStep{
+			// Steps run as the template's default user; the second arg runs this
+			// one as root (the sudoers entry is only written at finalize).
+			{
+				Type:  "RUN",
+				Force: new(true),
+				Args:  new([]string{"dnf install -y selinux-policy-targeted && grep -q '^SELINUX=enforcing' /etc/selinux/config", "root"}),
+			},
+		}),
+		StartCmd: new("echo 'Sandbox started'"),
+		// The guest must have booted with SELinux off at the kernel, not merely
+		// have survived the policy load.
+		ReadyCmd: new("grep -qw selinux=0 /proc/cmdline && ! test -e /sys/fs/selinux/enforce && sleep 1"),
+	}
+
+	outcome := runTemplateBuild(t, "test-selinux-policy", buildConfig, defaultBuildLogHandler(t))
+	require.True(t, outcome.ready, "Build failed: %s", outcome.reason)
+}

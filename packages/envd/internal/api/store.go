@@ -75,6 +75,18 @@ type API struct {
 	// X-Envd-Handover header. Set once at startup, before serving.
 	handover *handoverResult
 
+	// memory is the memory protection configured on envd's cgroup chain, read once
+	// at construction; PostInit advertises it to the orchestrator via the
+	// X-Envd-Memory header and does no reading of its own. It is a boot-time value:
+	// it survives a memory resume inside the snapshot, and only a fresh process (a
+	// cold boot, a live-upgrade re-exec) reads it again. The chain's values are the
+	// init system's, written at boot, so the two agree unless something changed the
+	// cgroups after envd started.
+	memory cgroups.MemoryProtection
+
+	// oomKills is nil when OOM kills aren't watched, as outside Firecracker.
+	oomKills *host.OOMWatcher
+
 	// initialized flips true on the first authenticated /init. It gates the
 	// live-upgrade /upgrade endpoint and the handover fallback thaw so a
 	// re-adopted (possibly hostile) guest process can neither drive an upgrade
@@ -123,7 +135,7 @@ func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retai
 	}
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, logFlushers ...LogFlusher) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, oomKills *host.OOMWatcher, logFlushers ...LogFlusher) *API {
 	logFlusher := NewNoopLogFlusher()
 	if len(logFlushers) > 0 && logFlushers[0] != nil {
 		logFlusher = logFlushers[0]
@@ -139,6 +151,8 @@ func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.
 		accessToken:     &SecureToken{},
 		caCertInstaller: host.NewCACertInstaller(l),
 		workloadFreezer: workloadFreezer,
+		memory:          workloadFreezer.MemoryProtection(),
+		oomKills:        oomKills,
 		logFlusher:      logFlusher,
 		initLock:        semaphore.NewWeighted(1),
 		fsFreezer:       fsfreeze.New(),
@@ -171,6 +185,12 @@ func (a *API) GetMetrics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 
 		return
+	}
+
+	if a.oomKills != nil {
+		if kills, ok := a.oomKills.Kills(); ok {
+			metrics.OomKills = &kills
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

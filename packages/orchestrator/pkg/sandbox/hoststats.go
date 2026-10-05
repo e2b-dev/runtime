@@ -10,6 +10,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // initializeHostStatsCollector initializes the host stats collector for a sandbox.
@@ -17,7 +18,7 @@ import (
 func initializeHostStatsCollector(
 	ctx context.Context,
 	sbx *Sandbox,
-	runtime RuntimeMetadata,
+	runtime sandboxtypes.RuntimeMetadata,
 	config *Config,
 	hostStatsDelivery hoststats.Delivery,
 ) {

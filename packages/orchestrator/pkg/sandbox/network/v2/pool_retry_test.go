@@ -17,6 +17,7 @@ import (
 
 type failingStorage struct {
 	attempts atomic.Int64
+	released atomic.Int64
 }
 
 func (s *failingStorage) Acquire(context.Context) (*network.Slot, error) {
@@ -25,7 +26,11 @@ func (s *failingStorage) Acquire(context.Context) (*network.Slot, error) {
 	return nil, errors.New("persistent acquire failure")
 }
 
-func (*failingStorage) Release(*network.Slot) error { return nil }
+func (s *failingStorage) Release(*network.Slot) error {
+	s.released.Add(1)
+
+	return nil
+}
 
 func newRetryTestPool(t *testing.T, storage network.Storage, delay time.Duration) (*V2Pool, *sdkmetric.ManualReader) {
 	t.Helper()
@@ -91,4 +96,32 @@ func requireReceive(t *testing.T, done <-chan struct{}) {
 	case <-time.After(time.Second):
 		t.Fatal("Populate did not exit promptly")
 	}
+}
+
+// A failed release notification keeps the slot allocated and out of reuse on
+// the normal, canceled and closed paths. An async return still finishes, so
+// Close does not wait on it.
+func TestV2Pool_FailedReleaseRetainsSlot(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	failRelease := func(context.Context, string) error { return boom }
+	storage := &failingStorage{}
+	pool, _ := newRetryTestPool(t, storage, time.Hour)
+	close(pool.newSlots)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.ErrorIs(t, pool.returnSlot(t.Context(), &network.Slot{Idx: 1}, failRelease, 0), boom)
+	err := pool.returnSlot(canceled, &network.Slot{Idx: 2}, failRelease, time.Hour)
+	require.ErrorIs(t, err, network.ErrSlotRetained)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, pool.ReturnAsync(t.Context(), &network.Slot{Idx: 3}, failRelease, time.Hour))
+	require.NoError(t, pool.Close(t.Context()))
+	err = pool.returnSlot(t.Context(), &network.Slot{Idx: 4}, failRelease, time.Hour)
+	require.ErrorIs(t, err, network.ErrSlotRetained)
+	require.ErrorIs(t, err, network.ErrClosed)
+
+	require.Zero(t, storage.released.Load(), "a retained slot must not be released for reuse")
+	require.Empty(t, pool.reusedSlots)
 }

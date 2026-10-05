@@ -2,6 +2,10 @@ FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe
 
 ARG COMMIT_SHA
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 LABEL org.opencontainers.image.title="clean-nfs-cache" \
       org.opencontainers.image.description="E2B privileged NFS cache cleanup CronJob" \
       org.opencontainers.image.source="https://github.com/e2b-dev/infra" \

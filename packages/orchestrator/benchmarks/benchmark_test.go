@@ -38,12 +38,12 @@ import (
 	buildconfig "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -157,7 +157,7 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		assert.NoError(b, err)
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())
@@ -214,15 +214,12 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		},
 	})
 
-	runtime := sandbox.RuntimeMetadata{
+	runtime := sandboxtypes.RuntimeMetadata{
 		TemplateID:  templateID,
 		SandboxID:   "sandbox-id",
 		ExecutionID: "execution-id",
 		TeamID:      "team-id",
 	}
-
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(b.Context())
-	require.NoError(b, err)
 
 	templateSpec2, err := cfg.TemplateStorage()
 	require.NoError(b, err)
@@ -275,7 +272,6 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		sandboxFactory,
 		persistenceTemplate,
 		persistenceBuild,
-		artifactRegistry,
 		dockerhubRepository,
 		sandboxProxy,
 		sandboxes,
@@ -311,13 +307,14 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 	}
 
 	// retrieve template
-	tmpl, err := templateCache.GetTemplate(
+	tmpl, releaseTmpl, err := templateCache.GetTemplatePinned(
 		b.Context(),
 		buildID,
 		false,
 		false,
 	)
 	require.NoError(b, err)
+	b.Cleanup(releaseTmpl)
 
 	tc := testContainer{
 		sandboxFactory: sandboxFactory,
@@ -354,7 +351,7 @@ type testContainer struct {
 	sandboxFactory *sandbox.Factory
 	tmpl           template.Template
 	sandboxConfig  *sandbox.Config
-	runtime        sandbox.RuntimeMetadata
+	runtime        sandboxtypes.RuntimeMetadata
 }
 
 func (tc *testContainer) testOneItem(b *testing.B, buildID, kernelVersion, fcVersion string) {

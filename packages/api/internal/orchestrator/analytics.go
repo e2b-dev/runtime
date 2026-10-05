@@ -126,7 +126,9 @@ func createdInstanceProperties(properties posthog.Properties, sbx sandbox.Sandbo
 		Set("egress_proxy", sbx.Network.HasEgressProxy())
 
 	if sbx.Network.HasEgressProxy() {
-		props = props.Set("egress_proxy_auth", sbx.Network.HasEgressProxyAuth())
+		props = props.
+			Set("egress_proxy_auth", sbx.Network.HasEgressProxyAuth()).
+			Set("egress_proxy_tls", sbx.Network.HasEgressProxyTLS())
 	}
 
 	if startDuration > 0 {

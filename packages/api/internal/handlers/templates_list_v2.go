@@ -29,7 +29,7 @@ func (a *APIStore) GetV2Templates(c *gin.Context, params api.GetV2TemplatesParam
 		return
 	}
 
-	if params.TeamID != nil && team.ID.String() != *params.TeamID {
+	if params.TeamID != nil && !teamIDMatches(team.ID, *params.TeamID) {
 		a.sendAPIStoreError(c, http.StatusBadRequest, "Team ID param mismatch with the API key")
 		telemetry.ReportError(ctx, "team param mismatch with the API key", nil, telemetry.WithTeamID(team.ID.String()))
 

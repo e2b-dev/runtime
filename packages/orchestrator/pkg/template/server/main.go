@@ -17,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/envd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
@@ -45,6 +46,7 @@ type ServerStore struct {
 	templatemanager.UnimplementedTemplateServiceServer
 
 	logger            logger.Logger
+	info              *service.ServiceInfo
 	builder           *build.Builder
 	buildCache        *cache.BuildCache
 	buildLogger       logger.Logger
@@ -62,6 +64,7 @@ type ServerStore struct {
 func New(
 	ctx context.Context,
 	config cfg.Config,
+	info *service.ServiceInfo,
 	featureFlags *featureflags.Client,
 	meterProvider metric.MeterProvider,
 	logger logger.Logger,
@@ -145,7 +148,6 @@ func New(
 		sandboxFactory,
 		templatePersistence,
 		buildPersistence,
-		artifactsRegistry,
 		dockerhubRepository,
 		proxy,
 		sandboxFactory.Sandboxes,
@@ -156,6 +158,7 @@ func New(
 
 	store := &ServerStore{
 		logger:            logger,
+		info:              info,
 		builder:           builder,
 		buildCache:        buildCache,
 		buildLogger:       buildLogger,

@@ -24,6 +24,7 @@ func projectLimits(projectID uuid.UUID, revision int64) ProjectLimitsProjection 
 		EventsTTLDays:            14,
 		DefaultFreeDiskSizeMB:    10240,
 		MaxFreeDiskSizeMB:        51200,
+		APITeamRPSList:           60,
 	}
 }
 
@@ -79,20 +80,48 @@ func limitsUpdatedAt(t *testing.T, db *testutils.Database, teamID uuid.UUID) tim
 func TestValidateProjectLimitsProjection(t *testing.T) {
 	t.Parallel()
 
-	valid := projectLimits(uuid.New(), 1)
+	require.NoError(t, validateProjectLimitsProjection(projectLimits(uuid.New(), 1)))
 
-	noProject := valid
-	noProject.ProjectID = uuid.Nil
+	accepted := map[string]func(*ProjectLimitsProjection){
+		"no default free disk":   func(p *ProjectLimitsProjection) { p.DefaultFreeDiskSizeMB = 0 },
+		"disabled list rate":     func(p *ProjectLimitsProjection) { p.APITeamRPSList = 0 },
+		"free disk at ceiling":   func(p *ProjectLimitsProjection) { p.DefaultFreeDiskSizeMB = p.MaxFreeDiskSizeMB },
+		"every limit at a floor": func(p *ProjectLimitsProjection) { *p = floors(p.ProjectID) },
+	}
+	for name, change := range accepted {
+		projection := projectLimits(uuid.New(), 1)
+		change(&projection)
+		require.NoError(t, validateProjectLimitsProjection(projection), name)
+	}
 
-	noRevision := valid
-	noRevision.Revision = 0
+	refused := map[string]func(*ProjectLimitsProjection){
+		"no project":                  func(p *ProjectLimitsProjection) { p.ProjectID = uuid.Nil },
+		"zero revision":               func(p *ProjectLimitsProjection) { p.Revision = 0 },
+		"negative revision":           func(p *ProjectLimitsProjection) { p.Revision = -1 },
+		"zero sandbox length":         func(p *ProjectLimitsProjection) { p.MaxLengthHours = 0 },
+		"zero sandboxes":              func(p *ProjectLimitsProjection) { p.ConcurrentSandboxes = 0 },
+		"zero template builds":        func(p *ProjectLimitsProjection) { p.ConcurrentTemplateBuilds = 0 },
+		"zero vcpu":                   func(p *ProjectLimitsProjection) { p.MaxVCPU = 0 },
+		"zero ram":                    func(p *ProjectLimitsProjection) { p.MaxRAMMB = 0 },
+		"zero disk":                   func(p *ProjectLimitsProjection) { p.DiskMB = 0 },
+		"zero events ttl":             func(p *ProjectLimitsProjection) { p.EventsTTLDays = 0 },
+		"negative default free disk":  func(p *ProjectLimitsProjection) { p.DefaultFreeDiskSizeMB = -1 },
+		"zero free disk ceiling":      func(p *ProjectLimitsProjection) { p.MaxFreeDiskSizeMB, p.DefaultFreeDiskSizeMB = 0, 0 },
+		"negative list rate":          func(p *ProjectLimitsProjection) { p.APITeamRPSList = -1 },
+		"free disk above its ceiling": func(p *ProjectLimitsProjection) { p.DefaultFreeDiskSizeMB = p.MaxFreeDiskSizeMB + 1 },
+	}
+	for name, change := range refused {
+		projection := projectLimits(uuid.New(), 1)
+		change(&projection)
+		require.ErrorIs(t, validateProjectLimitsProjection(projection), ErrInvalidProjectLimits, name)
+	}
+}
 
-	negativeRevision := valid
-	negativeRevision.Revision = -1
-
-	require.NoError(t, validateProjectLimitsProjection(valid))
-	for _, projection := range []ProjectLimitsProjection{noProject, noRevision, negativeRevision} {
-		require.ErrorIs(t, validateProjectLimitsProjection(projection), ErrInvalidProjectLimits)
+func floors(projectID uuid.UUID) ProjectLimitsProjection {
+	return ProjectLimitsProjection{
+		ProjectID: projectID, Revision: 1, MaxLengthHours: 1, ConcurrentSandboxes: 1,
+		ConcurrentTemplateBuilds: 1, MaxVCPU: 1, MaxRAMMB: 1, DiskMB: 1, EventsTTLDays: 1,
+		MaxFreeDiskSizeMB: 1,
 	}
 }
 
@@ -172,7 +201,7 @@ func TestApplyProjectLimitsLeavesTheLedgerBehindARejectedWrite(t *testing.T) {
 	incoherent := projectLimits(teamID, 4)
 	incoherent.DefaultFreeDiskSizeMB = incoherent.MaxFreeDiskSizeMB + 1
 
-	require.ErrorIs(t, service.ApplyProjectLimits(t.Context(), incoherent), ErrProjectLimitsRejected)
+	require.ErrorIs(t, service.ApplyProjectLimits(t.Context(), incoherent), ErrInvalidProjectLimits)
 	require.Nil(t, ledgerRevision(t, db, teamID))
 	require.Empty(t, cache.teams)
 
@@ -201,4 +230,57 @@ func TestApplyProjectLimitsLeavesAnUnpushedProjectOnItsTier(t *testing.T) {
 			return rows.Scan(&overrides)
 		}, teamID))
 	require.Zero(t, overrides)
+}
+
+func listRate(t *testing.T, db *testutils.Database, teamID uuid.UUID) int64 {
+	t.Helper()
+
+	var rate int64
+	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(),
+		"SELECT api_team_rps_list FROM public.team_limits WHERE id = $1",
+		func(rows pgx.Rows) error {
+			rows.Next()
+
+			return rows.Scan(&rate)
+		}, teamID))
+
+	return rate
+}
+
+func setTierListRate(t *testing.T, db *testutils.Database, teamID uuid.UUID, rate int64) {
+	t.Helper()
+
+	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(),
+		"UPDATE public.tiers SET api_team_rps_list = $2 WHERE id = (SELECT tier FROM public.teams WHERE id = $1)",
+		func(pgx.Rows) error { return nil }, teamID, rate))
+}
+
+func TestApplyProjectLimitsPushesTheListRate(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	service, _ := newService(db)
+	teamID := testutils.CreateTestTeam(t, db)
+	setTierListRate(t, db, teamID, 25)
+
+	pushed := projectLimits(teamID, 1)
+	pushed.APITeamRPSList = 70
+	require.NoError(t, service.ApplyProjectLimits(t.Context(), pushed))
+	require.EqualValues(t, 70, listRate(t, db, teamID))
+
+	disabled := projectLimits(teamID, 2)
+	disabled.APITeamRPSList = 0
+	require.NoError(t, service.ApplyProjectLimits(t.Context(), disabled))
+	require.EqualValues(t, 0, listRate(t, db, teamID), "a pushed zero disables the limit rather than falling back")
+}
+
+func TestAnUnpushedProjectKeepsItsTierListRate(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	_, _ = newService(db)
+	teamID := testutils.CreateTestTeam(t, db)
+	setTierListRate(t, db, teamID, 25)
+
+	require.EqualValues(t, 25, listRate(t, db, teamID))
 }

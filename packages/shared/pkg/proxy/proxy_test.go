@@ -339,7 +339,7 @@ func TestProxyResumePermissionDeniedErrorTemplate(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Unable to Resume Sandbox")
+		assert.Contains(t, string(body), "Unable to resume sandbox")
 		assert.Contains(t, string(body), "test-sandbox")
 	})
 }
@@ -399,7 +399,7 @@ func TestProxySandboxStillTransitioningErrorTemplate(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Sandbox Still Transitioning")
+		assert.Contains(t, string(body), "Sandbox still transitioning")
 		assert.Contains(t, string(body), "test-sandbox")
 	})
 }
@@ -461,7 +461,7 @@ func TestProxyInternalRouteErrorTemplate(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Endpoint Not Available")
+		assert.Contains(t, string(body), "Endpoint not available")
 		assert.Contains(t, string(body), "/init")
 		assert.NotContains(t, string(body), "test-sandbox")
 	})
@@ -520,7 +520,7 @@ func TestProxyTeamSandboxLimitError(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Sandbox Limit Reached")
+		assert.Contains(t, string(body), "Sandbox limit reached")
 		assert.Contains(t, string(body), "rate limit hit")
 	})
 }

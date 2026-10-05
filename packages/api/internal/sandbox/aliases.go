@@ -19,6 +19,7 @@ type (
 	RemoveOpts  = sandboxtypes.RemoveOpts
 
 	TransitionEffect = sandboxtypes.TransitionEffect
+	StateTransition  = sandboxtypes.StateTransition
 
 	InvalidStateTransitionError = sandboxtypes.InvalidStateTransitionError
 	LimitExceededError          = sandboxtypes.LimitExceededError
@@ -36,9 +37,10 @@ const (
 	TransitionExpires   = sandboxtypes.TransitionExpires
 	TransitionTransient = sandboxtypes.TransitionTransient
 
-	StaleCutoff           = sandboxtypes.StaleCutoff
-	SandboxTimeoutDefault = sandboxtypes.SandboxTimeoutDefault
-	AutoPauseDefault      = sandboxtypes.AutoPauseDefault
+	StaleCutoff             = sandboxtypes.StaleCutoff
+	SandboxTimeoutDefault   = sandboxtypes.SandboxTimeoutDefault
+	SandboxTimeoutDefaultV2 = sandboxtypes.SandboxTimeoutDefaultV2
+	AutoPauseDefault        = sandboxtypes.AutoPauseDefault
 
 	KillReasonUnknown             = sandboxtypes.KillReasonUnknown
 	KillReasonRequest             = sandboxtypes.KillReasonRequest
@@ -55,7 +57,9 @@ var (
 	ErrEvictionInProgress = sandboxtypes.ErrEvictionInProgress
 	ErrEvictionNotNeeded  = sandboxtypes.ErrEvictionNotNeeded
 	ErrExecutionMismatch  = sandboxtypes.ErrExecutionMismatch
+	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
 	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
+	ErrDraining           = sandboxtypes.ErrDraining
 
 	AllowedTransitions = sandboxtypes.AllowedTransitions
 

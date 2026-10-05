@@ -50,8 +50,7 @@ func executeScript(t *testing.T, script string, workDir string) (stdout, stderr 
 	stderr = errBuf.String()
 
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			t.Fatalf("Failed to execute script: %v", err)

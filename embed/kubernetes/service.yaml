@@ -1,0 +1,10 @@
+# Headless and portless: the pod uses the node's network namespace and nothing
+# resolves e2b-0.e2b, but a StatefulSet's serviceName must name a Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2b
+spec:
+  clusterIP: None
+  selector:
+    app: e2b

@@ -131,6 +131,26 @@ func ConvertTeamIDToProjectID(teamID uuid.UUID) ProjectID {
 	return ProjectID(teamID)
 }
 
+// ParseTeamID parses a team given either as its UUID or as its public project
+// ID, so callers can accept both while teams are still addressed by UUID.
+func ParseTeamID(s string) (uuid.UUID, error) {
+	if strings.HasPrefix(s, projectIDPrefix) {
+		projectID, err := ParseProjectID(s)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		return uuid.UUID(projectID), nil
+	}
+
+	teamID, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parse team ID: %w", err)
+	}
+
+	return teamID, nil
+}
+
 func randomTypeIDInput(s, prefix string) (string, error) {
 	if len(s) != ObjectIDLen {
 		return "", fmt.Errorf("%w: got %d characters, want %d", typeid.ErrParse, len(s), ObjectIDLen)

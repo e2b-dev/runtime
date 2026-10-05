@@ -11,18 +11,22 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -235,7 +239,7 @@ func TestNewCacheFromMemfdDeduped_DetachesCompareAndDrain(t *testing.T) {
 	metaOut := utils.NewSetOnce[*header.DiffMetadata]()
 	cache, err := NewCacheFromMemfdDeduped(
 		ctx, &fakeOriginalDevice{data: baseData}, pageSize, cachePath, memfd, dirty, false, false,
-		DedupBudget{}, nil, metaOut, false,
+		DedupBudget{}, nil, metaOut, false, false,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cache.Close() })
@@ -381,14 +385,14 @@ func TestDedupedMemfdCache_InflightServeMetric(t *testing.T) {
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &rm))
-	byPhase := collectCounterByPhase(t, rm, "orchestrator.memfd.inflight_serve_pages")
+	byPhase := collectCounterBy(t, rm, "orchestrator.memfd.inflight_serve_pages", "phase")
 	assert.Equal(t, int64(4), byPhase["drain"], "drain pages: 3 ReadAt + 1 Slice")
 	assert.Equal(t, int64(3), byPhase["provisional"], "provisional pages: a 2-page serve + a 1-page serve")
 }
 
-// collectCounterByPhase totals a named int64 monotonic-sum metric's datapoints
-// keyed by their "phase" label value.
-func collectCounterByPhase(t *testing.T, rm metricdata.ResourceMetrics, name string) map[string]int64 {
+// collectCounterBy totals a named int64 monotonic-sum metric's datapoints,
+// keyed by their values for the given labels joined with "/".
+func collectCounterBy(t *testing.T, rm metricdata.ResourceMetrics, name string, labels ...string) map[string]int64 {
 	t.Helper()
 
 	out := map[string]int64{}
@@ -402,9 +406,13 @@ func collectCounterByPhase(t *testing.T, rm metricdata.ResourceMetrics, name str
 			sum, ok := m.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "metric %q is not an int64 sum", name)
 			for _, dp := range sum.DataPoints {
-				phase, ok := dp.Attributes.Value("phase")
-				require.True(t, ok, "datapoint missing phase attribute")
-				out[phase.AsString()] += dp.Value
+				values := make([]string, 0, len(labels))
+				for _, label := range labels {
+					v, ok := dp.Attributes.Value(attribute.Key(label))
+					require.True(t, ok, "datapoint missing %s attribute", label)
+					values = append(values, v.AsString())
+				}
+				out[strings.Join(values, "/")] += dp.Value
 			}
 		}
 	}
@@ -440,7 +448,7 @@ func TestDedupedMemfdCache_MemfdHeldUntilSwap(t *testing.T) {
 	metaOut := utils.NewSetOnce[*header.DiffMetadata]()
 	cache, err := NewCacheFromMemfdDeduped(
 		t.Context(), base, ps, t.TempDir()+"/dedup-held", memfd, dirty,
-		false, false, DedupBudget{}, nil, metaOut, true,
+		false, false, DedupBudget{}, nil, metaOut, true, false,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cache.Close() })
@@ -486,7 +494,7 @@ func TestDedupedMemfdCache_InflightConcurrentDrainRace(t *testing.T) {
 	metaOut := utils.NewSetOnce[*header.DiffMetadata]()
 	cache, err := NewCacheFromMemfdDeduped(
 		t.Context(), base, ps, t.TempDir()+"/dedup-concurrent", memfd, dirty,
-		false, false, DedupBudget{}, nil, metaOut, true,
+		false, false, DedupBudget{}, nil, metaOut, true, false,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cache.Close() })
@@ -562,7 +570,7 @@ func TestMemfdIdentitySource_ServesThenReleases(t *testing.T) {
 	require.Equal(t, data[2*ps:3*ps], sl)
 	require.True(t, src.IsCached(t.Context(), 0, ps*4))
 
-	require.NoError(t, d.releaseMemfd())
+	require.NoError(t, d.releaseMemfd(t.Context()))
 
 	var bna BytesNotAvailableError
 	_, err = src.ReadAt(make([]byte, ps), 0)
@@ -606,4 +614,264 @@ func TestNewCacheFromMemfdKeepOpen(t *testing.T) {
 	_, err = second.ReadAt(got2, 0)
 	require.NoError(t, err)
 	require.Equal(t, expected, got2)
+}
+
+// swapDeadStructureCounters points the package-level dead-structure counters
+// at a manual reader for the duration of the test. NOT parallel-safe.
+func swapDeadStructureCounters(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+
+	reader := sdkmetric.NewManualReader()
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).
+		Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block")
+
+	prevOutcome, prevBytes := deadStructureOutcomeCounter, deadStructureBytesCounter
+	deadStructureOutcomeCounter = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorDeadStructureOutcomeCounterName))
+	deadStructureBytesCounter = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorDeadStructureBytesCounterName))
+	t.Cleanup(func() { deadStructureOutcomeCounter, deadStructureBytesCounter = prevOutcome, prevBytes })
+
+	return reader
+}
+
+// deadStructureTotals returns the dead-structure outcome counts and bytes,
+// each keyed by "structure/outcome". A counter nothing recorded on is empty.
+func deadStructureTotals(t *testing.T, reader *sdkmetric.ManualReader) (outcomes, bytes map[string]int64) {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+
+	collect := func(name telemetry.CounterType) map[string]int64 {
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name == string(name) {
+					return collectCounterBy(t, rm, string(name), "structure", "outcome")
+				}
+			}
+		}
+
+		return map[string]int64{}
+	}
+
+	return collect(telemetry.OrchestratorDeadStructureOutcomeCounterName), collect(telemetry.OrchestratorDeadStructureBytesCounterName)
+}
+
+// failingSliceDevice fails every base Slice, so the dedup compare fails on the
+// first dirty page that is not zero.
+type failingSliceDevice struct{ *fakeOriginalDevice }
+
+func (failingSliceDevice) Slice(context.Context, int64, int64) ([]byte, error) {
+	return nil, errors.New("base slice failed")
+}
+
+const freeIndexTestPages = 16
+
+// newFreeIndexCache starts a real dedup of freeIndexTestPages random dirty
+// pages. Over an all-zero base every dirty page is kept, so packed offsets
+// equal absolute ones.
+func newFreeIndexCache(t *testing.T, base ReadonlyDevice, inflight, freeIndex bool) (*DedupedMemfdCache, []byte) {
+	t.Helper()
+
+	ps := int64(header.PageSize)
+	size := ps * freeIndexTestPages
+
+	memfd, srcData := newTestMemfd(t, size)
+	dirty := roaring.New()
+	dirty.AddRange(0, freeIndexTestPages)
+	if base == nil {
+		base = &fakeOriginalDevice{data: make([]byte, size)}
+	}
+
+	cache, err := NewCacheFromMemfdDeduped(
+		t.Context(), base, ps, t.TempDir()+"/dedup-free-index", memfd, dirty,
+		false, false, DedupBudget{}, nil, utils.NewSetOnce[*header.DiffMetadata](), inflight, freeIndex,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cache.Close() })
+
+	return cache, srcData
+}
+
+// waitMemfdReleased waits until the drain goroutine has released the memfd.
+func waitMemfdReleased(t *testing.T, cache *DedupedMemfdCache) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		cache.mu.RLock()
+		defer cache.mu.RUnlock()
+
+		return cache.memfd == nil
+	}, 15*time.Second, time.Millisecond, "the drain goroutine never released the memfd")
+}
+
+// freeIndexTestIndexBytes is the size of the index the dedup builds for
+// newFreeIndexCache's dirty set: its backing array, 24 bytes an entry.
+func freeIndexTestIndexBytes() int64 {
+	dirty := roaring.New()
+	dirty.AddRange(0, freeIndexTestPages)
+
+	return int64(cap(buildPackedIndex(dirty))) * packedSegBytes
+}
+
+func TestPackedSegBytesMatchesLayout(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, uintptr(packedSegBytes), unsafe.Sizeof(packedSeg{}))
+}
+
+// The packed index is useful only while the memfd is mapped. Every release
+// records one outcome. With the flag on the index goes with the memfd; with it
+// off the index stays exactly as it does without the flag. Both record the
+// index's size. Without in-flight serving no index is built, which records
+// none and no size. In every state a read after the release is served,
+// correctly, by the drained cache.
+//
+//nolint:paralleltest // swaps the package-level dead-structure counters
+func TestDedupedMemfdCache_FreeIndexWithMemfd(t *testing.T) {
+	ps := int64(header.PageSize)
+	indexBytes := freeIndexTestIndexBytes()
+
+	for _, tc := range []struct {
+		name      string
+		inflight  bool
+		freeIndex bool
+		wantIndex bool
+		outcome   string
+		wantBytes int64
+	}{
+		{name: "flag on", inflight: true, freeIndex: true, wantIndex: false, outcome: "dropped", wantBytes: indexBytes},
+		{name: "flag off", inflight: true, freeIndex: false, wantIndex: true, outcome: "flag_off", wantBytes: indexBytes},
+		{name: "no inflight serving", inflight: false, freeIndex: true, wantIndex: false, outcome: "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := swapDeadStructureCounters(t)
+
+			cache, srcData := newFreeIndexCache(t, nil, tc.inflight, tc.freeIndex)
+			cache.MarkSwapped()
+			_, err := cache.Wait(t.Context())
+			require.NoError(t, err)
+			waitMemfdReleased(t, cache)
+
+			cache.mu.RLock()
+			hasIndex := cache.index != nil
+			cache.mu.RUnlock()
+			assert.Equal(t, tc.wantIndex, hasIndex, "packed index after the memfd release")
+
+			outcomes, bytes := deadStructureTotals(t, reader)
+			assert.Equal(t, map[string]int64{"dedup_index/" + tc.outcome: 1}, outcomes, "one outcome per release")
+			if tc.wantBytes > 0 {
+				assert.Equal(t, map[string]int64{"dedup_index/" + tc.outcome: tc.wantBytes}, bytes)
+			} else {
+				assert.Empty(t, bytes, "no index, no size")
+			}
+
+			buf := make([]byte, ps)
+			_, err = cache.ReadAt(buf, 5*ps)
+			require.NoError(t, err)
+			assert.Equal(t, srcData[5*ps:6*ps], buf, "a read after the release comes from the drained cache")
+		})
+	}
+}
+
+// A compare that fails releases the memfd before any index is built, so even
+// with in-flight serving and the flag on the release records none.
+//
+//nolint:paralleltest // swaps the package-level dead-structure counters
+func TestDedupedMemfdCache_FreeIndexCompareError(t *testing.T) {
+	reader := swapDeadStructureCounters(t)
+
+	size := int64(header.PageSize) * freeIndexTestPages
+	cache, _ := newFreeIndexCache(t, failingSliceDevice{&fakeOriginalDevice{data: make([]byte, size)}}, true, true)
+	_, err := cache.Wait(t.Context())
+	require.Error(t, err)
+	waitMemfdReleased(t, cache)
+
+	outcomes, bytes := deadStructureTotals(t, reader)
+	assert.Equal(t, map[string]int64{"dedup_index/none": 1}, outcomes)
+	assert.Empty(t, bytes)
+}
+
+// With no swap signal, cancelling the context the release waits on releases
+// the memfd, and with the flag on the index goes with it just as after a swap.
+//
+//nolint:paralleltest // swaps the package-level dead-structure counters
+func TestDedupedMemfdCache_FreeIndexOnCancelledSwapWait(t *testing.T) {
+	reader := swapDeadStructureCounters(t)
+
+	cache, _ := newFreeIndexCache(t, nil, true, true)
+	_, err := cache.Wait(t.Context())
+	require.NoError(t, err)
+	cache.cancel()
+	waitMemfdReleased(t, cache)
+
+	cache.mu.RLock()
+	assert.Nil(t, cache.index)
+	cache.mu.RUnlock()
+	outcomes, bytes := deadStructureTotals(t, reader)
+	assert.Equal(t, map[string]int64{"dedup_index/dropped": 1}, outcomes)
+	assert.Equal(t, map[string]int64{"dedup_index/dropped": freeIndexTestIndexBytes()}, bytes)
+}
+
+// Readers hammer the in-flight path across the drain and the release that
+// frees the index. Most of them fall back once the drain resolves, so this is
+// a -race check of the lock discipline, not a proof that a read overlapped the
+// free: every read either comes from the memfd with the right bytes or falls
+// back.
+func TestDedupedMemfdCache_FreeIndexUnderConcurrentReads(t *testing.T) {
+	t.Parallel()
+
+	ps := int64(header.PageSize)
+	const numPages = 256
+	size := ps * numPages
+
+	memfd, srcData := newTestMemfd(t, size)
+	dirty := roaring.New()
+	dirty.AddRange(0, numPages)
+
+	cache, err := NewCacheFromMemfdDeduped(
+		t.Context(), &fakeOriginalDevice{data: make([]byte, size)}, ps, t.TempDir()+"/dedup-free-race", memfd, dirty,
+		false, false, DedupBudget{}, nil, utils.NewSetOnce[*header.DiffMetadata](), true, true,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cache.Close() })
+	cache.MarkSwapped()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errCh := make(chan error, 8)
+	for g := range 8 {
+		wg.Go(func() {
+			buf := make([]byte, ps)
+			for i := g; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				page := int64(i % numPages)
+				n, ok := cache.tryInflightRead(buf, page*ps)
+				if ok && (n != int(ps) || !bytes.Equal(buf, srcData[page*ps:(page+1)*ps])) {
+					errCh <- fmt.Errorf("inflight page %d mismatch", page)
+
+					return
+				}
+				runtime.Gosched()
+			}
+		})
+	}
+
+	require.Eventually(t, func() bool {
+		cache.mu.RLock()
+		defer cache.mu.RUnlock()
+
+		return cache.memfd == nil && cache.index == nil
+	}, time.Minute, time.Millisecond, "the release never freed the memfd and its index")
+
+	close(stop)
+	wg.Wait()
+	select {
+	case e := <-errCh:
+		t.Fatal(e)
+	default:
+	}
 }

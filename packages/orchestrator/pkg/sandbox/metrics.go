@@ -6,11 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
+
+// Caps the guest-supplied /metrics body; envd's is a few KB even with its 32 OOM kills.
+const maxMetricsBodySize = 1 << 20
 
 type Metrics struct {
 	Timestamp int64 `json:"ts"` // Unix Timestamp in UTC
@@ -25,11 +30,8 @@ type Metrics struct {
 	DiskUsed  int64 `json:"disk_used"`  // Used disk space in bytes
 	DiskTotal int64 `json:"disk_total"` // Total disk space in bytes
 
-	// Deprecated
-	MemTotalMiB int64 `json:"mem_total_mib"` // Total virtual memory in MiB
-
-	// Deprecated
-	MemUsedMiB int64 `json:"mem_used_mib"` // Used virtual memory in MiB
+	// Latest OOM kills, oldest first; nil when envd doesn't know them.
+	OomKills *[]envd.OOMKill `json:"oom_kills,omitempty"`
 }
 
 func (c *Checks) GetMetrics(ctx context.Context, timeout time.Duration) (*Metrics, error) {
@@ -60,7 +62,7 @@ func (c *Checks) GetMetrics(ctx context.Context, timeout time.Duration) (*Metric
 	}
 
 	var m Metrics
-	err = json.NewDecoder(response.Body).Decode(&m)
+	err = json.NewDecoder(io.LimitReader(response.Body, maxMetricsBodySize)).Decode(&m)
 	if err != nil {
 		return nil, err
 	}

@@ -124,7 +124,17 @@ echo "include /etc/chrony/chrony.conf" >/etc/chrony.conf
 
 echo "Setting up SSH"
 mkdir -p /etc/ssh
-cat <<EOF >>/etc/ssh/sshd_config
+# A drop-in leaves the package's sshd_config untouched: appending to it marks the conffile
+# modified, and a later openssh upgrade in a customer build step then stops on dpkg's
+# "modified configuration file" prompt until the build times out. Images whose sshd_config
+# has no Include line (stock upstream config) still get the append.
+if grep -qE '^Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config 2>/dev/null; then
+  E2B_SSHD_CONF=/etc/ssh/sshd_config.d/00-e2b.conf
+  mkdir -p /etc/ssh/sshd_config.d
+else
+  E2B_SSHD_CONF=/etc/ssh/sshd_config
+fi
+cat <<EOF >>"$E2B_SSHD_CONF"
 PermitRootLogin yes
 PermitEmptyPasswords yes
 PasswordAuthentication yes

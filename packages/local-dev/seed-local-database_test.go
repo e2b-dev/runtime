@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	infradb "github.com/e2b-dev/infra/packages/db"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 )
@@ -49,14 +50,17 @@ func TestRun(t *testing.T) {
 	})
 
 	// run the db migration, through a provider carrying its own store rather
-	// than goose's package-level dialect and tracking-table globals
+	// than goose's package-level dialect and tracking-table globals. The
+	// files come embedded from the db module: go test does not track a file
+	// outside this module as a test input, so a migration edit read from the
+	// sibling checkout would leave a cached pass standing.
 	store, err := database.NewStore(goose.DialectPostgres, "_migrations")
 	require.NoError(t, err)
 
 	provider, err := goose.NewProvider(
 		"", // Has to be empty when using a custom store
 		db,
-		os.DirFS(filepath.Join("..", "db", "migrations")),
+		infradb.Migrations(),
 		goose.WithStore(store),
 	)
 	require.NoError(t, err)

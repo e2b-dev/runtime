@@ -1,0 +1,17 @@
+.DS_Store
+*.log
+.idea/
+.venv/
+.worktrees/
+node_modules/
+compose/env/*.local.env
+
+# The repository's root .gitignore ignores .env*; the pinned compose/.env is
+# tracked on purpose.
+!/compose/.env
+
+# `make lint` runs `terraform init` in each module and each example, through a
+# shared plugin cache; a module needs no lock file, so none of that is tracked.
+.terraform/
+.terraform-cache/
+.terraform.lock.hcl

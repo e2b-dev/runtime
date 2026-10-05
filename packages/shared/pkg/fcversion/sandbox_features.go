@@ -17,6 +17,10 @@ var (
 	// Filesystem-only snapshots are part of the e2b release contract from
 	// its first release.
 	filesystemSnapshotsMinE2B = semver.New(0, 1, 0, "", "")
+	// tscKhzTemplateMinE2B is the first release whose PUT /cpu-config accepts
+	// x86_tsc_khz (v1.14-0.3.0). firecracker-versions must not map a line below
+	// it: snapshots built above it store x86_tsc_khz, and their cold boots would fail.
+	tscKhzTemplateMinE2B = semver.New(0, 3, 0, "", "")
 )
 
 func (v *Info) atLeastE2B(minVersion *semver.Version) bool {
@@ -37,6 +41,12 @@ func (v *Info) HasInPlaceCheckpoint() bool {
 // betray an explicit memory:false.
 func (v *Info) HasFilesystemSnapshots() bool {
 	return v.atLeastE2B(filesystemSnapshotsMinE2B)
+}
+
+// HasTscKhzTemplate reports whether this build's custom CPU template accepts
+// x86_tsc_khz.
+func (v *Info) HasTscKhzTemplate() bool {
+	return v.atLeastE2B(tscKhzTemplateMinE2B)
 }
 
 func (v *Info) HasHugePages() bool {

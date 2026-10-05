@@ -15,6 +15,12 @@ import (
 var blockedTeamAllowlist = auth.BlockedTeamAllowlist{
 	http.MethodGet: {
 		"/api-keys":                                     {},
+		"/events/sandboxes":                             {},
+		"/events/sandboxes/:sandboxID":                  {},
+		"/events/webhooks":                              {},
+		"/events/webhooks/:webhookID":                   {},
+		"/events/webhooks/:webhookID/deliveries":        {},
+		"/events/webhooks/:webhookID/stats":             {},
 		"/sandboxes":                                    {},
 		"/sandboxes/metrics":                            {},
 		"/sandboxes/:sandboxID":                         {},

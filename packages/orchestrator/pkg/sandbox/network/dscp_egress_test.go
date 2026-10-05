@@ -17,6 +17,7 @@ import (
 	"github.com/vishvananda/netns"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // reserveNSTestIdx hands out unique high slot indexes so the root-gated netns
@@ -77,14 +78,14 @@ func TestConfig_EgressDSCP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			require.Equal(t, tt.wantSandbox, tt.config.EgressDSCP(EgressClassSandbox))
-			require.Equal(t, tt.wantBuild, tt.config.EgressDSCP(EgressClassBuild))
+			require.Equal(t, tt.wantSandbox, tt.config.EgressDSCP(sandboxtypes.EgressClassSandbox))
+			require.Equal(t, tt.wantBuild, tt.config.EgressDSCP(sandboxtypes.EgressClassBuild))
 		})
 	}
 }
 
 // TestConfig_EgressTOS pins the DSCP→TOS resolution both connection proxies
-// consume; the SandboxType→EgressClass mapping is pinned in the sandbox
+// consume; the SandboxType→sandboxtypes.EgressClass mapping is pinned in the shared sandboxtypes
 // package's egress_class_test.go.
 func TestConfig_EgressTOS(t *testing.T) {
 	t.Parallel()
@@ -92,49 +93,49 @@ func TestConfig_EgressTOS(t *testing.T) {
 	tests := []struct {
 		name   string
 		config Config
-		class  EgressClass
+		class  sandboxtypes.EgressClass
 		want   int
 	}{
 		{
 			name:   "build class uses the build value",
 			config: Config{SandboxEgressDSCP: 8, BuildSandboxEgressDSCP: DSCP(16)},
-			class:  EgressClassBuild,
+			class:  sandboxtypes.EgressClassBuild,
 			want:   16 << 2, // 0x40
 		},
 		{
 			name:   "sandbox class keeps the sandbox value when a build value is set",
 			config: Config{SandboxEgressDSCP: 8, BuildSandboxEgressDSCP: DSCP(16)},
-			class:  EgressClassSandbox,
+			class:  sandboxtypes.EgressClassSandbox,
 			want:   8 << 2, // 0x20
 		},
 		{
 			name:   "unset build value falls back to the sandbox value",
 			config: Config{SandboxEgressDSCP: 8},
-			class:  EgressClassBuild,
+			class:  sandboxtypes.EgressClassBuild,
 			want:   8 << 2,
 		},
 		{
 			name:   "build value of 0 disables marking for builds only",
 			config: Config{SandboxEgressDSCP: 8, BuildSandboxEgressDSCP: DSCP(0)},
-			class:  EgressClassBuild,
+			class:  sandboxtypes.EgressClassBuild,
 			want:   0,
 		},
 		{
 			name:   "sandbox value of 0 disables marking while builds stay marked",
 			config: Config{SandboxEgressDSCP: 0, BuildSandboxEgressDSCP: DSCP(16)},
-			class:  EgressClassSandbox,
+			class:  sandboxtypes.EgressClassSandbox,
 			want:   0,
 		},
 		{
 			name:   "both unset disables marking",
 			config: Config{},
-			class:  EgressClassBuild,
+			class:  sandboxtypes.EgressClassBuild,
 			want:   0,
 		},
 		{
 			name:   "max DSCP maps to the top of the TOS byte",
 			config: Config{BuildSandboxEgressDSCP: DSCP(63)},
-			class:  EgressClassBuild,
+			class:  sandboxtypes.EgressClassBuild,
 			want:   63 << 2, // 0xFC
 		},
 	}
@@ -154,7 +155,7 @@ func BenchmarkEgressTOS_For(b *testing.B) {
 
 	b.ReportAllocs()
 	for range b.N {
-		benchTOS = tos.For(EgressClassBuild)
+		benchTOS = tos.For(sandboxtypes.EgressClassBuild)
 	}
 }
 
@@ -207,7 +208,7 @@ func TestParseConfig_BuildEgressDSCP(t *testing.T) {
 		config, err := ParseConfig()
 		require.NoError(t, err)
 		require.Nil(t, config.BuildSandboxEgressDSCP)
-		require.Equal(t, uint8(8), config.EgressDSCP(EgressClassBuild))
+		require.Equal(t, uint8(8), config.EgressDSCP(sandboxtypes.EgressClassBuild))
 	})
 
 	t.Run("set but empty behaves as unset and inherits", func(t *testing.T) {
@@ -216,7 +217,7 @@ func TestParseConfig_BuildEgressDSCP(t *testing.T) {
 		config, err := ParseConfig()
 		require.NoError(t, err)
 		require.Nil(t, config.BuildSandboxEgressDSCP)
-		require.Equal(t, uint8(8), config.EgressDSCP(EgressClassBuild))
+		require.Equal(t, uint8(8), config.EgressDSCP(sandboxtypes.EgressClassBuild))
 	})
 
 	t.Run("explicit zero is distinct from absent", func(t *testing.T) {
@@ -225,7 +226,7 @@ func TestParseConfig_BuildEgressDSCP(t *testing.T) {
 		config, err := ParseConfig()
 		require.NoError(t, err)
 		require.NotNil(t, config.BuildSandboxEgressDSCP)
-		require.Equal(t, uint8(0), config.EgressDSCP(EgressClassBuild))
+		require.Equal(t, uint8(0), config.EgressDSCP(sandboxtypes.EgressClassBuild))
 	})
 
 	t.Run("set value is used for builds", func(t *testing.T) {
@@ -233,8 +234,8 @@ func TestParseConfig_BuildEgressDSCP(t *testing.T) {
 
 		config, err := ParseConfig()
 		require.NoError(t, err)
-		require.Equal(t, uint8(8), config.EgressDSCP(EgressClassSandbox))
-		require.Equal(t, uint8(16), config.EgressDSCP(EgressClassBuild))
+		require.Equal(t, uint8(8), config.EgressDSCP(sandboxtypes.EgressClassSandbox))
+		require.Equal(t, uint8(16), config.EgressDSCP(sandboxtypes.EgressClassBuild))
 	})
 
 	t.Run("out of range fails loudly", func(t *testing.T) {
@@ -326,15 +327,15 @@ func TestApplyEgressDSCP_RestampsSlotRule(t *testing.T) { //nolint:paralleltest 
 	requireSingleDSCPRule(t, slot, "0x08") // CreateNetwork seeds the sandbox class
 
 	// A build sandbox takes the slot.
-	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(EgressClassBuild)))
+	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(sandboxtypes.EgressClassBuild)))
 	requireSingleDSCPRule(t, slot, "0x10")
 
 	// Re-applying the same class must not duplicate the rule.
-	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(EgressClassBuild)))
+	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(sandboxtypes.EgressClassBuild)))
 	requireSingleDSCPRule(t, slot, "0x10")
 
 	// The pool recycles the slot back to the sandbox class.
-	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(EgressClassSandbox)))
+	require.NoError(t, slot.applyEgressDSCP(t.Context(), config.EgressDSCP(sandboxtypes.EgressClassSandbox)))
 	requireSingleDSCPRule(t, slot, "0x08")
 
 	// 0 removes the rule outright.
@@ -445,7 +446,7 @@ func TestPool_GetFailureReturnsSlotWithSandboxDSCP(t *testing.T) { //nolint:para
 	pool.newSlots <- slot
 	close(pool.newSlots) // Populate never runs here, and Close ranges over it.
 
-	_, err = pool.Get(t.Context(), nil, EgressClassBuild)
+	_, err = pool.Get(t.Context(), nil, sandboxtypes.EgressClassBuild)
 	require.ErrorContains(t, err, "egress DSCP for build")
 
 	select {
@@ -489,7 +490,7 @@ func TestPool_RecycleRestoresSandboxDSCP(t *testing.T) { //nolint:paralleltest /
 	netCfg := &orchestrator.SandboxNetworkConfig{
 		Egress: &orchestrator.SandboxNetworkEgressConfig{DeniedCidrs: []string{"10.0.0.0/8"}},
 	}
-	got, err := pool.Get(t.Context(), netCfg, EgressClassBuild)
+	got, err := pool.Get(t.Context(), netCfg, sandboxtypes.EgressClassBuild)
 	require.NoError(t, err)
 	require.Equal(t, slot.Idx, got.Idx)
 	requireSingleDSCPRule(t, got, "0x10")
@@ -507,6 +508,6 @@ func TestPool_RecycleRestoresSandboxDSCP(t *testing.T) { //nolint:paralleltest /
 	}
 
 	// The next tenant is a regular sandbox: no change, and no duplicate rule.
-	require.NoError(t, pool.configureSlot(t.Context(), slot, nil, EgressClassSandbox))
+	require.NoError(t, pool.configureSlot(t.Context(), slot, nil, sandboxtypes.EgressClassSandbox))
 	requireSingleDSCPRule(t, slot, "0x08")
 }

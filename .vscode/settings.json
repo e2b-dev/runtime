@@ -5,7 +5,6 @@
     "**/.hg": true,
     "**/CVS": true,
     "**/.DS_Store": true,
-    ".terraform/**": true,
     ".vscode/**": true,
     ".git/**": true,
     "packages/orchestrator/.shared/**": true,
@@ -21,7 +20,6 @@
     "**/.hg": true,
     "**/CVS": true,
     "**/.DS_Store": true,
-    ".terraform/**": true,
     ".vscode/**": true,
     ".git/**": true,
     "packages/fc-kernels/linux/**": true,
@@ -33,9 +31,6 @@
     "strings": true
   },
   "editor.formatOnSave": true,
-  "[terraform]": {
-    "editor.tabSize": 2
-  },
   "go.delveConfig": {
     "debuggerMode": "native",
   },

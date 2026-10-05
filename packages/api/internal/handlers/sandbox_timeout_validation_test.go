@@ -66,7 +66,6 @@ func TestSandboxResume_RejectsNonPositiveTimeout(t *testing.T) {
 			ginCtx.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, ginCtx, minimalTeamInfo())
 
-			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
 			store.PostSandboxesSandboxIDResume(ginCtx, "abc123")
 
 			assertBadRequestTimeout(t, recorder)
@@ -105,7 +104,6 @@ func TestSandboxFork_RejectsNonPositiveTimeout(t *testing.T) {
 			ginCtx.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, ginCtx, minimalTeamInfo())
 
-			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
 			store.PostSandboxesSandboxIDFork(ginCtx, "abc123")
 
 			assertBadRequestTimeout(t, recorder)

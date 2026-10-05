@@ -79,7 +79,7 @@ func TestDiskEntitlementsMigration(t *testing.T) {
 	const legacyColumns = "id,max_length_hours,concurrent_sandboxes,concurrent_template_builds," +
 		"max_vcpu,max_ram_mb,disk_mb,events_ttl_days"
 	require.Equal(t,
-		legacyColumns+",default_free_disk_size_mb,max_disk_size_mb,max_free_disk_size_mb",
+		legacyColumns+",default_free_disk_size_mb,max_disk_size_mb,max_free_disk_size_mb,api_team_rps_list",
 		viewColumns)
 
 	var securityInvoker bool

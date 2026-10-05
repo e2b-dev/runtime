@@ -52,7 +52,6 @@ import (
 )
 
 const (
-	serviceVersion     = "1.0.0"
 	serviceName        = "orchestration-api"
 	maxMultipartMemory = 1 << 23 // 8 MiB
 	maxUploadLimit     = 1 << 24 // 16 MiB
@@ -96,6 +95,7 @@ const (
 var (
 	commitSHA                  string
 	expectedMigrationTimestamp string
+	serviceVersion             = "0.14.1" // x-release-please-version
 )
 
 func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T, port int) *http.Server {
@@ -133,6 +133,8 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 			"/sandboxes/:sandboxID/connect",
 			"/sandboxes/:sandboxID/resume",
 			"/sandboxes/:sandboxID/snapshots",
+			"/v2/sandboxes",
+			"/v2/sandboxes/:sandboxID/connect",
 		),
 		sharedmiddleware.LoggingMiddleware(l, sharedmiddleware.Config{ //nolint:contextcheck // ctx is captured before c.Next() intentionally to avoid seeing child context cancellations from inner middleware
 			TimeFormat:   time.RFC3339Nano,
@@ -163,14 +165,21 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 	r.Use(customMiddleware.CORS())
 
-	// Access tokens are removed. Registered before the OpenAPI validator
-	// middleware (which rejects paths missing from the spec) so old clients
-	// get a clear 410 instead of a 404.
-	accessTokensGone := func(c *gin.Context) {
-		apierrors.SendAPIStoreError(c, http.StatusGone, "E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation")
+	// Removed routes are registered before the OpenAPI validator middleware
+	// (which rejects paths missing from the spec) so old clients get a clear
+	// 410 instead of a 404.
+	gone := func(msg string) gin.HandlerFunc {
+		return func(c *gin.Context) { apierrors.SendAPIStoreError(c, http.StatusGone, msg) }
 	}
+	accessTokensGone := gone("E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation")
 	r.POST("/access-tokens", accessTokensGone)
 	r.DELETE("/access-tokens/:accessTokenID", accessTokensGone)
+
+	templateBuildV1Gone := gone("The v1 template build API is no longer supported. Upgrade the CLI and migrate to v2 templates. See https://e2b.dev/docs/template/migration-v2")
+	r.POST("/templates", templateBuildV1Gone)
+	r.POST("/templates/:templateID", templateBuildV1Gone)
+	r.POST("/templates/:templateID/builds/:buildID", templateBuildV1Gone)
+	r.POST("/v2/templates", templateBuildV1Gone)
 
 	// Create a team API Key auth validator
 	AuthenticationFunc := auth.CreateAuthenticationFunc(
@@ -198,7 +207,7 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 				},
 				MultiErrorHandler: utils.MultiErrorHandler,
 				Options: openapi3filter.Options{
-					AuthenticationFunc: AuthenticationFunc,
+					AuthenticationFunc: customMiddleware.WithAPIGroup(AuthenticationFunc),
 					// Handle multiple errors as MultiError type
 					MultiError: true,
 				},
@@ -207,10 +216,12 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 	r.Use(customMiddleware.InitLaunchDarklyContext)
 
-	// Per-team rate limiting (after auth + LD context, before handlers).
-	// Only applied to connect and resume endpoints. Gated by feature flag.
 	limiter := ratelimit.NewLimiter(redisClient)
-	r.Use(ratelimit.Middleware(limiter, ratelimit.Config{FailOpen: true}, ff)) //nolint:contextcheck // Gin middleware sets context via c.Request.WithContext
+	rateLimitMiddleware, err := ratelimit.Middleware(limiter, ratelimit.Config{FailOpen: true}, ff, tel.MeterProvider, l) //nolint:contextcheck // Gin middleware gets context from the request.
+	if err != nil {
+		l.Fatal(ctx, "failed to create rate limit middleware", zap.Error(err))
+	}
+	r.Use(rateLimitMiddleware)
 
 	// Deny blocked teams on every mutating route unless allowlisted in
 	// EnforceBlockedTeam. Must run after auth (which populates team info on
@@ -403,14 +414,11 @@ func run() int {
 		return redisClient.Close()
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
 	cleanupFns = append(cleanupFns, featureFlags.Close)
-
-	featureFlags.SetServiceName(serviceName)
-	featureFlags.SetDeploymentName(config.DomainName)
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),
 	// falling back to the fixed collector address. Created here so it can use the
@@ -563,7 +571,7 @@ func run() int {
 		// to signal that the service is shutting down.
 		// This is a bit of a hack, but this way we can properly propagate
 		// the health status to the load balancer.
-		apiStore.Healthy.Store(false)
+		apiStore.BeginDrain()
 
 		// Skip the delay in local environment for instant shutdown
 		if !env.IsLocal() {
@@ -596,6 +604,13 @@ func run() int {
 			}
 		})
 		drainWG.Wait()
+
+		// A pause outlives the request that started it and writes its snapshot
+		// past the HTTP drain budget, so wait for it here: cleanup below closes
+		// the database and Redis clients it is still using.
+		if err := apiStore.Drain(ctx); err != nil {
+			l.Error(ctx, "sandbox work did not finish before shutdown", zap.Error(err))
+		}
 
 		// Drain pprof after, so that it is still available during the shutdown process for debugging if needed.
 		pprofShutdownCtx, pprofCancel := context.WithTimeout(ctx, pprofShutdownTimeout)

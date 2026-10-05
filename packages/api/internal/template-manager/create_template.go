@@ -134,8 +134,7 @@ func (tm *TemplateManager) CreateTemplate(
 	if err != nil {
 		// If the error is related to fromTemplate, set the build status to failed with the appropriate message
 		// This is to unify the error handling with fromImage errors
-		var fromTemplateErr *FromTemplateError
-		if !errors.As(err, &fromTemplateErr) {
+		if _, ok := errors.AsType[*FromTemplateError](err); !ok {
 			return fmt.Errorf("failed to set template source: %w", err)
 		}
 
@@ -289,8 +288,7 @@ func convertImageRegistry(registry *api.FromImageRegistry) (*templatemanagergrpc
 
 // setTemplateSource sets the source (either fromImage or fromTemplate)
 func setTemplateSource(ctx context.Context, tm *TemplateManager, teamID uuid.UUID, teamSlug string, template *templatemanagergrpc.TemplateConfig, fromImage *string, fromTemplate *string) error {
-	// hasImage can be empty for v1 template builds
-	hasImage := fromImage != nil
+	hasImage := fromImage != nil && *fromImage != ""
 	hasTemplate := fromTemplate != nil && *fromTemplate != ""
 
 	// Validate input: exactly one source must be provided

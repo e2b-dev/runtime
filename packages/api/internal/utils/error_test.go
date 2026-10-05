@@ -13,6 +13,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -176,4 +177,86 @@ func TestErrorHandlerOnSecretsRouteIsFixedAndBodyBlind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The webhook create and update bodies carry the caller's signing secret,
+// which is enough to forge a delivery for that team. A request these routes
+// reject before the handler must not put that body in the response, the access
+// log or the span — while keeping the validation message the spec documents.
+func TestErrorHandlerOnWebhookRoutesIsBodyBlind(t *testing.T) {
+	t.Parallel()
+
+	const secret = "whsec-DO-NOT-LOG-0000"
+
+	for _, test := range []struct {
+		name   string
+		method string
+		target string
+	}{
+		{name: "create", method: http.MethodPost, target: "/events/webhooks"},
+		{name: "update", method: http.MethodPatch, target: "/events/webhooks/" + uuid.NewString()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequestWithContext(t.Context(), test.method, test.target,
+				strings.NewReader(`{"name":"alerts","url":"nope","signatureSecret":"`+secret+`"}`))
+
+			ErrorHandler(c, `request body has an error: doesn't match schema: Error at "/url"`, http.StatusBadRequest)
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code)
+			assert.NotContains(t, recorder.Body.String(), secret, "the response echoed the signing secret")
+
+			// The caller still learns what was refused.
+			assert.Contains(t, recorder.Body.String(), `Error at \"/url\"`)
+
+			for _, ginErr := range c.Errors {
+				assert.NotContains(t, ginErr.Error(), secret, "a gin error carried the signing secret")
+			}
+
+			// The body was never consumed, so a handler could still read it.
+			body, err := io.ReadAll(c.Request.Body)
+			require.NoError(t, err)
+			assert.NotEmpty(t, body)
+		})
+	}
+}
+
+// A read route under the same prefix carries no secret, but the rule keys off
+// the path family rather than the method, so it is covered too.
+func TestErrorHandlerOnWebhookReadRoutesIsBodyBlind(t *testing.T) {
+	t.Parallel()
+
+	const sentinel = "sentinel-DO-NOT-LOG"
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"/events/webhooks/x/deliveries", strings.NewReader(sentinel))
+
+	ErrorHandler(c, "request has an error: limit", http.StatusBadRequest)
+
+	for _, ginErr := range c.Errors {
+		assert.NotContains(t, ginErr.Error(), sentinel)
+	}
+}
+
+// Every other route keeps reporting the body, which is what makes a rejected
+// request diagnosable.
+func TestErrorHandlerStillRecordsTheBodyElsewhere(t *testing.T) {
+	t.Parallel()
+
+	const marker = "template-marker"
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes",
+		strings.NewReader(`{"templateID":"`+marker+`"}`))
+
+	ErrorHandler(c, "request body has an error", http.StatusBadRequest)
+
+	require.NotEmpty(t, c.Errors)
+	assert.Contains(t, c.Errors[0].Error(), marker)
 }

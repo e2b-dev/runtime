@@ -681,12 +681,38 @@ func TestS3UncompressedStoreFile(t *testing.T) {
 	require.Equal(t, sha256.Sum256(data), sha256.Sum256(got.Bytes()))
 }
 
-func TestAWSDeleteObjectsWithPrefixRejectsEmptyPrefix(t *testing.T) {
+// An Azure-shaped header map leaking into the S3/GCS response would break any upload that echoed it into the presigned signature.
+func TestS3UploadSignedURLNeedsNoRequestHeaders(t *testing.T) {
 	t.Parallel()
 
-	s := &awsStorage{bucketName: "test-bucket"}
+	backend := testBackend(t)
+	client := backend.newClient(t, nil)
+	provider := &awsStorage{
+		client:        client,
+		presignClient: s3.NewPresignClient(client),
+		bucketName:    backend.bucket,
+	}
 
-	err := s.DeleteObjectsWithPrefix(t.Context(), "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "empty prefix")
+	key := testKey("presigned-upload.bin")
+	obj := backend.object(t, client, key)
+
+	upload, err := provider.UploadSignedURL(t.Context(), key, time.Hour)
+	require.NoError(t, err)
+	require.NotEmpty(t, upload.URL)
+	assert.Nil(t, upload.Headers)
+
+	body := []byte("presigned-upload-body")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, upload.URL, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.ContentLength = int64(len(body))
+
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	var read bytes.Buffer
+	_, err = obj.WriteTo(t.Context(), &read)
+	require.NoError(t, err)
+	assert.Equal(t, body, read.Bytes())
 }

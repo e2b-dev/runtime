@@ -23,18 +23,18 @@ func NewCacheSourceTemplateProvider(
 	}
 }
 
-func (cstp *CacheSourceTemplateProvider) Get(ctx context.Context, templateCache *sbxtemplate.Cache) (sbxtemplate.Template, error) {
-	template, err := templateCache.GetTemplate(
+func (cstp *CacheSourceTemplateProvider) Get(ctx context.Context, templateCache *sbxtemplate.Cache) (sbxtemplate.Template, func(), error) {
+	template, release, err := templateCache.GetTemplatePinned(
 		ctx,
 		cstp.buildID,
 		false,
 		true,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("get template snapshot: %w", err)
+		return nil, release, fmt.Errorf("get template snapshot: %w", err)
 	}
 
-	return template, nil
+	return template, release, nil
 }
 
 var _ SourceTemplateProvider = (*DirectSourceTemplateProvider)(nil)
@@ -47,6 +47,6 @@ func NewDirectSourceTemplateProvider(template sbxtemplate.Template) *DirectSourc
 	return &DirectSourceTemplateProvider{SourceTemplate: template}
 }
 
-func (dstp *DirectSourceTemplateProvider) Get(_ context.Context, _ *sbxtemplate.Cache) (sbxtemplate.Template, error) {
-	return dstp.SourceTemplate, nil
+func (dstp *DirectSourceTemplateProvider) Get(_ context.Context, _ *sbxtemplate.Cache) (sbxtemplate.Template, func(), error) {
+	return dstp.SourceTemplate, func() {}, nil
 }

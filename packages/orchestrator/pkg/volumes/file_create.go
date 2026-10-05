@@ -112,7 +112,7 @@ func (s *Service) CreateFile(server orchestrator.VolumeService_CreateFileServer)
 				return fmt.Errorf("failed to stat created file: %w", err)
 			}
 
-			entry := toEntry(path, fi)
+			entry := toEntry(fs, path, fi)
 
 			return server.SendAndClose(&orchestrator.CreateFileResponse{
 				Entry: entry,

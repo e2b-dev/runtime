@@ -29,7 +29,9 @@ type Sender interface {
 // Cache is the subset of template.Cache the peerserver needs.
 type Cache interface {
 	LookupDiff(buildID string, diffType build.DiffType) (build.Diff, bool)
-	GetCachedTemplate(buildID string) (tmpl.Template, bool)
+	// LookupPinned returns a cached template with a pin the caller must
+	// release once it stops reading the template.
+	LookupPinned(ctx context.Context, buildID string) (tmpl.Template, func(), bool)
 }
 
 // BlobSource serves whole-file reads and existence checks (snapfile, metadata, headers).

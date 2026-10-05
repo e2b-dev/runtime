@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="robots" content="noindex">
+    <title>{{template "title" .}} · E2B</title>
+    <style>
+        :root {
+            --bg: #fafafa;
+            --bg-1: #f5f5f5;
+            --bg-inverted: #0a0a0a;
+            --bg-inverted-hover: #292929;
+            --fill: #ebebeb;
+            --stroke: #d6d6d6;
+            --stroke-active: #c2c2c2;
+            --fg: #0a0a0a;
+            --fg-secondary: #333333;
+            --fg-tertiary: #707070;
+            --fg-inverted: #ffffff;
+            --accent-main: #e56f00;
+            --accent-error: #ff4400;
+            --accent-error-bg: rgba(255, 68, 0, 0.16);
+            --accent-warning: #d1a102;
+            --accent-warning-bg: rgba(209, 161, 2, 0.14);
+            --accent-info: #3c98c7;
+            --accent-info-bg: rgba(61, 153, 199, 0.2);
+            --hatch: rgba(214, 214, 214, 0.5);
+            --shadow: 0 4px 6px hsl(0 0% 90% / 0.3), 0 2px 4px hsl(0 0% 90% / 0.3);
+            --font-sans: "IBM Plex Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0a0a0a;
+                --bg-1: #141414;
+                --bg-inverted: #ffffff;
+                --bg-inverted-hover: #ebebeb;
+                --fill: #292929;
+                --stroke: #292929;
+                --stroke-active: #424242;
+                --fg: #ffffff;
+                --fg-secondary: #e0e0e0;
+                --fg-tertiary: #848484;
+                --fg-inverted: #0a0a0a;
+                --accent-main: #ff8800;
+                --accent-error: #f54545;
+                --accent-error-bg: rgba(245, 69, 69, 0.16);
+                --accent-warning: #ffff00;
+                --accent-warning-bg: rgba(255, 255, 0, 0.16);
+                --accent-info: #59a8e1;
+                --accent-info-bg: rgba(89, 168, 225, 0.22);
+                --hatch: rgba(41, 41, 41, 0.9);
+                --shadow: 0 4px 6px hsl(0 0% 3% / 0.2), 0 2px 4px hsl(0 0% 3% / 0.2);
+            }
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            min-height: 100svh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1rem;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: var(--font-sans);
+            font-size: 0.875rem;
+            line-height: 1.25rem;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        main {
+            width: 100%;
+            max-width: 28rem;
+        }
+
+        .frame {
+            position: relative;
+            padding-bottom: 6px;
+        }
+
+        .frame::before {
+            content: "";
+            position: absolute;
+            inset: 4px 3px 0;
+            border: 1px solid var(--stroke);
+            background: repeating-linear-gradient(135deg, var(--hatch) 0 1px, transparent 1px 3.5px);
+        }
+
+        .card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            padding: 1.5rem;
+            background: var(--bg);
+            border: 1px solid var(--stroke);
+            box-shadow: var(--shadow);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .logo {
+            display: block;
+            height: 18px;
+            width: auto;
+            color: var(--fg);
+        }
+
+        .logo-dark {
+            display: none;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .logo-light {
+                display: none;
+            }
+
+            .logo-dark {
+                display: inline;
+            }
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            height: 1.125rem;
+            padding: 0 5px;
+            font-size: 0.75rem;
+            line-height: 1.0625rem;
+            text-transform: uppercase;
+            white-space: nowrap;
+            background: var(--fill);
+            color: var(--fg-secondary);
+        }
+
+        .badge-error {
+            background: var(--accent-error-bg);
+            color: var(--accent-error);
+        }
+
+        .badge-warning {
+            background: var(--accent-warning-bg);
+            color: var(--accent-warning);
+        }
+
+        .badge-info {
+            background: var(--accent-info-bg);
+            color: var(--accent-info);
+        }
+
+        .card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        h1 {
+            font-size: 1rem;
+            line-height: 1.25rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .message {
+            color: var(--fg-secondary);
+            overflow-wrap: anywhere;
+        }
+
+        .message::first-letter {
+            text-transform: uppercase;
+        }
+
+        .hint {
+            margin-top: 0.75rem;
+            color: var(--fg-tertiary);
+        }
+
+        code {
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--fg);
+            overflow-wrap: anywhere;
+        }
+
+        .output {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: var(--bg-1);
+            border: 1px solid var(--stroke);
+            font-family: var(--font-mono);
+            font-size: 0.8125rem;
+            color: var(--fg-secondary);
+            overflow-wrap: anywhere;
+        }
+
+        .output .muted {
+            color: var(--fg-tertiary);
+        }
+
+        .output .error {
+            color: var(--accent-error);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+        }
+
+        .button {
+            flex: 1 1 10rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            height: 2.25rem;
+            padding: 0 1rem;
+            border: 1px solid var(--stroke);
+            color: var(--fg);
+            font-weight: 500;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: border-color 150ms, background-color 150ms;
+        }
+
+        .button:has(svg) {
+            padding: 0 0.75rem 0 0.625rem;
+        }
+
+        .button:has(.icon-trailing) {
+            padding: 0 0.625rem 0 0.75rem;
+        }
+
+        .button:hover {
+            border-color: var(--stroke-active);
+        }
+
+        .button:active {
+            background: var(--bg-1);
+        }
+
+        .button-primary {
+            border-color: var(--bg-inverted);
+            background: var(--bg-inverted);
+            color: var(--fg-inverted);
+        }
+
+        .button-primary:hover {
+            border-color: var(--bg-inverted-hover);
+            background: var(--bg-inverted-hover);
+        }
+
+        .button-primary:active {
+            background: var(--bg-inverted-hover);
+        }
+
+        .button svg {
+            width: 1rem;
+            height: 1rem;
+            flex-shrink: 0;
+            color: var(--fg-tertiary);
+        }
+
+        .button-primary svg {
+            color: var(--fg-inverted);
+        }
+
+        a:focus-visible {
+            outline: 1px solid var(--accent-main);
+            outline-offset: 2px;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                align-items: flex-start;
+            }
+
+            .card {
+                padding: 1.25rem;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .button {
+                transition: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="frame">
+            <section class="card" aria-labelledby="title">
+                <div class="card-header">
+                    <svg class="logo" viewBox="7.75 7.7 51.5 14.6" fill="none" role="img" aria-label="E2B" xmlns="http://www.w3.org/2000/svg">
+                        <g class="logo-light" fill="currentColor">
+                            <path d="M24.0469 7.74292V11.6941H12.2637C11.976 11.6942 11.7422 11.9279 11.7422 12.2156V12.4939C11.7422 12.7816 11.976 13.0152 12.2637 13.0154H24.0469V16.9666H12.2637C11.976 16.9667 11.7422 17.2004 11.7422 17.488V17.7664C11.7423 18.0539 11.9761 18.2867 12.2637 18.2869H24.0469V22.239H10.3906C8.955 22.2387 7.79103 21.0742 7.79102 19.6384V10.3425C7.79124 8.90699 8.95512 7.74327 10.3906 7.74292H24.0469Z"/>
+                            <path d="M38.998 7.74292C40.4339 7.74304 41.5977 8.90764 41.5977 10.3435V14.49C41.5976 15.8595 40.4876 16.9693 39.1182 16.9695H37.167C37.1532 16.9684 37.1389 16.9666 37.125 16.9666H29.79C29.5024 16.9667 29.2686 17.2004 29.2686 17.488V17.7664C29.2687 18.0539 29.5025 18.2867 29.79 18.2869H41.5908V22.239H25.3174V15.4919C25.3174 14.1226 26.4276 13.0119 27.7969 13.0115H29.7373C29.7547 13.0132 29.7725 13.0154 29.79 13.0154H37.125C37.4127 13.0153 37.6465 12.7817 37.6465 12.4939V12.2156C37.6464 11.9279 37.4126 11.6951 37.125 11.6951H25.3418V7.74292H38.998Z"/>
+                            <path d="M56.541 7.74292C57.9768 7.74295 59.1414 8.90679 59.1416 10.3425V19.6384C59.1416 21.0743 57.9769 22.239 56.541 22.239H42.8828V7.74292H56.541ZM47.3555 16.9666C47.0678 16.9667 46.834 17.2004 46.834 17.488V17.7664C46.8341 18.0539 47.0679 18.2867 47.3555 18.2869H54.6689C54.9565 18.2867 55.1894 18.054 55.1895 17.7664V17.488C55.1895 17.2003 54.9565 16.9667 54.6689 16.9666H47.3555ZM47.3555 11.6941C47.0678 11.6942 46.834 11.9279 46.834 12.2156V12.4939C46.834 12.7816 47.0678 13.0152 47.3555 13.0154H54.6689C54.9565 13.0153 55.1895 12.7816 55.1895 12.4939V12.2156C55.1895 11.9279 54.9565 11.6942 54.6689 11.6941H47.3555Z"/>
+                        </g>
+                        <g class="logo-dark" fill="currentColor">
+                            <path d="M23.9219 7.86768V11.5688H12.2637C11.907 11.569 11.6172 11.8586 11.6172 12.2153V12.4937C11.6172 12.8503 11.907 13.14 12.2637 13.1401H23.9219V16.8413H12.2637C11.907 16.8414 11.6172 17.1311 11.6172 17.4878V17.7661C11.6173 18.1227 11.9071 18.4115 12.2637 18.4116H23.9219V22.1138H10.3906C9.02403 22.1134 7.91603 21.0049 7.91602 19.6382V10.3423C7.91624 8.97577 9.02415 7.86802 10.3906 7.86768H23.9219Z"/>
+                            <path d="M38.998 7.86768C40.3649 7.8678 41.4727 8.97643 41.4727 10.3433V14.4897C41.4726 15.7902 40.4186 16.8441 39.1182 16.8442H37.167C37.1532 16.8433 37.1388 16.8413 37.125 16.8413H29.79C29.4334 16.8415 29.1436 17.1311 29.1436 17.4878V17.7661C29.1437 18.1227 29.4335 18.4115 29.79 18.4116H41.4658V22.1138H25.4424V15.4917C25.4424 14.1913 26.4966 13.1366 27.7969 13.1362H29.7412C29.7574 13.1374 29.7738 13.1401 29.79 13.1401H37.125C37.4817 13.1401 37.7715 12.8505 37.7715 12.4937V12.2153C37.7714 11.8586 37.4816 11.5699 37.125 11.5698H25.4668V7.86768H38.998Z"/>
+                            <path d="M56.541 7.86768C57.9078 7.8677 59.0164 8.97558 59.0166 10.3423V19.6382C59.0166 21.0051 57.9079 22.1137 56.541 22.1138H43.0078V7.86768H56.541ZM47.3555 16.8413C46.9988 16.8414 46.709 17.1311 46.709 17.4878V17.7661C46.7091 18.1227 46.9989 18.4115 47.3555 18.4116H54.6689C55.0255 18.4115 55.3144 18.1228 55.3145 17.7661V17.4878C55.3145 17.131 55.0256 16.8414 54.6689 16.8413H47.3555ZM47.3555 11.5688C46.9988 11.569 46.709 11.8586 46.709 12.2153V12.4937C46.709 12.8503 46.9988 13.14 47.3555 13.1401H54.6689C55.0256 13.14 55.3145 12.8504 55.3145 12.4937V12.2153C55.3145 11.8586 55.0256 11.569 54.6689 11.5688H47.3555Z"/>
+                        </g>
+                    </svg>
+                    <span class="badge badge-{{template "tone" .}}">{{.Code}} {{statusText .Code}}</span>
+                </div>
+                <div class="card-body">
+                    <h1 id="title">{{template "title" .}}</h1>
+                    {{template "body" .}}
+                </div>
+                {{- block "actions" .}}{{end}}
+            </section>
+        </div>
+    </main>
+</body>
+</html>
+{{- define "external-link-icon"}}<svg class="icon-trailing" viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path d="M12.1673 10V4H6.16732M4.33398 11.8333L11.5007 4.66667" stroke="currentColor" stroke-linecap="square" stroke-width="1.33333"/></svg>{{end}}
+{{- define "refresh-icon"}}<svg viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path d="M11.1667 14L13.1667 12L11.1667 10M4.5 2L2.5 4L4.5 6M3.16667 4H13.1667V7.33333M2.5 8.66667V12H12.5" stroke="currentColor" stroke-linecap="square" stroke-width="1.33333"/></svg>{{end}}

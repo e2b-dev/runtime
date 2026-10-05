@@ -22,6 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -44,16 +45,28 @@ func clampHarvestTimeoutMs(ms int) int {
 // harvestOutcome classifies a harvest attempt for the attempts/duration metrics.
 type harvestOutcome string
 
+// The vocabulary, in the order a harvest can fail:
+//
+//	skipped          the snapshot's deferred seal failed or did not settle inside
+//	                 the harvest deadline; no start slot was ever taken
+//	slot_timeout     the seal settled but no start slot freed up inside the
+//	                 deadline; the node's starts were the bottleneck
+//	resume_failed    slot held, the throwaway could not be brought up
+//	collect_failed   throwaway up, the trace could not be read
+//	success          trace harvested (the persist, if any, is best-effort)
+//	persist_deadline trace harvested but never reached the artifact
+//
+// skipped and slot_timeout are kept apart because their fixes differ: one is
+// an export that did not land, the other is start-slot pressure.
 const (
-	harvestSuccess       harvestOutcome = "success"        // trace harvested (persist, if any, is best-effort)
-	harvestResumeFailed  harvestOutcome = "resume_failed"  // couldn't bring the throwaway up
-	harvestCollectFailed harvestOutcome = "collect_failed" // throwaway up but the trace couldn't be read
-	harvestSkipped       harvestOutcome = "skipped"        // couldn't acquire a start slot
-	// harvestPersistDeadline: a mapping WAS harvested but never reached the
-	// artifact, because the snapshot upload it has to be written after did not
-	// finish inside the persist budget. Kept apart from success deliberately —
-	// the customer's next resume then demand-faults everything, and counting that
-	// as a success is what made the loss invisible.
+	harvestSuccess       harvestOutcome = "success"
+	harvestResumeFailed  harvestOutcome = "resume_failed"
+	harvestCollectFailed harvestOutcome = "collect_failed"
+	harvestSkipped       harvestOutcome = "skipped"
+	harvestSlotTimeout   harvestOutcome = "slot_timeout"
+	// Kept apart from success deliberately: the customer's next resume then
+	// demand-faults everything, and counting that as a success is what made the
+	// loss invisible.
 	harvestPersistDeadline harvestOutcome = "persist_deadline"
 )
 
@@ -64,6 +77,15 @@ var (
 	harvestPagesHistogram     = utils.Must(telemetry.GetHistogram(harvestMeter, telemetry.PauseResumePrefetchHarvestPagesName))
 	sealWaitDurationHistogram = utils.Must(telemetry.GetHistogram(harvestMeter, telemetry.PauseResumePrefetchSealWaitDurationName))
 	persistWaitHistogram      = utils.Must(telemetry.GetHistogram(harvestMeter, telemetry.PauseResumePrefetchPersistWaitDurationName))
+)
+
+// harvestSource names the operation that produced the snapshot a harvest
+// resumes from; it is the "path" attribute on the harvest metrics.
+type harvestSource string
+
+const (
+	harvestSourcePause      harvestSource = "pause"
+	harvestSourceCheckpoint harvestSource = "checkpoint"
 )
 
 // harvestRun is what one harvest attempt produced. A struct rather than a tuple
@@ -95,7 +117,7 @@ type harvestRun struct {
 type harvestResumer interface {
 	// ResumeForHarvest resumes a throwaway, network-isolated, unregistered copy
 	// of the snapshot; the caller reaps the returned instance.
-	ResumeForHarvest(ctx context.Context, t sbxtemplate.Template, config *sandbox.Config, runtime sandbox.RuntimeMetadata, startedAt, endAt time.Time) (harvestInstance, error)
+	ResumeForHarvest(ctx context.Context, t sbxtemplate.Template, config *sandbox.Config, runtime sandboxtypes.RuntimeMetadata, startedAt, endAt time.Time) (harvestInstance, error)
 }
 
 // harvestInstance is the subset of a resumed sandbox the harvest uses.
@@ -107,8 +129,8 @@ type harvestInstance interface {
 
 // harvestTemplates is the subset of the template cache the harvest uses.
 type harvestTemplates interface {
-	GetTemplate(ctx context.Context, buildID string, isSnapshot, isBuilding bool, opts ...sbxtemplate.GetTemplateOpts) (sbxtemplate.Template, error)
-	UpdateMetadata(buildID string, meta metadata.Template) error
+	GetTemplatePinned(ctx context.Context, buildID string, isSnapshot, isBuilding bool, opts ...sbxtemplate.GetTemplateOpts) (sbxtemplate.Template, func(), error)
+	UpdateMetadata(ctx context.Context, buildID string, meta metadata.Template) error
 }
 
 // harvestUpload is the subset of the in-flight snapshot upload the harvest waits on.
@@ -123,7 +145,7 @@ type factoryResumer struct {
 	factory *sandbox.Factory
 }
 
-func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Template, config *sandbox.Config, runtime sandbox.RuntimeMetadata, startedAt, endAt time.Time) (harvestInstance, error) {
+func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Template, config *sandbox.Config, runtime sandboxtypes.RuntimeMetadata, startedAt, endAt time.Time) (harvestInstance, error) {
 	sbx, err := r.factory.ResumeSandbox(
 		ctx,
 		t,
@@ -173,27 +195,31 @@ func (s *Server) newPrefetchHarvester() *prefetchHarvester {
 	}
 }
 
-// harvestResumePrefetchAsync records a resume page-fault trace for a freshly
-// paused sandbox and (optionally) persists it as a prefetch mapping, so the
-// customer's next resume of this snapshot can replay it.
+// harvestResumePrefetchAsync records a resume page-fault trace for a snapshot
+// that was written without a real resume — a pause, or an in-place checkpoint
+// — and (optionally) persists it as a prefetch mapping, so the next resume or
+// launch from that snapshot can replay it.
 //
-// It is the pause-side analogue of the resume+harvest that Checkpoint already
-// does, with these differences: the resumed instance is a throwaway (network
+// It is the analogue of the resume+harvest the resume-fresh checkpoint does,
+// with these differences: the resumed instance is a throwaway (network
 // isolated, kept out of the live registry, never promoted to a live sandbox),
-// and the harvested mapping is carried through the same-version pause metadata
-// (which otherwise drops Prefetch).
+// and the harvested mapping is carried through metadata that otherwise drops
+// Prefetch (the same-version pause metadata, or the in-place checkpoint's,
+// which deliberately records no live-tracker trace).
 //
-// It is best-effort and runs AFTER the Pause RPC has returned, alongside the
-// in-flight snapshot upload: it never affects the pause result, the local
-// snapshot is already in the cache, and the consume path waits for the upload
-// before touching metadata. Both gates default off, so this is a no-op until
-// explicitly enabled.
+// It is best-effort and runs AFTER the RPC has returned, alongside the
+// in-flight snapshot upload: it never affects the pause or checkpoint result,
+// the local snapshot is already in the cache, and the consume path waits for
+// the upload before touching metadata. Both gates default off, so this is a
+// no-op until explicitly enabled. source labels the harvest metrics so the two
+// producers can be read apart.
 func (s *Server) harvestResumePrefetchAsync(
 	ctx context.Context,
 	sbx *sandbox.Sandbox,
 	res *snapshotResult,
 	buildID string,
 	objectMetadata storage.ObjectMetadata,
+	source harvestSource,
 ) {
 	// Flag checks run synchronously (ctx still carries the per-sandbox LD
 	// context the Pause handler attached) before we detach into a goroutine.
@@ -211,7 +237,10 @@ func (s *Server) harvestResumePrefetchAsync(
 	consume := s.featureFlags.BoolFlag(ctx, featureflags.PauseResumePrefetchConsumeFlag)
 	harvester := s.newPrefetchHarvester()
 
+	releaseWork := s.info.TrackWork()
 	go func() {
+		defer releaseWork()
+
 		// Detach from the request (Pause has returned) but keep the LD context
 		// values; bound the whole harvest so a stuck resume can't pin the slot.
 		hCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(timeoutMs)*time.Millisecond)
@@ -222,32 +251,44 @@ func (s *Server) harvestResumePrefetchAsync(
 		span.SetAttributes(
 			attribute.String("build_id", buildID),
 			attribute.Bool("consume", consume),
+			attribute.String("path", string(source)),
 		)
 
-		// With deferred rootfs export the just-paused snapshot's rootfs diff is
-		// sealed (reflinked) in the background, and the throwaway warm resume below
-		// reads the rootfs. Wait for the seal to finish here instead of letting the
-		// resume block on — and burn its budget against — the reflink. Returns
-		// immediately for the synchronous and NoDiff paths. If the seal fails, or
-		// the harvest deadline fires before it completes, skip the harvest (it is
-		// best-effort and must never touch a half-sealed snapshot). Record the wait
-		// as its own metric and start the harvest timer after it, so the reflink
-		// wait doesn't inflate the harvest-duration (slot-hold) histogram.
+		// Both deferred exports seal in the background after the RPC returned, and
+		// the throwaway warm resume below reads both artifacts: the rootfs diff
+		// (reflinked off the critical path when deferred rootfs export is on) and,
+		// for an in-place checkpoint through the CoW window, the memfile diff
+		// (swept and flushed while the source keeps running). Wait for the seals
+		// here instead of letting the resume block on — and burn its budget
+		// against — them. Both return immediately for the synchronous paths. If a
+		// seal fails, or the harvest deadline fires before it completes, skip the
+		// harvest (it is best-effort and must never touch a half-sealed snapshot).
+		// Record the wait as its own metric and start the harvest timer after it,
+		// so the seal wait doesn't inflate the harvest-duration (slot-hold)
+		// histogram.
 		sealWaitStart := time.Now()
-		_, sealWaitErr := res.rootfsDiff.CachePath(hCtx)
-		sealWaitDurationHistogram.Record(hCtx, time.Since(sealWaitStart).Milliseconds())
+		sealWaitErr := waitSnapshotSealed(hCtx, res)
+		sealWait := time.Since(sealWaitStart)
 
 		var (
 			result harvestRun
 			err    error
 		)
 		if sealWaitErr != nil {
-			result.outcome, err = harvestSkipped, fmt.Errorf("waiting for rootfs seal: %w", sealWaitErr)
+			result.outcome, err = harvestSkipped, sealWaitErr
 		} else {
 			result, err = harvester.run(hCtx, sbx, res.meta, res.upload, buildID, objectMetadata, consume)
 		}
 
-		resultAttr := metric.WithAttributes(attribute.String("result", string(result.outcome)))
+		// Every histogram below carries result and path: the two producers have
+		// different seal waits (rootfs only for a pause, memfile sweep then rootfs
+		// for an in-place checkpoint) and different slot holds, and a reader has
+		// to be able to tell a skipped seal from a lost slot per path.
+		resultAttr := metric.WithAttributes(
+			attribute.String("result", string(result.outcome)),
+			attribute.String("path", string(source)),
+		)
+		sealWaitDurationHistogram.Record(hCtx, sealWait.Milliseconds(), resultAttr)
 		harvestAttemptsCounter.Add(hCtx, 1, resultAttr)
 		// Slot hold and persist wait are recorded apart because only the first is
 		// a node-capacity cost. Summing them into one "harvest duration" is what
@@ -259,7 +300,7 @@ func (s *Server) harvestResumePrefetchAsync(
 		if result.outcome == harvestSuccess {
 			// pages is meaningful only when a trace was harvested; its bottom
 			// bucket then surfaces the empty-trace (idle-at-pause) rate.
-			harvestPagesHistogram.Record(hCtx, int64(result.pages))
+			harvestPagesHistogram.Record(hCtx, int64(result.pages), metric.WithAttributes(attribute.String("path", string(source))))
 		}
 
 		span.SetAttributes(
@@ -272,13 +313,31 @@ func (s *Server) harvestResumePrefetchAsync(
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			logger.L().Warn(hCtx, "pause-resume prefetch harvest failed",
+			logger.L().Warn(hCtx, "resume prefetch harvest failed",
 				logger.WithSandboxID(sbx.Runtime.SandboxID),
 				logger.WithBuildID(buildID),
+				zap.String("path", string(source)),
 				zap.Error(err),
 			)
 		}
 	}()
+}
+
+// waitSnapshotSealed blocks until every deferred artifact of the snapshot a
+// harvest resumes from has settled: the memfile seal of an in-place CoW-window
+// export first (a memfile that is still being swept would feed the throwaway
+// pre-window bytes), then the rootfs seal. Nil when nothing was deferred.
+func waitSnapshotSealed(ctx context.Context, res *snapshotResult) error {
+	if res.memoryExportDeferred && res.waitMemorySealed != nil {
+		if err := res.waitMemorySealed(ctx); err != nil {
+			return fmt.Errorf("waiting for memory seal: %w", err)
+		}
+	}
+	if _, err := res.rootfsDiff.CachePath(ctx); err != nil {
+		return fmt.Errorf("waiting for rootfs seal: %w", err)
+	}
+
+	return nil
 }
 
 // run performs the throwaway warm resume, collects the fault trace, and (when
@@ -348,7 +407,7 @@ func (h *prefetchHarvester) run(
 	// remote upload succeeded.
 	meta = meta.WithPrefetch(&metadata.Prefetch{Memory: mapping})
 	var localUpdateErr error
-	if err := h.templates.UpdateMetadata(buildID, meta); err != nil {
+	if err := h.templates.UpdateMetadata(persistCtx, buildID, meta); err != nil {
 		localUpdateErr = fmt.Errorf("update local metadata: %w", err)
 		if !errors.Is(err, metadata.ErrReplaceCommitted) {
 			return result, localUpdateErr
@@ -379,10 +438,11 @@ func (h *prefetchHarvester) resumeMapping(
 	buildID string,
 ) (*metadata.MemoryPrefetchMapping, harvestOutcome, error) {
 	// Bound concurrent harvests the same way real starts are bounded, so a burst
-	// of pauses can't overcommit the node. If we can't acquire within the
-	// harvest deadline the run is simply skipped (best-effort).
+	// of pauses or checkpoints can't overcommit the node. If no slot frees up
+	// within the harvest deadline the run is dropped (best-effort) and booked as
+	// slot_timeout, so start-slot pressure reads apart from a seal that failed.
 	if err := h.acquire(ctx); err != nil {
-		return nil, harvestSkipped, fmt.Errorf("acquire start slot: %w", err)
+		return nil, harvestSlotTimeout, fmt.Errorf("acquire start slot: %w", err)
 	}
 	defer h.release()
 
@@ -390,18 +450,24 @@ func (h *prefetchHarvester) resumeMapping(
 	// pays no cold GCS/NFS fetch, only a local re-fault. isSnapshot=true mirrors
 	// Checkpoint's resume. The pause artifact carries no Prefetch (SameVersion
 	// dropped it), so no prefetcher runs and the trace is clean demand faults.
-	tmpl, err := h.templates.GetTemplate(ctx, buildID, true, false,
+	// Pinned: the throwaway below is a real Firecracker VM running off this
+	// template's snapfile, so for its lifetime the template must not be
+	// evictable — eviction Closes it, and Close removes the snapfile. Released
+	// last, after the reap deferred below has torn the throwaway down.
+	tmpl, releaseTemplate, err := h.templates.GetTemplatePinned(ctx, buildID, true, false,
 		sbxtemplate.GetTemplateOpts{MaxSandboxLengthHours: sbx.Config.MaxSandboxLengthHours})
 	if err != nil {
 		return nil, harvestResumeFailed, fmt.Errorf("get template: %w", err)
 	}
+
+	defer releaseTemplate()
 
 	// Throwaway identity: distinct SandboxID/ExecutionID from the (being-stopped)
 	// original so it never collides in the sandbox map. ResumeSandbox registers
 	// it in the factory's sandbox table (for network assignment and health), but
 	// it is never added to the server lifecycle or proxy pool and is reaped here,
 	// so it is not externally addressable.
-	runtime := sandbox.RuntimeMetadata{
+	runtime := sandboxtypes.RuntimeMetadata{
 		TemplateID:  sbx.Runtime.TemplateID,
 		SandboxID:   "prefetch-harvest-" + sbx.Runtime.SandboxID,
 		ExecutionID: uuid.NewString(),
@@ -420,15 +486,18 @@ func (h *prefetchHarvester) resumeMapping(
 	// back from the memfile, not over NFS, and NFS data not already cached was
 	// never a memfile page — so dropping the mount loses no prefetchable coverage
 	// while letting volume-mounted sandboxes harvest cleanly. Clone the config so
-	// the live original's is untouched.
-	harvestConfig := *sbx.Config
+	// the live original's is untouched; the clone snapshots the network config
+	// under the source's lock, because after an in-place checkpoint the source
+	// keeps running and a concurrent Update may rewrite its egress while the
+	// throwaway's slot is being configured from it.
+	harvestConfig := sbx.Config.Clone()
 	harvestConfig.VolumeMounts = nil
 
 	// The resumer isolates the throwaway from the network and keeps it out of the
 	// live registry: the user workload stays frozen until envd /init completes and
 	// the instance is reaped right after, but envd /init itself (and any briefly
 	// unfrozen workload) must not reach the network.
-	resumedSbx, err := h.resumer.ResumeForHarvest(ctx, tmpl, &harvestConfig, runtime, sbx.GetStartedAt(), sbx.GetEndAt())
+	resumedSbx, err := h.resumer.ResumeForHarvest(ctx, tmpl, harvestConfig, runtime, sbx.GetStartedAt(), sbx.GetEndAt())
 	if err != nil {
 		return nil, harvestResumeFailed, fmt.Errorf("resume throwaway: %w", err)
 	}

@@ -66,7 +66,6 @@ func newOrchestratorWithCounter(t *testing.T) (*Orchestrator, *eventCounter) {
 		storage,
 		redisreservations.NewReservationStorage(client, storage.Notifier()),
 		sandbox.Callbacks{
-			AddSandboxToRoutingTable: func(context.Context, sandbox.Sandbox) {},
 			AsyncNewlyCreatedSandbox: ec.callback(),
 		},
 	)

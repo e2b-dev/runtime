@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -272,6 +273,53 @@ func TestAcquireRespectsContextCancel(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatalf("Acquire didn’t return after context cancellation")
 	}
+}
+
+type semaphoreCancelContext struct {
+	context.Context //nolint:containedctx // Injects cancellation between Acquire's context check and Wait.
+
+	cancel context.CancelFunc
+}
+
+func (c *semaphoreCancelContext) Err() error {
+	err := c.Context.Err()
+	if err == nil {
+		c.cancel()
+		runtime.Gosched()
+	}
+
+	return err
+}
+
+func TestAcquireCancellationBeforeWait(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		for range 100 {
+			s, err := NewAdjustableSemaphore(1)
+			require.NoError(t, err)
+			require.True(t, s.TryAcquire(1))
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancelOnCheck := &semaphoreCancelContext{Context: ctx, cancel: cancel}
+			result := make(chan error, 1)
+			go func() { result <- s.Acquire(cancelOnCheck, 1) }()
+			synctest.Wait()
+			cancel()
+
+			select {
+			case err := <-result:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				s.mu.Lock()
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				synctest.Wait()
+				<-result
+				t.Fatal("Acquire missed cancellation before entering Wait")
+			}
+		}
+	})
 }
 
 // -----------------------------------------------------------------------------

@@ -55,12 +55,12 @@ import (
 	templatebuild "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	buildconfig "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -235,7 +235,7 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		assert.NoError(b, devicePool.Close(ctx))
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())
@@ -291,9 +291,6 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		},
 	})
 
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(b.Context())
-	require.NoError(b, err)
-
 	templateSpec2, err := cfg.TemplateStorage()
 	require.NoError(b, err)
 	persistenceTemplate, err := storage.NewProvider(b.Context(), templateSpec2)
@@ -329,7 +326,7 @@ func BenchmarkConcurrentResume(b *testing.B) {
 
 	builder := templatebuild.NewBuilder(
 		config.BuilderConfig, l, featureFlags, sandboxFactory,
-		persistenceTemplate, persistenceBuild, artifactRegistry,
+		persistenceTemplate, persistenceBuild,
 		dockerhubRepository, sandboxProxy, sandboxes, templateCache, buildMetrics,
 		nil,
 	)
@@ -358,12 +355,13 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		require.NoError(b, err)
 	}
 
-	tmpl, err := templateCache.GetTemplate(b.Context(), buildID, false, false)
+	tmpl, releaseTmpl, err := templateCache.GetTemplatePinned(b.Context(), buildID, false, false)
 	require.NoError(b, err)
+	b.Cleanup(releaseTmpl)
 
 	// warm-up: create and destroy one sandbox to prime caches
 	b.Log("warming up: creating one sandbox to prime caches...")
-	warmupRuntime := sandbox.RuntimeMetadata{
+	warmupRuntime := sandboxtypes.RuntimeMetadata{
 		TemplateID:  templateID,
 		SandboxID:   "warmup-" + uuid.NewString()[:8],
 		ExecutionID: "warmup-exec",
@@ -433,7 +431,7 @@ func runConcurrentResume(
 
 	for i := range n {
 		wg.Go(func() {
-			runtime := sandbox.RuntimeMetadata{
+			runtime := sandboxtypes.RuntimeMetadata{
 				TemplateID:  templateID,
 				SandboxID:   fmt.Sprintf("bench-%d-%s", i, uuid.NewString()[:8]),
 				ExecutionID: fmt.Sprintf("bench-exec-%d", i),

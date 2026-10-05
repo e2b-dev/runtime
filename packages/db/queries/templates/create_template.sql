@@ -1,6 +1,6 @@
 -- name: CreateOrUpdateTemplate :one
 INSERT INTO "public"."envs"(id, team_id, created_by, updated_at, public, cluster_id, source)
-VALUES (@template_id, @team_id, @created_by, NOW(), FALSE, @cluster_id, 'template')
+VALUES (@template_id, @team_id, @created_by, NOW(), @public, @cluster_id, 'template')
 ON CONFLICT (id) DO UPDATE
 SET updated_at  = NOW(),
     build_count = envs.build_count + 1

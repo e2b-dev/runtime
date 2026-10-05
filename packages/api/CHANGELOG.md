@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.14.1 (2026-09-09)
+
+
+### Bug Fixes
+
+* **api:** rebuild template aliases on the current cluster (c74f369)
+
+## 0.14.0 (2026-09-09)
+
+
+### Features
+
+* **api:** expose outstanding node work (045df33)
+
+
+### Code Refactoring
+
+* **api:** remove ignored free disk request field (53b8e04)
+
+## 0.13.0 (2026-09-09)
+
+
+### Features
+
+* **api:** add minimum free disk request name (b03cd83)
+
 ## 0.12.0 (2026-09-07)
 
 

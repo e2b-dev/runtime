@@ -94,6 +94,22 @@ func TestParse(t *testing.T) {
 		assert.Equal(t, "https://dns-endpoint.example", result.K8sAPIEndpoint)
 	})
 
+	t.Run("best of K hugepage memory defaults to true", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel
+		removeEnv(t, "BEST_OF_K_HUGEPAGE_MEMORY")
+
+		result, err := Parse()
+		require.NoError(t, err)
+		assert.True(t, result.BestOfKHugepageMemory)
+	})
+
+	t.Run("best of K hugepage memory can be disabled", func(t *testing.T) {
+		t.Setenv("BEST_OF_K_HUGEPAGE_MEMORY", "false")
+
+		result, err := Parse()
+		require.NoError(t, err)
+		assert.False(t, result.BestOfKHugepageMemory)
+	})
+
 	t.Run("invalid service discovery provider exposes failure condition", func(t *testing.T) {
 		t.Setenv("SERVICE_DISCOVERY_PROVIDER", "invalid")
 

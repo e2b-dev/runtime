@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"bufio"
+	"net"
 	"net/http"
 	"time"
 
@@ -26,7 +28,18 @@ func ConfigureH2C(server *http.Server) {
 	}
 
 	h2cHandler := h2c.NewHandler(handler, h2Server)
-	limitedH2CHandler := http.MaxBytesHandler(h2cHandler, h2cUpgradeBodyLimit)
+	trackedH2CHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writer := &h2cResponseWriter{ResponseWriter: w}
+		defer func() {
+			// h2c can return a preface read error without closing the hijacked socket.
+			if writer.conn != nil {
+				_ = writer.conn.Close()
+			}
+		}()
+		h2cHandler.ServeHTTP(writer, r)
+	})
+	// MaxBytesHandler needs the original writer's private requestTooLarge hook.
+	limitedH2CHandler := http.MaxBytesHandler(trackedH2CHandler, h2cUpgradeBodyLimit)
 
 	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isH2CUpgrade(r.Header) {
@@ -34,9 +47,33 @@ func ConfigureH2C(server *http.Server) {
 
 			return
 		}
+		if r.Method == "PRI" && len(r.Header) == 0 && r.URL.Path == "*" && r.Proto == "HTTP/2.0" {
+			trackedH2CHandler.ServeHTTP(w, r)
+
+			return
+		}
 
 		h2cHandler.ServeHTTP(w, r)
 	})
+}
+
+type h2cResponseWriter struct {
+	http.ResponseWriter
+
+	conn net.Conn
+}
+
+func (w *h2cResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *h2cResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, buffered, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.conn = conn
+	}
+
+	return conn, buffered, err
 }
 
 func newHTTP2Server() *http2.Server {

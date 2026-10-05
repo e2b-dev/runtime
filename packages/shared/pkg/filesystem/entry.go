@@ -40,34 +40,46 @@ func GetEntryFromPath(path string, includeMetadata bool) (EntryInfo, error) {
 	return entry, nil
 }
 
+// SymlinkResolver resolves the symlink at path to its target and the target's
+// file info. When the target cannot be stat'ed it returns the best target path
+// it has and a nil info.
+type SymlinkResolver func(path string) (target string, targetInfo os.FileInfo)
+
 // GetEntryInfo builds an EntryInfo purely from fileInfo. It does not read xattr
 // metadata; callers that surface metadata use GetEntryFromPath with
-// includeMetadata set.
+// includeMetadata set. A symlink is resolved against the host filesystem;
+// callers that interpret paths elsewhere use GetEntryInfoWithResolver.
 func GetEntryInfo(path string, fileInfo os.FileInfo) EntryInfo {
+	return GetEntryInfoWithResolver(path, fileInfo, resolveHostSymlink)
+}
+
+// GetEntryInfoWithResolver is GetEntryInfo with the symlink resolution
+// supplied by the caller. resolve is only called when fileInfo is a symlink.
+func GetEntryInfoWithResolver(path string, fileInfo os.FileInfo, resolve SymlinkResolver) EntryInfo {
 	fileMode := fileInfo.Mode()
 
 	var symlinkTarget *string
+	var targetInfo os.FileInfo
 	if fileMode&os.ModeSymlink != 0 {
 		// If we can't resolve the symlink target, we won't set the target
-		target := followSymlink(path)
+		target, info := resolve(path)
 		symlinkTarget = &target
+		targetInfo = info
 	}
 
 	var entryType FileType
 	var mode os.FileMode
 
-	if symlinkTarget == nil {
+	switch {
+	case symlinkTarget == nil:
 		entryType = getEntryType(fileMode)
 		mode = fileMode.Perm()
-	} else {
+	case targetInfo == nil:
 		// If it's a symlink, we need to determine the type of the target
-		targetInfo, err := os.Stat(*symlinkTarget)
-		if err != nil {
-			entryType = UnknownFileType
-		} else {
-			entryType = getEntryType(targetInfo.Mode())
-			mode = targetInfo.Mode().Perm()
-		}
+		entryType = UnknownFileType
+	default:
+		entryType = getEntryType(targetInfo.Mode())
+		mode = targetInfo.Mode().Perm()
 	}
 
 	entry := EntryInfo{
@@ -108,6 +120,17 @@ func getEntryType(mode os.FileMode) FileType {
 	default:
 		return UnknownFileType
 	}
+}
+
+func resolveHostSymlink(path string) (string, os.FileInfo) {
+	target := followSymlink(path)
+
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		return target, nil
+	}
+
+	return target, targetInfo
 }
 
 // followSymlink resolves a symbolic link to its target path.

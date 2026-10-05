@@ -151,9 +151,10 @@ func TestUploadSignedURL(t *testing.T) {
 
 		signedURL, err := p.UploadSignedURL(t.Context(), "templates/abc/layer.tar", 5*time.Minute)
 		require.NoError(t, err)
+		assert.Nil(t, signedURL.Headers)
 
 		// Parse the URL and verify structure.
-		u, err := url.Parse(signedURL)
+		u, err := url.Parse(signedURL.URL)
 		require.NoError(t, err)
 
 		assert.Equal(t, "http", u.Scheme)
@@ -184,7 +185,7 @@ func TestUploadSignedURL(t *testing.T) {
 		signedURL, err := p.UploadSignedURL(t.Context(), "path with spaces/file name.tar", 5*time.Minute)
 		require.NoError(t, err)
 
-		u, err := url.Parse(signedURL)
+		u, err := url.Parse(signedURL.URL)
 		require.NoError(t, err)
 
 		// Query().Get() returns the decoded value.
@@ -214,7 +215,7 @@ func TestUploadSignedURL(t *testing.T) {
 				require.NoError(t, err)
 
 				// Parse the signed URL as a client would receive it.
-				u, err := url.Parse(signedURL)
+				u, err := url.Parse(signedURL.URL)
 				require.NoError(t, err)
 
 				q := u.Query()

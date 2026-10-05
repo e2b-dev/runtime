@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -127,14 +128,16 @@ func TestAwaitSnapshotAdmission_ReadyAfterWait(t *testing.T) {
 func TestAwaitSnapshotAdmission_RefusedAfterGrace(t *testing.T) {
 	t.Parallel()
 
-	durable := utils.NewSetOnce[*header.Header]()
+	synctest.Test(t, func(t *testing.T) {
+		durable := utils.NewSetOnce[*header.Header]()
 
-	start := time.Now()
-	outcome, waited, err := admissionSandbox(durable).AwaitSnapshotAdmission(t.Context(), 40*time.Millisecond, true)
-	require.ErrorIs(t, err, ErrSnapshotAdmissionPending)
-	assert.Equal(t, SnapshotAdmissionRefused, outcome)
-	assert.GreaterOrEqual(t, waited, 40*time.Millisecond)
-	assert.Less(t, time.Since(start), 5*time.Second, "the wait must use its own timer, not the caller's deadline")
+		start := time.Now()
+		outcome, waited, err := admissionSandbox(durable).AwaitSnapshotAdmission(t.Context(), 40*time.Millisecond, true)
+		require.ErrorIs(t, err, ErrSnapshotAdmissionPending)
+		assert.Equal(t, SnapshotAdmissionRefused, outcome)
+		assert.Equal(t, 40*time.Millisecond, waited)
+		assert.Less(t, time.Since(start), 5*time.Second, "the wait must use its own timer, not the caller's deadline")
+	})
 }
 
 func TestAwaitSnapshotAdmission_InstantProbeRefuses(t *testing.T) {

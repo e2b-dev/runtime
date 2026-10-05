@@ -178,7 +178,7 @@ func openChunker(ctx context.Context, storagePath, buildID, artifact string, h *
 		return nil, nil, 0, nil, fmt.Errorf("get data size: %w", err)
 	}
 
-	flags, err := featureflags.NewClient()
+	flags, err := featureflags.NewClient("", "")
 	if err != nil {
 		return nil, nil, 0, nil, fmt.Errorf("feature flags: %w", err)
 	}

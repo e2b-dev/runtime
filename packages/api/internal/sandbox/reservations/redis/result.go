@@ -30,8 +30,7 @@ func encodeResult(sbx sandboxtypes.Sandbox, err error) ([]byte, error) {
 
 	if err != nil {
 		re := &reservationError{Message: err.Error()}
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 			re.Code = apiErr.Code
 			re.ClientMsg = apiErr.ClientMsg
 			re.ErrorCode = apiErr.ErrorCode

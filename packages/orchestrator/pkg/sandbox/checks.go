@@ -64,6 +64,8 @@ func (c *Checks) Start(ctx context.Context) {
 	ctx, c.cancelCtx = context.WithCancelCause(ctx)
 	c.mu.Unlock()
 
+	go c.sandbox.labelBalloonMode(ctx)
+	go c.sandbox.runPeriodicHinting(ctx)
 	c.logHealth(ctx)
 }
 
@@ -86,6 +88,7 @@ func (c *Checks) logHealth(ctx context.Context) {
 
 	// Get metrics and health status on sandbox startup
 	go c.Healthcheck(ctx, false)
+	go c.seedOOMWatermark(ctx)
 
 	for {
 		select {

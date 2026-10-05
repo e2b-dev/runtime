@@ -17,7 +17,7 @@ import (
 )
 
 // TestServeMetric exercises the serve-stats recording exactly as the Serve
-// worker does — serveTimer.Begin() + RecordRaw(ctx, bytes, serveAttrs[class][result])
+// worker does — serveTimer.Begin() + RecordRaw(ctx, bytes, serveAttrs[mode][bucket][class][result])
 // — and asserts the resulting orchestrator.sandbox.uffd.serve datapoints carry
 // the right page_class / result attributes, fault counts and faulted bytes.
 //
@@ -50,7 +50,7 @@ func TestServeMetric(t *testing.T) {
 	record := func(class pageClass, result faultResult, bytes int64, n int) {
 		for range n {
 			sw := serveTimer.Begin()
-			sw.RecordRaw(ctx, bytes, serveAttrs[genBucket1To10][class][result])
+			sw.RecordRaw(ctx, bytes, serveAttrs[BalloonModeUnknown][genBucket1To10][class][result])
 		}
 	}
 	record(pageClassNew, faultResultInstalled, pageSize, 3)
@@ -223,7 +223,7 @@ func TestServeMetric_GenerationBucket(t *testing.T) {
 	record := func(bucket generationBucket, n int) {
 		for range n {
 			sw := serveTimer.Begin()
-			sw.RecordRaw(ctx, int64(header.PageSize), serveAttrs[bucket][pageClassNew][faultResultInstalled])
+			sw.RecordRaw(ctx, int64(header.PageSize), serveAttrs[BalloonModeUnknown][bucket][pageClassNew][faultResultInstalled])
 		}
 	}
 	record(genBucket0, 1)

@@ -106,10 +106,17 @@ func (h *APIStore) Logs(c *gin.Context) {
 		return
 	}
 
-	// Overwrite instanceID, envID, and teamID to avoid spoofing
-	payload["instanceID"] = sbxID
-	payload["envID"] = sbx.Runtime.TemplateID
-	payload["teamID"] = sbx.Runtime.TeamID
+	// Downstream normalization relies on one trusted value for each identity field.
+	setTrustedLogIdentity(
+		payload,
+		sbxID,
+		sbx.Runtime.TemplateID,
+		sbx.Runtime.TeamID,
+		sbx.Runtime.BuildID,
+	)
+	if sbx.Runtime.TeamID == "" {
+		recordLogForwardWrite(ctx, "ingest", "degraded", "missing_team_id")
+	}
 
 	logs, err := json.Marshal(payload)
 	if err != nil {
@@ -167,6 +174,26 @@ func (h *APIStore) Logs(c *gin.Context) {
 	recordLogForwardWrite(ctx, "primary", "success", "")
 
 	c.Status(http.StatusOK)
+}
+
+func setTrustedLogIdentity(payload map[string]any, sandboxID, templateID, teamID, buildID string) {
+	for _, field := range [...]string{
+		"instanceID", "sandboxID", "sandbox_id", "sandbox.id",
+		"envID", "env_id", "env.id", "templateID", "template_id", "template.id",
+		"teamID", "team_id", "team.id",
+		"buildID", "build_id", "build.id",
+		// The collector routes on internal; only the platform may set it.
+		"internal",
+	} {
+		delete(payload, field)
+	}
+
+	payload["instanceID"] = sandboxID
+	payload["envID"] = templateID
+	payload["teamID"] = teamID
+	if buildID != "" {
+		payload["buildID"] = buildID
+	}
 }
 
 func (h *APIStore) tryAcquireShadow(maxInflight int64) bool {

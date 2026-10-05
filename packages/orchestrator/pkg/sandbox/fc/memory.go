@@ -84,6 +84,7 @@ func (p *Process) ExportMemory(
 	inputEmpty *roaring.Bitmap,
 	metaOut *utils.SetOnce[*header.DiffMetadata],
 	dedupInflightServe bool,
+	dedupFreeIndex bool,
 	keepMemfdOpen bool,
 ) (_ block.DiffSource, e error) {
 	// Resolve metaOut on every sync error so Wait-ers don't hang. Success paths
@@ -115,7 +116,7 @@ func (p *Process) ExportMemory(
 	if memfd != nil {
 		if originalMemfile != nil {
 			return block.NewCacheFromMemfdDeduped(ctx, originalMemfile, blockSize, cachePath, memfd, include,
-				dedupBestEffort, dedupDirectIO, dedupBudget, inputEmpty, metaOut, dedupInflightServe)
+				dedupBestEffort, dedupDirectIO, dedupBudget, inputEmpty, metaOut, dedupInflightServe, dedupFreeIndex)
 		}
 		var (
 			src block.DiffSource

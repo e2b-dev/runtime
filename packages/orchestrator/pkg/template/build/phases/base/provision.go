@@ -30,6 +30,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/writer"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -76,7 +77,7 @@ func (bb *BaseBuilder) provisionSandbox(
 	ctx context.Context,
 	userLogger logger.Logger,
 	sandboxConfig *sandbox.Config,
-	sandboxRuntime sandbox.RuntimeMetadata,
+	sandboxRuntime sandboxtypes.RuntimeMetadata,
 	localTemplate *sbxtemplate.LocalTemplate,
 	rootfsPath string,
 	logExternalPrefix string,

@@ -160,6 +160,21 @@ type effectiveDefaults struct {
 	Fallback bool `json:"fallback"`
 }
 
+// memoryHeader reports the memory protection configured on envd's cgroup chain, on
+// every /init response. Same JSON-header convention as its siblings above.
+//
+// It exists because the kernel exposes no file with a cgroup's EFFECTIVE protection:
+// a memory.min that reads back as set on envd.service proves nothing about what envd is
+// granted, since protection is handed down the chain and an ancestor without a value
+// leaves the leaf with none. The orchestrator turns this into a per-start cohort, which
+// is how a resume that ran with envd protected is told apart, fleet-wide, from one that did
+// not.
+//
+// The wire form is cgroups.MemoryProtection itself, whose fields carry the JSON tags:
+// unlike the freeze audit there is no log-only field to hide here, so a copy would only
+// be a second declaration to keep in step.
+const memoryHeader = "X-Envd-Memory"
+
 func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -167,6 +182,11 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	// ones) so the orchestrator can read the live version off the resume-path
 	// call it already makes — no extra round-trip. Set before any WriteHeader.
 	w.Header().Set("X-Envd-Version", pkg.Version)
+
+	// The memory protection on envd's cgroup chain, read once at construction and only
+	// serialised here, so the resume path does no extra reading. On every response,
+	// error ones included, for the same reason as the version above.
+	a.reportMemoryProtection(w)
 
 	// If this envd booted from a live-upgrade handover, advertise its outcome on
 	// /init so the orchestrator can record it — the envd-side result (re-adopted
@@ -318,6 +338,19 @@ func (a *API) reportEffectiveDefaults(w http.ResponseWriter, logger zerolog.Logg
 		return
 	}
 	w.Header().Set(defaultsHeader, string(b))
+}
+
+// reportMemoryProtection advertises the cached chain protection on the /init response.
+// Marshalling a struct of integers and a bool cannot fail, but the report is advisory and
+// must never fail the /init it rides on, so an error still degrades to no header.
+func (a *API) reportMemoryProtection(w http.ResponseWriter) {
+	b, err := json.Marshal(a.memory)
+	if err != nil {
+		a.logger.Warn().Err(err).Msg("could not encode the memory protection report")
+
+		return
+	}
+	w.Header().Set(memoryHeader, string(b))
 }
 
 func (a *API) SetData(ctx context.Context, logger zerolog.Logger, data PostInitJSONBody) error {

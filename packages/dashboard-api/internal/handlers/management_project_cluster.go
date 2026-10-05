@@ -8,13 +8,14 @@ import (
 
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 )
 
 func (s *APIStore) ManagementRegisterCluster(c *gin.Context, clusterID api.ClusterID) {
 	body, err := ginutils.ParseBody[api.ManagementClusterRegistrationRequest](c.Request.Context(), c)
 	if err != nil {
-		s.sendAPIStoreError(c, http.StatusBadRequest, "Invalid cluster registration")
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: string(api.ClusterRegistrationInvalid), ClientMsg: "Invalid cluster registration"})
 
 		return
 	}
@@ -29,9 +30,9 @@ func (s *APIStore) ManagementRegisterCluster(c *gin.Context, clusterID api.Clust
 	})
 	switch {
 	case errors.Is(err, errInvalidClusterRegistration):
-		s.sendAPIStoreError(c, http.StatusBadRequest, "Invalid cluster registration")
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: string(api.ClusterRegistrationInvalid), ClientMsg: "Invalid cluster registration"})
 	case dberrors.IsUniqueConstraintViolation(err), dberrors.IsNotFoundError(err):
-		s.sendAPIStoreError(c, http.StatusConflict, "Cluster conflicts with stored state")
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: string(api.ClusterRegistrationConflict), ClientMsg: "Cluster conflicts with stored state"})
 	case err != nil:
 		s.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to register cluster")
 	default:
@@ -44,7 +45,7 @@ func (s *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID api.
 }
 
 func (s *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID api.ProjectID, clusterID api.ClusterID) {
-	s.DeleteAdminTeamsTeamIDClusterClusterID(c, projectID, clusterID)
+	s.detachTeamCluster(c, projectID, clusterID)
 }
 
 func (s *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.ClusterID) {

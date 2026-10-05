@@ -1145,6 +1145,12 @@ func uploadFileForTemplate(
 	uploadReq, err := http.NewRequestWithContext(ctx, http.MethodPut, *resp.JSON201.Url, bytes.NewReader(data))
 	require.NoError(tb, err)
 	uploadReq.Header.Set("Content-Type", "application/octet-stream")
+	// Request headers the API returned must go on the PUT (Azure needs x-ms-blob-type).
+	if resp.JSON201.Headers != nil {
+		for name, value := range *resp.JSON201.Headers {
+			uploadReq.Header.Set(name, value)
+		}
+	}
 
 	uploadResp, err := http.DefaultClient.Do(uploadReq)
 	require.NoError(tb, err)

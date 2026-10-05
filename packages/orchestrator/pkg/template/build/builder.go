@@ -35,8 +35,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases/steps"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases/user"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/storage/cache"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/writer"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -49,8 +47,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-const progressDelay = 5 * time.Second
-
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build")
 
 type Builder struct {
@@ -60,7 +56,6 @@ type Builder struct {
 	sandboxFactory      *sandbox.Factory
 	templateStorage     storage.StorageProvider
 	buildStorage        storage.StorageProvider
-	artifactRegistry    artifactsregistry.ArtifactsRegistry
 	dockerhubRepository dockerhub.RemoteRepository
 	proxy               *proxy.SandboxProxy
 	sandboxes           *sandbox.Map
@@ -77,7 +72,6 @@ func NewBuilder(
 	sandboxFactory *sandbox.Factory,
 	templateStorage storage.StorageProvider,
 	buildStorage storage.StorageProvider,
-	artifactRegistry artifactsregistry.ArtifactsRegistry,
 	dockerhubRepository dockerhub.RemoteRepository,
 	proxy *proxy.SandboxProxy,
 	sandboxes *sandbox.Map,
@@ -92,7 +86,6 @@ func NewBuilder(
 		sandboxFactory:      sandboxFactory,
 		templateStorage:     templateStorage,
 		buildStorage:        buildStorage,
-		artifactRegistry:    artifactRegistry,
 		dockerhubRepository: dockerhubRepository,
 		proxy:               proxy,
 		sandboxes:           sandboxes,
@@ -170,8 +163,6 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 	// Validate template, update force layers if needed
 	cfg = forceSteps(cfg)
 
-	isV1Build := utils.IsVersion(cfg.Version, templates.TemplateV1Version) || (cfg.FromImage == "" && cfg.FromTemplate == nil)
-
 	l := logger.NewTracedLoggerFromCore(logsCore)
 	defer func(ctx context.Context) {
 		switch {
@@ -209,12 +200,6 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 			childSpan.SetStatus(codes.Error, e.Error())
 		}
 	}()
-
-	if isV1Build {
-		hookedCore, done := writer.NewPostProcessor(ctx, progressDelay, logsCore)
-		defer done()
-		l = logger.NewTracedLoggerFromCore(hookedCore)
-	}
 
 	l.Info(ctx, fmt.Sprintf("Building template %s/%s", cfg.TemplateID, paths.BuildID))
 
@@ -288,11 +273,25 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 		UploadErrGroup: uploadErrGroup,
 		EnvdVersion:    envdVersion,
 		CacheScope:     cacheScope,
-		IsV1Build:      isV1Build,
 		Version:        cfg.Version,
+		Rootfs:         resolveRootfsOptions(ctx, b.featureFlags, cfg),
 	}
 
 	return runBuild(ctx, l, buildContext, b)
+}
+
+// resolveRootfsOptions evaluates, once per build, the flags that shape the
+// baked rootfs files; buildcontext.RootfsOptions says why once. It uses the
+// template and team contexts, as the provision version does.
+func resolveRootfsOptions(ctx context.Context, featureFlags *featureflags.Client, cfg config.TemplateConfig) buildcontext.RootfsOptions {
+	return buildcontext.RootfsOptions{
+		EnvdMemoryProtection: featureFlags.BoolFlag(
+			ctx,
+			featureflags.BuildEnvdMemoryProtection,
+			featureflags.TemplateContext(cfg.TemplateID),
+			featureflags.TeamContext(cfg.TeamID),
+		),
+	}
 }
 
 func (b *Builder) useNFSCache(ctx context.Context) (string, bool) {
@@ -346,7 +345,6 @@ func runBuild(
 		builder.logger,
 		builder.proxy,
 		templateStorage,
-		builder.artifactRegistry,
 		builder.dockerhubRepository,
 		layerExecutor,
 		index,
@@ -464,9 +462,10 @@ func runBuild(
 }
 
 func templateSchedulingMetadata(ctx context.Context, cache *sbxtemplate.Cache, buildID string) *orchestratorgrpc.SchedulingMetadata {
-	// Use GetTemplate (not GetCachedTemplate): the optimize phase invalidates
-	// the final build from the cache, so re-fetch to resolve its headers.
-	t, err := cache.GetTemplate(ctx, buildID, false, false)
+	// A lookup that fetches on a miss: the optimize phase invalidates the final
+	// build from the cache, so re-fetch to resolve its headers.
+	t, release, err := cache.GetTemplatePinned(ctx, buildID, false, false)
+	defer release()
 	if err != nil {
 		return nil
 	}

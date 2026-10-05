@@ -3,9 +3,14 @@
 package rootfs
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,7 +83,7 @@ func TestClassifyE2fsckResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			outcome, reason, err := classifyE2fsckResult(tt.runErr, tt.rcOut, tt.timedOut)
+			outcome, reason, err := classifyE2fsckResult(tt.runErr, tt.rcOut, tt.timedOut, journalClean)
 			assert.Equal(t, tt.wantOutcome, outcome)
 			assert.Equal(t, tt.wantReason, reason)
 			if tt.wantErr == nil {
@@ -117,13 +122,15 @@ func TestClassifyE2fsckResult_NeverCondemns(t *testing.T) {
 
 	for _, timedOut := range []bool{false, true} {
 		for rc := range 256 {
-			outcome, _, err := classifyE2fsckResult(nil, rcStream(rc), timedOut)
-			assertInvariant(t, outcome, err, fmt.Sprintf("rc=%d timedOut=%v", rc, timedOut))
+			for _, journal := range []journalState{journalUnknown, journalClean, journalDirty} {
+				outcome, _, err := classifyE2fsckResult(nil, rcStream(rc), timedOut, journal)
+				assertInvariant(t, outcome, err, fmt.Sprintf("rc=%d timedOut=%v journal=%d", rc, timedOut, journal))
+			}
 		}
 		// The no-sentinel space (launcher failure, sentinel loss, timeout) is part of
 		// the invariant under both a nil and a non-nil run error.
 		for _, runErr := range []error{nil, errors.New("boom")} {
-			outcome, _, err := classifyE2fsckResult(runErr, nil, timedOut)
+			outcome, _, err := classifyE2fsckResult(runErr, nil, timedOut, journalClean)
 			assertInvariant(t, outcome, err, fmt.Sprintf("no sentinel timedOut=%v runErr=%v", timedOut, runErr))
 		}
 	}
@@ -191,4 +198,95 @@ func TestRecoverFilesystemRejectsNonNBDDevice(t *testing.T) {
 	outcome, _, err := RecoverFilesystem(t.Context(), "/dev/sda")
 	assert.Equal(t, RecoverOutcomeFailed, outcome)
 	require.ErrorIs(t, err, ErrRecoveryFailed)
+}
+
+// TestClassifyE2fsckResult_ReplayReasonFromSuperblock pins that rc 0 is labelled
+// from the pre-run superblock, not guessed: journal-only e2fsck exits 0 after a
+// real replay, so without the bit every replay would read as nothing_to_do.
+func TestClassifyE2fsckResult_ReplayReasonFromSuperblock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		rc         int
+		journal    journalState
+		wantReason RecoverReason
+	}{
+		{"rc 0, journal dirty -> replayed", 0, journalDirty, RecoverReasonJournalReplayed},
+		{"rc 0, journal clean -> nothing to do", 0, journalClean, RecoverReasonNothingToDo},
+		{"rc 0, superblock unreadable -> unknown", 0, journalUnknown, RecoverReasonReplayUnknown},
+		{"rc 1, journal clean -> replayed (repair applied)", 1, journalClean, RecoverReasonJournalReplayed},
+		{"rc 2, superblock unreadable -> replayed", 2, journalUnknown, RecoverReasonJournalReplayed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, reason, err := classifyE2fsckResult(nil, rcStream(tt.rc), false, tt.journal)
+			require.NoError(t, err)
+			assert.Equal(t, RecoverOutcomeReplayed, outcome)
+			assert.Equal(t, tt.wantReason, reason)
+		})
+	}
+}
+
+// superblockImage builds a 2 KiB image whose primary ext4 superblock carries the
+// given magic and incompat feature word.
+func superblockImage(magic uint16, incompat uint32) []byte {
+	img := make([]byte, ext4SuperblockOffset+ext4SuperblockSize)
+	binary.LittleEndian.PutUint16(img[ext4SuperblockOffset+ext4MagicOffset:], magic)
+	binary.LittleEndian.PutUint32(img[ext4SuperblockOffset+ext4IncompatOffset:], incompat)
+
+	return img
+}
+
+func TestExt4JournalState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		img  []byte // nil: no file at the path at all
+		want journalState
+	}{
+		{"needs_recovery set", superblockImage(ext4Magic, 0x2C2|ext4IncompatRecover), journalDirty},
+		{"needs_recovery clear", superblockImage(ext4Magic, 0x2C2), journalClean},
+		{"not ext4", superblockImage(0x1234, ext4IncompatRecover), journalUnknown},
+		{"short image", make([]byte, 512), journalUnknown},
+		{"missing device", nil, journalUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "rootfs.img")
+			if tt.img != nil {
+				require.NoError(t, os.WriteFile(path, tt.img, 0o600))
+			}
+			assert.Equal(t, tt.want, ext4JournalState(path))
+		})
+	}
+}
+
+// A device that never answers must not hold the create: the probe gives up at
+// ext4ProbeTimeout and the label degrades to unknown. A FIFO with no writer
+// blocks open(2) exactly like a stalled block device blocks read(2).
+func TestExt4JournalState_StalledDeviceIsBounded(t *testing.T) {
+	t.Parallel()
+
+	fifo := filepath.Join(t.TempDir(), "stalled")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+
+	start := time.Now()
+	state := ext4JournalState(fifo)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, journalUnknown, state)
+	assert.GreaterOrEqual(t, elapsed, ext4ProbeTimeout-100*time.Millisecond)
+	assert.Less(t, elapsed, ext4ProbeTimeout+2*time.Second, "the probe must return at its own bound")
+
+	// Release the blocked opener so the test leaves no goroutine behind.
+	w, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+	if err == nil {
+		w.Close()
+	}
 }

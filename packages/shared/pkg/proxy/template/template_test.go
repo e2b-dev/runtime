@@ -3,6 +3,7 @@ package template
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,4 +161,56 @@ func TestHandleErrorRejectsInvalidStatusCode(t *testing.T) {
 
 	require.Error(t, e.HandleError(w, r))
 	assert.Empty(t, w.Body.String())
+}
+
+// Every page is parsed into the shared layout, so a page whose blocks do not
+// fit it would fail here rather than when a browser first hits that error.
+func TestBrowserPagesRenderThroughLayout(t *testing.T) {
+	t.Parallel()
+
+	const (
+		sandboxID = "im9r2ycjiy2534qsdy1oo"
+		host      = "3000-im9r2ycjiy2534qsdy1oo.e2b.app"
+		hostile   = `<script>alert(1)</script>`
+	)
+
+	for _, tt := range []struct {
+		name     string
+		handler  interface{ buildHtml() ([]byte, error) }
+		title    string
+		status   string
+		contains []string
+		omits    []string
+	}{
+		{"sandbox not found", NewSandboxNotFoundError(sandboxID, host), "Sandbox not found", "502 Bad Gateway", []string{sandboxID}, nil},
+		{"port closed", NewPortClosedError(sandboxID, host, 3000), "Port closed", "502 Bad Gateway", []string{sandboxID, host, "port 3000"}, nil},
+		{"sandbox still transitioning", NewSandboxStillTransitioningError(sandboxID, host), "Sandbox still transitioning", "409 Conflict", []string{sandboxID}, nil},
+		{"sandbox resume permission denied", NewSandboxResumePermissionDeniedError(sandboxID, host), "Unable to resume sandbox", "403 Forbidden", []string{sandboxID}, nil},
+		{"sandbox too many connections", NewSandboxTooManyConnectionsError(sandboxID, host, 100), "Too many connections", "429 Too Many Requests", []string{sandboxID, "limit: 100"}, nil},
+		{"team sandbox limit", NewTeamSandboxLimitError(sandboxID, host, hostile), "Sandbox limit reached", "429 Too Many Requests", []string{"&lt;script&gt;"}, []string{hostile}},
+		{"traffic access token missing", NewTrafficAccessTokenMissingHeader(sandboxID, host, "e2b-traffic-access-token"), "Missing traffic access token", "403 Forbidden", []string{sandboxID, "e2b-traffic-access-token"}, nil},
+		{"traffic access token invalid", NewTrafficAccessTokenInvalidHeader(sandboxID, host, "e2b-traffic-access-token"), "Invalid traffic access token", "403 Forbidden", []string{sandboxID, "e2b-traffic-access-token"}, nil},
+		// The host carries the sandbox ID, which this page leaves out on purpose.
+		{"internal route", NewInternalRouteError(host, "/init"+hostile), "Endpoint not available", "404 Not Found", []string{"/init&lt;script&gt;"}, []string{hostile, sandboxID}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := tt.handler.buildHtml()
+			require.NoError(t, err)
+
+			html := string(body)
+			assert.True(t, strings.HasPrefix(html, "<!DOCTYPE html>"), "page must render in standards mode")
+			assert.True(t, strings.HasSuffix(strings.TrimSpace(html), "</html>"), "page must be a whole document")
+			assert.Contains(t, html, "<title>"+tt.title+" · E2B</title>")
+			assert.Contains(t, html, `<h1 id="title">`+tt.title+"</h1>")
+			assert.Contains(t, html, tt.status)
+			for _, s := range tt.contains {
+				assert.Contains(t, html, s)
+			}
+			for _, s := range tt.omits {
+				assert.NotContains(t, html, s)
+			}
+		})
+	}
 }

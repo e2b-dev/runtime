@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -17,34 +16,19 @@ import (
 // Make requires a block size >= inodesRatio; 4 KiB is what the rootfs uses.
 const makeBlockSize = 4096
 
-// TestMakeDirIndex pins both sides of the build-ext4-dir-index switch: nothing
-// else exercises the enabled path until the flag is turned on.
-func TestMakeDirIndex(t *testing.T) {
+// TestMakeKeepsDirIndex guards the htree directory index against a "^dir_index"
+// finding its way back into the feature list, which mkfs.ext4 would accept
+// silently.
+func TestMakeKeepsDirIndex(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		opts    MakeOptions
-		indexed bool
-	}{
-		{name: "enabled keeps the mkfs base feature", opts: MakeOptions{DirIndex: true}, indexed: true},
-		{name: "disabled strips the index", opts: MakeOptions{DirIndex: false}, indexed: false},
-	}
+	requireTools(t, "mkfs.ext4", "dumpe2fs")
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+	rootfsPath := filepath.Join(t.TempDir(), "rootfs.ext4")
+	require.NoError(t, Make(t.Context(), rootfsPath, 64, makeBlockSize))
 
-			requireTools(t, "mkfs.ext4", "dumpe2fs")
-
-			rootfsPath := filepath.Join(t.TempDir(), "rootfs.ext4")
-			require.NoError(t, Make(t.Context(), rootfsPath, 64, makeBlockSize, tc.opts))
-
-			features := filesystemFeatures(t, rootfsPath)
-			assert.Equal(t, tc.indexed, slices.Contains(features, "dir_index"),
-				"dir_index in mkfs.ext4 feature set %v", features)
-		})
-	}
+	features := filesystemFeatures(t, rootfsPath)
+	assert.Contains(t, features, "dir_index", "mkfs.ext4 feature set %v", features)
 }
 
 func requireTools(t *testing.T, tools ...string) {

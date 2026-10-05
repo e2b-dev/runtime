@@ -25,6 +25,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -498,13 +499,20 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 
 	// success is kept for backward compatibility until consumers move to exit_type.
 	callAttributes := func(exit envdInitExitType) []attribute.KeyValue {
-		return append(attributes,
+		attrs := append(attributes,
 			attribute.Bool("success", exit == envdInitExitSuccess),
 			attribute.String("exit_type", string(exit)),
 		)
+
+		// The cohort is read here rather than appended to attributes at the point the
+		// header decodes, so that every call site yields the same attribute set instead
+		// of one that depends on where in this function it sits. The error path below
+		// returns before any header is read, and only the first WaitForEnvd of a start
+		// records these counters, so on that path there is no report to find.
+		return append(attrs, s.envdProtectionAttrs()...)
 	}
 
-	address := fmt.Sprintf("http://%s:%d/init", s.Slot.HostIPString(), consts.DefaultEnvdServerPort)
+	address := s.envdServerURL() + "/init"
 
 	response, count, err := s.doRequestWithInfiniteRetries(ctx, http.MethodPost, address)
 	if err != nil {
@@ -526,17 +534,10 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		return fmt.Errorf("failed to init envd: %w", err)
 	}
 
-	if recordMetrics && count > 1 {
-		// Retried attempts were transient per-request failures that preceded the success.
-		envdInitCalls.Add(ctx, count-1, metric.WithAttributes(callAttributes(envdInitExitTransient)...))
-	}
-
-	// Track successful envd init (first WaitForEnvd only — see recordMetrics).
-	if recordMetrics {
-		envdInitCalls.Add(ctx, 1, metric.WithAttributes(callAttributes(envdInitExitSuccess)...))
-	}
-
 	defer response.Body.Close()
+	// The response headers are read before the init counters are recorded, so that
+	// anything the guest reports on /init can label the counters for this start.
+	//
 	// Capture the version the running envd reports (X-Envd-Version). This rides
 	// on the /init call the resume path already makes — before and after an
 	// upgrade — so the upgrade trigger can decide/label/confirm against the live
@@ -564,6 +565,22 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	if d := response.Header.Get("X-Envd-Defaults"); d != "" {
 		s.compareEnvdDefaults(ctx, d)
 	}
+	// The memory protection configured on envd's cgroup chain (X-Envd-Memory). Read
+	// before the counters below so the cohort it derives labels them for this start.
+	if m := response.Header.Get(envdMemoryHeader); m != "" {
+		s.recordEnvdMemoryProtection(ctx, m, startType, recordMetrics)
+	}
+
+	if recordMetrics && count > 1 {
+		// Retried attempts were transient per-request failures that preceded the success.
+		envdInitCalls.Add(ctx, count-1, metric.WithAttributes(callAttributes(envdInitExitTransient)...))
+	}
+
+	// Track successful envd init (first WaitForEnvd only — see recordMetrics).
+	if recordMetrics {
+		envdInitCalls.Add(ctx, 1, metric.WithAttributes(callAttributes(envdInitExitSuccess)...))
+	}
+
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read envd init response body: %w", err)
@@ -691,7 +708,7 @@ func resolveEnvdDefaultUser(meta metadata.Template, configured *string) (*string
 // this counter is the denominator its decline is read against. Deriving it twice is how the
 // two came to disagree — this counted a recorded workdir, the gate counted a recorded workdir
 // that was also not re-sent. With no metadata in scope the divergence cannot come back.
-func recordEnvdDefaults(ctx context.Context, source string, sbxType SandboxType, workdirWithheld bool) {
+func recordEnvdDefaults(ctx context.Context, source string, sbxType sandboxtypes.SandboxType, workdirWithheld bool) {
 	attrs := metric.WithAttributes(
 		attribute.String("source", source),
 		attribute.String("sandbox_type", string(sbxType)),
@@ -745,16 +762,27 @@ func envdDefaultsMismatches(eff EnvdEffectiveDefaults, sentUser, sentWorkdir str
 // mismatch. Display bounds belong at the points where a value escapes into a log line or a
 // span, and that is where envdDefaultsField*MaxLen are applied.
 func decodeEnvdEffectiveDefaults(header string) (EnvdEffectiveDefaults, error) {
-	if len(header) > envdDefaultsHeaderMaxBytes {
-		return EnvdEffectiveDefaults{}, fmt.Errorf("header is %d bytes, over the %d-byte cap", len(header), envdDefaultsHeaderMaxBytes)
+	return decodeEnvdHeader[EnvdEffectiveDefaults](header, envdDefaultsHeaderMaxBytes)
+}
+
+// decodeEnvdHeader decodes one guest-written JSON header into T, refusing anything over
+// maxBytes before parsing it. A header envd sets is input from a guest the customer
+// controls, so the byte bound is what limits what one can push through the decoder, and
+// the shape of T does the rest: a field the guest omits is its zero value, a field this
+// orchestrator does not know is ignored. X-Envd-Defaults and X-Envd-Memory decode through
+// it; the older headers keep their own paths.
+func decodeEnvdHeader[T any](header string, maxBytes int) (T, error) {
+	var zero T
+	if len(header) > maxBytes {
+		return zero, fmt.Errorf("header is %d bytes, over the %d-byte cap", len(header), maxBytes)
 	}
 
-	var eff EnvdEffectiveDefaults
-	if err := json.Unmarshal([]byte(header), &eff); err != nil {
-		return EnvdEffectiveDefaults{}, err
+	var v T
+	if err := json.Unmarshal([]byte(header), &v); err != nil {
+		return zero, err
 	}
 
-	return eff, nil
+	return v, nil
 }
 
 // effectiveUserForDisplay and effectiveWorkdirForDisplay bound a guest-written value on its way

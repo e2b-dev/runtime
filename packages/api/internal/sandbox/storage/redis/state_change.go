@@ -32,7 +32,7 @@ import (
 //
 // The callback is critical: it deletes the transition key
 // and sets the result value with short TTL to notify waiters of the outcome.
-func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.Sandbox, bool, func(context.Context, error), error) {
+func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
 	key := getSandboxKey(teamID.String(), sandboxID)
 	transitionKey := getTransitionKey(teamID.String(), sandboxID)
 	lockKey := redis_utils.GetLockKey(key)
@@ -40,7 +40,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// Acquire distributed lock
 	lock, err := s.locker.Obtain(ctx, lockKey, lockTimeout)
 	if err != nil {
-		return sandboxtypes.Sandbox{}, false, nil, fmt.Errorf("failed to obtain lock: %w", err)
+		return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("failed to obtain lock: %w", err)
 	}
 
 	// Ensure lock is released once
@@ -58,16 +58,17 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// Get current sandbox state first
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
-		return sandboxtypes.Sandbox{}, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
+		return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
 	}
 	if err != nil {
-		return sandboxtypes.Sandbox{}, false, nil, fmt.Errorf("failed to get sandbox from Redis: %w", err)
+		return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("failed to get sandbox from Redis: %w", err)
 	}
 
 	var sbx sandboxtypes.Sandbox
 	if err = json.Unmarshal(data, &sbx); err != nil {
-		return sandboxtypes.Sandbox{}, false, nil, fmt.Errorf("failed to unmarshal sandbox: %w", err)
+		return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("failed to unmarshal sandbox: %w", err)
 	}
+	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
 	// Fast path for a caller-pinned removal: refuse a stale one before doing any
 	// further work, and before possibly waiting out an unrelated transition
@@ -79,7 +80,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// The authority is the equivalent check inside startTransitionScript, which
 	// is atomic with that write.
 	if opts.ExpectExecutionID != "" && sbx.ExecutionID != opts.ExpectExecutionID {
-		return sbx, false, nil, fmt.Errorf(
+		return transition, false, nil, fmt.Errorf(
 			"sandbox %q is execution %q, expected %q: %w",
 			sandboxID, sbx.ExecutionID, opts.ExpectExecutionID, sandboxtypes.ErrExecutionMismatch,
 		)
@@ -88,19 +89,19 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// Check if there's an existing transition
 	transactionID, err := s.redisClient.Get(ctx, transitionKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return sbx, false, nil, fmt.Errorf("failed to check transition key: %w", err)
+		return transition, false, nil, fmt.Errorf("failed to check transition key: %w", err)
 	}
 
 	// Resolve eviction under the lock + re-check expiry
 	if opts.Eviction {
 		// if there's a transition already in place, don't do anything
 		if transactionID != "" {
-			return sbx, false, nil, sandboxtypes.ErrEvictionInProgress
+			return transition, false, nil, sandboxtypes.ErrEvictionInProgress
 		}
 
 		// if sandbox isn't expired (e.g. race condition with SetTimeout)
 		if !sbx.IsExpired(time.Now()) {
-			return sbx, false, nil, sandboxtypes.ErrEvictionNotNeeded
+			return transition, false, nil, sandboxtypes.ErrEvictionNotNeeded
 		}
 	}
 
@@ -119,12 +120,12 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	if sbx.State == newState {
 		logger.L().Debug(ctx, "Already in the same state", logger.WithSandboxID(sandboxID), zap.String("state", string(newState)))
 
-		return sbx, true, func(context.Context, error) {}, nil
+		return transition, true, func(context.Context, error) {}, nil
 	}
 
 	// Validate state transition is allowed
 	if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
-		return sbx, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 	}
 
 	// Build the updated sandbox for Redis without mutating the original.
@@ -140,7 +141,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 
 	newData, err := json.Marshal(updated)
 	if err != nil {
-		return sbx, false, nil, fmt.Errorf("failed to marshal sandbox: %w", err)
+		return transition, false, nil, fmt.Errorf("failed to marshal sandbox: %w", err)
 	}
 
 	// Generate transition ID
@@ -156,13 +157,13 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID,
 	).Int64()
 	if err != nil {
-		return sbx, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
+		return transition, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
 	}
 	if written == 0 {
 		// The pin no longer holds. Add is lockless, so the incarnation can have
 		// been replaced since the check above; the script refused rather than
 		// overwrite whatever is there now, and nothing has been written.
-		return sbx, false, nil, fmt.Errorf(
+		return transition, false, nil, fmt.Errorf(
 			"sandbox %q is no longer execution %q: %w",
 			sandboxID, opts.ExpectExecutionID, sandboxtypes.ErrExecutionMismatch,
 		)
@@ -170,7 +171,10 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 
 	logger.L().Debug(ctx, "Started state transition", logger.WithSandboxID(sandboxID), zap.String("state", string(newState)), zap.String("transitionID", transitionID))
 
-	return updated, false, s.createCallback(teamID, sandboxID, transitionKey, resultKey, transitionID, opts.Action), nil
+	transition.Sandbox = updated
+	transition.OriginalEndTime = &sbx.EndTime
+
+	return transition, false, s.createCallback(teamID, sandboxID, transitionKey, resultKey, transitionID, opts.Action), nil
 }
 
 // createCallback returns a callback function for completing a transition.
@@ -186,20 +190,6 @@ func (s *Storage) createCallback(teamID uuid.UUID, sandboxID, transitionKey, res
 			restoreErr = s.restoreToRunning(cbCtx, teamID, sandboxID, stateAction.TargetState)
 		}
 
-		lockKey := redis_utils.GetLockKey(transitionKey)
-		lock, err := s.locker.Obtain(cbCtx, lockKey, lockTimeout)
-		if err != nil {
-			logger.L().Warn(cbCtx, "Failed to obtain lock in callback", logger.WithSandboxID(sandboxID), zap.String("transitionID", transitionID), zap.Error(err))
-
-			return
-		}
-		defer func() {
-			err = lock.Release(context.WithoutCancel(cbCtx))
-			if err != nil {
-				logger.L().Error(cbCtx, "Failed to release lock in callback", logger.WithSandboxID(sandboxID), zap.String("transitionID", transitionID), zap.Error(err))
-			}
-		}()
-
 		// Determine result value for waiters:
 		// - Restore failure: propagate so callers know state is inconsistent
 		// - Transient original failure: signal success so concurrent ops (e.g. kill) can proceed
@@ -211,16 +201,11 @@ func (s *Storage) createCallback(teamID uuid.UUID, sandboxID, transitionKey, res
 			resultValue = cbErr.Error()
 		}
 
-		// Set result key with short TTL
-		setErr := s.redisClient.Set(cbCtx, resultKey, resultValue, transitionResultKeyTTL).Err()
-		if setErr != nil {
-			logger.L().Warn(cbCtx, "Failed to set transition result", logger.WithSandboxID(sandboxID), zap.String("transitionID", transitionID), zap.Error(setErr))
-		}
-
-		// Delete transition key
-		delErr := s.redisClient.Del(cbCtx, transitionKey).Err()
-		if delErr != nil {
-			logger.L().Warn(cbCtx, "Failed to delete transition key", logger.WithSandboxID(sandboxID), zap.Error(delErr))
+		// Publish the result before waiters can observe completion; expired owners cannot delete a successor's key.
+		err := finishTransitionScript.Run(cbCtx, s.redisClient, []string{transitionKey, resultKey},
+			transitionID, resultValue, int(transitionResultKeyTTL.Seconds())).Err()
+		if err != nil {
+			logger.L().Warn(cbCtx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transitionID", transitionID), zap.Error(err))
 		}
 
 		// Notify subscribers that the transition is complete so waitForTransition
@@ -248,47 +233,72 @@ func (s *Storage) restoreToRunning(ctx context.Context, teamID uuid.UUID, sandbo
 	return err
 }
 
-// RestoreRunning undoes StartRemoving for a sandbox still in fromState: state
-// back to Running and EndTime back to the expiry StartRemoving clamped, read
-// from the expiration index, which StartRemoving leaves untouched. A positive
-// retryAfter records when the eviction sweep may take the sandbox again and
-// moves the sandbox's index score there, so a held sandbox leaves the expired
-// scan window instead of occupying a slot on every tick.
-func (s *Storage) RestoreRunning(ctx context.Context, teamID uuid.UUID, sandboxID string, fromState sandboxtypes.State, retryAfter time.Duration) (sandboxtypes.Sandbox, error) {
-	restored, err := s.Update(ctx, teamID, sandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
-		if sbx.State != fromState {
-			return sbx, fmt.Errorf("sandbox is in state %q, not %q", sbx.State, fromState)
+func (s *Storage) RestoreRunning(ctx context.Context, transition sandboxtypes.StateTransition, retryAfter time.Duration) (sandboxtypes.Sandbox, error) {
+	if transition.OriginalEndTime == nil {
+		return sandboxtypes.Sandbox{}, errors.New("transition has no rollback expiry")
+	}
+	sbx := transition.Sandbox
+	teamID, sandboxID := sbx.TeamID, sbx.SandboxID
+	key := getSandboxKey(teamID.String(), sandboxID)
+	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
+	if err != nil {
+		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to obtain restore lock: %w", err)
+	}
+	defer func() {
+		if err := lock.Release(context.WithoutCancel(ctx)); err != nil {
+			logger.L().Error(ctx, "Failed to release restore lock", zap.Error(err))
 		}
+	}()
 
-		// A missing member (the state the index healer repairs) fails the
-		// restore on purpose: the caller falls back to today's removal rather
-		// than restoring the record with an invented expiry.
-		score, err := s.redisClient.ZScore(ctx, globalExpirationSet, sandboxExpirationMember(sbx)).Result()
-		if err != nil {
-			return sbx, fmt.Errorf("failed to read the sandbox expiry from the expiration index: %w", err)
-		}
+	data, err := s.redisClient.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return sandboxtypes.Sandbox{}, sandboxtypes.ErrNotFound
+	}
+	if err != nil {
+		return sandboxtypes.Sandbox{}, err
+	}
+	var restored sandboxtypes.Sandbox
+	if err := json.Unmarshal(data, &restored); err != nil {
+		return sandboxtypes.Sandbox{}, err
+	}
+	if restored.ExecutionID != sbx.ExecutionID {
+		return sandboxtypes.Sandbox{}, sandboxtypes.ErrExecutionMismatch
+	}
+	if restored.State != sbx.State {
+		return sandboxtypes.Sandbox{}, fmt.Errorf("sandbox is in state %q, not %q", restored.State, sbx.State)
+	}
 
-		sbx.State = sandboxtypes.StateRunning
-		sbx.EndTime = time.UnixMilli(int64(score))
-		if retryAfter > 0 {
-			now := time.Now()
-			sbx.RefusedSince = sbx.RefusalEpisodeStart(now)
-			sbx.RefusedUntil = now.Add(retryAfter)
-		}
+	restored.State = sandboxtypes.StateRunning
+	restored.EndTime = *transition.OriginalEndTime
+	if retryAfter > 0 {
+		now := time.Now()
+		restored.RefusedSince = restored.RefusalEpisodeStart(now)
+		restored.RefusedUntil = now.Add(retryAfter)
+	}
+	updated, err := json.Marshal(restored)
+	if err != nil {
+		return sandboxtypes.Sandbox{}, err
+	}
+	written, err := restoreSandboxScript.Run(ctx, s.redisClient, []string{key}, data, updated).Int64()
+	if err != nil {
+		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to restore sandbox: %w", err)
+	}
+	if written == 0 {
+		return sandboxtypes.Sandbox{}, sandboxtypes.ErrRestoreConflict
+	}
 
-		return sbx, nil
-	})
 	// The retry window only ever moves a member forward: an expired sandbox
 	// leaves the sweep's window until the retry, a live one keeps its expiry.
-	if err != nil || !restored.RefusedUntil.After(restored.EndTime) {
-		return restored, err
+	if !restored.RefusedUntil.After(restored.EndTime) {
+		return restored, nil
 	}
 
 	if err := s.redisClient.ZAdd(ctx, globalExpirationSet, redis.Z{
 		Score:  float64(restored.RefusedUntil.UnixMilli()),
 		Member: sandboxExpirationMember(restored),
 	}).Err(); err != nil {
-		return restored, fmt.Errorf("failed to move the sandbox in the expiration index to its retry window: %w", err)
+		// RefusedUntil on the committed record still holds eviction until the retry.
+		logger.L().Warn(ctx, "Failed to index restored sandbox retry window", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
 
 	return restored, nil
@@ -396,8 +406,9 @@ func (s *Storage) handleExistingTransition(
 	sbx sandboxtypes.Sandbox,
 	opts sandboxtypes.RemoveOpts,
 	transactionID string,
-) (sandboxtypes.Sandbox, bool, func(context.Context, error), error) {
+) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
 	newState := opts.Action.TargetState
+	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
 	if sbx.State == newState {
 		// Same target state - wait for completion and return alreadyDone=true.
@@ -413,23 +424,23 @@ func (s *Storage) handleExistingTransition(
 		if errors.Is(err, sandboxtypes.ErrTransitionRestored) {
 			// The pause the joiner rode was refused and the sandbox is running
 			// again: the joiner gets the same retryable refusal, not a success.
-			return sbx, false, nil, sandboxtypes.PauseQueueExhaustedError{}
+			return transition, false, nil, sandboxtypes.PauseQueueExhaustedError{}
 		}
 		if err != nil {
-			return sbx, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
+			return transition, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
 		}
 
-		return sbx, true, func(context.Context, error) {}, nil
+		return transition, true, func(context.Context, error) {}, nil
 	}
 
 	// Different state - validate transition and wait
 	if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
-		return sbx, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 	}
 
 	err := s.waitForTransition(ctx, teamID, sbx.SandboxID, transactionID)
 	if err != nil && !errors.Is(err, sandboxtypes.ErrTransitionRestored) {
-		return sbx, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
+		return transition, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
 	}
 
 	// Retry the caller's removal, in full, now the way is clear. Re-reading the

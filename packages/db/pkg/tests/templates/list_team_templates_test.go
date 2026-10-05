@@ -12,22 +12,6 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
-// setupDashboardSchema creates the env_defaults table from the dashboard
-// migrations (packages/db/pkg/dashboard/migrations), which testutils does not
-// apply: goose tracks all migrations in one version table and the dashboard
-// versions sort below the main ones, so a second "up" run would skip them.
-func setupDashboardSchema(t *testing.T, ctx context.Context, db *testutils.Database) {
-	t.Helper()
-
-	err := db.SqlcClient.TestsRawSQL(ctx,
-		`CREATE TABLE IF NOT EXISTS public.env_defaults (
-			env_id TEXT PRIMARY KEY REFERENCES public.envs(id),
-			description TEXT
-		)`,
-	)
-	require.NoError(t, err, "Failed to create env_defaults table")
-}
-
 // createReadyBuildWithAssignment creates a ready build with the given
 // resources and a default-tag assignment created at the given offset from now.
 func createReadyBuildWithAssignment(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, vcpu, ramMb int64, assignmentAge time.Duration) uuid.UUID {
@@ -59,7 +43,6 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	setupDashboardSchema(t, ctx, db)
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
@@ -127,7 +110,6 @@ func TestListTeamTemplatesByCreatedAt_SortsAndPaginates(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	setupDashboardSchema(t, ctx, db)
 
 	teamID := testutils.CreateTestTeam(t, db)
 
@@ -177,7 +159,6 @@ func TestListTeamTemplates_BuildDisplayFields(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	setupDashboardSchema(t, ctx, db)
 
 	teamID := testutils.CreateTestTeam(t, db)
 

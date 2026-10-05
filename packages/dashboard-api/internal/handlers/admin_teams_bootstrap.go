@@ -1,43 +1,21 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
-	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
+
+// retiredBootstrapMessage tells the remaining caller why the route no longer
+// works. The route stays registered so the contract is still documented while
+// the Stripe projects coordinator migrates.
+const retiredBootstrapMessage = "Team bootstrap is retired; create teams through the workspace API"
 
 func (s *APIStore) PostAdminTeamsBootstrap(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	body, err := ginutils.ParseBody[api.AdminTeamBootstrapRequest](ctx, c)
-	if err != nil {
-		s.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
-
-		return
-	}
-
-	name := strings.TrimSpace(body.Name)
-	email := string(body.Email)
-	if name == "" || email == "" {
-		s.sendAPIStoreError(c, http.StatusBadRequest, "Team name and email are required")
-
-		return
-	}
-
-	team, err := s.provisioningService.BootstrapTeam(ctx, name, email)
-	if err != nil {
-		s.sendProvisioningError(ctx, c, "provision team", err)
-
-		return
-	}
-
-	c.JSON(http.StatusOK, api.TeamResolveResponse{
-		Id:   team.ID,
-		Slug: team.Slug,
-	})
+	logger.L().Error(ctx, "rejected retired admin team bootstrap request")
+	s.sendAPIStoreError(c, http.StatusInternalServerError, retiredBootstrapMessage)
 }

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/httpserver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/proxy/pool"
 	"github.com/e2b-dev/infra/packages/shared/pkg/proxy/tracking"
+	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 
 // ConnectionLimitConfig bundles connection limiting and associated metric callbacks.
@@ -33,6 +35,7 @@ type Proxy struct {
 	http.Server
 
 	pool                      *pool.ProxyPool
+	serverConnections         *smap.Map[*tracking.Connection]
 	currentServerConnsCounter atomic.Int64
 }
 
@@ -69,7 +72,8 @@ func New(
 			ReadHeaderTimeout: 0,
 			Handler:           handler(p, getDestination, connLimitConfig),
 		},
-		pool: p,
+		pool:              p,
+		serverConnections: smap.New[*tracking.Connection](),
 	}
 	httpserver.ConfigureH2C(&proxy.Server)
 
@@ -109,5 +113,35 @@ func (p *Proxy) ListenAndServe(ctx context.Context) error {
 }
 
 func (p *Proxy) Serve(l net.Listener) error {
-	return p.Server.Serve(tracking.NewListener(l, &p.currentServerConnsCounter))
+	return p.Server.Serve(tracking.NewListener(l, &p.currentServerConnsCounter, p.serverConnections))
+}
+
+func (p *Proxy) Shutdown(ctx context.Context) error {
+	if err := p.Server.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	// net/http does not wait for hijacked H2C and upgraded connections.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for p.CurrentServerConnections() != 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+
+	return nil
+}
+
+func (p *Proxy) Close() error {
+	err := p.Server.Close()
+	for _, conn := range p.serverConnections.Items() {
+		if closeErr := conn.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
+	}
+
+	return err
 }

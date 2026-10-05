@@ -85,9 +85,46 @@ func TestStat(t *testing.T) {
 			if tt.path == linkedFile {
 				require.NotNil(t, resp.Msg.GetEntry().GetSymlinkTarget())
 				assert.Equal(t, testFile, resp.Msg.GetEntry().GetSymlinkTarget())
+				assert.True(t, resp.Msg.GetEntry().GetIsSymlink())
 			} else {
 				assert.Empty(t, resp.Msg.GetEntry().GetSymlinkTarget())
+				assert.False(t, resp.Msg.GetEntry().GetIsSymlink())
 			}
+		})
+	}
+}
+
+func TestStatSymlinkReportsTargetType(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	linkToDir := filepath.Join(root, "link-dir")
+	require.NoError(t, os.Symlink(t.TempDir(), linkToDir))
+	brokenLink := filepath.Join(root, "broken")
+	require.NoError(t, os.Symlink(filepath.Join(root, "missing"), brokenLink))
+
+	u, err := user.Current()
+	require.NoError(t, err)
+
+	svc := mockService()
+
+	tests := []struct {
+		name     string
+		path     string
+		wantType filesystem.FileType
+	}{
+		{name: "symlink to directory", path: linkToDir, wantType: filesystem.FileType_FILE_TYPE_DIRECTORY},
+		{name: "broken symlink", path: brokenLink, wantType: filesystem.FileType_FILE_TYPE_UNSPECIFIED},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			resp, err := svc.Stat(authn.SetInfo(t.Context(), u), connect.NewRequest(&filesystem.StatRequest{Path: tt.path}))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantType, resp.Msg.GetEntry().GetType())
+			assert.True(t, resp.Msg.GetEntry().GetIsSymlink())
 		})
 	}
 }

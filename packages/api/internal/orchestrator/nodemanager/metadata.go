@@ -7,7 +7,6 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
-	"github.com/e2b-dev/infra/packages/shared/pkg/edge"
 	grpcshared "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
@@ -36,51 +35,9 @@ func (n *Node) Metadata() NodeMetadata {
 }
 
 func (n *Node) GetSandboxCreateCtx(ctx context.Context, req *orchestrator.SandboxCreateRequest) (*clusters.GRPCClient, context.Context) {
-	md := metadata.MD{}
-
-	if n.IsClusterNode() {
-		md = edge.SerializeSandboxCatalogCreateEvent(
-			edge.SandboxCatalogCreateEvent{
-				SandboxID:               req.GetSandbox().GetSandboxId(),
-				SandboxMaxLengthInHours: req.GetSandbox().GetMaxSandboxLength(),
-				SandboxStartTime:        req.GetStartTime().AsTime(),
-
-				ExecutionID:    req.GetSandbox().GetExecutionId(),
-				OrchestratorID: n.Metadata().ServiceInstanceID,
-			},
-		)
-	}
-
 	// Pass snapshot (is_resume) via metadata so the server-side stats handler
 	// can include it in otelgrpc metric attributes during TagRPC.
-	md.Set(grpcshared.IsResumeMetadataKey, strconv.FormatBool(req.GetSandbox().GetSnapshot()))
+	ctx = metadata.AppendToOutgoingContext(ctx, grpcshared.IsResumeMetadataKey, strconv.FormatBool(req.GetSandbox().GetSnapshot()))
 
-	// Merge medata from client (auth, routing with service instance id) and event metadata.
-	return n.client, appendMetadataCtx(ctx, md)
-}
-
-func (n *Node) GetSandboxDeleteCtx(ctx context.Context, sandboxID string, executionID string, restoreOnRefusal bool) (*clusters.GRPCClient, context.Context) {
-	md := metadata.MD{}
-
-	if n.IsClusterNode() {
-		md = edge.SerializeSandboxCatalogDeleteEvent(
-			edge.SandboxCatalogDeleteEvent{
-				SandboxID:        sandboxID,
-				ExecutionID:      executionID,
-				RestoreOnRefusal: restoreOnRefusal,
-			},
-		)
-	}
-
-	// Merge medata from client (auth, routing with service instance id) and event metadata.
-	return n.client, appendMetadataCtx(ctx, md)
-}
-
-func appendMetadataCtx(ctx context.Context, md metadata.MD) context.Context {
-	args := make([]string, 0, len(md)*2)
-	for k, v := range md {
-		args = append(args, k, v[0])
-	}
-
-	return metadata.AppendToOutgoingContext(ctx, args...)
+	return n.client, ctx
 }

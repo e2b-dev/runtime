@@ -27,11 +27,23 @@ func main() {
 }
 
 func applyTestFlagOverrides() {
-	if mode := os.Getenv("TESTS_MEMFILE_DIFF_DEDUP_MODE"); mode != "" {
+	// "default" (the harness input default) means the flag's own fallback —
+	// dedup disabled — not an override that quietly enables it modeless.
+	if mode := os.Getenv("TESTS_MEMFILE_DIFF_DEDUP_MODE"); mode != "" && mode != "default" {
+		// direct_io also engages a representative fetch-defrag budget so the
+		// promotion/defrag path executes in CI; production tunes the numbers
+		// in the flag, the shape is what matters here.
+		defrag := 0
+		if mode == "direct_io" {
+			defrag = 1
+		}
 		featureflags.OverrideJSONFlag(featureflags.MemfileDiffDedupFlag, ldvalue.FromJSONMarshal(map[string]any{
-			"enabled":    true,
-			"bestEffort": mode == "best_effort",
-			"directIO":   mode == "direct_io",
+			"enabled":                        true,
+			"bestEffort":                     mode == "best_effort",
+			"directIO":                       mode == "direct_io",
+			"maxFetchWindowsPerBlock":        2 * defrag,
+			"maxPromotedParentPagesPerBlock": 64 * defrag,
+			"maxPagesPerPromotedFrame":       8 * defrag,
 		}))
 	}
 	if os.Getenv("TESTS_DISABLE_MEMFD") == "true" {

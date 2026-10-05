@@ -26,7 +26,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/filesystem"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -76,8 +75,7 @@ func wrapImagePullError(ctx context.Context, err error, imageRef string) error {
 	logger.L().Warn(ctx, "failed to pull image", zap.String("image_ref", imageRef), zap.Error(err))
 
 	// Check for transport errors with specific error codes from the registry API
-	var transportErr *transport.Error
-	if errors.As(err, &transportErr) {
+	if transportErr, ok := errors.AsType[*transport.Error](err); ok {
 		for _, e := range transportErr.Errors {
 			switch e.Code {
 			case transport.ManifestUnknownErrorCode:
@@ -157,29 +155,6 @@ func GetPublicImage(ctx context.Context, dockerhubRepository dockerhub.RemoteRep
 	return img, nil
 }
 
-func GetImage(ctx context.Context, artifactRegistry artifactsregistry.ArtifactsRegistry, templateId string, buildId string) (containerregistry.Image, error) {
-	childCtx, childSpan := tracer.Start(ctx, "pull-docker-image")
-	defer childSpan.End()
-
-	platform := DefaultPlatform()
-
-	img, err := artifactRegistry.GetImage(childCtx, templateId, buildId, platform)
-	if err != nil {
-		logger.L().Warn(childCtx, "failed to pull build image", logger.WithTemplateID(templateId), logger.WithBuildID(buildId), zap.Error(err))
-
-		return nil, errors.New("failed to pull build image from registry")
-	}
-
-	telemetry.ReportEvent(childCtx, "pulled image")
-
-	err = verifyImagePlatform(childCtx, img, platform, fmt.Sprintf("%s/%s", templateId, buildId))
-	if err != nil {
-		return nil, err
-	}
-
-	return img, nil
-}
-
 func GetImageSize(img containerregistry.Image) (int64, error) {
 	imageSize := int64(0)
 
@@ -199,11 +174,11 @@ func GetImageSize(img containerregistry.Image) (int64, error) {
 	return imageSize, nil
 }
 
-func ToExt4(ctx context.Context, logger logger.Logger, img containerregistry.Image, rootfsPath string, maxSize int64, blockSize int64, mkfsOpts filesystem.MakeOptions) (int64, error) {
+func ToExt4(ctx context.Context, logger logger.Logger, img containerregistry.Image, rootfsPath string, maxSize int64, blockSize int64) (int64, error) {
 	ctx, childSpan := tracer.Start(ctx, "oci-to-ext4")
 	defer childSpan.End()
 
-	err := filesystem.Make(ctx, rootfsPath, units.BytesToMB(maxSize), blockSize, mkfsOpts)
+	err := filesystem.Make(ctx, rootfsPath, units.BytesToMB(maxSize), blockSize)
 	if err != nil {
 		return 0, fmt.Errorf("error creating ext4 file: %w", err)
 	}
@@ -238,7 +213,8 @@ func ExtractToExt4(ctx context.Context, l logger.Logger, img containerregistry.I
 	ctx, childSpan := tracer.Start(ctx, "extract-to-ext4")
 	defer childSpan.End()
 
-	tmpMount, err := os.MkdirTemp("", "ext4-mount")
+	tempRoot := filepath.Dir(rootfsPath)
+	tmpMount, err := os.MkdirTemp(tempRoot, ".ext4-mount-")
 	if err != nil {
 		return fmt.Errorf("error creating temporary mount point: %w", err)
 	}
@@ -263,7 +239,7 @@ func ExtractToExt4(ctx context.Context, l logger.Logger, img containerregistry.I
 		zap.String("tmp_mount", tmpMount),
 	)
 
-	err = unpackRootfs(ctx, l, img, tmpMount, maxSize)
+	err = unpackRootfs(ctx, l, img, tmpMount, tempRoot, maxSize)
 	if err != nil {
 		return fmt.Errorf("error extracting tar to directory: %w", err)
 	}
@@ -291,16 +267,18 @@ func ParseEnvs(envs []string) map[string]string {
 	return envMap
 }
 
-func unpackRootfs(ctx context.Context, l logger.Logger, srcImage containerregistry.Image, destDir string, maxSize int64) (err error) {
+func unpackRootfs(ctx context.Context, l logger.Logger, srcImage containerregistry.Image, destDir string, tempRoot string, maxSize int64) (err error) {
 	ctx, childSpan := tracer.Start(ctx, "unpack-rootfs")
 	defer childSpan.End()
 
-	ociPath, err := os.MkdirTemp("", "oci-image")
+	ociPath, err := os.MkdirTemp(tempRoot, ".oci-image-")
 	if err != nil {
 		return fmt.Errorf("while creating temporary file for squashed image: %w", err)
 	}
 	defer func() {
-		go os.RemoveAll(ociPath)
+		if removeErr := os.RemoveAll(ociPath); removeErr != nil {
+			logger.L().Error(ctx, "error removing temporary OCI image", zap.Error(removeErr))
+		}
 	}()
 
 	// Create export of layers in the temporary directory
@@ -310,12 +288,14 @@ func unpackRootfs(ctx context.Context, l logger.Logger, srcImage containerregist
 	}
 
 	// Mount the overlay filesystem with the extracted layers
-	mountPath, err := os.MkdirTemp("", "overlayfs-mount")
+	mountPath, err := os.MkdirTemp(tempRoot, ".overlayfs-mount-")
 	if err != nil {
 		return fmt.Errorf("while creating temporary file for squashed image: %w", err)
 	}
 	defer func() {
-		go os.RemoveAll(mountPath)
+		if removeErr := os.RemoveAll(mountPath); removeErr != nil {
+			logger.L().Error(ctx, "error removing temporary overlayfs mount point", zap.Error(removeErr))
+		}
 	}()
 
 	err = filesystem.MountOverlayFS(ctx, layers, mountPath)

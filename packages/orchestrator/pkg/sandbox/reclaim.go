@@ -91,7 +91,8 @@ func (s *Sandbox) buildReclaimScript(cfg featureflags.ReclaimConfig) (string, ti
 
 // bestEffortReclaim optionally freezes user cgroups, then runs the
 // fstrim/sync/drop_caches/compact_memory chain via envd before pause.
-func (s *Sandbox) bestEffortReclaim(ctx context.Context) {
+// skipEnvdHeapCollapse leaves envd's heap alone when no memfile is exported.
+func (s *Sandbox) bestEffortReclaim(ctx context.Context, skipEnvdHeapCollapse bool) {
 	ctx, span := tracer.Start(ctx, "envd-reclaim")
 	defer span.End()
 
@@ -106,7 +107,7 @@ func (s *Sandbox) bestEffortReclaim(ctx context.Context) {
 		s.bestEffortFreeze(ctx)
 	}
 
-	if s.featureFlags.BoolFlag(ctx, featureflags.CollapseEnvdHeapFlag) {
+	if !skipEnvdHeapCollapse && s.featureFlags.BoolFlag(ctx, featureflags.CollapseEnvdHeapFlag) {
 		s.bestEffortCollapse(ctx)
 	}
 
@@ -181,7 +182,13 @@ func (s *Sandbox) guestSyncTimeout(ctx context.Context) time.Duration {
 // >= 0.6.6, or via the exec API for < 0.6.6) — i.e. the captured rootfs is
 // crash-consistent; frozen=false means it fell back to a plain sync. The caller
 // persists this into the snapshot metadata (fs_quiesced).
-func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup) (frozen bool, e error) {
+// thawOrLose, while true, makes the registered thaw treat a rootfs that stays
+// frozen as a lost sandbox: the VM is resumed in place on the error path and
+// a frozen rootfs would hang it. Pause clears it once the success path owns
+// the thaw, because the cleanup chain is handed back with the snapshot and
+// can run again later; nil (a destroy-path pause discards the VM with its
+// frozen state) keeps the thaw best-effort.
+func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup, thawOrLose *bool) (frozen bool, e error) {
 	supportsFsFreeze := s.envdSupportsFsFreeze(ctx)
 	// Use guestSyncTimeout here, as fsfreeze also syncs the disk
 	timeout := s.guestSyncTimeout(ctx)
@@ -217,14 +224,26 @@ func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup) 
 		// filesystem frozen; on success the VM is stopped during rootfs
 		// export, so the frozen state is discarded with it and the thaw is a
 		// harmless no-op.
+		froze := false
 		cleanup.Add(ctx, func(ctx context.Context) error {
-			s.bestEffortFsthaw(ctx)
+			if !froze || thawOrLose == nil || !*thawOrLose || s.GetStopReason() == StopReasonKilled {
+				// Aborted freeze (state unknown), a VM about to be discarded, one
+				// already torn down by the resume cleanup, or a chain re-run after
+				// the success path thawed: best effort.
+				s.bestEffortFsthaw(ctx)
 
-			return nil
+				return nil
+			}
+			// Same order as the success path: the workload's cgroups first, or a
+			// thaw that runs inside the guest would wait behind them.
+			s.bestEffortUnfreeze(ctx)
+
+			return s.thawRootfsOrLose(ctx)
 		})
 		if err := s.callEnvdFsfreeze(ctx, timeout); err != nil {
 			return false, fmt.Errorf("fsfreeze before filesystem-only pause: %w", err)
 		}
+		froze = true
 
 		return true, nil
 	}
@@ -245,10 +264,16 @@ func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup) 
 		} else if hasFsfreeze {
 			// Register the rollback thaw before freezing so an aborted freeze can't
 			// leave the live VM frozen; thawing a non-frozen fs is a harmless no-op.
+			froze := false
 			cleanup.Add(ctx, func(ctx context.Context) error {
-				s.bestEffortFsthawViaExec(ctx)
+				if !froze || thawOrLose == nil || !*thawOrLose || s.GetStopReason() == StopReasonKilled {
+					s.bestEffortFsthawViaExec(ctx)
 
-				return nil
+					return nil
+				}
+				s.bestEffortUnfreeze(ctx)
+
+				return s.thawRootfsOrLose(ctx)
 			})
 			// Set method before the freeze — as the native path sets "fsfreeze"
 			// before its call — so the deferred metric attributes an attempted but
@@ -263,6 +288,7 @@ func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup) 
 				return false, fmt.Errorf("fsfreeze via exec before filesystem-only pause: %w", err)
 			}
 
+			froze = true
 			s.log().Info(ctx, "froze guest rootfs via envd exec API before filesystem-only pause")
 
 			return true, nil
@@ -370,17 +396,76 @@ func (s *Sandbox) guestFsfreezeViaExec(ctx context.Context, timeout time.Duratio
 // return rather than hang, but a timed-out thaw leaves the VM frozen and the
 // sandbox should then be torn down. The pause success path never thaws.
 func (s *Sandbox) bestEffortFsthawViaExec(ctx context.Context) {
+	if err := s.fsthawViaExec(ctx); err != nil {
+		s.log().Warn(ctx, "fsthaw via exec failed", zap.Error(err))
+	}
+}
+
+func (s *Sandbox) fsthawViaExec(ctx context.Context) error {
 	exitCode, err := s.runGuestShellCommand(context.WithoutCancel(ctx), fsthawViaExecTimeout,
 		"command -v fsfreeze >/dev/null 2>&1 && fsfreeze -u /")
 	if err != nil {
-		s.log().Warn(ctx, "fsthaw via exec failed", zap.Error(err))
-
-		return
+		return err
 	}
 	if exitCode != 0 {
-		s.log().Warn(ctx, "fsthaw via exec exited non-zero",
-			zap.Int32("exit_code", exitCode))
+		return fmt.Errorf("fsfreeze -u exited %d", exitCode)
 	}
+
+	return nil
+}
+
+const (
+	fsthawAttempts     = 3
+	fsthawRetryBackoff = 250 * time.Millisecond
+)
+
+// thawRootfs undoes a successful pre-pause freeze on a VM that keeps running:
+// one call and two retries with doubling back-off, native /fsthaw or the exec
+// fallback matching how the rootfs was frozen.
+func (s *Sandbox) thawRootfs(ctx context.Context) error {
+	ctx = context.WithoutCancel(ctx)
+	native := s.envdSupportsFsFreeze(ctx)
+	delay := fsthawRetryBackoff
+	var err error
+	for attempt := 1; attempt <= fsthawAttempts; attempt++ {
+		start := time.Now()
+		if native {
+			err = s.callEnvdFsthaw(ctx, s.guestSyncTimeout(ctx))
+		} else {
+			err = s.fsthawViaExec(ctx)
+		}
+		envdFsthawDurationHistogram.Record(ctx, time.Since(start).Milliseconds(),
+			metric.WithAttributes(attribute.Bool("success", err == nil), attribute.Int("attempt", attempt)))
+		if err == nil {
+			return nil
+		}
+		s.log().Warn(ctx, "rootfs thaw failed", zap.Int("attempt", attempt), zap.Error(err))
+		if attempt < fsthawAttempts {
+			time.Sleep(delay)
+			delay *= 2
+		}
+	}
+
+	return err
+}
+
+// ErrRootfsThawFailed tags an ErrSandboxLost whose lethal step was the
+// rootfs thaw, not the resume: the VM came back, its rootfs stayed frozen. The
+// RPC layer reads it to name the kill correctly.
+var ErrRootfsThawFailed = errors.New("rootfs thaw failed")
+
+// thawRootfsOrLose treats a rootfs that stays frozen as a lost sandbox: the
+// guest runs but cannot write, and its health check, a read, keeps passing.
+// Same exit as a failed in-place resume, so the API reaps the record.
+func (s *Sandbox) thawRootfsOrLose(ctx context.Context) error {
+	err := s.thawRootfs(ctx)
+	if err == nil {
+		return nil
+	}
+	s.SetStopReason(StopReasonKilled)
+
+	return fmt.Errorf("rootfs thaw failed after in-place resume, sandbox torn down: %w",
+		errors.Join(ErrSandboxLost, ErrRootfsThawFailed, err, s.Close(context.WithoutCancel(ctx))))
 }
 
 // envdSupportsCgroupFreeze reports whether the sandbox's envd exposes the

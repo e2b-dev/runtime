@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- this is undocumented but needed to enable waiting for for shutdown for a custom amount of time  -->
+    <!-- see https://github.com/ClickHouse/ClickHouse/pull/77515 for more details  -->
+    <shutdown_wait_unfinished>60</shutdown_wait_unfinished>
+    <shutdown_wait_unfinished_queries>1</shutdown_wait_unfinished_queries>
+
+    <!-- Use up 80% of available RAM to be on the safer side, default is 90% -->
+    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+
+    <default_replica_path>/var/lib/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>
+
+    <remote_servers replace="true">
+        <cluster>
+            <shard>
+                <replica>
+                    <host>localhost</host>
+                    <port>9000</port>
+                    <user>clickhouse</user>
+                    <password>clickhouse</password>
+                </replica>
+            </shard>
+        </cluster>
+    </remote_servers>
+
+    <listen_host>0.0.0.0</listen_host>
+
+    <tcp_port>9000</tcp_port>
+</clickhouse>

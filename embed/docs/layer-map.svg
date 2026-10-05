@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1062 870" width="1062" height="870" role="img" aria-labelledby="title desc">
+  <title id="title">E2B Embed layer map</title>
+  <desc id="desc">Four bands, top to bottom: source files in the repo, the Dockerfiles that copy them, the thirteen images (three built here, ten pulled), and the twenty compose services with the depends_on gates drawn (the seed → base-template, preflight → api-secrets and dashboard → ready gates are omitted for space). The stripe on each service names its image.</desc>
+  <style>
+    svg {
+      --bg: #F7F8FA; --surface: #FFFFFF; --ink: #151A21; --mid: #5B6470; --rule: #C9CED6;
+      --accent: #D9521B; --c-node: #2F6FBF; --c-seed: #2F8F5B;
+      color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --bg: #12161C; --surface: #1A2029; --ink: #E6E9EE; --mid: #98A2AE; --rule: #2C3541;
+        --accent: #F27A45; --c-node: #6FA3E8; --c-seed: #4CBF7E;
+      }
+    }
+    .canvas { fill: var(--bg); }
+    .band { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--mid); }
+    .sep { stroke: var(--rule); stroke-dasharray: 3 5; stroke-width: 1; }
+    .node { fill: var(--surface); stroke: currentColor; stroke-width: 1; }
+    .node-ext { stroke-dasharray: 4 3; }
+    .node-accent { stroke: var(--accent); stroke-width: 1.75; }
+    .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9.5px; font-weight: 500; fill: currentColor; }
+    .name-lg { font-size: 11px; }
+    .name-sm { font-size: 9px; }
+    .sub { font-size: 8.5px; font-weight: 500; fill: var(--mid); }
+    .sub-xs { font-size: 8px; }
+    .edge { stroke: currentColor; stroke-width: 1.1; fill: none; }
+    .arrow { fill: currentColor; }
+    .lbl { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 8.5px; fill: var(--mid); }
+    .bake { fill: none; stroke: var(--mid); stroke-dasharray: 4 4; stroke-width: 1; }
+    .note { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-size: 9px; fill: var(--mid); }
+    .st-tools { fill: var(--accent); }
+    .st-node { fill: var(--c-node); }
+    .st-seed { fill: var(--c-seed); }
+    .st-e2b { fill: currentColor; }
+    .st-hub { fill: var(--mid); }
+    .legend { font-size: 9px; font-weight: 500; fill: var(--mid); }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1062" height="870" class="canvas"/>
+
+  <!-- band 1: source files -->
+  <text x="16" y="22" class="band">1 · Source files in the repo</text>
+
+  <rect x="20" y="44" width="106" height="44" class="node"/>
+  <text x="73" y="62" class="name" text-anchor="middle">preflight.sh</text>
+  <text x="73" y="78" class="sub" text-anchor="middle">scripts/</text>
+
+  <rect x="136" y="44" width="106" height="44" class="node"/>
+  <text x="189" y="62" class="name" text-anchor="middle">host-setup.sh</text>
+  <text x="189" y="78" class="sub" text-anchor="middle">scripts/</text>
+
+  <rect x="252" y="44" width="106" height="44" class="node"/>
+  <text x="305" y="62" class="name" text-anchor="middle">fetch-artifacts.sh</text>
+  <text x="305" y="78" class="sub" text-anchor="middle">scripts/</text>
+
+  <rect x="368" y="44" width="106" height="44" class="node"/>
+  <text x="421" y="58" class="name" text-anchor="middle">orchestrator-</text>
+  <text x="421" y="70" class="name" text-anchor="middle">launch.sh</text>
+  <text x="421" y="82" class="sub sub-xs" text-anchor="middle">scripts/</text>
+
+  <rect x="484" y="44" width="106" height="44" class="node"/>
+  <text x="537" y="62" class="name" text-anchor="middle">host-teardown.sh</text>
+  <text x="537" y="78" class="sub" text-anchor="middle">scripts/</text>
+
+  <rect x="600" y="44" width="106" height="44" class="node"/>
+  <text x="653" y="58" class="name" text-anchor="middle">build-base-</text>
+  <text x="653" y="70" class="name" text-anchor="middle">template.mjs</text>
+  <text x="653" y="82" class="sub sub-xs" text-anchor="middle">scripts/node/</text>
+
+  <rect x="716" y="44" width="106" height="44" class="node"/>
+  <text x="769" y="58" class="name" text-anchor="middle">smoke.mjs</text>
+  <text x="769" y="70" class="name" text-anchor="middle">package.json</text>
+  <text x="769" y="82" class="sub sub-xs" text-anchor="middle">scripts/node/</text>
+
+  <rect x="832" y="44" width="106" height="44" class="node node-ext"/>
+  <text x="885" y="58" class="name" text-anchor="middle">runtime mirror</text>
+  <text x="885" y="70" class="sub" text-anchor="middle">shared, db, local-dev</text>
+  <text x="885" y="82" class="sub sub-xs" text-anchor="middle">external, pinned commit</text>
+
+  <line x1="16" y1="108" x2="1046" y2="108" class="sep"/>
+
+  <!-- band 2: build definitions -->
+  <text x="16" y="124" class="band">2 · Build definitions</text>
+  <rect x="215" y="130" width="741" height="56" class="bake"/>
+
+  <rect x="225" y="138" width="160" height="40" class="node"/>
+  <text x="305" y="154" class="name name-lg" text-anchor="middle">tools.Dockerfile</text>
+  <text x="305" y="168" class="sub" text-anchor="middle">docker/ · COPY 5 host scripts → /opt/e2b</text>
+
+  <rect x="631" y="138" width="160" height="40" class="node"/>
+  <text x="711" y="154" class="name name-lg" text-anchor="middle">node-e2b.Dockerfile</text>
+  <text x="711" y="168" class="sub" text-anchor="middle">docker/ · npm ci e2b 2.46.1 · 2 .mjs</text>
+
+  <rect x="800" y="138" width="152" height="40" class="node"/>
+  <text x="876" y="154" class="name name-lg" text-anchor="middle">seed (inline)</text>
+  <text x="876" y="168" class="sub" text-anchor="middle">docker-bake.hcl · go build</text>
+
+  <text x="225" y="200" class="note">docker-bake.hcl builds all three: make images locally under the pinned names, and the maintainers publish those same images</text>
+
+  <!-- band 1 -> band 2 edges -->
+  <line x1="73" y1="88" x2="245" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="189" y1="88" x2="275" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="305" y1="88" x2="305" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="421" y1="88" x2="335" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="537" y1="88" x2="365" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="653" y1="88" x2="690" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="769" y1="88" x2="732" y2="136" class="edge" marker-end="url(#arr)"/>
+  <line x1="885" y1="88" x2="876" y2="136" class="edge" marker-end="url(#arr)"/>
+
+  <line x1="16" y1="210" x2="1046" y2="210" class="sep"/>
+
+  <!-- band 3: images -->
+  <text x="16" y="224" class="band">3 · Images, pinned in .env</text>
+
+  <rect x="66" y="238" width="68" height="50" class="node"/><rect x="66" y="238" width="4" height="50" class="st-hub"/>
+  <text x="102" y="257" class="name name-sm" text-anchor="middle">postgres</text>
+  <text x="102" y="279" class="sub sub-xs" text-anchor="middle">Docker Hub</text>
+
+  <rect x="142" y="238" width="68" height="50" class="node"/><rect x="142" y="238" width="4" height="50" class="st-hub"/>
+  <text x="178" y="257" class="name name-sm" text-anchor="middle">redis</text>
+  <text x="178" y="279" class="sub sub-xs" text-anchor="middle">Docker Hub</text>
+
+  <rect x="218" y="238" width="68" height="50" class="node"/><rect x="218" y="238" width="4" height="50" class="st-hub"/>
+  <text x="254" y="257" class="name name-sm" text-anchor="middle">clickhouse</text>
+  <text x="254" y="279" class="sub sub-xs" text-anchor="middle">Docker Hub</text>
+
+  <rect x="294" y="238" width="68" height="50" class="node"/><rect x="294" y="238" width="4" height="50" class="st-tools"/>
+  <text x="330" y="257" class="name name-sm" text-anchor="middle">tools</text>
+  <text x="330" y="279" class="sub sub-xs" text-anchor="middle">built here</text>
+
+
+  <rect x="370" y="238" width="68" height="50" class="node"/><rect x="370" y="238" width="4" height="50" class="st-hub"/>
+  <text x="406" y="257" class="name name-sm" text-anchor="middle">vector</text>
+  <text x="406" y="279" class="sub sub-xs" text-anchor="middle">Docker Hub</text>
+
+  <rect x="446" y="238" width="68" height="50" class="node"/><rect x="446" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="482" y="257" class="name name-sm" text-anchor="middle">api</text>
+  <text x="482" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
+
+  <rect x="522" y="238" width="68" height="50" class="node"/><rect x="522" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="558" y="257" class="name name-sm" text-anchor="middle">db-migrator</text>
+  <text x="558" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
+
+  <rect x="598" y="238" width="68" height="50" class="node"/><rect x="598" y="238" width="4" height="50" class="st-node"/>
+  <text x="634" y="257" class="name name-sm" text-anchor="middle">node-e2b</text>
+  <text x="634" y="279" class="sub sub-xs" text-anchor="middle">built here</text>
+
+  <rect x="674" y="238" width="68" height="50" class="node"/><rect x="674" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="710" y="257" class="name name-sm" text-anchor="middle">client-proxy</text>
+  <text x="710" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
+
+  <rect x="750" y="238" width="68" height="50" class="node"/><rect x="750" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="786" y="252" class="name name-sm" text-anchor="middle">clickhouse-</text>
+  <text x="786" y="264" class="name name-sm" text-anchor="middle">migrator</text>
+  <text x="786" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
+
+  <rect x="826" y="238" width="68" height="50" class="node"/><rect x="826" y="238" width="4" height="50" class="st-seed"/>
+  <text x="862" y="257" class="name name-sm" text-anchor="middle">seed</text>
+  <text x="862" y="279" class="sub sub-xs" text-anchor="middle">built here</text>
+
+  <rect x="902" y="238" width="68" height="50" class="node"/><rect x="902" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="936" y="252" class="name name-sm" text-anchor="middle">dashboard-</text>
+  <text x="936" y="264" class="name name-sm" text-anchor="middle">api</text>
+  <text x="936" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
+
+  <rect x="978" y="238" width="68" height="50" class="node"/><rect x="978" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="1012" y="257" class="name name-sm" text-anchor="middle">dashboard</text>
+  <text x="1012" y="279" class="sub sub-xs" text-anchor="middle">own release line</text>
+
+  <!-- band 2 -> band 3 edges -->
+  <line x1="305" y1="178" x2="330" y2="236" class="edge" marker-end="url(#arr)"/>
+  <line x1="711" y1="178" x2="634" y2="236" class="edge" marker-end="url(#arr)"/>
+  <line x1="876" y1="178" x2="862" y2="236" class="edge" marker-end="url(#arr)"/>
+
+  <line x1="16" y1="318" x2="1046" y2="318" class="sep"/>
+
+  <!-- band 4: services -->
+  <text x="16" y="332" class="band">4 · Services in compose.yaml · arrows are depends_on gates · the stripe says which image</text>
+
+  <!-- row A -->
+  <rect x="16" y="346" width="168" height="40" class="node"/><rect x="16" y="346" width="4" height="40" class="st-hub"/>
+  <text x="28" y="362" class="name name-lg">postgres</text><text x="28" y="376" class="sub">:5432 on loopback</text>
+  <rect x="200" y="346" width="168" height="40" class="node"/><rect x="200" y="346" width="4" height="40" class="st-tools"/>
+  <text x="212" y="362" class="name name-lg">preflight</text><text x="212" y="376" class="sub">host checks · via nsenter</text>
+  <rect x="384" y="346" width="168" height="40" class="node"/><rect x="384" y="346" width="4" height="40" class="st-hub"/>
+  <text x="396" y="362" class="name name-lg">redis</text><text x="396" y="376" class="sub">:6379 on loopback</text>
+  <rect x="568" y="346" width="168" height="40" class="node"/><rect x="568" y="346" width="4" height="40" class="st-hub"/>
+  <text x="580" y="362" class="name name-lg">clickhouse</text><text x="580" y="376" class="sub">configs: inline config.xml</text>
+
+  <!-- row B -->
+  <rect x="16" y="418" width="168" height="40" class="node"/><rect x="16" y="418" width="4" height="40" class="st-e2b"/>
+  <text x="28" y="434" class="name name-lg">db-migrator</text><text x="28" y="448" class="sub">one-shot</text>
+  <rect x="200" y="418" width="168" height="40" class="node"/><rect x="200" y="418" width="4" height="40" class="st-tools"/>
+  <text x="212" y="434" class="name name-lg">host-setup</text><text x="212" y="448" class="sub">mutates the host · via nsenter</text>
+  <rect x="568" y="418" width="168" height="40" class="node"/><rect x="568" y="418" width="4" height="40" class="st-e2b"/>
+  <text x="580" y="434" class="name name-lg">clickhouse-migrator</text><text x="580" y="448" class="sub">one-shot (goose)</text>
+  <rect x="752" y="418" width="168" height="40" class="node"/><rect x="752" y="418" width="4" height="40" class="st-hub"/>
+  <text x="764" y="434" class="name name-lg">vector</text><text x="764" y="448" class="sub">inline vector.toml → sandbox_logs</text>
+
+  <!-- row C -->
+  <rect x="16" y="490" width="168" height="40" class="node"/><rect x="16" y="490" width="4" height="40" class="st-seed"/>
+  <text x="28" y="506" class="name name-lg">seed</text><text x="28" y="520" class="sub">team + API key · one-shot</text>
+  <rect x="200" y="490" width="168" height="40" class="node"/><rect x="200" y="490" width="4" height="40" class="st-tools"/>
+  <text x="212" y="506" class="name name-lg">fetch-artifacts</text><text x="212" y="520" class="sub">/host bind mount · unprivileged</text>
+
+  <!-- row D -->
+  <rect x="200" y="562" width="168" height="40" class="node node-accent"/><rect x="200" y="562" width="4" height="40" class="st-tools"/>
+  <text x="212" y="578" class="name name-lg">orchestrator</text><text x="212" y="592" class="sub">launcher → nsenter → host binary</text>
+  <rect x="384" y="562" width="168" height="40" class="node"/><rect x="384" y="562" width="4" height="40" class="st-tools"/>
+  <text x="396" y="578" class="name name-lg">api-secrets</text><text x="396" y="592" class="sub">the api's two secrets · one-shot</text>
+
+  <!-- row E -->
+  <rect x="16" y="634" width="352" height="40" class="node"/><rect x="16" y="634" width="4" height="40" class="st-e2b"/>
+  <text x="28" y="650" class="name name-lg">api</text><text x="28" y="664" class="sub">:3000 · two secrets generated per install</text>
+  <rect x="384" y="634" width="168" height="40" class="node"/><rect x="384" y="634" width="4" height="40" class="st-e2b"/>
+  <text x="396" y="650" class="name name-lg">dashboard-api</text><text x="396" y="664" class="sub">:3010 · the api's admin token</text>
+
+  <!-- row F -->
+  <rect x="16" y="706" width="168" height="40" class="node"/><rect x="16" y="706" width="4" height="40" class="st-e2b"/>
+  <text x="28" y="722" class="name name-lg">client-proxy</text><text x="28" y="736" class="sub">:3002 → orchestrator :5007</text>
+  <rect x="200" y="706" width="168" height="40" class="node"/><rect x="200" y="706" width="4" height="40" class="st-node"/>
+  <text x="212" y="722" class="name name-lg">base-template</text><text x="212" y="736" class="sub">builds “base” · one-shot</text>
+  <rect x="384" y="706" width="168" height="40" class="node"/><rect x="384" y="706" width="4" height="40" class="st-e2b"/>
+  <text x="396" y="722" class="name name-lg">dashboard</text><text x="396" y="736" class="sub">:3001 · signs in with the team key</text>
+
+  <!-- row G -->
+  <rect x="16" y="796" width="168" height="40" class="node"/><rect x="16" y="796" width="4" height="40" class="st-tools"/>
+  <text x="28" y="812" class="name name-lg">ready</text><text x="28" y="826" class="sub">banner + idle · the --wait signal</text>
+  <rect x="200" y="796" width="168" height="40" class="node"/><rect x="200" y="796" width="4" height="40" class="st-node"/>
+  <text x="212" y="812" class="name name-lg">smoke</text><text x="212" y="826" class="sub">profile test · one-shot</text>
+  <rect x="752" y="796" width="168" height="40" class="node node-ext"/><rect x="752" y="796" width="4" height="40" class="st-tools"/>
+  <text x="764" y="812" class="name name-lg">host-teardown</text><text x="764" y="826" class="sub">profile purge · no depends_on</text>
+
+  <!-- depends_on edges -->
+  <line x1="100" y1="386" x2="100" y2="416" class="edge" marker-end="url(#arr)"/><text x="106" y="405" class="lbl">healthy</text>
+  <line x1="100" y1="458" x2="100" y2="488" class="edge" marker-end="url(#arr)"/><text x="106" y="477" class="lbl">done</text>
+  <line x1="100" y1="530" x2="100" y2="632" class="edge" marker-end="url(#arr)"/><text x="106" y="590" class="lbl">done</text>
+
+  <line x1="284" y1="386" x2="284" y2="416" class="edge" marker-end="url(#arr)"/><text x="290" y="405" class="lbl">done</text>
+  <line x1="284" y1="458" x2="284" y2="488" class="edge" marker-end="url(#arr)"/><text x="290" y="477" class="lbl">done</text>
+  <line x1="284" y1="530" x2="284" y2="560" class="edge" marker-end="url(#arr)"/><text x="290" y="549" class="lbl">done</text>
+
+  <line x1="652" y1="386" x2="652" y2="416" class="edge" marker-end="url(#arr)"/><text x="658" y="405" class="lbl">healthy</text>
+  <!-- clickhouse -> vector (rows go to sandbox_logs over :8123) -->
+  <path d="M720,386 V402 H836 V416" class="edge" marker-end="url(#arr)"/><text x="842" y="405" class="lbl">healthy</text>
+
+  <!-- bus into the orchestrator -->
+  <line x1="468" y1="386" x2="468" y2="546" class="edge"/><text x="474" y="500" class="lbl">healthy</text>
+  <line x1="652" y1="458" x2="652" y2="546" class="edge"/><text x="658" y="500" class="lbl">done</text>
+  <line x1="836" y1="458" x2="836" y2="546" class="edge"/><text x="842" y="500" class="lbl">healthy</text>
+  <path d="M836,546 H330 V560" class="edge" marker-end="url(#arr)"/>
+
+  <line x1="284" y1="602" x2="284" y2="632" class="edge" marker-end="url(#arr)"/><text x="290" y="621" class="lbl">healthy</text>
+  <path d="M468,602 V616 H340 V632" class="edge" marker-end="url(#arr)"/><text x="474" y="614" class="lbl">done</text>
+  <line x1="500" y1="602" x2="500" y2="632" class="edge" marker-end="url(#arr)"/><text x="506" y="621" class="lbl">done</text>
+  <line x1="468" y1="674" x2="468" y2="704" class="edge" marker-end="url(#arr)"/><text x="474" y="693" class="lbl">healthy</text>
+  <path d="M340,674 V690 H452 V704" class="edge" marker-end="url(#arr)"/>
+
+
+  <line x1="100" y1="674" x2="100" y2="704" class="edge" marker-end="url(#arr)"/><text x="106" y="693" class="lbl">healthy</text>
+  <line x1="284" y1="674" x2="284" y2="704" class="edge" marker-end="url(#arr)"/><text x="290" y="693" class="lbl">healthy</text>
+
+  <!-- ready and smoke each wait on client-proxy (healthy) and base-template (done) -->
+  <line x1="100" y1="746" x2="100" y2="794" class="edge" marker-end="url(#arr)"/><text x="106" y="772" class="lbl">healthy</text>
+  <line x1="284" y1="746" x2="284" y2="794" class="edge" marker-end="url(#arr)"/><text x="290" y="772" class="lbl">done</text>
+  <line x1="140" y1="746" x2="244" y2="794" class="edge" marker-end="url(#arr)"/>
+  <line x1="244" y1="746" x2="140" y2="794" class="edge" marker-end="url(#arr)"/>
+  <text x="16" y="858" class="note">ready and smoke wait on the same two gates, client-proxy healthy and base-template done (ready also waits for the dashboard); the crossing arrows are those gates, not a link between the two services</text>
+
+  <!-- legend -->
+  <text x="568" y="718" class="band">Stripe = image</text>
+  <rect x="568" y="727" width="10" height="10" class="st-tools"/><text x="584" y="736" class="legend">embed/tools · 7 services</text>
+  <rect x="568" y="743" width="10" height="10" class="st-node"/><text x="584" y="752" class="legend">embed/node-e2b · 2</text>
+  <rect x="568" y="759" width="10" height="10" class="st-seed"/><text x="584" y="768" class="legend">embed/seed · 1</text>
+  <rect x="568" y="775" width="10" height="10" class="st-e2b"/><text x="584" y="784" class="legend">e2b-artifacts release image · 6</text>
+  <rect x="568" y="791" width="10" height="10" class="st-hub"/><text x="584" y="800" class="legend">Docker Hub image · 4</text>
+</svg>

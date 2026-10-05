@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // dscpConfig builds the host-firewall test config with the DSCP fields parsed
@@ -67,7 +68,7 @@ func makeDSCPTestNS(t *testing.T, slot *network.Slot, config network.Config) {
 	defer conn.CloseLasting()
 
 	table := conn.AddTable(&nftables.Table{Name: "slot-firewall", Family: nftables.TableFamilyINet})
-	require.NoError(t, SetupEgressDSCP(conn, table, slot.VpeerName(), config.EgressDSCP(network.EgressClassSandbox)))
+	require.NoError(t, SetupEgressDSCP(conn, table, slot.VpeerName(), config.EgressDSCP(sandboxtypes.EgressClassSandbox)))
 }
 
 // requireDSCPByte asserts the slot's in-namespace mangle rule stamps wantTOS —
@@ -139,9 +140,9 @@ func TestEgressDSCP_V1Parity(t *testing.T) { //nolint:paralleltest // mutates ho
 			makeDSCPTestNS(t, slot, config)
 
 			// Creation seeds the untenanted class, as v1's CreateNetwork does.
-			requireDSCPByte(t, slot, config.EgressTOS().For(network.EgressClassSandbox))
+			requireDSCPByte(t, slot, config.EgressTOS().For(sandboxtypes.EgressClassSandbox))
 
-			for _, class := range []network.EgressClass{network.EgressClassBuild, network.EgressClassSandbox} {
+			for _, class := range []sandboxtypes.EgressClass{sandboxtypes.EgressClassBuild, sandboxtypes.EgressClassSandbox} {
 				require.NoError(t, ApplyEgressDSCP(slot, config.EgressDSCP(class)))
 				requireDSCPByte(t, slot, config.EgressTOS().For(class))
 			}
@@ -212,12 +213,12 @@ func TestV2Pool_GetStampsAndRecycleRestoresDSCP(t *testing.T) { //nolint:paralle
 
 	requireDSCPByte(t, slot, 8<<2)
 
-	got, err := pool.Get(ctx, nil, network.EgressClassBuild)
+	got, err := pool.Get(ctx, nil, sandboxtypes.EgressClassBuild)
 	require.NoError(t, err)
 	require.Equal(t, slot.Idx, got.Idx)
 	requireDSCPByte(t, got, 16<<2)
 
-	require.NoError(t, pool.returnSlot(ctx, got, func(context.Context, string) {}, 0))
+	require.NoError(t, pool.returnSlot(ctx, got, func(context.Context, string) error { return nil }, 0))
 	requireDSCPByte(t, got, 8<<2)
 
 	select {
@@ -243,10 +244,10 @@ func TestEgressDSCP_WireTOS(t *testing.T) { //nolint:paralleltest // mutates hos
 	require.NoError(t, CreateNetworkV2(ctx, slot, sv2, hf, nil))
 	t.Cleanup(func() { _ = RemoveNetworkV2(context.WithoutCancel(t.Context()), slot, sv2, hf, nil) })
 
-	assert.Equal(t, config.EgressTOS().For(network.EgressClassSandbox), observeEgressTOS(t, slot))
+	assert.Equal(t, config.EgressTOS().For(sandboxtypes.EgressClassSandbox), observeEgressTOS(t, slot))
 
-	require.NoError(t, ApplyEgressDSCP(slot, config.EgressDSCP(network.EgressClassBuild)))
-	assert.Equal(t, config.EgressTOS().For(network.EgressClassBuild), observeEgressTOS(t, slot))
+	require.NoError(t, ApplyEgressDSCP(slot, config.EgressDSCP(sandboxtypes.EgressClassBuild)))
+	assert.Equal(t, config.EgressTOS().For(sandboxtypes.EgressClassBuild), observeEgressTOS(t, slot))
 
 	require.NoError(t, ApplyEgressDSCP(slot, 0))
 	assert.Equal(t, 0, observeEgressTOS(t, slot))

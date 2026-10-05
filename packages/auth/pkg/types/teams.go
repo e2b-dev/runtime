@@ -25,6 +25,7 @@ func newTeamLimits(
 		MaxRamMb:           teamLimits.MaxRamMb,
 		DiskMb:             teamLimits.DiskMb,
 		EventsTTLDays:      teamLimits.EventsTtlDays,
+		APITeamRPSList:     teamLimits.ApiTeamRpsList,
 
 		DefaultFreeDiskSizeMb: teamLimits.DefaultFreeDiskSizeMb,
 		MaxFreeDiskSizeMb:     teamLimits.MaxFreeDiskSizeMb,

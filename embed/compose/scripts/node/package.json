@@ -1,0 +1,8 @@
+{
+  "name": "e2b-compose-node",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "e2b": "2.46.1"
+  }
+}

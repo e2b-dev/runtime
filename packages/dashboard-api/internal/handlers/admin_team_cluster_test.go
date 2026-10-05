@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -62,6 +61,7 @@ func TestPostAdminClustersCreatesImmutableCluster(t *testing.T) {
 
 	conflict := callCreateCluster(t, store, request)
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	requireClusterErrorCode(t, conflict, api.ClusterRegistrationConflict)
 	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
 		`SELECT count(*) FROM public.clusters WHERE id = $1 AND name = $2`,
 		func(rows pgx.Rows) error {
@@ -97,6 +97,7 @@ func TestPostAdminClustersReusesStableIDOnlyForIdenticalConfiguration(t *testing
 	request.Token = "different-token"
 	conflict := callCreateCluster(t, store, request)
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	requireClusterErrorCode(t, conflict, api.ClusterRegistrationConflict)
 
 	var storedToken string
 	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(),
@@ -340,420 +341,6 @@ func TestDeleteClusterReleasesOnlyDeletedTemplateReferences(t *testing.T) {
 	}
 }
 
-func TestPutAdminTeamsTeamIDClusterAssignsExistingCluster(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'api.example.test:5008', true, 'token')`,
-		clusterID,
-	))
-
-	authService := &recordingCacheAuthService{}
-	store := &APIStore{db: db.SqlcClient, authService: authService}
-	response := callAssignCluster(t, store, teamID, api.AdminTeamClusterAssignmentRequest{ClusterId: clusterID})
-	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
-	require.Equal(t, []uuid.UUID{teamID}, authService.invalidated)
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, clusterID, assignedClusterID)
-}
-
-func TestPutAdminTeamsTeamIDClusterRetriesCacheInvalidation(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'api.example.test:5008', true, 'token')`,
-		clusterID,
-	))
-
-	authService := &configurableCacheAuthService{invalidateErr: errors.New("cache unavailable")}
-	store := &APIStore{db: db.SqlcClient, authService: authService}
-	request := api.AdminTeamClusterAssignmentRequest{ClusterId: clusterID}
-
-	first := callAssignCluster(t, store, teamID, request)
-	require.Equal(t, http.StatusInternalServerError, first.Code, first.Body.String())
-	require.Equal(t, []uuid.UUID{teamID}, authService.invalidated)
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, clusterID, assignedClusterID)
-
-	second := callAssignCluster(t, store, teamID, request)
-	require.Equal(t, http.StatusInternalServerError, second.Code, second.Body.String())
-	require.Equal(t, []uuid.UUID{teamID, teamID}, authService.invalidated)
-
-	authService.invalidateErr = nil
-	third := callAssignCluster(t, store, teamID, request)
-	require.Equal(t, http.StatusNoContent, third.Code, third.Body.String())
-	require.Equal(t, []uuid.UUID{teamID, teamID, teamID}, authService.invalidated)
-}
-
-func TestPutAdminTeamsTeamIDClusterPreservesExistingAssignment(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	managedClusterID := uuid.New()
-	replacementClusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'managed.example.test:5008', true, 'token'), ($2, 'replacement', 'replacement.example.test:5008', true, 'token')`,
-		managedClusterID,
-		replacementClusterID,
-	))
-	preserveExisting := true
-	store := &APIStore{db: db.SqlcClient, authService: &recordingCacheAuthService{}}
-	request := api.AdminTeamClusterAssignmentRequest{
-		ClusterId:        managedClusterID,
-		PreserveExisting: &preserveExisting,
-	}
-	require.Equal(t, http.StatusNoContent, callAssignCluster(t, store, teamID, request).Code)
-	require.Equal(t, http.StatusNoContent, callAssignCluster(t, store, teamID, request).Code)
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		replacementClusterID,
-		teamID,
-	))
-
-	response := callAssignCluster(t, store, teamID, request)
-	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, replacementClusterID, assignedClusterID)
-}
-
-func TestPutAdminTeamsTeamIDClusterPreservesConcurrentReplacement(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	managedClusterID := uuid.New()
-	replacementClusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'managed.example.test:5008', true, 'token'), ($2, 'replacement', 'replacement.example.test:5008', true, 'token')`,
-		managedClusterID,
-		replacementClusterID,
-	))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		managedClusterID,
-		teamID,
-	))
-
-	replacementClient, replacementTx, err := db.SqlcClient.WithTx(ctx)
-	require.NoError(t, err)
-	defer func() {
-		_ = replacementTx.Rollback(t.Context())
-	}()
-	result, err := replacementClient.Dashboard.AssignTeamCluster(ctx, dashboardqueries.AssignTeamClusterParams{
-		TeamID:    teamID,
-		ClusterID: replacementClusterID,
-	})
-	require.NoError(t, err)
-	require.True(t, result.Assigned)
-
-	preserveExisting := true
-	store := &APIStore{db: db.SqlcClient, authService: &recordingCacheAuthService{}}
-	body, err := json.Marshal(api.AdminTeamClusterAssignmentRequest{
-		ClusterId:        managedClusterID,
-		PreserveExisting: &preserveExisting,
-	})
-	require.NoError(t, err)
-	httpRequest := httptest.NewRequestWithContext(ctx, http.MethodPut, "/admin/teams/"+teamID.String()+"/cluster", bytes.NewReader(body))
-	httpRequest.Header.Set("Content-Type", "application/json")
-	responseCh := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		responseCh <- callAssignClusterRequest(store, teamID, httpRequest)
-	}()
-
-	require.Eventually(t, func() bool {
-		var blocked bool
-		err := db.SqlcClient.TestsRawSQLQuery(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM pg_stat_activity
-				WHERE datname = current_database()
-				  AND state = 'active'
-				  AND wait_event_type = 'Lock'
-				  AND query LIKE '%WITH locked_team AS MATERIALIZED%'
-			)`, func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&blocked)
-		})
-
-		return err == nil && blocked
-	}, 5*time.Second, 10*time.Millisecond)
-
-	select {
-	case response := <-responseCh:
-		require.FailNow(t, "assignment returned before the replacement committed", response.Body.String())
-	default:
-	}
-
-	require.NoError(t, replacementTx.Commit(ctx))
-	select {
-	case response := <-responseCh:
-		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "assignment did not finish after the replacement committed")
-	}
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, replacementClusterID, assignedClusterID)
-}
-
-func TestDeleteAdminTeamsTeamIDClusterClusterIDDetachesIdempotently(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'api.example.test:5008', true, 'token')`,
-		clusterID,
-	))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		clusterID,
-		teamID,
-	))
-
-	authService := &recordingCacheAuthService{}
-	store := &APIStore{db: db.SqlcClient, authService: authService}
-	response := callDetachCluster(t, store, teamID, clusterID)
-	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
-
-	replayed := callDetachCluster(t, store, teamID, clusterID)
-	require.Equal(t, http.StatusNoContent, replayed.Code, replayed.Body.String())
-	require.Equal(t, []uuid.UUID{teamID, teamID}, authService.invalidated)
-
-	var assignedClusterID *uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Nil(t, assignedClusterID)
-}
-
-func TestDeleteAdminTeamsTeamIDClusterClusterIDRetriesCacheInvalidation(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'api.example.test:5008', true, 'token')`,
-		clusterID,
-	))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		clusterID,
-		teamID,
-	))
-
-	authService := &configurableCacheAuthService{invalidateErr: errors.New("cache unavailable")}
-	store := &APIStore{db: db.SqlcClient, authService: authService}
-	failed := callDetachCluster(t, store, teamID, clusterID)
-	require.Equal(t, http.StatusInternalServerError, failed.Code, failed.Body.String())
-
-	var assignedClusterID *uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Nil(t, assignedClusterID)
-
-	failedReplay := callDetachCluster(t, store, teamID, clusterID)
-	require.Equal(t, http.StatusInternalServerError, failedReplay.Code, failedReplay.Body.String())
-
-	authService.invalidateErr = nil
-	replayed := callDetachCluster(t, store, teamID, clusterID)
-	require.Equal(t, http.StatusNoContent, replayed.Code, replayed.Body.String())
-	require.Equal(t, []uuid.UUID{teamID, teamID, teamID}, authService.invalidated)
-}
-
-func TestDeleteAdminTeamsTeamIDClusterClusterIDPreservesReplacement(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	staleClusterID := uuid.New()
-	replacementClusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'replacement', 'replacement.example.test:5008', true, 'token')`,
-		replacementClusterID,
-	))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		replacementClusterID,
-		teamID,
-	))
-
-	authService := &recordingCacheAuthService{}
-	store := &APIStore{db: db.SqlcClient, authService: authService}
-	response := callDetachCluster(t, store, teamID, staleClusterID)
-	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	require.Empty(t, authService.invalidated)
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, replacementClusterID, assignedClusterID)
-
-	missingTeam := callDetachCluster(t, store, uuid.New(), staleClusterID)
-	require.Equal(t, http.StatusNotFound, missingTeam.Code, missingTeam.Body.String())
-}
-
-func TestDeleteAdminTeamsTeamIDClusterClusterIDWaitsForReplacement(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	ctx := t.Context()
-	teamID := createClusterAssignmentTestTeam(t, db)
-	staleClusterID := uuid.New()
-	replacementClusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'stale', 'stale.example.test:5008', true, 'token'), ($2, 'replacement', 'replacement.example.test:5008', true, 'token')`,
-		staleClusterID,
-		replacementClusterID,
-	))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET cluster_id = $1 WHERE id = $2`,
-		staleClusterID,
-		teamID,
-	))
-
-	replacementClient, replacementTx, err := db.SqlcClient.WithTx(ctx)
-	require.NoError(t, err)
-	defer func() {
-		_ = replacementTx.Rollback(t.Context())
-	}()
-
-	result, err := replacementClient.Dashboard.AssignTeamCluster(ctx, dashboardqueries.AssignTeamClusterParams{
-		TeamID:    teamID,
-		ClusterID: replacementClusterID,
-	})
-	require.NoError(t, err)
-	require.True(t, result.Assigned)
-
-	store := &APIStore{db: db.SqlcClient, authService: &recordingCacheAuthService{}}
-	responseCh := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		responseCh <- callDetachCluster(t, store, teamID, staleClusterID)
-	}()
-
-	require.Eventually(t, func() bool {
-		var blocked bool
-		err := db.SqlcClient.TestsRawSQLQuery(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM pg_stat_activity
-				WHERE datname = current_database()
-				  AND state = 'active'
-				  AND wait_event_type = 'Lock'
-				  AND query LIKE '%WITH locked_team AS MATERIALIZED (%'
-			)`, func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&blocked)
-		})
-
-		return err == nil && blocked
-	}, 5*time.Second, 10*time.Millisecond)
-
-	select {
-	case response := <-responseCh:
-		require.FailNow(t, "detach returned before replacement committed", response.Body.String())
-	default:
-	}
-
-	require.NoError(t, replacementTx.Commit(ctx))
-
-	select {
-	case response := <-responseCh:
-		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "detach did not finish after replacement committed")
-	}
-
-	var assignedClusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&assignedClusterID)
-		},
-		teamID,
-	))
-	require.Equal(t, replacementClusterID, assignedClusterID)
-}
-
 func TestGetAdminTeamsTeamIDClusterReturnsOnlyAssignment(t *testing.T) {
 	t.Parallel()
 
@@ -780,25 +367,6 @@ func TestGetAdminTeamsTeamIDClusterReturnsOnlyAssignment(t *testing.T) {
 
 	missing := callGetClusterAssignment(t, store, uuid.New())
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
-}
-
-func TestPutAdminTeamsTeamIDClusterRejectsMissingResources(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	teamID := createClusterAssignmentTestTeam(t, db)
-	store := &APIStore{db: db.SqlcClient, authService: &recordingCacheAuthService{}}
-
-	missingCluster := callAssignCluster(t, store, teamID, api.AdminTeamClusterAssignmentRequest{ClusterId: uuid.New()})
-	require.Equal(t, http.StatusNotFound, missingCluster.Code, missingCluster.Body.String())
-
-	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'managed', 'api.example.test:5008', true, 'token')`,
-		clusterID,
-	))
-	missingTeam := callAssignCluster(t, store, uuid.New(), api.AdminTeamClusterAssignmentRequest{ClusterId: clusterID})
-	require.Equal(t, http.StatusNotFound, missingTeam.Code, missingTeam.Body.String())
 }
 
 func callCreateCluster(t *testing.T, store *APIStore, request api.AdminClusterCreateRequest) *httptest.ResponseRecorder {
@@ -834,37 +402,6 @@ func callDeleteCluster(t *testing.T, store *APIStore, clusterID uuid.UUID) *http
 	return recorder
 }
 
-func callAssignCluster(
-	t *testing.T,
-	store *APIStore,
-	teamID uuid.UUID,
-	request api.AdminTeamClusterAssignmentRequest,
-) *httptest.ResponseRecorder {
-	t.Helper()
-
-	body, err := json.Marshal(request)
-	require.NoError(t, err)
-
-	httpRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/admin/teams/"+teamID.String()+"/cluster", bytes.NewReader(body))
-	httpRequest.Header.Set("Content-Type", "application/json")
-
-	return callAssignClusterRequest(store, teamID, httpRequest)
-}
-
-func callAssignClusterRequest(
-	store *APIStore,
-	teamID uuid.UUID,
-	httpRequest *http.Request,
-) *httptest.ResponseRecorder {
-	recorder := httptest.NewRecorder()
-	ginCtx, _ := gin.CreateTestContext(recorder)
-	ginCtx.Request = httpRequest
-	store.PutAdminTeamsTeamIDCluster(ginCtx, teamID)
-	ginCtx.Writer.WriteHeaderNow()
-
-	return recorder
-}
-
 func callGetClusterAssignment(
 	t *testing.T,
 	store *APIStore,
@@ -881,28 +418,6 @@ func callGetClusterAssignment(
 		nil,
 	)
 	store.GetAdminTeamsTeamIDCluster(ginCtx, teamID)
-	ginCtx.Writer.WriteHeaderNow()
-
-	return recorder
-}
-
-func callDetachCluster(
-	t *testing.T,
-	store *APIStore,
-	teamID uuid.UUID,
-	clusterID uuid.UUID,
-) *httptest.ResponseRecorder {
-	t.Helper()
-
-	recorder := httptest.NewRecorder()
-	ginCtx, _ := gin.CreateTestContext(recorder)
-	ginCtx.Request = httptest.NewRequestWithContext(
-		t.Context(),
-		http.MethodDelete,
-		"/admin/teams/"+teamID.String()+"/cluster/"+clusterID.String(),
-		nil,
-	)
-	store.DeleteAdminTeamsTeamIDClusterClusterID(ginCtx, teamID, clusterID)
 	ginCtx.Writer.WriteHeaderNow()
 
 	return recorder
@@ -939,10 +454,12 @@ func createClusterAssignmentTestTeam(t *testing.T, db *testutils.Database) uuid.
 			default_free_disk_size_mb,
 			max_disk_size_mb
 		)
-		VALUES ('cluster_assignment_test', 'Cluster assignment test', 512, 20, 1, 8, 8096, 20, 7, 512, 25512)
+		VALUES
+			('Enterprise_cluster_assignment_test', 'Enterprise cluster assignment test', 512, 20, 1, 8, 8096, 20, 7, 512, 25512),
+			('cluster_assignment_test', 'Cluster assignment test', 512, 20, 1, 8, 8096, 20, 7, 512, 25512)
 	`))
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.teams (id, name, tier, email, slug) VALUES ($1, $2, 'cluster_assignment_test', $3, $4)`,
+		`INSERT INTO public.teams (id, name, tier, email, slug) VALUES ($1, $2, 'Enterprise_cluster_assignment_test', $3, $4)`,
 		teamID,
 		"Cluster assignment test team",
 		"cluster-"+teamID.String()+"@example.com",

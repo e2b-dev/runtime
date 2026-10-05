@@ -26,11 +26,14 @@ import (
 // import cycle.
 type PauseQueueExhaustedError = sandbox.PauseQueueExhaustedError
 
-func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool, restoreOnRefusal bool) error {
+func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly bool) error {
 	ctx, span := tracer.Start(ctx, "pause-sandbox")
 	defer span.End()
 
-	result, err := o.throttledUpsertSnapshot(ctx, buildUpsertSnapshotParams(sbx, node, filesystemOnly))
+	// The requested kind is recorded only once the pause has succeeded: a pause
+	// the node refuses leaves the sandbox running on its previous build, whose
+	// kind the row must keep describing.
+	currentKind, result, err := o.upsertSnapshotKeepingKind(ctx, sbx, node)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error inserting snapshot for env", err)
 
@@ -52,7 +55,7 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		zap.String("source_build_id", sbx.BuildID.String()),
 	)
 
-	err = snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly, restoreOnRefusal)
+	err = snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly)
 	if err != nil {
 		// The build is already committed, and nothing reaps one left non-terminal.
 		o.failSnapshotBuild(ctx, result.BuildID, err)
@@ -68,7 +71,7 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		return fmt.Errorf("error pausing sandbox: %w", err)
 	}
 
-	if err := o.finishSnapshotBuild(ctx, result.BuildID, types.BuildStatusSuccess); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, result.BuildID, sbx.SandboxID, currentKind, filesystemOnly, types.BuildStatusSuccess); err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
 		return fmt.Errorf("error pausing sandbox: %w", err)
@@ -79,11 +82,11 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 	return nil
 }
 
-func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly bool, restoreOnRefusal bool) error {
+func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly bool) error {
 	childCtx, childSpan := tracer.Start(ctx, "snapshot-instance")
 	defer childSpan.End()
 
-	client, childCtx := node.GetSandboxDeleteCtx(childCtx, sbx.SandboxID, sbx.ExecutionID, restoreOnRefusal)
+	client, childCtx := node.GetClient(childCtx)
 	_, err := client.Sandbox.Pause(
 		childCtx, &orchestrator.SandboxPauseRequest{
 			SandboxId:      sbx.SandboxID,
@@ -108,14 +111,6 @@ func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.S
 		logger.L().Warn(ctx, "Pause refused by the node", logger.WithSandboxID(sbx.SandboxID), zap.String("node_message", st.Message()))
 
 		return PauseQueueExhaustedError{}
-	}
-
-	// Only the edge answers a pause with Aborted: the node refused and the
-	// route could not be restored (a node never emits it).
-	if st.Code() == codes.Aborted {
-		logger.L().Warn(ctx, "Pause refused by the node but its route was lost", logger.WithSandboxID(sbx.SandboxID), zap.String("edge_message", st.Message()))
-
-		return ErrRefusedRouteLost
 	}
 
 	return fmt.Errorf("failed to pause sandbox '%s': %w", sbx.SandboxID, err)

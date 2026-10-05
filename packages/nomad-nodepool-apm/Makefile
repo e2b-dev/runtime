@@ -21,6 +21,11 @@ E2B_ARTIFACT_BINARIES_URL ?= https://storage.googleapis.com/e2b-artifact-binarie
 # is included above. Quotes are stripped so both `=v0.1.0` and `="v0.1.0"`
 # work; a command-line value always wins over the env file.
 NOMAD_NODEPOOL_APM_VERSION := $(strip $(subst ",,$(NOMAD_NODEPOOL_APM_VERSION)))
+ifneq ($(NOMAD_NODEPOOL_APM_VERSION),)
+ifeq ($(filter v%,$(NOMAD_NODEPOOL_APM_VERSION)),)
+$(error NOMAD_NODEPOOL_APM_VERSION must be a v-prefixed version (e.g. v0.1.0), not a commit SHA)
+endif
+endif
 
 PLUGIN_NAME := nomad-nodepool-apm
 TARGET_PLUGIN_NAME := nomad-deployment-aware-target
@@ -44,19 +49,22 @@ test:
 
 .PHONY: upload
 upload:
-	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
 	chmod +x $(BINARY)
 	chmod +x $(TARGET_BINARY)
 ifeq ($(PROVIDER),aws)
 	aws s3 cp $(BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
-	aws s3 cp $(BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm.$(COMMIT_SHA)" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
 	aws s3 cp $(TARGET_BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
-	aws s3 cp $(TARGET_BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target.$(COMMIT_SHA)" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
+ifneq ($(strip $(NOMAD_NODEPOOL_APM_VERSION)),)
+	aws s3 cp $(BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm.$(NOMAD_NODEPOOL_APM_VERSION)" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
+	aws s3 cp $(TARGET_BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target.$(NOMAD_NODEPOOL_APM_VERSION)" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
+endif
 else
 	gcloud storage cp --cache-control="no-cache, max-age=0" $(BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm"
-	gcloud storage cp --cache-control="no-cache, max-age=0" $(BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm.$(COMMIT_SHA)"
 	gcloud storage cp --cache-control="no-cache, max-age=0" $(TARGET_BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target"
-	gcloud storage cp --cache-control="no-cache, max-age=0" $(TARGET_BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target.$(COMMIT_SHA)"
+ifneq ($(strip $(NOMAD_NODEPOOL_APM_VERSION)),)
+	gcloud storage cp --cache-control="no-cache, max-age=0" $(BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm.$(NOMAD_NODEPOOL_APM_VERSION)"
+	gcloud storage cp --cache-control="no-cache, max-age=0" $(TARGET_BINARY) "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/nomad-deployment-aware-target.$(NOMAD_NODEPOOL_APM_VERSION)"
+endif
 endif
 
 # Released-artifact flow: download the prebuilt, versioned binaries from the

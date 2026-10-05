@@ -41,11 +41,12 @@ const (
 
 	shutdownDrainingWait  = 15 * time.Second
 	shutdownUnhealthyWait = 15 * time.Second
-
-	version = "1.2.0"
 )
 
-var commitSHA string
+var (
+	commitSHA string
+	version   = "0.3.0" // x-release-please-version
+)
 
 func run() int {
 	config, err := cfg.Parse()
@@ -99,13 +100,12 @@ func run() int {
 
 	l.Info(ctx, "Starting client proxy", zap.String("commit", commitSHA), zap.String("instance_id", instanceID))
 
-	featureFlagsClient, err := featureflags.NewClient()
+	featureFlagsClient, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName)
 	if err != nil {
 		l.Error(ctx, "Failed to create feature flags client", zap.Error(err))
 
 		return 1
 	}
-	featureFlagsClient.SetServiceName(serviceName)
 
 	redisClient, err := factories.NewRedisClient(ctx, factories.RedisConfig{
 		RedisURL:         config.RedisURL,

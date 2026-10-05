@@ -5,9 +5,6 @@
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
     "image": "mcr.microsoft.com/devcontainers/go:2.1.3-1.26-bookworm",
     "features": {
-        "ghcr.io/devcontainers/features/terraform:1": {
-            "version": "1.7.5"
-        },
         "ghcr.io/dhoeric/features/google-cloud-cli:1": {
             "INSTALL_GKEGCLOUDAUTH_PLUGIN": true
         },
@@ -20,9 +17,7 @@
         "vscode": {
             "extensions": [
                 "golang.go",
-                "hashicorp.hcl",
                 "42Crunch.vscode-openapi",
-                "hashicorp.terraform",
                 "foxundermoon.shell-format",
                 "ms-vscode.makefile-tools",
                 "redhat.vscode-yaml",

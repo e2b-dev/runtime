@@ -18,18 +18,6 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
-// env_defaults lives in the dashboard migration set, which goose can't layer on
-// top of the main migrations here (lower version number). Create it directly.
-func createEnvDefaultsTable(t *testing.T, db *testutils.Database) {
-	t.Helper()
-	err := db.SqlcClient.TestsRawSQL(t.Context(),
-		`CREATE TABLE IF NOT EXISTS public.env_defaults (
-			env_id text PRIMARY KEY REFERENCES public.envs(id),
-			description text
-		)`)
-	require.NoError(t, err)
-}
-
 func markEnvDefault(t *testing.T, db *testutils.Database, envID string, description *string) {
 	t.Helper()
 	err := db.SqlcClient.TestsRawSQL(t.Context(),
@@ -77,7 +65,6 @@ func TestGetTemplates_ListAndKeysetPaginate(t *testing.T) {
 	t.Parallel()
 
 	testDB := testutils.SetupDatabase(t)
-	createEnvDefaultsTable(t, testDB)
 
 	teamID := testutils.CreateTestTeam(t, testDB)
 	want := map[string]bool{}
@@ -121,7 +108,6 @@ func TestGetTemplates_DefaultGatingByCluster(t *testing.T) {
 	t.Parallel()
 
 	testDB := testutils.SetupDatabase(t)
-	createEnvDefaultsTable(t, testDB)
 
 	teamID := testutils.CreateTestTeam(t, testDB)
 	owned := testutils.CreateTestTemplate(t, testDB, teamID)
@@ -156,7 +142,6 @@ func TestGetTemplates_Filters(t *testing.T) {
 	t.Parallel()
 
 	testDB := testutils.SetupDatabase(t)
-	createEnvDefaultsTable(t, testDB)
 
 	teamID := testutils.CreateTestTeam(t, testDB)
 	matching := testutils.CreateTestTemplate(t, testDB, teamID)

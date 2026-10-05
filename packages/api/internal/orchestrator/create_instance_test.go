@@ -26,7 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/machineinfo"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
-	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
+	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 
@@ -69,7 +69,6 @@ func newCreateSandboxTestOrchestratorWithFlags(t *testing.T, flagSource *ldtestd
 		storage,
 		redisreservations.NewReservationStorage(client, storage.Notifier()),
 		sandbox.Callbacks{
-			AddSandboxToRoutingTable: func(context.Context, sandbox.Sandbox) {},
 			AsyncNewlyCreatedSandbox: func(context.Context, sandbox.Sandbox, sandbox.CreationMetadata) {},
 		},
 	)
@@ -91,7 +90,6 @@ func newCreateSandboxTestOrchestratorWithFlags(t *testing.T, flagSource *ldtestd
 		placementAlgorithm:      algo,
 		featureFlagsClient:      ffClient,
 		createdSandboxesCounter: counter,
-		routingCatalog:          e2bcatalog.NewRedisSandboxCatalog(client),
 	}
 
 	o.registerNode(node)
@@ -124,6 +122,68 @@ func TestBuildEgressConfigPreservesWildcardRuleKey(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, rules.GetRules(), 1)
 	assert.Equal(t, "value", rules.GetRules()[0].GetTransform().GetHeaders()["X-Test"])
+}
+
+// The TLS block has to survive validated config -> stored form -> wire. A
+// field-by-field copy that misses a hop leaves the API accepting TLS while the
+// orchestrator dials in the clear.
+func TestEgressProxyTLSRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enabled block reaches the wire", func(t *testing.T) {
+		t.Parallel()
+
+		stored := &dbtypes.SandboxNetworkEgressConfig{}
+		ApplyValidatedEgressProxy(stored, &sandbox_network.EgressProxyConfig{
+			Address:  "proxy.example.com:1080",
+			Username: "alice",
+			Password: "s3cret",
+			TLS: &sandbox_network.EgressProxyTLSConfig{
+				Enabled:    true,
+				ServerName: "cert-name.test",
+				CACert:     "-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----",
+			},
+		})
+
+		require.NotNil(t, stored.EgressProxyTLS, "stored config must keep the TLS block")
+		assert.True(t, stored.EgressProxyTLS.Enabled)
+
+		wire := buildNetworkConfig(&dbtypes.SandboxNetworkConfig{Egress: stored}, nil, nil)
+		proxyTLS := wire.GetEgress().GetEgressProxyTls()
+
+		require.NotNil(t, proxyTLS, "the orchestrator must be told the hop is TLS")
+		assert.True(t, proxyTLS.GetEnabled())
+		assert.Equal(t, "cert-name.test", proxyTLS.GetServerName())
+		assert.Equal(t, stored.EgressProxyTLS.CACert, string(proxyTLS.GetCaCert()))
+	})
+
+	t.Run("proxy without TLS stays plaintext", func(t *testing.T) {
+		t.Parallel()
+
+		stored := &dbtypes.SandboxNetworkEgressConfig{}
+		ApplyValidatedEgressProxy(stored, &sandbox_network.EgressProxyConfig{
+			Address: "proxy.example.com:1080",
+		})
+
+		assert.Nil(t, stored.EgressProxyTLS)
+
+		wire := buildNetworkConfig(&dbtypes.SandboxNetworkConfig{Egress: stored}, nil, nil)
+		assert.Nil(t, wire.GetEgress().GetEgressProxyTls(),
+			"an existing BYOP config must not acquire TLS it never asked for")
+		assert.Equal(t, "proxy.example.com:1080", wire.GetEgress().GetEgressProxyAddress())
+	})
+
+	t.Run("nil config clears the proxy", func(t *testing.T) {
+		t.Parallel()
+
+		// A PUT that omits egressProxy arrives as a fresh config and a nil
+		// source.
+		stored := &dbtypes.SandboxNetworkEgressConfig{}
+		ApplyValidatedEgressProxy(stored, nil)
+
+		assert.Empty(t, stored.EgressProxyAddress)
+		assert.Nil(t, stored.EgressProxyTLS)
+	})
 }
 
 func TestBuildNetworkConfigHTTPSPorts(t *testing.T) {
@@ -393,6 +453,53 @@ func fsOnlyPinFlagSource(cpuModel string) *ldtestdata.TestDataSource {
 	source.Update(source.Flag("fs-only-resume-cpu-model").ValueForAll(ldvalue.String(cpuModel)))
 
 	return source
+}
+
+// Only a resume is pinned to the node its snapshot was taken on. A start that
+// names that node but is not a resume (a fork) is placed by load, so the forks
+// of one sandbox are not all sent to the original's node.
+func TestCreateSandbox_NodeAffinityOnlyForResume(t *testing.T) {
+	t.Parallel()
+
+	fromSnapshotOn := func(nodeID string) SandboxDataFetcher {
+		return func(_ context.Context) (SandboxMetadata, *api.APIError) {
+			return SandboxMetadata{
+				TemplateID:     "tpl",
+				BaseTemplateID: "base-tpl",
+				Build:          testBuild(),
+				NodeID:         &nodeID,
+			}, nil
+		}
+	}
+
+	tests := []struct {
+		name     string
+		isResume bool
+		wantNode string
+	}{
+		{"resume stays on the snapshot's node", true, "node-origin"},
+		{"fork is placed on the less loaded node", false, "node-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			o := newCreateSandboxTestOrchestrator(t)
+			// Loaded well past node-1, so best-of-K never prefers it.
+			origin := nodemanager.NewTestNode("node-origin", api.NodeStatusReady, 30, 8)
+			origin.ClusterID = uuid.Nil
+			o.registerNode(origin)
+			now := time.Now()
+
+			sbx, apiErr := o.CreateSandbox(t.Context(), "sbx-affinity-"+uuid.New().String()[:8], uuid.New().String(),
+				testTeam(), fromSnapshotOn(origin.ID),
+				now, now.Add(time.Hour), time.Hour, tt.isResume, false, sandbox.CreationMetadata{IsResume: tt.isResume})
+
+			require.Nil(t, apiErr)
+			assert.Equal(t, tt.wantNode, sbx.NodeID)
+		})
+	}
 }
 
 // A filesystem-only snapshot is held to its build's CPU model, so the

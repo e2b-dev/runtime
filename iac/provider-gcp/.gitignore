@@ -1,8 +1,0 @@
-.terraform
-.idea
-.tfplan.*
-.DS_Store
-
-terraform.tfvars
-terraform.tfstate
-terraform.tfstate.backup

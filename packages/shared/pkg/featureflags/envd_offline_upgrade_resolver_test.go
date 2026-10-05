@@ -34,13 +34,13 @@ func TestResolveEnvdOfflineUpgrade_ReadsSiblingFlag(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
 
-	path, _, reason := ResolveEnvdOfflineUpgrade(t.Context(), ff, "0.6.5", promoted, getVersion)
+	path, _, reason := ResolveEnvdOfflineUpgrade(t.Context(), ff, "0.6.5", promoted, getVersion, nil)
 	assert.Empty(t, path, "offline resolver must ignore the live-path flag")
 	assert.Equal(t, "off", reason)
 
 	// Now turn the offline flag on: the swap resolves.
 	source.Update(source.Flag(EnvdOfflineUpgradeTargetFlag.Key()).ValueForAll(ldvalue.String("promoted")))
-	path, version, reason := ResolveEnvdOfflineUpgrade(t.Context(), ff, "0.6.5", promoted, getVersion)
+	path, version, reason := ResolveEnvdOfflineUpgrade(t.Context(), ff, "0.6.5", promoted, getVersion, nil)
 	assert.Equal(t, promoted, path)
 	assert.Equal(t, "0.6.12", version)
 	assert.Empty(t, reason)
@@ -73,7 +73,7 @@ func TestOfflineUpgradeConvergence(t *testing.T) {
 
 	// Cycle 1 — first resume of the pre-upgrade snapshot: built-with < target, so
 	// the resolver returns a swap.
-	path, version, reason := resolveEnvdUpgradePath(t.Context(), "promoted", builtWith, promoted, getVersion)
+	path, version, reason := resolveEnvdUpgradePath(t.Context(), "promoted", builtWith, promoted, getVersion, nil)
 	require.Equal(t, promoted, path, "cycle 1 must resolve a swap")
 	require.Equal(t, target, version)
 	require.Empty(t, reason)
@@ -83,7 +83,7 @@ func TestOfflineUpgradeConvergence(t *testing.T) {
 	// it, and pause does not persist LiveEnvdVersion), so the resolver STILL sees
 	// built-with < target and re-fires. Harmless: the swap replaces the target
 	// binary with the same target binary (idempotent).
-	path2, version2, reason2 := resolveEnvdUpgradePath(t.Context(), "promoted", builtWith, promoted, getVersion)
+	path2, version2, reason2 := resolveEnvdUpgradePath(t.Context(), "promoted", builtWith, promoted, getVersion, nil)
 	assert.Equal(t, promoted, path2, "cycle 2 re-fires because built-with never advances")
 	assert.Equal(t, target, version2)
 	assert.Empty(t, reason2)
@@ -92,7 +92,7 @@ func TestOfflineUpgradeConvergence(t *testing.T) {
 	// then built-with == target and the resolver no-ops (same_version). This is the
 	// deferred cross-pause improvement; without it, the re-fire above is the
 	// accepted steady state.
-	pathConverged, _, reasonConverged := resolveEnvdUpgradePath(t.Context(), "promoted", target, promoted, getVersion)
+	pathConverged, _, reasonConverged := resolveEnvdUpgradePath(t.Context(), "promoted", target, promoted, getVersion, nil)
 	assert.Empty(t, pathConverged, "once built-with == target the swap no-ops")
 	assert.Equal(t, "same_version", reasonConverged)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 const (
@@ -31,6 +32,8 @@ const (
 )
 
 type Config struct {
+	featureflags.Config
+
 	AdminToken string `env:"ADMIN_TOKEN"`
 
 	AnalyticsCollectorAPIToken string `env:"ANALYTICS_COLLECTOR_API_TOKEN"`
@@ -124,11 +127,17 @@ type Config struct {
 
 	SandboxAccessTokenHashSeed string `env:"SANDBOX_ACCESS_TOKEN_HASH_SEED"`
 
-	// SecretsStoreBackendGrpcAddress is the "host:port" address of the secrets
-	// store management backend. Optional: when empty the API keeps serving
-	// every other route and answers the secret management routes with the same
-	// forbidden response the feature gate produces.
+	// SecretsStoreBackendGrpcAddress is the gRPC target of the secrets store
+	// management backend, either "host:port" or a schemed target such as
+	// "dns:///name:port" for a headless Service. Optional: when empty the API
+	// keeps serving every other route and answers the secret management routes
+	// with the same forbidden response the feature gate produces.
 	SecretsStoreBackendGrpcAddress string `env:"SECRETS_STORE_BACKEND_GRPC_ADDRESS"`
+
+	// WebhooksBackendGrpcAddress is the sandbox events and webhook management
+	// backend. Unset leaves those routes registered and answering as they do
+	// when the backend is absent, so the surface does not depend on the wiring.
+	WebhooksBackendGrpcAddress string `env:"WEBHOOKS_BACKEND_GRPC_ADDRESS"`
 
 	VolumesToken VolumesTokenConfig
 
@@ -145,7 +154,14 @@ type Config struct {
 	// region with several types lacks an explicit default.
 	DefaultPersistentVolumeTypeByRegion map[string]string `env:"DEFAULT_PERSISTENT_VOLUME_TYPE_BY_REGION"`
 
+	// DomainName is the public domain of this deployment. It builds API-facing
+	// URLs, such as the volume token audience. It is not a LaunchDarkly key.
 	DomainName string `env:"DOMAIN_NAME" envDefault:""`
+
+	// BestOfKHugepageMemory includes hugepage-pool load in best-of-K
+	// placement (max of CPU and pool). A node that reports no pool scores
+	// 0.5, so clusters without a pool should set this false and rank on CPU.
+	BestOfKHugepageMemory bool `env:"BEST_OF_K_HUGEPAGE_MEMORY" envDefault:"true"`
 }
 
 type FailureCondition string

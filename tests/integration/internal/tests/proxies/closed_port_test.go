@@ -111,9 +111,9 @@ func TestSandboxProxyClosedPort(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	assert.True(t, strings.HasPrefix(string(body), "<html"))
-	assert.Contains(t, string(body), "no service running on port")
+	assert.True(t, strings.HasPrefix(string(body), "<!DOCTYPE html>"))
+	assert.Contains(t, string(body), "no service is listening on port")
 	assert.Contains(t, string(body), sbx.SandboxID)
 	assert.Contains(t, string(body), fmt.Sprintf("%d", port))
-	assert.True(t, strings.HasSuffix(string(body), "</html>"))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(string(body)), "</html>"))
 }

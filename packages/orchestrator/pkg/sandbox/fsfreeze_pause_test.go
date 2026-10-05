@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -50,7 +51,7 @@ func TestGuestPrepareFsForPause_FreezeFailureRollsBackThaw(t *testing.T) {
 	cleanup := NewCleanup()
 
 	// During the pause: freeze fails, so guestPrepareFsForPause aborts the pause.
-	frozen, err := s.guestPrepareFsForPause(t.Context(), cleanup)
+	frozen, err := s.guestPrepareFsForPause(t.Context(), cleanup, nil)
 	require.Error(t, err, "a failed freeze must abort the filesystem-only pause")
 	require.False(t, frozen, "a failed freeze must not report the rootfs as frozen")
 	require.Equal(t, int32(1), freezeCalls.Load(), "freeze should have been attempted once")
@@ -87,7 +88,7 @@ func TestGuestPrepareFsForPause_SuccessDoesNotThaw(t *testing.T) {
 	s := newFsFreezeSandbox(t, srv.URL)
 	cleanup := NewCleanup()
 
-	frozen, err := s.guestPrepareFsForPause(t.Context(), cleanup)
+	frozen, err := s.guestPrepareFsForPause(t.Context(), cleanup, nil)
 	require.NoError(t, err)
 	require.True(t, frozen, "a successful native freeze must report the rootfs as frozen")
 	require.Equal(t, int32(1), freezeCalls.Load(), "freeze should have run once")
@@ -110,10 +111,73 @@ func newFsFreezeSandbox(t *testing.T, envdURL string) *Sandbox {
 				AccessToken: &token,
 			},
 		},
-		Runtime: RuntimeMetadata{SandboxID: "test-sandbox"},
+		Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "test-sandbox"},
 	}}
 	s.featureFlags = ff
 	s.internalConfig.envdServerURLOverride = envdURL
 
 	return s
+}
+
+// thawRootfs retries a failed /fsthaw twice with back-off and succeeds as soon
+// as one attempt does.
+func TestThawRootfs_RetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	var thawCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fsthaw" {
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+
+			return
+		}
+		if thawCalls.Add(1) < 3 {
+			http.Error(w, "FITHAW /: simulated failure", http.StatusInternalServerError)
+
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newFsFreezeSandbox(t, srv.URL)
+	require.NoError(t, s.thawRootfs(t.Context()))
+	require.Equal(t, int32(3), thawCalls.Load(), "two failures then a success: three attempts")
+}
+
+// After the last retry fails the error is returned, so the caller can treat the
+// sandbox as lost; it is never left silently frozen.
+func TestThawRootfs_GivesUpAfterTheRetries(t *testing.T) {
+	t.Parallel()
+
+	var thawCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		thawCalls.Add(1)
+		http.Error(w, "FITHAW /: simulated failure", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newFsFreezeSandbox(t, srv.URL)
+	require.Error(t, s.thawRootfs(t.Context()))
+	require.Equal(t, int32(fsthawAttempts), thawCalls.Load(), "one call and two retries, then give up")
+}
+
+// Giving up tears the sandbox down as lost, tagged as a thaw failure so the
+// kill is not booked as a failed resume.
+func TestThawRootfsOrLose_TagsTheThawFailure(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "FITHAW /: simulated failure", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := newFsFreezeSandbox(t, srv.URL)
+	s.cleanup = NewCleanup()
+
+	err := s.thawRootfsOrLose(t.Context())
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSandboxLost)
+	require.ErrorIs(t, err, ErrRootfsThawFailed)
+	require.Equal(t, StopReasonKilled, s.GetStopReason())
 }

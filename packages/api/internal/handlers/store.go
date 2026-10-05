@@ -42,6 +42,8 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
+	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
@@ -190,7 +192,7 @@ type teamRunningSandboxCounter interface {
 }
 
 type APIStore struct {
-	Healthy      atomic.Bool
+	startupState atomic.Uint32
 	config       cfg.Config
 	posthog      *analyticscollector.PosthogClient
 	Telemetry    *telemetry.Client
@@ -201,31 +203,50 @@ type APIStore struct {
 	pauseBackendOverride   pauseOrchestrator
 	resumeBackendOverride  resumeWaitOrchestrator
 	connectBackendOverride connectOrchestrator
-	teamSandboxCounter     teamRunningSandboxCounter
-	templateManager        *template_manager.TemplateManager
-	sqlcDB                 *sqlcdb.Client
-	authDB                 *authdb.Client
-	redisClient            redis.UniversalClient
-	templateCache          *templatecache.TemplateCache
-	templateBuildsCache    *templatecache.TemplatesBuildCache
-	snapshotCache          *snapshotcache.SnapshotCache
-	authService            sharedauth.Service
-	templateSpawnCounter   *utils.TemplateSpawnCounter
-	clickhouseStore        clickhouse.Clickhouse
-	sandboxLogsReader      *sandboxlogs.Reader
-	accessTokenGenerator   *sandbox.AccessTokenGenerator
-	featureFlags           *featureflags.Client
-	clusters               *clusters.Pool
-	snapshotUpsertSem      *sharedutils.AdjustableSemaphore
-	sandboxListSem         *sharedutils.AdjustableSemaphore
-	snapshotBuildQuerySem  *sharedutils.AdjustableSemaphore
+	// snapshotBackendOverride does the same for the snapshot-template
+	// handler: the memory:false refusals must land before the sandbox leaves
+	// Running.
+	snapshotBackendOverride snapshotOrchestrator
+	// autoResumeBackendOverride does the same for the client-proxy auto-resume
+	// RPC: a running sandbox is routed before its snapshot kind is consulted.
+	autoResumeBackendOverride autoResumeOrchestrator
+	teamSandboxCounter        teamRunningSandboxCounter
+	templateManager           *template_manager.TemplateManager
+	sqlcDB                    *sqlcdb.Client
+	authDB                    *authdb.Client
+	redisClient               redis.UniversalClient
+	templateCache             *templatecache.TemplateCache
+	templateBuildsCache       *templatecache.TemplatesBuildCache
+	snapshotCache             *snapshotcache.SnapshotCache
+	authService               sharedauth.Service
+	templateSpawnCounter      *utils.TemplateSpawnCounter
+	clickhouseStore           clickhouse.Clickhouse
+	sandboxLogsReader         *sandboxlogs.Reader
+	accessTokenGenerator      *sandbox.AccessTokenGenerator
+	featureFlags              *featureflags.Client
+	clusters                  *clusters.Pool
+	snapshotUpsertSem         *sharedutils.AdjustableSemaphore
+	sandboxListSem            *sharedutils.AdjustableSemaphore
+	snapshotBuildQuerySem     *sharedutils.AdjustableSemaphore
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer
 	// as they do when the feature gate is closed.
 	secretsConn       *grpc.ClientConn
 	secretsManagement managementv1.SecretManagementServiceClient
+
+	// The sandbox events and webhook management backend, dialed only when an
+	// address is configured. Its routes stay registered either way.
+	webhooksConn      *grpc.ClientConn
+	webhookManagement webhookmanagement.WebhookManagementServiceClient
+	sandboxEvents     webhookevents.SandboxEventsServiceClient
 }
+
+const (
+	startupStateStarting uint32 = iota
+	startupStateReady
+	startupStateDraining
+)
 
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
@@ -372,6 +393,21 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		secretsManagement = managementv1.NewSecretManagementServiceClient(secretsConn)
 	}
 
+	var (
+		webhooksConn      *grpc.ClientConn
+		webhookManagement webhookmanagement.WebhookManagementServiceClient
+		sandboxEvents     webhookevents.SandboxEventsServiceClient
+	)
+	if config.WebhooksBackendGrpcAddress != "" {
+		webhooksConn, err = newWebhooksClient(config.WebhooksBackendGrpcAddress)
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing webhooks backend client", zap.Error(err))
+		}
+
+		webhookManagement = webhookmanagement.NewWebhookManagementServiceClient(webhooksConn)
+		sandboxEvents = webhookevents.NewSandboxEventsServiceClient(webhooksConn)
+	}
+
 	a := &APIStore{
 		config:                config,
 		orchestrator:          orch,
@@ -396,30 +432,38 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		sandboxListSem:        sandboxListSem,
 		snapshotBuildQuerySem: snapshotBuildQuerySem,
 		secretsConn:           secretsConn,
+		webhooksConn:          webhooksConn,
+		webhookManagement:     webhookManagement,
+		sandboxEvents:         sandboxEvents,
 		secretsManagement:     secretsManagement,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
 
-	// Wait till there's at least one, otherwise we can't create sandboxes yet
+	// Health stays blocked until the orchestrator has completed both startup
+	// gates and projected its initial cluster snapshots into placement.
 	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if orch.NodeCount() != 0 {
-					logger.L().Info(ctx, "Nodes are ready, setting API as healthy")
-					a.Healthy.Store(true)
-
-					return
-				}
-			}
+		select {
+		case <-ctx.Done():
+			return
+		case <-orch.StartupReady():
+			logger.L().Info(ctx, "Startup readiness completed, setting API as healthy")
+			a.markStartupReady()
 		}
 	}()
 
 	return a
+}
+
+// Drain stops admitting sandbox work that outlives its request and waits for
+// what is in flight. It runs before Close, which tears down the clients that
+// work uses.
+func (a *APIStore) Drain(ctx context.Context) error {
+	if a.orchestrator == nil {
+		return nil
+	}
+
+	return a.orchestrator.Drain(ctx)
 }
 
 func (a *APIStore) Close(ctx context.Context) error {
@@ -483,6 +527,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 		}
 	}
 
+	if a.webhooksConn != nil {
+		if err := a.webhooksConn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing webhooks backend client: %w", err))
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -519,13 +569,23 @@ func (a *APIStore) sendAPIStoreError(c *gin.Context, code int, message string) {
 }
 
 func (a *APIStore) GetHealth(c *gin.Context) {
-	if a.Healthy.Load() {
+	if a.startupState.Load() == startupStateReady {
 		c.String(http.StatusOK, "Health check successful")
 
 		return
 	}
 
 	c.String(http.StatusServiceUnavailable, "Service is unavailable")
+}
+
+func (a *APIStore) markStartupReady() {
+	a.startupState.CompareAndSwap(startupStateStarting, startupStateReady)
+}
+
+// BeginDrain permanently marks this API instance unhealthy. Startup completion
+// racing with shutdown cannot restore readiness after the drain begins.
+func (a *APIStore) BeginDrain() {
+	a.startupState.Store(startupStateDraining)
 }
 
 func (a *APIStore) GetTeamFromAPIKey(ctx context.Context, ginCtx *gin.Context, apiKey string) (*types.Team, *api.APIError) {
@@ -564,8 +624,7 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 
 	team, err := a.authService.GetTeamByID(ctx, teamUUID)
 	if err != nil {
-		var forbiddenErr *sharedauth.TeamForbiddenError
-		if errors.As(err, &forbiddenErr) {
+		if _, ok := errors.AsType[*sharedauth.TeamForbiddenError](err); ok {
 			return nil, &api.APIError{
 				Code:      http.StatusForbidden,
 				ClientMsg: err.Error(),

@@ -44,16 +44,18 @@ end
 return 2
 `)
 
+// routingKeyPrefix is the orchestrator-owned routing record.
+const routingKeyPrefix = "sandbox:routing:"
+
 type RedisSandboxCatalog struct {
 	redisClient redis.UniversalClient
 }
 
 var _ SandboxesCatalog = (*RedisSandboxCatalog)(nil)
 
+// NewRedisSandboxCatalog reads and writes the sandbox:routing:{sandboxID} record.
 func NewRedisSandboxCatalog(redisClient redis.UniversalClient) *RedisSandboxCatalog {
-	return &RedisSandboxCatalog{
-		redisClient: redisClient,
-	}
+	return &RedisSandboxCatalog{redisClient: redisClient}
 }
 
 func (c *RedisSandboxCatalog) GetSandbox(ctx context.Context, sandboxID string) (*SandboxInfo, error) {
@@ -105,6 +107,8 @@ func (c *RedisSandboxCatalog) StoreSandbox(ctx context.Context, sandboxID string
 	return nil
 }
 
+// DeleteSandbox deletes the entry if its execution ID matches and returns the Redis error, if any.
+// A mismatch, an unreadable value or an absent key are not errors.
 func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error {
 	spanCtx, span := tracer.Start(ctx, "sandbox-catalog-delete")
 	defer span.End()
@@ -114,10 +118,9 @@ func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID strin
 
 	outcome, err := deleteIfSameExecution.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)}, executionID).Int()
 	if err != nil {
-		// Best-effort cleanup — never fail the caller (as the original did not); the entry has a TTL.
-		logger.L().Warn(ctx, "sandbox catalog delete did not complete; entry will expire via TTL", logger.WithSandboxID(sandboxID), zap.Error(err))
+		span.RecordError(err)
 
-		return nil
+		return fmt.Errorf("failed to delete sandbox info from redis: %w", err)
 	}
 
 	switch outcome {
@@ -142,7 +145,7 @@ func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID strin
 }
 
 func (c *RedisSandboxCatalog) getCatalogKey(sandboxID string) string {
-	return fmt.Sprintf("sandbox:catalog:%s", sandboxID)
+	return routingKeyPrefix + sandboxID
 }
 
 func (c *RedisSandboxCatalog) Close(_ context.Context) error {

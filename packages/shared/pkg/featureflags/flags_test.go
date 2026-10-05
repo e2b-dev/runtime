@@ -209,3 +209,51 @@ func TestParseLogsReadConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestGetIsolatedSchedulingHosts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    ldvalue.Value
+		expected map[string]struct{}
+	}{
+		{
+			name:     "unset leaves scheduling unpartitioned",
+			value:    ldvalue.Null(),
+			expected: map[string]struct{}{},
+		},
+		{
+			name:     "array of host ids",
+			value:    ldvalue.FromJSONMarshal([]string{"node-a", "node-b"}),
+			expected: map[string]struct{}{"node-a": {}, "node-b": {}},
+		},
+		{
+			name:     "empty entries are dropped",
+			value:    ldvalue.FromJSONMarshal([]string{"node-a", ""}),
+			expected: map[string]struct{}{"node-a": {}},
+		},
+		{
+			name:     "a non-array value reads as empty rather than stranding every sandbox",
+			value:    ldvalue.FromJSONMarshal(map[string]bool{"node-a": true}),
+			expected: map[string]struct{}{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			td := ldtestdata.DataSource()
+			td.Update(td.Flag(IsolatedSchedulingHostsFlag.Key()).ValueForAll(tt.value))
+
+			client, err := NewClientWithDatasource(td)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, client.Close(context.WithoutCancel(t.Context())))
+			})
+
+			assert.Equal(t, tt.expected, GetIsolatedSchedulingHosts(t.Context(), client))
+		})
+	}
+}

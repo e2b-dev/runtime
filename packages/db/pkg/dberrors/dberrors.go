@@ -13,8 +13,7 @@ func IsNotFoundError(err error) bool {
 }
 
 func IsUniqueConstraintViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == "23505"
 	}
 
@@ -22,8 +21,7 @@ func IsUniqueConstraintViolation(err error) bool {
 }
 
 func IsForeignKeyViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == "23503"
 	}
 
@@ -34,8 +32,7 @@ func IsForeignKeyViolation(err error) bool {
 // taken straight from a request body means the caller sent something the
 // column set does not permit — a client error rather than a server one.
 func IsCheckViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == "23514"
 	}
 
@@ -47,8 +44,7 @@ func IsCheckViolation(err error) bool {
 // needs the name to say which rule the request actually broke, and those rules
 // rarely map to the same response.
 func ConstraintName(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.ConstraintName
 	}
 

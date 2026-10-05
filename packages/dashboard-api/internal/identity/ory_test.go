@@ -1,79 +1,12 @@
 package identity
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
 	ory "github.com/ory/client-go"
-
-	sharedteamprovision "github.com/e2b-dev/infra/packages/shared/pkg/teamprovision"
 )
-
-func TestOryDirectory_SetExternalID(t *testing.T) {
-	t.Parallel()
-
-	subject := uuid.NewString()
-	externalID := uuid.New()
-
-	var gotPatch []ory.JsonPatch
-	var gotPath, gotMethod string
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotPatch)
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"` + subject + `","schema_id":"default","schema_url":"","state":"active","traits":{}}`))
-	}))
-	defer server.Close()
-
-	directory, err := NewOryDirectory(OryConfig{
-		HTTPClient: server.Client(),
-		SDKURL:     server.URL,
-		Token:      "test-token",
-	})
-	if err != nil {
-		t.Fatalf("failed to build ory directory: %v", err)
-	}
-
-	if err := directory.SetExternalID(t.Context(), subject, externalID); err != nil {
-		t.Fatalf("SetExternalID returned error: %v", err)
-	}
-
-	if gotMethod != http.MethodPatch {
-		t.Fatalf("expected PATCH, got %s", gotMethod)
-	}
-	if want := "/admin/identities/" + subject; gotPath != want {
-		t.Fatalf("expected path %q, got %q", want, gotPath)
-	}
-	if len(gotPatch) != 1 {
-		t.Fatalf("expected one json patch op, got %d", len(gotPatch))
-	}
-	if gotPatch[0].Op != "add" || gotPatch[0].Path != "/external_id" {
-		t.Fatalf("unexpected patch op/path: %+v", gotPatch[0])
-	}
-	if value, _ := gotPatch[0].Value.(string); value != externalID.String() {
-		t.Fatalf("expected external id %q, got %v", externalID.String(), gotPatch[0].Value)
-	}
-}
-
-func TestOryDirectory_SetExternalIDValidatesInput(t *testing.T) {
-	t.Parallel()
-
-	directory := &oryDirectory{}
-
-	if err := directory.SetExternalID(t.Context(), "  ", uuid.New()); err == nil {
-		t.Fatal("expected error for blank subject")
-	}
-	if err := directory.SetExternalID(t.Context(), uuid.NewString(), uuid.Nil); err == nil {
-		t.Fatal("expected error for nil external id")
-	}
-}
 
 func TestIdentityFromOryProfileFields(t *testing.T) {
 	t.Parallel()
@@ -177,12 +110,8 @@ func TestIdentityFromOryProfileFields(t *testing.T) {
 			t.Parallel()
 
 			oryIdentity := ory.Identity{Id: uuid.NewString(), Traits: tt.traits, MetadataPublic: tt.metadataPublic, Credentials: tt.credentials}
-			id, err := identityFromOry(oryIdentity)
-			if err != nil {
-				t.Fatalf("identityFromOry returned error: %v", err)
-			}
 
-			got := ProfileFromIdentity(userID, id)
+			got := ProfileFromIdentity(userID, identityFromOry(oryIdentity))
 			if got.UserID != userID {
 				t.Fatalf("UserID = %s, want %s", got.UserID, userID)
 			}
@@ -199,87 +128,5 @@ func TestIdentityFromOryProfileFields(t *testing.T) {
 				t.Fatalf("Providers = %v, want %v", got.Providers, tt.wantProviders)
 			}
 		})
-	}
-}
-
-func TestIdentityFromOryCreatorContextUsesMetadataAdmin(t *testing.T) {
-	t.Parallel()
-
-	credentials := map[string]ory.IdentityCredentials{
-		"oidc": {
-			Config: map[string]any{
-				"providers": []any{map[string]any{"provider": "github-main"}},
-			},
-		},
-	}
-	oryIdentity := ory.Identity{
-		Id: uuid.NewString(),
-		MetadataAdmin: map[string]any{
-			"signup_ip":         "198.51.100.20",
-			"signup_user_agent": "Dashboard/1.0",
-			"ip_address":        "should-not-be-used",
-			"user_agent":        "should-not-be-used",
-		},
-		MetadataPublic: map[string]any{
-			"signup_ip":         "should-not-be-used",
-			"signup_user_agent": "should-not-be-used",
-		},
-		Credentials: &credentials,
-	}
-
-	id, err := identityFromOry(oryIdentity)
-	if err != nil {
-		t.Fatalf("identityFromOry returned error: %v", err)
-	}
-
-	got := CreatorContextFromIdentity(id)
-	if got.IPAddress != "198.51.100.20" {
-		t.Fatalf("IPAddress = %q, want %q", got.IPAddress, "198.51.100.20")
-	}
-	if got.UserAgent != "Dashboard/1.0" {
-		t.Fatalf("UserAgent = %q, want %q", got.UserAgent, "Dashboard/1.0")
-	}
-	if got.AuthMethod != sharedteamprovision.AuthMethodSocial {
-		t.Fatalf("AuthMethod = %q, want %q", got.AuthMethod, sharedteamprovision.AuthMethodSocial)
-	}
-}
-
-func TestOryDirectory_GetIdentityReturnsOrganizationID(t *testing.T) {
-	t.Parallel()
-
-	orgID := uuid.New()
-	subject := uuid.NewString()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		body := `{"id":"` + subject + `","schema_id":"default","schema_url":"","state":"active","traits":{},"organization_id":"` + orgID.String() + `"}`
-		_, _ = w.Write([]byte(body))
-	}))
-	defer server.Close()
-
-	directory, err := NewOryDirectory(OryConfig{
-		HTTPClient: server.Client(),
-		SDKURL:     server.URL,
-		Token:      "test-token",
-	})
-	if err != nil {
-		t.Fatalf("failed to build ory directory: %v", err)
-	}
-
-	got, err := directory.GetIdentity(t.Context(), subject)
-	if err != nil {
-		t.Fatalf("GetIdentity returned error: %v", err)
-	}
-	if got.OrganizationID != orgID {
-		t.Fatalf("expected organization %s, got %s", orgID, got.OrganizationID)
-	}
-}
-
-func TestIdentityFromOryRejectsMalformedOrganizationID(t *testing.T) {
-	t.Parallel()
-
-	badOrgID := "not-a-uuid"
-	if _, err := identityFromOry(ory.Identity{Id: uuid.NewString(), OrganizationId: *ory.NewNullableString(&badOrgID)}); err == nil {
-		t.Fatal("expected error for malformed organization_id")
 	}
 }

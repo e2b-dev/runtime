@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -14,13 +13,11 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
-	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -47,11 +44,6 @@ func TestManagementClusterReadinessRequiresServiceJWT(t *testing.T) {
 	t.Cleanup(keys.Close)
 	verifier, err := sharedauth.NewJWKSVerifier(t.Context(), sharedauth.ProviderConfig{JWT: []sharedauth.JWTConfig{{Issuer: sharedauth.JWTIssuer{URL: keys.URL, Audiences: []string{"regional"}}}}}, keys.Client())
 	require.NoError(t, err)
-	data := ldtestdata.DataSource()
-	data.Update(data.Flag(featureflags.DisableLegacyTeamMutationsFlag.Key()).VariationForAll(true))
-	flags, err := featureflags.NewClientWithDatasource(data)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
 	swagger, err := api.GetSpec()
 	require.NoError(t, err)
 	swagger.Servers = nil
@@ -73,7 +65,7 @@ func TestManagementClusterReadinessRequiresServiceJWT(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			store := &managementReadinessStore{}
-			server := newHTTPServer(0, logger.NewNopLogger(), telemetry.NewNoopClient(), swagger, authenticate, flags, store)
+			server := newHTTPServer(0, logger.NewNopLogger(), telemetry.NewNoopClient(), swagger, authenticate, store)
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/management/clusters/"+clusterID.String()+"/destroy-readiness", nil)
 			req.Header.Set("Authorization", tc.authorization)
 			req.Header.Set(sharedauth.HeaderAdminToken, tc.adminKey)

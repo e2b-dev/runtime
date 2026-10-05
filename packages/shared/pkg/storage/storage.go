@@ -21,6 +21,10 @@ var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/shared/pkg/storage")
 
 var ErrObjectNotExist = errors.New("object does not exist")
 
+// ErrSignedUploadURLUnsupported means the provider cannot sign an upload URL usable by an
+// external client. Callers that only need the URL on a cache miss may tolerate it.
+var ErrSignedUploadURLUnsupported = errors.New("signed upload URLs are not supported by this storage provider")
+
 // ErrObjectRateLimited means per-object mutation rate limiting —
 // multiple concurrent writers racing to write the same content-addressed object.
 var ErrObjectRateLimited = errors.New("object access rate limited")
@@ -61,9 +65,15 @@ func (t SeekableObjectType) String() string {
 	}
 }
 
+// UploadURL is a signed upload target for an external client; Headers go verbatim on the PUT (a SAS can pin response headers but never require a request one).
+type UploadURL struct {
+	URL     string
+	Headers map[string]string
+}
+
 type StorageProvider interface {
 	DeleteObjectsWithPrefix(ctx context.Context, prefix string) error
-	UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error)
+	UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error)
 	OpenBlob(ctx context.Context, path string) (Blob, error)
 	OpenSeekable(ctx context.Context, path string) (Seekable, error)
 	GetDetails() string

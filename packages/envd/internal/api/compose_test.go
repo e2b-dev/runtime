@@ -33,7 +33,7 @@ func newComposeTestAPI(t *testing.T) (*API, *user.User) {
 		User:    currentUser.Username,
 	}
 
-	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager())), currentUser
+	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil), currentUser
 }
 
 func writeSourceFile(t *testing.T, dir string, name string, data []byte) string {

@@ -29,6 +29,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 const (
@@ -112,7 +113,7 @@ func TestIntegrationTest(t *testing.T) {
 	sandboxes := sandbox.NewSandboxesMap()
 	sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
-			Runtime: sandbox.RuntimeMetadata{
+			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID: sandboxID,
 				TeamID:    teamID.String(),
 			},

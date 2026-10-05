@@ -6,8 +6,6 @@ package identity
 
 import (
 	"github.com/google/uuid"
-
-	sharedteamprovision "github.com/e2b-dev/infra/packages/shared/pkg/teamprovision"
 )
 
 type Identity struct {
@@ -16,10 +14,6 @@ type Identity struct {
 	Name              string
 	ProfilePictureURL string
 	Providers         []string
-	OrganizationID    uuid.UUID
-	SignupIP          string
-	SignupUserAgent   string
-	AuthMethod        string
 }
 
 type Profile struct {
@@ -37,13 +31,5 @@ func ProfileFromIdentity(userID uuid.UUID, id Identity) Profile {
 		Name:              id.Name,
 		ProfilePictureURL: id.ProfilePictureURL,
 		Providers:         id.Providers,
-	}
-}
-
-func CreatorContextFromIdentity(id Identity) *sharedteamprovision.CreatorContextV1 {
-	return &sharedteamprovision.CreatorContextV1{
-		IPAddress:  id.SignupIP,
-		UserAgent:  id.SignupUserAgent,
-		AuthMethod: id.AuthMethod,
 	}
 }

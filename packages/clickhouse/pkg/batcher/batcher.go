@@ -3,6 +3,7 @@ package batcher
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -30,6 +32,10 @@ var (
 	meter = otel.Meter("github.com/e2b-dev/infra/packages/clickhouse/pkg/batcher")
 
 	mItemsDropped      = utils.Must(meter.Int64Counter("batcher.items.dropped", metric.WithDescription("Number of items dropped because the batcher queue was full"), metric.WithUnit("{item}")))
+	mFlushes           = utils.Must(meter.Int64Counter("batcher.flushes", metric.WithDescription("Completed flush attempts by result")))
+	mMaxBatchSize      = utils.Must(meter.Int64Gauge("batcher.config.max_batch_size", metric.WithUnit("{item}")))
+	mMaxDelay          = utils.Must(meter.Int64Gauge("batcher.config.max_delay", metric.WithUnit("ms")))
+	mQueueSize         = utils.Must(meter.Int64Gauge("batcher.config.queue_size", metric.WithUnit("{item}")))
 	mQueueLen          = utils.Must(meter.Int64Gauge("batcher.queue.length", metric.WithDescription("Current number of items waiting in the batcher queue"), metric.WithUnit("{item}")))
 	mFlushBatchSize    = utils.Must(meter.Int64Histogram("batcher.flush.batch_size", metric.WithDescription("Number of items per flushed batch"), metric.WithUnit("{item}")))
 	mFlushWaitDuration = utils.Must(meter.Int64Histogram("batcher.flush.wait_duration", metric.WithDescription("Time from first item enqueued in a batch to when the batch is flushed"), metric.WithUnit("ms")))
@@ -63,6 +69,8 @@ type Batcher[T any] struct {
 	doneCh  chan struct{}
 	started bool
 
+	flags *featureflags.Client
+	name  string
 	attrs metric.MeasurementOption
 }
 
@@ -73,6 +81,10 @@ type Batcher[T any] struct {
 type BatcherFunc[T any] func(ctx context.Context, batch []T) error
 
 type BatcherOptions struct {
+	// FeatureFlags optionally overrides batch size and delay at startup and every
+	// 30 seconds between flushes. Nil keeps static options. QueueSize is startup-only.
+	FeatureFlags *featureflags.Client
+
 	// Name is added as the "batcher" attribute on all metrics, allowing different
 	// batcher instances to be identified in dashboards (e.g. "sandbox-events", "billing-export").
 	Name string
@@ -98,6 +110,8 @@ type BatcherOptions struct {
 func NewBatcher[T any](fn BatcherFunc[T], cfg BatcherOptions) (*Batcher[T], error) {
 	b := &Batcher[T]{
 		Func:         fn,
+		flags:        cfg.FeatureFlags,
+		name:         cfg.Name,
 		MaxBatchSize: cfg.MaxBatchSize,
 		MaxDelay:     cfg.MaxDelay,
 		QueueSize:    cfg.QueueSize,
@@ -114,9 +128,15 @@ func NewBatcher[T any](fn BatcherFunc[T], cfg BatcherOptions) (*Batcher[T], erro
 	}
 	if b.MaxBatchSize <= 0 {
 		b.MaxBatchSize = defaultMaxBatchSize
+		if b.flags != nil {
+			b.MaxBatchSize = featureflags.ClickhouseBatcherMaxBatchSize.Fallback()
+		}
 	}
 	if b.MaxDelay <= 0 {
 		b.MaxDelay = defaultMaxDelay
+		if b.flags != nil {
+			b.MaxDelay = time.Duration(featureflags.ClickhouseBatcherMaxDelay.Fallback()) * time.Millisecond
+		}
 	}
 	if b.QueueSize <= 0 {
 		b.QueueSize = defaultQueueSize
@@ -197,7 +217,21 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		batchStartTime time.Time
 	)
 
-	ticker := time.NewTicker(b.MaxDelay)
+	// Runtime limits belong to this goroutine; public fields remain startup options.
+	maxBatchSize, maxDelay := b.limits(ctx, b.MaxBatchSize, b.MaxDelay)
+	recordConfig := func() {
+		mMaxBatchSize.Record(ctx, int64(maxBatchSize), b.attrs)
+		mMaxDelay.Record(ctx, maxDelay.Milliseconds(), b.attrs)
+		mQueueSize.Record(ctx, int64(b.QueueSize), b.attrs)
+	}
+	recordConfig()
+	var refreshC <-chan time.Time
+	if b.flags != nil {
+		refresh := time.NewTicker(30 * time.Second)
+		defer refresh.Stop()
+		refreshC = refresh.C
+	}
+	ticker := time.NewTicker(maxDelay)
 	defer ticker.Stop()
 
 	flush := func() {
@@ -207,16 +241,19 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 
 		mFlushWaitDuration.Record(ctx, time.Since(batchStartTime).Milliseconds(), b.attrs)
 		start := time.Now()
+		result := "success"
 		if err := b.Func(ctx, batch); err != nil {
+			result = "error"
 			b.ErrorHandler(err)
 		}
 
+		mFlushes.Add(ctx, 1, b.attrs, metric.WithAttributes(attribute.String("result", result)))
 		mFlushBatchSize.Record(ctx, int64(len(batch)), b.attrs)
 		mFlushDuration.Record(ctx, time.Since(start).Milliseconds(), b.attrs)
 		mQueueLen.Record(ctx, int64(len(b.ch)), b.attrs)
 
 		batch = batch[:0]
-		ticker.Reset(b.MaxDelay)
+		ticker.Reset(maxDelay)
 	}
 
 	for {
@@ -233,11 +270,45 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 			}
 
 			batch = append(batch, item)
-			if len(batch) >= b.MaxBatchSize {
+			if len(batch) >= maxBatchSize {
 				flush()
 			}
 		case <-ticker.C:
 			flush()
+		case <-refreshC:
+			previousDelay := maxDelay
+			maxBatchSize, maxDelay = b.limits(ctx, maxBatchSize, maxDelay)
+			if maxDelay != previousDelay {
+				remaining := maxDelay
+				if len(batch) > 0 {
+					remaining -= time.Since(batchStartTime)
+				}
+				if remaining <= 0 {
+					flush()
+				} else {
+					ticker.Reset(remaining)
+				}
+			}
+			if len(batch) >= maxBatchSize {
+				flush()
+			}
+			recordConfig()
 		}
 	}
+}
+
+// limits retains the last valid values when a flag update is invalid.
+func (b *Batcher[T]) limits(ctx context.Context, size int, delay time.Duration) (int, time.Duration) {
+	if b.flags == nil {
+		return size, delay
+	}
+	target := featureflags.BatcherContext(b.name)
+	if value := b.flags.IntFlag(ctx, featureflags.ClickhouseBatcherMaxBatchSize, target); value > 0 {
+		size = value
+	}
+	if ms := b.flags.IntFlag(ctx, featureflags.ClickhouseBatcherMaxDelay, target); ms > 0 && int64(ms) <= math.MaxInt64/int64(time.Millisecond) {
+		delay = time.Duration(ms) * time.Millisecond
+	}
+
+	return size, delay
 }

@@ -27,3 +27,7 @@ func MustGetTeamID(c *gin.Context) uuid.UUID {
 func GetTeamInfo(c *gin.Context) (*types.Team, bool) {
 	return authcontext.GetTeamInfo(c)
 }
+
+func GetServiceIssuer(c *gin.Context) (string, bool) {
+	return authcontext.GetServiceIssuer(c)
+}

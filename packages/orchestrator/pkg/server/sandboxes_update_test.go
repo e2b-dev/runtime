@@ -20,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // These tests exercise the rollback path of Update: when egress application
@@ -34,7 +35,7 @@ func TestUpdate_EgressOnly_FailsAndDoesNotChangeEndTime(t *testing.T) {
 	sbx := &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
 			Config:  sandbox.NewConfig(sandbox.Config{}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: id.Generate()},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: id.Generate()},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 	}
@@ -73,7 +74,7 @@ func TestUpdate_EndTimeAndEgress_EgressFails_RevertsEndTime(t *testing.T) {
 	sbx := &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
 			Config:  sandbox.NewConfig(sandbox.Config{}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: id.Generate()},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: id.Generate()},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 	}
@@ -125,7 +126,7 @@ func TestUpdate_NonBYOPEgress_FirewallFails_ConfigUntouched(t *testing.T) {
 	sbx := &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
 			Config:  sandbox.NewConfig(sandbox.Config{}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: id.Generate()},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: id.Generate()},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 	}
@@ -252,7 +253,7 @@ func TestUpdate_SerializesUpdatesPerSandbox(t *testing.T) {
 	sbx := &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
 			Config:  sandbox.NewConfig(sandbox.Config{}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: id.Generate()},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: id.Generate()},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 	}

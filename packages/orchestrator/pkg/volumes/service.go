@@ -102,7 +102,7 @@ func (s *Service) getFilesystemAndPath(ctx context.Context, request volumePathRe
 		)
 	}
 
-	chroot, err := s.builder.Chroot(ctx, volumeType, teamID, volumeID)
+	chroot, err := s.builder.Chroot(volumeType, teamID, volumeID)
 	if err != nil {
 		if errors.Is(err, chrooted.ErrVolumeTypeNotFound) {
 			return nil, "", newAPIError(ctx,
@@ -134,10 +134,10 @@ func (s *Service) isRoot(path string) bool {
 	return path == "/"
 }
 
-func toEntry(fullVolumePath string, fileInfo os.FileInfo) *orchestrator.EntryInfo {
-	entryInfo := filesystem.GetEntryInfo(fullVolumePath, fileInfo)
-
-	return fromEntryInfo(fullVolumePath, entryInfo)
+// toEntry describes fileInfo, taken at fullVolumePath inside fs. A symlink's
+// target is resolved inside the volume, never against the host.
+func toEntry(fs *chrooted.Chrooted, fullVolumePath string, fileInfo os.FileInfo) *orchestrator.EntryInfo {
+	return fromEntryInfo(fullVolumePath, fs.EntryInfo(fullVolumePath, fileInfo))
 }
 
 func fromEntryInfo(fullVolumePath string, entryInfo filesystem.EntryInfo) *orchestrator.EntryInfo {

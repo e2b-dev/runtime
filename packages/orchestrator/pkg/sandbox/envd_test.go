@@ -17,6 +17,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func TestClassifyEnvdInitExit(t *testing.T) {
@@ -77,7 +78,7 @@ func newTestSandboxWithBundle(bundle string) *Sandbox {
 		Metadata: &Metadata{
 			internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second},
 			Config:         NewConfig(Config{}),
-			Runtime:        RuntimeMetadata{SandboxID: "test-sandbox"},
+			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "test-sandbox"},
 		},
 		CABundle: bundle,
 	}

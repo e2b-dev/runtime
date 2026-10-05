@@ -38,13 +38,13 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -108,8 +108,9 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 
 			// Phase 2: resume from the build
 			t.Logf("resuming build %s", buildID)
-			tmpl, err := infra.templateCache.GetTemplate(ctx, buildID, false, false)
+			tmpl, releaseTmpl, err := infra.templateCache.GetTemplatePinned(ctx, buildID, false, false)
 			require.NoError(t, err, "load template for FC %s", fcVersion)
+			t.Cleanup(releaseTmpl)
 
 			meta, err := tmpl.Metadata()
 			require.NoError(t, err)
@@ -134,7 +135,7 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 						FirecrackerVersion: meta.Template.FirecrackerVersion,
 					},
 				}),
-				sandbox.RuntimeMetadata{
+				sandboxtypes.RuntimeMetadata{
 					TemplateID:  "smoke-" + fcMajor,
 					TeamID:      "smoke",
 					SandboxID:   fmt.Sprintf("sbx-smoke-%s-%d", fcMajor, time.Now().UnixNano()),
@@ -181,7 +182,7 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	sbxlogger.SetSandboxLoggerInternal(l)
 	sbxlogger.SetSandboxLoggerExternal(l)
 
-	flags, _ := featureflags.NewClientWithLogLevel(ldlog.Error)
+	flags, _ := featureflags.NewClientWithLogLevel("", "", ldlog.Error)
 
 	builderConfig, err := cfg.ParseBuilder()
 	require.NoError(t, err)
@@ -226,9 +227,6 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	ti.closers = append(ti.closers, func(ctx context.Context) { networkPool.Close(ctx) })
 
 	// Artifacts / Docker
-	artifactRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(ctx)
-	require.NoError(t, err)
-
 	dockerhubRepo, err := dockerhub.GetRemoteRepository(ctx)
 	require.NoError(t, err)
 	ti.closers = append(ti.closers, func(_ context.Context) { dockerhubRepo.Close() })
@@ -253,7 +251,7 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	buildMetrics, _ := metrics.NewBuildMetrics(noop.MeterProvider{})
 	ti.builder = build.NewBuilder(
 		builderConfig, l, flags, factory,
-		persistenceTemplate, persistenceBuild, artifactRegistry,
+		persistenceTemplate, persistenceBuild,
 		dockerhubRepo, sandboxProxy, sandboxes, templateCache, buildMetrics,
 		nil,
 	)

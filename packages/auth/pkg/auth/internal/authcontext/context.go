@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	teamContextKey   = "team"
-	userIDContextKey = "user_id"
+	teamContextKey          = "team"
+	userIDContextKey        = "user_id"
+	serviceIssuerContextKey = "service_issuer"
 )
 
 func SetUserID(c *gin.Context, userID uuid.UUID) {
@@ -65,4 +66,12 @@ func getFromGinContextSafely[T any](c *gin.Context, contextKey string) (T, bool)
 	t, ok = val.(T)
 
 	return t, ok
+}
+
+func SetServiceIssuer(c *gin.Context, issuer string) {
+	setInGinContext(c, serviceIssuerContextKey, issuer)
+}
+
+func GetServiceIssuer(c *gin.Context) (string, bool) {
+	return getFromGinContextSafely[string](c, serviceIssuerContextKey)
 }

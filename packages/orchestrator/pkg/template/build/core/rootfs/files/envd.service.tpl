@@ -58,8 +58,13 @@ OOMScoreAdjust=-1000
 Environment="GOMEMLIMIT={{ .MemoryLimit }}MiB"
 
 Delegate=yes
+{{- if .EnvdMemoryProtection }}
+MemoryMin={{ .EnvdMemoryMinMiB }}M
+MemoryLow={{ .EnvdMemoryLowMiB }}M
+{{- else }}
 MemoryMin=50M
 MemoryLow=100M
+{{- end }}
 CPUAccounting=yes
 CPUWeight=1000
 IOAccounting=yes

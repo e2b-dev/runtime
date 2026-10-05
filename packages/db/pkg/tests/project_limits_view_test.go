@@ -93,21 +93,21 @@ func TestProjectLimitsOverridesTierAndAddons(t *testing.T) {
 		INSERT INTO public.project_limits (
 			team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
 			max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
-			default_free_disk_size_mb, max_disk_size_mb
-		) VALUES ($1, 111, 222, 333, 444, 555, 666, 777, 888, 999)
+			default_free_disk_size_mb, max_disk_size_mb, api_team_rps_list
+		) VALUES ($1, 111, 222, 333, 444, 555, 666, 777, 888, 999, 1010)
 	`, teamID)
 	require.NoError(t, err)
 
-	var got [10]int64
+	var got [11]int64
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT max_length_hours, concurrent_sandboxes, concurrent_template_builds,
 		       max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
-		       default_free_disk_size_mb, max_disk_size_mb, max_free_disk_size_mb
+		       default_free_disk_size_mb, max_disk_size_mb, max_free_disk_size_mb, api_team_rps_list
 		FROM public.team_limits WHERE id = $1
-	`, teamID).Scan(&got[0], &got[1], &got[2], &got[3], &got[4], &got[5], &got[6], &got[7], &got[8], &got[9])
+	`, teamID).Scan(&got[0], &got[1], &got[2], &got[3], &got[4], &got[5], &got[6], &got[7], &got[8], &got[9], &got[10])
 	require.NoError(t, err)
 
-	require.Equal(t, [10]int64{111, 222, 333, 444, 555, 666, 777, 888, 999, 999}, got)
+	require.Equal(t, [11]int64{111, 222, 333, 444, 555, 666, 777, 888, 999, 999, 1010}, got)
 }
 
 // tiers has always guaranteed that a team's free disk allowance sits at or
@@ -131,8 +131,8 @@ func TestProjectLimitsRejectsFreeDiskAboveTheCeiling(t *testing.T) {
 			INSERT INTO public.project_limits (
 				team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
 				max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
-				default_free_disk_size_mb, max_disk_size_mb
-			) VALUES ($1, 1, 1, 1, 1, 1, 1, 1, $2, $3)
+				default_free_disk_size_mb, max_disk_size_mb, api_team_rps_list
+			) VALUES ($1, 1, 1, 1, 1, 1, 1, 1, $2, $3, 0)
 			ON CONFLICT (team_id) DO UPDATE SET
 				default_free_disk_size_mb = EXCLUDED.default_free_disk_size_mb,
 				max_disk_size_mb = EXCLUDED.max_disk_size_mb
@@ -164,8 +164,8 @@ func TestProjectLimitsIsRemovedWithItsTeam(t *testing.T) {
 		INSERT INTO public.project_limits (
 			team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
 			max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
-			default_free_disk_size_mb, max_disk_size_mb
-		) VALUES ($1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+			default_free_disk_size_mb, max_disk_size_mb, api_team_rps_list
+		) VALUES ($1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0)
 	`, teamID)
 	require.NoError(t, err)
 

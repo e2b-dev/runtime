@@ -23,7 +23,6 @@ type CreationMetadata struct {
 }
 
 type (
-	InsertCallback   func(ctx context.Context, sbx Sandbox)
 	OrphanCallback   func(ctx context.Context, sbx NodeSandbox)
 	CreationCallback func(ctx context.Context, sbx Sandbox, meta CreationMetadata)
 )
@@ -40,8 +39,6 @@ type (
 )
 
 type Callbacks struct {
-	// AddSandboxToRoutingTable should be called sync to prevent race conditions where we would know where to route the sandbox
-	AddSandboxToRoutingTable InsertCallback
 	// AsyncNewlyCreatedSandbox is called asynchronously for newly created sandboxes (Add called with non-nil CreationMetadata).
 	AsyncNewlyCreatedSandbox CreationCallback
 	// KillOrphanSandbox kills an orphaned sandbox on the orchestrator node via gRPC.
@@ -87,7 +84,6 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 	if err != nil {
 		return err
 	}
-	s.callbacks.AddSandboxToRoutingTable(ctx, sandbox)
 
 	if creation != nil {
 		meta := *creation
@@ -129,12 +125,12 @@ func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, 
 	return s.storage.Update(ctx, teamID, sandboxID, updateFunc)
 }
 
-func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (Sandbox, bool, func(context.Context, error), error) {
+func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {
 	return s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
 }
 
-func (s *Store) RestoreRunning(ctx context.Context, teamID uuid.UUID, sandboxID string, fromState State, retryAfter time.Duration) (Sandbox, error) {
-	return s.storage.RestoreRunning(ctx, teamID, sandboxID, fromState, retryAfter)
+func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, retryAfter time.Duration) (Sandbox, error) {
+	return s.storage.RestoreRunning(ctx, transition, retryAfter)
 }
 
 func (s *Store) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {

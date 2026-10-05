@@ -94,6 +94,11 @@ func (n *mockSandboxClient) Create(_ context.Context, req *orchestrator.SandboxC
 	}, nil
 }
 
+// Update is a mock implementation that always accepts the new egress config.
+func (n *mockSandboxClient) Update(_ context.Context, _ *orchestrator.SandboxUpdateRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	return &emptypb.Empty{}, nil
+}
+
 // mockLegacySandboxClient mimics an orchestrator that predates the
 // filesystem_boot field: it succeeds but never echoes the applied boot path.
 type mockLegacySandboxClient struct {
@@ -208,6 +213,17 @@ func WithSandboxCreateError(err error) TestOptions {
 func WithAllocatedMemoryBytes(bytes uint64) TestOptions {
 	return func(node *TestNode) {
 		node.metrics.MemoryAllocatedBytes = bytes
+	}
+}
+
+// WithHugePages sets the hugepage pool the test node reports: page counts, as
+// the kernel exposes them (total / used / reserved), plus the page size.
+func WithHugePages(total, used, reserved, pageSizeBytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.HugePagesTotal = total
+		node.metrics.HugePagesUsed = used
+		node.metrics.HugePagesReserved = reserved
+		node.metrics.HugePageSizeBytes = pageSizeBytes
 	}
 }
 

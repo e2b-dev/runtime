@@ -17,38 +17,25 @@ SET
     name = CASE
         WHEN $1::bool THEN $2::text
         ELSE name
-    END,
-    profile_picture_url = CASE
-        WHEN $3::bool THEN $4::text
-        ELSE profile_picture_url
     END
-WHERE id = $5::uuid
-RETURNING id, name, profile_picture_url
+WHERE id = $3::uuid
+RETURNING id, name
 `
 
 type UpdateTeamParams struct {
-	NameSet              bool
-	Name                 *string
-	ProfilePictureUrlSet bool
-	ProfilePictureUrl    *string
-	TeamID               uuid.UUID
+	NameSet bool
+	Name    *string
+	TeamID  uuid.UUID
 }
 
 type UpdateTeamRow struct {
-	ID                uuid.UUID
-	Name              string
-	ProfilePictureUrl *string
+	ID   uuid.UUID
+	Name string
 }
 
 func (q *Queries) UpdateTeam(ctx context.Context, arg UpdateTeamParams) (UpdateTeamRow, error) {
-	row := q.db.QueryRow(ctx, updateTeam,
-		arg.NameSet,
-		arg.Name,
-		arg.ProfilePictureUrlSet,
-		arg.ProfilePictureUrl,
-		arg.TeamID,
-	)
+	row := q.db.QueryRow(ctx, updateTeam, arg.NameSet, arg.Name, arg.TeamID)
 	var i UpdateTeamRow
-	err := row.Scan(&i.ID, &i.Name, &i.ProfilePictureUrl)
+	err := row.Scan(&i.ID, &i.Name)
 	return i, err
 }

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -33,6 +34,25 @@ type SandboxService struct {
 	api                        *APIStore
 	requireEdgeClientProxyAuth bool
 	clientProxyOAuth           oauth.Verifier
+}
+
+// autoResumeOrchestrator is the slice of *orchestrator.Orchestrator the
+// auto-resume RPC consumes. An interface so the ordering that matters, a
+// still-running sandbox routed before its snapshot kind is consulted, is
+// testable without a real orchestrator.
+type autoResumeOrchestrator interface {
+	GetSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandbox.Sandbox, error)
+	HandleExistingSandboxAutoResume(ctx context.Context, teamID uuid.UUID, sandboxID string, sbx sandbox.Sandbox, transitionWaitBudget time.Duration) (string, bool, error)
+}
+
+// autoResumeBackend returns the auto-resume RPC's orchestrator slice,
+// overridable in tests via autoResumeBackendOverride.
+func (a *APIStore) autoResumeBackend() autoResumeOrchestrator {
+	if a.autoResumeBackendOverride != nil {
+		return a.autoResumeBackendOverride
+	}
+
+	return a.orchestrator
 }
 
 func NewSandboxService(api *APIStore, requireEdgeClientProxyAuth bool, clientProxyOAuth oauth.Verifier) *SandboxService {
@@ -114,13 +134,6 @@ func (s *SandboxService) getAutoResumeSnapshot(ctx context.Context, sandboxID st
 		return nil, nil, status.Error(codes.NotFound, "sandbox auto-resume disabled")
 	}
 
-	// A filesystem-only snapshot can only be resumed by cold-booting (reboot),
-	// which loses in-memory state. Refuse to do that implicitly on an incoming
-	// request — the caller must resume it explicitly.
-	if snapshotIsFilesystemOnly(snap.Snapshot) {
-		return nil, nil, status.Error(codes.FailedPrecondition, "filesystem-only snapshot must be resumed explicitly")
-	}
-
 	return snap, autoResume, nil
 }
 
@@ -176,13 +189,15 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
 
-	sandboxData, sandboxErr := s.api.orchestrator.GetSandbox(ctx, teamID, sandboxID)
+	backend := s.api.autoResumeBackend()
+
+	sandboxData, sandboxErr := backend.GetSandbox(ctx, teamID, sandboxID)
 	if sandboxErr != nil {
 		if !errors.Is(sandboxErr, sandbox.ErrNotFound) {
 			return nil, status.Errorf(codes.Internal, "failed to get sandbox state: %v", sandboxErr)
 		}
 	} else {
-		nodeIP, handled, existingErr := s.api.orchestrator.HandleExistingSandboxAutoResume(
+		nodeIP, handled, existingErr := backend.HandleExistingSandboxAutoResume(
 			ctx,
 			teamID,
 			sandboxID,
@@ -205,6 +220,16 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		if handled {
 			return &proxygrpc.SandboxResumeResponse{OrchestratorIp: nodeIP}, nil
 		}
+	}
+
+	// A filesystem-only snapshot can only be resumed by cold-booting (reboot),
+	// which loses in-memory state. Refuse to do that implicitly on an incoming
+	// request; the caller must resume it explicitly. Checked only once a resume
+	// is actually needed: a sandbox that is still running is routed above
+	// whatever kind its last snapshot recorded (a filesystem-only snapshot
+	// template leaves the source running).
+	if snapshotIsFilesystemOnly(snap.Snapshot) {
+		return nil, status.Error(codes.FailedPrecondition, "filesystem-only snapshot must be resumed explicitly")
 	}
 
 	minAutoResumeTimeout := time.Duration(s.api.featureFlags.IntFlag(ctx, featureflags.MinAutoResumeTimeoutSeconds)) * time.Second

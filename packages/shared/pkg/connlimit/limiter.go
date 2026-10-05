@@ -18,48 +18,45 @@ func NewConnectionLimiter() *ConnectionLimiter {
 	}
 }
 
-func (l *ConnectionLimiter) getCounter(key string) *atomic.Int64 {
-	return l.connections.Upsert(key, &atomic.Int64{}, func(exists bool, valueInMap, newValue *atomic.Int64) *atomic.Int64 {
-		if exists {
-			return valueInMap
-		}
-
-		return newValue
-	})
-}
-
 // TryAcquire attempts to acquire a connection slot for a key.
 // Returns (current count after increment, true) if successful, or (current count, false) if limit exceeded.
 // If maxLimit is negative, no limit is enforced. If maxLimit is 0, all connections are blocked.
 func (l *ConnectionLimiter) TryAcquire(key string, maxLimit int) (int64, bool) {
-	counter := l.getCounter(key)
-	for {
-		current := counter.Load()
-		if maxLimit >= 0 && current >= int64(maxLimit) {
-			return current, false
-		}
-		if counter.CompareAndSwap(current, current+1) {
-			return current + 1, true
-		}
+	if maxLimit == 0 {
+		return l.Count(key), false
 	}
+
+	var count int64
+	var acquired bool
+	// Admission and idle-counter deletion must hold the same shard lock.
+	l.connections.Upsert(key, &atomic.Int64{}, func(exists bool, counter, newCounter *atomic.Int64) *atomic.Int64 {
+		if !exists {
+			counter = newCounter
+		}
+		count = counter.Load()
+		if maxLimit < 0 || count < int64(maxLimit) {
+			count = counter.Add(1)
+			acquired = true
+		}
+
+		return counter
+	})
+
+	return count, acquired
 }
 
 // Release decrements the connection count for a key.
 func (l *ConnectionLimiter) Release(key string) {
-	counter, ok := l.connections.Get(key)
-	if !ok {
-		return
-	}
+	l.connections.RemoveCb(key, func(_ string, counter *atomic.Int64, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if counter.Load() > 0 {
+			counter.Add(-1)
+		}
 
-	for {
-		current := counter.Load()
-		if current <= 0 {
-			return
-		}
-		if counter.CompareAndSwap(current, current-1) {
-			return
-		}
-	}
+		return counter.Load() == 0
+	})
 }
 
 // Remove removes a key entry entirely. Call when the key is no longer needed.

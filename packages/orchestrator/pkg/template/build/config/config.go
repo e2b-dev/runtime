@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -82,6 +83,10 @@ type TemplateConfig struct {
 	// flag once, at the start of the build, so every boot in the build agrees and the
 	// stored snapshot is self-describing.
 	CmdlineArgs map[string]string
+
+	// CPUTemplate is the CPU template every boot in this build applies, resolved once from
+	// the per-team flag at build start. Nil is none.
+	CPUTemplate *cputemplate.Template
 }
 
 // ObjectMetadata is the provenance stamped on a build's uploaded objects.

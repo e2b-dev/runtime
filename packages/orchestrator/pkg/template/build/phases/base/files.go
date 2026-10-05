@@ -16,7 +16,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/rootfs"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases/base/distro"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -30,7 +29,6 @@ func constructLayerFilesFromOCI(
 	phaseMetadata phases.PhaseMeta,
 	// The base build ID can be different from the final requested template build ID.
 	baseBuildID string,
-	artifactRegistry artifactsregistry.ArtifactsRegistry,
 	dockerhubRepository dockerhub.RemoteRepository,
 	featureFlags *featureflags.Client,
 	rootfsPath string,
@@ -40,7 +38,6 @@ func constructLayerFilesFromOCI(
 
 	// Create a rootfs file
 	rtfs := rootfs.New(
-		artifactRegistry,
 		dockerhubRepository,
 		buildContext,
 		featureFlags,

@@ -276,22 +276,22 @@ func (_c *MockStorageProvider_OpenSeekable_Call) RunAndReturn(run func(ctx conte
 }
 
 // UploadSignedURL provides a mock function for the type MockStorageProvider
-func (_mock *MockStorageProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error) {
+func (_mock *MockStorageProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
 	ret := _mock.Called(ctx, path, ttl)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UploadSignedURL")
 	}
 
-	var r0 string
+	var r0 UploadURL
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Duration) (string, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Duration) (UploadURL, error)); ok {
 		return returnFunc(ctx, path, ttl)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Duration) string); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, time.Duration) UploadURL); ok {
 		r0 = returnFunc(ctx, path, ttl)
 	} else {
-		r0 = ret.Get(0).(string)
+		r0 = ret.Get(0).(UploadURL)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, time.Duration) error); ok {
 		r1 = returnFunc(ctx, path, ttl)
@@ -337,12 +337,12 @@ func (_c *MockStorageProvider_UploadSignedURL_Call) Run(run func(ctx context.Con
 	return _c
 }
 
-func (_c *MockStorageProvider_UploadSignedURL_Call) Return(s string, err error) *MockStorageProvider_UploadSignedURL_Call {
-	_c.Call.Return(s, err)
+func (_c *MockStorageProvider_UploadSignedURL_Call) Return(uploadURL UploadURL, err error) *MockStorageProvider_UploadSignedURL_Call {
+	_c.Call.Return(uploadURL, err)
 	return _c
 }
 
-func (_c *MockStorageProvider_UploadSignedURL_Call) RunAndReturn(run func(ctx context.Context, path string, ttl time.Duration) (string, error)) *MockStorageProvider_UploadSignedURL_Call {
+func (_c *MockStorageProvider_UploadSignedURL_Call) RunAndReturn(run func(ctx context.Context, path string, ttl time.Duration) (UploadURL, error)) *MockStorageProvider_UploadSignedURL_Call {
 	_c.Call.Return(run)
 	return _c
 }

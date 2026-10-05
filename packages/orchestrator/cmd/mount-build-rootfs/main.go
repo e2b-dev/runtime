@@ -78,7 +78,7 @@ func main() {
 	// We use a separate ctx for majority of the operations as cancelling context for the NBD+storage and *then* doing cleanup for these often resulted in deadlocks.
 	nbdContext := context.Background()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	if err != nil {
 		panic(fmt.Errorf("failed to create feature flags client: %w", err))
 	}

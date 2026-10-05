@@ -1,10 +1,19 @@
 package storage
 
 import (
+	"context"
 	"encoding/base64"
+	"io"
 	"math"
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -155,10 +164,7 @@ func TestAzurePartUploaderBlockIDsAreUploadScoped(t *testing.T) {
 }
 
 func TestNewAzureStorageAcceptsKeylessConnectionString(t *testing.T) {
-	// A least-privilege SAS connection string (no AccountKey) is a working config for
-	// every reachable operation — nothing in the provider needs a shared key. (Signed
-	// upload URLs would have, but UploadSignedURL is hard-disabled on Azure; the AAD
-	// path is likewise accepted without one.)
+	// A SAS-only connection string (no AccountKey) works for everything except minting an upload SAS.
 	t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
 		"BlobEndpoint=https://myaccount.blob.core.windows.net;SharedAccessSignature=sv=2022-11-02&ss=b&sig=fake")
 
@@ -219,4 +225,171 @@ func TestClampAzureUploadConcurrency(t *testing.T) {
 			assert.Equal(t, tt.want, clampAzureUploadConcurrency(tt.tasks))
 		})
 	}
+}
+
+func TestNewAzureStorageSigningCredential(t *testing.T) {
+	t.Run("connection string with an account key can sign locally", func(t *testing.T) {
+		t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
+			"DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=ZmFrZS1hY2NvdW50LWtleS1mb3ItdGVzdHMtb25seS1ub3QtYS1jcmVkZW50aWFs;EndpointSuffix=core.windows.net")
+
+		s, err := newAzureStorage(t.Context(), "fc-templates", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, s.sharedKey)
+		assert.False(t, s.canDelegate)
+
+		upload, err := s.UploadSignedURL(t.Context(), "templates/abc/layer.tar", 30*time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"x-ms-blob-type": "BlockBlob"}, upload.Headers)
+		assert.Contains(t, upload.URL, "sp=cw", "the SAS must grant exactly create+write")
+	})
+
+	t.Run("SAS-only connection string cannot sign", func(t *testing.T) {
+		t.Setenv("AZURE_STORAGE_CONNECTION_STRING",
+			"BlobEndpoint=https://myaccount.blob.core.windows.net;SharedAccessSignature=sv=2022-11-02&ss=b&sig=fake")
+
+		s, err := newAzureStorage(t.Context(), "fc-templates", nil)
+		require.NoError(t, err)
+		assert.Nil(t, s.sharedKey)
+		assert.False(t, s.canDelegate)
+
+		_, err = s.UploadSignedURL(t.Context(), "templates/abc/layer.tar", 30*time.Minute)
+		require.ErrorIs(t, err, ErrSignedUploadURLUnsupported)
+	})
+
+	t.Run("account name and key env pair signs locally", func(t *testing.T) {
+		t.Setenv("AZURE_STORAGE_ACCOUNT_NAME", "myaccount")
+		t.Setenv("AZURE_STORAGE_ACCOUNT_KEY", "ZmFrZS1hY2NvdW50LWtleS1mb3ItdGVzdHMtb25seS1ub3QtYS1jcmVkZW50aWFs")
+
+		s, err := newAzureStorage(t.Context(), "fc-templates", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, s.sharedKey)
+
+		upload, err := s.UploadSignedURL(t.Context(), "templates/abc/layer.tar", 30*time.Minute)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(upload.URL, "https://myaccount.blob.core.windows.net/"), upload.URL)
+		assert.Contains(t, upload.URL, "spr=https", "a real account must only accept HTTPS")
+	})
+}
+
+func TestParseConnectionStringSharedKey(t *testing.T) {
+	t.Parallel()
+
+	// Base64 keys end in '=' padding, so the value must be split on the first '=' only.
+	const key = "ZmFrZS1hY2NvdW50LWtleS1mb3ItdGVzdHMtb25seS1ub3QtYS1jcmVk=="
+
+	for _, tt := range []struct {
+		name             string
+		connectionString string
+		wantName         string
+		wantKey          string
+		wantOK           bool
+	}{
+		{
+			name:             "account key with base64 padding",
+			connectionString: "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=" + key + ";EndpointSuffix=core.windows.net",
+			wantName:         "myaccount",
+			wantKey:          key,
+			wantOK:           true,
+		},
+		{
+			name:             "sas only",
+			connectionString: "BlobEndpoint=https://myaccount.blob.core.windows.net;SharedAccessSignature=sv=2022-11-02&ss=b&sig=fake",
+			wantOK:           false,
+		},
+		{
+			name:             "account name without a key",
+			connectionString: "AccountName=myaccount;SharedAccessSignature=sig=fake",
+			wantName:         "myaccount",
+			wantOK:           false,
+		},
+		{
+			name:             "empty",
+			connectionString: "",
+			wantOK:           false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			accountName, accountKey, ok := parseConnectionStringSharedKey(tt.connectionString)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantName, accountName)
+			assert.Equal(t, tt.wantKey, accountKey)
+		})
+	}
+}
+
+// staticTokenCredential stands in for a managed identity — the pipeline demands a bearer token before it talks to the fake transport.
+type staticTokenCredential struct{}
+
+func (staticTokenCredential) GetToken(context.Context, policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{Token: "fake-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+// userDelegationKeyTransport answers Get User Delegation Key with a canned key and records the request, so its shape asserts without an AAD-backed account.
+type userDelegationKeyTransport struct {
+	query url.Values
+	calls int
+}
+
+func (t *userDelegationKeyTransport) Do(req *http.Request) (*http.Response, error) {
+	t.calls++
+	t.query = req.URL.Query()
+
+	// Azure's own documented example key value; it only ever signs in this test.
+	body := `<?xml version="1.0" encoding="utf-8"?>
+<UserDelegationKey>
+  <SignedOid>11111111-1111-1111-1111-111111111111</SignedOid>
+  <SignedTid>22222222-2222-2222-2222-222222222222</SignedTid>
+  <SignedStart>2026-09-11T09:00:00Z</SignedStart>
+  <SignedExpiry>2026-09-11T09:30:00Z</SignedExpiry>
+  <SignedService>b</SignedService>
+  <SignedVersion>2026-06-06</SignedVersion>
+  <Value>ZmFrZS11c2VyLWRlbGVnYXRpb24ta2V5LWZvci10ZXN0cy1vbmx5</Value>
+</UserDelegationKey>`
+
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/xml"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}, nil
+}
+
+// Covers the managed-identity signing path; only the RBAC grant behind the key fetch cannot be exercised here.
+func TestAzureUploadSignedURLSignsWithUserDelegation(t *testing.T) {
+	t.Parallel()
+
+	transport := &userDelegationKeyTransport{}
+	client, err := azblob.NewClient("https://myaccount.blob.core.windows.net/", staticTokenCredential{},
+		&azblob.ClientOptions{ClientOptions: azcore.ClientOptions{Transport: transport}})
+	require.NoError(t, err)
+
+	provider := &azureStorage{
+		client:        client,
+		container:     client.ServiceClient().NewContainerClient("fc-templates"),
+		containerName: "fc-templates",
+		canDelegate:   true,
+	}
+
+	upload, err := provider.UploadSignedURL(t.Context(), "templates/abc/layer.tar", 30*time.Minute)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, transport.calls)
+	assert.Equal(t, "userdelegationkey", transport.query.Get("comp"))
+	assert.Equal(t, "service", transport.query.Get("restype"))
+
+	assert.Equal(t, map[string]string{"x-ms-blob-type": "BlockBlob"}, upload.Headers)
+
+	signed, err := url.Parse(upload.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "/fc-templates/templates/abc/layer.tar", signed.Path)
+
+	params := signed.Query()
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", params.Get("skoid"), "a user-delegation SAS is identified by skoid/sktid")
+	assert.Equal(t, "22222222-2222-2222-2222-222222222222", params.Get("sktid"))
+	assert.Equal(t, "cw", params.Get("sp"))
+	assert.Equal(t, "b", params.Get("sr"))
+	assert.Equal(t, "https", params.Get("spr"))
+	assert.NotEmpty(t, params.Get("sig"))
 }

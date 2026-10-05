@@ -16,6 +16,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -56,26 +57,13 @@ func TestCloseClosesTheDescriptorBeforeTheHandlerTeardown(t *testing.T) {
 	overlay := block.NewOverlay(device, cache)
 	t.Cleanup(func() { _ = overlay.Close() })
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = featureFlags.Close(context.WithoutCancel(t.Context())) })
 
-	pool, err := NewDevicePool(16)
-	require.NoError(t, err)
+	pool := newPartitionedPool(t)
 
-	poolCtx, poolCancel := context.WithCancel(t.Context())
-	poolDone := make(chan struct{})
-	go func() {
-		pool.Populate(poolCtx)
-		close(poolDone)
-	}()
-	t.Cleanup(func() {
-		poolCancel()
-		<-poolDone
-		_ = pool.Close(context.WithoutCancel(t.Context()))
-	})
-
-	mnt := NewDirectPathMount(overlay, pool, featureFlags)
+	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L())
 
 	_, err = mnt.Open(ctx)
 	require.NoError(t, err)

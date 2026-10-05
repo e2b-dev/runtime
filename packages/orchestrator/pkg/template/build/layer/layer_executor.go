@@ -84,7 +84,10 @@ func (lb *LayerExecutor) BuildLayer(
 	ctx, childSpan := tracer.Start(ctx, "run-in-sandbox")
 	defer childSpan.End()
 
-	localTemplate, err := cmd.SourceTemplate.Get(ctx, lb.templateCache)
+	localTemplate, releaseTemplate, err := cmd.SourceTemplate.Get(ctx, lb.templateCache)
+	// Deferred first so it runs last, after the sandbox built on the template
+	// has been closed.
+	defer releaseTemplate()
 	if err != nil {
 		return metadata.Template{}, fmt.Errorf("get template snapshot: %w", err)
 	}
@@ -297,9 +300,10 @@ func (lb *LayerExecutor) UploadSnapshot(
 	userLogger.Debug(ctx, fmt.Sprintf("Adding layer to cache: %s", meta.Template.BuildID))
 
 	// Add snapshot to template cache so it can be used immediately
-	err := lb.templateCache.AddSnapshot(
+	finishUpload, err := lb.templateCache.AddSnapshot(
 		context.WithoutCancel(ctx),
 		meta.Template.BuildID,
+		sbxtemplate.SnapshotLineage{Origin: buildOrigin},
 		snapshot.MemorySnapshot.DiffHeader,
 		snapshot.RootfsDiffHeader,
 		snapshot.Snapfile,
@@ -322,7 +326,7 @@ func (lb *LayerExecutor) UploadSnapshot(
 
 	objectMetadata := lb.BuildContext.Config.ObjectMetadata(buildOrigin)
 
-	upload, err := sandbox.NewUpload(ctx, lb.uploads, snapshot, lb.templateStorage, lb.compressConfig, lb.ff, storage.UseCaseBuild, objectMetadata)
+	upload, err := sandbox.NewUpload(ctx, lb.uploads, snapshot, lb.templateStorage, lb.compressConfig, lb.ff, storage.UseCaseBuild, objectMetadata, finishUpload)
 	if err != nil {
 		return fmt.Errorf("register upload: %w", err)
 	}
@@ -354,7 +358,7 @@ func (lb *LayerExecutor) UploadSnapshot(
 		}()
 
 		// Signal even on error so child layers waiting on this build can abort.
-		defer func() { upload.Finish(ctx, uploadErr) }()
+		defer func() { endLayerUpload(ctx, upload, uploadErr) }()
 
 		if err := upload.Run(ctx); err != nil {
 			return fmt.Errorf("error uploading snapshot: %w", err)
@@ -386,4 +390,16 @@ func (lb *LayerExecutor) UploadSnapshot(
 	})
 
 	return nil
+}
+
+// endLayerUpload ends a build layer's upload, returning its template cache pin.
+// A failed layer fails its build, so nothing will read it: it is abandoned
+// rather than finished.
+func endLayerUpload(ctx context.Context, upload *sandbox.Upload, uploadErr error) {
+	if uploadErr != nil {
+		upload.Abandon(ctx, uploadErr)
+
+		return
+	}
+	upload.Finish(ctx, nil)
 }

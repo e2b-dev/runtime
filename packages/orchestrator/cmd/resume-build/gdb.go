@@ -15,6 +15,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -101,7 +102,7 @@ func (r *runner) gdbMode(ctx context.Context, opts gdbOptions) error {
 	//    until a debugger attaches, so ResumeSandbox does not return until we connect
 	//    gdb. Run it in the background and connect gdb once FC binds the socket; doing
 	//    it the other way around (resume, then connect) deadlocks.
-	runtime := sandbox.RuntimeMetadata{
+	runtime := sandboxtypes.RuntimeMetadata{
 		TemplateID:  r.buildID,
 		TeamID:      "local",
 		SandboxID:   fmt.Sprintf("sbx-gdb-%d", time.Now().UnixNano()),

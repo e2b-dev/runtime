@@ -16,7 +16,11 @@ const (
 )
 
 func validateAndParseTimeout(rawTimeout *int32, maxHours int64) (time.Duration, *api.APIError) {
-	timeout := sandbox.SandboxTimeoutDefault
+	return validateAndParseTimeoutWithDefault(rawTimeout, maxHours, sandbox.SandboxTimeoutDefault)
+}
+
+func validateAndParseTimeoutWithDefault(rawTimeout *int32, maxHours int64, fallback time.Duration) (time.Duration, *api.APIError) {
+	timeout := fallback
 	if rawTimeout != nil {
 		if *rawTimeout <= 0 {
 			return 0, &api.APIError{

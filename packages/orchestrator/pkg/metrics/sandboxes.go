@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -30,17 +31,21 @@ const (
 	sbxMemThresholdPct = 80
 	sbxCpuThresholdPct = 80
 
+	// Caps the guest-supplied process name, in runes. Real names are escaped to ASCII, 60 at most.
+	maxOomProcessLen = 64
+
+	// Caps the kill lines one poll writes.
+	maxOomKillsLogged = 10
+
 	minEnvdVersionForMetrics         = "0.1.5"
 	minEnvVersionForMetricsTimestamp = "0.1.3"
-	minEnvdVersionForMemoryPrecise   = "0.2.4"
+	minEnvdVersionForMemoryMetrics   = "0.2.4"
 	minEnvdVersionForDiskMetrics     = "0.2.4"
 	minEnvdVersionForCacheMetrics    = "0.5.9"
 
 	timeoutGetMetrics         = 100 * time.Millisecond
 	metricsParallelismFactor  = 5 // Used to calculate number of concurrently sandbox metrics requests
 	sandboxMetricExportPeriod = 5 * time.Second
-
-	shiftFromMiBToBytes = 20 // Shift to convert MiB to bytes
 )
 
 type (
@@ -221,26 +226,16 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 					o.ObserveInt64(so.cpuTotal, sbxMetrics.CPUCount, attributes)
 					o.ObserveFloat64(so.cpuUsed, sbxMetrics.CPUUsedPercent, attributes)
 
-					var memoryTotal int64
-					var memoryUsed int64
-
-					ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForMemoryPrecise)
+					memoryTotal, memoryUsed, memoryReported, err := sandboxMemory(sbx.Config.Envd.Version, sbxMetrics)
 					if err != nil {
 						logger.L().Error(ctx, "Failed to check envd version for memory metrics", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
 					}
-
-					if ok {
-						memoryTotal = sbxMetrics.MemTotal
-						memoryUsed = sbxMetrics.MemUsed
-					} else {
-						memoryTotal = sbxMetrics.MemTotalMiB << shiftFromMiBToBytes
-						memoryUsed = sbxMetrics.MemUsedMiB << shiftFromMiBToBytes
+					if memoryReported {
+						o.ObserveInt64(so.memoryTotal, memoryTotal, attributes)
+						o.ObserveInt64(so.memoryUsed, memoryUsed, attributes)
 					}
 
-					o.ObserveInt64(so.memoryTotal, memoryTotal, attributes)
-					o.ObserveInt64(so.memoryUsed, memoryUsed, attributes)
-
-					ok, err = utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForCacheMetrics)
+					ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForCacheMetrics)
 					if err != nil {
 						logger.L().Error(ctx, "Failed to check envd version for cache metrics", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
 					}
@@ -259,12 +254,14 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 					// Log warnings if memory or CPU usage exceeds thresholds
 					// Round percentage to 2 decimal places
-					memUsedPct := float32(math.Floor(float64(memoryUsed)/float64(memoryTotal)*10000) / 100)
-					if memUsedPct >= sbxMemThresholdPct {
-						sbxlogger.E(sbx).Warn(ctx, "Memory usage threshold exceeded",
-							zap.Float32("mem_used_percent", memUsedPct),
-							zap.Float32("mem_threshold_percent", sbxMemThresholdPct),
-						)
+					if memoryReported {
+						memUsedPct := float32(math.Floor(float64(memoryUsed)/float64(memoryTotal)*10000) / 100)
+						if memUsedPct >= sbxMemThresholdPct {
+							sbxlogger.E(sbx).Warn(ctx, "Memory usage threshold exceeded",
+								zap.Float32("mem_used_percent", memUsedPct),
+								zap.Float32("mem_threshold_percent", sbxMemThresholdPct),
+							)
+						}
 					}
 
 					if sbxMetrics.CPUUsedPercent >= sbxCpuThresholdPct {
@@ -272,6 +269,16 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 							zap.Float32("cpu_used_percent", float32(sbxMetrics.CPUUsedPercent)),
 							zap.Float32("cpu_threshold_percent", sbxCpuThresholdPct),
 						)
+					}
+
+					kills, more := unseenOOMKills(sbx, sbxMetrics)
+					for _, kill := range kills {
+						sbxlogger.E(sbx).Warn(ctx, "Out of memory: process was killed", zap.String("process", kill.Process))
+					}
+					if more > 0 {
+						// envd lists only its latest kills, so there may have been more.
+						sbxlogger.E(sbx).Warn(ctx, "Out of memory: at least this many more processes were killed",
+							zap.Int("processes", more))
 					}
 
 					return nil
@@ -317,4 +324,34 @@ func (so *SandboxObserver) Close(ctx context.Context) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// unseenOOMKills returns up to maxOomKillsLogged kills not yet logged for sbx, names capped, and
+// how many more it saw; envd lists only its latest kills, so there may have been more. Builds log none.
+func unseenOOMKills(sbx *sandbox.Sandbox, m *sandbox.Metrics) ([]envd.OOMKill, int) {
+	if !sbx.LogsOOMKills() || m.OomKills == nil {
+		return nil, 0
+	}
+
+	kills := sbx.OOMKills.Unseen(*m.OomKills)
+	for i := range kills {
+		kills[i].Process = utils.Truncate(kills[i].Process, maxOomProcessLen)
+	}
+
+	if len(kills) > maxOomKillsLogged {
+		return kills[:maxOomKillsLogged], len(kills) - maxOomKillsLogged
+	}
+
+	return kills, 0
+}
+
+// sandboxMemory returns the sandbox's memory in bytes. envd reports bytes since
+// minEnvdVersionForMemoryMetrics; older envd reports only MiB, so reported is false.
+func sandboxMemory(envdVersion string, m *sandbox.Metrics) (total, used int64, reported bool, err error) {
+	reported, err = utils.IsGTEVersion(envdVersion, minEnvdVersionForMemoryMetrics)
+	if err != nil || !reported {
+		return 0, 0, false, err
+	}
+
+	return m.MemTotal, m.MemUsed, true, nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // CgroupStatsFunc is a function that returns current cgroup resource usage statistics.
@@ -41,7 +42,7 @@ type HostStatsMetadata struct {
 	TeamID      uuid.UUID
 	VCPUCount   int64
 	MemoryMB    int64
-	SandboxType SandboxType
+	SandboxType sandboxtypes.SandboxType
 }
 
 func NewHostStatsCollector(

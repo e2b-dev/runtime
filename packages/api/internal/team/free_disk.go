@@ -22,18 +22,18 @@ func LimitFreeDiskSize(limits *types.TeamLimits, requestedMB *int32) (int64, *ap
 
 	if requested < 0 {
 		return 0, &api.APIError{
-			Err:       fmt.Errorf("free disk space must not be negative, got %d MiB", requested),
-			ClientMsg: "Free disk space can't be negative",
+			Err:       fmt.Errorf("minimum free disk must not be negative, got %d MiB", requested),
+			ClientMsg: "Minimum free disk can't be negative",
 			Code:      http.StatusBadRequest,
 		}
 	}
 
 	if requested > limits.MaxFreeDiskSizeMb {
 		return 0, &api.APIError{
-			Err: fmt.Errorf("free disk space %d MiB exceeds team limits (%d MiB)",
+			Err: fmt.Errorf("minimum free disk %d MiB exceeds team limits (%d MiB)",
 				requested, limits.MaxFreeDiskSizeMb),
 			ClientMsg: fmt.Sprintf(
-				"Free disk space can't be higher than %d MiB (if you need to increase this limit, please contact support)",
+				"Minimum free disk can't be higher than %d MiB (if you need to increase this limit, please contact support)",
 				limits.MaxFreeDiskSizeMb),
 			Code: http.StatusBadRequest,
 		}

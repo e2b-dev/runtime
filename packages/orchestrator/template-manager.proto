@@ -16,6 +16,8 @@ message InitLayerFileUploadRequest {
 message InitLayerFileUploadResponse{
   bool present = 1;
   optional string url = 2;
+  // Request headers the upload client must send on the PUT to `url`.
+  map<string, string> headers = 3;
 }
 
 message TemplateStep {

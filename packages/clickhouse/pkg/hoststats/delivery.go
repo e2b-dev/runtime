@@ -3,8 +3,8 @@ package hoststats
 import (
 	"context"
 	"fmt"
-	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	chconfig "github.com/e2b-dev/infra/packages/clickhouse/pkg"
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/batcher"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -41,8 +42,10 @@ const InsertSandboxHostStatQuery = `INSERT INTO sandbox_host_stats
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 type ClickhouseDelivery struct {
-	batcher *batcher.Batcher[SandboxHostStat]
-	conn    driver.Conn
+	batcher     *batcher.Batcher[SandboxHostStat]
+	conn        driver.Conn
+	ff          *featureflags.Client
+	batcherName string
 }
 
 type GatedClickhouseDelivery struct {
@@ -61,20 +64,18 @@ func NewDefaultClickhouseHostStatsDelivery(
 	featureFlags *featureflags.Client,
 	batcherName string,
 ) (*ClickhouseDelivery, error) {
-	maxBatchSize := featureFlags.IntFlag(ctx, featureflags.ClickhouseBatcherMaxBatchSize)
-	maxDelay := time.Duration(featureFlags.IntFlag(ctx, featureflags.ClickhouseBatcherMaxDelay)) * time.Millisecond
-	batcherQueueSize := featureFlags.IntFlag(ctx, featureflags.ClickhouseBatcherQueueSize)
+	batcherQueueSize := featureFlags.IntFlag(ctx, featureflags.ClickhouseBatcherQueueSize, featureflags.BatcherContext(batcherName))
 
 	return NewClickhouseHostStatsDelivery(
 		ctx, conn, batcher.BatcherOptions{
 			Name:         batcherName,
-			MaxBatchSize: maxBatchSize,
-			MaxDelay:     maxDelay,
+			FeatureFlags: featureFlags,
 			QueueSize:    batcherQueueSize,
 			ErrorHandler: func(err error) {
 				logger.L().Error(ctx, "error batching sandbox host stats", zap.Error(err))
 			},
 		},
+		featureFlags,
 	)
 }
 
@@ -86,8 +87,9 @@ func NewClickhouseHostStatsDelivery(
 	ctx context.Context,
 	conn driver.Conn,
 	opts batcher.BatcherOptions,
+	featureFlags *featureflags.Client,
 ) (*ClickhouseDelivery, error) {
-	delivery := &ClickhouseDelivery{conn: conn}
+	delivery := &ClickhouseDelivery{conn: conn, ff: featureFlags, batcherName: opts.Name}
 
 	var err error
 	delivery.batcher, err = batcher.NewBatcher(delivery.batchInserter, opts)
@@ -119,10 +121,25 @@ func (c *ClickhouseDelivery) Close(_ context.Context) error {
 	return c.batcher.Stop()
 }
 
+// insertSettings returns the per-query ClickHouse settings for one flush, or
+// nil when no feature flag client is configured.
+func (c *ClickhouseDelivery) insertSettings(ctx context.Context) clickhouse.Settings {
+	var fallback clickhouse.Settings
+	if c.ff != nil && c.ff.BoolFlag(ctx, featureflags.ClickhouseHostStatsAsyncInsertFlag) {
+		fallback = clickhouse.Settings{"async_insert": 1}
+	}
+
+	return chconfig.InsertSettings(ctx, c.ff, c.batcherName, fallback)
+}
+
 func (c *ClickhouseDelivery) batchInserter(ctx context.Context, stats []SandboxHostStat) error {
 	attrs := trace.WithAttributes(attribute.Int("batch.size", len(stats)))
 	ctx, span := tracer.Start(ctx, "Flush host stats batch to Clickhouse", attrs)
 	defer span.End()
+
+	if settings := c.insertSettings(ctx); settings != nil {
+		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(settings))
+	}
 
 	batch, err := c.conn.PrepareBatch(ctx, InsertSandboxHostStatQuery, driver.WithReleaseConnection())
 	if err != nil {

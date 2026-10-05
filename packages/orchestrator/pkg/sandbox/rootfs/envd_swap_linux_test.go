@@ -38,6 +38,14 @@ func TestRunDebugfsRejectsNonNBDDevice(t *testing.T) {
 	assert.Empty(t, out)
 }
 
+func TestSwapEnvdBinaryRejectsRelativeStageRoot(t *testing.T) {
+	t.Parallel()
+
+	_, err := SwapEnvdBinary(t.Context(), "/dev/nbd0", "/fc-envd/envd", "relative")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "envd swap stage root must be absolute")
+}
+
 // TestEnvdExecutable pins the mode check the swap/rollback verify relies on: a
 // content match is not enough — a silent `sif` failure could leave envd
 // non-executable, which this must catch from debugfs `stat` output.

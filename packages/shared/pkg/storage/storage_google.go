@@ -97,6 +97,10 @@ func NewGCP(ctx context.Context, bucketName string, limiter *limit.Limiter) (Sto
 }
 
 func (s *gcpStorage) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
+	if err := validateObjectPath(prefix); err != nil {
+		return err
+	}
+
 	objects := s.bucket.Objects(ctx, &storage.Query{Prefix: prefix + "/"})
 
 	for {
@@ -122,10 +126,14 @@ func (s *gcpStorage) GetDetails() string {
 	return fmt.Sprintf("[GCP Storage, bucket set to %s]", s.bucket.BucketName())
 }
 
-func (s *gcpStorage) UploadSignedURL(_ context.Context, path string, ttl time.Duration) (string, error) {
+func (s *gcpStorage) UploadSignedURL(_ context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	token, err := parseServiceAccountBase64(consts.GoogleServiceAccountSecret)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse GCP service account: %w", err)
+		return UploadURL{}, fmt.Errorf("failed to parse GCP service account: %w", err)
 	}
 
 	opts := &storage.SignedURLOptions{
@@ -137,13 +145,17 @@ func (s *gcpStorage) UploadSignedURL(_ context.Context, path string, ttl time.Du
 
 	url, err := storage.SignedURL(s.bucket.BucketName(), path, opts)
 	if err != nil {
-		return "", fmt.Errorf("failed to create signed URL for GCS object (%s): %w", path, err)
+		return UploadURL{}, fmt.Errorf("failed to create signed URL for GCS object (%s): %w", path, err)
 	}
 
-	return url, nil
+	return UploadURL{URL: url}, nil
 }
 
 func (s *gcpStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	handle := s.bucket.Object(path).Retryer(
 		storage.WithMaxAttempts(googleMaxAttempts),
 		storage.WithPolicy(storage.RetryAlways),
@@ -169,6 +181,10 @@ func (s *gcpStorage) OpenSeekable(_ context.Context, path string) (Seekable, err
 }
 
 func (s *gcpStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	handle := s.bucket.Object(path).Retryer(
 		storage.WithMaxAttempts(googleMaxAttempts),
 		storage.WithPolicy(storage.RetryAlways),

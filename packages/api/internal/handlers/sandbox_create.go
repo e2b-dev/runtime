@@ -66,15 +66,6 @@ const (
 func (a *APIStore) PostSandboxes(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// Get team from context, use TeamContextKey
-	teamInfo := auth.MustGetTeamInfo(c)
-
-	c.Set("teamID", teamInfo.Team.ID.String())
-
-	span := trace.SpanFromContext(ctx)
-	traceID := span.SpanContext().TraceID().String()
-	c.Set("traceID", traceID)
-
 	body, err := ginutils.ParseBody[api.PostSandboxesJSONRequestBody](ctx, c)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
@@ -83,6 +74,58 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 
 		return
 	}
+
+	a.createSandbox(c, body, sandbox.SandboxTimeoutDefault)
+}
+
+// PostV2Sandboxes creates a sandbox with secured envd access; the request has no secure field to opt out.
+func (a *APIStore) PostV2Sandboxes(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	body, err := ginutils.ParseBody[api.PostV2SandboxesJSONRequestBody](ctx, c)
+	if err != nil {
+		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
+
+		telemetry.ReportCriticalError(ctx, "error when parsing request", err)
+
+		return
+	}
+
+	a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+}
+
+func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
+	secure := true
+
+	return api.NewSandbox{
+		TemplateID:          body.TemplateID,
+		Timeout:             body.Timeout,
+		AutoPause:           body.AutoPause,
+		AutoPauseMemory:     body.AutoPauseMemory,
+		AutoResume:          body.AutoResume,
+		Secure:              &secure,
+		AllowInternetAccess: body.AllowInternetAccess,
+		Network:             body.Network,
+		Metadata:            body.Metadata,
+		EnvVars:             body.EnvVars,
+		Mcp:                 body.Mcp,
+		Iam:                 body.Iam,
+		VolumeMounts:        body.VolumeMounts,
+	}
+}
+
+// createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
+func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) {
+	ctx := c.Request.Context()
+
+	// Get team from context, use TeamContextKey
+	teamInfo := auth.MustGetTeamInfo(c)
+
+	c.Set("teamID", teamInfo.Team.ID.String())
+
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+	c.Set("traceID", traceID)
 
 	telemetry.ReportEvent(ctx, "Parsed body")
 
@@ -157,7 +200,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	metadata := sharedUtils.DerefOrDefault(body.Metadata, nil)
 	apiVolumeMounts := sharedUtils.DerefOrDefault(body.VolumeMounts, nil)
 
-	timeout, apiErr := validateAndParseTimeout(body.Timeout, teamInfo.Limits.MaxLengthHours)
+	timeout, apiErr := validateAndParseTimeoutWithDefault(body.Timeout, teamInfo.Limits.MaxLengthHours, defaultTimeout)
 	if apiErr != nil {
 		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
@@ -261,11 +304,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 				return
 			}
 
-			canonical, err := sandbox_network.ValidateEgressProxy(ctx, &sandbox_network.EgressProxyConfig{
-				Address:  ep.Address,
-				Username: sharedUtils.DerefOrDefault(ep.Username, ""),
-				Password: sharedUtils.DerefOrDefault(ep.Password, ""),
-			}, nil)
+			canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
 			if err != nil {
 				telemetry.ReportError(ctx, "invalid egress proxy config", err, telemetry.WithSandboxID(sandboxID))
 				a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))
@@ -273,9 +312,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 				return
 			}
 
-			network.Egress.EgressProxyAddress = canonical.Address
-			network.Egress.EgressProxyUsername = canonical.Username
-			network.Egress.EgressProxyPassword = canonical.Password
+			apiorch.ApplyValidatedEgressProxy(network.Egress, canonical)
 		}
 
 		// Make sure envd seucre access is enforced when public access is disabled,
@@ -303,8 +340,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 			return
 		}
 
-		var vne InvalidVolumeMountsError
-		if errors.As(err, &vne) {
+		if vne, ok := errors.AsType[InvalidVolumeMountsError](err); ok {
 			a.sendAPIStoreError(c, http.StatusBadRequest, vne.Error())
 
 			return
@@ -702,6 +738,30 @@ func apiRulesToDBRules(apiRules *map[string][]api.SandboxNetworkRule) map[string
 	}
 
 	return dbRules
+}
+
+// apiEgressProxyToConfig maps the API egress proxy object onto the validation
+// input. It does no checking of its own; ValidateEgressProxy owns that.
+func apiEgressProxyToConfig(ep *api.SandboxEgressProxyConfig) *sandbox_network.EgressProxyConfig {
+	if ep == nil {
+		return nil
+	}
+
+	cfg := &sandbox_network.EgressProxyConfig{
+		Address:  ep.Address,
+		Username: sharedUtils.DerefOrDefault(ep.Username, ""),
+		Password: sharedUtils.DerefOrDefault(ep.Password, ""),
+	}
+
+	if t := ep.Tls; t != nil {
+		cfg.TLS = &sandbox_network.EgressProxyTLSConfig{
+			Enabled:    t.Enabled,
+			ServerName: sharedUtils.DerefOrDefault(t.ServerName, ""),
+			CACert:     sharedUtils.DerefOrDefault(t.CaCert, ""),
+		}
+	}
+
+	return cfg
 }
 
 func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, maxDomains int, network *api.SandboxNetworkConfig) *api.APIError {

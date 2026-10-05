@@ -274,7 +274,13 @@ func run() error {
 		}()
 	}
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, logFlusher)
+	var oomWatcher *host.OOMWatcher
+	if !isNotFC {
+		oomWatcher = host.NewOOMWatcher(&envLogger)
+		go oomWatcher.Watch(ctx)
+	}
+
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, logFlusher)
 	if resumeHandover {
 		// Restore the NFS mount ledger carried across the upgrade before the
 		// post-upgrade /init runs setupNFS, so it recognizes a still-live mount

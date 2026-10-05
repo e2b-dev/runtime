@@ -7,7 +7,7 @@ Repository and review rules are shared through:
 
 ## Project Overview
 
-E2B Infrastructure is the backend infrastructure powering E2B (e2b.dev), an open-source cloud platform for AI code interpreting. It provides sandboxed execution environments using Firecracker microVMs, deployed on GCP using Terraform and Nomad.
+E2B Infrastructure is the backend infrastructure powering E2B (e2b.dev), an open-source cloud platform for AI code interpreting. It provides sandboxed execution environments using Firecracker microVMs.
 
 **Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — it explains what each service does, how services interact (with diagrams of the core flows: sandbox creation, traffic routing, pause/resume, template builds), and the deployment topology. Reading it first is the fastest way to understand this repository.
 
@@ -19,12 +19,6 @@ E2B Infrastructure is the backend infrastructure powering E2B (e2b.dev), an open
 ```bash
 # Switch between environments (prod, staging, dev)
 make switch-env ENV=staging
-
-# Setup GCP authentication
-make login-gcloud
-
-# Initialize Terraform
-make init
 
 # Setup local development stack (PostgreSQL, Redis, ClickHouse, monitoring)
 make local-infra
@@ -82,22 +76,14 @@ make migrate
 cd packages/<package> && go test -v -run TestName ./path/to/package
 ```
 
-### Deployment
+### Publishing Artifacts
 ```bash
-# Build and upload all services to GCP
+# Build and upload all service images to your GCP project
 make build-and-upload
 
 # Build specific service
 make build-and-upload/api
 make build-and-upload/orchestrator
-
-# Plan Terraform changes
-make plan                    # All changes
-make plan-without-jobs       # Without Nomad jobs
-make plan-only-jobs          # Only Nomad jobs
-
-# Apply changes
-make apply
 ```
 
 ## Architecture Overview
@@ -122,6 +108,12 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - OpenAPI code generation: `internal/api/*.gen.go`
 - Port: 80
 
+**Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
+- Entry point: `main.go`
+- Spec: `spec/openapi-dashboard.yml`; team reads, template tags, builds, `/v1/management`, deprecated admin team bootstrap
+- Talks to Postgres and ClickHouse; never to orchestrators (see `docs/ARCHITECTURE.md`)
+- Port: 3010
+
 **Orchestrator (`packages/orchestrator/`)** - Firecracker microVM orchestration
 - Entry point: `main.go`
 - VM management: `pkg/sandbox/`
@@ -141,7 +133,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - **Version in `pkg/version.go` must be bumped on every behavioral change** (not comments/docs-only changes)
 
 **Client Proxy (`packages/client-proxy/`)** - Edge routing layer
-- Service discovery via Consul
+- Service discovery via `packages/shared/pkg/servicediscovery`
 - Request routing to orchestrators
 - Redis-backed state management
 
@@ -161,12 +153,11 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 
 ### Key Technologies
 
-- **go 1.26.6** with workspaces (`go.work`)
+- **go 1.26.8** with workspaces (`go.work`)
 - **Firecracker** for microVM virtualization
 - **PostgreSQL** for primary data (sqlc for queries)
 - **ClickHouse** for analytics
 - **Redis** for caching and state
-- **Terraform + Nomad** for IaC and orchestration
 - **OpenTelemetry** for observability (Grafana stack: Loki, Tempo, Mimir)
 - **gRPC/Connect RPC** for service communication
 - **Gin** (API), **chi** (Envd) for HTTP
@@ -224,17 +215,9 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 - Code generation: `make generate/db` (regenerates sqlc code)
 
 ### Environment Variables
-- Environment configs: `.env.{prod,staging,dev}`
-- Template: `.env.template`
-- Switch: `make switch-env ENV=staging`
-- Secrets stored in GCP Secrets Manager (production)
-
-### Infrastructure as Code
-- Location: `iac/provider-gcp/`
-- Nomad jobs: `iac/provider-gcp/nomad/jobs/`
-- Network config: `iac/provider-gcp/network/`
-- Deploy jobs only: `make plan-only-jobs` + `make apply`
-- Deploy specific job: `make plan-only-jobs/orchestrator`
+- Local development defaults: `packages/<service>/.env.local`; see [DEV-LOCAL.md](DEV-LOCAL.md).
+- Self-hosting configuration: [embed/compose/.env](embed/compose/.env); see [embed/README.md](embed/README.md).
+- Custom environment configs: `.env.<environment>`, selected with `make switch-env ENV=<environment>`.
 
 ### Firecracker & VM Management
 - Orchestrator requires **sudo** to run (Firecracker needs root)
@@ -251,9 +234,8 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 - Profiling: API exposes pprof on `/debug/pprof/` (see `packages/api/Makefile` profiler target)
 
 ### CI/CD Workflows
-- `.github/workflows/pr-tests.yml` - Run on PRs
-- `.github/workflows/deploy-infra.yml` - Deploy infrastructure
-- `.github/workflows/build-and-upload-job.yml` - Build containers
+- `.github/workflows/pull-request.yml` - PR orchestrator (lint, OpenAPI, unit, arm64, integration)
+- `.github/workflows/pr-tests.yml` - Unit test shards
 - `.github/workflows/integration_tests.yml` - Integration test suite
 
 ## Architecture Patterns
@@ -266,35 +248,8 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 6. **Graceful Shutdown**: Services handle SIGTERM with context cancellation
 7. **Health Checks**: gRPC health protocol + HTTP health endpoints
 
-## Self-Hosting
-
-Self-hosting is fully supported on GCP (AWS in progress). See `self-host.md` for complete setup guide.
-
-Key steps:
-1. Create GCP project and configure quotas
-2. Create `.env.{prod,staging,dev}` from `.env.template`
-3. Run `make switch-env ENV=<env>`
-4. Run `make login-gcloud && make init`
-5. Run `make build-and-upload && make copy-public-builds`
-6. Configure secrets in GCP Secrets Manager
-7. Run `make plan && make apply`
-
 ## Debugging
-
-### Remote Development (VSCode)
-- See `DEV.md` for remote SSH setup via GCP
-- Supports Go debugger attachment to remote instances
-
-### SSH to Orchestrator
-```bash
-make setup-ssh
-make connect-orchestrator
-```
-
-### Nomad UI
-- Access: `https://nomad.<your-domain>`
-- Token: GCP Secrets Manager
 
 ### Logs
 - Local: Docker logs in `make local-infra`
-- Production: Grafana Loki or Nomad UI
+- Production: Grafana Loki

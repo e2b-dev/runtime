@@ -33,6 +33,13 @@ type Pool struct {
 
 	clusters        *smap.Map[*Cluster]
 	synchronization *synchronization.Synchronize[queries.Cluster, *Cluster]
+	store           clustersSyncStore
+
+	cancel           context.CancelFunc
+	lifecycleDone    <-chan struct{}
+	startupReady     chan struct{}
+	startupReadyOnce sync.Once
+	lifecycleMu      *sync.Mutex
 }
 
 func localClusterConfig() *queries.Cluster {
@@ -55,33 +62,43 @@ func NewPool(
 	config cfg.Config,
 ) (*Pool, error) {
 	clusters := smap.New[*Cluster]()
-
-	localCluster := localClusterConfig()
-
+	poolCtx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		db:       db,
-		tel:      tel,
-		clusters: clusters,
-		synchronization: synchronization.NewSynchronize(
-			"clusters-pool",
-			"Clusters pool",
-			clustersSyncStore{
-				config:               config,
-				db:                   db,
-				tel:                  tel,
-				clusters:             clusters,
-				local:                localCluster,
-				localDiscovery:       localDiscovery,
-				queryLogsProvider:    queryLogsProvider,
-				queryMetricsProvider: queryMetricsProvider,
-				sandboxLogsReader:    sandboxLogsReader,
-				featureFlags:         featureFlags,
-			},
-		),
+		db:            db,
+		tel:           tel,
+		clusters:      clusters,
+		cancel:        cancel,
+		lifecycleDone: poolCtx.Done(),
+		startupReady:  make(chan struct{}),
+		lifecycleMu:   &sync.Mutex{},
 	}
+	p.store = clustersSyncStore{
+		config:               config,
+		db:                   db,
+		tel:                  tel,
+		clusters:             clusters,
+		local:                localClusterConfig(),
+		localDiscovery:       localDiscovery,
+		queryLogsProvider:    queryLogsProvider,
+		queryMetricsProvider: queryMetricsProvider,
+		sandboxLogsReader:    sandboxLogsReader,
+		featureFlags:         featureFlags,
+		activateCluster: func(cluster *Cluster, mode initialSyncMode) error {
+			return p.activateCluster(poolCtx, cluster, mode)
+		},
+	}
+	p.synchronization = synchronization.NewSynchronize("clusters-pool", "Clusters pool", p.store)
 
-	// Periodically sync clusters with the database
-	go p.synchronization.Start(ctx, clustersSyncInterval, clusterSyncTimeout, true)
+	coordinator := newStartupCoordinator(
+		func(inventoryCtx context.Context) ([]queries.Cluster, error) {
+			return p.initialInventory(poolCtx, inventoryCtx)
+		},
+		func(attemptCtx context.Context, cluster queries.Cluster) error {
+			return p.startInitialRemoteCluster(poolCtx, attemptCtx, cluster)
+		},
+		p.finishStartup,
+	)
+	go coordinator.Start(poolCtx)
 
 	return p, nil
 }
@@ -94,7 +111,16 @@ func (p *Pool) GetClusters() map[string]*Cluster {
 	return p.clusters.Items()
 }
 
+// StartupReady closes after the first successful inventory and every remote
+// target in that inventory has applied a snapshot or exhausted startup retries.
+func (p *Pool) StartupReady() <-chan struct{} {
+	return p.startupReady
+}
+
 func (p *Pool) Close(ctx context.Context) {
+	p.lifecycleMu.Lock()
+	p.cancel()
+	p.lifecycleMu.Unlock()
 	p.synchronization.Close()
 
 	wg := &sync.WaitGroup{}
@@ -122,6 +148,7 @@ type clustersSyncStore struct {
 	sandboxLogsReader    ClickhouseLogsReader
 	featureFlags         *featureflags.Client
 	config               cfg.Config
+	activateCluster      func(*Cluster, initialSyncMode) error
 }
 
 func (d clustersSyncStore) SourceList(ctx context.Context) ([]queries.Cluster, error) {
@@ -169,30 +196,35 @@ func (d clustersSyncStore) PoolExists(_ context.Context, cluster queries.Cluster
 }
 
 func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster queries.Cluster) {
-	clusterID := cluster.ID.String()
-
 	logger.L().Info(ctx, "Initializing newly discovered cluster", logger.WithClusterID(cluster.ID))
 
-	var c *Cluster
-	var err error
-
-	// Local cluster
-	if cluster.ID == consts.LocalClusterID {
-		c = newLocalCluster(context.WithoutCancel(ctx), d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config)
-		d.clusters.Insert(clusterID, c)
-		logger.L().Info(ctx, "Local cluster initialized successfully", logger.WithClusterID(cluster.ID))
+	c, err := d.newCluster(cluster)
+	if err != nil {
+		logger.L().Error(ctx, "Initializing cluster failed", zap.Error(err), logger.WithClusterID(cluster.ID))
 
 		return
 	}
 
-	// Remote cluster
+	if err := d.activateCluster(c, syncImmediately); err != nil {
+		logger.L().Info(ctx, "Skipped cluster initialization during shutdown", zap.Error(err), logger.WithClusterID(cluster.ID))
+
+		return
+	}
+
+	logger.L().Info(ctx, "Cluster initialized successfully", logger.WithClusterID(cluster.ID))
+}
+
+func (d clustersSyncStore) newCluster(cluster queries.Cluster) (*Cluster, error) {
+	if cluster.ID == consts.LocalClusterID {
+		return newLocalCluster(d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config), nil
+	}
+
 	authOrgID := ""
 	if cluster.AuthOrgID != nil {
 		authOrgID = *cluster.AuthOrgID
 	}
 
-	c, err = newRemoteCluster(
-		context.WithoutCancel(ctx),
+	return newRemoteCluster(
 		d.tel,
 		cluster.Endpoint,
 		cluster.EndpointTls,
@@ -201,14 +233,89 @@ func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster queries.Clust
 		cluster.SandboxProxyDomain,
 		authOrgID,
 	)
-	if err != nil {
-		logger.L().Error(ctx, "Initializing remote cluster failed", zap.Error(err), logger.WithClusterID(cluster.ID))
+}
 
+func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Context) ([]queries.Cluster, error) {
+	clusters, err := p.store.SourceList(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]queries.Cluster, 0, len(clusters))
+	for _, cluster := range clusters {
+		if cluster.ID != consts.LocalClusterID {
+			targets = append(targets, cluster)
+
+			continue
+		}
+
+		local, localErr := p.store.newCluster(cluster)
+		if localErr != nil {
+			return nil, localErr
+		}
+		if err := p.activateCluster(lifecycleCtx, local, syncImmediately); err != nil {
+			return nil, err
+		}
+	}
+
+	return targets, nil
+}
+
+func (p *Pool) startInitialRemoteCluster(lifecycleCtx context.Context, ctx context.Context, cluster queries.Cluster) error {
+	c, err := p.store.newCluster(cluster)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SyncInstances(ctx); err != nil {
+		_ = c.Close(ctx)
+
+		return err
+	}
+
+	// The snapshot is already applied, so the periodic loop starts at its first
+	// scheduled tick rather than repeating discovery now.
+	if err := p.activateCluster(lifecycleCtx, c, syncOnNextTick); err != nil {
+		_ = c.Close(ctx)
+
+		return err
+	}
+
+	return nil
+}
+
+// activateCluster publishes a constructed cluster: it starts the cluster's
+// periodic discovery and adds it to the pool. Both happen under lifecycleMu,
+// the mutex Close holds while cancelling, so a cluster can never start or
+// become visible after shutdown began. Callers construct the cluster and run
+// any network calls outside this method, both to keep those off the mutex and
+// because the caller owns the cluster until activation succeeds.
+func (p *Pool) activateCluster(lifecycleCtx context.Context, cluster *Cluster, mode initialSyncMode) error {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if err := lifecycleCtx.Err(); err != nil {
+		return err
+	}
+
+	cluster.Start(lifecycleCtx, mode)
+	p.clusters.Insert(cluster.ID.String(), cluster)
+
+	return nil
+}
+
+func (p *Pool) finishStartup(lifecycleCtx context.Context) {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if lifecycleCtx.Err() != nil {
 		return
 	}
 
-	d.clusters.Insert(clusterID, c)
-	logger.L().Info(ctx, "Remote cluster initialized successfully", logger.WithClusterID(cluster.ID))
+	p.startupReadyOnce.Do(func() {
+		close(p.startupReady)
+		go p.synchronization.Start(lifecycleCtx, clustersSyncInterval, clusterSyncTimeout, false)
+	})
 }
 
 func (d clustersSyncStore) PoolUpdate(_ context.Context, _ *Cluster) {

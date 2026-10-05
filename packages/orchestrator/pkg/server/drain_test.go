@@ -11,6 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func TestDrainSandboxesReturnsWhenEmpty(t *testing.T) {
@@ -94,7 +95,7 @@ func drainTestSandbox(t *testing.T, lifecycleID string) *sandbox.Sandbox {
 		LifecycleID: lifecycleID,
 		Metadata: &sandbox.Metadata{
 			Config:  sandbox.NewConfig(sandbox.Config{}),
-			Runtime: sandbox.RuntimeMetadata{SandboxID: "sandbox-1"},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "sandbox-1"},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 	}

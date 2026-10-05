@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
@@ -112,12 +113,79 @@ func resolveTLSConfig(ctx context.Context, config RedisConfig, addr string) (*tl
 }
 
 // refusePlaintextPassword: go-redis sends AUTH on every connection, so a password without TLS puts the credential on the wire in cleartext -- fail once at startup with a named error instead.
-func refusePlaintextPassword(config RedisConfig, tlsConfig *tls.Config) error {
-	if config.RedisPassword != "" && tlsConfig == nil {
-		return errors.New("REDIS_PASSWORD is set but TLS is not enabled: refusing to send credentials over plaintext (set REDIS_TLS_ENABLED, or unset REDIS_PASSWORD)")
+// It takes the effective password rather than the config, so a password spelled inside REDIS_URL meets the same rule as REDIS_PASSWORD.
+func refusePlaintextPassword(password string, tlsConfig *tls.Config) error {
+	if password != "" && tlsConfig == nil {
+		return errors.New("a Redis password is set but TLS is not enabled: refusing to send credentials over plaintext (set REDIS_TLS_ENABLED or use the rediss:// scheme, or drop the password)")
 	}
 
 	return nil
+}
+
+// parseRedisURL reads REDIS_URL, which is either a redis:// / rediss:// URL carrying
+// credentials and a database number, or the bare host:port that predates it.
+// A scheme means the value is meant as a URL, so failing to parse one is a
+// misconfiguration; only a schemeless value falls through to host:port.
+func parseRedisURL(redisURL string) (*redis.Options, error) {
+	if !strings.Contains(redisURL, "://") {
+		return &redis.Options{Addr: redisURL}, nil
+	}
+
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		// Parser errors echo slices of the input -- the URL, host:port
+		// fragments, escape sequences -- and any slice may carry the
+		// credential (an unencoded '#' in a password puts it in the "invalid
+		// port" detail, for example). Callers log this error at startup, so
+		// no parser text passes through at all.
+		return nil, errors.New(`failed to parse REDIS_URL: "<redacted>" is not a valid redis URL`)
+	}
+
+	return opts, nil
+}
+
+// newRedisOptions builds the single-node client options, reconciling what REDIS_URL
+// carries with what the explicit REDIS_* settings ask for.
+func newRedisOptions(ctx context.Context, config RedisConfig, poolSize, minIdleConns int) (*redis.Options, error) {
+	opts, err := parseRedisURL(config.RedisURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// rediss:// asks for TLS in the URL. Fold it into the flag so a single path resolves
+	// the CA, pins the ServerName, and decides whether a password may go on the wire.
+	tlsRequest := config
+	tlsRequest.RedisTLSEnabled = config.RedisTLSEnabled || opts.TLSConfig != nil
+
+	// The parsed address, not the raw URL: resolveTLSConfig pins ServerName to the host.
+	tlsConfig, err := resolveTLSConfig(ctx, tlsRequest, opts.Addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if config.RedisPassword != "" {
+		// Two passwords that disagree is a misconfiguration either way it resolves; name it at startup.
+		if opts.Password != "" && opts.Password != config.RedisPassword {
+			return nil, errors.New("REDIS_PASSWORD and the password in REDIS_URL differ: set the password in one place")
+		}
+
+		opts.Password = config.RedisPassword
+	}
+
+	if err := refusePlaintextPassword(opts.Password, tlsConfig); err != nil {
+		return nil, err
+	}
+
+	opts.TLSConfig = tlsConfig
+
+	// The resolved pool settings are authoritative, so any pool parameters in the URL query are overwritten.
+	opts.PoolSize = poolSize
+	opts.MinIdleConns = minIdleConns
+	opts.ConnMaxIdleTime = -1
+	opts.ConnMaxLifetime = connMaxLifetime
+	opts.ConnMaxLifetimeJitter = connMaxLifetimeJitter
+
+	return opts, nil
 }
 
 func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalClient, error) {
@@ -149,30 +217,16 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 		if err != nil {
 			return nil, err
 		}
-		if err := refusePlaintextPassword(config, tlsConfig); err != nil {
+		if err := refusePlaintextPassword(config.RedisPassword, tlsConfig); err != nil {
 			return nil, err
 		}
 		clusterOpts.TLSConfig = tlsConfig
 
 		redisClient = redis.NewClusterClient(clusterOpts)
 	case config.RedisURL != "":
-		tlsConfig, err := resolveTLSConfig(ctx, config, config.RedisURL)
+		opts, err := newRedisOptions(ctx, config, poolSize, minIdleConns)
 		if err != nil {
 			return nil, err
-		}
-		if err := refusePlaintextPassword(config, tlsConfig); err != nil {
-			return nil, err
-		}
-
-		opts := &redis.Options{
-			Addr:                  config.RedisURL,
-			Password:              config.RedisPassword,
-			TLSConfig:             tlsConfig,
-			PoolSize:              poolSize,
-			MinIdleConns:          minIdleConns,
-			ConnMaxIdleTime:       -1,
-			ConnMaxLifetime:       connMaxLifetime,
-			ConnMaxLifetimeJitter: connMaxLifetimeJitter,
 		}
 
 		redisClient = redis.NewClient(opts)

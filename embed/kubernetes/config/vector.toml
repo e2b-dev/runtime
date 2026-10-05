@@ -1,0 +1,198 @@
+data_dir = "alloc/data/vector/"
+
+[api]
+enabled = true
+address = "127.0.0.1:44313"
+
+[sources.http_server]
+type = "http_server"
+address = "127.0.0.1:20006"
+encoding = "ndjson"
+path_key = "_path"
+
+[transforms.add_source_http_server]
+type = "remap"
+inputs = ["http_server"]
+source = """
+del(."_path")
+if (!exists(.sandboxID) || .sandboxID == null) && exists(.instanceID) && .instanceID != null {
+  .sandboxID = .instanceID
+}
+.timestamp = parse_timestamp(.timestamp, format: "%+") ?? now()
+# Normalize keys
+if exists(.sandbox_id) {
+  .sandboxID = .sandbox_id
+}
+if exists(.build_id) {
+  .buildID = .build_id
+}
+if exists(.env_id) {
+  .envID = .env_id
+}
+if exists(.team_id) {
+  .teamID = .team_id
+}
+if exists(."template.id") {
+  .templateID = ."template.id"
+  del(."template.id")
+}
+if exists(."sandbox.id") {
+  .sandboxID = ."sandbox.id"
+  del(."sandbox.id")
+}
+if exists(."build.id") {
+  .buildID = ."build.id"
+  del(."build.id")
+}
+if exists(."env.id") {
+  .envID = ."env.id"
+  del(."env.id")
+}
+if exists(."team.id") {
+  .teamID = ."team.id"
+  del(."team.id")
+}
+
+# Apply defaults if not already set
+if !exists(.envID) {
+  .envID = "unknown"
+}
+if !exists(.category) {
+  .category = "default"
+}
+if !exists(.teamID) {
+  .teamID = "unknown"
+}
+if !exists(.sandboxID) {
+  .sandboxID = "unknown"
+}
+if !exists(.buildID) {
+  .buildID = "unknown"
+}
+if !exists(.service) {
+  if exists(.service_name) && .service_name != null {
+    .service = .service_name
+  } else {
+    .service = "envd"
+  }
+}
+"""
+
+[transforms.internal_routing]
+type = "route"
+inputs = [ "add_source_http_server" ]
+
+[transforms.internal_routing.route]
+internal = '.internal == true'
+
+[transforms.remove_internal]
+type = "remap"
+inputs = [ "internal_routing._unmatched" ]
+source = '''
+del(.internal)
+'''
+
+# Enable debugging of logs to the console
+# [sinks.console_logs]
+# type = "console"
+# inputs = ["remove_internal"]
+# encoding.codec = "json"
+
+# One row of the ClickHouse `sandbox_logs` table per line, the same eleven
+# columns and the same rules as the collector that writes it in E2B's own
+# deployments. The api reads this table for sandbox and template-build logs
+# (LOGS_READ_CONFIG=true); there is no Loki in this stack.
+# Rows are dropped when the team id is not a UUID, or when a line has no
+# sandbox id unless it is a template-manager build line, which the api looks
+# up by template and build id and stores under the "unknown" sandbox.
+[transforms.sandbox_logs_rows]
+type = "remap"
+inputs = [ "remove_internal" ]
+drop_on_error = true
+drop_on_abort = true
+source = '''
+raw = encode_json(.)
+
+# A UUID, or the row is dropped. The regex has no end anchor on purpose: compose
+# interpolation would need that character doubled in the inline copy of this
+# file, so the length check closes the match instead.
+team_id = string(.teamID) ?? ""
+if length(team_id) != 36 || !match(team_id, r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
+  abort
+}
+
+service = string(.service) ?? ""
+if service == "" { service = string(.service_name) ?? "" }
+if service == "" { service = "envd" }
+category = string(.category) ?? ""
+if category == "" { category = "default" }
+
+template_id = string(.template_id) ?? ""
+if template_id == "" { template_id = string(.templateID) ?? "" }
+if template_id == "" { template_id = string(.envID) ?? "" }
+if template_id == "unknown" { template_id = "" }
+build_id = string(.buildID) ?? ""
+if build_id == "unknown" { build_id = "" }
+
+sandbox_id = string(.sandbox_id) ?? ""
+if sandbox_id == "" { sandbox_id = string(.sandboxID) ?? "" }
+if sandbox_id == "" { sandbox_id = string(.instanceID) ?? "" }
+if sandbox_id == "" || sandbox_id == "unknown" {
+  if service != "template-manager" || build_id == "" { abort }
+  sandbox_id = "unknown"
+}
+
+message = string(.message) ?? ""
+if message == "" { message = raw }
+level = downcase(string(.level) ?? "")
+# sandbox_logs.timestamp is DateTime64(9), 1900-01-01 to 2262-04-11. A producer
+# clock outside that range would make ClickHouse reject the whole batch, which
+# the sink retries forever and every later line waits behind; such a line keeps
+# its content and takes the collector's time.
+ts = timestamp(.timestamp) ?? now()
+secs = to_unix_timestamp(ts)
+if secs > 9223372036 || secs < -2208988800 {
+  ts = now()
+}
+
+promoted = ["timestamp", "message", "level", "team_id", "teamID", "sandbox_id", "sandboxID", "instanceID",
+            "template_id", "templateID", "envID", "env_id", "build_id", "buildID", "service", "service_name", "category"]
+fields = {}
+for_each(object(.)) -> |key, value| {
+  if !includes(promoted, key) {
+    fields = set!(fields, [key], to_string(value) ?? encode_json(value))
+  }
+}
+
+. = {
+  "timestamp": ts,
+  "team_id": team_id,
+  "sandbox_id": sandbox_id,
+  "template_id": template_id,
+  "build_id": build_id,
+  "service": service,
+  "category": category,
+  "level": level,
+  "message": message,
+  "raw": raw,
+  "fields": encode_json(fields),
+}
+'''
+
+[sinks.clickhouse_sandbox_logs]
+type = "clickhouse"
+inputs = [ "sandbox_logs_rows" ]
+endpoint = "http://127.0.0.1:8123"
+database = "default"
+table = "sandbox_logs"
+auth.strategy = "basic"
+auth.user = "clickhouse"
+auth.password = "clickhouse"
+# The row carries an RFC 3339 timestamp; ClickHouse parses it into
+# DateTime64(9) with best-effort date/time input. Unknown keys are refused by
+# design (the remap emits exactly the table's columns), so skipping them would
+# only hide a bug.
+date_time_best_effort = true
+skip_unknown_fields = false
+compression = "gzip"
+batch.timeout_secs = 1

@@ -2,13 +2,13 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -32,7 +32,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
-	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -149,11 +148,14 @@ func refusedPauseErr() error {
 	return status.Error(codes.ResourceExhausted, "node is busy persisting sandbox, please retry")
 }
 
-func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error) refusalFixture {
+func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error, hooks ...redis.Hook) refusalFixture {
 	t.Helper()
 
 	db := testutils.SetupDatabase(t)
 	redisClient := redis_utils.SetupInstance(t)
+	for _, hook := range hooks {
+		redisClient.AddHook(hook)
+	}
 
 	storage, err := sandboxredis.NewStorage(redisClient, noop.NewMeterProvider(), nil)
 	require.NoError(t, err)
@@ -193,11 +195,9 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 			storage,
 			redisreservations.NewReservationStorage(redisClient, storage.Notifier()),
 			sandbox.Callbacks{
-				AddSandboxToRoutingTable: func(context.Context, sandbox.Sandbox) {},
 				AsyncNewlyCreatedSandbox: func(context.Context, sandbox.Sandbox, sandbox.CreationMetadata) {},
 			},
 		),
-		routingCatalog:     e2bcatalog.NewRedisSandboxCatalog(redisClient),
 		featureFlagsClient: ff,
 		posthogClient:      posthog,
 		analytics:          analyticscollector.NewAnalyticsWithClient(recorder),
@@ -235,7 +235,7 @@ func (f refusalFixture) removePause(t *testing.T) error {
 
 // A retryable refusal with the restore flag on leaves the sandbox in service
 // on a local-cluster node: record intact (Running, pre-pause expiry, not
-// expired), routing re-registered, and no stopped-analytics emission.
+// expired) and no stopped-analytics emission.
 func TestRemoveSandbox_RefusalRestoresLocalNode(t *testing.T) {
 	t.Parallel()
 
@@ -255,10 +255,6 @@ func TestRemoveSandbox_RefusalRestoresLocalNode(t *testing.T) {
 	for _, e := range expired {
 		assert.NotEqual(t, f.sbx.SandboxID, e.SandboxID, "a restored sandbox must not read as expired")
 	}
-
-	info, err := f.o.routingCatalog.GetSandbox(t.Context(), f.sbx.SandboxID)
-	require.NoError(t, err, "routing must be re-registered for a local-cluster node")
-	assert.Equal(t, f.sbx.ExecutionID, info.ExecutionID)
 
 	time.Sleep(300 * time.Millisecond)
 	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
@@ -336,39 +332,10 @@ func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	finish(t.Context(), nil)
 }
 
-// failingCatalog refuses every write: the route cannot come back.
-type failingCatalog struct {
-	e2bcatalog.SandboxesCatalog
-}
-
-func (failingCatalog) StoreSandbox(context.Context, string, *e2bcatalog.SandboxInfo, time.Duration) error {
-	return errors.New("catalog unavailable")
-}
-
-// If the route cannot be re-registered, the restore fails closed: the record
-// is removed and the caller gets today's error, never a Running record with
-// no route behind it.
-func TestRemoveSandbox_RefusalRouteFailureFallsBackToRemoval(t *testing.T) {
-	t.Parallel()
-
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
-	f.o.routingCatalog = failingCatalog{SandboxesCatalog: f.o.routingCatalog}
-
-	err := f.removePause(t)
-	require.ErrorIs(t, err, ErrSandboxOperationFailed)
-	require.NotErrorIs(t, err, PauseQueueExhaustedError{})
-
-	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.ErrorIs(t, err, sandbox.ErrNotFound, "a sandbox whose route cannot be restored is removed as today")
-	require.Eventually(t, func() bool { return f.recorder.stoppedCount() == 1 },
-		3*time.Second, 10*time.Millisecond, "and its stopped event is emitted as today")
-	assert.Equal(t, map[string]int64{"route_restore_failed/request": 1}, f.restoreOutcomes(t))
-}
-
-// If the record cannot be restored after a refusal the API would have
-// asked the edge to restore, the sandbox is killed on the node right away:
-// the kill carries the catalog delete, so the route goes with the record
-// instead of outliving it until the orphan reconciler.
+// If the record cannot be restored after a refusal, the sandbox is killed on
+// the node right away: the node refused before it stopped the sandbox, so
+// its route is still live and would otherwise outlive the record until the
+// orphan reconciler.
 func TestRemoveSandbox_FailedRestoreKillsTheRefusedSandbox(t *testing.T) {
 	t.Parallel()
 
@@ -396,58 +363,59 @@ func TestRemoveSandbox_FailedRestoreKillsTheRefusedSandbox(t *testing.T) {
 	assert.Equal(t, map[string]int64{"restore_failed/request": 1}, f.restoreOutcomes(t))
 }
 
-// The edge answers Aborted when the node refused but the route could not be
-// put back: the sandbox cannot be kept, so the record goes, the VM is killed
-// now, and the outcome is counted as a failed route restore.
-func TestRemoveSandbox_RefusedRouteLostRemovesAndKills(t *testing.T) {
+// A refused pause whose record was removed and the ID reclaimed by a new
+// incarnation while the RPC was in flight must leave that incarnation alone:
+// its record is not rewritten with the stale one, not removed, and its VM is
+// not killed on the node.
+func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) {
 	t.Parallel()
 
 	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
 	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
 	require.True(t, ok)
-	stub := &pauseStubClient{err: status.Error(codes.Aborted, "failed to restore sandbox in catalog after a refused request")}
+
+	resumed := f.sbx
+	resumed.ExecutionID = uuid.NewString()
+	resumed.MaxInstanceLength = 3 * time.Hour
+	resumed.EndTime = time.Now().Add(2 * time.Hour)
+
+	stub := &pauseStubClient{err: refusedPauseErr()}
+	stub.onPause = func() {
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
+	}
 	node.SetSandboxClient(stub)
 
 	err := f.removePause(t)
-	require.ErrorIs(t, err, ErrSandboxOperationFailed)
-
-	assert.Equal(t, 1, stub.deleteCount(), "the node is asked to kill the sandbox now, not by the reconciler later")
-	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.ErrorIs(t, err, sandbox.ErrNotFound)
-	assert.Equal(t, map[string]int64{"route_restore_failed/request": 1}, f.restoreOutcomes(t))
-}
-
-// On a remote-cluster node the routing catalog is the edge's: the delete rode
-// as metadata on the RPC and the edge restores the entry itself on a refusal,
-// so the API must not write it — the cluster guard makes it a no-op. Driven at
-// the restore seam: the full pause chain persists a snapshot row whose cluster
-// foreign key the test vocabulary cannot satisfy.
-func TestRestoreRefusedPause_ClusterNodeSkipsCatalog(t *testing.T) {
-	t.Parallel()
-
-	f := newRefusalFixture(t, true, uuid.New(), refusedPauseErr())
-
-	_, _, finish, err := f.o.sandboxStore.StartRemoving(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause})
-	require.NoError(t, err)
-
-	require.Equal(t, restoreOutcomeRestored, f.o.restoreRefusedPause(t.Context(), f.sbx.TeamID, f.sbx))
-	finish(t.Context(), PauseQueueExhaustedError{})
+	require.ErrorIs(t, err, ErrSandboxNotFound, "the caller's sandbox is gone, as when it was removed before the pause")
+	require.ErrorIs(t, err, sandbox.ErrExecutionMismatch)
+	require.NotErrorIs(t, err, PauseQueueExhaustedError{})
 
 	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.NoError(t, err)
+	require.NoError(t, err, "the incarnation that reclaimed the ID must survive")
+	assert.Equal(t, resumed.ExecutionID, stored.ExecutionID)
 	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.WithinDuration(t, resumed.EndTime, stored.EndTime, time.Second, "its expiry is its own, not the stale rollback's")
+	assert.True(t, stored.RefusedUntil.IsZero(), "the refusal is the old incarnation's, not stamped on the new one")
 
-	_, err = f.o.routingCatalog.GetSandbox(t.Context(), f.sbx.SandboxID)
-	require.Error(t, err, "a cluster node's routing is the edge's to restore; the API's catalog must stay untouched")
+	assert.Zero(t, stub.deleteCount(), "the node must not be asked to kill the sandbox that now owns the ID")
+	time.Sleep(200 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "no stopped event for a removal someone else already completed")
+	assert.Equal(t, map[string]int64{"superseded/request": 1}, f.restoreOutcomes(t))
 }
 
 // Flag off: a refusal still ends today's way — record removed, stopped
 // analytics emitted, today's generic error to the caller. No 503 may promise
-// a retry the record cannot honor.
+// a retry the record cannot honor. The refused VM is still live on the node,
+// so it is killed with the record.
 func TestRemoveSandbox_RefusalFlagOffRemovesToday(t *testing.T) {
 	t.Parallel()
 
 	f := newRefusalFixture(t, false, consts.LocalClusterID, refusedPauseErr())
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{err: refusedPauseErr()}
+	node.SetSandboxClient(stub)
 
 	err := f.removePause(t)
 	require.ErrorIs(t, err, ErrSandboxOperationFailed)
@@ -455,6 +423,7 @@ func TestRemoveSandbox_RefusalFlagOffRemovesToday(t *testing.T) {
 
 	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
 	require.ErrorIs(t, err, sandbox.ErrNotFound, "flag off keeps today's removal")
+	assert.Equal(t, 1, stub.deleteCount(), "the refused VM goes with its record, not with the reconciler later")
 
 	require.Eventually(t, func() bool { return f.recorder.stoppedCount() == 1 },
 		3*time.Second, 10*time.Millisecond, "flag off keeps today's stopped-analytics emission")

@@ -11,8 +11,6 @@
 /packages/api/README.md
 /packages/api/.gitignore
 /packages/api/Dockerfile
-/packages/api/main.tf
-/packages/api/variables.tf
 
 /.dockerfile
 /Dockerfile

@@ -22,6 +22,7 @@ linters:
     - errcheck
     - exhaustive
     - exhaustruct
+    - exhaustruct_v5
     - funcorder
     - funlen
     - gochecknoglobals

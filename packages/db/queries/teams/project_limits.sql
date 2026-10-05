@@ -19,14 +19,16 @@ FOR UPDATE;
 -- rather than against what it read.
 -- name: ApplyProjectLimitsProjection :one
 WITH changed AS (
-    INSERT INTO projection.project_limits (project_id, revision)
+    INSERT INTO projection.project_limits (project_id, revision, decided_at)
     VALUES (
         sqlc.arg(project_id)::uuid,
-        sqlc.arg(revision)::bigint
+        sqlc.arg(revision)::bigint,
+        sqlc.narg(decided_at)::timestamptz
     )
     ON CONFLICT (project_id) DO UPDATE
     SET
         revision = EXCLUDED.revision,
+        decided_at = EXCLUDED.decided_at,
         updated_at = now()
     WHERE projection.project_limits.revision < EXCLUDED.revision
     RETURNING project_id
@@ -58,6 +60,7 @@ INSERT INTO public.project_limits (
     default_free_disk_size_mb,
     max_disk_size_mb,
     max_free_disk_size_mb,
+    api_team_rps_list,
     updated_at
 ) VALUES (
     sqlc.arg(team_id)::uuid,
@@ -71,6 +74,7 @@ INSERT INTO public.project_limits (
     sqlc.arg(default_free_disk_size_mb)::bigint,
     sqlc.arg(max_free_disk_size_mb)::bigint,
     sqlc.arg(max_free_disk_size_mb)::bigint,
+    sqlc.arg(api_team_rps_list)::bigint,
     now()
 )
 ON CONFLICT (team_id) DO UPDATE SET
@@ -84,4 +88,5 @@ ON CONFLICT (team_id) DO UPDATE SET
     default_free_disk_size_mb  = EXCLUDED.default_free_disk_size_mb,
     max_disk_size_mb           = EXCLUDED.max_disk_size_mb,
     max_free_disk_size_mb      = EXCLUDED.max_free_disk_size_mb,
+    api_team_rps_list          = EXCLUDED.api_team_rps_list,
     updated_at                 = now();

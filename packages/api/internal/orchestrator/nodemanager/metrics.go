@@ -21,6 +21,8 @@ type Metrics struct {
 	MemoryUsedBytes      uint64
 	MemoryTotalBytes     uint64
 	SandboxCount         uint32
+	MaxSandboxes         int64
+	OutstandingWork      uint64
 
 	// Hugepage pool metrics (page counts)
 	HugePagesTotal    uint64
@@ -50,6 +52,10 @@ func (n *Node) UpdateMetricsFromServiceInfoResponse(info *orchestratorinfo.Servi
 
 	// Update total sandbox count
 	n.metrics.SandboxCount = info.GetMetricSandboxesRunning()
+
+	n.metrics.MaxSandboxes = info.GetMaxSandboxes()
+
+	n.metrics.OutstandingWork = info.GetOutstandingWork()
 
 	// Update hugepage metrics
 	n.metrics.HugePagesTotal = info.GetMetricHugepagesTotal()
@@ -83,6 +89,8 @@ func (n *Node) Metrics() Metrics {
 		MemoryUsedBytes:      n.metrics.MemoryUsedBytes,
 		MemoryTotalBytes:     n.metrics.MemoryTotalBytes,
 		SandboxCount:         n.metrics.SandboxCount,
+		MaxSandboxes:         n.metrics.MaxSandboxes,
+		OutstandingWork:      n.metrics.OutstandingWork,
 
 		HugePagesTotal:    n.metrics.HugePagesTotal,
 		HugePagesUsed:     n.metrics.HugePagesUsed,

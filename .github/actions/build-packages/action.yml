@@ -21,10 +21,14 @@ runs:
           ~/go/pkg/mod
           ~/.cache/go-build
         # The "opt" salt separates this cache from setup-go caches populated
-        # by other jobs with debugger-friendly build flags.
-        key: integration-go-opt-v1-${{ runner.os }}-${{ hashFiles('go.work', 'packages/*/go.mod', 'packages/*/go.sum', 'tests/integration/go.mod', 'tests/integration/go.sum') }}
+        # by other jobs with debugger-friendly build flags. The key also
+        # carries the job's RACE_FLAG: race and non-race builds produce
+        # different artifacts, and cache entries are immutable, so sharing one
+        # key would leave whichever variant loses the first save recompiling
+        # on every run.
+        key: integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-${{ hashFiles('go.work', 'packages/*/go.mod', 'packages/*/go.sum', 'tests/integration/go.mod', 'tests/integration/go.sum') }}
         restore-keys: |
-          integration-go-opt-v1-${{ runner.os }}-
+          integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-
 
     # Built concurrently: the runner has 32 cores and 128 GB, while the two
     # slow builds (api, orchestrator) are mostly serial link steps that leave

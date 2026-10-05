@@ -39,6 +39,8 @@ const uploadedBuildsTTL = 1 * time.Hour
 // MaxStartingInstancesPerNode feature flag and resize the semaphore.
 const startingSandboxesLimitRefreshInterval = 30 * time.Second
 
+const maxSandboxesLimitRefreshInterval = 30 * time.Second
+
 // uploadDrainLogInterval is how often Close logs progress while waiting for
 // in-flight snapshot uploads to finish during shutdown.
 const uploadDrainLogInterval = 10 * time.Second
@@ -64,31 +66,33 @@ type Server struct {
 	orchestrator.UnimplementedSandboxServiceServer
 	orchestrator.UnimplementedChunkServiceServer
 
-	config                   cfg.Config
-	sandboxFactory           *sandbox.Factory
-	info                     *service.ServiceInfo
-	proxy                    *proxy.SandboxProxy
-	networkPool              network.PoolInterface
-	templateCache            *template.Cache
-	devicePool               *nbd.DevicePool
-	persistence              storage.StorageProvider
-	featureFlags             *featureflags.Client
-	sbxEventsService         *events.EventsService
-	startingSandboxes        *utils.AdjustableSemaphore
-	peerRegistry             peerclient.Registry
-	uploadedBuilds           *ttlcache.Cache[string, struct{}]
-	uploads                  *sandbox.Uploads
-	sandboxCreateDuration    metric.Int64Histogram
-	sandboxExecutionDuration metric.Int64Histogram
-	sandboxPauseDuration     metric.Int64Histogram
-	sandboxKilledCounter     metric.Int64Counter
-	sandboxCheckpointCounter metric.Int64Counter
-	uploadFailedCounter      metric.Int64Counter
-	envdUpgradeAttempts      metric.Int64Counter
-	envdUpgradeGated         metric.Int64Counter
-	envdUpgradeHandover      metric.Int64Counter
-	envdUpgradeDuration      metric.Int64Histogram
-	envdUpgradePhaseDuration metric.Int64Histogram
+	config                    cfg.Config
+	sandboxFactory            *sandbox.Factory
+	info                      *service.ServiceInfo
+	proxy                     *proxy.SandboxProxy
+	networkPool               network.PoolInterface
+	templateCache             *template.Cache
+	devicePool                *nbd.DevicePool
+	persistence               storage.StorageProvider
+	featureFlags              *featureflags.Client
+	sbxEventsService          *events.EventsService
+	startingSandboxes         *utils.AdjustableSemaphore
+	peerRegistry              peerclient.Registry
+	uploadedBuilds            *ttlcache.Cache[string, struct{}]
+	uploads                   *sandbox.Uploads
+	sandboxCreateDuration     metric.Int64Histogram
+	sandboxExecutionDuration  metric.Int64Histogram
+	sandboxPauseDuration      metric.Int64Histogram
+	sandboxKilledCounter      metric.Int64Counter
+	sandboxCrashedCounter     metric.Int64Counter
+	sandboxCheckpointCounter  metric.Int64Counter
+	sandboxCheckpointDuration metric.Int64Histogram
+	uploadFailedCounter       metric.Int64Counter
+	envdUpgradeAttempts       metric.Int64Counter
+	envdUpgradeGated          metric.Int64Counter
+	envdUpgradeHandover       metric.Int64Counter
+	envdUpgradeDuration       metric.Int64Histogram
+	envdUpgradePhaseDuration  metric.Int64Histogram
 
 	pauseAdmissionCounter      metric.Int64Counter
 	pauseAdmissionWaitDuration metric.Int64Histogram
@@ -148,6 +152,7 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		uploads:           cfg.Uploads,
 		done:              make(chan struct{}),
 	}
+	server.updateMaxSandboxesLimit(ctx)
 
 	meter := cfg.Tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
 
@@ -175,11 +180,23 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	}
 	server.sandboxKilledCounter = sandboxKilledCounter
 
+	sandboxCrashedCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCrashedCounterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register sandbox crashes counter: %w", err)
+	}
+	server.sandboxCrashedCounter = sandboxCrashedCounter
+
 	sandboxCheckpointCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCheckpointCounterName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register sandbox checkpoint counter: %w", err)
 	}
 	server.sandboxCheckpointCounter = sandboxCheckpointCounter
+
+	sandboxCheckpointDuration, err := telemetry.GetHistogram(meter, telemetry.CheckpointDurationName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register sandbox checkpoint duration histogram: %w", err)
+	}
+	server.sandboxCheckpointDuration = sandboxCheckpointDuration
 
 	pauseAdmissionCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxPauseAdmissionCounterName)
 	if err != nil {
@@ -236,6 +253,20 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to register sandbox count metric: %w", err)
+	}
+
+	sandboxLimitGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorSandboxLimitGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sandbox limit gauge: %w", err)
+	}
+
+	_, err = meter.RegisterCallback(func(_ context.Context, obs metric.Observer) error {
+		obs.ObserveInt64(sandboxLimitGauge, server.info.MaxSandboxes.Load())
+
+		return nil
+	}, sandboxLimitGauge)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register sandbox limit gauge: %w", err)
 	}
 
 	statusGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorStatusGaugeName)
@@ -297,6 +328,7 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	}
 
 	go server.refreshStartingSandboxesLimit(ctx)
+	go server.refreshMaxSandboxesLimit(ctx)
 
 	return server, nil
 }
@@ -422,6 +454,26 @@ func (s *Server) refreshStartingSandboxesLimit(ctx context.Context) {
 				logger.L().Error(ctx, "failed to adjust starting sandboxes semaphore",
 					zap.Int("limit", limit), zap.Error(err))
 			}
+		}
+	}
+}
+
+func (s *Server) updateMaxSandboxesLimit(ctx context.Context) {
+	s.info.MaxSandboxes.Store(int64(s.featureFlags.IntFlag(ctx, featureflags.MaxSandboxesPerNode)))
+}
+
+func (s *Server) refreshMaxSandboxesLimit(ctx context.Context) {
+	ticker := time.NewTicker(maxSandboxesLimitRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.done:
+			return
+		case <-ticker.C:
+			s.updateMaxSandboxesLimit(ctx)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
@@ -17,7 +18,7 @@ import (
 func newService(db *testutils.Database) (*Service, *recordingCache) {
 	cache := &recordingCache{}
 
-	return NewService(db.AuthDB, db.SqlcClient, cache), cache
+	return NewService(db.AuthDB, db.SqlcClient, cache, noop.NewMeterProvider()), cache
 }
 
 func teamMembers(t *testing.T, db *testutils.Database, teamID uuid.UUID) []uuid.UUID {

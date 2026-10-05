@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -84,7 +85,7 @@ func upgradeSandbox(version string) *sandbox.Sandbox {
 	return &sandbox.Sandbox{
 		Metadata: &sandbox.Metadata{
 			Config:  &sandbox.Config{Envd: sandbox.EnvdMetadata{Version: version}},
-			Runtime: sandbox.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl", ExecutionID: "exec"},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl", ExecutionID: "exec"},
 		},
 	}
 }

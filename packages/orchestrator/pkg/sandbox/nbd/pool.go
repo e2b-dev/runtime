@@ -84,6 +84,10 @@ type DevicePool struct {
 	mu        sync.Mutex
 
 	slots chan DeviceSlot
+
+	// sysBlockDir is where device state is read from; the /sys/block default
+	// is overridden only by tests.
+	sysBlockDir string
 }
 
 func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
@@ -101,9 +105,10 @@ func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
 	}
 
 	pool := &DevicePool{
-		done:      make(chan struct{}),
-		usedSlots: bitset.New(maxDevices),
-		slots:     make(chan DeviceSlot, int(math.Min(float64(maxSlotsReady), float64(maxDevices)))),
+		done:        make(chan struct{}),
+		usedSlots:   bitset.New(maxDevices),
+		slots:       make(chan DeviceSlot, int(math.Min(float64(maxSlotsReady), float64(maxDevices)))),
+		sysBlockDir: sysBlockDir,
 	}
 
 	return pool, nil
@@ -215,7 +220,7 @@ func (d *DevicePool) Populate(ctx context.Context) {
 // https://superuser.com/questions/919895/how-to-get-a-list-of-connected-nbd-devices-on-ubuntu
 // https://github.com/NetworkBlockDevice/nbd/blob/17043b068f4323078637314258158aebbfff0a6c/nbd-client.c#L254
 func (d *DevicePool) isDeviceFree(slot DeviceSlot) (bool, error) {
-	connected, err := isDeviceConnectedIn(sysBlockDir, slot)
+	connected, err := isDeviceConnectedIn(d.sysBlockDir, slot)
 	if err != nil {
 		return false, err
 	}
@@ -224,7 +229,7 @@ func (d *DevicePool) isDeviceFree(slot DeviceSlot) (bool, error) {
 		return false, nil
 	}
 
-	sizeFile := fmt.Sprintf("/sys/block/nbd%d/size", slot)
+	sizeFile := fmt.Sprintf("%s/nbd%d/size", d.sysBlockDir, slot)
 
 	data, err := os.ReadFile(sizeFile)
 	if err != nil {
@@ -299,15 +304,32 @@ func (d *DevicePool) getFreeDeviceSlot() (*DeviceSlot, error) {
 func (d *DevicePool) GetDevice(ctx context.Context) (DeviceSlot, error) {
 	select {
 	case <-d.done:
-		return 0, ErrClosed
+		return 0, noSlotErr(ctx)
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case slot := <-d.slots:
+	case slot, ok := <-d.slots:
+		if !ok {
+			// Populate closed the channel on its way out; without the ok
+			// check this case would hand out slot 0 without claiming it.
+			return 0, noSlotErr(ctx)
+		}
+
 		acquired.Add(ctx, 1)
 		slotCounter.Add(ctx, -1)
 
 		return slot, nil
 	}
+}
+
+// noSlotErr classifies a wakeup that carried no slot: a caller whose own
+// context is done gets ctx.Err() even when the pool closed at the same time —
+// select alone picks between simultaneously ready cases pseudo-randomly.
+func noSlotErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return ErrClosed
 }
 
 func (d *DevicePool) release(ctx context.Context, idx DeviceSlot) error {
@@ -331,7 +353,7 @@ func (d *DevicePool) release(ctx context.Context, idx DeviceSlot) error {
 
 // ReleaseDevice will return an error if the device is not free and not release the slot — you can retry.
 func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...ReleaseOption) error {
-	opt := releaseOptions{}
+	opt := releaseOptions{logger: logger.L()}
 	for _, o := range opts {
 		o(&opt)
 	}
@@ -362,7 +384,11 @@ func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...
 		}
 
 		if attempt%100 == 0 {
-			logger.L().Error(ctx, "error releasing device", zap.Int("attempt", attempt), zap.Error(err))
+			opt.logger.Error(ctx, "error releasing device",
+				zap.Uint32("device_index", idx),
+				zap.Int("attempt", attempt),
+				zap.Error(err),
+			)
 		}
 
 		// Wait on the context too: Close bounds a stuck device with WithTimeout,
@@ -396,16 +422,30 @@ func (d *DevicePool) Close(ctx context.Context) error {
 
 	d.mu.Unlock()
 
-	var errs error
+	// Release concurrently so every device runs against its own fresh
+	// deadline. Done serially, one stuck device burns the whole budget and
+	// every release queued behind it fails instantly on the spent context,
+	// and a shutdown with several stuck devices pays their timeouts in sum
+	// rather than once.
+	var (
+		wg     sync.WaitGroup
+		errsMu sync.Mutex
+		errs   error
+	)
 	for _, slot := range slotsToRelease {
-		err := d.ReleaseDevice(ctx, slot,
-			WithInfiniteRetry(),
-			WithTimeout(devicePoolCloseReleaseTimeout),
-		)
-		if err != nil {
-			errs = errors.Join(errs, fmt.Errorf("failed to release device %d: %w", slot, err))
-		}
+		wg.Go(func() {
+			err := d.ReleaseDevice(ctx, slot,
+				WithInfiniteRetry(),
+				WithTimeout(devicePoolCloseReleaseTimeout),
+			)
+			if err != nil {
+				errsMu.Lock()
+				errs = errors.Join(errs, fmt.Errorf("failed to release device %d: %w", slot, err))
+				errsMu.Unlock()
+			}
+		})
 	}
+	wg.Wait()
 
 	return errs
 }
@@ -413,6 +453,7 @@ func (d *DevicePool) Close(ctx context.Context) error {
 type releaseOptions struct {
 	timeout       time.Duration
 	infiniteRetry bool
+	logger        logger.Logger
 }
 
 type ReleaseOption func(*releaseOptions)
@@ -426,5 +467,17 @@ func WithTimeout(timeout time.Duration) ReleaseOption {
 func WithInfiniteRetry() ReleaseOption {
 	return func(opts *releaseOptions) {
 		opts.infiniteRetry = true
+	}
+}
+
+// WithLogger attributes the retry log to whoever owns the release; the pool's
+// own releases are host-scoped and carry no identity.
+func WithLogger(lg logger.Logger) ReleaseOption {
+	return func(opts *releaseOptions) {
+		if lg == nil {
+			return
+		}
+
+		opts.logger = lg
 	}
 }

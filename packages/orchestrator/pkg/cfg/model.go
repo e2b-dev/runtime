@@ -15,13 +15,15 @@ import (
 	"github.com/willscott/go-nfs"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
 const DefaultBusyboxVersion = "1.36.1"
 
 type BuilderConfig struct {
-	DomainName             string `env:"DOMAIN_NAME"              envDefault:""`
+	featureflags.Config
+
 	FirecrackerVersionsDir string `env:"FIRECRACKER_VERSIONS_DIR" envDefault:"/fc-versions"`
 	BusyboxVersion         string `env:"BUSYBOX_VERSION"          envDefault:"1.36.1"`
 	HostBusyboxDir         string `env:"HOST_BUSYBOX_DIR"         envDefault:"/fc-busybox"`

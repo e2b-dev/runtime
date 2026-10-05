@@ -22,7 +22,7 @@ func (a *APIStore) GetTeamsTeamIDMetricsMax(c *gin.Context, teamID string, param
 
 	authTeamID := auth.MustGetTeamID(c)
 
-	if teamID != authTeamID.String() {
+	if !teamIDMatches(authTeamID, teamID) {
 		telemetry.ReportError(ctx, "team ids mismatch", fmt.Errorf("you (%s) are not authorized to access this team's (%s) metrics", authTeamID, teamID), telemetry.WithTeamID(authTeamID.String()))
 		a.sendAPIStoreError(c, http.StatusForbidden, fmt.Sprintf("You (%s) are not authorized to access this team's (%s) metrics", authTeamID, teamID))
 
@@ -50,10 +50,10 @@ func (a *APIStore) GetTeamsTeamIDMetricsMax(c *gin.Context, teamID string, param
 	var maxMetric clickhouse.MaxTeamMetric
 	switch params.Metric {
 	case api.ConcurrentSandboxes:
-		maxMetric, err = a.clickhouseStore.QueryMaxConcurrentTeamMetrics(ctx, teamID, start, end)
+		maxMetric, err = a.clickhouseStore.QueryMaxConcurrentTeamMetrics(ctx, authTeamID.String(), start, end)
 
 	case api.SandboxStartRate:
-		maxMetric, err = a.clickhouseStore.QueryMaxStartRateTeamMetrics(ctx, teamID, start, end, metrics.ExportPeriod)
+		maxMetric, err = a.clickhouseStore.QueryMaxStartRateTeamMetrics(ctx, authTeamID.String(), start, end, metrics.ExportPeriod)
 	default:
 		telemetry.ReportError(ctx, "invalid metric", fmt.Errorf("invalid metric: %s", params.Metric), telemetry.WithTeamID(authTeamID.String()))
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("invalid metric: %s", params.Metric))

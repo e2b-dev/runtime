@@ -1179,36 +1179,50 @@ definitions:
 
   CpuConfig:
     type: object
-    description:
+    description: >-
       The CPU configuration template defines a set of bit maps as modifiers of flags accessed by register
       to be disabled/enabled for the microvm.
     properties:
       kvm_capabilities:
         type: array
+        x-omitempty: true
         description: A collection of KVM capabilities to be added or removed (both x86_64 and aarch64)
         items:
           type: string
           description: KVM capability as a numeric string. Prefix with '!' to remove capability. Example "121" (add) or "!121" (remove)
       cpuid_modifiers:
         type: array
+        x-omitempty: true
         description: A collection of CPUID leaf modifiers (x86_64 only)
         items:
           $ref: "#/definitions/CpuidLeafModifier"
       msr_modifiers:
         type: array
+        x-omitempty: true
         description: A collection of model specific register modifiers (x86_64 only)
         items:
           $ref: "#/definitions/MsrModifier"
       reg_modifiers:
         type: array
+        x-omitempty: true
         description: A collection of register modifiers (aarch64 only)
         items:
           $ref: "#/definitions/ArmRegisterModifier"
       vcpu_features:
         type: array
+        x-omitempty: true
         description: A collection of vCPU features to be modified (aarch64 only)
         items:
           $ref: "#/definitions/VcpuFeatures"
+      x86_tsc_khz:
+        type: integer
+        format: int64
+        minimum: 100000
+        maximum: 10000000
+        description:
+          Custom frequency at which the guest TSC should be scaled at (in kHz). Only for x86_64.
+          When omitted, the guest runs at the host TSC frequency. Firecracker rejects values
+          outside 100 MHz to 10 GHz, which also catches a value given in Hz or MHz by mistake.
 
   CpuidLeafModifier:
     type: object

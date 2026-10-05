@@ -76,7 +76,7 @@ func TestSlowBackend_ShortTimeout(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	const (
@@ -102,13 +102,11 @@ func TestSlowBackend_ShortTimeout(t *testing.T) {
 	// Kernel I/O timeout of 5s + deadconn 5s = 10s total.
 	// The 8s backend delay exceeds the 5s I/O timeout, so the kernel
 	// will declare the connection dead and return EIO.
-	devicePath, cleanup, err := GetNBDDevice(
-		t.Context(), overlay, featureFlags,
+	_, devicePath := setupNBDMount(
+		t, featureFlags, overlay,
 		WithIOTimeout(5*time.Second),
 		WithDeadconnTimeout(5*time.Second),
 	)
-	t.Cleanup(func() { cleanup.Run(t.Context(), 30*time.Second) })
-	require.NoError(t, err)
 
 	deviceFile, err := os.OpenFile(devicePath, os.O_RDONLY, 0)
 	require.NoError(t, err)
@@ -129,7 +127,7 @@ func TestSlowBackend_SufficientTimeout(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "")
 	require.NoError(t, err)
 
 	const (
@@ -153,13 +151,11 @@ func TestSlowBackend_SufficientTimeout(t *testing.T) {
 	t.Cleanup(func() { overlay.Close() })
 
 	// Kernel I/O timeout of 30s — well above the 3s backend delay.
-	devicePath, cleanup, err := GetNBDDevice(
-		t.Context(), overlay, featureFlags,
+	_, devicePath := setupNBDMount(
+		t, featureFlags, overlay,
 		WithIOTimeout(30*time.Second),
 		WithDeadconnTimeout(30*time.Second),
 	)
-	t.Cleanup(func() { cleanup.Run(t.Context(), 30*time.Second) })
-	require.NoError(t, err)
 
 	deviceFile, err := os.OpenFile(devicePath, os.O_RDONLY, 0)
 	require.NoError(t, err)

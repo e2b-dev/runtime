@@ -36,6 +36,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/events"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/gcpercent"
 	e2bhealthcheck "github.com/e2b-dev/infra/packages/orchestrator/pkg/healthcheck"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/hyperloopserver"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/localupload"
@@ -44,6 +45,7 @@ import (
 	nfscfg "github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/routing"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
@@ -70,6 +72,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	sandboxcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -513,6 +516,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 		zap.String("version", version),
 		zap.String("commit", commitSHA),
 		zap.Strings("labels", config.NodeLabels),
+		zap.String("host_kernel", telemetry.HostKernelVersion()),
 		logger.WithServiceInstanceID(serviceInstanceID),
 	)
 
@@ -539,20 +543,43 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	var closers []closer
 
+	pprofServer := telemetry.NewPprofServer()
+	go func() {
+		logger.L().Info(ctx, "pprof server starting", zap.Int("port", telemetry.PprofPort()))
+
+		if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.L().Error(ctx, "pprof server encountered error", zap.Error(err))
+		}
+	}()
+	// Closers run in reverse order; retain diagnostics through service teardown.
+	closers = append(closers, closer{"pprof server", func(ctx context.Context) error {
+		return closePprofServer(ctx, pprofServer)
+	}})
+
 	// The sandbox map is shared between the server and the proxy
 	// to propagate information about sandbox routing.
 	sandboxes := sandbox.NewSandboxesMap()
 
 	// feature flags
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, "")
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
 	closers = append(closers, closer{"feature flags", featureFlags.Close})
 
-	featureFlags.SetDeploymentName(config.DomainName)
 	featureFlags.RegisterContextProvider(orchestratorContextProvider(nodeID, commitSHA))
 	featureFlags.RegisterContextProvider(instanceGroupContextProvider(config.InstanceGroupName))
+
+	// Not a service and no closer: pacing stays in force through the sandbox
+	// drain and ends with the process.
+	if usesSandboxRuntime {
+		gcController, err := gcpercent.New(tel.MeterProvider, featureFlags)
+		if err != nil {
+			logger.L().Error(ctx, "failed to create GC percent controller", zap.Error(err))
+		} else {
+			go gcController.Run(context.WithoutCancel(ctx))
+		}
+	}
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),
 	// falling back to the fixed collector address. Created here so it can use the
@@ -671,6 +698,22 @@ func run(config cfg.Config, opts Options) (success bool) {
 		sbxEventsDeliveryTargets = append(sbxEventsDeliveryTargets, sbxEventsDeliveryRedis)
 	}
 
+	// Orchestrator-owned sandbox routing record (sandbox:routing:{id}).
+	if redisClient != nil {
+		routingPublisher, err := routing.New(
+			tel.MeterProvider,
+			sandboxcatalog.NewRedisSandboxCatalog(redisClient),
+			serviceInstanceID,
+			config.NodeIP,
+		)
+		if err != nil {
+			logger.L().Fatal(ctx, "failed to create sandbox routing publisher", zap.Error(err))
+		}
+		sandboxes.Subscribe(routingPublisher)
+	} else {
+		logger.L().Warn(ctx, "redis disabled; orchestrator sandbox routing records are not published")
+	}
+
 	// Wrapper closers run before per-driver closers (deliveries write through the drivers).
 	eventsService := events.NewEventsService(sbxEventsDeliveryTargets)
 	closers = append(closers, closer{"sandbox host stats deliveries (all)", hostStatsDelivery.Close})
@@ -749,6 +792,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 			StorageConfig: config.StorageConfig,
 		})
 		reclaimClean = !summary.HasFailures()
+	}
+
+	if usesSandboxRuntime {
+		tracker, err := metrics.NewFirecrackerTracker(tel.MeterProvider, sandboxes)
+		if err != nil {
+			logger.L().Fatal(ctx, "failed to create Firecracker process tracker", zap.Error(err))
+		}
+		startService("Firecracker process tracker", func() error { return tracker.Start(ctx) })
+		closers = append(closers, closer{"Firecracker process tracker", tracker.Close})
 	}
 
 	// device pool
@@ -846,11 +898,14 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 	sandboxFactory := sandbox.NewFactory(ctx, config.BuilderConfig, networkPool, devicePool, featureFlags, hostStatsDelivery, cgroupManager, egressSetup.Proxy, networkAssignHook, sandboxes)
 
-	// isolated filesystems cache (for nfs proxy)
+	// confined volume filesystems (for the volume service and nfs proxy)
+	if err := chrooted.CheckSupport(); err != nil {
+		logger.L().Fatal(ctx, "volume confinement prerequisites not met", zap.Error(err))
+	}
 	builder := chrooted.NewBuilder(config)
 	volumeService := volumes.New(config, builder)
 
-	uploads := sandbox.NewUploads(templateCache, persistence, peerResolver, redisClient)
+	uploads := sandbox.NewUploads(templateCache, persistence, peerResolver, redisClient, featureFlags)
 	closers = append(closers, closer{"pending uploads", func(context.Context) error {
 		uploads.Stop()
 
@@ -944,6 +999,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 		tmpl, err = tmplserver.New(
 			ctx,
 			config,
+			serviceInfo,
 			featureFlags,
 			tel.MeterProvider,
 			globalLogger,
@@ -996,17 +1052,6 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 		return nil
 	}})
-
-	pprofServer := telemetry.NewPprofServer()
-	// We handle the pprof in a separate goroutine to prevent any interaction with the main server.
-	go func() {
-		logger.L().Info(ctx, "pprof server starting", zap.Int("port", telemetry.PprofPort()))
-
-		if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.L().Error(ctx, "pprof server encountered error", zap.Error(err))
-		}
-	}()
-	closers = append(closers, closer{"pprof server", pprofServer.Shutdown})
 
 	// http server
 	healthcheck, err := e2bhealthcheck.NewHealthcheck(serviceInfo)

@@ -73,6 +73,10 @@ func WrapInNFSCache(
 }
 
 func (c cache) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
+	if err := validateObjectPath(prefix); err != nil {
+		return err
+	}
+
 	// no need to wait for cache deletion before returning
 	go func(ctx context.Context) {
 		c.deleteCachedObjectsWithPrefix(ctx, prefix)
@@ -81,11 +85,19 @@ func (c cache) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error
 	return c.inner.DeleteObjectsWithPrefix(ctx, prefix)
 }
 
-func (c cache) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error) {
+func (c cache) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	return c.inner.UploadSignedURL(ctx, path, ttl)
 }
 
 func (c cache) OpenBlob(ctx context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	innerObject, err := c.inner.OpenBlob(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open object: %w", err)
@@ -106,6 +118,10 @@ func (c cache) OpenBlob(ctx context.Context, path string) (Blob, error) {
 }
 
 func (c cache) OpenSeekable(ctx context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	innerObject, err := c.inner.OpenSeekable(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open object: %w", err)

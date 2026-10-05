@@ -64,6 +64,7 @@ func entryInfo(path string) (*rpc.EntryInfo, error) {
 		ModifiedTime:  toTimestamp(info.ModifiedTime),
 		SymlinkTarget: info.SymlinkTarget,
 		Metadata:      info.Metadata,
+		IsSymlink:     info.SymlinkTarget != nil,
 	}, nil
 }
 

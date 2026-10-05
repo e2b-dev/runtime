@@ -1,0 +1,376 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: e2b
+spec:
+  serviceName: e2b
+  replicas: 1
+  selector:
+    matchLabels:
+      app: e2b
+  template:
+    metadata:
+      labels:
+        app: e2b
+    spec:
+      # Every container shares the node's network and pid namespaces, so the
+      # 127.0.0.1 addresses below are the same ones compose.yaml uses — and
+      # every store binds loopback itself (compose did that with port mappings).
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # One budget, spent in reverse order after `ready`: client-proxy's fixed
+      # 15 + 15 s shutdown, then api, then the orchestrator's sweep (compose
+      # gives it 60 s alone), then Vector and the three stores.
+      terminationGracePeriodSeconds: 180
+      # The databases and the team key are hostPath directories under
+      # /var/lib/e2b/data on this node, so the pod must always land on the node
+      # prepared for it: `kubectl label node <node> e2b.dev/single-node=true`
+      # before `apply -k`. If the node carries a taint, add a toleration with a
+      # kustomize patch, for example:
+      #   tolerations: [{ key: e2b.dev/single-node, operator: Equal, value: "true", effect: NoSchedule }]
+      nodeSelector:
+        e2b.dev/single-node: "true"
+      initContainers:
+        # --- host preparation first: the same scripts compose runs, in PID 1's
+        # namespaces; an unsuitable node fails here, before any store starts ---
+        - name: preflight
+          image: E2B_TOOLS_IMAGE
+          securityContext: { privileged: true }
+          env:
+            - { name: PF_MIN_FREE_GIB, value: "20" }
+          command: ["/bin/sh", "-c", "exec nsenter -t 1 -m -u -i -n -p -- /bin/bash -s < /opt/e2b/scripts/preflight.sh"]
+        - name: host-setup
+          image: E2B_TOOLS_IMAGE
+          securityContext: { privileged: true }
+          env:
+            # Same file and value as the node prep in the README, so this is a no-op there.
+            - { name: HUGEPAGES, value: "2048" }
+            - { name: NBDS_MAX, value: "64" }
+          command: ["/bin/sh", "-c", "exec nsenter -t 1 -m -u -i -n -p -- /bin/bash -s < /opt/e2b/scripts/host-setup.sh"]
+        - name: fetch-artifacts
+          image: E2B_TOOLS_IMAGE
+          env:
+            - { name: HOST_ROOT, value: /host }
+          envFrom:
+            - configMapRef: { name: e2b-versions }
+          volumeMounts:
+            - { name: host-root, mountPath: /host }
+          command: ["/bin/bash", "/opt/e2b/scripts/fetch-artifacts.sh"]
+        # --- stores: native sidecars, started in order, each waited for; every
+        # probe carries the compose interval, retries and timeout ---
+        - name: postgres
+          image: postgres:18.6-alpine
+          restartPolicy: Always
+          args: ["-c", "listen_addresses=127.0.0.1"]
+          env:
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_PASSWORD, value: postgres }
+            - { name: POSTGRES_DB, value: postgres }
+            - { name: PGDATA, value: /var/lib/postgresql/18/docker }
+          volumeMounts:
+            - { name: postgres, mountPath: /var/lib/postgresql }
+          startupProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "postgres"] }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+        - name: redis
+          image: redis:7.4.6
+          restartPolicy: Always
+          # The official image compiles protected mode off; bind loopback explicitly.
+          args: ["--bind", "127.0.0.1"]
+          startupProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.8.30.16
+          restartPolicy: Always
+          env:
+            - { name: CLICKHOUSE_DB, value: default }
+            - { name: CLICKHOUSE_USER, value: clickhouse }
+            - { name: CLICKHOUSE_PASSWORD, value: clickhouse }
+            - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
+          volumeMounts:
+            - { name: clickhouse, mountPath: /var/lib/clickhouse }
+            - { name: clickhouse-config, mountPath: /etc/clickhouse-server/config.d/config.xml, subPath: config.xml }
+            # The image's own file adds <listen_host>0.0.0.0</listen_host>; an empty <clickhouse/> replaces it.
+            - { name: clickhouse-config, mountPath: /etc/clickhouse-server/config.d/docker_related_config.xml, subPath: docker_related_config.xml }
+          startupProbe:
+            exec: { command: ["clickhouse-client", "--user", "clickhouse", "--password", "clickhouse", "--query", "SELECT 1"] }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+        - name: vector
+          image: timberio/vector:0.51.1-alpine
+          restartPolicy: Always
+          env:
+            - { name: VECTOR_CONFIG, value: /etc/vector/vector.toml }
+            - { name: VECTOR_LOG, value: warn }
+          volumeMounts:
+            - { name: vector-config, mountPath: /etc/vector/vector.toml, subPath: vector.toml }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 44313, path: /health }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 12
+        # --- one-shots: migrations and the seed ---
+        - name: db-migrator
+          image: E2B_DB_MIGRATOR_IMAGE
+          env:
+            - { name: POSTGRES_CONNECTION_STRING, value: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" }
+        - name: clickhouse-migrator
+          image: E2B_CLICKHOUSE_MIGRATOR_IMAGE
+          env:
+            - { name: GOOSE_DBSTRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
+        - name: seed
+          image: E2B_SEED_IMAGE
+          env:
+            - { name: POSTGRES_CONNECTION_STRING, value: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" }
+            - { name: OIDC_ISSUER, value: "http://localhost:4444/" }
+            - { name: OIDC_SUBJECT, value: local-dev-user }
+            # random on the first run; the file in seed-state is read back after.
+            - { name: SEED_TEAM_API_KEY, value: random }
+            - { name: SEED_TEAM_API_KEY_FILE, value: /run/e2b/team-api-key }
+          volumeMounts:
+            - { name: seed-state, mountPath: /run/e2b }
+        # --- the orchestrator: a host process, supervised by the launcher ---
+        - name: orchestrator
+          image: E2B_TOOLS_IMAGE
+          restartPolicy: Always
+          securityContext: { privileged: true }
+          # The kubelet sets the pod cgroup's hugetlb.2MB.max to 0 unless a
+          # container requests hugepages, and the orchestrator's own uffd
+          # handler faults the sandboxes' hugetlb pages. Limits must equal
+          # requests, and a hugepage request needs a memory request. The node
+          # must advertise hugepages-2Mi: 4Gi before the pod schedules (README,
+          # Node requirements). No memory limit: neither compose nor the
+          # reference Nomad job caps the orchestrator (its 1 GiB is a scheduler
+          # reservation with memory_max = -1), and an OOM kill here would sweep
+          # every running sandbox. The 2 GiB request only satisfies the
+          # hugepages rule.
+          resources:
+            requests: { hugepages-2Mi: 4Gi, memory: 2Gi }
+            limits: { hugepages-2Mi: 4Gi }
+          env:
+            - { name: ORCHESTRATOR_SERVICES, value: "orchestrator,template-manager" }
+            - { name: NODE_ID, value: orchestrator }
+            - { name: NODE_IP, value: 127.0.0.1 }
+            - { name: ENVIRONMENT, value: local }
+            - { name: GRPC_PORT, value: "5008" }
+            - { name: PROXY_PORT, value: "5007" }
+            - { name: PPROF_PORT, value: "6061" }
+            - { name: REDIS_URL, value: 127.0.0.1:6379 }
+            - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
+            - { name: LOGS_COLLECTOR_ADDRESS, value: "http://127.0.0.1:20006" }
+            # The kustomization's e2b-settings map; empty exports nothing.
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
+            - { name: TEMPLATE_STORAGE_URL, value: "file:///var/lib/e2b/storage/templates" }
+            - { name: BUILD_CACHE_STORAGE_URL, value: "file:///var/lib/e2b/storage/build-cache" }
+            - { name: ARTIFACTS_REGISTRY_PROVIDER, value: Local }
+            - { name: LOCAL_UPLOAD_BASE_URL, value: "http://127.0.0.1:5008" }
+            - { name: FIRECRACKER_VERSIONS_DIR, value: /fc-versions }
+            - { name: HOST_KERNELS_DIR, value: /fc-kernels }
+            - { name: HOST_BUSYBOX_DIR, value: /fc-busybox }
+            - { name: BUSYBOX_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_BUSYBOX_VERSION } } }
+            - { name: HOST_ENVD_PATH, value: /fc-envd/envd }
+            - { name: ORCHESTRATOR_BASE_PATH, value: /orchestrator }
+            - { name: SANDBOX_DIR, value: /fc-vm }
+            - { name: NBD_POOL_SIZE, value: "32" }
+            - { name: NETWORK_VERSION, value: "1" }
+            - { name: DEFAULT_KERNEL_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_KERNEL_VERSION } } }
+            - { name: DEFAULT_FIRECRACKER_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_FIRECRACKER_VERSION } } }
+            # The launcher's sweep addresses the host cgroup tree through this mount.
+            - { name: OL_CGROUP_ROOT, value: /host-cgroup/e2b }
+          volumeMounts:
+            - { name: host-cgroup, mountPath: /host-cgroup }
+          command: ["/bin/bash", "/opt/e2b/scripts/orchestrator-launch.sh"]
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 5008, path: /health }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 60
+        # --- api and client-proxy ---
+        - name: api
+          image: E2B_API_IMAGE
+          restartPolicy: Always
+          args: ["--port", "3000"]
+          env:
+            - { name: ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: e2b-api, key: ADMIN_TOKEN } } }
+            - { name: SANDBOX_ACCESS_TOKEN_HASH_SEED, valueFrom: { secretKeyRef: { name: e2b-api, key: SANDBOX_ACCESS_TOKEN_HASH_SEED } } }
+            - { name: NODE_ID, value: api }
+            - { name: ENVIRONMENT, value: local }
+            - { name: SERVICE_DISCOVERY_PROVIDER, value: local }
+            - { name: LOCAL_ORCHESTRATOR_ADDRESS, value: 127.0.0.1:5008 }
+            - { name: POSTGRES_CONNECTION_STRING, value: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" }
+            - { name: REDIS_URL, value: 127.0.0.1:6379 }
+            - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
+            - { name: LOGS_READ_CONFIG, value: "true" }
+            - { name: PAUSE_REFUSAL_RESTORE, value: "true" }
+            - { name: LOGS_COLLECTOR_ADDRESS, value: "http://127.0.0.1:20006" }
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
+            - { name: API_INTERNAL_GRPC_PORT, value: "5009" }
+            - { name: API_EDGE_GRPC_PORT, value: "5109" }
+            - { name: PPROF_PORT, value: "6060" }
+            - { name: VOLUME_TOKEN_ENABLED, value: "false" }
+            - { name: AUTH_PROVIDER_CONFIG, value: '{"jwt":[]}' }
+            - { name: DEFAULT_KERNEL_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_KERNEL_VERSION } } }
+            - { name: DEFAULT_FIRECRACKER_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_FIRECRACKER_VERSION } } }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 3000, path: /health }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+        - name: client-proxy
+          image: E2B_CLIENT_PROXY_IMAGE
+          restartPolicy: Always
+          env:
+            - { name: NODE_ID, value: client-proxy }
+            - { name: ENVIRONMENT, value: local }
+            - { name: REDIS_URL, value: 127.0.0.1:6379 }
+            - { name: API_INTERNAL_GRPC_ADDRESS, value: 127.0.0.1:5009 }
+            - { name: PROXY_PORT, value: "3002" }
+            - { name: HEALTH_PORT, value: "3003" }
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 3003, path: / }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+        # --- the base template, built through the api ---
+        - name: base-template
+          image: E2B_NODE_E2B_IMAGE
+          env:
+            - { name: E2B_API_URL, value: "http://127.0.0.1:3000" }
+            - { name: FORCE_REBUILD, value: "0" }
+          volumeMounts:
+            - { name: seed-state, mountPath: /run/e2b }
+          command:
+            - /bin/sh
+            - -c
+            - |
+              test -s /run/e2b/team-api-key || {
+                echo "build-base-template: the seed left no /run/e2b/team-api-key" >&2
+                echo "FIX: E2B_SEED_IMAGE must be a release whose seed knows SEED_TEAM_API_KEY_FILE (the published seed images do); run kubectl -n e2b logs e2b-0 -c seed" >&2
+                exit 2
+              }
+              E2B_API_KEY="$(cat /run/e2b/team-api-key)" exec node /app/build-base-template.mjs
+        # --- the dashboard: its backend, then the web UI. Last on purpose: a
+        # sidecar gates the next init container on its startup probe, and only
+        # `ready` should wait for the dashboard, as on compose ---
+        # dashboard-api holds the api's admin token (the same Secret key) and
+        # reads the same three stores on loopback. No identity provider is
+        # configured, so /v1/management answers 401; nothing here calls it.
+        - name: dashboard-api
+          image: E2B_DASHBOARD_API_IMAGE
+          restartPolicy: Always
+          env:
+            - { name: ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: e2b-api, key: ADMIN_TOKEN } } }
+            - { name: PORT, value: "3010" }
+            - { name: NODE_ID, value: dashboard-api }
+            - { name: ENVIRONMENT, value: local }
+            - { name: POSTGRES_CONNECTION_STRING, value: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" }
+            - { name: REDIS_URL, value: 127.0.0.1:6379 }
+            - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
+            - { name: AUTH_PROVIDER_CONFIG, value: '{"jwt":[]}' }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 3010, path: /health }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+        # The browser reaches sandboxes through client-proxy at the node's own
+        # IP, the address ready prints; NODE_IP is declared first so the
+        # $(NODE_IP) below expands. The image refuses E2B_SANDBOX_URL and the
+        # NEXT_PUBLIC_* names, so none is set. /api/health is 503 until
+        # dashboard-api answers, which is the readiness we want.
+        - name: dashboard
+          image: E2B_DASHBOARD_IMAGE
+          restartPolicy: Always
+          env:
+            - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
+            - { name: PORT, value: "3001" }
+            - { name: HOSTNAME, value: 0.0.0.0 }
+            - { name: PUBLIC_E2B_DOMAIN, value: localhost }
+            - { name: E2B_INFRA_API_URL, value: "http://127.0.0.1:3000" }
+            - { name: E2B_DASHBOARD_API_URL, value: "http://127.0.0.1:3010" }
+            - { name: PUBLIC_SANDBOX_URL, value: "http://$(NODE_IP):3002" }
+            - { name: DASHBOARD_COOKIE_SECURE, value: "false" }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 3001, path: /api/health }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+      containers:
+        # The only main container: prints the SDK variables, re-renders them on
+        # a key rotation, and is the pod's readiness.
+        - name: ready
+          image: E2B_TOOLS_IMAGE
+          volumeMounts:
+            - { name: seed-state, mountPath: /run/e2b }
+          readinessProbe:
+            exec: { command: ["test", "-s", "/run/e2b/sdk.env"] }
+            periodSeconds: 5
+          command:
+            - /bin/sh
+            - -c
+            # Everything below the three assignments is byte-for-byte compose's
+            # ready command; tests/kubernetes.bats compares the two.
+            - |
+              E2B_HOST="$NODE_IP"
+              LOG_HINT='kubectl -n e2b logs e2b-0 -c seed'
+              EPILOGUE='Same, in one line:  eval "$(kubectl -n e2b exec e2b-0 -c ready -- cat /run/e2b/sdk.env)"
+              Smoke test:  no smoke service here; see Limitations in the README
+              Tear down, in this order:
+                1. kubectl -n e2b delete statefulset e2b && kubectl -n e2b wait --for=delete pod/e2b-0 --timeout=5m
+                   (the pod; wait for it, the data directory must not go while it runs)
+                2. sudo rm -rf /var/lib/e2b/data           (on the node: also drops the databases)
+                3. kubectl delete namespace e2b            (the Secret and the namespace)
+                4. the node keeps what host-setup wrote until it is recycled (see Remove in the README)'
+              test -s /run/e2b/team-api-key || {
+                echo "ready: the seed left no /run/e2b/team-api-key" >&2
+                echo "FIX: E2B_SEED_IMAGE must be a release whose seed knows SEED_TEAM_API_KEY_FILE (the published seed images do); run $LOG_HINT" >&2
+                exit 1
+              }
+              last=""
+              while :; do
+                key="$(cat /run/e2b/team-api-key 2>/dev/null)"
+                if [ -n "$key" ] && [ "$key" != "$last" ]; then
+                  printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\nexport E2B_DASHBOARD_URL=http://%s:3001\n' "$key" "$E2B_HOST" "$E2B_HOST" "$E2B_HOST" > /run/e2b/sdk.env
+                  if [ -z "$last" ]; then
+                    echo "E2B stack is up. Point the SDK at it (this install's own key). Open E2B_DASHBOARD_URL in a browser and paste E2B_API_KEY into its key form."
+                  else
+                    echo "Team API key rotated; the earlier key stops working within five minutes. The SDK variables are now:"
+                  fi
+                  sed 's/^/  /' /run/e2b/sdk.env
+                  if [ -z "$last" ]; then
+                    printf '%s\n' "$EPILOGUE"
+                  fi
+                  last="$key"
+                fi
+                sleep 5
+              done
+          env:
+            - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
+      volumes:
+        - name: host-root
+          hostPath: { path: /, type: Directory }
+        - name: host-cgroup
+          hostPath: { path: /sys/fs/cgroup, type: Directory }
+        - name: clickhouse-config
+          configMap: { name: clickhouse-config }
+        - name: vector-config
+          configMap: { name: vector-config }
+        # The databases and the seed's key file live on the node's disk, like
+        # compose's named volumes. The directories are created on first use;
+        # `rm -rf /var/lib/e2b/data` on the node is compose's `down -v`. Nothing
+        # here removes the rest of what host-setup wrote (there is no Kubernetes
+        # teardown one-shot); the README's Remove section says what stays.
+        - name: postgres
+          hostPath: { path: /var/lib/e2b/data/postgres, type: DirectoryOrCreate }
+        - name: clickhouse
+          hostPath: { path: /var/lib/e2b/data/clickhouse, type: DirectoryOrCreate }
+        - name: seed-state
+          hostPath: { path: /var/lib/e2b/data/seed-state, type: DirectoryOrCreate }

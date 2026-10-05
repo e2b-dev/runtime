@@ -94,7 +94,7 @@ func (p *routingProvider) DeleteObjectsWithPrefix(ctx context.Context, prefix st
 	return p.base.DeleteObjectsWithPrefix(ctx, prefix)
 }
 
-func (p *routingProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error) {
+func (p *routingProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (storage.UploadURL, error) {
 	return p.base.UploadSignedURL(ctx, path, ttl)
 }
 
@@ -168,7 +168,7 @@ func (p *peerStorageProvider) DeleteObjectsWithPrefix(ctx context.Context, prefi
 	return p.base.DeleteObjectsWithPrefix(ctx, prefix)
 }
 
-func (p *peerStorageProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (string, error) {
+func (p *peerStorageProvider) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (storage.UploadURL, error) {
 	return p.base.UploadSignedURL(ctx, path, ttl)
 }
 

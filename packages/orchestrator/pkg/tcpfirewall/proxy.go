@@ -70,8 +70,13 @@ func New(logger logger.Logger, networkConfig network.Config, sandboxes *sandbox.
 
 func (p *Proxy) OnInsert(_ context.Context, _ *sandbox.Sandbox) {}
 
-func (p *Proxy) OnNetworkRelease(_ context.Context, sbx *sandbox.Sandbox) {
+// OnStopping is called when a sandbox leaves the live registry.
+func (p *Proxy) OnStopping(_ context.Context, _ *sandbox.Sandbox) {}
+
+func (p *Proxy) OnNetworkRelease(_ context.Context, sbx *sandbox.Sandbox) error {
 	p.limiter.Remove(sbx.LifecycleID)
+
+	return nil
 }
 
 func (p *Proxy) Start(ctx context.Context) error {

@@ -87,7 +87,7 @@ func (s *Service) UpdatePath(ctx context.Context, request *orchestrator.UpdatePa
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	entry := toEntry(path, fi)
+	entry := toEntry(fs, path, fi)
 
 	return &orchestrator.UpdatePathResponse{Entry: entry}, nil
 }

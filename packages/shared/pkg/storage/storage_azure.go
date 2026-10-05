@@ -22,6 +22,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/service"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -35,6 +37,9 @@ const (
 	azureReadTimeout      = 15 * time.Second
 
 	azureUploadBlockSize = 10 * 1024 * 1024 // 10 MB
+
+	// Backdated SAS start time, so clock skew cannot reject a just-issued token.
+	azureSASClockSkew = 5 * time.Minute
 )
 
 type azureStorage struct {
@@ -42,6 +47,10 @@ type azureStorage struct {
 	container     *container.Client
 	containerName string
 	limiter       *limit.Limiter
+
+	// A shared key signs a SAS locally, a token credential fetches a user delegation key; SAS-only auth can do neither.
+	sharedKey   *azblob.SharedKeyCredential
+	canDelegate bool
 }
 
 var _ StorageProvider = (*azureStorage)(nil)
@@ -66,18 +75,25 @@ var (
 // key (AZURE_STORAGE_ACCOUNT_KEY) when present, falling back to
 // azidentity.NewDefaultAzureCredential.
 func newAzureStorage(ctx context.Context, containerName string, limiter *limit.Limiter) (*azureStorage, error) {
-	var client *azblob.Client
+	var (
+		client      *azblob.Client
+		sharedKey   *azblob.SharedKeyCredential
+		canDelegate bool
+	)
 
 	if connectionString := consts.AzureStorageConnectionString(); connectionString != "" {
-		// Any connection string the SDK accepts is accepted here, including a
-		// least-privilege SAS one (BlobEndpoint=...;SharedAccessSignature=...):
-		// every reachable operation works without a shared key. Signed upload
-		// URLs would have needed one, but they are unsupported on Azure anyway
-		// (see UploadSignedURL).
 		var err error
 		client, err = azblob.NewClientFromConnectionString(connectionString, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure client from connection string: %w", err)
+		}
+
+		// The SDK keeps the credential it parsed private, so signing needs its own copy.
+		if accountName, accountKey, ok := parseConnectionStringSharedKey(connectionString); ok {
+			sharedKey, err = azblob.NewSharedKeyCredential(accountName, accountKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Azure shared key credential: %w", err)
+			}
 		}
 	} else {
 		accountName := consts.AzureStorageAccountName()
@@ -88,7 +104,8 @@ func newAzureStorage(ctx context.Context, containerName string, limiter *limit.L
 		serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
 
 		if accountKey := consts.AzureStorageAccountKey(); accountKey != "" {
-			sharedKey, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+			var err error
+			sharedKey, err = azblob.NewSharedKeyCredential(accountName, accountKey)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create Azure shared key credential: %w", err)
 			}
@@ -107,29 +124,49 @@ func newAzureStorage(ctx context.Context, containerName string, limiter *limit.L
 			if err != nil {
 				return nil, fmt.Errorf("failed to create Azure client: %w", err)
 			}
+
+			canDelegate = true
 		}
 	}
 
-	// A stated property of the provider, surfaced at construction rather than
-	// discovered in staging: template layer-file uploads go through
-	// UploadSignedURL, which is unsupported on Azure (see its doc comment), so
-	// template builds fail at the get-signed-URL step until the proxied-upload
-	// follow-up lands.
-	logger.L().Warn(ctx, "Azure storage does not support signed upload URLs: template layer-file uploads are unavailable until uploads are proxied through the orchestrator",
-		zap.String("container", containerName))
+	if sharedKey == nil && !canDelegate {
+		logger.L().Warn(ctx, "Azure storage cannot sign upload URLs with a SAS-only connection string: template layer-file uploads will fail on a cache miss",
+			zap.String("container", containerName))
+	}
 
 	return &azureStorage{
 		client:        client,
 		container:     client.ServiceClient().NewContainerClient(containerName),
 		containerName: containerName,
 		limiter:       limiter,
+		sharedKey:     sharedKey,
+		canDelegate:   canDelegate,
 	}, nil
+}
+
+// ok is false for a connection string that authenticates with a SAS instead of a key.
+func parseConnectionStringSharedKey(connectionString string) (accountName, accountKey string, ok bool) {
+	for part := range strings.SplitSeq(connectionString, ";") {
+		key, value, found := strings.Cut(part, "=")
+		if !found {
+			continue
+		}
+
+		switch strings.TrimSpace(key) {
+		case "AccountName":
+			accountName = value
+		case "AccountKey":
+			accountKey = value
+		}
+	}
+
+	return accountName, accountKey, accountName != "" && accountKey != ""
 }
 
 func (s *azureStorage) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
 	// An empty prefix would match, and delete, every blob in the container.
-	if prefix == "" {
-		return errors.New("refusing to delete objects with an empty prefix")
+	if err := validateObjectPath(prefix); err != nil {
+		return err
 	}
 
 	// Deletes are sequential per blob for now. azblob does have Blob Batch
@@ -174,26 +211,71 @@ func (s *azureStorage) GetDetails() string {
 	return fmt.Sprintf("[Azure Storage, container set to %s]", s.containerName)
 }
 
-// UploadSignedURL is deliberately unsupported on Azure, and fails loudly rather than
-// handing back a URL the caller cannot use.
-//
-// Azure's Put Blob requires the request header "x-ms-blob-type: BlockBlob". S3 and GCS
-// presigned PUTs have no equivalent, and a SAS cannot carry a required REQUEST header --
-// SAS only pins response headers (rsct/rscd). The URL therefore reaches an external
-// client (the public API returns only {present, url}, and the PUT is performed by the SDK
-// or CLI, not by this repo) which does not send the header, so the upload fails with
-// MissingRequiredHeader while the same code path works on the other two providers.
-//
-// Returning an error keeps that failure at the API boundary, where it names its cause,
-// instead of surfacing as an opaque Azure 4xx in someone's build. Azure uploads will
-// instead be proxied through the orchestrator in a follow-up to this stack (the same
-// shape as the filesystem provider's local upload path, and no proto or public-API
-// change); SAS PUT URLs are deliberately never issued.
-func (s *azureStorage) UploadSignedURL(_ context.Context, path string, _ time.Duration) (string, error) {
-	return "", fmt.Errorf("signed upload URLs are not supported on Azure (%q): Put Blob requires the x-ms-blob-type request header, which a SAS cannot carry and external upload clients do not send", path)
+// Put Blob also requires the "x-ms-blob-type" request header, which a SAS cannot carry, so it travels back in Headers for the external client to send.
+func (s *azureStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
+	blobURL := s.container.NewBlobClient(path).URL()
+
+	now := time.Now().UTC()
+	values := sas.BlobSignatureValues{
+		Protocol:      sasProtocolFor(blobURL),
+		StartTime:     now.Add(-azureSASClockSkew),
+		ExpiryTime:    now.Add(ttl),
+		Permissions:   (&sas.BlobPermissions{Create: true, Write: true}).String(),
+		ContainerName: s.containerName,
+		BlobName:      path,
+	}
+
+	var (
+		params sas.QueryParameters
+		err    error
+	)
+
+	switch {
+	case s.sharedKey != nil:
+		params, err = values.SignWithSharedKey(s.sharedKey)
+	case s.canDelegate:
+		var credential *service.UserDelegationCredential
+		credential, err = s.client.ServiceClient().GetUserDelegationCredential(ctx, service.KeyInfo{
+			Start:  new(values.StartTime.Format(sas.TimeFormat)),
+			Expiry: new(values.ExpiryTime.Format(sas.TimeFormat)),
+		}, nil)
+		if err != nil {
+			return UploadURL{}, fmt.Errorf("failed to get Azure user delegation key for %q: %w", path, err)
+		}
+
+		params, err = values.SignWithUserDelegation(credential)
+	default:
+		return UploadURL{}, fmt.Errorf("%w: Azure (%q) needs AZURE_STORAGE_ACCOUNT_KEY, an AccountKey in AZURE_STORAGE_CONNECTION_STRING, or a credential allowed to fetch a user delegation key", ErrSignedUploadURLUnsupported, path)
+	}
+
+	if err != nil {
+		return UploadURL{}, fmt.Errorf("failed to sign Azure upload SAS for %q: %w", path, err)
+	}
+
+	return UploadURL{
+		URL:     blobURL + "?" + params.Encode(),
+		Headers: map[string]string{"x-ms-blob-type": string(blob.BlobTypeBlockBlob)},
+	}, nil
+}
+
+// HTTPS-only against a real account; the storage emulator serves plain HTTP.
+func sasProtocolFor(blobURL string) sas.Protocol {
+	if strings.HasPrefix(blobURL, "https://") {
+		return sas.ProtocolHTTPS
+	}
+
+	return sas.ProtocolHTTPSandHTTP
 }
 
 func (s *azureStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &azureObject{
 		container:     s.container,
 		containerName: s.containerName,
@@ -203,6 +285,10 @@ func (s *azureStorage) OpenSeekable(_ context.Context, path string) (Seekable, e
 }
 
 func (s *azureStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &azureObject{
 		container:     s.container,
 		containerName: s.containerName,
@@ -256,12 +342,9 @@ func (o *azureObject) StoreFile(ctx context.Context, path string, opts ...PutOpt
 		})
 	}
 
-	// Inherit the caller's context for the block upload. UploadFile stages
-	// blocks concurrently (Concurrency=8, BlockSize=10MB) and commits the block
-	// list at the end — a tight static timeout here would cancel an in-flight
-	// multi-GB snapshot upload. The caller (pkg/server/sandboxes.go) already
-	// scopes a per-attempt deadline (uploadTimeout = 20m) with retry budget on
-	// top, matching the AWS/GCP paths which also inherit the caller's ctx.
+	// UploadFile uses ctx for staging every block and committing the list, so
+	// a fixed timeout here would cancel a large upload mid-transfer. The
+	// caller sets the deadline for each attempt.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, [32]byte{}, fmt.Errorf("failed to open file %s: %w", path, err)

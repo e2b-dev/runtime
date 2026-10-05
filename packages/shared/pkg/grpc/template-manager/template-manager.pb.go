@@ -232,9 +232,11 @@ func (x *InitLayerFileUploadRequest) GetCacheScope() string {
 }
 
 type InitLayerFileUploadResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Present       bool                   `protobuf:"varint,1,opt,name=present,proto3" json:"present,omitempty"`
-	Url           *string                `protobuf:"bytes,2,opt,name=url,proto3,oneof" json:"url,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Present bool                   `protobuf:"varint,1,opt,name=present,proto3" json:"present,omitempty"`
+	Url     *string                `protobuf:"bytes,2,opt,name=url,proto3,oneof" json:"url,omitempty"`
+	// Request headers the upload client must send on the PUT to `url`.
+	Headers       map[string]string `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -281,6 +283,13 @@ func (x *InitLayerFileUploadResponse) GetUrl() string {
 		return *x.Url
 	}
 	return ""
+}
+
+func (x *InitLayerFileUploadResponse) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
 }
 
 type TemplateStep struct {
@@ -1370,10 +1379,14 @@ const file_template_manager_proto_rawDesc = "" +
 	"\n" +
 	"cacheScope\x18\x03 \x01(\tH\x00R\n" +
 	"cacheScope\x88\x01\x01B\r\n" +
-	"\v_cacheScope\"V\n" +
+	"\v_cacheScope\"\xd7\x01\n" +
 	"\x1bInitLayerFileUploadResponse\x12\x18\n" +
 	"\apresent\x18\x01 \x01(\bR\apresent\x12\x15\n" +
-	"\x03url\x18\x02 \x01(\tH\x00R\x03url\x88\x01\x01B\x06\n" +
+	"\x03url\x18\x02 \x01(\tH\x00R\x03url\x88\x01\x01\x12C\n" +
+	"\aheaders\x18\x03 \x03(\v2).InitLayerFileUploadResponse.HeadersEntryR\aheaders\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x06\n" +
 	"\x04_url\"\x8c\x01\n" +
 	"\fTemplateStep\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
@@ -1517,7 +1530,7 @@ func file_template_manager_proto_rawDescGZIP() []byte {
 }
 
 var file_template_manager_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_template_manager_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_template_manager_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_template_manager_proto_goTypes = []any{
 	(LogLevel)(0),                           // 0: LogLevel
 	(LogsDirection)(0),                      // 1: LogsDirection
@@ -1538,44 +1551,46 @@ var file_template_manager_proto_goTypes = []any{
 	(*TemplateBuildLogEntry)(nil),           // 16: TemplateBuildLogEntry
 	(*TemplateBuildStatusReason)(nil),       // 17: TemplateBuildStatusReason
 	(*TemplateBuildStatusResponse)(nil),     // 18: TemplateBuildStatusResponse
-	nil,                                     // 19: TemplateBuildLogEntry.FieldsEntry
-	(*timestamppb.Timestamp)(nil),           // 20: google.protobuf.Timestamp
-	(*orchestrator.SchedulingMetadata)(nil), // 21: SchedulingMetadata
-	(*emptypb.Empty)(nil),                   // 22: google.protobuf.Empty
+	nil,                                     // 19: InitLayerFileUploadResponse.HeadersEntry
+	nil,                                     // 20: TemplateBuildLogEntry.FieldsEntry
+	(*timestamppb.Timestamp)(nil),           // 21: google.protobuf.Timestamp
+	(*orchestrator.SchedulingMetadata)(nil), // 22: SchedulingMetadata
+	(*emptypb.Empty)(nil),                   // 23: google.protobuf.Empty
 }
 var file_template_manager_proto_depIdxs = []int32{
-	7,  // 0: FromImageRegistry.aws:type_name -> AWSRegistry
-	8,  // 1: FromImageRegistry.gcp:type_name -> GCPRegistry
-	9,  // 2: FromImageRegistry.general:type_name -> GeneralRegistry
-	5,  // 3: TemplateConfig.steps:type_name -> TemplateStep
-	6,  // 4: TemplateConfig.fromTemplate:type_name -> FromTemplateConfig
-	10, // 5: TemplateConfig.fromImageRegistry:type_name -> FromImageRegistry
-	11, // 6: TemplateCreateRequest.template:type_name -> TemplateConfig
-	0,  // 7: TemplateStatusRequest.level:type_name -> LogLevel
-	20, // 8: TemplateStatusRequest.start:type_name -> google.protobuf.Timestamp
-	20, // 9: TemplateStatusRequest.end:type_name -> google.protobuf.Timestamp
-	1,  // 10: TemplateStatusRequest.direction:type_name -> LogsDirection
-	21, // 11: TemplateBuildMetadata.schedulingMetadata:type_name -> SchedulingMetadata
-	20, // 12: TemplateBuildLogEntry.timestamp:type_name -> google.protobuf.Timestamp
-	0,  // 13: TemplateBuildLogEntry.level:type_name -> LogLevel
-	19, // 14: TemplateBuildLogEntry.fields:type_name -> TemplateBuildLogEntry.FieldsEntry
-	2,  // 15: TemplateBuildStatusResponse.status:type_name -> TemplateBuildState
-	15, // 16: TemplateBuildStatusResponse.metadata:type_name -> TemplateBuildMetadata
-	16, // 17: TemplateBuildStatusResponse.logEntries:type_name -> TemplateBuildLogEntry
-	17, // 18: TemplateBuildStatusResponse.reason:type_name -> TemplateBuildStatusReason
-	12, // 19: TemplateService.TemplateCreate:input_type -> TemplateCreateRequest
-	13, // 20: TemplateService.TemplateBuildStatus:input_type -> TemplateStatusRequest
-	14, // 21: TemplateService.TemplateBuildDelete:input_type -> TemplateBuildDeleteRequest
-	3,  // 22: TemplateService.InitLayerFileUpload:input_type -> InitLayerFileUploadRequest
-	22, // 23: TemplateService.TemplateCreate:output_type -> google.protobuf.Empty
-	18, // 24: TemplateService.TemplateBuildStatus:output_type -> TemplateBuildStatusResponse
-	22, // 25: TemplateService.TemplateBuildDelete:output_type -> google.protobuf.Empty
-	4,  // 26: TemplateService.InitLayerFileUpload:output_type -> InitLayerFileUploadResponse
-	23, // [23:27] is the sub-list for method output_type
-	19, // [19:23] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	19, // 0: InitLayerFileUploadResponse.headers:type_name -> InitLayerFileUploadResponse.HeadersEntry
+	7,  // 1: FromImageRegistry.aws:type_name -> AWSRegistry
+	8,  // 2: FromImageRegistry.gcp:type_name -> GCPRegistry
+	9,  // 3: FromImageRegistry.general:type_name -> GeneralRegistry
+	5,  // 4: TemplateConfig.steps:type_name -> TemplateStep
+	6,  // 5: TemplateConfig.fromTemplate:type_name -> FromTemplateConfig
+	10, // 6: TemplateConfig.fromImageRegistry:type_name -> FromImageRegistry
+	11, // 7: TemplateCreateRequest.template:type_name -> TemplateConfig
+	0,  // 8: TemplateStatusRequest.level:type_name -> LogLevel
+	21, // 9: TemplateStatusRequest.start:type_name -> google.protobuf.Timestamp
+	21, // 10: TemplateStatusRequest.end:type_name -> google.protobuf.Timestamp
+	1,  // 11: TemplateStatusRequest.direction:type_name -> LogsDirection
+	22, // 12: TemplateBuildMetadata.schedulingMetadata:type_name -> SchedulingMetadata
+	21, // 13: TemplateBuildLogEntry.timestamp:type_name -> google.protobuf.Timestamp
+	0,  // 14: TemplateBuildLogEntry.level:type_name -> LogLevel
+	20, // 15: TemplateBuildLogEntry.fields:type_name -> TemplateBuildLogEntry.FieldsEntry
+	2,  // 16: TemplateBuildStatusResponse.status:type_name -> TemplateBuildState
+	15, // 17: TemplateBuildStatusResponse.metadata:type_name -> TemplateBuildMetadata
+	16, // 18: TemplateBuildStatusResponse.logEntries:type_name -> TemplateBuildLogEntry
+	17, // 19: TemplateBuildStatusResponse.reason:type_name -> TemplateBuildStatusReason
+	12, // 20: TemplateService.TemplateCreate:input_type -> TemplateCreateRequest
+	13, // 21: TemplateService.TemplateBuildStatus:input_type -> TemplateStatusRequest
+	14, // 22: TemplateService.TemplateBuildDelete:input_type -> TemplateBuildDeleteRequest
+	3,  // 23: TemplateService.InitLayerFileUpload:input_type -> InitLayerFileUploadRequest
+	23, // 24: TemplateService.TemplateCreate:output_type -> google.protobuf.Empty
+	18, // 25: TemplateService.TemplateBuildStatus:output_type -> TemplateBuildStatusResponse
+	23, // 26: TemplateService.TemplateBuildDelete:output_type -> google.protobuf.Empty
+	4,  // 27: TemplateService.InitLayerFileUpload:output_type -> InitLayerFileUploadResponse
+	24, // [24:28] is the sub-list for method output_type
+	20, // [20:24] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_template_manager_proto_init() }
@@ -1605,7 +1620,7 @@ func file_template_manager_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_template_manager_proto_rawDesc), len(file_template_manager_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   17,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

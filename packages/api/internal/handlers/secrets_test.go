@@ -6,8 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +21,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/protoadapt"
@@ -582,6 +589,7 @@ func TestSecretsBackendErrorMapping(t *testing.T) {
 		// usable answer; everything else is malformed.
 		{name: "one secret limit reached detail", err: exhausted(reason(managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_SECRET_LIMIT_REACHED)), wantStatus: http.StatusConflict},
 		{name: "one value too large detail", err: exhausted(reason(managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_VALUE_TOO_LARGE)), wantStatus: http.StatusBadRequest},
+		{name: "value too large ignores reason details", err: exhausted(&managementv1.ManagementErrorDetail{Reason: managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_VALUE_TOO_LARGE, ReasonDetails: sentinelBackendMessage}), wantStatus: http.StatusBadRequest},
 		{name: "no detail", err: exhausted(), wantStatus: http.StatusBadGateway},
 		{name: "unspecified reason", err: exhausted(reason(managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_UNSPECIFIED)), wantStatus: http.StatusBadGateway},
 		{name: "unknown future reason", err: exhausted(reason(managementv1.ManagementErrorReason(4242))), wantStatus: http.StatusBadGateway},
@@ -634,6 +642,49 @@ func TestSecretsBackendErrorMapping(t *testing.T) {
 			for _, ginErr := range ginCtx.Errors {
 				requireNoSentinel(t, "gin error", ginErr.Error(), sentinelBackendMessage)
 			}
+		})
+	}
+}
+
+func TestSecretsLimitErrorResponse(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name          string
+		reasonDetails string
+		message       string
+	}{
+		{name: "effective limit", reasonDetails: "Project has reached its limit of 50 live secrets", message: "Project has reached its limit of 50 live secrets"},
+		{name: "older backend", message: "Project secret limit reached"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			backendStatus, err := status.New(codes.ResourceExhausted, sentinelBackendMessage).WithDetails(
+				&managementv1.ManagementErrorDetail{
+					Reason:        managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_SECRET_LIMIT_REACHED,
+					ReasonDetails: test.reasonDetails,
+				},
+			)
+			require.NoError(t, err)
+			backend := &fakeSecretsBackend{err: backendStatus.Err()}
+			store := newSecretsStore(t, startSecretsBackend(t, backend), true)
+
+			requestBody, err := json.Marshal(api.NewSecret{Name: "my-secret", Value: sentinelSecretValue})
+			require.NoError(t, err)
+			ginCtx, recorder, _ := newSecretsRequest(t, http.MethodPost, "/secrets", string(requestBody))
+			store.PostSecrets(ginCtx)
+
+			require.Equal(t, http.StatusConflict, recorder.Code)
+			requireNoSentinel(t, "quota error response", recorder.Body.String(), sentinelBackendMessage, sentinelSecretValue)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+			want := map[string]any{
+				"code":       float64(http.StatusConflict),
+				"message":    test.message,
+				"error_code": secretLimitReachedCode,
+			}
+			require.Equal(t, want, body)
 		})
 	}
 }
@@ -736,6 +787,52 @@ func TestSecretsMutationsAreAttemptedOnce(t *testing.T) {
 			require.Len(t, backend.updateRequests, 1, "an update is attempted exactly once")
 		})
 	}
+
+	// Through the production client, a mutation that ran and then failed or
+	// lost its answer never runs again on the other ready replica.
+	for index, test := range []struct {
+		name         string
+		update, lose bool
+	}{
+		{name: "create unavailable after it ran"},
+		{name: "update unavailable after it ran", update: true},
+		{name: "create answer lost after it ran", lose: true},
+		{name: "update answer lost after it ran", update: true, lose: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			replicas := make([]*secretsReplica, 2)
+			for i := range replicas {
+				var server *grpc.Server
+				server = grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+					response, err := handler(ctx, req)
+					if _, get := req.(*managementv1.GetSecretRequest); get {
+						return response, err
+					}
+					if test.lose {
+						server.Stop() // Closes the connection before any answer is sent.
+					}
+
+					return nil, status.Error(codes.Unavailable, sentinelBackendMessage)
+				}))
+				replicas[i] = startSecretsReplica(t, server, true)
+			}
+			mutationResolvers[index].UpdateState(secretsAddresses(replicas...))
+			client := dialSecretsManagement(t, mutationResolvers[index].Scheme()+":///backend")
+			requireEveryReplicaServes(t, client, replicas...)
+			served := func() int { return replicas[0].backend.callCount() + replicas[1].backend.callCount() }
+			before := served()
+			var err error
+			if test.update {
+				_, err = client.UpdateSecret(t.Context(), &managementv1.UpdateSecretRequest{})
+			} else {
+				_, err = client.CreateSecret(t.Context(), &managementv1.CreateSecretRequest{})
+			}
+			require.Equal(t, codes.Unavailable, status.Code(err))
+			require.Equal(t, before+1, served(), "the mutation ran exactly once")
+		})
+	}
 }
 
 func TestSecretsUnavailableWithoutBackendOrGate(t *testing.T) {
@@ -824,4 +921,231 @@ func TestSecretsManagementClientIsLazyAndFailsFast(t *testing.T) {
 
 	require.Equal(t, http.StatusBadGateway, recorder.Code)
 	require.Less(t, elapsed, 5*time.Second, "the call must not wait for the connection to become ready")
+}
+
+func TestSecretsManagementClientFollowsReadyReplicas(t *testing.T) {
+	t.Parallel()
+
+	a, b, c := startSecretsReplica(t, grpc.NewServer(), true), startSecretsReplica(t, grpc.NewServer(), true), startSecretsReplica(t, grpc.NewServer(), true)
+	endpointsResolver.UpdateState(secretsAddresses(a, b, c))
+	client := dialSecretsManagement(t, endpointsResolver.Scheme()+":///backend")
+	require.NoError(t, getSecrets(t, client, 1))
+	// Honouring the resolver's pick_first would send every call to one replica.
+	state := secretsAddresses(a, b, c)
+	state.ServiceConfig = endpointsResolver.CC().ParseServiceConfig(`{"loadBalancingConfig":[{"pick_first":{}}]}`)
+	require.NoError(t, state.ServiceConfig.Err)
+	endpointsResolver.UpdateState(state)
+	requireEveryReplicaServes(t, client, a, b, c)
+	before := []int{a.backend.callCount(), b.backend.callCount(), c.backend.callCount()}
+	require.NoError(t, getSecrets(t, client, 30))
+	for index, replica := range []*secretsReplica{a, b, c} {
+		require.InDelta(t, 10, replica.backend.callCount()-before[index], 2, "round robin over three ready replicas")
+	}
+	// NOT_SERVING on a live connection keeps new calls off c until SERVING. A
+	// call running through rotation: TestNewGRPCServerWithMaxConnectionAge.
+	c.health.SetServingStatus(secretsReadinessService, healthv1.HealthCheckResponse_NOT_SERVING)
+	require.Eventually(t, func() bool {
+		served := c.backend.callCount()
+
+		return getSecrets(t, client, 6) == nil && c.backend.callCount() == served
+	}, 10*time.Second, 10*time.Millisecond, "the unready replica stops receiving calls")
+	c.health.SetServingStatus(secretsReadinessService, healthv1.HealthCheckResponse_SERVING)
+	requireEveryReplicaServes(t, client, c)
+	// A stopped replica is routed around for a full three-call rotation before its address goes.
+	c.server.Stop()
+	require.Eventually(t, func() bool { return getSecrets(t, client, 3) == nil }, 10*time.Second, 10*time.Millisecond)
+	endpointsResolver.UpdateState(secretsAddresses(a, b))
+	require.NoError(t, getSecrets(t, client, 3))
+	// An empty address set fails fast, never at the 5 second call deadline.
+	endpointsResolver.UpdateState(resolver.State{})
+	require.Eventually(t, func() bool { return status.Code(getSecrets(t, client, 1)) == codes.Unavailable }, 10*time.Second, 10*time.Millisecond)
+	added := startSecretsReplica(t, grpc.NewServer(), true)
+	endpointsResolver.UpdateState(secretsAddresses(a, b, added))
+	requireEveryReplicaServes(t, client, a, b, added)
+}
+
+func TestSecretsManagementClientFindsAddedReplicaAfterRotation(t *testing.T) {
+	t.Parallel()
+
+	// The client resolves again when a connection closes. This manual resolver says nothing about DNS.
+	resolutions := rotationResolutions.Load()
+	watchEnded := make(chan struct{})
+	endWatch := sync.OnceFunc(func() { close(watchEnded) })
+	aging := startSecretsReplica(t, grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: 200 * time.Millisecond, MaxConnectionAgeGrace: time.Minute}),
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			defer endWatch() // The only stream is the health watch.
+
+			return handler(srv, stream)
+		}),
+	), true)
+	rotationResolver.UpdateState(secretsAddresses(aging))
+	client := dialSecretsManagement(t, rotationResolver.Scheme()+":///backend")
+	require.NoError(t, getSecrets(t, client, 1))
+	added := startSecretsReplica(t, grpc.NewServer(), true)
+	// The client cancels its health watch on GOAWAY instead of holding the aged
+	// connection for the whole grace.
+	receiveWithin(t, watchEnded, "the health watch on the aged connection to end")
+	require.Eventually(t, func() bool { return rotationResolutions.Load() > resolutions }, 10*time.Second, 10*time.Millisecond, "the client resolves again after rotation")
+	rotationResolver.UpdateState(secretsAddresses(aging, added))
+	requireEveryReplicaServes(t, client, aging, added)
+}
+
+func TestSecretsManagementClientTargetsDeadlinesAndCancellation(t *testing.T) {
+	t.Parallel()
+
+	deadlines, ended := make(chan time.Time, 2), make(chan error, 2)
+	replica := startSecretsReplica(t, grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if _, list := req.(*managementv1.ListSecretsRequest); list {
+			return handler(ctx, req)
+		}
+		deadline, _ := ctx.Deadline()
+		deadlines <- deadline
+		<-ctx.Done()
+		ended <- ctx.Err()
+
+		return nil, status.FromContextError(ctx.Err()).Err()
+	})), false)
+	// Without a health service, UNIMPLEMENTED counts as healthy. Plain and schemed targets work as
+	// given and connect before the short deadline below. An absent backend fails fast.
+	var client managementv1.SecretManagementServiceClient
+	for _, target := range []string{replica.address, "dns:///" + replica.address} {
+		client = dialSecretsManagement(t, target)
+		_, err := client.ListSecrets(t.Context(), &managementv1.ListSecretsRequest{})
+		require.NoError(t, err)
+	}
+	require.Equal(t, codes.Unavailable, status.Code(getSecrets(t, dialSecretsManagement(t, "dns:///127.0.0.1:1"), 1)))
+	store := newSecretsStore(t, client, true)
+	// A caller deadline shorter than the API's own timeout reaches the backend.
+	deadlineCtx, cancelDeadline := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancelDeadline()
+	callerDeadline, _ := deadlineCtx.Deadline()
+	ginCtx, recorder, _ := newSecretsRequest(t, http.MethodGet, "/secrets/my-secret", "")
+	ginCtx.Request = ginCtx.Request.WithContext(deadlineCtx)
+	store.GetSecretsSecretID(ginCtx, "my-secret")
+	require.Equal(t, http.StatusGatewayTimeout, recorder.Code)
+	require.WithinDuration(t, callerDeadline, receiveWithin(t, deadlines, "the backend handler"), 100*time.Millisecond)
+	receiveWithin(t, ended, "the backend call to end")
+	// Without one the API's timeout applies. A caller that goes away cancels the call.
+	cancelCtx, cancel := context.WithCancel(t.Context())
+	ginCtx, recorder, _ = newSecretsRequest(t, http.MethodGet, "/secrets/my-secret", "")
+	ginCtx.Request = ginCtx.Request.WithContext(cancelCtx)
+	done := make(chan struct{})
+	go func() { store.GetSecretsSecretID(ginCtx, "my-secret"); close(done) }()
+	require.WithinDuration(t, time.Now().Add(secretsBackendTimeout), receiveWithin(t, deadlines, "the backend handler"), secretsBackendTimeout/5)
+	cancel()
+	require.ErrorIs(t, receiveWithin(t, ended, "the backend call to end"), context.Canceled)
+	receiveWithin(t, done, "the canceled call to return")
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+}
+
+// Manual resolvers stand in for DNS. resolver.Register must not race client
+// construction, so each test owns a scheme registered at package init.
+var (
+	rotationResolutions atomic.Int32
+	endpointsResolver   = registerSecretsTestResolver("secrets-test-endpoints", nil)
+	rotationResolver    = registerSecretsTestResolver("secrets-test-rotation", func() { rotationResolutions.Add(1) })
+	mutationResolvers   = []*manual.Resolver{
+		registerSecretsTestResolver("secrets-test-mutation-0", nil), registerSecretsTestResolver("secrets-test-mutation-1", nil),
+		registerSecretsTestResolver("secrets-test-mutation-2", nil), registerSecretsTestResolver("secrets-test-mutation-3", nil),
+	}
+)
+
+// registerSecretsTestResolver calls resolveNow, if set, on each re-resolution.
+func registerSecretsTestResolver(scheme string, resolveNow func()) *manual.Resolver {
+	r := manual.NewBuilderWithScheme(scheme)
+	if resolveNow != nil {
+		r.ResolveNowCallback = func(resolver.ResolveNowOptions) { resolveNow() }
+	}
+	resolver.Register(r)
+
+	return r
+}
+
+type secretsReplica struct {
+	backend *fakeSecretsBackend
+	health  *health.Server
+	server  *grpc.Server
+	address string
+}
+
+// startSecretsReplica serves a fake backend on local TCP, with SERVING readiness if withHealth.
+func startSecretsReplica(t *testing.T, server *grpc.Server, withHealth bool) *secretsReplica {
+	t.Helper()
+
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	replica := &secretsReplica{backend: &fakeSecretsBackend{secret: backendSecret()}, server: server, address: listener.Addr().String()}
+	managementv1.RegisterSecretManagementServiceServer(server, replica.backend)
+	if withHealth {
+		replica.health = health.NewServer()
+		replica.health.SetServingStatus(secretsReadinessService, healthv1.HealthCheckResponse_SERVING)
+		healthv1.RegisterHealthServer(server, replica.health)
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	return replica
+}
+
+func secretsAddresses(replicas ...*secretsReplica) resolver.State {
+	var state resolver.State
+	for _, replica := range replicas {
+		state.Addresses = append(state.Addresses, resolver.Address{Addr: replica.address})
+	}
+
+	return state
+}
+
+// dialSecretsManagement builds the production client, which must not dial yet.
+func dialSecretsManagement(t *testing.T, target string) managementv1.SecretManagementServiceClient {
+	t.Helper()
+
+	conn, err := newSecretsManagementClient(target)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.Equal(t, connectivity.Idle, conn.GetState())
+
+	return managementv1.NewSecretManagementServiceClient(conn)
+}
+
+// getSecrets makes sequential calls within 5 seconds and returns the first error.
+func getSecrets(t *testing.T, client managementv1.SecretManagementServiceClient, calls int) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for range calls {
+		if _, err := client.GetSecret(ctx, &managementv1.GetSecretRequest{}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// requireEveryReplicaServes waits until each replica has served a new call.
+func requireEveryReplicaServes(t *testing.T, client managementv1.SecretManagementServiceClient, replicas ...*secretsReplica) {
+	t.Helper()
+
+	before := map[*secretsReplica]int{}
+	for _, replica := range replicas {
+		before[replica] = replica.backend.callCount()
+	}
+	require.Eventually(t, func() bool {
+		_ = getSecrets(t, client, 1)
+
+		return !slices.ContainsFunc(replicas, func(r *secretsReplica) bool { return r.backend.callCount() == before[r] })
+	}, 10*time.Second, 10*time.Millisecond, "every replica serves a call")
+}
+
+func receiveWithin[T any](t *testing.T, values <-chan T, what string) (value T) {
+	t.Helper()
+
+	select {
+	case value = <-values:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+
+	return value
 }

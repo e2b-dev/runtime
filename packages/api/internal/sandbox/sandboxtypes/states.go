@@ -102,6 +102,8 @@ var AllowedTransitions = map[State]map[State]bool{
 
 const (
 	SandboxTimeoutDefault = time.Second * 15
+	// Timeout applied by the v2 create and connect endpoints when the request omits one
+	SandboxTimeoutDefaultV2 = time.Minute * 5
 	// Should we auto pause the instance by default instead of killing it
 	AutoPauseDefault = false
 )

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
@@ -12,6 +13,7 @@ import (
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // ManagementUpsertProjectLimits records a project's effective limits.
@@ -45,6 +47,7 @@ func (s *APIStore) ManagementUpsertProjectLimits(c *gin.Context, projectID api.P
 	if err := s.managementService.ApplyProjectLimits(ctx, management.ProjectLimitsProjection{
 		ProjectID:                projectID,
 		Revision:                 body.Revision,
+		DecidedAt:                utils.DerefOrDefault(body.DecidedAt, time.Time{}),
 		MaxLengthHours:           int64(body.MaxSandboxLengthHours),
 		ConcurrentSandboxes:      int64(body.ConcurrentSandboxes),
 		ConcurrentTemplateBuilds: int64(body.ConcurrentTemplateBuilds),
@@ -54,6 +57,7 @@ func (s *APIStore) ManagementUpsertProjectLimits(c *gin.Context, projectID api.P
 		EventsTTLDays:            int64(body.EventsTtlDays),
 		DefaultFreeDiskSizeMB:    body.DefaultFreeDiskSizeMb,
 		MaxFreeDiskSizeMB:        maxFreeDiskSizeMB,
+		APITeamRPSList:           body.ApiTeamRpsList,
 	}); err != nil {
 		s.sendProjectLimitsError(c, err, attrs...)
 

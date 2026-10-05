@@ -37,6 +37,9 @@ enum UserErrorCode {
   NOT_SUPPORTED = 4;
   DEPTH_OUT_OF_RANGE = 5;
   INVALID_REQUEST = 6;
+  // A filesystem-only checkpoint refused because filesystem-only-checkpoint is
+  // off on the node; the API answers it like its own pre-flight (400).
+  FILESYSTEM_ONLY_CHECKPOINT_DISABLED = 7;
 }
 
 message UserError {
