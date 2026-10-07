@@ -6,9 +6,22 @@ import (
 	"sync/atomic"
 )
 
+// subscriberBufSize is the capacity of each subscriber's channel. A buffer
+// this deep lets a temporarily slow consumer absorb bursts without blocking
+// the fan-out loop. When the buffer is full the fan-out drops that event for
+// that subscriber (non-blockingly) rather than stalling all other consumers.
+//
+// 256 gives a slow-but-live client roughly 256 ms of headroom at a process
+// emission rate of ~1000 events/s before it starts losing events; a ghost
+// subscriber (consumer goroutine stuck inside stream.Send to a dead peer)
+// never blocks the fan-out loop regardless of how long TCP takes to time out.
+const subscriberBufSize = 256
+
 // MultiplexedChannel fans out values written to Source to every subscriber
-// obtained via Fork. Each subscriber send is guarded by a done channel so
-// a cancelled consumer can never wedge the fan-out loop.
+// obtained via Fork. Each subscriber channel is buffered; when a subscriber's
+// buffer is full the fan-out skips that one event for that subscriber instead
+// of blocking, ensuring that a stuck or slow consumer cannot wedge the loop
+// or starve the others.
 type MultiplexedChannel[T any] struct {
 	Source chan T
 
@@ -67,6 +80,22 @@ func (m *MultiplexedChannel[T]) run() {
 			select {
 			case s.ch <- v:
 			case <-s.done:
+			default:
+				// The subscriber's buffer is full. Skip this event for this
+				// subscriber rather than blocking the fan-out loop.
+				//
+				// A legitimately slow client will drain its buffer as soon as it
+				// catches up, and will resume receiving future events normally;
+				// only the events dropped during the burst are lost. A ghost
+				// subscriber (consumer goroutine stuck inside stream.Send to a
+				// dead peer) will have its buffer permanently full and every
+				// event skipped until the underlying TCP timeout eventually
+				// closes the connection and the consumer goroutine exits.
+				//
+				// In either case the subscriber is NOT cancelled here. Cancelling
+				// on the first overflow would disconnect a temporarily slow but
+				// still-alive client, causing HasSubscribers() to return false
+				// and silently truncating subsequent process output.
 			}
 		}
 	}
@@ -120,7 +149,7 @@ func (m *MultiplexedChannel[T]) Fork() (<-chan T, func()) {
 	}
 
 	s := &subscriber[T]{
-		ch:   make(chan T),
+		ch:   make(chan T, subscriberBufSize),
 		done: make(chan struct{}),
 	}
 
