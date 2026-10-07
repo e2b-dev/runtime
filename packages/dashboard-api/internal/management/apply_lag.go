@@ -20,8 +20,9 @@ const (
 type projectionKind string
 
 const (
-	projectionProjectLimits projectionKind = "project_limits"
-	projectionProjectBlocks projectionKind = "project_blocks"
+	projectionProjectLimits   projectionKind = "project_limits"
+	projectionProjectBlocks   projectionKind = "project_blocks"
+	projectionBillingProfiles projectionKind = "billing_profiles"
 )
 
 type applyLag struct {

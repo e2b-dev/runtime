@@ -57,6 +57,22 @@ func (s *APIStore) sendProjectBlockError(c *gin.Context, err error, attrs ...att
 	}
 }
 
+func (s *APIStore) sendBillingProfileError(c *gin.Context, err error, attrs ...attribute.KeyValue) {
+	ctx := c.Request.Context()
+
+	switch {
+	case errors.Is(err, management.ErrProjectNotFound):
+		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "apply billing profile failed", err, attrs...)
+		s.sendAPIStoreError(c, http.StatusNotFound, "Project not found")
+	case errors.Is(err, management.ErrInvalidBillingProfile):
+		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "apply billing profile failed", err, attrs...)
+		s.sendAPIStoreError(c, http.StatusBadRequest, "Invalid billing profile")
+	default:
+		telemetry.ReportCriticalError(ctx, "apply billing profile failed", err, attrs...)
+		s.sendAPIStoreError(c, http.StatusInternalServerError, "Error applying billing profile")
+	}
+}
+
 // A cache eviction that failed is reported: the values are committed, so the
 // caller retrying is what gets the stale entry cleared.
 func (s *APIStore) sendProjectLimitsError(c *gin.Context, err error, attrs ...attribute.KeyValue) {

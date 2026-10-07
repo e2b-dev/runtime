@@ -1405,6 +1405,39 @@ components:
         decided_at:
           $ref: "#/components/schemas/ManagementDecidedAt"
 
+    ManagementProjectBillingProfile:
+      type: object
+      description: >-
+        A project's billing profile as resolved on the global billing plane,
+        for regional readers that cannot know it on their own (abuse detection's
+        payment signal, feature-flag tier context, plan labels). This side
+        stores what it is given; a project without a stored profile is unknown,
+        never defaulted.
+      required: [revision, has_payment_method, enterprise]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Monotonic per-project revision. Older or duplicate revisions
+            succeed without changing stored state.
+        has_payment_method:
+          type: boolean
+          description: >-
+            Whether the owning workspace has a default payment method on the
+            global billing plane.
+        enterprise:
+          type: boolean
+          description: Whether the owning workspace is invoiced (manual billing).
+        plan:
+          type: string
+          description: >-
+            The tier in force for the project (catalogue key). Absent when no
+            tier is in force or the caller does not know.
+        decided_at:
+          $ref: "#/components/schemas/ManagementDecidedAt"
+
 tags:
   - name: builds
   - name: control-plane-management
@@ -2236,6 +2269,35 @@ paths:
       responses:
         "204":
           description: Effective limits are synchronized.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+        "501":
+          $ref: "#/components/responses/501"
+
+  /v1/management/projects/{projectID}/billing-profile:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    put:
+      operationId: managementUpsertProjectBillingProfile
+      summary: Reconcile a project's billing profile (v1).
+      tags: [control-plane-management]
+      security:
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagementProjectBillingProfile"
+      responses:
+        "204":
+          description: Billing profile is synchronized.
         "400":
           $ref: "#/components/responses/400"
         "401":
