@@ -16,24 +16,23 @@ const ProcSelfCgroup = "/proc/self/cgroup"
 // path in the resume, not by caution -- a list that grew with the customer population
 // would defeat the point of walking the hierarchy in the first place.
 //
-//   - init.scope holds systemd (PID 1). The resume thaw is deferred inside the /init
-//     handler, so it runs after setupNFS; volume mounts are nfsvers=3 without nolock, so
-//     mount.nfs needs rpc.statd, which it asks systemd to start. Freeze PID 1 and every
-//     volume-mounting sandbox hangs to the NFS mount timeout and fails. Keeping systemd
-//     live is also what lets envd's own Restart=always fire if envd dies mid-resume.
+//   - init.scope holds systemd (PID 1). Keeping it live is what lets envd's own
+//     Restart=always fire if envd dies mid-resume, and PID 1 must never be frozen
+//     regardless. (Volume mounts now carry nolock, so mount.nfs no longer needs
+//     rpc.statd during setupNFS -- see the rpcbind note below.)
 //   - systemd-journald.service drains the socket envd logs to (its unit has
 //     Wants=systemd-journald.socket). Freeze it and once the socket buffer fills, envd's
 //     own log writes block -- turning a slow resume into a wedged one.
 //   - socats is envd's port forwarding. It is already excluded from the freeze today
 //     (ProcessTypeSocat is absent from WorkloadProcessTypes); this preserves that.
 //   - rpcbind.service holds the local portmapper, and rpcbind.socket is its activation
-//     pair. nfsvers=3 mounts carry no `nolock`, so mount.nfs starts rpc.statd, which
-//     registers with the LOCAL portmapper -- and the resume thaw is deferred inside the
-//     /init handler, so it runs after setupNFS. Measured on a dev guest: with rpcbind
-//     frozen, `rpcinfo -p 127.0.0.1` goes from answering in 0.145s to timing out, and a
-//     v3 mount attempt from a clean 3.2s error to a 25s hang. The socket unit holds no
-//     processes today, so freezing it stops nothing -- it is here because activation could
-//     later place a process into a cgroup we froze, and rpcbind is one service in practice.
+//     pair. Volume mounts now carry `nolock` (issue #3619), so mount.nfs no longer starts
+//     rpc.statd and the resume mount path no longer depends on the local portmapper.
+//     These entries are kept defensively: before nolock, a frozen rpcbind turned a v3
+//     mount from a clean 3.2s error into a 25s hang (measured on a dev guest), so keeping
+//     OUR own portmapper live across a pause is cheap insurance against any other resume
+//     path that might come to rely on it. The socket unit holds no processes today, so
+//     freezing it stops nothing; it rides along with its service for the same reason.
 //
 // Deliberately NOT here, so the list stays justified rather than merely cautious:
 // run-rpc_pipefs.mount (a mount unit, 0 processes, so freezing its cgroup stops nothing)
