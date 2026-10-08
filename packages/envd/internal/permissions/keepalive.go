@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"math"
 	"strconv"
 	"time"
 
@@ -12,12 +13,10 @@ const defaultKeepAliveInterval = 90 * time.Second
 func GetKeepAliveTicker[T any](req *connect.Request[T]) (*time.Ticker, func()) {
 	keepAliveIntervalHeader := req.Header().Get("Keepalive-Ping-Interval")
 
-	var interval time.Duration
-
-	keepAliveIntervalInt, err := strconv.Atoi(keepAliveIntervalHeader)
-	if err != nil {
-		interval = defaultKeepAliveInterval
-	} else {
+	interval := defaultKeepAliveInterval
+	keepAliveIntervalInt, err := strconv.ParseInt(keepAliveIntervalHeader, 10, 64)
+	// Validate seconds before multiplication, which could overflow time.Duration.
+	if err == nil && keepAliveIntervalInt > 0 && keepAliveIntervalInt <= math.MaxInt64/int64(time.Second) {
 		interval = time.Duration(keepAliveIntervalInt) * time.Second
 	}
 
