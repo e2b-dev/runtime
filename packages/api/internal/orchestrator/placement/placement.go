@@ -150,6 +150,18 @@ func placeSandbox(
 					return failed(SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr})
 				}
 
+				// The only error chooseNode returns is FailedToPlaceSandboxError,
+				// whose message carries the per-stage rejection breakdown. Unlike
+				// the create and refusal paths above, this return had no log line,
+				// so a "no compatible node" placement failure left no trace in
+				// structured logs; the client message is intentionally generic.
+				logger.L().Error(ctx, "No eligible node for sandbox placement",
+					logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()),
+					logger.WithTemplateID(sbxRequest.GetSandbox().GetTemplateId()),
+					logger.WithBuildID(sbxRequest.GetSandbox().GetBuildId()),
+					zap.Error(err),
+				)
+
 				return failed(err)
 			}
 
