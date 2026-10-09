@@ -323,7 +323,13 @@ batcher, whose flushing remains part of shutdown.
 The agent inside every VM (started by systemd very early in boot), port 49983, chi + Connect RPC.
 
 - **Process service** (`spec/process/process.proto`): start/list/connect to processes, stream
-  stdout/stderr, stdin, signals, PTYs — this is what SDKs use to "run code". A start is refused
+  stdout/stderr, stdin, signals, PTYs — this is what SDKs use to "run code".
+  Signals target the managed leader by default. `SendSignalRequest.descendants` opts into
+  signaling its process group, after checking that the leader owns that group. Non-PTY commands
+  start in their own group; PTYs create a session/group at startup. Descendants that leave the
+  group (for example with `setsid`) are outside this guarantee. Automatic command timeouts
+  and natural leader exit retain their existing behavior; this option does not destroy the VM.
+  A start is refused
   with `unavailable` while the workload cgroups are frozen for a pause, and the freeze waits for
   in-flight starts, so a pause does not capture a child stopped before exec in a frozen cgroup. A
   start into a cgroup the guest froze itself is refused the same way. Starts carrying the system
