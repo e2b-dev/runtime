@@ -290,6 +290,48 @@ func (s *Sandbox) postEnvd(ctx context.Context, timeout time.Duration, path stri
 	return nil
 }
 
+// CaptureEnvVarsForUpgrade reads the running envd's defaults so the post-upgrade
+// /init can restore them when resume metadata did not retain the original values.
+func (s *Sandbox) CaptureEnvVarsForUpgrade(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.envdServerURL()+"/envs", nil)
+	if err != nil {
+		return fmt.Errorf("build env vars request: %w", err)
+	}
+	if s.Config.Envd.AccessToken != nil {
+		request.Header.Set("X-Access-Token", *s.Config.Envd.AccessToken)
+	}
+
+	response, err := sandboxHttpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("get env vars before envd upgrade: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("get env vars before envd upgrade returned %d", response.StatusCode)
+	}
+
+	var envVars map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&envVars); err != nil {
+		return fmt.Errorf("decode env vars before envd upgrade: %w", err)
+	}
+	if envVars == nil {
+		return errors.New("get env vars before envd upgrade returned null")
+	}
+	// /envs flattens user and internal values; the new envd rebuilds these keys itself.
+	for _, key := range [...]string{
+		"E2B_SANDBOX",
+		"E2B_SANDBOX_ID",
+		"E2B_TEMPLATE_ID",
+		"E2B_EVENTS_ADDRESS",
+	} {
+		delete(envVars, key)
+	}
+
+	s.Config.Envd.Vars = envVars
+	return nil
+}
+
 // CallEnvdUpgrade triggers envd's POST /upgrade — the orchestrator-driven
 // live-upgrade trigger. It streams the new envd binary
 // from localSrcPath as the (authenticated) request body; envd writes it to

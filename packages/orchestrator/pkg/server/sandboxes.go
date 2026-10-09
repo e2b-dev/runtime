@@ -2529,6 +2529,13 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 
 		return false, nil
 	}
+	if err := sbx.CaptureEnvVarsForUpgrade(ctx); err != nil {
+		s.envdUpgradeGated.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "env_vars_unavailable")))
+		sbxlogger.I(sbx).Warn(ctx, "envd auto-upgrade: could not capture default env vars; deferring",
+			zap.Error(err))
+
+		return false, nil
+	}
 
 	attempted = true
 	start = time.Now()
