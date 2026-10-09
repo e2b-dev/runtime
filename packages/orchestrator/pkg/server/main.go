@@ -66,20 +66,25 @@ type Server struct {
 	orchestrator.UnimplementedSandboxServiceServer
 	orchestrator.UnimplementedChunkServiceServer
 
-	config                    cfg.Config
-	sandboxFactory            *sandbox.Factory
-	info                      *service.ServiceInfo
-	proxy                     *proxy.SandboxProxy
-	networkPool               network.PoolInterface
-	templateCache             *template.Cache
-	devicePool                *nbd.DevicePool
-	persistence               storage.StorageProvider
-	featureFlags              *featureflags.Client
-	sbxEventsService          *events.EventsService
-	startingSandboxes         *utils.AdjustableSemaphore
-	peerRegistry              peerclient.Registry
-	uploadedBuilds            *ttlcache.Cache[string, struct{}]
-	uploads                   *sandbox.Uploads
+	config            cfg.Config
+	sandboxFactory    *sandbox.Factory
+	info              *service.ServiceInfo
+	proxy             *proxy.SandboxProxy
+	networkPool       network.PoolInterface
+	templateCache     *template.Cache
+	devicePool        *nbd.DevicePool
+	persistence       storage.StorageProvider
+	featureFlags      *featureflags.Client
+	sbxEventsService  *events.EventsService
+	startingSandboxes *utils.AdjustableSemaphore
+	peerRegistry      peerclient.Registry
+	uploadedBuilds    *ttlcache.Cache[string, struct{}]
+	uploads           *sandbox.Uploads
+
+	// buildDisk is the filesystem holding the build directory, as the pause
+	// disk admission sees it (pause_disk_admission.go).
+	buildDisk *buildDisk
+
 	sandboxCreateDuration     metric.Int64Histogram
 	sandboxExecutionDuration  metric.Int64Histogram
 	sandboxPauseDuration      metric.Int64Histogram
@@ -121,6 +126,9 @@ type ServiceConfig struct {
 	SbxEventsService *events.EventsService
 	PeerRegistry     peerclient.Registry
 	Uploads          *sandbox.Uploads
+	// TemplateStorage says where snapshots are uploaded; a directory on the
+	// build filesystem means an upload writes a second copy there.
+	TemplateStorage storage.Spec
 }
 
 func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
@@ -150,7 +158,9 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		peerRegistry:      cfg.PeerRegistry,
 		uploadedBuilds:    uploadedBuilds,
 		uploads:           cfg.Uploads,
-		done:              make(chan struct{}),
+
+		buildDisk: newBuildDisk(cfg.Config.DefaultCacheDir, cfg.TemplateStorage),
+		done:      make(chan struct{}),
 	}
 	server.updateMaxSandboxesLimit(ctx)
 

@@ -422,6 +422,14 @@ func groupRouter(t *testing.T, limiter requestLimiter, mode string, team *types.
 	} {
 		r.GET(path, ok)
 	}
+	for _, path := range []string{
+		"/sandboxes/:sandboxID", "/templates/:templateID", "/templates/tags",
+		"/api-keys/:apiKeyID", "/volumes/:volumeID", "/secrets/:secretID",
+		"/events/webhooks/:webhookID", "/admin/teams/:teamID/api-keys/:apiKeyID",
+		"/clusters/:clusterID/rigs/instances/:instanceID",
+	} {
+		r.DELETE(path, ok)
+	}
 
 	return groupFixture{router: r, reader: reader, logs: logs, flags: td}
 }
@@ -436,6 +444,12 @@ func groupRequest(t *testing.T, r *gin.Engine, method, path string) *httptest.Re
 }
 
 func groupDecisions(t *testing.T, reader *sdkmetric.ManualReader, mode string, teamID uuid.UUID) map[string]int64 {
+	t.Helper()
+
+	return decisionsForGroup(t, reader, mode, teamID, "list")
+}
+
+func decisionsForGroup(t *testing.T, reader *sdkmetric.ManualReader, mode string, teamID uuid.UUID, wantGroup string) map[string]int64 {
 	t.Helper()
 
 	var metrics metricdata.ResourceMetrics
@@ -457,7 +471,7 @@ func groupDecisions(t *testing.T, reader *sdkmetric.ManualReader, mode string, t
 				group, _ := point.Attributes.Value("api_group")
 				gotMode, _ := point.Attributes.Value("mode")
 				decision, _ := point.Attributes.Value("decision")
-				assert.Equal(t, "list", group.AsString())
+				assert.Equal(t, wantGroup, group.AsString())
 				assert.Equal(t, mode, gotMode.AsString())
 				decisions[decision.AsString()] += point.Value
 			}

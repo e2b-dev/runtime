@@ -47,8 +47,10 @@ ENVD_VERSION := $(strip $(subst ",,$(ENVD_VERSION)))
 # uploads are named envd.$(UPLOAD_VERSION) with the same vMAJOR.MINOR…
 # schema as image tags, so the object name matches the envd-upgrade-target
 # flag grammar and the central bucket's envd/<version>/ release dirs.
-# Rebuilds of an unchanged version overwrite the same object; that is safe
-# because pkg/version.go must be bumped on any envd behavior change. Legacy
+# Rebuilds of an unchanged version overwrite the same object. pkg/version.go
+# moves only on an envd release (release-please owns it), so a from-source
+# upload of an unreleased commit replaces the released binary of that name;
+# set ENVD_VERSION to upload a released one instead. Legacy
 # envd.<sha> objects stay in the buckets untouched and age out on their own.
 VERSION := v$(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' pkg/version.go)
 # The version this run operates on: the released version when ENVD_VERSION is

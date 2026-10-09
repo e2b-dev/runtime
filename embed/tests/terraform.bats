@@ -7,9 +7,10 @@
 #
 # Every test name starts with the module it reads, and setup() runs the test
 # from that module's directory: "gcp: ..." in terraform/gcp, "aws: ..." in
-# terraform/aws, and "gcp+aws: ..." in terraform/ for the tests that compare
-# the two. A check both modules must pass is a function below with one test
-# per module, so a failure names the module it failed in.
+# terraform/aws, "azure: ..." in terraform/azure, and "modules: ..." in
+# terraform/ for the tests that compare them. A check every module must pass
+# is a function below with one test per module, so a failure names the module
+# it failed in.
 #
 # Assertions stand one per line. Under errexit, and so under bats, a failing
 # command in an `a && b` list fails the test only when it is the list's last
@@ -19,11 +20,12 @@
 setup() {
   local dir
   case "$BATS_TEST_DESCRIPTION" in
-    gcp+aws:*) dir=. ;;
+    modules:*) dir=. ;;
     gcp:*) dir=gcp ;;
     aws:*) dir=aws ;;
+    azure:*) dir=azure ;;
     *)
-      echo "name the test gcp:, aws: or gcp+aws: so setup() knows its module" >&2
+      echo "name the test gcp:, aws:, azure: or modules: so setup() knows its module" >&2
       return 1
       ;;
   esac
@@ -504,20 +506,25 @@ env_block() {
   awk '/^  sed -i -E / { f = 1 } f { print } f && /^  chmod 0600 \.env$/ { exit }' "$1"
 }
 
-# The two modules put the same install on the same Compose files, so they
-# write the same .env overrides; this is the block check_env_keys reasons
-# about. Kept byte-identical so a key added on one cloud reaches the other.
-@test "gcp+aws: both startup scripts write the same .env block" {
-  gcp="$(env_block gcp/startup.sh.tftpl)"
-  aws="$(env_block aws/startup.sh.tftpl)"
-  # An anchor that stopped matching would compare two empty strings.
-  [ -n "$gcp" ]
-  [ -n "$aws" ]
-  [ "$(printf '%s\n' "$gcp" | wc -l)" -gt 5 ]
-  diff <(printf '%s\n' "$gcp") <(printf '%s\n' "$aws") || {
-    echo "the gcp (-) and aws (+) .env blocks differ"
-    return 1
-  }
+# The modules put the same install on the same Compose files, so they write
+# the same .env overrides; this is the block check_env_keys reasons about.
+# Kept byte-identical so a key added on one cloud reaches the others.
+@test "modules: every startup script writes the same .env block" {
+  local cloud block first=""
+  for cloud in gcp aws azure; do
+    block="$(env_block "$cloud/startup.sh.tftpl")"
+    # An anchor that stopped matching would compare two empty strings.
+    [ -n "$block" ] || { echo "$cloud: the .env block came out empty"; return 1; }
+    [ "$(printf '%s\n' "$block" | wc -l)" -gt 5 ]
+    if [ -z "$first" ]; then
+      first="$block"
+      continue
+    fi
+    diff <(printf '%s\n' "$first") <(printf '%s\n' "$block") || {
+      echo "the gcp (-) and $cloud (+) .env blocks differ"
+      return 1
+    }
+  done
 }
 
 # variable_block <file> <name>: one variable's declaration, braces included.
@@ -525,19 +532,24 @@ variable_block() {
   awk -v want="variable \"$2\" {" '$0 == want { f = 1 } f { print } f && /^}$/ { exit }' "$1"
 }
 
-# The inputs that mean the same on both clouds are declared the same, with
+# The inputs that mean the same on every cloud are declared the same, with
 # the same validation, so an install moves between them unchanged.
-@test "gcp+aws: the variables both modules take are declared the same" {
-  local var gcp aws
+@test "modules: the variables every module takes are declared the same" {
+  local var cloud block first
   for var in compose_base_url team_api_key hugepages otel_collector_grpc_endpoint otel_collector; do
-    gcp="$(variable_block gcp/variables.tf "$var")"
-    aws="$(variable_block aws/variables.tf "$var")"
-    [ -n "$gcp" ] || { echo "gcp/variables.tf has no $var"; return 1; }
-    [ -n "$aws" ] || { echo "aws/variables.tf has no $var"; return 1; }
-    diff <(printf '%s\n' "$gcp") <(printf '%s\n' "$aws") || {
-      echo "$var is declared differently in gcp (-) and aws (+)"
-      return 1
-    }
+    first=""
+    for cloud in gcp aws azure; do
+      block="$(variable_block "$cloud/variables.tf" "$var")"
+      [ -n "$block" ] || { echo "$cloud/variables.tf has no $var"; return 1; }
+      if [ -z "$first" ]; then
+        first="$block"
+        continue
+      fi
+      diff <(printf '%s\n' "$first") <(printf '%s\n' "$block") || {
+        echo "$var is declared differently in gcp (-) and $cloud (+)"
+        return 1
+      }
+    done
   done
 }
 
@@ -1061,21 +1073,25 @@ install_block() {
        f' "$1"
 }
 
-# The same four outputs for the SDK and the browser on both clouds; each
+# The same four outputs for the SDK and the browser on every cloud; each
 # names its own group and its own way onto the instance, and each example
 # forwards all but the group. Each guide's Install block is what a reader
 # copies, so it forwards what its example does.
-@test "gcp+aws: both modules give the SDK and the browser the same outputs" {
+@test "modules: every module gives the SDK and the browser the same outputs" {
   diff <(printf '%s\n' api_url dashboard_url e2b_api_key instance_group sandbox_url ssh_command) \
        <(outputs gcp/outputs.tf)
   diff <(printf '%s\n' api_url autoscaling_group dashboard_url e2b_api_key sandbox_url session_command) \
        <(outputs aws/outputs.tf)
+  diff <(printf '%s\n' admin_password api_url dashboard_url e2b_api_key run_command sandbox_url scale_set) \
+       <(outputs azure/outputs.tf)
   diff <(printf '%s\n' api_url dashboard_url e2b_api_key sandbox_url ssh_command) \
        <(outputs gcp/examples/basic/main.tf)
   diff <(printf '%s\n' api_url dashboard_url e2b_api_key sandbox_url session_command) \
        <(outputs aws/examples/basic/main.tf)
+  diff <(printf '%s\n' admin_password api_url dashboard_url e2b_api_key run_command sandbox_url) \
+       <(outputs azure/examples/basic/main.tf)
   local cloud
-  for cloud in gcp aws; do
+  for cloud in gcp aws azure; do
     diff <(outputs "$cloud/examples/basic/main.tf") <(outputs <(install_block "$cloud/README.md")) || {
       echo "$cloud: the example (-) and the README's Install block (+) forward different outputs"
       return 1
@@ -1085,4 +1101,562 @@ install_block() {
 
 @test "aws: the collector variables reach the instance's .env" {
   check_collector_vars
+}
+
+@test "azure: the startup script never prints the secrets it writes" {
+  check_no_secret_printing
+}
+
+@test "azure: the startup script writes only .env keys the compose project reads" {
+  check_env_keys
+}
+
+@test "azure: the collector variables reach the instance's .env" {
+  check_collector_vars
+}
+
+@test "azure: the endpoint variable takes host:port and refuses a URL" {
+  check_endpoint_regex
+}
+
+@test "azure: the firewall header names the ports the clients rule opens" {
+  # The rule iterates this one list, so it is what it opens.
+  opened="$(sed -n 's/^  client_ports = \[\(.*\)\]$/\1/p' firewall.tf |
+    grep -oE '[0-9]+' | sort -n)"
+  check_firewall_header "$opened"
+}
+
+# A security group's rules are separate resources on this cloud, and the
+# policy is exactly two of them: the clients allow, and a deny that stands
+# between it and the group's own defaults. The defaults are not deny-all —
+# AllowVNetInBound admits every port from the whole VirtualNetwork tag (the
+# VNet plus anything peered or connected on-premises) ahead of the final
+# deny, so without the explicit deny the three-port surface silently widens
+# the day the network gains private connectivity. Squeezed, every line of a
+# block is one space and its text, so the settings match as whole lines.
+@test "azure: the security group admits the client ports from client_cidrs and nothing else" {
+  [ "$(cat ./*.tf | grep -c '^resource "azurerm_network_security_rule"')" -eq 2 ] || {
+    echo "expected exactly two azurerm_network_security_rule resources: clients and deny-inbound"
+    return 1
+  }
+  run grep -nE '^[[:space:]]*security_rule[[:space:]]*\{' ./*.tf
+  [ "$status" -eq 1 ] || { echo "inline security_rule blocks: $output"; return 1; }
+  rule="$(awk '/^resource "azurerm_network_security_rule" "clients"/ { f = 1 }
+               f { print } f && /^}/ { exit }' firewall.tf | tr -s ' ')"
+  [ -n "$rule" ]
+  grep -qxF ' direction = "Inbound"' <<<"$rule"
+  grep -qxF ' access = "Allow"' <<<"$rule"
+  grep -qxF ' protocol = "Tcp"' <<<"$rule"
+  grep -qxF ' destination_port_ranges = [for port in local.client_ports : tostring(port)]' <<<"$rule"
+  grep -qxF ' source_address_prefixes = distinct(var.client_cidrs)' <<<"$rule"
+  deny="$(awk '/^resource "azurerm_network_security_rule" "deny_inbound"/ { f = 1 }
+               f { print } f && /^}/ { exit }' firewall.tf | tr -s ' ')"
+  [ -n "$deny" ]
+  grep -qxF ' direction = "Inbound"' <<<"$deny"
+  grep -qxF ' access = "Deny"' <<<"$deny"
+  grep -qxF ' protocol = "*"' <<<"$deny"
+  grep -qxF ' source_address_prefix = "*"' <<<"$deny"
+  grep -qxF ' destination_port_range = "*"' <<<"$deny"
+  # 4096 is the lowest custom priority: every custom rule outranks it, and it
+  # outranks every default — the deny cannot shadow a future allow by accident.
+  grep -qxF ' priority = 4096' <<<"$deny"
+  # On the subnet, so it covers whatever interface the scale set makes.
+  grep -qF 'resource "azurerm_subnet_network_security_group_association"' firewall.tf
+}
+
+# An instance of a Flexible scale set gets no outbound address of its own,
+# and the address the clients reach is not on the interface until the first
+# boot has already installed Docker and called Resource Manager. The NAT
+# gateway is what makes that boot possible; without it the instance cannot
+# reach the call that would give it its address.
+@test "azure: the subnet has an explicit egress and the client address stands on its own" {
+  grep -qF 'resource "azurerm_nat_gateway_public_ip_association"' network.tf
+  grep -qF 'resource "azurerm_subnet_nat_gateway_association"' network.tf
+  pip="$(awk '/^resource "azurerm_public_ip" "this"/ { f = 1 } f { print } f && /^}$/ { exit }' network.tf | tr -s ' ')"
+  [ -n "$pip" ]
+  grep -qxF ' allocation_method = "Static"' <<<"$pip"
+  grep -qxF ' sku = "Standard"' <<<"$pip"
+}
+
+# Sandboxes are Firecracker microVMs, so the instance needs /dev/kvm, and on
+# this cloud the size alone decides whether it has one: there is no
+# per-instance flag and no API to ask at plan time. A size outside the rule
+# launches, boots and then fails preflight on the instance; the variable
+# refuses it at plan time. The burstable sizes offer no nested virtualization
+# and the Cobalt sizes are arm64, and both are refused with their own reason.
+# The rule takes a generation rather than a list of families: a list goes
+# stale the month Azure ships the next one, and this one did -- it was written
+# for v5 and v6 and refused the v7 sizes that were the only ones the
+# validation subscription could run. Checked with the rules' own regexes,
+# which ERE reads the way RE2 does.
+@test "azure: instance_size takes the nested-virtualization generations and refuses burstable and arm64" {
+  allow="$(sed -n 's/^    condition     = can(regex("\(.*\)", var\.instance_size))$/\1/p' variables.tf |
+    sed 's/\\\\/\\/g')"
+  deny="$(sed -n 's/^    condition     = !can(regex("\(.*\)", var\.instance_size))$/\1/p' variables.tf |
+    sed 's/\\\\/\\/g')"
+  # A pattern that stopped matching would pass the refusals vacuously.
+  [ -n "$allow" ]
+  [ -n "$deny" ]
+  grep -qx '  default     = "Standard_D4ds_v7"' variables.tf
+  for ok in Standard_D4ds_v5 Standard_D8ds_v5 Standard_D16ds_v5 Standard_D4s_v5 \
+            Standard_D8as_v5 Standard_D8ads_v5 Standard_D4ds_v6 Standard_D4ads_v6 \
+            Standard_D4ds_v7 Standard_D8ds_v7 Standard_D4s_v3 Standard_D4ds_v4 \
+            Standard_L8s_v3 Standard_L16s_v4; do
+    grep -qE "$allow" <<<"$ok" || { echo "refuses $ok"; return 1; }
+    run grep -qE "$deny" <<<"$ok"
+    [ "$status" -eq 1 ] || { echo "calls $ok burstable or arm64"; return 1; }
+  done
+  # The AMD sizes (an a in the name) gained nested virtualization at v5;
+  # Microsoft's Dasv4 feature table marks it unsupported, so AMD v3/v4 must
+  # fail the plan, while the Intel v3/v4 sizes above stay accepted.
+  for bad in Standard_B2s Standard_E4ds_v5 Standard_D4_v5 Standard_D4ds_v2 \
+             Standard_D4as_v4 Standard_D4ads_v4 Standard_D8as_v3 \
+             Standard_D4ps_v5 D4ds_v5 standard_d4ds_v5 Standard_D4ds_v5x ''; do
+    run grep -qE "$allow" <<<"$bad"
+    [ "$status" -eq 1 ] || { echo "accepts $bad"; return 1; }
+  done
+  for refused in Standard_B2s Standard_B4ms Standard_D4ps_v5 Standard_D8pds_v5 \
+                 Standard_E4ps_v5 Standard_D4plds_v6; do
+    grep -qE "$deny" <<<"$refused" || { echo "does not refuse $refused"; return 1; }
+  done
+}
+
+# The network has no IPv6, so an IPv6 client CIDR would plan and then fail at
+# apply; cidrnetmask() accepts only IPv4 prefixes, which is what the rule
+# relies on. It accepts host bits (203.0.113.5/24) too, which the security
+# group rule refuses at plan time, so the validation also compares each entry
+# with its network address; and a CIDR listed twice must not be sent to Azure
+# as a duplicate.
+@test "azure: client_cidrs takes IPv4 network addresses only" {
+  tr -s ' ' < variables.tf |
+    grep -qF 'condition = alltrue([for c in var.client_cidrs : can(cidrnetmask(c)) && try(cidrsubnet(c, 0, 0) == c, false)])'
+  grep -qF 'condition     = length(var.client_cidrs) > 0' variables.tf
+  grep -qF 'distinct(var.client_cidrs)' firewall.tf
+}
+
+# The two shipped files are uploaded from this repository, the way the gcp
+# module embeds them in metadata: a module source that is not the repository
+# fails at plan time rather than booting an instance on files from elsewhere.
+# The content hash makes a changed file a changed blob on the next apply. The
+# account refuses shared keys, so no key and no SAS exists to reach the state
+# file, a log or the instance; the identity reads the blobs with a token and
+# the apply writes them with its own.
+@test "azure: the two shipped files are uploaded from this directory to a private container" {
+  squeezed="$(tr -s ' ' < storage.tf)"
+  local f blob
+  for f in compose.yaml .env; do
+    # The blob named $f, so its source and hash are checked against the same
+    # file: a swap between the two would otherwise pass.
+    blob="$(awk -v key="name = \"$f\"" '
+      /^resource "azurerm_storage_blob" / { block = ""; in_block = 1 }
+      in_block { block = block $0 "\n" }
+      in_block && /^}/ { in_block = 0; if (index(block, key)) printf "%s", block }
+    ' <<<"$squeezed")"
+    [ -n "$blob" ] || { echo "no blob is named $f"; return 1; }
+    grep -qF "source = \"\${path.module}/../../compose/$f\"" <<<"$blob" ||
+      { echo "the blob named $f does not upload compose/$f"; return 1; }
+    grep -qF "content_md5 = filemd5(\"\${path.module}/../../compose/$f\")" <<<"$blob" ||
+      { echo "the blob named $f has no filemd5 of compose/$f"; return 1; }
+  done
+  local setting
+  for setting in 'shared_access_key_enabled = false' 'allow_nested_items_to_be_public = false' \
+                 'https_traffic_only_enabled = true' 'min_tls_version = "TLS1_2"' \
+                 'container_access_type = "private"'; do
+    grep -qF "$setting" <<<"$squeezed" || { echo "storage.tf has no $setting"; return 1; }
+  done
+  run grep -nE 'primary_access_key|secondary_access_key|connection_string|_sas\b|sas_policy' ./*.tf
+  [ "$status" -eq 1 ] || { echo "a key or a SAS in the module: $output"; return 1; }
+}
+
+# Anyone with a shell on the instance, and any process on the host, holds the
+# identity, so its grants are the blast radius of a compromised install: read
+# the two blobs in this install's container, and attach this install's
+# address to its own interface. The built-in role that can attach an address
+# is Network Contributor, which carries every other write in
+# Microsoft.Network with it, so the module defines its own with five actions.
+@test "azure: the identity reads the two blobs, attaches this install's address and nothing more" {
+  # Every built-in role the module grants, by name. The third is the apply's
+  # own, which the account's refusal of shared keys is what makes necessary.
+  builtin="$(grep -oE 'role_definition_name += +"[^"]*"' ./*.tf |
+    sed -E 's/.*"(.*)"$/\1/' | LC_ALL=C sort)"
+  diff <(printf '%s\n' 'Storage Blob Data Contributor' 'Storage Blob Data Reader') \
+       <(printf '%s\n' "$builtin") || {
+    echo "the module grants built-in roles (+) other than the ones it should (-)"
+    return 1
+  }
+  actions="$(awk '/^    actions = \[$/ { f = 1; next } f && /^    \]$/ { exit } f' iam.tf |
+    grep -oE '"[^"]+"' | tr -d '",' | LC_ALL=C sort)"
+  # An anchor that stopped matching would compare against nothing.
+  [ -n "$actions" ]
+  diff <(printf '%s\n' Microsoft.Network/networkInterfaces/read \
+                       Microsoft.Network/networkInterfaces/write \
+                       Microsoft.Network/publicIPAddresses/join/action \
+                       Microsoft.Network/publicIPAddresses/read \
+                       Microsoft.Network/virtualNetworks/subnets/join/action | LC_ALL=C sort) \
+       <(printf '%s\n' "$actions") || {
+    echo "the custom role names actions (+) other than the ones it should (-)"
+    return 1
+  }
+  grep -qF 'not_actions = []' iam.tf
+  # One role definition and no wildcard in it, so no grant sits where the
+  # diffs above do not look.
+  [ "$(cat ./*.tf | grep -c '^resource "azurerm_role_definition"')" -eq 1 ] || {
+    echo "expected exactly one azurerm_role_definition in the module"
+    return 1
+  }
+  # Every grant in the module is in this file, which the counts below check,
+  # so a wildcard or a wide built-in anywhere in it is a wider grant.
+  run grep -nE '"\*"|Microsoft\.[A-Za-z]+/\*|"(Owner|Contributor|Network Contributor|User Access Administrator|Storage Blob Data Owner)"' iam.tf
+  [ "$status" -eq 1 ] || { echo "a grant wider than the five actions: $output"; return 1; }
+  # The identity takes two of the three assignments; the apply takes the one
+  # that writes the blobs. Both blob grants are on the container, not the
+  # account, and the custom role is scoped to the group because the interface
+  # it writes does not exist until the scale set launches an instance.
+  [ "$(cat ./*.tf | grep -c '^resource "azurerm_role_assignment"')" -eq 3 ]
+  [ "$(tr -s ' ' < iam.tf | grep -c ' principal_id = azurerm_user_assigned_identity.this.principal_id')" -eq 2 ]
+  [ "$(tr -s ' ' < iam.tf | grep -c ' principal_id = data.azurerm_client_config.current.object_id')" -eq 1 ]
+  [ "$(tr -s ' ' < iam.tf | grep -c ' scope = azurerm_storage_container.this.id')" -eq 2 ]
+  tr -s ' ' < iam.tf | grep -qxF ' assignable_scopes = [azurerm_resource_group.this.id]'
+}
+
+# Role assignments are eventually consistent: a data-plane write or a first
+# boot inside the window after one is made is refused as if it were never
+# made. The blobs and the scale set wait on this sleep, which starts once all
+# three assignments exist and starts again if one of them is replaced.
+@test "azure: the blobs and the first boot wait for the role assignments to propagate" {
+  delay="$(awk '/^resource "time_sleep" "rbac_propagation"/ { f = 1 } f { print } f && /^}$/ { exit }' iam.tf | tr -s ' ')"
+  [ -n "$delay" ]
+  grep -qxF ' create_duration = "60s"' <<<"$delay"
+  local trigger
+  for trigger in blob_reader blob_writer public_ip_attach; do
+    grep -qF " $trigger = azurerm_role_assignment.$trigger.id" <<<"$delay" ||
+      { echo "the sleep does not trigger on $trigger"; return 1; }
+  done
+  [ "$(grep -c 'depends_on = \[time_sleep.rbac_propagation\]' storage.tf)" -eq 2 ]
+  tr -s ' ' < versions.tf | grep -qxF ' source = "hashicorp/time"'
+}
+
+# vmss_block: the scale set resource, squeezed so fmt's alignment does not
+# matter. Every line is then one space and its text, so the tests match whole
+# lines: a substring match would take PT150M for PT15M.
+vmss_block() {
+  awk '/^resource "azurerm_orchestrated_virtual_machine_scale_set" "this"/ { f = 1 }
+       f { print } f && /^}$/ { exit }' main.tf | tr -s ' '
+}
+
+# One instance, one fault domain, and no address in the interface profile:
+# the address the outputs name is created on its own and attached by the
+# first boot, so it survives a replacement, while an address from the profile
+# would be a new one each time. Flexible orchestration is what gives the
+# instance an interface of its own to attach it to; a Uniform scale set's
+# instances have none.
+@test "azure: the scale set is one instance with no address in its interface profile" {
+  vmss="$(vmss_block)"
+  [ -n "$vmss" ]
+  local line
+  for line in ' instances = 1' ' platform_fault_domain_count = 1' \
+              ' sku_name = var.instance_size' ' zones = var.zone != "" ? [var.zone] : null' \
+              ' subnet_id = azurerm_subnet.this.id' \
+              ' identity_ids = [azurerm_user_assigned_identity.this.id]' \
+              ' type = "UserAssigned"' \
+              ' azurerm_subnet_nat_gateway_association.this,' \
+              ' azurerm_subnet_network_security_group_association.this,' \
+              ' time_sleep.rbac_propagation,'; do
+    grep -qxF "$line" <<<"$vmss" || { echo "the scale set has no $line"; return 1; }
+  done
+  run grep -nE 'public_ip_address|public_ip_prefix_id' <<<"$(grep -v '^ #' <<<"$vmss")"
+  [ "$status" -eq 1 ] || { echo "an address in the scale set's interface profile: $output"; return 1; }
+  run grep -nE '^resource "azurerm_(linux_|windows_)?virtual_machine_scale_set"' ./*.tf
+  [ "$status" -eq 1 ] || { echo "a Uniform scale set: $output"; return 1; }
+  # Password authentication exists because the platform refuses an instance
+  # with no credential at all, and the security group opens no port 22 for
+  # it; the serial console is what takes it.
+  grep -qxF ' admin_password = random_password.admin.result' <<<"$vmss"
+}
+
+# The prober on this cloud is the Application Health extension, which asks
+# the stack's own /health from inside the instance: a Flexible scale set
+# takes no load-balancer probe, and the aws module's on-instance watchdog has
+# no counterpart here. A dead /health past the grace period deletes the
+# instance and creates its replacement, which is delete-before-create, so the
+# address only ever has one holder. The first boot installs Docker and runs
+# the whole first `up`, about four minutes with downloads.
+#
+# The version is the load-bearing part. 1.0 is Binary Health States: 200 is
+# healthy, anything else is unhealthy, which is the contract /health meets.
+# 2.0 reads the state out of the response body instead and calls a plain 200
+# Unknown, which repairs treat as unhealthy -- a healthy node replaced every
+# grace period, forever. The first e2e apply shipped 2.0 and the instance
+# never left Unknown.
+@test "azure: the health extension is the prober and a dead /health replaces the instance" {
+  vmss="$(vmss_block)"
+  [ -n "$vmss" ]
+  local line
+  for line in ' publisher = "Microsoft.ManagedServices"' ' type = "ApplicationHealthLinux"' \
+              ' type_handler_version = "1.0"' ' protocol = "http"' ' port = 3000' \
+              ' requestPath = "/health"' ' enabled = true' ' action = "Replace"' \
+              ' grace_period = "PT15M"'; do
+    grep -qxF "$line" <<<"$vmss" || { echo "the scale set has no $line"; return 1; }
+  done
+  run grep -nxF ' type_handler_version = "2.0"' <<<"$vmss"
+  [ "$status" -eq 1 ] || { echo "Rich Health States: a plain 200 is Unknown, and repairs replace Unknown"; return 1; }
+  run grep -nF 'e2b-embed-watchdog' startup.sh.tftpl
+  [ "$status" -eq 1 ] || { echo "a watchdog the extension replaces: $output"; return 1; }
+  run grep -nE 'load_balancer_backend_address_pool_ids|azurerm_lb' ./*.tf
+  [ "$status" -eq 1 ] || { echo "a load balancer in front of the node: $output"; return 1; }
+}
+
+# The rendered script is the whole of the custom data, which the API takes
+# base-64 encoded. The textual budget test below keeps the template small;
+# this is the exact check at plan time, for an operator value long enough to
+# overflow anyway.
+@test "azure: the scale set refuses custom data over 64 KB" {
+  vmss="$(vmss_block)"
+  grep -qxF ' custom_data = base64encode(local.startup_script)' <<<"$vmss"
+  grep -qxF ' condition = length(base64encode(local.startup_script)) < 65536' <<<"$vmss"
+}
+
+# Azure takes at most 64 KB of custom data, base-64 encoded, and the startup
+# script is all of it. Rendered here without Terraform: the template's own
+# bytes, with every placeholder counted at 256 bytes, more than any value the
+# module computes (the longest are a resource id under 200 and the
+# 64-character secrets) and than any sane operator value, then grown by the
+# four bytes base64 writes for every three.
+@test "azure: the startup script fits Azure's 64 KB custom-data limit with room to spare" {
+  bytes="$(wc -c < startup.sh.tftpl | tr -d ' ')"
+  placeholders="$(grep -oE '\$\{[a-z_0-9]+\}' startup.sh.tftpl | wc -l | tr -d ' ')"
+  budget=$(( (bytes + placeholders * 256) * 4 / 3 ))
+  echo "template $bytes bytes, $placeholders placeholders, worst case $budget bytes encoded"
+  [ "$placeholders" -gt 0 ]
+  [ "$budget" -lt 65536 ]
+}
+
+@test "azure: every template placeholder is a templatefile key, and every key is used" {
+  # shellcheck disable=SC2016  # tr deletes the three characters, nothing expands
+  used="$(grep -oE '\$\{[a-z_0-9]+\}' startup.sh.tftpl | tr -d '${}' | sort -u)"
+  passed="$(awk '/templatefile\("\$\{path\.module\}\/startup\.sh\.tftpl", \{/ { f = 1; next }
+                 f && /^  \}\)$/ { exit }
+                 f' main.tf |
+    sed -n 's/^[[:space:]]*\([a-z_0-9]*\)[[:space:]]*=.*/\1/p' | sort -u)"
+  [ -n "$used" ]
+  [ -n "$passed" ]
+  diff <(printf '%s\n' "$passed") <(printf '%s\n' "$used") || {
+    echo "main.tf passes (-) and the template uses (+) different names"
+    return 1
+  }
+  run grep -nF '%{' startup.sh.tftpl
+  [ "$status" -eq 1 ] || { echo "a template directive: $output"; return 1; }
+}
+
+# render_template <file>: the template with each placeholder replaced by a
+# value of its own shape, so the shell side can be checked as shell.
+render_azure_template() {
+  sed -E -e 's/\$\{(admin_token|sandbox_access_token_hash_seed|compose_sha256|env_sha256)\}/0123456789abcdef/g' \
+         -e 's/\$\{dashboard_host\}/203.0.113.10/g' \
+         -e 's/\$\{hugepages\}/2048/g' \
+         -e 's/\$\{[a-z_0-9]+\}/placeholder/g' "$1"
+}
+
+# cloud-init runs the script with its shebang, and /bin/sh on Ubuntu is dash:
+# no bash. The helper it writes is checked the same way, since nothing else
+# runs it before an instance does.
+@test "azure: the startup script and the script it writes are POSIX sh" {
+  [ "$(head -n 1 startup.sh.tftpl)" = '#!/bin/sh' ]
+  run grep -nE '\[\[[[:space:]]|pipefail|<<<|^[[:space:]]*function[[:space:]]|\$'"'"'|^[[:space:]]*source[[:space:]]' startup.sh.tftpl
+  [ "$status" -eq 1 ] || { echo "bash-only syntax: $output"; return 1; }
+  render_azure_template startup.sh.tftpl > "$BATS_TEST_TMPDIR/startup.sh"
+  sed -n "/^cat > \/usr\/local\/lib\/e2b-embed\/azure.sh <<'EOF'$/,/^EOF$/p" "$BATS_TEST_TMPDIR/startup.sh" |
+    sed '1d;$d' > "$BATS_TEST_TMPDIR/azure.sh"
+  local f
+  for f in startup.sh azure.sh; do
+    [ -s "$BATS_TEST_TMPDIR/$f" ] || { echo "$f came out empty"; return 1; }
+    if command -v dash >/dev/null 2>&1; then
+      dash -n "$BATS_TEST_TMPDIR/$f" || { echo "$f is not valid sh"; return 1; }
+    else
+      sh -n "$BATS_TEST_TMPDIR/$f" || { echo "$f is not valid sh"; return 1; }
+    fi
+  done
+  # SC2157: after rendering, compose_base_url is a constant, as Terraform
+  # makes it on the instance.
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -s sh -e SC2157 "$BATS_TEST_TMPDIR/startup.sh" "$BATS_TEST_TMPDIR/azure.sh"
+  fi
+}
+
+# The identity's token signs every call the instance makes. It never becomes
+# a shell variable and never an argument, which would put it in every process
+# listing on the instance for the length of the call: the one line that reads
+# it turns the metadata service's answer straight into a curl config file and
+# pipes it in.
+@test "azure: the identity's token reaches curl on its standard input only" {
+  run grep -nE -- '--user|[[:space:]]-u[[:space:]]|-H[[:space:]]+.Authorization' startup.sh.tftpl
+  [ "$status" -eq 1 ] || { echo "a token on a command line: $output"; return 1; }
+  [ "$(grep -c 'Authorization' startup.sh.tftpl)" -eq 1 ]
+  uses="$(grep -n '"access_token"' startup.sh.tftpl)"
+  [ "$(printf '%s\n' "$uses" | wc -l)" -eq 1 ] || { echo "access_token is read on more than one line: $uses"; return 1; }
+  line="${uses%%:*}"
+  sed -n "${line}p" startup.sh.tftpl | grep -qF 'header = "Authorization: Bearer \1"' ||
+    { echo "line $line does not turn the answer into a curl config"; return 1; }
+  sed -n "${line}p" startup.sh.tftpl | grep -qE '\|$' || { echo "line $line does not pipe"; return 1; }
+  # shellcheck disable=SC2016  # the template's own shell text, matched literally
+  sed -n "$((line + 1))p" startup.sh.tftpl | grep -qF 'curl -sS -m 60 -K - "$@" "$url"' ||
+    { echo "line $line does not feed curl -K -"; return 1; }
+}
+
+# The instance attaches the address before it fetches anything, and waits
+# until the address says which interface it is on, so the files, the images
+# and E2B_DASHBOARD_HOST all agree on one address. An interface is written
+# whole on this cloud, so the body is the one Azure just returned with the
+# address added, which is also what makes a second attach a no-op.
+@test "azure: the instance attaches its public IP before it fetches the files" {
+  attach="$(grep -n '^retry 20 attach_public_ip$' startup.sh.tftpl | cut -d: -f1)"
+  wait_for="$(grep -n '^retry 20 public_ip_attached$' startup.sh.tftpl | cut -d: -f1)"
+  fetch="$(grep -n 'az_curl https%3A%2F%2Fstorage.azure.com%2F' startup.sh.tftpl | head -n 1 | cut -d: -f1)"
+  [ -n "$attach" ]
+  [ -n "$wait_for" ]
+  [ -n "$fetch" ]
+  [ "$attach" -lt "$wait_for" ]
+  [ "$wait_for" -lt "$fetch" ]
+  # shellcheck disable=SC2016  # jq's own variables, matched literally
+  grep -qF '.properties.ipConfigurations[0].properties.publicIPAddress = {id: $pip}' startup.sh.tftpl
+  grep -qF "jq -r '.properties.ipConfiguration.id // empty'" startup.sh.tftpl
+  # shellcheck disable=SC2016  # the template's ${...}, matched literally
+  grep -qF 'arm "$nic?api-version=2024-05-01" -X PUT' startup.sh.tftpl
+  tr -s ' ' < main.tf | grep -qF 'public_ip_id = azurerm_public_ip.this.id'
+  tr -s ' ' < main.tf | grep -qF 'resource_group_id = azurerm_resource_group.this.id'
+  tr -s ' ' < main.tf | grep -qF 'dashboard_host = azurerm_public_ip.this.ip_address'
+  tr -s ' ' < main.tf | grep -qF 'identity_client_id = azurerm_user_assigned_identity.this.client_id'
+}
+
+# The files come from the two blobs the module wrote, checked against the
+# hashes of the files it read, unless compose_base_url points elsewhere. The
+# names are the blobs' own, so a blob renamed in storage.tf is renamed here
+# too, and referencing them orders the upload before any launch.
+@test "azure: the compose files come from the two blobs unless compose_base_url is set" {
+  # shellcheck disable=SC2016
+  grep -qF 'echo "${compose_sha256}  compose.yaml" | sha256sum -c --quiet' startup.sh.tftpl
+  # shellcheck disable=SC2016
+  grep -qF 'echo "${env_sha256}  .env" | sha256sum -c --quiet' startup.sh.tftpl
+  # shellcheck disable=SC2016
+  grep -qF 'https://${blob_host}/${container}/${compose_blob}' startup.sh.tftpl
+  # shellcheck disable=SC2016
+  grep -qF 'https://${blob_host}/${container}/${env_blob}' startup.sh.tftpl
+  # shellcheck disable=SC2016
+  [ "$(grep -cF 'if [ -n "${compose_base_url}" ]; then' startup.sh.tftpl)" -eq 2 ]
+  squeezed="$(tr -s ' ' < main.tf)"
+  grep -qF 'compose_blob = azurerm_storage_blob.compose_yaml.name' <<<"$squeezed"
+  grep -qF 'env_blob = azurerm_storage_blob.dot_env.name' <<<"$squeezed"
+  grep -qF 'blob_host = azurerm_storage_account.this.primary_blob_host' <<<"$squeezed"
+  grep -qF 'container = azurerm_storage_container.this.name' <<<"$squeezed"
+  # shellcheck disable=SC2016
+  grep -qF 'compose_sha256 = filesha256("${path.module}/../../compose/compose.yaml")' <<<"$squeezed"
+  # shellcheck disable=SC2016
+  grep -qF 'env_sha256 = filesha256("${path.module}/../../compose/.env")' <<<"$squeezed"
+}
+
+# A token-signed blob call is refused without x-ms-version, and refused with a
+# 400 naming no cause the caller can act on if the value is not one of the
+# published Storage REST versions -- which is how a composed date shipped and
+# cost a whole e2e apply. Both calls carry it and both carry the same one, and
+# the script says where the list of real versions lives.
+@test "azure: both blob calls carry the same published x-ms-version" {
+  versions="$(grep -oE "'x-ms-version: [0-9]{4}-[0-9]{2}-[0-9]{2}'" startup.sh.tftpl | sort -u)"
+  [ -n "$versions" ] || { echo "no x-ms-version on the blob calls"; return 1; }
+  [ "$(printf '%s\n' "$versions" | wc -l)" -eq 1 ] || {
+    echo "the two blob calls carry different versions: $versions"
+    return 1
+  }
+  [ "$(grep -c -- "-H 'x-ms-version: " startup.sh.tftpl)" -eq 2 ]
+  grep -qF 'rest/api/storageservices/versioning-for-the-azure-storage-services' startup.sh.tftpl
+}
+
+# Under set -e a download that fails once aborts the first boot, so each
+# retries: from the container and from compose_base_url alike.
+@test "azure: every download after the address is attached retries" {
+  fetches="$(sed -n '/^retry 20 public_ip_attached$/,/^systemctl enable e2b-embed\.service$/p' startup.sh.tftpl |
+    grep -E '(^|[[:space:]])(az_)?curl[[:space:]]')"
+  # Two files, each from the container or from compose_base_url.
+  [ "$(printf '%s\n' "$fetches" | wc -l)" -eq 4 ]
+  run grep -vE '^[[:space:]]*retry 10 ' <<<"$fetches"
+  [ "$status" -eq 1 ] || { echo "a download that does not retry: $output"; return 1; }
+}
+
+# cloud-init runs custom data once per instance, so the every-boot `up` is a
+# systemd unit here, as it is on aws: without it a reboot brings the
+# containers back without the MSS clamp.
+@test "azure: e2b-embed.service runs up -d --wait on every boot" {
+  unit="$(awk "/^cat > \/etc\/systemd\/system\/e2b-embed.service <<'EOF'$/ { f = 1; next }
+               f && /^EOF$/ { exit } f" startup.sh.tftpl)"
+  [ -n "$unit" ]
+  local line
+  for line in 'Type=oneshot' 'RemainAfterExit=yes' 'WorkingDirectory=/opt/e2b' \
+              'ExecStart=/usr/bin/docker compose up -d --wait' 'TimeoutStartSec=20min' \
+              'Requires=docker.service' 'After=docker.service network-online.target' \
+              'WantedBy=multi-user.target'; do
+    grep -qxF "$line" <<<"$unit" || { echo "e2b-embed.service has no $line"; return 1; }
+  done
+  grep -qxF 'systemctl enable e2b-embed.service' startup.sh.tftpl
+  grep -qxF 'systemctl start e2b-embed.service' startup.sh.tftpl
+}
+
+# Azure's IMDS answers any process that sets `Metadata: true` -- there is no
+# hop-limit guard like the IMDSv2 TTL of 1 the aws module requires -- so a
+# container on Docker's bridge could mint the managed-identity token and hold
+# the module's role grants. The unit drops forwarded traffic to the endpoint
+# before every `up`: DOCKER-USER sees only bridge traffic, so the
+# host-network services and the boot script itself keep their IMDS access,
+# and the sandboxes were never exposed (the orchestrator's firewall denies
+# link-local unless an operator exempts it). -C before -I keeps a restart
+# from stacking duplicate rules.
+@test "azure: bridge containers cannot reach the metadata endpoint" {
+  unit="$(awk "/^cat > \/etc\/systemd\/system\/e2b-embed.service <<'EOF'$/ { f = 1; next }
+               f && /^EOF$/ { exit } f" startup.sh.tftpl)"
+  [ -n "$unit" ]
+  grep -qxF "ExecStartPre=/bin/sh -c 'iptables -C DOCKER-USER -d 169.254.169.254 -j DROP 2>/dev/null || iptables -I DOCKER-USER -d 169.254.169.254 -j DROP'" <<<"$unit" || {
+    echo "e2b-embed.service does not drop bridge traffic to 169.254.169.254"
+    return 1
+  }
+}
+
+# Every address a reader is handed -- the three URL outputs and the browser's
+# sandbox host -- is the static public IP, which exists before any instance
+# does. Each port is checked in its own output: an api_url on 3001 would send
+# the SDK to the dashboard.
+@test "azure: every address the module hands out is the static public IP" {
+  # shellcheck disable=SC2016  # Terraform's ${...}, compared literally
+  [ "$(out_value api_url)" = ' value = "http://${azurerm_public_ip.this.ip_address}:3000"' ]
+  # shellcheck disable=SC2016
+  [ "$(out_value sandbox_url)" = ' value = "http://${azurerm_public_ip.this.ip_address}:3002"' ]
+  # shellcheck disable=SC2016
+  [ "$(out_value dashboard_url)" = ' value = "http://${azurerm_public_ip.this.ip_address}:3001"' ]
+  tr -s ' ' < main.tf | grep -qF 'dashboard_host = azurerm_public_ip.this.ip_address'
+}
+
+# The resource group holds this install and nothing else, so the instance is
+# the one VM in it, whatever the scale set named it. The snippet runs under
+# eval against a stub az, which records the arguments as the Azure CLI would
+# receive them.
+@test "azure: run_command runs a script on the scale set's instance" {
+  local value
+  value="$(out_value run_command)"
+  value=${value#' value = "'}
+  value=${value%'"'}
+  # shellcheck disable=SC2016  # Terraform's ${...}, replaced literally
+  value=${value//'${azurerm_resource_group.this.name}'/e2b-embed}
+  # shellcheck disable=SC2016
+  value=${value//'${data.azurerm_client_config.current.subscription_id}'/0000-sub}
+  az() {
+    printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/$2"
+    [ "$2" = run-command ] || echo e2b-embed-instance
+  }
+  eval "$value 'tail -n 1 /var/log/cloud-init-output.log'"
+  # --subscription on both: the operator's active CLI subscription may be a
+  # different one, where a same-named group's first VM would take the script.
+  diff <(printf '%s\n' vm list --subscription 0000-sub --resource-group e2b-embed \
+           --query '[0].name' --output tsv) \
+       "$BATS_TEST_TMPDIR/list"
+  diff <(printf '%s\n' vm run-command invoke --subscription 0000-sub --resource-group e2b-embed \
+           --name e2b-embed-instance \
+           --command-id RunShellScript --scripts 'tail -n 1 /var/log/cloud-init-output.log') \
+       "$BATS_TEST_TMPDIR/run-command"
 }

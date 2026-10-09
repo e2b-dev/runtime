@@ -132,7 +132,14 @@ func (a *commonAuthenticator[T]) Authenticate(ctx context.Context, ginCtx *gin.C
 			return validationError.Err
 		}
 
-		return fmt.Errorf("%s\n%s", a.errorMessage, validationError.ClientMsg)
+		// The scheme's message rejects the credential, which a server error
+		// has not done.
+		message := validationError.ClientMsg
+		if validationError.Code < http.StatusInternalServerError {
+			message = fmt.Sprintf("%s\n%s", a.errorMessage, validationError.ClientMsg)
+		}
+
+		return errors.New(message)
 	}
 
 	telemetry.ReportEvent(ctx, "api key validated")

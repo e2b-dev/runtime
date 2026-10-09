@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -311,7 +312,7 @@ func TestAzureIntegration(t *testing.T) {
 		for i := range 2 {
 			kept = append(kept, fmt.Sprintf("prefix-keep/obj-%d", i))
 		}
-		for _, path := range append(append([]string{}, doomed...), kept...) {
+		for _, path := range slices.Concat(doomed, kept) {
 			putBlob(path)
 		}
 

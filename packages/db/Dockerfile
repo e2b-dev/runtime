@@ -19,6 +19,7 @@ WORKDIR /build
 
 COPY ./shared/pkg ./shared/pkg
 
+COPY ./db/*.go ./db/
 COPY ./db/scripts/migrator.go ./db/scripts/migrator.go
 COPY ./db/migrations/ ./db/migrations
 
@@ -35,6 +36,5 @@ ENV LAST_FORCED_UPDATE=2026-09-11
 RUN apk upgrade --no-cache
 
 COPY --from=builder /build/db/bin/migrator .
-COPY --from=builder  /build/db/migrations ./migrations
 
 ENTRYPOINT ["./migrator"]

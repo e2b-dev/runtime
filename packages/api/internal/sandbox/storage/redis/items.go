@@ -15,6 +15,11 @@ import (
 
 const expiredItemsBatchSize = 256
 
+// transitionRecheckDelay is how long an expired sandbox that is still in a
+// transition stays out of the expired window before ExpiredItems looks at it
+// again. It bounds how late a sandbox restored to Running is seen.
+const transitionRecheckDelay = 10 * time.Second
+
 // ExpiredItems returns running sandboxes whose EndTime has passed.
 // It bounds per-cycle work via LIMIT and cleans up orphaned ZSET entries.
 func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, error) {
@@ -94,7 +99,8 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 
 	// Deserialize and filter.
 	var result []sandboxtypes.Sandbox
-	var rescores []redis.Z // live members whose score drifted from EndTime
+	var rescores []redis.Z  // live members whose score drifted from EndTime
+	var deferrals []redis.Z // expired members whose sandbox is still in a transition
 	var orphanCount, deadExecutionCount int64
 
 	for _, batch := range batches {
@@ -150,7 +156,17 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 			if sbx.State != sandboxtypes.StateRunning {
 				// If the sandbox is in transitioning state for more than stale cutoff, it's likely failed removal. Let it be cleaned up by the regular expiration process.
 				if time.Since(sbx.EndTime) <= sandboxtypes.StaleCutoff {
-					// Let the current removal finish
+					// Let the current removal finish, but move the member out of
+					// the expired window for a while (never past the stale cutoff),
+					// so transitions cannot fill the window.
+					recheckAt := now.Add(transitionRecheckDelay)
+					if staleAt := sbx.EndTime.Add(sandboxtypes.StaleCutoff); staleAt.Before(recheckAt) {
+						recheckAt = staleAt
+					}
+					deferrals = append(deferrals, redis.Z{
+						Score:  float64(recheckAt.UnixMilli()),
+						Member: ref.member,
+					})
 
 					continue
 				}
@@ -176,6 +192,15 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 			if invalidCount > 0 {
 				s.metrics.indexSwept.Add(ctx, invalidCount, s.metrics.sweptInvalid)
 			}
+		}
+	}
+
+	if len(deferrals) > 0 {
+		// XX: never resurrect a member a concurrent Remove deleted.
+		if err := s.redisClient.ZAddXX(ctx, globalExpirationSet, deferrals...).Err(); err != nil {
+			logger.L().Warn(ctx, "Failed to defer expiration index entries of sandboxes in transition", zap.Error(err), zap.Int("count", len(deferrals)))
+		} else {
+			s.metrics.indexDeferred.Add(ctx, int64(len(deferrals)))
 		}
 	}
 

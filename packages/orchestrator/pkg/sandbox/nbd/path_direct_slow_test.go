@@ -76,7 +76,7 @@ func TestSlowBackend_ShortTimeout(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	const (
@@ -127,7 +127,7 @@ func TestSlowBackend_SufficientTimeout(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	const (

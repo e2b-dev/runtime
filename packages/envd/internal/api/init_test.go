@@ -22,6 +22,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 )
@@ -139,9 +140,16 @@ func secureTokenPtr(s string) *SecureToken {
 type mockMMDSClient struct {
 	hash string
 	err  error
+	// onGet runs on every lookup, which sits between the /init lock and SetData in the
+	// handler; a test uses it to stop a handler there, or to end its request context there.
+	onGet func()
 }
 
 func (m *mockMMDSClient) GetAccessTokenHash(_ context.Context) (string, error) {
+	if m.onGet != nil {
+		m.onGet()
+	}
+
 	return m.hash, m.err
 }
 
@@ -150,7 +158,7 @@ func newTestAPI(accessToken *SecureToken, mmdsClient MMDSClient) *API {
 	defaults := &execcontext.Defaults{
 		EnvVars: utils.NewEnvVars(),
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, nil)
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), nil)
 	if accessToken != nil {
 		api.accessToken.TakeFrom(accessToken)
 	}
@@ -614,6 +622,9 @@ type fakeCgroupManager struct {
 	// frozenUnobservable models a guest with no cgroup manager: the write is accepted
 	// but freeze state can never be read back.
 	frozenUnobservable bool
+	// onUnfreeze runs inside every Unfreeze, which is inside the handler's thaw; a test uses
+	// it to end the request context while the thaw is running.
+	onUnfreeze func()
 }
 
 type fakeLogFlusher struct {
@@ -725,6 +736,10 @@ func (f *fakeCgroupManager) Frozen(pt cgroups.ProcessType) (bool, error) {
 }
 
 func (f *fakeCgroupManager) Unfreeze(pt cgroups.ProcessType) error {
+	if f.onUnfreeze != nil {
+		f.onUnfreeze()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.unfreezeAttempts = append(f.unfreezeAttempts, pt)
@@ -745,7 +760,41 @@ func newAPIWithCgroupManager(mgr cgroups.Manager) *API {
 func newAPIWithCgroupManagerAndLogFlusher(mgr cgroups.Manager, logFlusher LogFlusher) *API {
 	logger := zerolog.Nop()
 
-	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, logFlusher)
+	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, cpus.NewNoopManager(), logFlusher)
+}
+
+// postInitJSON serves one /init directly, as the generated router would call it. A body
+// carrying an access token goes through postInitRaw: SecureToken only decodes.
+func postInitJSON(t *testing.T, ctx context.Context, api *API, body PostInitJSONBody) *httptest.ResponseRecorder {
+	t.Helper()
+
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	return postInitRaw(t, ctx, api, raw)
+}
+
+func postInitRaw(t *testing.T, ctx context.Context, api *API, raw []byte) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/init", bytes.NewReader(raw))
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	api.PostInit(rec, req)
+
+	return rec
+}
+
+// freezeAPI takes the pre-pause freeze through POST /freeze.
+func freezeAPI(t *testing.T, api *API) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/freeze", http.NoBody)
+	require.NoError(t, err)
+	maxWaitMs := int64(1000)
+	rec := httptest.NewRecorder()
+	api.PostFreeze(rec, req, PostFreezeParams{MaxWaitMs: &maxWaitMs})
+	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 // newAPIWithCgroupManagerLogging is newAPIWithCgroupManager with the log output captured,
@@ -753,7 +802,7 @@ func newAPIWithCgroupManagerAndLogFlusher(mgr cgroups.Manager, logFlusher LogFlu
 func newAPIWithCgroupManagerLogging(mgr cgroups.Manager, out io.Writer) *API {
 	logger := zerolog.New(out)
 
-	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, nil)
+	return New(&logger, &execcontext.Defaults{EnvVars: utils.NewEnvVars()}, nil, false, cgroups.NewWorkloadFreezer(mgr), nil, cpus.NewNoopManager(), nil)
 }
 
 func TestPostFreeze(t *testing.T) {

@@ -361,14 +361,25 @@ func (t *storageTemplate) Close(ctx context.Context) error {
 }
 
 func (t *storageTemplate) close(ctx context.Context) error {
-	err := closeTemplate(ctx, t)
+	// Fetch owns four independent results. Join the metadata child before any
+	// teardown too: otherwise Close can remove the private cache directory and
+	// return while newStorageFile is still writing the metadata file into it.
+	metafile, metafileErr := t.metafile.Wait()
 
-	// closeTemplate only removes the files it holds handles for, which leaves the
-	// metafile and the directory itself behind; nothing else reclaims them, since
+	err := closeTemplate(ctx, t)
+	if metafileErr != nil {
+		err = errors.Join(err, fmt.Errorf("failed to get metafile: %w", metafileErr))
+	} else if metafile != nil {
+		if closeErr := metafile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close metafile: %w", closeErr))
+		}
+	}
+
+	// The directory itself still needs removing; nothing else reclaims it, since
 	// the startup sweep covers DefaultCacheDir and these live under
-	// TemplateCacheDir. The directory is private to this instance — CachePaths
-	// mints a fresh identifier per template — so removing it cannot touch another
-	// instance's files.
+	// TemplateCacheDir. Every fetch child is terminal before this point. The
+	// directory is private to this instance — CachePaths mints a fresh identifier
+	// per template — so removing it cannot touch another instance's files.
 	if pathsErr := t.paths.Close(); pathsErr != nil {
 		err = errors.Join(err, fmt.Errorf("failed to remove template cache dir: %w", pathsErr))
 	}

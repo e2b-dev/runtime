@@ -297,6 +297,12 @@ services:
       # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and empty exports nothing.
       OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
       TEMPLATE_STORAGE_URL: file:///var/lib/e2b/storage/templates
+      # A pause the disk cannot hold is refused before it starts, keeping this
+      # many MiB free, instead of failing midway: snapshots and their uploads
+      # both live on this host's filesystem. This is the orchestrator's
+      # pause-admission-disk-headroom-mib flag, which has no LaunchDarkly to
+      # come from here; orchestrator releases that predate the knob ignore it.
+      PAUSE_ADMISSION_DISK_HEADROOM_MIB: "1024"
       BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
       ARTIFACTS_REGISTRY_PROVIDER: Local
       LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008

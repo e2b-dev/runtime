@@ -48,7 +48,7 @@ func TestCreateTracksWorkUntilCanceled(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			_, err := s.Create(ctx, &orchestrator.SandboxCreateRequest{
-				Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-create", Snapshot: true},
+				Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-create", Snapshot: true, Vcpu: 1},
 			})
 			done <- err
 		}()

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,6 +36,12 @@ const (
 	testToken      = "test-token"
 	uploadsPath    = "uploads"
 )
+
+type multipartRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f multipartRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 // createTestMultipartUploader creates a test uploader with a mock HTTP client
 func createTestMultipartUploader(t *testing.T, handler http.HandlerFunc, retryConfig ...RetryConfig) *MultipartUploader {
@@ -143,6 +150,103 @@ func TestGCPUploadFileInParallelAbortsOnPartFailure(t *testing.T) {
 	_, err := uploader.UploadFileInParallel(t.Context(), inputPath, 2, nil)
 	require.Error(t, err)
 	require.True(t, aborted.Load(), "failed parallel upload should abort the multipart upload")
+}
+
+func TestMultipartUploaderUploadPartsZeroConcurrencyDoesNotDeadlock(t *testing.T) {
+	t.Parallel()
+
+	inputPath := writeTempFile(t, []byte("x"))
+	input, err := os.Open(inputPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, input.Close()) })
+
+	uploader := createTestMultipartUploader(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("unexpected request method: %s", r.Method)
+
+			return
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read request body: %v", err)
+
+			return
+		}
+		w.Header().Set("ETag", `"etag"`)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := uploader.uploadParts(t.Context(), 0, 1, 1, input, "upload-id")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("zero upload concurrency blocked part admission")
+	}
+}
+
+func TestMultipartUploaderUploadPartsNegativeConcurrencyUsesOneWorker(t *testing.T) {
+	t.Parallel()
+
+	inputPath := filepath.Join(t.TempDir(), "multipart.bin")
+	input, err := os.OpenFile(inputPath, os.O_CREATE|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, input.Close()) })
+	require.NoError(t, input.Truncate(gcpMultipartUploadChunkSize+1))
+
+	synctest.Test(t, func(t *testing.T) {
+		var active atomic.Int32
+		var maxActive atomic.Int32
+		release := make(chan struct{})
+
+		client := retryablehttp.NewClient()
+		client.RetryMax = 0
+		client.Logger = nil
+		client.HTTPClient.Transport = multipartRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for {
+				previous := maxActive.Load()
+				if current <= previous || maxActive.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+
+			<-release
+
+			response := new(http.Response)
+			response.StatusCode = http.StatusOK
+			response.Header = make(http.Header)
+			response.Header.Set("ETag", `"etag"`)
+			response.Body = http.NoBody
+			response.Request = req
+
+			return response, nil
+		})
+
+		uploader := new(MultipartUploader)
+		uploader.objectName = "object"
+		uploader.token = "token"
+		uploader.client = client
+		uploader.baseURL = "http://storage.test"
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := uploader.uploadParts(t.Context(), -1, 2, gcpMultipartUploadChunkSize+1, input, "upload-id")
+			done <- err
+		}()
+
+		synctest.Wait()
+		gotMax := maxActive.Load()
+		close(release)
+		require.NoError(t, <-done)
+		require.Equal(t, int32(1), gotMax, "negative concurrency admitted multiple GCS parts")
+		require.Zero(t, active.Load())
+	})
 }
 
 func TestMultipartUploader_InitiateUpload_Success(t *testing.T) {

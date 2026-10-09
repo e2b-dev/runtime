@@ -25,7 +25,7 @@ func TestSecureSandboxFilesystemOnlyResumeAuth(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -57,8 +57,7 @@ func TestSecureSandboxFilesystemOnlyResumeAuth(t *testing.T) {
 	fileResponse, err := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-		setup.WithSandbox(t, sbxMeta.SandboxID),
-		setup.WithEnvdAccessToken(t, *sbxMeta.EnvdAccessToken),
+		setup.WithSandbox(t, sbxMeta),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, fileResponse.StatusCode())

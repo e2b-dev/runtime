@@ -8,10 +8,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 type fakeStorage struct {
@@ -219,4 +223,99 @@ func TestReturn_FailedReleaseRetainsSlot(t *testing.T) {
 
 	assert.Zero(t, storage.released.Load(), "a retained slot must not be released for reuse")
 	assert.Empty(t, pool.reusedSlots)
+}
+
+type poolGetResult struct {
+	slot *Slot
+	err  error
+}
+
+func TestPool_GetPrefersInitiallyReusedSlot(t *testing.T) {
+	t.Parallel()
+
+	pool := NewPool(NewSlotsPoolSize, ReusedSlotsPoolSize, &fakeStorage{}, Config{NetworkVersion: 1})
+	reused := newTestSlot(51)
+	newSlot := newTestSlot(52)
+	pool.reusedSlots <- reused
+	reusableSlotsAvailableCounter.Add(t.Context(), 1)
+	pool.newSlots <- newSlot
+	newSlotsAvailableCounter.Add(t.Context(), 1)
+
+	got, err := pool.Get(t.Context(), &orchestrator.SandboxNetworkConfig{}, sandboxtypes.EgressClassSandbox)
+	require.NoError(t, err)
+	require.Same(t, reused, got)
+	assert.Empty(t, pool.reusedSlots)
+	assert.Len(t, pool.newSlots, 1)
+}
+
+func TestPool_GetMakesProgressWithOnlyNewSlot(t *testing.T) {
+	t.Parallel()
+
+	pool := NewPool(NewSlotsPoolSize, ReusedSlotsPoolSize, &fakeStorage{}, Config{NetworkVersion: 1})
+	newSlot := newTestSlot(61)
+	pool.newSlots <- newSlot
+	newSlotsAvailableCounter.Add(t.Context(), 1)
+
+	got, err := pool.Get(t.Context(), &orchestrator.SandboxNetworkConfig{}, sandboxtypes.EgressClassSandbox)
+	require.NoError(t, err)
+	require.Same(t, newSlot, got)
+	assert.Empty(t, pool.newSlots)
+	assert.Empty(t, pool.reusedSlots)
+}
+
+func TestPool_GetReturnsErrClosedWhenNewSlotsAreClosed(t *testing.T) {
+	t.Parallel()
+
+	pool := NewPool(NewSlotsPoolSize, ReusedSlotsPoolSize, &fakeStorage{}, Config{NetworkVersion: 1})
+	close(pool.newSlots)
+
+	got, err := pool.Get(t.Context(), &orchestrator.SandboxNetworkConfig{}, sandboxtypes.EgressClassSandbox)
+	require.Nil(t, got)
+	require.ErrorIs(t, err, ErrClosed)
+}
+
+func TestPool_GetReturnsContextErrorWhenWaiting(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		pool := NewPool(NewSlotsPoolSize, ReusedSlotsPoolSize, &fakeStorage{}, Config{NetworkVersion: 1})
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan poolGetResult, 1)
+		go func() {
+			slot, err := pool.Get(ctx, &orchestrator.SandboxNetworkConfig{}, sandboxtypes.EgressClassSandbox)
+			result <- poolGetResult{slot: slot, err: err}
+		}()
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+
+		got := <-result
+		require.Nil(t, got.slot)
+		require.ErrorIs(t, got.err, context.Canceled)
+	})
+}
+
+func TestPool_CloseUnblocksGetWaitingForSlot(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		pool := NewPool(NewSlotsPoolSize, ReusedSlotsPoolSize, &fakeStorage{}, Config{NetworkVersion: 1})
+		result := make(chan poolGetResult, 1)
+		go func() {
+			slot, err := pool.Get(t.Context(), &orchestrator.SandboxNetworkConfig{}, sandboxtypes.EgressClassSandbox)
+			result <- poolGetResult{slot: slot, err: err}
+		}()
+		synctest.Wait()
+
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- pool.Close(t.Context()) }()
+		synctest.Wait()
+		got := <-result
+		require.Nil(t, got.slot)
+		require.ErrorIs(t, got.err, ErrClosed)
+
+		close(pool.newSlots)
+		synctest.Wait()
+		require.NoError(t, <-closeDone)
+	})
 }

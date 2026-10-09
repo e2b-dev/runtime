@@ -91,3 +91,7 @@ func (s *SwitchingClient) QueryMaxStartRateTeamMetrics(ctx context.Context, team
 func (s *SwitchingClient) QueryMaxConcurrentTeamMetrics(ctx context.Context, teamID string, start, end time.Time) (MaxTeamMetric, error) {
 	return s.switcher.Resolve(ctx).QueryMaxConcurrentTeamMetrics(ctx, teamID, start, end)
 }
+
+func (s *SwitchingClient) QuerySandboxLifecycle(ctx context.Context, sandboxID string) (SandboxLifecycle, error) {
+	return s.switcher.Resolve(ctx).QuerySandboxLifecycle(ctx, sandboxID)
+}

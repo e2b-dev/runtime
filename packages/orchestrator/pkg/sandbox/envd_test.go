@@ -114,7 +114,7 @@ func TestEnvdInitSendsCaBundle(t *testing.T) { //nolint:paralleltest
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, http.MethodPost, server.URL+"/init")
+	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, server.URL+"/init")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -140,7 +140,7 @@ func TestEnvdInitEmptyCaBundle(t *testing.T) { //nolint:paralleltest
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, http.MethodPost, server.URL+"/init")
+	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, server.URL+"/init")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

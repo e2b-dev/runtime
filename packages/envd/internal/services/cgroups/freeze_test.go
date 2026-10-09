@@ -57,6 +57,8 @@ type fakeFreezeManager struct {
 	freezeErr map[ProcessType]error
 	frozenErr map[ProcessType]error
 	readOrder []ProcessType
+	// unfreezeErr fails the thaw of a cgroup, leaving it frozen: a dirty thaw.
+	unfreezeErr map[ProcessType]error
 }
 
 func newFakeFreezeManager() *fakeFreezeManager {
@@ -86,6 +88,9 @@ func (m *fakeFreezeManager) Freeze(pt ProcessType) error {
 func (m *fakeFreezeManager) Unfreeze(pt ProcessType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.unfreezeErr[pt]; err != nil {
+		return err
+	}
 	m.frozen[pt] = false
 
 	return nil
@@ -336,4 +341,144 @@ func TestFreezeOptions_MaxCgroupsIsClampedAtTheThawCap(t *testing.T) {
 			assert.Equal(t, tc.want, FreezeOptions{MaxCgroups: tc.set}.maxCgroups())
 		})
 	}
+}
+
+// The freeze generation moves on every freeze -- Freeze, and FreezeHold, which the live
+// upgrade's handover takes -- and on nothing else: no thaw, no read and no ResumeFrozen.
+func TestWorkloadFreezer_FreezeGenerationAdvancesOnFreezesOnly(t *testing.T) {
+	t.Parallel()
+
+	f := NewWorkloadFreezer(newFakeFreezeManager())
+	ctx := t.Context()
+	gen := f.FreezeGeneration(ctx)
+
+	_, err := f.Freeze(ctx, FreezeOptions{MaxWait: time.Second})
+	require.NoError(t, err)
+	assert.Equal(t, gen+1, f.FreezeGeneration(ctx), "Freeze advances it")
+
+	release, _, err := f.FreezeHold(ctx, FreezeOptions{MaxWait: time.Second})
+	require.NoError(t, err)
+	release()
+	assert.Equal(t, gen+2, f.FreezeGeneration(ctx), "FreezeHold advances it")
+
+	require.NoError(t, f.Unfreeze(ctx))
+	_, err = f.UnfreezeReporting(ctx, DefaultThawMaxCgroups)
+	require.NoError(t, err)
+	_, matched, _, err := f.ThawIfGeneration(ctx, gen+2, nil)
+	require.NoError(t, err)
+	assert.True(t, matched)
+	_, matched, _, err = f.ThawIfGeneration(ctx, gen, nil)
+	require.NoError(t, err)
+	assert.False(t, matched)
+	f.ResumeFrozen(ctx)
+	assert.Equal(t, gen+2, f.FreezeGeneration(ctx), "thaws, reads and ResumeFrozen leave it alone")
+}
+
+// ThawIfGeneration thaws only for the current generation; a stale one runs nothing, not even
+// afterThaw, and reports the generation it found.
+func TestWorkloadFreezer_ThawIfGenerationThawsOnlyTheCurrentGeneration(t *testing.T) {
+	t.Parallel()
+
+	mgr := newFakeFreezeManager()
+	f := NewWorkloadFreezer(mgr)
+	ctx := t.Context()
+	entered := f.FreezeGeneration(ctx)
+	_, err := f.Freeze(ctx, FreezeOptions{MaxWait: time.Second})
+	require.NoError(t, err)
+
+	ran := false
+	current, matched, _, err := f.ThawIfGeneration(ctx, entered, func() { ran = true })
+	require.NoError(t, err)
+	assert.False(t, matched, "a generation a freeze overtook must not thaw")
+	assert.Equal(t, entered+1, current)
+	assert.False(t, ran, "nothing runs on a mismatch")
+	assert.True(t, mgr.frozen[ProcessTypeUser], "the freeze stands")
+
+	_, matched, _, err = f.ThawIfGeneration(ctx, current, func() { ran = true })
+	require.NoError(t, err)
+	assert.True(t, matched)
+	assert.True(t, ran)
+	assert.False(t, mgr.frozen[ProcessTypeUser], "the current generation thaws")
+}
+
+// afterThaw runs after the thaw and before the freeze lock is released, so whatever it records
+// cannot be zeroed by a freeze landing between the thaw and the record.
+func TestWorkloadFreezer_ThawIfGenerationRunsAfterThawUnderTheLock(t *testing.T) {
+	t.Parallel()
+
+	mgr := newFakeFreezeManager()
+	f := NewWorkloadFreezer(mgr)
+	_, err := f.Freeze(t.Context(), FreezeOptions{MaxWait: time.Second})
+	require.NoError(t, err)
+
+	var ran, held, frozen bool
+	_, matched, _, err := f.ThawIfGeneration(t.Context(), f.FreezeGeneration(t.Context()), func() {
+		ran = true
+		frozen = mgr.frozen[ProcessTypeUser]
+		held = !f.lock.TryAcquire(1)
+		if !held {
+			f.lock.Release(1)
+		}
+	})
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.True(t, ran)
+	assert.False(t, frozen, "afterThaw runs after the thaw")
+	assert.True(t, held, "afterThaw runs before the lock is released")
+}
+
+// The conditional thaw keeps the watchdog's rules: a clean thaw disarms it, a dirty one leaves
+// it armed to retry, and a withheld one leaves it armed for the freeze that voided the thaw.
+func TestWorkloadFreezer_ThawIfGenerationKeepsTheWatchdogRules(t *testing.T) {
+	t.Parallel()
+
+	armed := func(f *WorkloadFreezer) bool {
+		f.watchdogMu.Lock()
+		defer f.watchdogMu.Unlock()
+
+		return f.watchdog != nil
+	}
+	freeze := func(t *testing.T, mgr *fakeFreezeManager) *WorkloadFreezer {
+		t.Helper()
+
+		f := NewWorkloadFreezer(mgr)
+		f.SetThawWatchdog(time.Hour, func(ThawResult, error) {})
+		_, err := f.Freeze(t.Context(), FreezeOptions{MaxWait: time.Second})
+		require.NoError(t, err)
+		require.True(t, armed(f), "the freeze arms the watchdog")
+
+		return f
+	}
+
+	t.Run("clean", func(t *testing.T) {
+		t.Parallel()
+
+		f := freeze(t, newFakeFreezeManager())
+		_, matched, _, err := f.ThawIfGeneration(t.Context(), f.FreezeGeneration(t.Context()), nil)
+		require.NoError(t, err)
+		require.True(t, matched)
+		assert.False(t, armed(f))
+	})
+
+	t.Run("dirty", func(t *testing.T) {
+		t.Parallel()
+
+		mgr := newFakeFreezeManager()
+		mgr.unfreezeErr = map[ProcessType]error{ProcessTypeUser: errors.New("EBUSY")}
+		f := freeze(t, mgr)
+		_, matched, _, err := f.ThawIfGeneration(t.Context(), f.FreezeGeneration(t.Context()), nil)
+		require.Error(t, err)
+		require.True(t, matched)
+		assert.True(t, armed(f))
+	})
+
+	t.Run("withheld", func(t *testing.T) {
+		t.Parallel()
+
+		f := freeze(t, newFakeFreezeManager())
+		_, matched, _, err := f.ThawIfGeneration(t.Context(), f.FreezeGeneration(t.Context())-1, nil)
+		require.NoError(t, err)
+		require.False(t, matched)
+		assert.True(t, armed(f))
+	})
 }

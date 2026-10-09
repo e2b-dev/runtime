@@ -3,7 +3,7 @@
 The [hub README](../README.md) says what E2B Embed is and how to run it.
 This page holds the rest: what runs where and on which ports, logs and
 telemetry, the secrets, how images and pins are released, building templates,
-and the developer tooling. The 4 guides cover what differs on Compose,
+and the developer tooling. The 5 guides cover what differs on Compose,
 Terraform and Kubernetes.
 
 ## What runs where
@@ -181,8 +181,9 @@ commented patch line in the kustomization; the
 [Kubernetes guide](../kubernetes/README.md#telemetry) has both, and where the
 collector sits in the pod. Terraform has the `otel_collector_grpc_endpoint` and
 `otel_collector` variables, which the startup script writes into the
-instance's `.env`; the [GCP](../terraform/gcp/README.md#variables) and
-[AWS](../terraform/aws/README.md#variables) guides list them.
+instance's `.env`; the [GCP](../terraform/gcp/README.md#variables),
+[AWS](../terraform/aws/README.md#variables) and
+[Azure](../terraform/azure/README.md#variables) guides list them.
 
 ## Secrets
 
@@ -316,7 +317,7 @@ without a tunnel.
 | Target | What it does |
 |--------|--------------|
 | `make images` | build the 3 stack images locally under their pinned tags |
-| `make lint` | render the compose file and the kustomization, validate the Vector config and the 2 Terraform modules, shellcheck the scripts and the tests |
+| `make lint` | render the compose file and the kustomization, validate the Vector config and the 3 Terraform modules, shellcheck the scripts and the tests |
 | `make test` | run the bats suite in `tests/` |
 | `make stores-check` | the store-level integration check |
 | `make sync-configs` | re-inline the 3 configs into the compose file |
@@ -324,12 +325,12 @@ without a tunnel.
 ### What the targets need
 
 `make lint` wants `shellcheck`, `terraform` (1.7.5 or newer) and `kubectl`,
-for `kubectl kustomize`. `terraform init` downloads the google, aws, random
-and time providers, once each into a shared cache, so it needs network; the
-aws provider alone is about 180 MB to download and about 800 MB unpacked in
-the cache. `make test` wants `bats` plus `kubectl`, which
+for `kubectl kustomize`. `terraform init` downloads the google, aws, azurerm,
+random and time providers, once each into a shared cache, so it needs network;
+the aws provider alone is about 180 MB to download and about 800 MB unpacked
+in the cache. `make test` wants `bats` plus `kubectl`, which
 `tests/kubernetes.bats` renders the manifest with.
-`tests/terraform.bats` reads both modules' files as text and needs no
+`tests/terraform.bats` reads every module's files as text and needs no
 terraform.
 
 Both also need a working Docker daemon with the compose plugin, and `jq` on

@@ -31,7 +31,7 @@ func TestSandboxWithEnabledTrafficAccessTokenButMissingHeader(t *testing.T) {
 	sbxNet := &api.SandboxNetworkConfig{
 		AllowPublicTraffic: &sbxNetAllowPublic,
 	}
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet), utils.WithSecure(true))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet))
 	require.NotNil(t, sbx.TrafficAccessToken)
 	require.NotNil(t, sbx.EnvdAccessToken)
 
@@ -87,7 +87,7 @@ func TestSandboxWithEnabledTrafficAccessTokenButInvalidHeader(t *testing.T) {
 	sbxNet := &api.SandboxNetworkConfig{
 		AllowPublicTraffic: &sbxNetAllowPublic,
 	}
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet), utils.WithSecure(true))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet))
 	require.NotNil(t, sbx.TrafficAccessToken)
 	require.NotNil(t, sbx.EnvdAccessToken)
 
@@ -145,7 +145,7 @@ func TestSandboxWithEnabledTrafficAccessToken(t *testing.T) {
 	sbxNet := &api.SandboxNetworkConfig{
 		AllowPublicTraffic: &sbxNetAllowPublic,
 	}
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet), utils.WithSecure(true))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet))
 	require.NotNil(t, sbx.TrafficAccessToken)
 	require.NotNil(t, sbx.EnvdAccessToken)
 
@@ -186,7 +186,7 @@ func TestEnvdPortIsNotAffectedByTrafficAccessToken(t *testing.T) {
 	sbxNet := &api.SandboxNetworkConfig{
 		AllowPublicTraffic: &sbxNetAllowPublic,
 	}
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet), utils.WithSecure(true))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithNetwork(sbxNet))
 	require.NotNil(t, sbx.TrafficAccessToken)
 	require.NotNil(t, sbx.EnvdAccessToken)
 
@@ -223,7 +223,6 @@ func TestSandboxWithTrafficAccessTokenAutoResumeViaProxy(t *testing.T) {
 		t,
 		c,
 		utils.WithNetwork(sbxNet),
-		utils.WithSecure(true),
 		utils.WithAutoPause(true),
 		utils.WithAutoResume(true),
 	)
@@ -239,9 +238,8 @@ func TestSandboxWithTrafficAccessTokenAutoResumeViaProxy(t *testing.T) {
 			Args: []string{"-m", "http.server", fmt.Sprintf("%d", port)},
 		},
 	})
-	setup.SetSandboxHeader(t, serverReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, serverReq.Header(), sbx)
 	setup.SetUserHeader(t, serverReq.Header(), "user")
-	setup.SetAccessTokenHeader(t, serverReq.Header(), *sbx.EnvdAccessToken)
 	serverStream, err := envdClient.ProcessClient.Start(serverCtx, serverReq)
 	require.NoError(t, err)
 	defer func() {
@@ -306,7 +304,6 @@ func TestEnvdAccessTokenAutoResumeViaProxy(t *testing.T) {
 	sbx := utils.SetupSandboxWithCleanup(
 		t,
 		c,
-		utils.WithSecure(true),
 		utils.WithAutoPause(true),
 		utils.WithAutoResume(true),
 	)

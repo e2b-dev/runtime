@@ -75,6 +75,12 @@ func ErrorHandler(c *gin.Context, message string, statusCode int) {
 		// credentials (fromImageRegistry), so it is not read into the error
 		// either; the validator's message names the refused field.
 		errMsg = fmt.Errorf("OpenAPI validation error: %s", message)
+	case isAuthFailure(message):
+		// The validator checks credentials before the body, so the body plays
+		// no part in an authentication failure. It is not read into the error:
+		// a request reaching a server that does not hold the caller's key
+		// would otherwise have its body logged there.
+		errMsg = fmt.Errorf("OpenAPI security error: %s", message)
 	default:
 		data, err := c.GetRawData()
 		if err == nil {
@@ -119,6 +125,18 @@ func ErrorHandler(c *gin.Context, message string, statusCode int) {
 	}
 
 	c.AbortWithStatusJSON(statusCode, gin.H{"code": statusCode, "message": fmt.Errorf("validation error: %s", message).Error()})
+}
+
+// isAuthFailure reports whether message is a rejection ProcessSecurityErrors
+// produced: a missing or invalid credential, or a forbidden or blocked team.
+func isAuthFailure(message string) bool {
+	for _, prefix := range []string{sharedauth.SecurityErrPrefix, sharedauth.ForbiddenErrPrefix, sharedauth.BlockedErrPrefix} {
+		if strings.HasPrefix(message, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // MultiErrorHandler handles wrapped SecurityRequirementsError, so there are no multiple errors returned to the user.

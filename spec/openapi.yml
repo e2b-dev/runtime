@@ -981,7 +981,8 @@ components:
           $ref: "#/components/schemas/SandboxAutoResumeConfig"
         secure:
           type: boolean
-          description: Secure all system communication with sandbox
+          deprecated: true
+          description: "Ignored. All system communication with the sandbox is always secured; the template's envd version must support secured access."
         allow_internet_access:
           type: boolean
           description:
@@ -1285,6 +1286,35 @@ components:
         failedCount:
           type: integer
           description: Number of sandboxes that failed to kill
+
+    AdminSandbox:
+      type: object
+      required:
+        - sandboxID
+        - teamID
+        - state
+      properties:
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        teamID:
+          type: string
+          format: uuid
+          description: Identifier of the team that owns the sandbox
+        state:
+          $ref: "#/components/schemas/AdminSandboxState"
+
+    AdminSandboxState:
+      type: string
+      description: State after the sandbox's latest create, resume, pause or kill event
+      enum:
+        - running
+        - paused
+        - killed
+      x-enum-varnames:
+        - AdminSandboxStateRunning
+        - AdminSandboxStatePaused
+        - AdminSandboxStateKilled
 
     AdminTeamRunningSandboxCounts:
       type: object
@@ -2233,7 +2263,8 @@ components:
             Machine-readable semantic error code. Not a closed set; initial values:
             sandbox_capacity_unavailable, sandbox_placement_timeout,
             sandbox_no_compatible_node, sandbox_create_failed, internal_server_error,
-            secret_limit_reached.
+            secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress,
+            idempotency_outcome_unknown.
         message:
           type: string
           description: Error
@@ -2914,7 +2945,7 @@ paths:
           $ref: "#/components/responses/500"
     post:
       summary: Create sandbox
-      description: Create a sandbox from the template. Use POST /v2/sandboxes instead.
+      description: Create a sandbox from the template. All system communication with the sandbox is secured. Use POST /v2/sandboxes instead.
       deprecated: true
       tags: [sandboxes]
       security:
@@ -2955,6 +2986,23 @@ paths:
     post:
       summary: Create sandbox (v2)
       description: Create a sandbox from the template. All system communication with the sandbox is secured.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: |
+            Optional team-scoped key for retrying sandbox creation. Use 1 to 255 lowercase ASCII
+            letters or digits (a-z, 0-9). When idempotency is enabled, matching retries replay the original
+            status and body, including errors, for the retention period.
+            Different request parameters return 409 with error_code idempotency_request_mismatch.
+            An in-progress request returns 409 with error_code idempotency_in_progress; an unknown
+            outcome returns 422 with error_code idempotency_outcome_unknown. These retries do not execute the request again.
+            Retries do not extend retention. After the key expires, it can start a new creation.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+            pattern: '^[a-z0-9]+$'
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -2981,6 +3029,18 @@ paths:
           $ref: "#/components/responses/401"
         "400":
           $ref: "#/components/responses/400"
+        "409":
+          description: The Idempotency-Key conflicts with a different request (error_code idempotency_request_mismatch), or the matching original request has no recorded response yet and is within its expected response window (error_code idempotency_in_progress); this request was not executed again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The matching original request has no recorded response and its expected response deadline has passed or is unknown (error_code idempotency_outcome_unknown); this request was not executed again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/429"
         "500":
@@ -3248,6 +3308,7 @@ paths:
 
     delete:
       summary: Kill sandbox
+      x-api-group: delete
       description: Kill a sandbox
       tags: [sandboxes]
       security:
@@ -3949,6 +4010,7 @@ paths:
           $ref: "#/components/responses/500"
     delete:
       summary: Delete template
+      x-api-group: delete
       description: Delete a template
       tags: [templates]
       security:
@@ -4473,6 +4535,37 @@ paths:
                 $ref: "#/components/schemas/AdminTeamRunningSandboxCounts"
         "401":
           $ref: "#/components/responses/401"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /admin/sandboxes/{sandboxID}:
+    get:
+      summary: Get a sandbox's team and state
+      description: |
+        Reads the team and state of a sandbox from its latest lifecycle event.
+        The state lags the sandbox while that event is in flight. A sandbox
+        whose events have expired is not found.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      responses:
+        "200":
+          description: The sandbox, its team and its state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandbox"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
         "429":
           $ref: "#/components/responses/429"
         "500":

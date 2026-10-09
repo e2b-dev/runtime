@@ -33,6 +33,10 @@ type Cleaner struct {
 	logger.Logger
 
 	metrics *Metrics
+
+	// cacheBytesEstimate is the whole cache's estimated size after the scan:
+	// CacheBytes, scaled up by rootBuilds/scanned when build sampling is on.
+	cacheBytesEstimate uint64
 }
 
 type statReq struct {
@@ -51,6 +55,15 @@ type Options struct {
 	// run (in main); the cleaner itself only reads TargetBytesToDelete.
 	TargetBytesToDelete    uint64
 	TargetDiskUsagePercent float64
+
+	// Byte budget for elastic filesystems (Amazon EFS), where df/statfs reports a
+	// pseudo capacity (~8 EiB) and a percent target can never fire. When the
+	// cache's estimated size (summed from chunk filenames during the scan,
+	// Grace-protected builds included) exceeds MaxCacheBytes, builds are evicted
+	// coldest-first until the estimate is down to it — the same single-threshold
+	// rule as the percent mode. Resolved into TargetBytesToDelete after the scan,
+	// the only way to size a cache whose statfs total is meaningless. 0 = off.
+	MaxCacheBytes uint64
 
 	SampleMinFiles int
 	SamplePercent  int
@@ -92,6 +105,10 @@ type Counters struct {
 	BuildsScanned atomic.Int64
 	Deleted       atomic.Int64 // builds deleted to hit the byte target (coldest first)
 	BytesFreed    atomic.Uint64
+	// CacheBytes is the summed on-disk size of every build the scan sized this
+	// run — eviction candidates plus (in byte-budget mode) Grace-protected builds.
+	// With build sampling on it covers the sample only; see cacheBytesEstimate.
+	CacheBytes atomic.Uint64
 
 	OpenC    atomic.Int64
 	ReadDirC atomic.Int64
@@ -126,36 +143,42 @@ func NewCleaner(opts Options, log logger.Logger, metrics *Metrics) *Cleaner {
 	return &Cleaner{Options: opts, Logger: log, metrics: metrics}
 }
 
-func (c *Cleaner) validateOptions() error {
-	if c.Path == "" {
+// Validate checks the options for internal consistency. Clean runs it, and main
+// runs it up front so a bad flag combination fails before the "nothing to do"
+// early exit can hide it.
+func (o Options) Validate() error {
+	if o.Path == "" {
 		return ErrUsage
 	}
 	var errs []error
-	if c.TargetBytesToDelete == 0 && c.TargetDiskUsagePercent == 0 {
-		errs = append(errs, errors.New("either target-bytes-to-delete or disk-usage-target-percent must be set"))
+	if o.TargetBytesToDelete == 0 && o.TargetDiskUsagePercent == 0 && o.MaxCacheBytes == 0 {
+		errs = append(errs, errors.New("one of target-bytes-to-delete, disk-usage-target-percent or max-cache-bytes must be set"))
 	}
-	if c.SampleMinFiles <= 0 {
+	if o.MaxCacheBytes > 0 && o.TargetBytesToDelete > 0 {
+		errs = append(errs, errors.New("max-cache-bytes and target-bytes-to-delete are mutually exclusive"))
+	}
+	if o.SampleMinFiles <= 0 {
 		errs = append(errs, errors.New("sample-min must be > 0"))
 	}
-	if c.SampleMaxFiles < c.SampleMinFiles {
+	if o.SampleMaxFiles < o.SampleMinFiles {
 		errs = append(errs, errors.New("sample-max must be >= sample-min"))
 	}
-	if c.SamplePercent < 0 || c.SamplePercent > 100 {
+	if o.SamplePercent < 0 || o.SamplePercent > 100 {
 		errs = append(errs, errors.New("sample-pct must be in [0, 100]"))
 	}
-	if c.BuildSamplePercent < 0 || c.BuildSamplePercent > 100 {
+	if o.BuildSamplePercent < 0 || o.BuildSamplePercent > 100 {
 		errs = append(errs, errors.New("build-sample-pct must be in [0, 100]"))
 	}
-	if c.TargetDiskUsagePercent < 0 || c.TargetDiskUsagePercent > 100 {
+	if o.TargetDiskUsagePercent < 0 || o.TargetDiskUsagePercent > 100 {
 		errs = append(errs, errors.New("disk-usage-target-percent must be in [0, 100]"))
 	}
-	if c.MaxConcurrentScan <= 0 {
+	if o.MaxConcurrentScan <= 0 {
 		errs = append(errs, errors.New("max-concurrent-scan must be > 0"))
 	}
-	if c.MaxConcurrentStat <= 0 {
+	if o.MaxConcurrentStat <= 0 {
 		errs = append(errs, errors.New("max-concurrent-stat must be > 0"))
 	}
-	if c.MaxConcurrentDelete <= 0 {
+	if o.MaxConcurrentDelete <= 0 {
 		errs = append(errs, errors.New("max-concurrent-delete must be > 0"))
 	}
 
@@ -163,7 +186,7 @@ func (c *Cleaner) validateOptions() error {
 }
 
 func (c *Cleaner) Clean(ctx context.Context) error {
-	if err := c.validateOptions(); err != nil {
+	if err := c.Options.Validate(); err != nil {
 		return err
 	}
 
@@ -179,11 +202,12 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	picks, err := c.list(ctx, root)
+	picks, total, err := c.list(ctx, root)
 	if err != nil {
 		return err
 	}
 	builds := c.scan(ctx, picks)
+	c.sizeCache(ctx, total, len(picks))
 	c.deleteColdest(ctx, builds)
 
 	dur := time.Since(start)
@@ -191,9 +215,38 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 	c.Info(ctx, "clean complete",
 		zap.Int64("deleted_builds", c.Deleted.Load()),
 		zap.Uint64("bytes_freed_estimate", c.BytesFreed.Load()),
+		zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
 		zap.Duration("duration", dur))
 
 	return nil
+}
+
+// sizeCache estimates the whole cache's on-disk bytes from what the scan sized.
+// With build sampling on, only `scanned` of `rootBuilds` were sized, so the sum
+// is scaled up by rootBuilds/scanned (the sample is uniform). In byte-budget mode
+// it then resolves the budget into TargetBytesToDelete: nothing when the estimate
+// is at or under MaxCacheBytes, otherwise the excess. Deletion can only pick from
+// the scanned builds, so a sampled run may under-delete and converge over
+// successive runs, like the percent mode.
+func (c *Cleaner) sizeCache(ctx context.Context, rootBuilds, scanned int) {
+	est := c.CacheBytes.Load()
+	if scanned > 0 && scanned < rootBuilds {
+		est = uint64(float64(est) * float64(rootBuilds) / float64(scanned))
+	}
+	c.cacheBytesEstimate = est
+	c.metrics.recordLastCacheBytes(ctx, est)
+
+	if c.MaxCacheBytes == 0 {
+		return
+	}
+	if est > c.MaxCacheBytes {
+		c.TargetBytesToDelete = est - c.MaxCacheBytes
+	}
+	c.Info(ctx, "byte budget resolved",
+		zap.Uint64("cache_bytes_estimate", est),
+		zap.Uint64("cache_bytes_sampled", c.CacheBytes.Load()),
+		zap.Uint64("max_cache_bytes", c.MaxCacheBytes),
+		zap.Uint64("target_bytes_to_delete", c.TargetBytesToDelete))
 }
 
 // list reads the whole cache root — the one unavoidable full readdir — and
@@ -203,9 +256,10 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 // stream by so memory stays O(sample) not O(rootCount); the per-build work
 // downstream is then bounded too. A fixed prefix would starve the tail (NFS readdir
 // order is server-hash, not stable), so the sample is random. BuildSampleMax == 0
-// returns every build. A genuine readdir error aborts the run (returns the error)
-// rather than cleaning off a truncated view of the root.
-func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, error) {
+// returns every build. Also returns the root's total build-dir count, so a sampled
+// scan can be scaled back up to the whole cache. A genuine readdir error aborts
+// the run (returns the error) rather than cleaning off a truncated view of the root.
+func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, error) {
 	start := time.Now()
 	capN := c.BuildSampleMax
 	var reservoir []string
@@ -233,7 +287,7 @@ func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, error) {
 		case err != nil:
 			c.metrics.recordError(ctx, ValOpRootReaddir)
 
-			return nil, fmt.Errorf("read cache root %s: %w", c.Path, err)
+			return nil, 0, fmt.Errorf("read cache root %s: %w", c.Path, err)
 		case len(entries) < readdirPage:
 			// EOF: no more entries, exit the loop
 		default:
@@ -261,7 +315,7 @@ func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, error) {
 	c.Info(ctx, "root listing complete",
 		zap.Int("builds", total), zap.Int("picked", len(picks)), zap.Duration("duration", dur))
 
-	return picks, nil
+	return picks, total, nil
 }
 
 // scan classifies the picked build dirs concurrently, returning the records
@@ -316,7 +370,9 @@ func (c *Cleaner) scan(ctx context.Context, picks []string) []build {
 // floor is crossed, then waits for the pool to drain.
 func (c *Cleaner) deleteColdest(ctx context.Context, builds []build) {
 	if c.TargetBytesToDelete == 0 {
-		c.Info(ctx, "no byte target, nothing to delete")
+		c.Info(ctx, "no byte target, nothing to delete",
+			zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
+			zap.Uint64("max_cache_bytes", c.MaxCacheBytes))
 
 		return
 	}
@@ -338,7 +394,6 @@ func (c *Cleaner) deleteColdest(ctx context.Context, builds []build) {
 	if c.Grace > 0 {
 		floorSec = time.Now().Add(-c.Grace).Unix()
 	}
-
 	var queued uint64
 	var queuedBuilds int
 queueLoop:
@@ -376,11 +431,17 @@ queueLoop:
 		c.metrics.recordUnderTarget(ctx)
 	}
 	c.metrics.recordPhase(ctx, ValPhaseDelete, time.Since(start))
+	// One line with the whole decision — what was selected and the inputs that
+	// drove it — so a dry run is auditable from a single log entry.
 	c.Info(ctx, "deletion selected",
+		zap.Bool("dry_run", c.DryRun),
 		zap.Bool("target_met", met),
 		zap.Int("num_builds", queuedBuilds),
 		zap.Uint64("queued_bytes", queued),
-		zap.Uint64("target_bytes", c.TargetBytesToDelete))
+		zap.Uint64("target_bytes", c.TargetBytesToDelete),
+		zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
+		zap.Uint64("max_cache_bytes", c.MaxCacheBytes),
+		zap.Duration("grace", c.Grace))
 }
 
 // clampSample returns the per-build sample size for n chunks.
@@ -427,20 +488,43 @@ func chunkOnDiskBytes(name string) uint64 {
 	return n
 }
 
+// ElasticTotalThreshold is the df total above which a filesystem is treated as
+// elastic (no provisioned capacity). Amazon EFS reports 2^63 bytes (8 EiB); no
+// real disk under this cache is anywhere near 1 PiB.
+const ElasticTotalThreshold uint64 = 1 << 50
+
 type DiskInfo struct {
-	Total, Used int64
+	Total, Used uint64
+}
+
+// Elastic reports whether the df total is a pseudo capacity (EFS and the like),
+// on which a disk-usage percent target can never fire.
+func (d DiskInfo) Elastic() bool {
+	return d.Total > ElasticTotalThreshold
 }
 
 func GetDiskInfo(ctx context.Context, path string) (DiskInfo, error) {
-	cmd := exec.CommandContext(ctx, "df", path)
+	// -P (POSIX) keeps every filesystem on one line. Without it GNU df wraps a
+	// mount source longer than 20 characters onto its own line — every EFS DNS
+	// name is — and the numbers end up on the next line, shifted by one field.
+	// -k pins the unit to 1024-byte blocks: under POSIXLY_CORRECT, -P alone
+	// switches to 512-byte blocks and the parser would read half the size.
+	cmd := exec.CommandContext(ctx, "df", "-Pk", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return DiskInfo{}, fmt.Errorf("df command failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return parseDiskInfo(string(out))
+}
+
+// parseDiskInfo reads the first data row of `df -Pk` output. Sizes are parsed as
+// uint64: an EFS total (2^53 KiB) times 1024 is exactly 2^63, which overflows
+// int64 to a negative number and silently zeroes the percent math.
+func parseDiskInfo(out string) (DiskInfo, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) < 2 {
-		return DiskInfo{}, fmt.Errorf("unexpected df output: %q", strings.TrimSpace(string(out)))
+		return DiskInfo{}, fmt.Errorf("unexpected df output: %q", strings.TrimSpace(out))
 	}
 
 	for i := 1; i < len(lines); i++ {
@@ -453,12 +537,12 @@ func GetDiskInfo(ctx context.Context, path string) (DiskInfo, error) {
 			continue
 		}
 
-		totalSize, err := strconv.ParseInt(fields[1], 10, 64)
+		totalSize, err := strconv.ParseUint(fields[1], 10, 64)
 		if err != nil {
 			return DiskInfo{}, fmt.Errorf("failed to parse total size: %w", err)
 		}
 
-		usedSpace, err := strconv.ParseInt(fields[2], 10, 64)
+		usedSpace, err := strconv.ParseUint(fields[2], 10, 64)
 		if err != nil {
 			return DiskInfo{}, fmt.Errorf("failed to parse available space: %w", err)
 		}
@@ -467,5 +551,5 @@ func GetDiskInfo(ctx context.Context, path string) (DiskInfo, error) {
 		return DiskInfo{Total: totalSize * 1024, Used: usedSpace * 1024}, nil
 	}
 
-	return DiskInfo{}, fmt.Errorf("could not parse mount point from df output: %q", strings.TrimSpace(string(out)))
+	return DiskInfo{}, fmt.Errorf("could not parse mount point from df output: %q", strings.TrimSpace(out))
 }

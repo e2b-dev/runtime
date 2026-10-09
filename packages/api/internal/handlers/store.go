@@ -26,6 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
+	"github.com/e2b-dev/infra/packages/api/internal/outbox"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	managementv1 "github.com/e2b-dev/infra/packages/api/internal/secretsstore/management/v1"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
@@ -191,6 +192,10 @@ type teamRunningSandboxCounter interface {
 	TeamRunningSandboxCounts(ctx context.Context) (map[uuid.UUID]int64, error)
 }
 
+type sandboxLifecycleReader interface {
+	QuerySandboxLifecycle(ctx context.Context, sandboxID string) (clickhouse.SandboxLifecycle, error)
+}
+
 type APIStore struct {
 	startupState atomic.Uint32
 	config       cfg.Config
@@ -211,8 +216,10 @@ type APIStore struct {
 	// RPC: a running sandbox is routed before its snapshot kind is consulted.
 	autoResumeBackendOverride autoResumeOrchestrator
 	teamSandboxCounter        teamRunningSandboxCounter
+	sandboxLifecycles         sandboxLifecycleReader
 	templateManager           *template_manager.TemplateManager
 	sqlcDB                    *sqlcdb.Client
+	sqlcReadDB                *sqlcdb.Client
 	authDB                    *authdb.Client
 	redisClient               redis.UniversalClient
 	templateCache             *templatecache.TemplateCache
@@ -254,6 +261,16 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	sqlcDB, err := sqlcdb.NewClient(ctx, config.PostgresConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing SQLC client", zap.Error(err))
+	}
+
+	// Read-only queries that tolerate replica lag go to sqlcReadDB: the read
+	// replica when one is configured, otherwise the primary.
+	sqlcReadDB := sqlcDB
+	if config.PostgresReadReplicaConnectionString != "" {
+		sqlcReadDB, err = sqlcdb.NewReadClient(ctx, config.PostgresReadReplicaConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing read SQLC client", zap.Error(err))
+		}
 	}
 
 	authDB, err := authdb.NewClient(
@@ -412,8 +429,10 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		config:                config,
 		orchestrator:          orch,
 		teamSandboxCounter:    sandboxcountscache.NewCountsCache(orch, redisClient),
+		sandboxLifecycles:     clickhouseStore,
 		templateManager:       templateManager,
 		sqlcDB:                sqlcDB,
+		sqlcReadDB:            sqlcReadDB,
 		authDB:                authDB,
 		Telemetry:             tel,
 		posthog:               posthogClient,
@@ -455,6 +474,22 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	return a
 }
 
+// NewOutbox builds the River client that works the API's outbox jobs on the
+// store's clients. Stop it before Close.
+func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
+	return outbox.New(outbox.Dependencies{
+		Pool:      a.sqlcDB.Pool(),
+		Sandboxes: a.orchestrator,
+		Teams:     a.authDB,
+		Logger:    l,
+		Telemetry: a.Telemetry,
+		Config: outbox.Config{
+			MaxWorkers:      a.config.OutboxMaxWorkers,
+			BacklogInterval: a.config.OutboxBacklogInterval,
+		},
+	})
+}
+
 // Drain stops admitting sandbox work that outlives its request and waits for
 // what is in flight. It runs before Close, which tears down the clients that
 // work uses.
@@ -494,6 +529,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 
 	if err := a.authDB.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing auth database client: %w", err))
+	}
+
+	if a.sqlcReadDB != a.sqlcDB {
+		if err := a.sqlcReadDB.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing read sqlc database client: %w", err))
+		}
 	}
 
 	if err := a.sqlcDB.Close(); err != nil {

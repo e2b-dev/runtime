@@ -10,12 +10,15 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapio"
@@ -38,6 +41,8 @@ import (
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc")
+
+var errFirecrackerExitedBeforeSocketReadiness = errors.New("fc process exited before API socket became ready")
 
 // fcLogFilter wraps an io.Writer and suppresses Firecracker FlushMetrics
 // request/response log line pairs that fire every few seconds and create
@@ -112,6 +117,9 @@ type ProcessOptions struct {
 	// filesystem-only snapshot. A memory resume never re-reads the command line.
 	CmdlineArgs map[string]string
 
+	// BootCpus caps the CPUs the guest kernel brings up (maxcpus=); 0 is all. Create sets it.
+	BootCpus int64
+
 	// CPUTemplate is the custom Firecracker CPU template sent before boot. Nil is none. Only
 	// a cold boot needs it; a memory resume restores the vCPU state the template produced.
 	CPUTemplate *cputemplate.Template
@@ -160,6 +168,8 @@ type Process struct {
 	rootfsPath     string
 	kernelPath     string
 	files          *storage.SandboxFiles
+	// vmVcpus is the VM's vCPU count as Resume resolved it; 0 for a booted VM or before Resume.
+	vmVcpus int64
 
 	Exit *utils.ErrorOnce
 
@@ -326,13 +336,29 @@ func (p *Process) configure(
 		defer stderrWriter.Close()
 		defer stdoutWriter.Close()
 
-		if exitErr := p.handleExit(ctx, p.cmd.Wait()); exitErr != nil {
-			cancelStart(exitErr)
+		exitErr := p.handleExit(ctx, p.cmd.Wait())
+		// Exit intentionally resolves cleanly for exit 0 and SIGTERM/SIGKILL,
+		// but every reaped process still makes API-socket startup impossible.
+		if exitErr == nil {
+			exitErr = errFirecrackerExitedBeforeSocketReadiness
 		}
+		cancelStart(exitErr)
 	}()
 
 	// Wait for the FC process to start so we can use FC API
 	err = socket.Wait(startCtx, p.firecrackerSocketPath)
+	if err == nil {
+		// The socket file and process exit can become observable together. Do
+		// not publish readiness for a process the wait owner already reaped.
+		select {
+		case <-p.Exit.Done():
+			err = p.Exit.Error()
+			if err == nil {
+				err = errFirecrackerExitedBeforeSocketReadiness
+			}
+		default:
+		}
+	}
 	if err != nil {
 		errMsg := fmt.Errorf("error waiting for fc socket: %w", err)
 
@@ -347,7 +373,6 @@ func (p *Process) configure(
 func (p *Process) Create(
 	ctx context.Context,
 	sbxMetadata sbxlogger.LoggerMetadata,
-	vCPUCount int64,
 	memoryMB int64,
 	hugePages bool,
 	freePageReporting bool,
@@ -355,7 +380,9 @@ func (p *Process) Create(
 	options ProcessOptions,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
-	cgroupFD int,
+	cgroupHandle *cgroup.CgroupHandle,
+	targetOnlineVcpus int64,
+	configuredMaxVcpus int64,
 ) error {
 	ctx, childSpan := tracer.Start(ctx, "create-fc")
 	defer childSpan.End()
@@ -366,12 +393,25 @@ func (p *Process) Create(
 		return fmt.Errorf("error symlinking rootfs: %w", err)
 	}
 
+	// Firecracker creates the full VM capacity. Limit the whole cgroup until its vCPU threads exist.
+	firecrackerVcpuCount := max(targetOnlineVcpus, configuredMaxVcpus)
+	cpuQuota := bootCpuQuota(targetOnlineVcpus, firecrackerVcpuCount)
+	// Keep this before configure starts Firecracker and fatal: no CI test pins it (the cgroup tests need root).
+	if cpuQuota > 0 {
+		if err := cgroupHandle.SetSandboxCpuLimit(ctx, cpuQuota); err != nil {
+			recordVcpuLimit(ctx, "boot", "failed")
+
+			return fmt.Errorf("error limiting sandbox cgroup before boot: %w", err)
+		}
+		options.BootCpus = targetOnlineVcpus
+	}
+
 	err = p.configure(
 		ctx,
 		sbxMetadata,
 		options.Stdout,
 		options.Stderr,
-		cgroupFD,
+		cgroupHandle.GetFD(),
 	)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
@@ -436,7 +476,7 @@ func (p *Process) Create(
 	}
 	telemetry.ReportEvent(ctx, "set fc network config")
 
-	err = p.client.setMachineConfig(ctx, vCPUCount, memoryMB, hugePages)
+	err = p.client.setMachineConfig(ctx, firecrackerVcpuCount, memoryMB, hugePages)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -506,8 +546,157 @@ func (p *Process) Create(
 	}
 
 	telemetry.ReportEvent(ctx, "started fc")
+	p.moveLimitToVcpuThreads(ctx, cgroupHandle, cpuQuota, firecrackerVcpuCount)
 
 	return nil
+}
+
+// bootCpuQuota is the host CPU quota needed before a larger VM boots; 0 means no quota.
+func bootCpuQuota(targetOnlineVcpus, firecrackerVcpuCount int64) int64 {
+	if firecrackerVcpuCount > targetOnlineVcpus {
+		return targetOnlineVcpus
+	}
+
+	return 0
+}
+
+// recordVcpuLimit counts how a start whose VM has spare vCPUs got its CPU limit (SandboxVcpuLimit).
+func recordVcpuLimit(ctx context.Context, path, outcome string) {
+	vcpuLimitStarts.Add(ctx, 1, metric.WithAttributes(attribute.String("path", path), attribute.String("outcome", outcome)))
+}
+
+// ResumeVcpus sizes a resume: Target CPUs online in a VM of Snapshot vCPUs, Recorded in the snapshot or a
+// guess the loaded threads replace. RefuseSmallerVM fails a resume whose VM is smaller than Target; it is
+// set when a VM size was given, so a resume without one runs as before.
+type ResumeVcpus struct {
+	Target          int64
+	Snapshot        int64
+	Recorded        bool
+	RefuseSmallerVM bool
+}
+
+// vcpuCapResumeErr is whether the cap step's error fails the resume: a VM smaller than the target has
+// nothing to cap and fails it only when refuseSmallerVM; any other error always does.
+func vcpuCapResumeErr(err error, refuseSmallerVM bool) error {
+	if errors.Is(err, ErrVcpuExceedsSnapshot) && !refuseSmallerVM {
+		return nil
+	}
+
+	return err
+}
+
+// ErrVcpuExceedsSnapshot is a memory resume asking for more vCPUs than the snapshot's VM has; a resume cannot add any.
+var ErrVcpuExceedsSnapshot = errors.New("requested vcpu exceeds snapshot capacity")
+
+// resolveVmVcpus is the loaded VM's vCPU count: the recorded one, or for a snapshot from before it was
+// recorded, the fc_vcpu threads Firecracker restored. If they cannot be counted, the caller's guess stands.
+func (p *Process) resolveVmVcpus(ctx context.Context, guess int64, recorded bool) int64 {
+	p.vmVcpus = guess
+	if recorded {
+		return guess
+	}
+	n, err := vcpuThreadCount(fmt.Sprintf("/proc/%d", p.cmd.Process.Pid))
+	if err != nil {
+		telemetry.ReportError(ctx, "failed to count the snapshot's vcpu threads, using the requested size", err,
+			telemetry.WithSandboxID(p.files.SandboxID))
+
+		return guess
+	}
+	p.vmVcpus = n
+
+	return n
+}
+
+// VmVcpus is how many vCPUs the running VM has, once Resume resolved it; 0 before.
+func (p *Process) VmVcpus() int64 {
+	return p.vmVcpus
+}
+
+// vcpuThreadCount counts the fc_vcpu threads of the process at procDir. Walking that one process's
+// task list takes no host-wide lock, unlike reading the sandbox cgroup's cgroup.threads (css_set_lock).
+func vcpuThreadCount(procDir string) (int64, error) {
+	tasks, err := os.ReadDir(filepath.Join(procDir, "task"))
+	if err != nil {
+		return 0, fmt.Errorf("failed to list threads: %w", err)
+	}
+	var n int64
+	for _, task := range tasks {
+		comm, err := os.ReadFile(filepath.Join(procDir, "task", task.Name(), "comm"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("failed to read thread name: %w", err)
+		}
+		if strings.HasPrefix(string(comm), cgroup.VcpuThreadPrefix) {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, errors.New("no firecracker vcpu threads")
+	}
+
+	return n, nil
+}
+
+// limitVcpusBeforeResume confines paused vCPU threads when the snapshot's VM is larger than the online target.
+// If that fails, limit the whole cgroup; failing both aborts the resume.
+func (p *Process) limitVcpusBeforeResume(ctx context.Context, cgroupHandle *cgroup.CgroupHandle, targetOnlineVcpus, snapshotVcpuCount int64) error {
+	if snapshotVcpuCount < targetOnlineVcpus {
+		return fmt.Errorf("%w: snapshot has %d vcpus, request asks for %d", ErrVcpuExceedsSnapshot, snapshotVcpuCount, targetOnlineVcpus)
+	}
+	if snapshotVcpuCount == targetOnlineVcpus {
+		return nil
+	}
+
+	// Its own span: cgroup writes can stall on one node (RCU grace period, a fork stuck in reclaim).
+	return telemetry.Observe0(ctx, tracer, "limit-vcpus-before-resume", func(ctx context.Context) error {
+		outcome := "failed"
+		defer func() { recordVcpuLimit(ctx, "resume", outcome) }()
+
+		err := cgroupHandle.ConfineVcpuThreads(ctx, targetOnlineVcpus, snapshotVcpuCount)
+		if err == nil {
+			outcome = "confined"
+
+			return nil
+		}
+		telemetry.ReportError(ctx, "failed to confine vcpu threads, limiting the whole sandbox cgroup", err,
+			telemetry.WithSandboxID(p.files.SandboxID))
+		if err := cgroupHandle.SetSandboxCpuLimit(ctx, targetOnlineVcpus); err != nil {
+			return fmt.Errorf("error limiting sandbox cgroup before resume: %w", err)
+		}
+		outcome = "cgroup_fallback"
+
+		return nil
+	})
+}
+
+// moveLimitToVcpuThreads confines the VM's vCPU threads, then lifts the cgroup-wide limit; if confining fails it stays.
+func (p *Process) moveLimitToVcpuThreads(ctx context.Context, h *cgroup.CgroupHandle, cpuQuota, firecrackerVcpuCount int64) {
+	if cpuQuota <= 0 {
+		return
+	}
+	// The error only marks the span: any failure leaves the cgroup-wide limit, so the VMM threads share the quota.
+	_ = telemetry.Observe0(ctx, tracer, "move-limit-to-vcpu-threads", func(ctx context.Context) error {
+		outcome := "cgroup_fallback"
+		defer func() { recordVcpuLimit(ctx, "boot", outcome) }()
+
+		if err := h.ConfineVcpuThreads(ctx, cpuQuota, firecrackerVcpuCount); err != nil {
+			telemetry.ReportError(ctx, "failed to confine vcpu threads, vmm threads share the cpu limit", err,
+				telemetry.WithSandboxID(p.files.SandboxID))
+
+			return err
+		}
+		if err := h.SetSandboxCpuLimit(ctx, 0); err != nil {
+			telemetry.ReportError(ctx, "failed to lift the cgroup-wide cpu limit, vmm threads stay limited", err,
+				telemetry.WithSandboxID(p.files.SandboxID))
+
+			return err
+		}
+		outcome = "confined"
+
+		return nil
+	})
 }
 
 // ResumeInPlace resumes the already-running Firecracker process after an
@@ -534,12 +723,13 @@ func (p *Process) Resume(
 	snapfile template.File,
 	uffdReady chan struct{},
 	accessToken *string,
-	cgroupFD int,
+	cgroupHandle *cgroup.CgroupHandle,
 	useMemfd bool,
 	useSyncWP bool,
 	cpuTemplate string,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
+	vcpus ResumeVcpus,
 ) error {
 	ctx, span := tracer.Start(ctx, "resume-fc")
 	defer span.End()
@@ -559,7 +749,7 @@ func (p *Process) Resume(
 			sbxMetadata,
 			nil,
 			nil,
-			cgroupFD,
+			cgroupHandle.GetFD(),
 		)
 		if err != nil {
 			return fmt.Errorf("error starting fc process: %w", err)
@@ -651,6 +841,15 @@ func (p *Process) Resume(
 		return errors.Join(fmt.Errorf("error setting drive rate limit: %w", setErr), fcStopErr)
 	}
 	telemetry.ReportEvent(ctx, "configured drive rate limit")
+
+	// The snapshot is loaded and the vCPU threads exist, paused: limit them before the guest runs.
+	// Keep this before resumeVM and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
+	err = p.limitVcpusBeforeResume(ctx, cgroupHandle, vcpus.Target, p.resolveVmVcpus(ctx, vcpus.Snapshot, vcpus.Recorded))
+	if err := vcpuCapResumeErr(err, vcpus.RefuseSmallerVM); err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(err, fcStopErr)
+	}
 
 	err = p.client.resumeVM(ctx)
 	if err != nil {

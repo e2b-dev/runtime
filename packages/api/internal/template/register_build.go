@@ -287,6 +287,7 @@ func registerBuild(
 	// used in TemplateBuildMetadata and SetFinished overwrites these rows.
 	err = client.CreateTemplateBuild(ctx, queries.CreateTemplateBuildParams{
 		BuildID:            buildID,
+		TemplateID:         data.TemplateID,
 		Status:             dbtypes.BuildStatusWaiting,
 		RamMb:              ramMB,
 		Vcpu:               cpuCount,

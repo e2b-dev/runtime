@@ -147,6 +147,9 @@ func (ppb *PostProcessingBuilder) Layer(
 		result.BuildCPUTemplate = &buildTmpl
 	}
 
+	// Build always boots a fresh VM of this size, while the source layer may be a cached one of another.
+	result = result.WithVcpuCount(ppb.Config.VCpuCount)
+
 	return phases.LayerResult{
 		Metadata: result,
 		Cached:   false,

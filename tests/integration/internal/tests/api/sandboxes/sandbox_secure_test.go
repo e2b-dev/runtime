@@ -69,7 +69,7 @@ func TestCreateSandboxV2IsSecured(t *testing.T) {
 
 	sbxTimeout := int32(60)
 
-	resp, err := c.PostV2SandboxesWithResponse(ctx, api.NewSandboxV2{
+	resp, err := c.PostV2SandboxesWithResponse(ctx, nil, api.NewSandboxV2{
 		TemplateID: setup.SandboxTemplateID,
 		Timeout:    &sbxTimeout,
 	}, setup.WithAPIKey())
@@ -113,7 +113,7 @@ func TestCreateSandboxV2WithDisabledPublicTraffic(t *testing.T) {
 	sbxTimeout := int32(60)
 	sbxAllowPublicTraffic := false
 
-	resp, err := c.PostV2SandboxesWithResponse(ctx, api.NewSandboxV2{
+	resp, err := c.PostV2SandboxesWithResponse(ctx, nil, api.NewSandboxV2{
 		TemplateID: setup.SandboxTemplateID,
 		Timeout:    &sbxTimeout,
 		Network: &api.SandboxNetworkConfig{
@@ -139,7 +139,7 @@ func TestCreateSandboxV2WithDisabledPublicTraffic(t *testing.T) {
 	assert.NotNil(t, resp.JSON201.EnvdAccessToken)
 }
 
-func TestCreateSandboxWithDisabledPublicTrafficAndDisabledEnvdSecure(t *testing.T) {
+func TestCreateSandboxV1IgnoresSecureFalse(t *testing.T) {
 	t.Parallel()
 
 	utils.AcquireSandboxSlot(t)
@@ -175,7 +175,41 @@ func TestCreateSandboxWithDisabledPublicTrafficAndDisabledEnvdSecure(t *testing.
 		}
 	})
 
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
-	require.NotNil(t, resp.JSON400)
-	assert.Equal(t, "You cannot create a sandbox without public access unless you enable secure envd access via 'secure' flag.", resp.JSON400.Message)
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+	assert.NotNil(t, resp.JSON201.EnvdAccessToken)
+}
+
+func TestCreateSandboxV1WithSecureOmitted(t *testing.T) {
+	t.Parallel()
+
+	utils.AcquireSandboxSlot(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	c := setup.GetAPIClient()
+
+	sbxTimeout := int32(60)
+	resp, err := c.PostSandboxesWithResponse(ctx, api.NewSandbox{
+		TemplateID: setup.SandboxTemplateID,
+		Timeout:    &sbxTimeout,
+	}, setup.WithAPIKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("Response: %s", string(resp.Body))
+		}
+
+		if resp.JSON201 != nil {
+			utils.TeardownSandbox(t, c, resp.JSON201.SandboxID)
+		}
+	})
+
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+	assert.NotNil(t, resp.JSON201.EnvdAccessToken)
 }

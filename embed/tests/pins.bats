@@ -22,6 +22,36 @@ setup() {
   fi
 }
 
+# A refused pause keeps the sandbox running only once the api reads
+# PAUSE_REFUSAL_RESTORE, and a pause the disk cannot hold is refused up front
+# only once the orchestrator reads PAUSE_ADMISSION_DISK_HEADROOM_MIB; both
+# shipped in the builds of 2026-10-05, which compose.yaml sets both variables
+# for. Older pins ignore the variables and a refusal kills the sandbox, so
+# the pins must not slide back below those builds.
+@test "api pin is at least the build that reads PAUSE_REFUSAL_RESTORE" {
+  grep -q 'PAUSE_REFUSAL_RESTORE: "true"' compose/compose.yaml
+  api_tag="$(sed -n 's/^E2B_API_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$api_tag" ]
+  min=v0.14.202610051633
+  lowest="$(printf '%s\n%s\n' "$min" "$api_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_API_IMAGE is $api_tag; PAUSE_REFUSAL_RESTORE is read from api build $min on" >&2
+    return 1
+  fi
+}
+
+@test "orchestrator pin is at least the build that reads PAUSE_ADMISSION_DISK_HEADROOM_MIB" {
+  grep -q 'PAUSE_ADMISSION_DISK_HEADROOM_MIB: "1024"' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  min=v0.16.202610051633
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; PAUSE_ADMISSION_DISK_HEADROOM_MIB is read from orchestrator build $min on" >&2
+    return 1
+  fi
+}
+
 # The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
 # after a hyphen, and two images from different commits must not compare equal.
 @test "api and db-migrator pins move together" {

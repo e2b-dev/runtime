@@ -48,6 +48,8 @@ func (q *Queries) CreateOrUpdateTemplate(ctx context.Context, arg CreateOrUpdate
 const createTemplateBuild = `-- name: CreateTemplateBuild :exec
 INSERT INTO "public"."env_builds" (
     id,
+    env_id,
+    team_id,
     updated_at,
     status,
     ram_mb,
@@ -61,8 +63,9 @@ INSERT INTO "public"."env_builds" (
     version
 ) VALUES (
     $1,
+    $2::text,
+    (SELECT team_id FROM "public"."envs" WHERE id = $2::text),
     NOW(),
-    $2,
     $3,
     $4,
     $5,
@@ -71,12 +74,14 @@ INSERT INTO "public"."env_builds" (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
 `
 
 type CreateTemplateBuildParams struct {
 	BuildID            uuid.UUID
+	TemplateID         string
 	Status             types.BuildStatus
 	RamMb              int64
 	Vcpu               int64
@@ -94,9 +99,12 @@ type CreateTemplateBuildParams struct {
 // completes. The template-manager reports the versions it actually used via
 // TemplateBuildMetadata, and FinishTemplateBuild overwrites these fields with
 // the reported values.
+// env_id and team_id are set here rather than left to the trigger on
+// env_build_assignments, so the build is complete without it.
 func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBuildParams) error {
 	_, err := q.db.Exec(ctx, createTemplateBuild,
 		arg.BuildID,
+		arg.TemplateID,
 		arg.Status,
 		arg.RamMb,
 		arg.Vcpu,

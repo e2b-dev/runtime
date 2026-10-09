@@ -197,11 +197,11 @@ type layerMark struct {
 type markable interface {
 	layerKind() layerKind
 	mark() *layerMark
-	// devicesResolved reports, without blocking, whether every device Close
-	// waits on has resolved, to a value or to an error.
+	// devicesResolved reports, without blocking, whether every fetch result
+	// Close waits on has resolved, to a value or to an error.
 	devicesResolved() bool
-	// devicesDone returns a channel per device Close waits on, each closed
-	// once that device resolves.
+	// devicesDone returns a channel per fetch result Close waits on, each
+	// closed once that result resolves.
 	devicesDone() []<-chan struct{}
 }
 
@@ -215,7 +215,7 @@ func (t *storageTemplate) layerKind() layerKind { return t.kind }
 func (t *storageTemplate) mark() *layerMark { return &t.layerMark }
 
 func (t *storageTemplate) devicesDone() []<-chan struct{} {
-	return []<-chan struct{}{t.memfile.Done, t.rootfs.Done, t.snapfile.Done}
+	return []<-chan struct{}{t.memfile.Done, t.rootfs.Done, t.snapfile.Done, t.metafile.Done}
 }
 
 func (t *storageTemplate) devicesResolved() bool {

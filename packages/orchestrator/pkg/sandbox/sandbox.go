@@ -126,6 +126,9 @@ type Config struct {
 
 	Vcpu  int64
 	RamMB int64
+	// ConfiguredVmVcpus is the requested or inherited VM capacity; 0 means unspecified.
+	// On a memory resume, the snapshot's recorded capacity takes precedence.
+	ConfiguredVmVcpus int64
 
 	// TotalDiskSizeMB optional, now used only for metrics.
 	TotalDiskSizeMB   int64
@@ -376,6 +379,8 @@ type Sandbox struct {
 	// Unknown until one of those landed. A known value does not imply the
 	// device was consulted; decisions that must match the VM resolve it.
 	balloonMode atomic.Uint32
+	// resolvedVmVcpus is the capacity recorded on pause; inferred for legacy snapshots.
+	resolvedVmVcpus int64
 	// readBalloonCaps replaces the device read in tests; nil means the process.
 	readBalloonCaps func(context.Context) (fc.BalloonCaps, error)
 	// balloonReadRetryAt (unix ns) holds off the checkpoint-time device read
@@ -420,6 +425,8 @@ type Sandbox struct {
 
 	// Kept here, not on Checks, so it survives checkpoints.
 	OOMKills OOMWatermark
+	// CPUWriteStuck tracks the last reported state, so each stuck episode is logged once.
+	CPUWriteStuck atomic.Bool
 
 	hostStatsCollector *HostStatsCollector
 
@@ -867,6 +874,23 @@ func withNetworkAssignReason(reason NetworkAssignReason) CreateOption {
 	return func(o *createOptions) { o.networkAssignReason = reason }
 }
 
+type rootfsLifecycle interface {
+	Start(ctx context.Context) error
+	Close(ctx context.Context) error
+}
+
+func startRootfsProvider(ctx, execCtx context.Context, cleanup *Cleanup, provider rootfsLifecycle, lg logger.Logger) {
+	// Add runs late callbacks inline. Start needs its own goroutine first because
+	// the NBD close path waits for Start to publish readiness.
+	go func() {
+		if err := provider.Start(execCtx); err != nil {
+			lg.Error(ctx, "rootfs overlay error", zap.Error(err))
+		}
+	}()
+
+	cleanup.Add(ctx, provider.Close)
+}
+
 // CreateSandbox creates the sandbox.
 // IMPORTANT: You must Close() the sandbox after you are done with it.
 func (f *Factory) CreateSandbox(
@@ -890,7 +914,7 @@ func (f *Factory) CreateSandbox(
 		opt(&createOpts)
 	}
 
-	execCtx, execSpan := startExecutionSpan(ctx)
+	execCtx, execSpan := startExecutionSpan(ctx, runtime)
 
 	exit := utils.NewErrorOnce()
 
@@ -906,10 +930,19 @@ func (f *Factory) CreateSandbox(
 
 	lifecycleID := uuid.NewString()
 
-	ipsPromise := getNetworkSlot(ctx, f.networkPool, cleanup, config.Network, f.Sandboxes.NetworkReleased, runtime.SandboxType.EgressClass())
-
 	sandboxFiles := template.Files().NewSandboxFiles(runtime.SandboxID)
 	cleanup.Add(ctx, cleanupFiles(f.config, sandboxFiles))
+
+	// Fail before network or rootfs setup if a required CPU limit is unavailable.
+	cgroupHandle, err := createCgroup(ctx, f.cgroupManager, sandboxFiles.SandboxCgroupName(), config.ConfiguredVmVcpus > config.Vcpu)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseCgroupFD(ctx, cgroupHandle, runtime.SandboxID)
+	cgroupRemovalRegistered := false
+	defer cleanupIfNotRegistered(ctx, &e, &cgroupRemovalRegistered, cgroupHandle.Remove)
+
+	ipsPromise := getNetworkSlot(ctx, f.networkPool, cleanup, config.Network, f.Sandboxes.NetworkReleased, runtime.SandboxType.EgressClass())
 
 	rootFS, err := template.Rootfs()
 	if err != nil {
@@ -941,13 +974,7 @@ func (f *Factory) CreateSandbox(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
 	}
-	cleanup.Add(ctx, rootfsProvider.Close)
-	go func() {
-		runErr := rootfsProvider.Start(execCtx)
-		if runErr != nil {
-			sbxLogger.Error(ctx, "rootfs overlay error", zap.Error(runErr))
-		}
-	}()
+	startRootfsProvider(ctx, execCtx, cleanup, rootfsProvider, sbxLogger)
 
 	memfile, err := template.Memfile(ctx)
 	if err != nil {
@@ -980,12 +1007,9 @@ func (f *Factory) CreateSandbox(
 		}
 	}
 
-	cgroupHandle, cgroupFD := createCgroup(ctx, f.cgroupManager, sandboxFiles.SandboxCgroupName())
-	defer releaseCgroupFD(ctx, cgroupHandle, runtime.SandboxID)
-
-	cleanup.Add(ctx, func(ctx context.Context) error {
-		return cgroupHandle.Remove(ctx)
-	})
+	// Normal cleanup runs after final host stats and before rootfs close.
+	cleanup.Add(ctx, cgroupHandle.Remove)
+	cgroupRemovalRegistered = true
 
 	fcHandle, err := fc.NewProcess(
 		ctx,
@@ -1075,6 +1099,7 @@ func (f *Factory) CreateSandbox(
 	// A boot's balloon is whatever it is configured with here; a cold-booted
 	// resume configures none.
 	sbx.StampBalloonMode(balloonModeOf(fc.BalloonCaps{Reporting: config.FreePageReporting, Hinting: freePageHinting}))
+	sbx.resolvedVmVcpus = max(config.Vcpu, config.ConfiguredVmVcpus)
 
 	err = fcHandle.Create(
 		ctx,
@@ -1083,7 +1108,6 @@ func (f *Factory) CreateSandbox(
 			TemplateID: runtime.TemplateID,
 			TeamID:     runtime.TeamID,
 		},
-		config.Vcpu,
 		config.RamMB,
 		config.HugePages,
 		config.FreePageReporting,
@@ -1097,7 +1121,9 @@ func (f *Factory) CreateSandbox(
 			Ops:       fc.TokenBucketConfig(driveThrottleConfig.Ops),
 			Bandwidth: fc.TokenBucketConfig(driveThrottleConfig.Bandwidth),
 		},
-		cgroupFD,
+		cgroupHandle,
+		config.Vcpu,
+		config.ConfiguredVmVcpus,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create FC: %w", err)
@@ -1228,6 +1254,26 @@ func ThrowawayResumeOptions() []ResumeOption {
 	return []ResumeOption{WithDenyEgress(), WithoutLiveRegistration()}
 }
 
+// ErrVcpuExceedsSnapshot is fc.ErrVcpuExceedsSnapshot, so a refusal before and after the snapshot loads match.
+var ErrVcpuExceedsSnapshot = fc.ErrVcpuExceedsSnapshot
+
+// resumeVmVcpus uses recorded VM capacity, or infers it from the request for
+// legacy snapshots. It never trusts guest reports or scans host cgroups. A VM
+// smaller than the target is refused only when a VM size was given (the request's
+// max_vcpus, or the size a reboot booted, which is never below vcpu); otherwise it
+// resumes as before and is reported later.
+func resumeVmVcpus(targetOnlineVcpus, configuredVmVcpus, recordedVmVcpus int64) (int64, error) {
+	resolvedVmVcpus := recordedVmVcpus
+	if resolvedVmVcpus == 0 {
+		resolvedVmVcpus = max(targetOnlineVcpus, configuredVmVcpus)
+	}
+	if targetOnlineVcpus > resolvedVmVcpus && configuredVmVcpus > 0 {
+		return 0, fmt.Errorf("%w: snapshot has %d vcpus, request asks for %d", ErrVcpuExceedsSnapshot, resolvedVmVcpus, targetOnlineVcpus)
+	}
+
+	return resolvedVmVcpus, nil
+}
+
 // ResumeSandbox resumes the sandbox from already saved template or snapshot.
 // IMPORTANT: You must Close() the sandbox after you are done with it.
 func (f *Factory) ResumeSandbox(
@@ -1249,7 +1295,7 @@ func (f *Factory) ResumeSandbox(
 		opt(&ropts)
 	}
 
-	execCtx, execSpan := startExecutionSpan(ctx)
+	execCtx, execSpan := startExecutionSpan(ctx, runtime)
 
 	exit := utils.NewErrorOnce()
 
@@ -1263,10 +1309,33 @@ func (f *Factory) ResumeSandbox(
 		}
 	}()
 
+	meta, err := t.Metadata()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata: %w", err)
+	}
+	telemetry.ReportEvent(ctx, "got metadata")
+
+	// Validate the requested CPU count before starting UFFD, prefetch, network,
+	// rootfs, or memory initialization. The snapshot metadata is authoritative
+	// for new snapshots; legacy callers carry the original capacity in max_vcpus.
+	resolvedVmVcpus, err := resumeVmVcpus(config.Vcpu, config.ConfiguredVmVcpus, meta.VcpuCount)
+	if err != nil {
+		return nil, err
+	}
+
 	lifecycleID := uuid.NewString()
 
 	sandboxFiles := t.Files().NewSandboxFiles(runtime.SandboxID)
 	cleanup.Add(ctx, cleanupFiles(f.config, sandboxFiles))
+
+	// Before any other resource: a sandbox that needs a limit and cannot get one fails here, cheaply.
+	cgroupHandle, cgroupErr := createCgroup(ctx, f.cgroupManager, sandboxFiles.SandboxCgroupName(), resolvedVmVcpus > config.Vcpu)
+	if cgroupErr != nil {
+		return nil, cgroupErr
+	}
+	defer releaseCgroupFD(ctx, cgroupHandle, runtime.SandboxID)
+	cgroupRemovalRegistered := false
+	defer cleanupIfNotRegistered(ctx, &e, &cgroupRemovalRegistered, cgroupHandle.Remove)
 
 	telemetry.ReportEvent(ctx, "created sandbox files")
 
@@ -1292,14 +1361,11 @@ func (f *Factory) ResumeSandbox(
 	// non-cancelable (context.WithoutCancel) and the fetch-only last-cycle path
 	// has no copy worker to observe uffd close, so without an explicit cancel a
 	// torn-down sandbox would keep draining a (potentially multi-GiB) diff from
-	// object storage. Registering here rather than inside the goroutine also
-	// avoids racing cleanup.Run: a goroutine-side Add could lose the hasRun
-	// check to a concurrent teardown and never register.
+	// object storage. Registering here rather than inside the goroutine makes
+	// cancellation ownership and priority ordering explicit before any prefetch
+	// work starts.
 	//
-	// Register as PRIORITY so teardown aborts the fetch first: priority handlers
-	// run before the normal cleanup list, and (LIFO) this one runs before the
-	// priority Stop — otherwise the fetchers keep issuing large memfile reads
-	// through Stop and the rest of the normal cleanup until a late cancel.
+	// Register as PRIORITY so teardown cancels the fetch before normal cleanup.
 	prefetchCtx, cancelPrefetch := context.WithCancel(execCtx)
 	cleanup.AddPriority(ctx, func(context.Context) error {
 		cancelPrefetch()
@@ -1312,13 +1378,6 @@ func (f *Factory) ResumeSandbox(
 		if err != nil {
 			return
 		}
-
-		meta, err := t.Metadata()
-		if err != nil {
-			return
-		}
-
-		telemetry.ReportEvent(ctx, "got metadata")
 
 		// Start background prefetchers as early as possible. Fetching from
 		// source starts immediately; copying (when prefaulting) waits for uffd.
@@ -1348,6 +1407,7 @@ func (f *Factory) ResumeSandbox(
 		if useInit && meta.Prefetch != nil {
 			initMapping = meta.Prefetch.Memory
 		}
+		initOrigin := meta.Prefetch.InitOrigin()
 
 		var lastCycleMapping *metadata.MemoryPrefetchMapping
 		if useLastCycle {
@@ -1358,11 +1418,13 @@ func (f *Factory) ResumeSandbox(
 			lastCycleMapping = capResumePrefetch(lastCycleMapping, maxMiB)
 		}
 
-		// Record the chosen source and the sizes it resolved to, so a resume can
-		// be cohorted by prefetch source (guards against flag misconfiguration)
-		// and the last-cycle set size is visible per resume.
+		// Record the chosen source, the init mapping's origin and the sizes they
+		// resolved to, so a resume can be cohorted by prefetch source and by who
+		// produced its mapping (guards against flag misconfiguration) and the
+		// last-cycle set size is visible per resume.
 		execSpan.SetAttributes(
 			attribute.String("resume.prefetch.source", source),
+			attribute.String("resume.prefetch.init_origin", initOrigin),
 			attribute.Int("resume.prefetch.init_blocks", initMapping.Count()),
 			attribute.Int("resume.prefetch.last_cycle_blocks", lastCycleMapping.Count()),
 		)
@@ -1424,16 +1486,9 @@ func (f *Factory) ResumeSandbox(
 			return nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
 		}
 
-		cleanup.Add(ctx, overlay.Close)
-
 		telemetry.ReportEvent(ctx, "created rootfs overlay")
 
-		go func() {
-			runErr := overlay.Start(execCtx)
-			if runErr != nil {
-				sbxLogger.Error(ctx, "rootfs overlay error", zap.Error(runErr))
-			}
-		}()
+		startRootfsProvider(ctx, execCtx, cleanup, overlay, sbxLogger)
 
 		return overlay, nil
 	})
@@ -1495,11 +1550,6 @@ func (f *Factory) ResumeSandbox(
 		return nil, fmt.Errorf("failed to get rootfs overlay: %w", err)
 	}
 
-	meta, err := t.Metadata()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metadata: %w", err)
-	}
-
 	// The snapshot was taken from a guest booted with this template, so it labels the build
 	// cohort a resume belongs to.
 	cpuTemplate := cputemplate.AppliedDigest(meta.CPUTemplate)
@@ -1545,13 +1595,9 @@ func (f *Factory) ResumeSandbox(
 		recordEnvdDefaults(ctx, defaultsSource, runtime.SandboxType, workdirWithheld)
 	}
 
-	// Create cgroup for sandbox resource accounting
-	cgroupHandle, cgroupFD := createCgroup(ctx, f.cgroupManager, sandboxFiles.SandboxCgroupName())
-	defer releaseCgroupFD(ctx, cgroupHandle, runtime.SandboxID)
-
-	cleanup.Add(ctx, func(ctx context.Context) error {
-		return cgroupHandle.Remove(ctx)
-	})
+	// Normal cleanup runs after final host stats and before rootfs close.
+	cleanup.Add(ctx, cgroupHandle.Remove)
+	cgroupRemovalRegistered = true
 
 	fcHandle, fcErr := fc.NewProcess(
 		ctx,
@@ -1634,6 +1680,7 @@ func (f *Factory) ResumeSandbox(
 		// A throwaway resume keeps its warm, customer-indistinguishable start out
 		// of the per-resume KPI histograms (see WaitForEnvd).
 		skipStartupMetrics: !ropts.describesCustomerStart(),
+		resolvedVmVcpus:    resolvedVmVcpus,
 	}
 	// Known before the VM starts for templates built with the field, so the
 	// resume working set is labelled; older templates are labelled by
@@ -1729,7 +1776,7 @@ func (f *Factory) ResumeSandbox(
 		snapfile,
 		fcUffd.Ready(),
 		config.Envd.AccessToken,
-		cgroupFD,
+		cgroupHandle,
 		useMemfd,
 		useSyncWP,
 		cpuTemplate,
@@ -1741,10 +1788,24 @@ func (f *Factory) ResumeSandbox(
 			Ops:       fc.TokenBucketConfig(resumeDriveThrottleConfig.Ops),
 			Bandwidth: fc.TokenBucketConfig(resumeDriveThrottleConfig.Bandwidth),
 		},
+		fc.ResumeVcpus{
+			Target:          config.Vcpu,
+			Snapshot:        resolvedVmVcpus,
+			Recorded:        meta.VcpuCount > 0,
+			RefuseSmallerVM: config.ConfiguredVmVcpus > 0,
+		},
 	)
 
 	if fcStartErr != nil {
 		return nil, fmt.Errorf("failed to start FC: %w", fcStartErr)
+	}
+	// For a snapshot that never recorded its size, the loaded VM's count is what the next pause records.
+	if n := fcHandle.VmVcpus(); n > 0 {
+		sbx.resolvedVmVcpus = n
+		if n < config.Vcpu {
+			telemetry.ReportError(ctx, "resumed with fewer vcpus than requested", fmt.Errorf("%w: snapshot has %d vcpus, request asks for %d", ErrVcpuExceedsSnapshot, n, config.Vcpu),
+				telemetry.WithSandboxID(runtime.SandboxID))
+		}
 	}
 
 	telemetry.ReportEvent(ctx, "initialized FC")
@@ -1805,12 +1866,20 @@ func (f *Factory) ResumeSandbox(
 	return sbx, nil
 }
 
-func startExecutionSpan(ctx context.Context) (context.Context, trace.Span) {
+func startExecutionSpan(ctx context.Context, runtime sandboxtypes.RuntimeMetadata) (context.Context, trace.Span) {
 	parentSpan := trace.SpanFromContext(ctx)
 
 	ctx = context.WithoutCancel(ctx)
+	// The span is a new root, so it carries the sandbox's identity itself:
+	// its attributes (resume prefetch source and sizes) are otherwise
+	// unlinkable to the create or resume that produced them.
 	ctx, span := tracer.Start(ctx, "execute sandbox", //nolint:spancheck // this is still just a helper method
 		trace.WithNewRoot(),
+		trace.WithAttributes(
+			telemetry.WithSandboxID(runtime.SandboxID),
+			telemetry.WithTemplateID(runtime.TemplateID),
+			telemetry.WithBuildID(runtime.BuildID),
+		),
 	)
 
 	parentSpan.AddLink(trace.LinkFromContext(ctx))
@@ -2161,6 +2230,11 @@ func (s *Sandbox) Pause(
 	if mode := userfaultfd.BalloonMode(s.balloonMode.Load()); mode != userfaultfd.BalloonModeUnknown {
 		m = m.WithBalloon(mode == userfaultfd.BalloonModeReporting, mode == userfaultfd.BalloonModeHinting)
 	}
+	// Persist the resolved VM capacity so later resumes validate without
+	// consulting the guest or scanning the cgroup hierarchy.
+	if s.resolvedVmVcpus > 0 {
+		m = m.WithVcpuCount(s.resolvedVmVcpus)
+	}
 
 	// Drain free-page-hinting before pause so the snapshot doesn't capture
 	// pages the guest already considers free. Budget per use case; 0 disables.
@@ -2453,6 +2527,7 @@ func (s *Sandbox) Pause(
 		MemoryExportDeferred: memExportDeferred,
 		Snapfile:             snapfile,
 		Metafile:             metadataFileLink,
+		Metadata:             m,
 		MemorySnapshot:       mem,
 		RootfsDiff:           rootfsDiff,
 		RootfsDiffHeader:     rootfsDiffHeader,
@@ -3759,7 +3834,28 @@ const (
 	// SnapshotAdmissionLatchedError: a latched seal failure means no valid
 	// snapshot can ever be produced; not retryable.
 	SnapshotAdmissionLatchedError SnapshotAdmissionOutcome = "latched_error"
+	// SnapshotAdmissionRefusedDisk: the build filesystem cannot hold the
+	// capture; refused retryably before anything destructive.
+	SnapshotAdmissionRefusedDisk SnapshotAdmissionOutcome = "refused_disk"
 )
+
+// rootfsCacheSizer is the optional capability of a rootfs provider to report
+// what its writable cache occupies on disk; the NBD provider has it.
+type rootfsCacheSizer interface {
+	CacheSize(ctx context.Context) (int64, error)
+}
+
+// RootfsCacheSize reports the bytes the sandbox's writable rootfs cache
+// occupies on disk, which a rootfs export copies; 0 when the provider cannot
+// say.
+func (s *Sandbox) RootfsCacheSize(ctx context.Context) (int64, error) {
+	sizer, ok := s.rootfs.(rootfsCacheSizer)
+	if !ok {
+		return 0, nil
+	}
+
+	return sizer.CacheSize(ctx)
+}
 
 // ErrSnapshotAdmissionPending marks a retryable admission refusal: the parent
 // memfile header was still deduplicating when the grace elapsed.
@@ -4134,29 +4230,28 @@ func (s *Sandbox) runInPlaceRootfsExport(
 	_ = sealDone.SetValue(struct{}{})
 }
 
-// createCgroup creates a cgroup for sandbox resource accounting.
-// The caller is responsible for registering cleanup to remove the cgroup.
-//
-// Returns the CgroupHandle and the cgroup directory FD to pass to the
-// Firecracker process or (nil, cgroup.NoCgroupFD) on error.
-func createCgroup(ctx context.Context, cgroupManager cgroup.Manager, cgroupName string) (*cgroup.CgroupHandle, int) {
-	ctx, span := tracer.Start(ctx, "sandbox-create-cgroup", trace.WithAttributes(
-		attribute.String("cgroup_name", cgroupName),
-	))
-	defer span.End()
+// createCgroup creates the sandbox's cgroup, which the caller removes. Without one Firecracker runs
+// unaccounted, which is tolerated unless the sandbox needs a CPU limit: then the failure is returned.
+func createCgroup(ctx context.Context, cgroupManager cgroup.Manager, cgroupName string, needsLimit bool) (*cgroup.CgroupHandle, error) {
+	return telemetry.Observe1(ctx, tracer, "sandbox-create-cgroup", func(ctx context.Context) (*cgroup.CgroupHandle, error) {
+		handle, err := cgroupManager.Create(ctx, cgroupName)
+		if err == nil {
+			if needsLimit && !handle.CanLimit() {
+				return nil, errors.New("sandbox needs a vcpu limit but cgroups are disabled")
+			}
 
-	handle, err := cgroupManager.Create(ctx, cgroupName)
-	if err != nil {
+			return handle, nil
+		}
+		if needsLimit {
+			return nil, fmt.Errorf("failed to create cgroup for the vcpu limit: %w", err)
+		}
 		logger.L().Warn(ctx, "failed to create cgroup, continuing without cgroup accounting",
 			zap.String("cgroup_name", cgroupName),
 			zap.Error(err))
-
 		telemetry.ReportEvent(ctx, "cgroup creation failed, continuing without accounting")
 
-		return nil, cgroup.NoCgroupFD
-	}
-
-	return handle, handle.GetFD()
+		return nil, nil
+	}, trace.WithAttributes(attribute.String("cgroup_name", cgroupName)))
 }
 
 func getNetworkSlot(
@@ -4177,9 +4272,6 @@ func getNetworkSlot(
 		}
 
 		cleanup.Add(ctx, func(ctx context.Context) error {
-			ctx, span := tracer.Start(ctx, "clean network-slot")
-			defer span.End()
-
 			// Async so sandbox cleanup doesn't block on the return delay or
 			// network teardown; the pool's Close waits for in-flight returns.
 			return networkPool.ReturnAsync(ctx, slot, networkReleased, network.ReturnDelay)

@@ -66,18 +66,38 @@ func (q *Queries) AssignTeamCluster(ctx context.Context, arg AssignTeamClusterPa
 	return i, err
 }
 
-const clusterHasActiveEnvironments = `-- name: ClusterHasActiveEnvironments :one
+const clusterDeletionProtected = `-- name: ClusterDeletionProtected :one
 SELECT EXISTS (
-    SELECT FROM public.active_envs
-    WHERE cluster_id = $1::uuid
+    SELECT FROM public.clusters
+    WHERE id = $1::uuid
+      AND deletion_protection
 )
 `
 
-func (q *Queries) ClusterHasActiveEnvironments(ctx context.Context, clusterID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, clusterHasActiveEnvironments, clusterID)
+func (q *Queries) ClusterDeletionProtected(ctx context.Context, clusterID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, clusterDeletionProtected, clusterID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const clusterUsedByMultipleTeams = `-- name: ClusterUsedByMultipleTeams :one
+SELECT COUNT(DISTINCT team_id) > 1
+FROM (
+    SELECT id AS team_id FROM public.teams WHERE cluster_id = $1::uuid
+    UNION
+    SELECT team_id FROM public.active_envs WHERE cluster_id = $1::uuid
+) AS cluster_teams
+`
+
+// True when more than one team is assigned to the cluster or owns live
+// environments on it. One team's own environments do not count: deleting the
+// cluster soft-deletes them.
+func (q *Queries) ClusterUsedByMultipleTeams(ctx context.Context, clusterID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, clusterUsedByMultipleTeams, clusterID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createCluster = `-- name: CreateCluster :one
@@ -88,7 +108,8 @@ INSERT INTO public.clusters (
     endpoint_tls,
     token,
     sandbox_proxy_domain,
-    auth_org_id
+    auth_org_id,
+    deletion_protection
 )
 VALUES (
     COALESCE($1::uuid, gen_random_uuid()),
@@ -97,7 +118,8 @@ VALUES (
     $4::boolean,
     $5::text,
     $6::text,
-    $7::text
+    $7::text,
+    $8::boolean
 )
 ON CONFLICT (id) DO UPDATE
 SET id = EXCLUDED.id
@@ -118,8 +140,11 @@ type CreateClusterParams struct {
 	Token              string
 	SandboxProxyDomain *string
 	AuthOrgID          *string
+	DeletionProtection bool
 }
 
+// deletion_protection is set only on a new row. Registering an existing cluster
+// again leaves its stored protection unchanged.
 func (q *Queries) CreateCluster(ctx context.Context, arg CreateClusterParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, createCluster,
 		arg.ClusterID,
@@ -129,6 +154,7 @@ func (q *Queries) CreateCluster(ctx context.Context, arg CreateClusterParams) (u
 		arg.Token,
 		arg.SandboxProxyDomain,
 		arg.AuthOrgID,
+		arg.DeletionProtection,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -146,6 +172,16 @@ func (q *Queries) DeleteCluster(ctx context.Context, clusterID uuid.UUID) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteEnvironmentsActiveBuilds = `-- name: DeleteEnvironmentsActiveBuilds :exec
+DELETE FROM public.active_template_builds
+WHERE template_id = ANY($1::text[])
+`
+
+func (q *Queries) DeleteEnvironmentsActiveBuilds(ctx context.Context, envIds []string) error {
+	_, err := q.db.Exec(ctx, deleteEnvironmentsActiveBuilds, envIds)
+	return err
 }
 
 const detachDeletedTemplatesFromCluster = `-- name: DetachDeletedTemplatesFromCluster :exec
@@ -195,6 +231,49 @@ func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterPa
 	var i DetachTeamClusterRow
 	err := row.Scan(&i.ClusterID, &i.Detached)
 	return i, err
+}
+
+const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec
+DELETE FROM public.env_aliases
+WHERE env_id = ANY($1::text[])
+`
+
+func (q *Queries) ReleaseEnvironmentsAliases(ctx context.Context, envIds []string) error {
+	_, err := q.db.Exec(ctx, releaseEnvironmentsAliases, envIds)
+	return err
+}
+
+const softDeleteClusterEnvironments = `-- name: SoftDeleteClusterEnvironments :many
+UPDATE public.envs
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE cluster_id = $1::uuid
+  AND deleted_at IS NULL
+RETURNING id
+`
+
+// Step 1 of cluster environment cleanup (run in a tx): soft-deletes every live
+// template, snapshot template and paused sandbox snapshot on the cluster. The
+// UPDATE waits on rows a concurrent build registration has locked, so the
+// alias and active-build cleanup run as separate statements afterwards: their
+// fresh snapshots see rows that registration committed during the wait.
+func (q *Queries) SoftDeleteClusterEnvironments(ctx context.Context, clusterID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, softDeleteClusterEnvironments, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const teamClusterAssignment = `-- name: TeamClusterAssignment :one

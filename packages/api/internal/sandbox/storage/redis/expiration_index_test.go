@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -9,8 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
+	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 // makeIndexedSandbox builds a running sandbox fixture with explicit lifecycle
@@ -273,6 +278,121 @@ func TestExpiredItems_ResidualKillingAfterStaleCutoff(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, stale.SandboxID, items[0].SandboxID)
 	require.Equal(t, sandboxtypes.StateKilling, items[0].State)
+}
+
+// A sandbox still in a transition is left to finish it, but its member moves
+// out of the expired window until it is worth checking again, well before the
+// stale cutoff would hand it to the evictor anyway.
+func TestExpiredItems_DefersSandboxInTransition(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
+	storage, err := NewStorage(client, provider, nil)
+	require.NoError(t, err)
+
+	teamID := uuid.New()
+	sbx := makeIndexedSandbox(teamID, "sbx-pausing", uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(-time.Minute))
+	sbx.State = sandboxtypes.StatePausing
+	require.NoError(t, storage.Add(t.Context(), sbx))
+
+	before := time.Now()
+	items, err := storage.ExpiredItems(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, items)
+
+	score, err := client.ZScore(t.Context(), globalExpirationSet, expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)).Result()
+	require.NoError(t, err)
+	require.Greater(t, score, float64(before.UnixMilli()), "the member must leave the expired window")
+	require.Less(t, score, float64(sbx.EndTime.Add(sandboxtypes.StaleCutoff).UnixMilli()), "the member must be checked again before the stale cutoff")
+
+	require.Equal(t, int64(1), counterTotal(t, reader, string(telemetry.ApiRedisStorageExpirationIndexDeferred)))
+}
+
+func counterTotal(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+
+	var total int64
+	for _, scope := range metrics.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			for _, point := range sum.DataPoints {
+				total += point.Value
+			}
+		}
+	}
+
+	return total
+}
+
+// A sandbox deferred just before the stale cutoff comes back at the cutoff,
+// not a full recheck delay after it.
+func TestExpiredItems_DefersNoLaterThanStaleCutoff(t *testing.T) {
+	t.Parallel()
+
+	storage, client := setupTestStorage(t)
+
+	teamID := uuid.New()
+	sbx := makeIndexedSandbox(teamID, "sbx-pausing-near-cutoff", uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(-sandboxtypes.StaleCutoff+transitionRecheckDelay-time.Second))
+	sbx.State = sandboxtypes.StatePausing
+	require.NoError(t, storage.Add(t.Context(), sbx))
+
+	items, err := storage.ExpiredItems(t.Context())
+	require.NoError(t, err)
+
+	staleAt := sbx.EndTime.Add(sandboxtypes.StaleCutoff)
+	if len(items) > 0 {
+		// A slow runner reached the cutoff before the sweep: it then hands
+		// the sandbox to the evictor, which is the same outcome.
+		require.Equal(t, sbx.SandboxID, items[0].SandboxID)
+		require.True(t, time.Now().After(staleAt))
+
+		return
+	}
+
+	requireMemberScore(t, client, expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID), float64(staleAt.UnixMilli()))
+}
+
+// The sweep reads a fixed number of the oldest expired members. Sandboxes in
+// a transition at the front of the index must not hide a newer expired one
+// from the evictor, however many of them there are.
+func TestExpiredItems_TransitionsDoNotHideOtherExpiredSandboxes(t *testing.T) {
+	t.Parallel()
+
+	storage, _ := setupTestStorage(t)
+
+	teamID := uuid.New()
+	now := time.Now()
+	for i := range expiredItemsBatchSize + 44 {
+		sbx := makeIndexedSandbox(teamID, fmt.Sprintf("sbx-pausing-%d", i), uuid.NewString(), now.Add(-time.Hour), now.Add(-5*time.Minute+time.Duration(i)*time.Millisecond))
+		sbx.State = sandboxtypes.StatePausing
+		require.NoError(t, storage.Add(t.Context(), sbx))
+	}
+
+	expired := makeIndexedSandbox(teamID, "sbx-expired-behind", uuid.NewString(), now.Add(-time.Hour), now.Add(-30*time.Second))
+	require.NoError(t, storage.Add(t.Context(), expired))
+
+	var found bool
+	for range 10 {
+		items, err := storage.ExpiredItems(t.Context())
+		require.NoError(t, err)
+		for _, item := range items {
+			found = found || item.SandboxID == expired.SandboxID
+		}
+		if found {
+			break
+		}
+	}
+	require.True(t, found, "an expired sandbox behind a full window of transitions was never returned")
 }
 
 // TestHeal_RestoresMissingMember reproduces the production incident: a

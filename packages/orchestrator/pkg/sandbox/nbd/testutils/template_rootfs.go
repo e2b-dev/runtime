@@ -78,7 +78,7 @@ func TemplateRootfs(ctx context.Context, spec storage.Spec, buildID string) (*Bu
 		return os.RemoveAll(diffCacheDir)
 	})
 
-	flags, err := featureflags.NewClient("", "")
+	flags, err := featureflags.NewClient("", "", "")
 	if err != nil {
 		return nil, &cleaner, fmt.Errorf("failed to create feature flags client: %w", err)
 	}

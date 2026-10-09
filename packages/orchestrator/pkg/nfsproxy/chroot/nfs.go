@@ -9,6 +9,7 @@ import (
 	"net"
 	"regexp"
 	"sync"
+	"syscall"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ var (
 	ErrVolumeID         = errors.New("invalid volume ID")
 	ErrInvalidMountPath = errors.New("invalid mount path")
 	ErrUnknownSandbox   = errors.New("unknown sandbox")
+	ErrVolumeBroken     = errors.New("volume root is no longer usable")
 )
 
 type NFSHandler struct {
@@ -39,7 +41,9 @@ type NFSHandler struct {
 	builder   *chrooted.Builder
 	sandboxes *sandbox.Map
 
-	chrootsByLifecycleID  map[string][]*chrooted.Chrooted
+	chrootsByLifecycleID  map[string]map[uuid.UUID]*wrappedFS
+	onMount               []func(billy.Filesystem)
+	onRelease             []func(billy.Filesystem)
 	chrootMountsCounter   metric.Int64Counter
 	chrootUnmountsCounter metric.Int64Counter
 }
@@ -63,7 +67,7 @@ func NewNFSHandler(
 	h := &NFSHandler{
 		builder:               builder,
 		sandboxes:             sandboxes,
-		chrootsByLifecycleID:  make(map[string][]*chrooted.Chrooted),
+		chrootsByLifecycleID:  make(map[string]map[uuid.UUID]*wrappedFS),
 		chrootMountsCounter:   chrootMountsCounter,
 		chrootUnmountsCounter: chrootUnmountsCounter,
 	}
@@ -90,6 +94,24 @@ func NewNFSHandler(
 	return h, nil
 }
 
+// OnMount registers f to be called with each filesystem Mount creates for a
+// sandbox, before Mount returns it.
+func (h *NFSHandler) OnMount(f func(billy.Filesystem)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.onMount = append(h.onMount, f)
+}
+
+// OnRelease registers f to be called with each filesystem Mount returned for
+// a sandbox once the sandbox releases its network, before it is closed.
+func (h *NFSHandler) OnRelease(f func(billy.Filesystem)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.onRelease = append(h.onRelease, f)
+}
+
 func (h *NFSHandler) OnInsert(_ context.Context, _ *sandbox.Sandbox) {}
 
 // OnStopping is called when a sandbox leaves the live registry.
@@ -99,11 +121,17 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 	lifecycleID := sbx.LifecycleID
 
 	h.mu.Lock()
-	chroots := h.chrootsByLifecycleID[lifecycleID]
+	mounts := h.chrootsByLifecycleID[lifecycleID]
 	delete(h.chrootsByLifecycleID, lifecycleID)
+	onRelease := h.onRelease
 	h.mu.Unlock()
 
-	for _, chroot := range chroots {
+	for _, mounted := range mounts {
+		for _, f := range onRelease {
+			f(mounted)
+		}
+
+		chroot := mounted.chroot
 		err := chroot.Close()
 		if err != nil {
 			logger.L().Warn(ctx, "failed to close chroot",
@@ -136,12 +164,12 @@ func (h *NFSHandler) Mount(
 		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
 	}
 
-	return nfs.MountStatusOk, wrapChrooted(fs), nil
+	return nfs.MountStatusOk, fs, nil
 }
 
 var mountPath = regexp.MustCompile(`^/[^/]+$`)
 
-func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request nfs.MountRequest) (*chrooted.Chrooted, error) {
+func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request nfs.MountRequest) (*wrappedFS, error) {
 	sbx, err := h.sandboxes.GetByHostPort(remoteAddr.String())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnknownSandbox, err)
@@ -178,19 +206,78 @@ func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request
 		return nil, ErrVolumeID
 	}
 
-	fs, err := h.builder.Chroot(volumeMount.Type, teamID, volumeMount.ID)
+	// A sandbox mounting the same volume again gets the filesystem it already
+	// has, so repeated mounts share one set of file handles instead of each
+	// holding its own until the sandbox goes away. If that filesystem's root
+	// stopped working, the mount fails rather than opening the volume afresh.
+	lifecycleID := sbx.LifecycleID
+	if fs, ok := h.mounted(lifecycleID, volumeMount.ID); ok {
+		if err := rootUsable(fs); err != nil {
+			return nil, fmt.Errorf("failed to mount %q: %w: %w", volumeName, ErrVolumeBroken, err)
+		}
+
+		return fs, nil
+	}
+
+	chroot, err := h.builder.Chroot(volumeMount.Type, teamID, volumeMount.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mount %q: %w", volumeName, err)
 	}
 
-	lifecycleID := sbx.LifecycleID
 	h.mu.Lock()
-	h.chrootsByLifecycleID[lifecycleID] = append(h.chrootsByLifecycleID[lifecycleID], fs)
+	mounts, ok := h.chrootsByLifecycleID[lifecycleID]
+	if !ok {
+		mounts = make(map[uuid.UUID]*wrappedFS)
+		h.chrootsByLifecycleID[lifecycleID] = mounts
+	}
+	fs, raced := mounts[volumeMount.ID]
+	if !raced {
+		fs = wrapChrooted(chroot)
+		mounts[volumeMount.ID] = fs
+	}
+	onMount := h.onMount
 	h.mu.Unlock()
+
+	if raced {
+		if err := chroot.Close(); err != nil {
+			logger.L().Warn(ctx, "failed to close duplicate chroot", zap.String("path", chroot.Root()), zap.Error(err))
+		}
+
+		return fs, nil
+	}
+
+	for _, f := range onMount {
+		f(fs)
+	}
 
 	h.chrootMountsCounter.Add(ctx, 1)
 
 	return fs, nil
+}
+
+// rootUsable reports whether the volume root a filesystem was opened on can
+// still be used. The open root keeps a removed directory statable, so a
+// removed root shows up as a link count of zero rather than as an error.
+func rootUsable(fs *wrappedFS) error {
+	info, err := fs.chroot.Stat("/")
+	if err != nil {
+		return err
+	}
+
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink == 0 {
+		return errors.New("volume root was removed")
+	}
+
+	return nil
+}
+
+func (h *NFSHandler) mounted(lifecycleID string, volumeID uuid.UUID) (*wrappedFS, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	fs, ok := h.chrootsByLifecycleID[lifecycleID][volumeID]
+
+	return fs, ok
 }
 
 func (h *NFSHandler) Change(_ context.Context, filesystem billy.Filesystem) billy.Change {

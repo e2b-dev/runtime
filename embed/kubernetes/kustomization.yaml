@@ -12,19 +12,19 @@ resources:
 images:
   - name: E2B_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/api
-    newTag: v0.14.202609170000-908833e4c12 # x-release-please-version
+    newTag: v0.14.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_DB_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/db-migrator
-    newTag: v0.14.202609170000-908833e4c12 # x-release-please-version
+    newTag: v0.14.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_CLIENT_PROXY_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy
-    newTag: v0.3.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.3.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_CLICKHOUSE_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator
-    newTag: v0.4.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.4.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_DASHBOARD_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboard-api
-    newTag: v0.7.202609170000-908833e4c12 # x-release-please-version
+    newTag: v0.7.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_DASHBOARD_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/dashboard/dashboard
     newTag: v0.2.1
@@ -44,7 +44,7 @@ images:
 configMapGenerator:
   - name: e2b-versions
     literals:
-      - E2B_ORCHESTRATOR_VERSION=v0.16.202609212023-35cc85a6c61 # x-release-please-version
+      - E2B_ORCHESTRATOR_VERSION=v0.16.202610051633-d1cd3db3890 # x-release-please-version
       - E2B_ENVD_VERSION=v0.9.202609130627-59497eb9134
       - E2B_KERNEL_VERSION=vmlinux-6.1.177_5008931
       - E2B_FIRECRACKER_VERSION=v1.14-0.2.0

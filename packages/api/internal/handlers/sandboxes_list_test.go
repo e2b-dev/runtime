@@ -23,6 +23,7 @@ import (
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 func TestParseSandboxListTemplateFilter_AllowsExplicitNamespace(t *testing.T) {
@@ -323,4 +324,25 @@ func TestInstanceInfoToPaginatedSandboxes_PaginationTimestampPrecision(t *testin
 		"pagination key must be microsecond-aligned")
 	assert.Zero(t, sandboxes[0].PaginationTimestamp.Nanosecond()%1000,
 		"pagination key should have no sub-microsecond bits")
+}
+
+// TestGetPausedSandboxes_ReadsFromTheReadClient checks that the paused page is read
+// through sqlcReadDB. The snapshot exists only in the database behind that client.
+func TestGetPausedSandboxes_ReadsFromTheReadClient(t *testing.T) {
+	t.Parallel()
+
+	primary, replica := testutils.SetupDatabase(t), testutils.SetupDatabase(t)
+	ctx := t.Context()
+	teamID := testutils.CreateTestTeam(t, replica)
+	templateID := testutils.CreateTestTemplate(t, replica, teamID)
+	testutils.UpsertTestSnapshot(t, ctx, replica, "snap-replica", "sbx-replica", teamID, templateID)
+	sem, err := sharedutils.NewAdjustableSemaphore(1)
+	require.NoError(t, err)
+	store := &APIStore{sqlcDB: primary.SqlcClient, sqlcReadDB: replica.SqlcClient, sandboxListSem: sem}
+
+	page, err := store.getPausedSandboxes(ctx, teamID, nil, nil, 10,
+		time.Now().Add(time.Hour), utils.MaxSandboxID, utils.SortDesc, time.Time{}, nil)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, "sbx-replica", page[0].SandboxID)
 }

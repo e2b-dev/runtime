@@ -1,16 +1,25 @@
 package storage
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 )
 
 const (
@@ -82,6 +91,11 @@ func newSSETestStorage(t *testing.T, spec Spec, rec *sseRecorder) *awsStorage {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`<InitiateMultipartUploadResult><UploadId>sse-upload-id</UploadId></InitiateMultipartUploadResult>`))
 		case r.Method == http.MethodPut && strings.Contains(r.URL.RawQuery, "partNumber="):
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				t.Errorf("read multipart body: %v", err)
+
+				return
+			}
 			w.Header().Set("ETag", `"etag1"`)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.Contains(r.URL.RawQuery, "uploadId=sse-upload-id"):
@@ -104,6 +118,67 @@ func newSSETestStorage(t *testing.T, spec Spec, rec *sseRecorder) *awsStorage {
 		bucketName:    spec.Bucket,
 		sse:           newAWSSSE(spec),
 	}
+}
+
+func newTestUploadLimiter(t *testing.T, maxUploadTasks int) *limit.Limiter {
+	t.Helper()
+
+	source := ldtestdata.DataSource()
+	source.Update(source.Flag(featureflags.StorageMaxUploadTasks.Key()).ValueForAll(ldvalue.Int(maxUploadTasks)))
+	ff, err := featureflags.NewClientWithDatasource(source)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ff.Close(context.WithoutCancel(t.Context()))) })
+
+	limiter, err := limit.New(t.Context(), ff)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, limiter.Close(context.WithoutCancel(t.Context()))) })
+
+	return limiter
+}
+
+func TestNormalizeAWSUploadConcurrency(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		tasks int
+		want  int
+	}{
+		{name: "negative uses SDK default", tasks: -1, want: 0},
+		{name: "zero keeps SDK default", tasks: 0, want: 0},
+		{name: "positive passes through", tasks: 16, want: 16},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, normalizeAWSUploadConcurrency(tt.tasks))
+		})
+	}
+}
+
+func TestAWSUncompressedStoreFileNegativeConcurrencyUsesSDKDefault(t *testing.T) {
+	t.Parallel()
+
+	var spec Spec
+	provider := newSSETestStorage(t, spec, new(sseRecorder))
+	provider.limiter = newTestUploadLimiter(t, -1)
+
+	obj, err := provider.OpenSeekable(t.Context(), testObjectName)
+	require.NoError(t, err)
+
+	inputPath := filepath.Join(t.TempDir(), "multipart.bin")
+	input, err := os.Create(inputPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = input.Close() })
+	require.NoError(t, input.Truncate(awsMultipartUploadPartSize+1))
+	require.NoError(t, input.Close())
+
+	var storeErr error
+	require.NotPanics(t, func() {
+		_, _, storeErr = obj.StoreFile(t.Context(), inputPath)
+	})
+	require.NoError(t, storeErr)
 }
 
 func TestAWSPutRequestsServerSideEncryption(t *testing.T) {

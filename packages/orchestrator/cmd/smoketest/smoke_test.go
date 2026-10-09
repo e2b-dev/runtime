@@ -182,7 +182,7 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	sbxlogger.SetSandboxLoggerInternal(l)
 	sbxlogger.SetSandboxLoggerExternal(l)
 
-	flags, _ := featureflags.NewClientWithLogLevel("", "", ldlog.Error)
+	flags, _ := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 
 	builderConfig, err := cfg.ParseBuilder()
 	require.NoError(t, err)

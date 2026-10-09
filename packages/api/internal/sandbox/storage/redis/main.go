@@ -53,6 +53,7 @@ type Storage struct {
 type expirationIndexMetrics struct {
 	indexHealed   metric.Int64Counter
 	indexRescored metric.Int64Counter
+	indexDeferred metric.Int64Counter
 
 	indexSwept         metric.Int64Counter
 	sweptOrphan        metric.MeasurementOption
@@ -73,6 +74,11 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 		return expirationIndexMetrics{}, fmt.Errorf("expiration index rescored counter: %w", err)
 	}
 
+	deferred, err := telemetry.GetCounter(meter, telemetry.ApiRedisStorageExpirationIndexDeferred)
+	if err != nil {
+		return expirationIndexMetrics{}, fmt.Errorf("expiration index deferred counter: %w", err)
+	}
+
 	swept, err := telemetry.GetCounter(meter, telemetry.ApiRedisStorageExpirationIndexSwept)
 	if err != nil {
 		return expirationIndexMetrics{}, fmt.Errorf("expiration index swept counter: %w", err)
@@ -81,6 +87,7 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 	return expirationIndexMetrics{
 		indexHealed:        healed,
 		indexRescored:      rescored,
+		indexDeferred:      deferred,
 		indexSwept:         swept,
 		sweptOrphan:        metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "orphan"))),
 		sweptDeadExecution: metric.WithAttributeSet(attribute.NewSet(attribute.String(sweptReasonAttr, "dead_execution"))),

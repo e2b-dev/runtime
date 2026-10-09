@@ -64,6 +64,9 @@ var (
 	// before it flushes, so its own metrics never carry the failure.
 	fcSnapshotLoadFailures = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCSnapshotLoadFailures))
 
+	// How a start that needs a CPU limit got it, so the rollout can see fallbacks and failures.
+	vcpuLimitStarts = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxVcpuLimit))
+
 	// Block histograms.
 	fcBlockBytes                 = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCBlockBytes))
 	fcBlockCount                 = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCBlockCount))

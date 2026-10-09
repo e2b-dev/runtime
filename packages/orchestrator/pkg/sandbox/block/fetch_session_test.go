@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,96 @@ func makeTestCacheForSession(t *testing.T, numBlocks int64) *Cache {
 	t.Cleanup(func() { _ = c.Close() })
 
 	return c
+}
+
+type cancelBetweenCheckAndWaitContext struct {
+	done       chan struct{}
+	errSampled chan struct{}
+	releaseErr chan struct{}
+
+	errCalls   atomic.Int32
+	cancelOnce sync.Once
+	afterMu    sync.Mutex
+	after      func()
+}
+
+func newCancelBetweenCheckAndWaitContext() *cancelBetweenCheckAndWaitContext {
+	ctx := new(cancelBetweenCheckAndWaitContext)
+	ctx.done = make(chan struct{})
+	ctx.errSampled = make(chan struct{})
+	ctx.releaseErr = make(chan struct{})
+
+	return ctx
+}
+
+func (c *cancelBetweenCheckAndWaitContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *cancelBetweenCheckAndWaitContext) Done() <-chan struct{}       { return c.done }
+func (c *cancelBetweenCheckAndWaitContext) Value(any) any               { return nil }
+
+func (c *cancelBetweenCheckAndWaitContext) Err() error {
+	if c.errCalls.Add(1) == 1 {
+		close(c.errSampled)
+		<-c.releaseErr
+
+		return nil
+	}
+
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func (c *cancelBetweenCheckAndWaitContext) AfterFunc(f func()) func() bool {
+	c.afterMu.Lock()
+	c.after = f
+	c.afterMu.Unlock()
+
+	return func() bool {
+		c.afterMu.Lock()
+		defer c.afterMu.Unlock()
+		if c.after == nil {
+			return false
+		}
+		c.after = nil
+
+		return true
+	}
+}
+
+func (c *cancelBetweenCheckAndWaitContext) cancel() {
+	c.cancelOnce.Do(func() {
+		close(c.done)
+
+		c.afterMu.Lock()
+		f := c.after
+		c.after = nil
+		c.afterMu.Unlock()
+		if f == nil {
+			return
+		}
+
+		go f()
+	})
+}
+
+// Mutex contention is not durably blocking for synctest. The channel token
+// mirrors the same critical section while mu remains the session's state lock.
+type fetchSessionTestMutex struct {
+	mu    *sync.Mutex
+	token chan struct{}
+}
+
+func (m *fetchSessionTestMutex) Lock() {
+	m.token <- struct{}{}
+	m.mu.Lock()
+}
+
+func (m *fetchSessionTestMutex) Unlock() {
+	m.mu.Unlock()
+	<-m.token
 }
 
 func TestFetchSession_FastPath(t *testing.T) {
@@ -174,6 +265,41 @@ func TestFetchSession_ContextCancellation(t *testing.T) {
 
 	require.ErrorIs(t, <-ch, context.Canceled)
 	require.Equal(t, int64(1), returned.Load())
+}
+
+func TestFetchSession_CancelBetweenCheckAndWait(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		cache := makeTestCacheForSession(t, 4)
+		s := newFetchSession(0, 4*fetchSessionBlockSize, cache)
+		s.cond.L = &fetchSessionTestMutex{mu: &s.mu, token: make(chan struct{}, 1)}
+		ctx := newCancelBetweenCheckAndWaitContext()
+		result := make(chan error, 1)
+
+		go func() { result <- s.registerAndWait(ctx, 0) }()
+
+		<-ctx.errSampled
+		ctx.cancel()
+		// Err still holds the condition lock. An unlocked callback must finish
+		// its real Broadcast before this returns; a locked callback cannot yet
+		// take the token. No Cond.Wait has registered at this point.
+		synctest.Wait()
+		close(ctx.releaseErr)
+		synctest.Wait()
+
+		select {
+		case err := <-result:
+			require.ErrorIs(t, err, context.Canceled)
+		default:
+			// Settle the intentionally stranded pre-fix waiter so the test
+			// leaves no goroutine or cache ownership behind after reporting RED.
+			s.fail(context.Canceled)
+			synctest.Wait()
+			require.ErrorIs(t, <-result, context.Canceled)
+			t.Fatal("context cancellation wakeup was lost between Err and Cond.Wait")
+		}
+	})
 }
 
 func TestFetchSession_TerminatedButCachedByPriorSession(t *testing.T) {

@@ -55,4 +55,5 @@ type TeamLimit struct {
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        int64
 	ApiTeamRpsList           int64
+	ApiTeamRpsDelete         int64
 }

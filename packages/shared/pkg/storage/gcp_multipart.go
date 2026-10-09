@@ -583,7 +583,9 @@ func (m *MultipartUploader) UploadFileInParallel(ctx context.Context, filePath s
 
 func (m *MultipartUploader) uploadParts(ctx context.Context, maxConcurrency int, numParts int, fileSize int64, file *os.File, uploadID string) ([]Part, error) {
 	g, ctx := errgroup.WithContext(ctx) // Context ONLY for waitgroup goroutines; canceled after errgroup finishes
-	g.SetLimit(maxConcurrency)          // Limit concurrent goroutines
+	// SetLimit(0) blocks every Go call, while a negative limit disables the
+	// bound. Always retain at least one admitted uploader.
+	g.SetLimit(max(maxConcurrency, 1))
 
 	// Thread-safe map to collect parts
 	var partsMu sync.Mutex

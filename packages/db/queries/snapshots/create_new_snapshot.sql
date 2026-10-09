@@ -56,6 +56,8 @@ snapshot as (
 -- the row is always inserted (CPU info is NULL if the source build is missing).
 new_build as (
     INSERT INTO "public"."env_builds" (
+        env_id,
+        team_id,
         vcpu,
         ram_mb,
         free_disk_size_mb,
@@ -73,6 +75,8 @@ new_build as (
         cpu_flags
     )
     VALUES (
+        (SELECT template_id FROM snapshot),
+        @team_id,
         @vcpu,
         @ram_mb,
         @free_disk_size_mb,

@@ -105,6 +105,13 @@ func Middleware(limiter requestLimiter, cfg Config, ff *featureflags.Client, met
 		}
 
 		mode := ff.StringFlag(c.Request.Context(), featureflags.RateLimitV2Mode)
+		if middleware.APIGroupFromContext(c) == "delete" &&
+			(mode == featureflags.APIGroupRateLimitEnabled || mode == featureflags.APIGroupRateLimitShadow) {
+			// An enabled delete flag inherits the global mode.
+			if deleteMode := ff.StringFlag(c.Request.Context(), featureflags.RateLimitDeleteMode); deleteMode != featureflags.APIGroupRateLimitEnabled {
+				mode = deleteMode
+			}
+		}
 		switch mode {
 		case featureflags.APIGroupRateLimitEnabled, featureflags.APIGroupRateLimitShadow:
 			checkLimitV2(c, limiter, requests, l, mode)
@@ -170,7 +177,8 @@ func checkLimitV1(c *gin.Context, limiter requestLimiter, cfg Config, ff *featur
 }
 
 var apiGroupRPSFields = map[string]func(*types.TeamLimits) int64{
-	"list": func(limits *types.TeamLimits) int64 { return limits.APITeamRPSList },
+	"list":   func(limits *types.TeamLimits) int64 { return limits.APITeamRPSList },
+	"delete": func(limits *types.TeamLimits) int64 { return limits.APITeamRPSDelete },
 }
 
 // Keys combine a team hash tag with an escaped method and route template to keep

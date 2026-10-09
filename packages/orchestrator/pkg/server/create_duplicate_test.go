@@ -40,6 +40,7 @@ func TestCreate_RefusesASandboxAlreadyLiveOnTheNode(t *testing.T) {
 			SandboxId:   live.Runtime.SandboxID,
 			ExecutionId: "exec-new",
 			Snapshot:    true,
+			Vcpu:        1,
 		},
 	})
 	require.Error(t, err)
@@ -65,7 +66,7 @@ func TestCreate_RefusesASandboxWhoseCreateIsInFlight(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = s.Create(t.Context(), &orchestrator.SandboxCreateRequest{
-		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1", ExecutionId: "exec-second", Snapshot: true},
+		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1", ExecutionId: "exec-second", Snapshot: true, Vcpu: 1},
 	})
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -87,7 +88,7 @@ func TestCreate_ReleasesTheIDWhenItFails(t *testing.T) {
 	s.info.MaxSandboxes.Store(0) // every create fails right after reserving
 
 	_, err := s.Create(t.Context(), &orchestrator.SandboxCreateRequest{
-		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1", Snapshot: true},
+		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1", Snapshot: true, Vcpu: 1},
 	})
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -131,7 +132,7 @@ func TestFailedStartReturnsBeforeCleanupAndRetainsReservation(t *testing.T) {
 		require.Equal(t, 1, stops)
 		require.Zero(t, releases)
 		_, err = s.Create(t.Context(), &orchestrator.SandboxCreateRequest{
-			Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1"},
+			Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-1", Vcpu: 1},
 		})
 		require.Equal(t, codes.AlreadyExists, status.Code(err))
 

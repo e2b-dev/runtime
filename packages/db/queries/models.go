@@ -34,6 +34,7 @@ type Cluster struct {
 	SandboxProxyDomain *string
 	AuthOrgID          *string
 	Name               string
+	DeletionProtection bool
 }
 
 type EnvAlias struct {

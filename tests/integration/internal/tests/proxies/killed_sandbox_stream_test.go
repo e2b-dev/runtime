@@ -31,7 +31,7 @@ func TestExecStreamEndsWithStatusWhenSandboxIsKilled(t *testing.T) {
 		Stdin:   &stdin,
 	})
 
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 
 	// A frame can only be appended between frames. sleep writes nothing, and

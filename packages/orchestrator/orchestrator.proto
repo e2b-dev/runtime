@@ -25,6 +25,9 @@ message SandboxConfig {
 
   int64 vcpu = 11;
   int64 ram_mb = 12;
+  // VM capacity on cold boot; 0 defaults to max(vcpu, recorded snapshot capacity).
+  // Memory resumes use recorded capacity; legacy resizes must pass the original size.
+  int64 max_vcpus = 28;
 
   string team_id = 13;
   // Maximum length of the sandbox in Hours.
@@ -176,6 +179,24 @@ message SandboxCreateResponse {
   // evaluation contexts differ. Empty from orchestrators that predate the
   // field.
   string resolved_firecracker_version = 4;
+
+  // The network mode the orchestrator selected for this execution and where
+  // callers must send its ingress traffic. Absent from orchestrators that
+  // predate routed networking; callers then keep using the worker endpoint
+  // they already resolve today.
+  optional SandboxNetworkPlacement network_placement = 5;
+}
+
+// The network placement of one execution of a sandbox: its mode, the router
+// serving it and the ingress endpoint a caller must use. The execution_id pins
+// the placement to that execution, so a caller can reject a placement that
+// belongs to a predecessor.
+message SandboxNetworkPlacement {
+  string execution_id = 1;
+  string network_mode = 2;
+  string router_id = 3;
+  string ingress_address = 4;
+  uint32 ingress_port = 5;
 }
 
 message SandboxUpdateRequest {

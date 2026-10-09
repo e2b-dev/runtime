@@ -46,7 +46,7 @@ func (f *failingWriteDevice) WriteZeroesAt(_, _ int64) (int, error) {
 func TestPathDirect_FlushReportsFailedWriteback(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	overlay := setupOverlay(t, 10*1024*1024)
@@ -74,7 +74,7 @@ func TestPathDirect_FlushReportsFailedWriteback(t *testing.T) {
 func TestPathDirect_FlushReportsWritebackFailedBeforeFlush(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	overlay := setupOverlay(t, 10*1024*1024)
@@ -99,7 +99,7 @@ func TestPathDirect_FlushReportsWritebackFailedBeforeFlush(t *testing.T) {
 func TestPathDirect_FlushPushesBufferedWrites(t *testing.T) {
 	t.Parallel()
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	overlay := setupOverlay(t, 10*1024*1024)

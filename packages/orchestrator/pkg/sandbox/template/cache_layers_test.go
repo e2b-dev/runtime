@@ -619,7 +619,10 @@ func TestStorageTemplate_DevicesResolved(t *testing.T) {
 	assert.False(t, tmpl.devicesResolved(), "the snapfile is still pending")
 
 	require.NoError(t, tmpl.snapfile.SetValue(nil))
-	assert.True(t, tmpl.devicesResolved(), "a device resolved to an error counts as resolved")
+	assert.False(t, tmpl.devicesResolved(), "the metafile is still pending")
+
+	require.NoError(t, tmpl.metafile.SetError(errors.New("metadata fetch failed")))
+	assert.True(t, tmpl.devicesResolved(), "a fetch child resolved to an error counts as resolved")
 }
 
 // swapLayerMetrics points the release counters and the miss counter at a

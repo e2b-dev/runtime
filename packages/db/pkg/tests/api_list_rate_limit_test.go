@@ -95,7 +95,7 @@ func TestAPIListRateMigrationRoundTrip(t *testing.T) {
 		t.Helper()
 
 		var limits string
-		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'api_team_rps_list')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
+		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'api_team_rps_list' - 'api_team_rps_delete')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
 		require.NoError(t, err)
 
 		return limits

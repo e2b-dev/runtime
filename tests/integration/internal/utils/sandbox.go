@@ -49,7 +49,6 @@ type SandboxConfig struct {
 	autoResume          *api.SandboxAutoResumeConfig
 	network             *api.SandboxNetworkConfig
 	allowInternetAccess *bool
-	secure              *bool
 }
 
 type SandboxOption func(config *SandboxConfig)
@@ -89,12 +88,6 @@ func WithAutoPauseMemory(memory bool) SandboxOption {
 func WithAutoResume(enabled bool) SandboxOption {
 	return func(config *SandboxConfig) {
 		config.autoResume = &api.SandboxAutoResumeConfig{Enabled: enabled}
-	}
-}
-
-func WithSecure(secure bool) SandboxOption {
-	return func(config *SandboxConfig) {
-		config.secure = &secure
 	}
 }
 
@@ -154,7 +147,6 @@ func SetupSandboxWithCleanup(t *testing.T, c *api.ClientWithResponses, options .
 			AutoResume:          config.autoResume,
 			Network:             config.network,
 			AllowInternetAccess: config.allowInternetAccess,
-			Secure:              config.secure,
 		}, setup.WithAPIKey())
 		require.NoError(t, err)
 

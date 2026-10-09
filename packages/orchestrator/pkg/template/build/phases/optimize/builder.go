@@ -152,6 +152,7 @@ func (pb *OptimizeBuilder) Build(
 	// Update metadata with prefetch mapping
 	updatedMetadata := sourceLayer.Metadata.WithPrefetch(&metadata.Prefetch{
 		Memory: memoryPrefetchMapping,
+		Origin: metadata.PrefetchOriginBuild,
 	})
 
 	// Upload the updated metadata

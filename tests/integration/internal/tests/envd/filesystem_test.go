@@ -90,7 +90,7 @@ func TestListDir(t *testing.T) {
 				Path:  testFolder,
 				Depth: tt.depth,
 			})
-			setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+			setup.SetSandboxHeader(t, req.Header(), sbx)
 			setup.SetUserHeader(t, req.Header(), "user")
 			folderListResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 			require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestFilePermissions(t *testing.T) {
 			Args: []string{"-la", userHome},
 		},
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	stream, err := envdClient.ProcessClient.Start(
 		ctx,
@@ -164,7 +164,7 @@ func TestStat(t *testing.T) {
 	req := connect.NewRequest(&filesystem.StatRequest{
 		Path: filePath,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	statResp, err := envdClient.FilesystemClient.Stat(ctx, req)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestListDirFileEntry(t *testing.T) {
 		Path:  testDir,
 		Depth: 1,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	folderListResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestListDirEntry(t *testing.T) {
 		Path:  testDir,
 		Depth: 1,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	folderListResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestListDirMixedEntries(t *testing.T) {
 		Path:  testDir,
 		Depth: 1,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	folderListResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 	require.NoError(t, err)
@@ -363,7 +363,7 @@ func TestRelativePath(t *testing.T) {
 		Path:  relativeTestFolder,
 		Depth: 0,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	folderListResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 	require.NoError(t, err)
@@ -395,7 +395,7 @@ func TestConcurrentFileUpload(t *testing.T) {
 			content := fmt.Sprintf("content of test_%d\n", i)
 
 			buffer, contentType := utils.CreateTextFile(t, filePath, content)
-			reqEditors := []envdAPI.RequestEditorFn{setup.WithSandbox(t, sbx.SandboxID)}
+			reqEditors := []envdAPI.RequestEditorFn{setup.WithSandbox(t, sbx)}
 
 			writeRes, err := envdClient.HTTPClient.PostFilesWithBodyWithResponse(
 				gCtx,
@@ -423,7 +423,7 @@ func TestConcurrentFileUpload(t *testing.T) {
 		Path:  baseDir,
 		Depth: 1,
 	})
-	setup.SetSandboxHeader(t, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbx)
 	setup.SetUserHeader(t, req.Header(), "user")
 	listResp, err := envdClient.FilesystemClient.ListDir(ctx, req)
 	require.NoError(t, err)

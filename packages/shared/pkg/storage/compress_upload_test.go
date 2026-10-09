@@ -210,6 +210,22 @@ func TestCompressStreamContextCancel(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestCompressStreamNonPositiveUploadConcurrency(t *testing.T) {
+	t.Parallel()
+
+	for _, maxConcurrency := range []int{-1, 0} {
+		t.Run(fmt.Sprintf("max_%d", maxConcurrency), func(t *testing.T) {
+			t.Parallel()
+
+			up := new(memPartUploader)
+			cfg := defaultCfg(CompressionZstd, 1, 128*1024)
+			_, _, err := compressStream(t.Context(), bytes.NewReader([]byte("payload")), cfg, up, maxConcurrency, nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, up.parts)
+		})
+	}
+}
+
 func TestClampCloudMinPartSize(t *testing.T) {
 	t.Parallel()
 

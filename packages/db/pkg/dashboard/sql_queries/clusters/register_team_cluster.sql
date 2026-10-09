@@ -1,4 +1,6 @@
 -- name: CreateCluster :one
+-- deletion_protection is set only on a new row. Registering an existing cluster
+-- again leaves its stored protection unchanged.
 INSERT INTO public.clusters (
     id,
     name,
@@ -6,7 +8,8 @@ INSERT INTO public.clusters (
     endpoint_tls,
     token,
     sandbox_proxy_domain,
-    auth_org_id
+    auth_org_id,
+    deletion_protection
 )
 VALUES (
     COALESCE(sqlc.narg(cluster_id)::uuid, gen_random_uuid()),
@@ -15,7 +18,8 @@ VALUES (
     sqlc.arg(endpoint_tls)::boolean,
     sqlc.arg(token)::text,
     sqlc.narg(sandbox_proxy_domain)::text,
-    sqlc.narg(auth_org_id)::text
+    sqlc.narg(auth_org_id)::text,
+    sqlc.arg(deletion_protection)::boolean
 )
 ON CONFLICT (id) DO UPDATE
 SET id = EXCLUDED.id
@@ -27,11 +31,43 @@ WHERE clusters.name = EXCLUDED.name
   AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
 RETURNING id;
 
--- name: ClusterHasActiveEnvironments :one
+-- name: ClusterDeletionProtected :one
 SELECT EXISTS (
-    SELECT FROM public.active_envs
-    WHERE cluster_id = sqlc.arg(cluster_id)::uuid
+    SELECT FROM public.clusters
+    WHERE id = sqlc.arg(cluster_id)::uuid
+      AND deletion_protection
 );
+
+-- name: ClusterUsedByMultipleTeams :one
+-- True when more than one team is assigned to the cluster or owns live
+-- environments on it. One team's own environments do not count: deleting the
+-- cluster soft-deletes them.
+SELECT COUNT(DISTINCT team_id) > 1
+FROM (
+    SELECT id AS team_id FROM public.teams WHERE cluster_id = sqlc.arg(cluster_id)::uuid
+    UNION
+    SELECT team_id FROM public.active_envs WHERE cluster_id = sqlc.arg(cluster_id)::uuid
+) AS cluster_teams;
+
+-- name: SoftDeleteClusterEnvironments :many
+-- Step 1 of cluster environment cleanup (run in a tx): soft-deletes every live
+-- template, snapshot template and paused sandbox snapshot on the cluster. The
+-- UPDATE waits on rows a concurrent build registration has locked, so the
+-- alias and active-build cleanup run as separate statements afterwards: their
+-- fresh snapshots see rows that registration committed during the wait.
+UPDATE public.envs
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE cluster_id = sqlc.arg(cluster_id)::uuid
+  AND deleted_at IS NULL
+RETURNING id;
+
+-- name: ReleaseEnvironmentsAliases :exec
+DELETE FROM public.env_aliases
+WHERE env_id = ANY(sqlc.arg(env_ids)::text[]);
+
+-- name: DeleteEnvironmentsActiveBuilds :exec
+DELETE FROM public.active_template_builds
+WHERE template_id = ANY(sqlc.arg(env_ids)::text[]);
 
 -- name: DetachDeletedTemplatesFromCluster :exec
 UPDATE public.envs

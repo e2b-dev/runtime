@@ -14,6 +14,7 @@ import (
 	"os"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -32,7 +33,46 @@ import (
 
 const (
 	loopDelay = 5 * time.Millisecond
+
+	// maxEnvdResultBodySize caps a JSON result the orchestrator decodes from envd. The
+	// guest writes it; /metrics's is a few KB even with its 32 OOM kills.
+	maxEnvdResultBodySize = 1 << 20
+
+	// envdErrorBodyRunes is the length, in runes, an error or log line cuts a failed call's body to.
+	envdErrorBodyRunes = 100
+	// envdErrorBodyLimit is the most of a failed call's body worth reading. Any
+	// envdErrorBodyRunes runes fit in that many times utf8.UTFMax bytes, and the
+	// extra byte lets Truncate still tell that a longer body was cut.
+	envdErrorBodyLimit = envdErrorBodyRunes*utf8.UTFMax + 1
 )
+
+// envdErrorBody reads the start of a failed envd response for an error or log
+// line. The guest writes the body, so only enough of it to build the message is read.
+func envdErrorBody(r io.Reader) string {
+	body, _ := io.ReadAll(io.LimitReader(r, envdErrorBodyLimit))
+
+	return utils.Truncate(string(body), envdErrorBodyRunes)
+}
+
+// decodeEnvdResult decodes a guest-supplied JSON result, reading at most maxEnvdResultBodySize.
+func decodeEnvdResult(r io.Reader, v any) error {
+	return json.NewDecoder(io.LimitReader(r, maxEnvdResultBodySize)).Decode(v)
+}
+
+// cancelOnClose ends a request's context when its body is closed, so the request's
+// deadline stays in force while the caller reads the body.
+type cancelOnClose struct {
+	io.ReadCloser
+
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+
+	return err
+}
 
 // envdInitExitType classifies the outcome of an envd init call.
 type envdInitExitType string
@@ -73,12 +113,11 @@ const (
 	envdOpFsthaw   envdOp = "fsthaw"
 )
 
-// doRequestWithInfiniteRetries does a request with infinite retries until the context is done.
+// doRequestWithInfiniteRetries POSTs /init with infinite retries until the context is done.
 // The parent context must be bounded — by a deadline/timeout, or by a cancel
 // the caller races against sandbox liveness (WaitForEnvd, bestEffortEnvdReinit).
 func (s *Sandbox) doRequestWithInfiniteRetries(
 	ctx context.Context,
-	method,
 	address string,
 ) (*http.Response, int64, error) {
 	requestCount := int64(0)
@@ -92,6 +131,8 @@ func (s *Sandbox) doRequestWithInfiniteRetries(
 		DefaultWorkdir: utils.DerefOrDefault(s.Config.Envd.DefaultWorkdir, ""),
 		VolumeMounts:   s.convertMounts(s.Config.VolumeMounts),
 		CaBundle:       s.CABundle,
+		// A snapshot may resume with a different number of guest CPUs online.
+		CpuCount: s.guestCpuCount(),
 	}
 
 	for {
@@ -104,7 +145,7 @@ func (s *Sandbox) doRequestWithInfiniteRetries(
 
 		requestCount++
 		reqCtx, cancel := context.WithTimeout(ctx, s.internalConfig.EnvdInitRequestTimeout)
-		request, err := http.NewRequestWithContext(reqCtx, method, address, bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(reqCtx, http.MethodPost, address, bytes.NewReader(body))
 		if err != nil {
 			cancel()
 
@@ -118,11 +159,12 @@ func (s *Sandbox) doRequestWithInfiniteRetries(
 		}
 
 		response, err := sandboxHttpClient.Do(request)
-		cancel()
-
 		if err == nil {
+			response.Body = &cancelOnClose{ReadCloser: response.Body, cancel: cancel}
+
 			return response, requestCount, nil
 		}
+		cancel()
 
 		select {
 		case <-ctx.Done():
@@ -167,21 +209,19 @@ func (s *Sandbox) callEnvdFreeze(ctx context.Context, timeout time.Duration, hie
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-
-		return envd.FreezeResult{}, false, fmt.Errorf("freeze returned %d: %s", resp.StatusCode, utils.Truncate(string(body), 100))
+		return envd.FreezeResult{}, false, fmt.Errorf("freeze returned %d: %s", resp.StatusCode, envdErrorBody(resp.Body))
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeEnvdResult(resp.Body, &result); err != nil {
 		return envd.FreezeResult{}, false, fmt.Errorf("decode freeze result: %w", err)
 	}
 
 	return result, true, nil
 }
 
-// callEnvdUnfreeze calls envd's native POST /unfreeze endpoint. Reserved for
-// the pause-failure rollback path; the resume thaw runs via /init's deferred
-// unfreeze and does not use this.
+// callEnvdUnfreeze calls envd's native POST /unfreeze endpoint. Used by the
+// pause-failure rollback and after an in-place checkpoint; the resume thaw runs
+// inside /init and does not use this.
 func (s *Sandbox) callEnvdUnfreeze(ctx context.Context, timeout time.Duration) error {
 	return s.callEnvdPostOp(ctx, timeout, envdOpUnfreeze)
 }
@@ -220,13 +260,11 @@ func (s *Sandbox) callEnvdCollapse(ctx context.Context, timeout time.Duration) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-
-		return envd.CollapseResult{}, fmt.Errorf("collapse returned %d: %s", resp.StatusCode, utils.Truncate(string(body), 100))
+		return envd.CollapseResult{}, fmt.Errorf("collapse returned %d: %s", resp.StatusCode, envdErrorBody(resp.Body))
 	}
 
 	var result envd.CollapseResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeEnvdResult(resp.Body, &result); err != nil {
 		return envd.CollapseResult{}, fmt.Errorf("decode collapse result: %w", err)
 	}
 
@@ -246,9 +284,7 @@ func (s *Sandbox) postEnvd(ctx context.Context, timeout time.Duration, path stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-
-		return fmt.Errorf("%s returned %d: %s", path, resp.StatusCode, utils.Truncate(string(body), 100))
+		return fmt.Errorf("%s returned %d: %s", path, resp.StatusCode, envdErrorBody(resp.Body))
 	}
 
 	return nil
@@ -325,9 +361,7 @@ func (s *Sandbox) CallEnvdUpgrade(ctx context.Context, localSrcPath, guestBinPat
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-
-		return false, fmt.Errorf("upgrade returned %d: %s", resp.StatusCode, utils.Truncate(string(body), 100))
+		return false, fmt.Errorf("upgrade returned %d: %s", resp.StatusCode, envdErrorBody(resp.Body))
 	}
 
 	// envd answered instead of exec'ing — no swap happened, exec not confirmed.
@@ -514,7 +548,7 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 
 	address := s.envdServerURL() + "/init"
 
-	response, count, err := s.doRequestWithInfiniteRetries(ctx, http.MethodPost, address)
+	response, count, err := s.doRequestWithInfiniteRetries(ctx, address)
 	if err != nil {
 		s.log().Error(ctx, "failed to init envd after retries",
 			logger.WithEnvdVersion(s.Config.Envd.Version),
@@ -565,6 +599,12 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	if d := response.Header.Get("X-Envd-Defaults"); d != "" {
 		s.compareEnvdDefaults(ctx, d)
 	}
+	// What envd did with cpuCount (X-Envd-Cpus): a refused count must not pass silently.
+	if err := verifyEnvdCpuCount(response.Header.Get("X-Envd-Cpus"), s.guestCpuCount(), s.resolvedVmVcpus); err != nil {
+		telemetry.ReportError(ctx, "envd did not take the cpu count", err,
+			telemetry.WithSandboxID(s.Runtime.SandboxID),
+			telemetry.WithEnvdVersion(s.LiveEnvdVersion()))
+	}
 	// The memory protection configured on envd's cgroup chain (X-Envd-Memory). Read
 	// before the counters below so the cohort it derives labels them for this start.
 	if m := response.Header.Get(envdMemoryHeader); m != "" {
@@ -581,16 +621,11 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		envdInitCalls.Add(ctx, 1, metric.WithAttributes(callAttributes(envdInitExitSuccess)...))
 	}
 
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read envd init response body: %w", err)
-	}
-
 	if response.StatusCode != http.StatusNoContent {
 		s.log().Error(ctx, "envd init request failed",
 			logger.WithEnvdVersion(s.Config.Envd.Version),
 			zap.Int("status_code", response.StatusCode),
-			zap.String("response_body", utils.Truncate(string(body), 100)),
+			zap.String("response_body", envdErrorBody(response.Body)),
 		)
 
 		return fmt.Errorf("unexpected status code: %d", response.StatusCode)
@@ -603,6 +638,56 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	)
 
 	span.SetStatus(codes.Ok, fmt.Sprintf("envd init returned %d", response.StatusCode))
+
+	return nil
+}
+
+// guestCpuCount is the CPU count sent on /init: vcpu, or the VM's size when a resume allowed a smaller VM.
+func (s *Sandbox) guestCpuCount() int {
+	if s.resolvedVmVcpus > 0 && s.resolvedVmVcpus < s.Config.Vcpu {
+		return int(s.resolvedVmVcpus)
+	}
+
+	return int(s.Config.Vcpu)
+}
+
+// envdCpus is envd's X-Envd-Cpus report; its JSON tags match envd's cpuReport.
+type envdCpus struct {
+	Online   int    `json:"online"`
+	Possible int    `json:"possible"`
+	Target   int    `json:"target"`
+	Rejected string `json:"rejected"`
+}
+
+// The header is guest input: capped on the way in and bounded on the way into a log line.
+const (
+	envdCpusHeaderMaxBytes = 512
+	envdCpusRejectedMaxLen = 100
+)
+
+// errEnvdCannotSetCpus is an envd without CPU hotplug in a VM with spare vCPUs: they all stay online.
+var errEnvdCannotSetCpus = errors.New("envd sent no X-Envd-Cpus, so it cannot offline the spare vcpus")
+
+// verifyEnvdCpuCount checks envd's X-Envd-Cpus answer to the cpuCount sent on /init. No header is an
+// envd that predates CPU hotplug, which matters only when the VM has more vCPUs than the sandbox uses.
+func verifyEnvdCpuCount(header string, want int, vmVcpus int64) error {
+	if header == "" {
+		if vmVcpus > int64(want) {
+			return errEnvdCannotSetCpus
+		}
+
+		return nil
+	}
+	r, err := decodeEnvdHeader[envdCpus](header, envdCpusHeaderMaxBytes)
+	if err != nil {
+		return fmt.Errorf("unreadable X-Envd-Cpus: %w", err)
+	}
+	if r.Rejected != "" {
+		return fmt.Errorf("cpu count %d rejected, guest keeps %d of %d: %s", want, r.Target, r.Possible, utils.Truncate(r.Rejected, envdCpusRejectedMaxLen))
+	}
+	if r.Target != want {
+		return fmt.Errorf("cpu count %d sent, guest targets %d of %d", want, r.Target, r.Possible)
+	}
 
 	return nil
 }

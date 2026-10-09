@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,7 @@ import (
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -705,6 +707,78 @@ func TestNewSandboxFromV2(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &want))
 		assert.Equal(t, want, got)
 	})
+}
+
+func TestPostSandboxes_AlwaysRequiresSecureCapableTemplate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		secure *bool
+	}{
+		{name: "secure omitted"},
+		{name: "secure false", secure: new(false)},
+		{name: "secure true", secure: new(true)},
+	}
+
+	db := testutils.SetupDatabase(t)
+	redis := redis_utils.SetupInstance(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	teamSlug := testutils.GetTeamSlug(t, ctx, db, teamID)
+
+	flags, err := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
+	require.NoError(t, err)
+
+	store := &APIStore{
+		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		featureFlags:  flags,
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.templateCache.Close(ctx))
+	})
+
+	alias := "secure-access-required"
+	templateID := createTestTemplate(ctx, t, db, teamID)
+	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &teamSlug)
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+
+			body, err := json.Marshal(api.PostSandboxesJSONRequestBody{
+				TemplateID: id.WithNamespace(teamSlug, alias),
+				Secure:     tt.secure,
+			})
+			require.NoError(t, err)
+
+			ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
+			ginCtx.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
+				Team: &authqueries.Team{
+					ID:   teamID,
+					Slug: teamSlug,
+				},
+				Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
+			})
+
+			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
+			store.PostSandboxes(ginCtx)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+			var apiErr api.Error
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &apiErr))
+			assert.Equal(t, int32(http.StatusBadRequest), apiErr.Code)
+			assert.Equal(t, "You need to re-build template to allow using secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.", apiErr.Message)
+		})
+	}
 }
 
 func TestPostSandboxes_MissingTagDisclosure(t *testing.T) {

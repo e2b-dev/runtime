@@ -53,6 +53,16 @@ type Handler struct {
 	cmd *exec.Cmd
 	tty *os.File
 
+	// freezer admits the fork. Kept for Start, which forks a non-PTY child after New has
+	// returned; see spawn for why the admission has to sit right around the clone.
+	freezer *cgroups.WorkloadFreezer
+
+	// childIO are this process's copies of the pipe ends the child inherits. Start closes
+	// them once it is done with the fork -- refused, failed or started: after a fork the
+	// child holds its own copies, and without one nothing ever will -- so closing them is
+	// what lets the readers see EOF either way. See newChildPipes.
+	childIO []*os.File
+
 	cancel context.CancelFunc
 
 	outCtx    context.Context //nolint:containedctx // todo: refactor so this can be removed
@@ -188,7 +198,7 @@ func New(
 	req *rpc.StartRequest,
 	logger *zerolog.Logger,
 	defaults *execcontext.Defaults,
-	cgroupManager cgroups.Manager,
+	freezer *cgroups.WorkloadFreezer,
 	cancel context.CancelFunc,
 ) (*Handler, error) {
 	// User command string for logging (without the internal wrapper details).
@@ -218,7 +228,7 @@ func New(
 		}
 	}
 
-	cgroupFD, ok := cgroupManager.GetFileDescriptor(getProcType(req))
+	cgroupFD, ok := freezer.Manager().GetFileDescriptor(getProcType(req))
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{
@@ -283,6 +293,7 @@ func New(
 		outCancel: outCancel,
 		EndEvent:  NewMultiplexedChannel[rpc.ProcessEvent_End](0),
 		logger:    logger,
+		freezer:   freezer,
 	}
 	h.cgType = getProcType(req)
 
@@ -295,11 +306,23 @@ func New(
 	if req.GetPty() != nil {
 		// The pty should ideally start only in the Start method, but the package does not support that and we would have to code it manually.
 		// The output of the pty should correctly be passed though.
-		tty, err := pty.StartWithSize(cmd, &pty.Winsize{
-			Cols: uint16(req.GetPty().GetSize().GetCols()),
-			Rows: uint16(req.GetPty().GetSize().GetRows()),
+		var tty *os.File
+		err := h.spawn(ctx, func() (err error) {
+			tty, err = pty.StartWithSize(cmd, &pty.Winsize{
+				Cols: uint16(req.GetPty().GetSize().GetCols()),
+				Rows: uint16(req.GetPty().GetSize().GetRows()),
+			})
+
+			return err
 		})
 		if err != nil {
+			// Neither fan-out loop has anything left to deliver, and nothing else will ever
+			// close their sources: the readers and their closer below are never started, and
+			// Wait is never reached.
+			outCancel()
+			close(outMultiplex.Source)
+			close(h.EndEvent.Source)
+
 			startErr := fmt.Errorf("error starting pty with command '%s' in dir '%s' with '%d' cols and '%d' rows: %w", userCmd, cmd.Dir, req.GetPty().GetSize().GetCols(), req.GetPty().GetSize().GetRows(), err)
 
 			return nil, connect.NewError(StartErrorCode(startErr), startErr)
@@ -341,15 +364,40 @@ func New(
 
 		h.tty = tty
 	} else {
-		stdout, err := cmd.StdoutPipe()
+		// The pipes are created here rather than through exec.Cmd's StdoutPipe and friends,
+		// because only cmd.Start and cmd.Wait close those, so a start that never reaches
+		// cmd.Start would leak their fds and the readers below. Owning them lets Start release
+		// them on every outcome -- including a start refused while the workload is frozen for
+		// a pause, which a client polling through the pause meets on every attempt.
+		pipes, err := newChildPipes(req.Stdin == nil || req.GetStdin())
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error creating stdout pipe for command '%s': %w", userCmd, err))
-		}
-		if f, ok := stdout.(*os.File); ok {
-			h.stdoutF = f // captured for live-upgrade handover
+			// As for a failed PTY start: nothing will ever feed or close the fan-out sources.
+			outCancel()
+			close(outMultiplex.Source)
+			close(h.EndEvent.Source)
+
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error creating stdio pipes for command '%s': %w", userCmd, err))
 		}
 
+		cmd.Stdout, cmd.Stderr = pipes.stdoutW, pipes.stderrW
+		// Captured for live-upgrade handover.
+		h.stdoutF, h.stderrF = pipes.stdoutR, pipes.stderrR
+		h.childIO = []*os.File{pipes.stdoutW, pipes.stderrW}
+		// For backwards compatibility we still set the stdin if not explicitly disabled.
+		// If stdin is disabled, the process will use /dev/null as stdin.
+		if pipes.stdinR != nil {
+			cmd.Stdin = pipes.stdinR
+			h.stdin, h.stdinF = pipes.stdinW, pipes.stdinW
+			h.childIO = append(h.childIO, pipes.stdinR)
+		}
+
+		stdout, stderr := pipes.stdoutR, pipes.stderrR
+
+		// Each reader closes its own read end once the stream ends: at EOF nothing more can
+		// arrive, and nobody else closes it now that exec.Cmd does not own the pipe.
 		outWg.Go(func() {
+			defer stdout.Close()
+
 			readBuf := make([]byte, stdChunkSize)
 
 			for {
@@ -383,15 +431,9 @@ func New(
 			}
 		})
 
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error creating stderr pipe for command '%s': %w", userCmd, err))
-		}
-		if f, ok := stderr.(*os.File); ok {
-			h.stderrF = f // captured for live-upgrade handover
-		}
-
 		outWg.Go(func() {
+			defer stderr.Close()
+
 			readBuf := make([]byte, stdChunkSize)
 
 			for {
@@ -424,20 +466,6 @@ func New(
 				}
 			}
 		})
-
-		// For backwards compatibility we still set the stdin if not explicitly disabled
-		// If stdin is disabled, the process will use /dev/null as stdin
-		if req.Stdin == nil || req.GetStdin() == true {
-			stdin, err := cmd.StdinPipe()
-			if err != nil {
-				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error creating stdin pipe for command '%s': %w", userCmd, err))
-			}
-
-			h.stdin = stdin
-			if f, ok := stdin.(*os.File); ok {
-				h.stdinF = f // captured for live-upgrade handover
-			}
-		}
 	}
 
 	go func() {
@@ -572,11 +600,22 @@ func (p *Handler) WriteTty(data []byte) error {
 	return nil
 }
 
-func (p *Handler) Start(requestTimeout time.Duration) (uint32, error) {
+func (p *Handler) Start(ctx context.Context, requestTimeout time.Duration) (uint32, error) {
 	// Pty is already started in the New method
 	if p.tty == nil {
-		err := p.cmd.Start()
+		err := p.spawn(ctx, p.cmd.Start)
+		// Whatever happened, our copies of the child's ends must go: a child that was forked
+		// has its own, and one that was refused or failed never will. Either way this is
+		// what lets the readers see EOF and exit.
+		p.closeChildIO()
 		if err != nil {
+			// No process will ever read stdin, and Wait, which closes it on the normal path,
+			// is never reached for a start that did not happen. Wait is also what closes the
+			// end event's source, whose fan-out loop would otherwise run for good. The data
+			// event's closes on its own once the readers above see EOF.
+			p.closeStdinPipe()
+			close(p.EndEvent.Source)
+
 			return 0, fmt.Errorf("error starting process '%s': %w", p.userCommand(), err)
 		}
 	}
@@ -594,6 +633,48 @@ func (p *Handler) Start(requestTimeout time.Duration) (uint32, error) {
 	return uint32(p.cmd.Process.Pid), nil
 }
 
+// spawn runs fork, admitted by the freezer for the pre-spawn probe and the fork.
+//
+// A process placed into a frozen cgroup with clone3(CLONE_INTO_CGROUP) never reaches
+// execve, and Go's fork/exec carries CLONE_VFORK, so the forking thread blocks in the
+// kernel without giving up its P -- and the next garbage-collection stop-the-world stops
+// every goroutine in envd behind it, the resume thaw included. The freezer refuses the
+// spawn while such a freeze is in effect, and holds its sweep off until the fork has
+// returned. See cgroups.WorkloadFreezer.BeginSpawn.
+//
+// Scoped to the fork itself, not to everything that prepares one: a freeze waits for every
+// admitted spawn, so anything held inside -- a user-database lookup, a stat of a cwd on a
+// network mount -- would be charged to the pause's drain budget.
+func (p *Handler) spawn(ctx context.Context, fork func() error) error {
+	release, err := p.freezer.BeginSpawn(ctx, p.cgType)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	return fork()
+}
+
+// closeChildIO closes this process's copies of the child's pipe ends. Idempotent.
+func (p *Handler) closeChildIO() {
+	for _, f := range p.childIO {
+		_ = f.Close()
+	}
+	p.childIO = nil
+}
+
+// closeStdinPipe closes the stdin write end if CloseStdin has not already. The handover
+// copy in stdinF is the same *os.File, whose Close is idempotent.
+func (p *Handler) closeStdinPipe() {
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+
+	if p.stdin != nil {
+		_ = p.stdin.Close()
+		p.stdin = nil
+	}
+}
+
 func (p *Handler) Wait() {
 	// Wait for the output pipes to be closed or cancelled.
 	<-p.outCtx.Done()
@@ -601,6 +682,14 @@ func (p *Handler) Wait() {
 	err := p.cmd.Wait()
 
 	p.tty.Close()
+	// The handler owns the stdio pipes, so it closes them here as exec.Cmd.Wait closes the
+	// ones it creates. The read ends matter on a kill or a timeout: a grandchild still
+	// holding the write ends would otherwise keep the readers -- and the Start stream that
+	// waits on them -- open until it exits. A reader that already hit EOF has closed its
+	// end, and a second Close is harmless.
+	p.closeStdinPipe()
+	_ = p.stdoutF.Close()
+	_ = p.stderrF.Close()
 
 	var errMsg *string
 
@@ -646,4 +735,48 @@ func (p *Handler) Wait() {
 	// Ensure the process cancel is called to cleanup resources.
 	// As it is called after end event and Wait, it should not affect command execution or returned events.
 	p.cancel()
+}
+
+// childPipes are the stdio pipes of a non-PTY child. The *W / stdinR ends go to the child;
+// stdoutR, stderrR and stdinW stay with envd.
+type childPipes struct {
+	stdoutR, stdoutW *os.File
+	stderrR, stderrW *os.File
+	stdinR, stdinW   *os.File
+}
+
+// newChildPipes creates every pipe up front, so a failure part-way closes what was created
+// before anything reads from it. withStdin leaves stdin nil when disabled, which exec.Cmd
+// turns into /dev/null.
+func newChildPipes(withStdin bool) (childPipes, error) {
+	var (
+		p       childPipes
+		created []*os.File
+	)
+	pipe := func(r, w **os.File) error {
+		var err error
+		if *r, *w, err = os.Pipe(); err != nil {
+			return err
+		}
+		created = append(created, *r, *w)
+
+		return nil
+	}
+
+	err := pipe(&p.stdoutR, &p.stdoutW)
+	if err == nil {
+		err = pipe(&p.stderrR, &p.stderrW)
+	}
+	if err == nil && withStdin {
+		err = pipe(&p.stdinR, &p.stdinW)
+	}
+	if err != nil {
+		for _, f := range created {
+			_ = f.Close()
+		}
+
+		return childPipes{}, err
+	}
+
+	return p, nil
 }

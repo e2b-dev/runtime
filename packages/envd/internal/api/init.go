@@ -11,7 +11,9 @@ import (
 	"net/netip"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awnumar/memguard"
@@ -175,6 +177,23 @@ type effectiveDefaults struct {
 // be a second declaration to keep in step.
 const memoryHeader = "X-Envd-Memory"
 
+// unobservedHeader carries the freezer's unobserved-/init count on a /init 204 whose client
+// is still connected when its headers are decided: the number of handlers whose thaw ran
+// and finished with no client left, since the last such response or the last freeze,
+// whichever came later. Always set on that response, so a zero reads as "counted none" and
+// only an envd predating the header sends nothing. An error response carries nothing and
+// resets nothing: the orchestrator is to read the header off a served 204 only.
+const unobservedHeader = "X-Envd-Init-Unobserved"
+
+// thawHeader answers "skip" on a /init that carried thaw: "skip" and so installed no thaw.
+const thawHeader = "X-Envd-Thaw"
+
+// clockCorrectionHeader carries the time, in whole milliseconds truncated, that /init added to
+// its timestamp before the clock gates (see the correction in PostInit). Set whenever the
+// request carried a timestamp and passed auth, whether or not the gates then stepped the
+// clock.
+const clockCorrectionHeader = "X-Envd-Init-Clock-Correction"
+
 func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -204,6 +223,18 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	operationID := logs.AssignOperationID()
 	logger := a.logger.With().Str(string(logs.OperationIDKey), operationID).Logger()
 
+	// Why this request's cpuCount was refused, reported on its own response only.
+	var cpuErr error
+
+	// Read on entry, before the first body read and before the /init lock, and compared
+	// again by the thaw below: a freeze that lands at any point before that thaw, including
+	// while this handler waits on either, has voided it. Under an Expect: 100-continue request the 100 Continue, and so the
+	// body, goes out only at the first body read, after this read: a handler that entered
+	// after a freeze holds the new generation and thaws, and one that entered before it keeps
+	// the old one whatever it then waits on. A request sent with its body is dispatched
+	// whenever the guest gets to it, so for it the entry is only as early as the dispatch.
+	freezeGen := a.workloadFreezer.FreezeGeneration(ctx)
+
 	if r.Body != nil {
 		// Read raw body so we can wipe it after parsing
 		body, err := io.ReadAll(r.Body)
@@ -215,6 +246,9 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
+		// The timestamp is the host's time when the body was sent, so this is the reading the
+		// correction below measures this handler's own delay from.
+		bodyRead := a.now()
 
 		var initRequest PostInitJSONBody
 		if len(body) > 0 {
@@ -268,8 +302,29 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		a.auditFrozenSet(w, logger)
 
 		// Run on every /init regardless of the Timestamp guard, so stale/replayed
-		// requests still thaw cgroups after pre-pause freeze.
-		defer a.unfreezeUserCgroups(ctx, logger)
+		// requests still thaw cgroups after pre-pause freeze, unless a freeze came after
+		// this handler entered or the request asked to skip the thaw. Once: the success path
+		// runs it before the response is decided, and the defer covers the error returns.
+		thaw := func() {}
+		if skipThaw(initRequest.Thaw) {
+			// Set when decided, so an error response this handler still writes says it too.
+			w.Header().Set(thawHeader, string(Skip))
+		} else {
+			thaw = sync.OnceFunc(func() { a.unfreezeUserCgroups(ctx, logger, freezeGen) })
+			defer thaw()
+		}
+
+		if initRequest.Timestamp != nil {
+			// The host minted the timestamp before it sent the body; everything since this
+			// handler read it -- the lock, the token check, the audit -- is time the guest clock
+			// would otherwise lose. Moving the target forward cannot cause a backward step, and
+			// the newest-wins compare and the step's bands apply to the corrected value.
+			correction := a.now().Sub(bodyRead)
+			corrected := initRequest.Timestamp.Add(correction)
+			initRequest.Timestamp = &corrected
+			w.Header().Set(clockCorrectionHeader, strconv.FormatInt(correction.Milliseconds(), 10))
+			logger.Info().Dur("clock_correction", correction).Msg("corrected the /init timestamp by the handler's delay")
+		}
 
 		// Restore the access token (and env) BEFORE marking the envd initialized.
 		// On a live-upgraded envd, WithAuthorization only fails CLOSED while
@@ -285,6 +340,14 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 
 				return
 			}
+
+			// A refused count must not fail the resume.
+			// The refusal is reported as "rejected" on the X-Envd-Cpus header.
+			if initRequest.CpuCount != nil {
+				if cpuErr = a.cpuManager.SetTarget(*initRequest.CpuCount); cpuErr != nil {
+					logger.Warn().Err(cpuErr).Int("cpu_count", *initRequest.CpuCount).Msg("ignoring cpu count")
+				}
+			}
 		}
 
 		// Auth passed and token restored: mark the envd initialized so the
@@ -292,6 +355,19 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		// up — a guest process that can't pass auth can't flip this and drive an
 		// unauthenticated upgrade.
 		a.initialized.Store(true)
+
+		// Before the response is decided: a bodiless 204 reaches the wire only when the
+		// handler returns, after the thaw, so a client that leaves during a slow thaw must be
+		// seen as gone below rather than handed the count in a response it will never read.
+		thaw()
+
+		// Only a response whose client is still connected when its headers are decided
+		// carries the count; one written into a connection already dead would reset it
+		// unread. (A client that leaves between this check and the handler's return is
+		// handed the count anyway: the header bytes leave only at return.)
+		if ctx.Err() == nil {
+			w.Header().Set(unobservedHeader, strconv.FormatInt(a.workloadFreezer.TakeUnobservedInits(), 10))
+		}
 	}
 
 	go func() { //nolint:contextcheck // TODO: fix this later
@@ -303,6 +379,7 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	// After SetData, so this reports what is actually in effect rather than what was
 	// requested. Set before WriteHeader.
 	a.reportEffectiveDefaults(w, logger)
+	a.reportCPUs(w, cpuErr)
 
 	w.Header().Set("Cache-Control", "no-store")
 
@@ -358,7 +435,7 @@ func (a *API) SetData(ctx context.Context, logger zerolog.Logger, data PostInitJ
 		// Check if current time differs significantly from the received timestamp
 		if shouldSetSystemTime(time.Now(), *data.Timestamp) {
 			logger.Debug().Msgf("Setting sandbox start time to: %v", *data.Timestamp)
-			if err := setSystemTime(*data.Timestamp); err != nil {
+			if err := a.setSystemTime(*data.Timestamp); err != nil {
 				logger.Error().Msgf("Failed to set system time: %v", err)
 			}
 		} else {
@@ -593,9 +670,9 @@ func (a *API) PostFreeze(w http.ResponseWriter, r *http.Request, params PostFree
 	}
 }
 
-// PostUnfreeze thaws user/pty cgroups directly. Exists ONLY for the
-// orchestrator's pause-failure rollback path; the resume thaw runs via /init's
-// deferred unfreeze and must not be replaced by this endpoint. Best-effort: tries
+// PostUnfreeze thaws user/pty cgroups directly. Exists for the orchestrator's
+// pause-failure rollback and for the thaw after an in-place checkpoint; the resume thaw
+// runs inside /init, before it answers, and must not be replaced by this endpoint. Best-effort: tries
 // every cgroup even if one fails so a partial failure cannot leave the rest frozen.
 func (a *API) PostUnfreeze(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
@@ -613,11 +690,37 @@ func (a *API) PostUnfreeze(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// unfreezeUserCgroups unfreezes user/pty cgroups (idempotent if not frozen).
-// The freezer detaches the wait from ctx cancellation so the unfreeze always
-// completes.
-func (a *API) unfreezeUserCgroups(ctx context.Context, logger zerolog.Logger) {
-	if err := a.workloadFreezer.Unfreeze(ctx); err != nil {
+// skipThaw reports whether a /init asked to leave the workload frozen. Only "skip" does: an
+// absent field, "inline" and any value this envd does not know thaw, the side on which a
+// guest is never left frozen.
+func skipThaw(v *PostInitJSONBodyThaw) bool {
+	return v != nil && *v == Skip
+}
+
+// unfreezeUserCgroups unfreezes user/pty cgroups (idempotent if not frozen), unless a
+// freeze has advanced the generation since entryGen was read, and this handler must not
+// undo it: a pause's freeze is kept in its snapshot, or thawed through /unfreeze on the
+// pause's own failure or after an in-place checkpoint; the live upgrade's handover freeze
+// is thawed by the outgoing envd if the handover fails, or by the post-upgrade /init in the
+// process that replaces this one, or, if that /init never comes, by the 60 s post-upgrade
+// fallback thaw; the thaw watchdog backs up both freezes. A thaw that finishes with the
+// client gone counts the handler as unobserved, decided after the thaw, which is the event
+// the count is about, and inside the freeze lock, so a freeze cannot zero the count between
+// the thaw and the count. A handler whose thaw is withheld is never counted. The freezer
+// detaches the wait from ctx cancellation so the unfreeze always completes.
+func (a *API) unfreezeUserCgroups(ctx context.Context, logger zerolog.Logger, entryGen uint64) {
+	current, matched, _, err := a.workloadFreezer.ThawIfGeneration(ctx, entryGen, func() {
+		if ctx.Err() != nil {
+			a.workloadFreezer.AddUnobservedInit()
+		}
+	})
+	if !matched {
+		logger.Warn().Uint64("entry_freeze_generation", entryGen).Uint64("current_freeze_generation", current).
+			Msg("a freeze came after this /init entered; not thawing the workload")
+
+		return
+	}
+	if err != nil {
 		logger.Warn().Err(err).Msg("unfreeze workload cgroups")
 	}
 }

@@ -23,7 +23,7 @@ func TestCreateSandboxV2DefaultTimeout(t *testing.T) {
 
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV2SandboxesWithResponse(t.Context(), api.NewSandboxV2{
+	resp, err := c.PostV2SandboxesWithResponse(t.Context(), nil, api.NewSandboxV2{
 		TemplateID: setup.SandboxTemplateID,
 	}, setup.WithAPIKey())
 	require.NoError(t, err)

@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/fcgate"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	apiorch "github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -63,6 +64,7 @@ const (
 	maxIamTokens = 5
 )
 
+// PostSandboxes creates a sandbox with secured envd access; the body's secure field is ignored.
 func (a *APIStore) PostSandboxes(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -75,11 +77,12 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 		return
 	}
 
+	body.Secure = new(true)
 	a.createSandbox(c, body, sandbox.SandboxTimeoutDefault)
 }
 
 // PostV2Sandboxes creates a sandbox with secured envd access; the request has no secure field to opt out.
-func (a *APIStore) PostV2Sandboxes(c *gin.Context) {
+func (a *APIStore) PostV2Sandboxes(c *gin.Context, _ api.PostV2SandboxesParams) {
 	ctx := c.Request.Context()
 
 	body, err := ginutils.ParseBody[api.PostV2SandboxesJSONRequestBody](ctx, c)
@@ -91,7 +94,9 @@ func (a *APIStore) PostV2Sandboxes(c *gin.Context) {
 		return
 	}
 
-	a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+	idempotency.Execute(c, body, func() {
+		a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+	})
 }
 
 func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
@@ -313,14 +318,6 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 			}
 
 			apiorch.ApplyValidatedEgressProxy(network.Egress, canonical)
-		}
-
-		// Make sure envd seucre access is enforced when public access is disabled,
-		// This requirement forces users using newer features to secure sandboxes properly.
-		if !sharedUtils.DerefOrDefault(network.Ingress.AllowPublicAccess, types.AllowPublicAccessDefault) && envdAccessToken == nil {
-			a.sendAPIStoreError(c, http.StatusBadRequest, "You cannot create a sandbox without public access unless you enable secure envd access via 'secure' flag.")
-
-			return
 		}
 	}
 

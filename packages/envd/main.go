@@ -24,7 +24,10 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/logs/exporter"
 	"github.com/e2b-dev/infra/packages/envd/internal/permissions"
 	publicport "github.com/e2b-dev/infra/packages/envd/internal/port"
+	"github.com/e2b-dev/infra/packages/envd/internal/reaper"
+	"github.com/e2b-dev/infra/packages/envd/internal/reexec"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	filesystemRpc "github.com/e2b-dev/infra/packages/envd/internal/services/filesystem"
 	processRpc "github.com/e2b-dev/infra/packages/envd/internal/services/process"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
@@ -153,6 +156,7 @@ func withCORS(h http.Handler) http.Handler {
 }
 
 func main() {
+	reexec.Main()
 	parseFlags()
 
 	if versionFlag {
@@ -274,13 +278,22 @@ func run() error {
 		}()
 	}
 
+	var helpers reaper.Registry
+	for _, pid := range handover.Helpers {
+		helpers.Adopt(int(pid))
+	}
+
 	var oomWatcher *host.OOMWatcher
+	cpuManager := cpus.NewNoopManager()
 	if !isNotFC {
 		oomWatcher = host.NewOOMWatcher(&envLogger)
 		go oomWatcher.Watch(ctx)
+
+		cpuManager = cpus.New(envLogger, &helpers)
+		cpuManager.Start(ctx)
 	}
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, logFlusher)
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, cpuManager, logFlusher)
 	if resumeHandover {
 		// Restore the NFS mount ledger carried across the upgrade before the
 		// post-upgrade /init runs setupNFS, so it recognizes a still-live mount
@@ -329,7 +342,7 @@ func run() error {
 	defer portScanner.Destroy()
 
 	portLogger := l.With().Str("logger", "port-forwarder").Logger()
-	portForwarder := publicport.NewForwarder(&portLogger, portScanner, cgroupManager)
+	portForwarder := publicport.NewForwarder(&portLogger, portScanner, workloadFreezer)
 	if resumeHandover {
 		// Re-adopt the socats carried across the upgrade before the forwarder's
 		// first scan, so it recognizes already-forwarded ports instead of spawning
@@ -392,12 +405,14 @@ func run() error {
 		mounts := service.ExportMounts()
 		forwards, releaseForwards := portForwarder.ExportForwardsHold()
 		defer releaseForwards()
+		helperPids, releaseHelpers := helpers.ExportHold()
+		defer releaseHelpers()
 
 		// Upgrade only returns on failure — a successful execve replaces this
 		// process (and drops the held freeze/watcher/forward locks with it). On
 		// failure the OLD envd is still running; the deferred releases + thaw keep
 		// the old version serving rather than leaving the sandbox hung.
-		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards)
+		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards, helperPids)
 	}
 
 	// Orchestrator-driven trigger: authenticated POST /upgrade with the target

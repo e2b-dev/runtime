@@ -12,6 +12,7 @@ func TestKillReasonValues(t *testing.T) {
 		KillReasonAdmin:               "admin",
 		KillReasonOrphaned:            "orphaned",
 		KillReasonBaseTemplateMissing: "base_template_missing",
+		KillReasonTeamDeleted:         "team_deleted",
 	} {
 		if string(reason) != want {
 			t.Errorf("KillReason = %q, want %q", string(reason), want)

@@ -567,7 +567,8 @@ func snapshotsByTemplateAscParams(p queries.GetSnapshotsWithCursorParams, templa
 // template filter is set. The variants return identically-shaped rows, converted back
 // to the descending row type so callers share a single conversion path; the compiler
 // enforces that shape, and TestSnapshotCursorQueriesShareOneProjection enforces that
-// the four queries still select it the same way.
+// the four queries still select it the same way. It reads from the read replica when
+// one is configured: a snapshot paused or deleted a moment ago can lag there briefly.
 func (a *APIStore) throttledGetSnapshots(ctx context.Context, order utils.SortDirection, templateID *string, params queries.GetSnapshotsWithCursorParams) ([]queries.GetSnapshotsWithCursorRow, error) {
 	if err := a.sandboxListSem.Acquire(ctx, 1); err != nil {
 		return nil, err
@@ -576,10 +577,10 @@ func (a *APIStore) throttledGetSnapshots(ctx context.Context, order utils.SortDi
 
 	switch {
 	case templateID == nil && order != utils.SortAsc:
-		return a.sqlcDB.GetSnapshotsWithCursor(ctx, params)
+		return a.sqlcReadDB.GetSnapshotsWithCursor(ctx, params)
 
 	case templateID == nil:
-		rows, err := a.sqlcDB.GetSnapshotsWithCursorAsc(ctx, snapshotsAscParams(params))
+		rows, err := a.sqlcReadDB.GetSnapshotsWithCursorAsc(ctx, snapshotsAscParams(params))
 		if err != nil {
 			return nil, err
 		}
@@ -589,7 +590,7 @@ func (a *APIStore) throttledGetSnapshots(ctx context.Context, order utils.SortDi
 		}), nil
 
 	case order != utils.SortAsc:
-		rows, err := a.sqlcDB.GetSnapshotsByTemplateWithCursor(ctx, snapshotsByTemplateParams(params, *templateID))
+		rows, err := a.sqlcReadDB.GetSnapshotsByTemplateWithCursor(ctx, snapshotsByTemplateParams(params, *templateID))
 		if err != nil {
 			return nil, err
 		}
@@ -599,7 +600,7 @@ func (a *APIStore) throttledGetSnapshots(ctx context.Context, order utils.SortDi
 		}), nil
 
 	default:
-		rows, err := a.sqlcDB.GetSnapshotsByTemplateWithCursorAsc(ctx, snapshotsByTemplateAscParams(params, *templateID))
+		rows, err := a.sqlcReadDB.GetSnapshotsByTemplateWithCursorAsc(ctx, snapshotsByTemplateAscParams(params, *templateID))
 		if err != nil {
 			return nil, err
 		}

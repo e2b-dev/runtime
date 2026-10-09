@@ -140,7 +140,11 @@ func TestAStatThatLandsAfterItsLookupsGaveUpWarmsTheCache(t *testing.T) {
 		return len(c.statFlights) == 0 && len(c.entries) == 1
 	}, 10*time.Second, 5*time.Millisecond, "the late stat must retire its flight and warm the cache")
 
-	// The mount answers now, so the next resume takes its own stat and hits.
+	// The mount answers now, so the next resume takes its own stat and hits. The
+	// short budget was for the stall phase; kept, it would measure how fast a
+	// loaded runner schedules the fresh stat's goroutine, not the mount, so the
+	// default applies from here.
+	c.lookupBudget = 0
 	r := NewResolver(c, OpLive)
 	version, err := r.Version(t.Context(), src)
 	require.NoError(t, err)
@@ -258,6 +262,10 @@ func TestAStalledCandidateCheckWarmsTheCacheWhenItLands(t *testing.T) {
 		return len(c.entries) == 1
 	}, 10*time.Second, 5*time.Millisecond, "the late candidate stat must warm the cache")
 
+	// The stall phase is over: the candidate check and the version lookup each
+	// take a fresh bounded stat, and under the short budget they would measure
+	// the runner's scheduling latency rather than the mount.
+	c.lookupBudget = 0
 	r := NewResolver(c, OpLive)
 	path, version, reason := featureflags.ResolveEnvdUpgrade(t.Context(), "promoted", "0.6.0", src, r.Version, r.Stat)
 	require.Empty(t, reason)

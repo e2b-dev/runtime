@@ -3,19 +3,21 @@ ENV := $(shell cat ../../.last_used_env || echo "not-set")
 PREFIX := $(strip $(subst ",,$(PREFIX)))
 
 goose := GOOSE_DRIVER=postgres GOOSE_DBSTRING=$(POSTGRES_CONNECTION_STRING) go tool goose -table "_migrations" -dir "migrations"
-goose-local := GOOSE_DBSTRING=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable go tool goose -table "_migrations" -dir "migrations" postgres
+
+# The migrator applies River's migrations after goose's; the goose CLI cannot.
+migrator := go run ./scripts/migrator.go
 
 
 .PHONY: migrate
 migrate:
 	@echo "Applying Postgres migration *$(notdir $@)* for ${ENV}"
-	@$(goose) up
+	@POSTGRES_CONNECTION_STRING=$(POSTGRES_CONNECTION_STRING) $(migrator)
 	@echo "Done"
 
 .PHONY: migrate-local
 migrate-local:
 	@echo "Applying Postgres migration *$(notdir $@)* for ${ENV}"
-	@$(goose-local) up
+	@POSTGRES_CONNECTION_STRING=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable $(migrator)
 	@echo "Done"
 
 .PHONY: migrate/up

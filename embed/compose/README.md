@@ -51,7 +51,11 @@ the hub is [`../README.md`](../README.md).
   show what you have; an
   older Compose rejects the compose file with an error on `required:` before
   anything starts.
-- 12 GiB RAM recommended and 20 GiB free disk. `HUGEPAGES=2048` reserves
+- 12 GiB RAM recommended and 20 GiB free disk. A pause the disk cannot hold is
+  refused before it starts, keeping 1 GiB free
+  (`PAUSE_ADMISSION_DISK_HEADROOM_MIB`), instead of failing midway; the
+  estimate counts the sandbox's whole memory, so a large sandbox needs that
+  much free disk to pause. `HUGEPAGES=2048` reserves
   4 GiB of that RAM for sandboxes, and `preflight` does not check RAM, so on
   a smaller host the first signal is `host-setup` failing with `FIX: give the
   host more memory (12 GiB recommended) or lower HUGEPAGES`. Lower
@@ -388,12 +392,9 @@ restarts; a single machine has nowhere to drain them to.
 - The team API key rotates only through the seed (set `TEAM_API_KEY`, or
   remove the key file, then `up`), not through an API call, and the old key
   keeps working for up to five minutes afterwards.
-- With an api release that reads `PAUSE_REFUSAL_RESTORE` (the pin here
-  predates it), a pause the node refuses — it is still persisting the
-  sandbox's parent — leaves the sandbox running and answers 503; retry it.
-  Until then a refused pause ends the old way, with the sandbox killed and a
-  500. A full disk is not a refusal in the pinned orchestrator: that pause
-  fails after it has started and ends the same old way.
+- A pause the node refuses — it is still persisting the sandbox's parent, or
+  the disk cannot hold the capture — leaves the sandbox running and answers
+  503 (`PAUSE_REFUSAL_RESTORE`); retry it.
 - Container logs are capped: every service keeps at most five 50 MiB log
   files (`x-logging` in `compose.yaml`), so `docker compose logs` shows about
   the last 250 MiB per service and older lines are gone. Without the cap a

@@ -1562,7 +1562,7 @@ paths:
   /admin/clusters:
     post:
       summary: Create a cluster
-      description: Creates a cluster whose configuration cannot be modified.
+      description: Creates a cluster whose configuration cannot be modified. The cluster starts with deletion protection turned on.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []
@@ -1591,8 +1591,8 @@ paths:
 
   /admin/clusters/{clusterID}:
     delete:
-      summary: Delete an unreferenced cluster
-      description: Deletes a cluster after all team assignments are detached and no active environment references remain. Releases soft-deleted environment references in the same transaction while preserving environment and build history. Repeating a completed deletion succeeds.
+      summary: Delete a cluster and its environments
+      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []
@@ -1615,7 +1615,7 @@ paths:
     get:
       operationId: managementClusterDestroyReadiness
       summary: Check cluster destroy readiness
-      description: Checks whether this exact cluster has active templates or snapshots. Soft-deleted history and team assignments do not block this check. Returns success if the cluster is absent. This read does not change resources or prevent later template creation.
+      description: Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
       tags: [control-plane-management]
       security:
         - AdminJWTAuth: []
@@ -1623,13 +1623,13 @@ paths:
         - $ref: "#/components/parameters/clusterID"
       responses:
         "204":
-          description: No active templates or snapshots reference the cluster.
+          description: At most one team uses the cluster.
         "400":
           $ref: "#/components/responses/400"
         "401":
           $ref: "#/components/responses/401"
         "409":
-          description: Active templates or snapshots must be deleted before destroying the cluster.
+          description: The cluster has deletion protection turned on, or more than one team uses it and the other teams and their templates must move off it before destroying the cluster.
           content:
             application/json:
               schema:
@@ -2286,6 +2286,7 @@ paths:
     put:
       operationId: managementRegisterCluster
       summary: Register a cluster (v1).
+      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again keeps its stored deletion protection.
       tags: [control-plane-management]
       security:
         - AdminJWTAuth: []
@@ -2308,14 +2309,16 @@ paths:
           $ref: "#/components/responses/500"
     delete:
       operationId: managementDeleteCluster
-      summary: Delete an unreferenced cluster (v1).
-      description: Deletes a cluster after all team assignments are detached and no active environment references remain. Releases soft-deleted environment references in the same transaction while preserving environment and build history. Repeating a completed deletion succeeds.
+      summary: Delete a cluster and its environments (v1).
+      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [control-plane-management]
       security:
         - AdminJWTAuth: []
       responses:
         "204":
           description: Cluster is absent.
+        "400":
+          $ref: "#/components/responses/400"
         "401":
           $ref: "#/components/responses/401"
         "409":

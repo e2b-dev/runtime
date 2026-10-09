@@ -16,7 +16,7 @@ import (
 	"github.com/e2b-dev/infra/tests/integration/internal/utils"
 )
 
-func createSandbox(t *testing.T, sbxWithAuth bool, reqEditors ...api.RequestEditorFn) *api.PostSandboxesResponse {
+func createSandbox(t *testing.T, reqEditors ...api.RequestEditorFn) *api.PostSandboxesResponse {
 	t.Helper()
 
 	utils.AcquireSandboxSlot(t)
@@ -30,7 +30,6 @@ func createSandbox(t *testing.T, sbxWithAuth bool, reqEditors ...api.RequestEdit
 	resp, err := c.PostSandboxesWithResponse(ctx, api.NewSandbox{
 		TemplateID: setup.SandboxTemplateID,
 		Timeout:    &sbxTimeout,
-		Secure:     &sbxWithAuth,
 	}, reqEditors...)
 
 	require.NoError(t, err)
@@ -54,7 +53,7 @@ func TestAccessToAuthorizedPathWithoutToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -62,7 +61,7 @@ func TestAccessToAuthorizedPathWithoutToken(t *testing.T) {
 
 	// set up the request to list the directory
 	req := connect.NewRequest(&filesystem.ListDirRequest{Path: "/"})
-	setup.SetSandboxHeader(t, req.Header(), sbx.JSON201.SandboxID)
+	setup.SetInsecureSandboxHeader(t, req.Header(), sbx.JSON201.SandboxID)
 	setup.SetUserHeader(t, req.Header(), "user")
 
 	_, err := envdClient.FilesystemClient.ListDir(ctx, req)
@@ -82,7 +81,7 @@ func TestAccessToAuthorizedPathWithoutToken(t *testing.T) {
 func TestInitIsNotReachableThroughTheSandboxURL(t *testing.T) { //nolint:tparallel // the subtests must not queue; see the loop below
 	t.Parallel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -106,7 +105,7 @@ func TestInitIsNotReachableThroughTheSandboxURL(t *testing.T) { //nolint:tparall
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := t.Context()
 
-			reqSetup := []envd.RequestEditorFn{setup.WithSandbox(t, sbx.JSON201.SandboxID)}
+			reqSetup := []envd.RequestEditorFn{setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID)}
 			if tt.token != nil {
 				reqSetup = append(reqSetup, setup.WithEnvdAccessToken(t, *tt.token))
 			}
@@ -127,7 +126,7 @@ func TestAccessAuthorizedPathWithResumedSandboxWithValidAccessToken(t *testing.T
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -136,9 +135,8 @@ func TestAccessAuthorizedPathWithResumedSandboxWithValidAccessToken(t *testing.T
 
 	// set up the request to list the directory
 	req := connect.NewRequest(&filesystem.ListDirRequest{Path: "/"})
-	setup.SetSandboxHeader(t, req.Header(), sbxMeta.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbxMeta)
 	setup.SetUserHeader(t, req.Header(), "user")
-	setup.SetAccessTokenHeader(t, req.Header(), *sbxMeta.EnvdAccessToken)
 
 	filePath := "demo.txt"
 	fileContent := "Hello, world!"
@@ -168,8 +166,7 @@ func TestAccessAuthorizedPathWithResumedSandboxWithValidAccessToken(t *testing.T
 	fileResponse, err := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
-		setup.WithEnvdAccessToken(t, *sbxMeta.EnvdAccessToken),
+		setup.WithSandbox(t, sbx.JSON201),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +181,7 @@ func TestAccessAuthorizedPathWithResumedSandboxWithoutAccessToken(t *testing.T) 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -193,9 +190,8 @@ func TestAccessAuthorizedPathWithResumedSandboxWithoutAccessToken(t *testing.T) 
 
 	// set up the request to list the directory
 	req := connect.NewRequest(&filesystem.ListDirRequest{Path: "/"})
-	setup.SetSandboxHeader(t, req.Header(), sbxMeta.SandboxID)
+	setup.SetSandboxHeader(t, req.Header(), sbxMeta)
 	setup.SetUserHeader(t, req.Header(), "user")
-	setup.SetAccessTokenHeader(t, req.Header(), *sbxMeta.EnvdAccessToken)
 
 	filePath := "demo.txt"
 	fileContent := "Hello, world!"
@@ -221,11 +217,10 @@ func TestAccessAuthorizedPathWithResumedSandboxWithoutAccessToken(t *testing.T) 
 
 	assert.Equal(t, http.StatusCreated, sbxResume.StatusCode())
 
-	// try to get the file with the without access token
 	fileResponse, err := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 	if err != nil {
 		t.Fatal(err)

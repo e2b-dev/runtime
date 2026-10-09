@@ -5,18 +5,20 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	_ "github.com/lib/pq" //nolint:blank-imports
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/database"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"go.uber.org/zap"
 
+	dbmodule "github.com/e2b-dev/infra/packages/db"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
-const trackingTable = "_migrations"
-
-// CheckMigrationVersion refuses a database older than the caller requires.
+// CheckMigrationVersion refuses a database older than the caller requires, or
+// one whose River migrations are not current.
 //
 // It only reads. The version comes from an explicit store rather than goose's
 // package-level version API, for two reasons. That API's read path creates the
@@ -37,7 +39,7 @@ func CheckMigrationVersion(ctx context.Context, connectionString string, expecte
 		}
 	}()
 
-	store, err := database.NewStore(goose.DialectPostgres, trackingTable)
+	store, err := database.NewStore(goose.DialectPostgres, dbmodule.TrackingTable)
 	if err != nil {
 		return fmt.Errorf("failed to create migration store: %w", err)
 	}
@@ -56,6 +58,18 @@ func CheckMigrationVersion(ctx context.Context, connectionString string, expecte
 	// We allow higher versions to account for future migrations and rollbacks
 	if version < expectedMigration {
 		return fmt.Errorf("database version %d is less than expected %d", version, expectedMigration)
+	}
+
+	riverMigrator, err := dbmodule.RiverMigrator(riverdatabasesql.New(db))
+	if err != nil {
+		return err
+	}
+	validation, err := riverMigrator.Validate(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to validate river migrations: %w", err)
+	}
+	if !validation.OK {
+		return fmt.Errorf("river migrations are not current: %s", strings.Join(validation.Messages, "; "))
 	}
 
 	logger.L().Info(ctx, "Database version", zap.Int64("version", version), zap.Int64("expected_migration", expectedMigration))

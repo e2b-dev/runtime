@@ -31,7 +31,17 @@ const (
 
 	cgroupKillTimeout      = 2 * time.Second
 	cgroupKillPollInterval = 100 * time.Millisecond
+
+	// vcpuCgroupName is the threaded child holding only the vCPU threads, so a quota there spares the VMM.
+	vcpuCgroupName = "vcpu"
+	// VcpuThreadPrefix is how Firecracker names its vCPU threads ("fc_vcpu 3").
+	VcpuThreadPrefix = "fc_vcpu"
+	// cpuPeriodUsec is the cpu.max period; only quota/period sets the CPU count, the period only the granularity.
+	cpuPeriodUsec = 100000
 )
+
+// ErrNoCgroup is a limit asked of a nil, noop or removed handle: nothing would enforce it.
+var ErrNoCgroup = errors.New("sandbox has no cgroup to limit")
 
 // Stats contains resource usage statistics from a cgroup
 type Stats struct {
@@ -53,13 +63,179 @@ type Stats struct {
 // closes the cgroup directory FD as a safety net if ReleaseCgroupFD() was not
 // called, and deletes the cgroup directory.
 type CgroupHandle struct {
-	cgroupName     string
-	path           string
-	file           *os.File // Open FD to the cgroup directory (nil after ReleaseCgroupFD)
-	memoryPeakFile *os.File // Open FD to memory.peak for per-FD reset (nil after Remove or if not available)
-	manager        *managerImpl
-	removed        bool
-	noop           bool // true for handles created by NoopManager (no real cgroup backing)
+	cgroupName          string
+	path                string
+	file                *os.File // Open FD to the cgroup directory (nil after ReleaseCgroupFD)
+	memoryPeakFile      *os.File // Open FD to memory.peak for per-FD reset (nil after Remove or if not available)
+	manager             *managerImpl
+	removed             bool
+	noop                bool // true for handles created by NoopManager (no real cgroup backing)
+	vcpuThreadsConfined bool // true only after every expected vCPU thread was moved to the child cgroup
+}
+
+// CanLimit reports whether a limit set on this handle would hold anything: false for nil, noop and removed.
+func (h *CgroupHandle) CanLimit() bool {
+	return h != nil && !h.noop && !h.removed
+}
+
+// SetSandboxCpuLimit sets cpu.max on the whole cgroup; 0 lifts it.
+func (h *CgroupHandle) SetSandboxCpuLimit(ctx context.Context, limitCpus int64) error {
+	if !h.CanLimit() {
+		if limitCpus > 0 {
+			return ErrNoCgroup
+		}
+
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(h.path, "cpu.max"), []byte(cpuMaxValue(limitCpus)), 0); err != nil {
+		return fmt.Errorf("failed to write cpu.max: %w", err)
+	}
+
+	logger.L().Debug(ctx, "limited sandbox cgroup",
+		zap.String("cgroup_name", h.cgroupName),
+		zap.Int64("cpus", limitCpus))
+
+	return nil
+}
+
+// cpuMaxValue renders a CPU count as a cpu.max quota, "max" for 0.
+func cpuMaxValue(limitCpus int64) string {
+	if limitCpus <= 0 {
+		return "max"
+	}
+
+	return fmt.Sprintf("%d %d", limitCpus*cpuPeriodUsec, cpuPeriodUsec)
+}
+
+// ConfineVcpuThreads limits the VM's vCPU threads to targetOnlineVcpus. It requires all
+// firecrackerVcpuCount threads to be found so none can escape the limit.
+func (h *CgroupHandle) ConfineVcpuThreads(ctx context.Context, targetOnlineVcpus, firecrackerVcpuCount int64) error {
+	if targetOnlineVcpus <= 0 || firecrackerVcpuCount <= targetOnlineVcpus {
+		return nil
+	}
+	if !h.CanLimit() {
+		return ErrNoCgroup
+	}
+	if h.vcpuThreadsConfined {
+		return h.setVcpuCpuLimit(targetOnlineVcpus)
+	}
+	tids, err := vcpuThreads(h.path)
+	if err != nil {
+		return err
+	}
+	if int64(len(tids)) != firecrackerVcpuCount {
+		return fmt.Errorf("vcpu threads in sandbox cgroup do not match the vm: found %d of %d", len(tids), firecrackerVcpuCount)
+	}
+	if err := h.createVcpuCgroup(); err != nil {
+		return err
+	}
+	if err := h.setVcpuCpuLimit(targetOnlineVcpus); err != nil {
+		return err
+	}
+	moved, err := h.moveVcpuThreads(tids)
+	if err != nil {
+		return err
+	}
+	if int64(moved) != firecrackerVcpuCount {
+		return fmt.Errorf("vcpu threads moved to child cgroup do not match the vm: moved %d of %d", moved, firecrackerVcpuCount)
+	}
+	h.vcpuThreadsConfined = true
+
+	logger.L().Debug(ctx, "confined vcpu threads",
+		zap.String("cgroup_name", h.cgroupName),
+		zap.Int64("cpus", targetOnlineVcpus),
+		zap.Int("threads_moved", moved))
+
+	return nil
+}
+
+func (h *CgroupHandle) vcpuCgroupPath() string {
+	return filepath.Join(h.path, vcpuCgroupName)
+}
+
+// createVcpuCgroup makes the threaded vcpu child with the cpu controller, removing it again on failure.
+func (h *CgroupHandle) createVcpuCgroup() (err error) {
+	vcpuPath := h.vcpuCgroupPath()
+	if err := os.Mkdir(vcpuPath, 0o755); err != nil {
+		return fmt.Errorf("failed to create vcpu cgroup: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(vcpuPath)
+		}
+	}()
+	if err := os.WriteFile(filepath.Join(vcpuPath, "cgroup.type"), []byte("threaded"), 0); err != nil {
+		return fmt.Errorf("failed to make vcpu cgroup threaded: %w", err)
+	}
+	// cpu is a threaded controller, so the kernel allows this below a cgroup that has processes.
+	if err := os.WriteFile(filepath.Join(h.path, "cgroup.subtree_control"), []byte("+cpu"), 0); err != nil {
+		return fmt.Errorf("failed to enable cpu controller for vcpu cgroup: %w", err)
+	}
+
+	return nil
+}
+
+// setVcpuCpuLimit sets the vcpu child's quota; a repeat changes it in place.
+func (h *CgroupHandle) setVcpuCpuLimit(limitCpus int64) error {
+	if err := os.WriteFile(filepath.Join(h.vcpuCgroupPath(), "cpu.max"), []byte(cpuMaxValue(limitCpus)), 0); err != nil {
+		return fmt.Errorf("failed to write vcpu cpu.max: %w", err)
+	}
+
+	return nil
+}
+
+// moveVcpuThreads moves the given threads into the child; one that exited in between is skipped.
+func (h *CgroupHandle) moveVcpuThreads(tids []int) (int, error) {
+	threadsPath := filepath.Join(h.vcpuCgroupPath(), "cgroup.threads")
+	moved := 0
+	for _, tid := range tids {
+		err := os.WriteFile(threadsPath, []byte(strconv.Itoa(tid)), 0)
+		if errors.Is(err, unix.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return moved, fmt.Errorf("failed to move thread %d into vcpu cgroup: %w", tid, err)
+		}
+		moved++
+	}
+
+	return moved, nil
+}
+
+// vcpuThreads lists the fc_vcpu threads in the sandbox cgroup itself, not in its vcpu child.
+func vcpuThreads(cgroupPath string) ([]int, error) {
+	data, err := os.ReadFile(filepath.Join(cgroupPath, "cgroup.threads"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cgroup.threads: %w", err)
+	}
+
+	var tids []int
+	for _, tid := range parseUniqueThreadIDs(data) {
+		comm, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(tid), "comm"))
+		if err != nil {
+			// The thread exited between the listing and the read.
+			continue
+		}
+		if strings.HasPrefix(string(comm), VcpuThreadPrefix) {
+			tids = append(tids, tid)
+		}
+	}
+
+	return tids, nil
+}
+
+// parseUniqueThreadIDs deduplicates cgroup.threads entries before they count as vCPU threads.
+func parseUniqueThreadIDs(data []byte) []int {
+	var tids []int
+	for field := range strings.FieldsSeq(string(data)) {
+		tid, err := strconv.Atoi(field)
+		if err != nil || slices.Contains(tids, tid) {
+			continue
+		}
+		tids = append(tids, tid)
+	}
+
+	return tids
 }
 
 // GetFD returns the file descriptor for use with SysProcAttr.CgroupFD.
@@ -191,15 +367,13 @@ func (h *CgroupHandle) kill(ctx context.Context) error {
 }
 
 // Remove closes all open FDs and deletes the cgroup directory.
-// The handle should not be used after calling Remove.
+// After an error, the handle may only be used to retry Remove.
 // Safe to call multiple times. Returns error if removal fails
 // (but tolerates the cgroup having been auto-cleaned by the kernel).
 func (h *CgroupHandle) Remove(ctx context.Context) error {
 	if h == nil || h.noop || h.removed {
 		return nil
 	}
-
-	h.removed = true
 
 	// Close the directory FD if ReleaseCgroupFD() was not called
 	if h.file != nil {
@@ -214,8 +388,9 @@ func (h *CgroupHandle) Remove(ctx context.Context) error {
 
 	// Try plain rmdir first. The kernel removes the directory once the
 	// last process exits, so the common path is a single rmdir.
-	rmErr := os.Remove(h.path)
+	rmErr := h.rmdir()
 	if rmErr == nil || os.IsNotExist(rmErr) {
+		h.removed = true
 		logger.L().Debug(ctx, "removed cgroup for sandbox",
 			zap.String("cgroup_name", h.cgroupName),
 			zap.String("path", h.path))
@@ -240,7 +415,7 @@ func (h *CgroupHandle) Remove(ctx context.Context) error {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		err := os.Remove(h.path)
+		err := h.rmdir()
 		if err == nil || os.IsNotExist(err) {
 			break
 		}
@@ -254,11 +429,21 @@ func (h *CgroupHandle) Remove(ctx context.Context) error {
 		}
 	}
 
+	h.removed = true
 	logger.L().Debug(ctx, "removed cgroup for sandbox after cgroup.kill",
 		zap.String("cgroup_name", h.cgroupName),
 		zap.String("path", h.path))
 
 	return nil
+}
+
+// rmdir removes the vcpu child first, or the parent stays busy.
+func (h *CgroupHandle) rmdir() error {
+	if err := os.Remove(filepath.Join(h.path, vcpuCgroupName)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return os.Remove(h.path)
 }
 
 // Path returns the filesystem path to the cgroup directory

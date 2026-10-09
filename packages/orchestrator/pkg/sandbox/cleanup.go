@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -28,6 +29,25 @@ type Cleanup struct {
 	mu     sync.Mutex
 }
 
+const lateCleanupLogMessage = "cleanup callback ran after cleanup completed"
+
+func runLateCleanup(ctx context.Context, f func(context.Context) error, priority bool) {
+	runCtx := context.WithoutCancel(ctx)
+	start := time.Now()
+	err := f(runCtx)
+	fields := []zap.Field{
+		zap.Bool("priority", priority),
+		zap.Duration("duration", time.Since(start)),
+	}
+	if err != nil {
+		logger.L().Error(runCtx, lateCleanupLogMessage, append(fields, zap.Error(err))...)
+
+		return
+	}
+
+	logger.L().Info(runCtx, lateCleanupLogMessage, fields...)
+}
+
 func NewCleanup() *Cleanup {
 	return &Cleanup{}
 }
@@ -37,35 +57,32 @@ func (c *Cleanup) AddNoContext(ctx context.Context, f func() error) {
 }
 
 func (c *Cleanup) Add(ctx context.Context, f func(ctx context.Context) error) {
-	if c.hasRun.Load() == true {
-		err := f(context.WithoutCancel(ctx))
-		if err != nil {
-			logger.L().Error(ctx, "failed to run function after cleanup has run", zap.Error(err))
-		}
+	// Keep the state check and registration under the same lock as Run. Without
+	// this, Add can observe false, lose the lock to Run, then append after Run has
+	// already drained the list.
+	c.mu.Lock()
+	if !c.hasRun.Load() {
+		c.cleanup = append(c.cleanup, f)
+		c.mu.Unlock()
 
 		return
 	}
+	c.mu.Unlock()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.cleanup = append(c.cleanup, f)
+	runLateCleanup(ctx, f, false)
 }
 
 func (c *Cleanup) AddPriority(ctx context.Context, f func(ctx context.Context) error) {
-	if c.hasRun.Load() == true {
-		err := f(context.WithoutCancel(ctx))
-		if err != nil {
-			logger.L().Error(ctx, "failed to run priority function after cleanup has run", zap.Error(err))
-		}
+	c.mu.Lock()
+	if !c.hasRun.Load() {
+		c.priorityCleanup = append(c.priorityCleanup, f)
+		c.mu.Unlock()
 
 		return
 	}
+	c.mu.Unlock()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.priorityCleanup = append(c.priorityCleanup, f)
+	runLateCleanup(ctx, f, true)
 }
 
 func (c *Cleanup) Run(ctx context.Context) error {
@@ -76,23 +93,32 @@ func (c *Cleanup) Run(ctx context.Context) error {
 	return c.error
 }
 
+// cleanupIfNotRegistered covers errors before a resource's normal cleanup callback is registered.
+func cleanupIfNotRegistered(ctx context.Context, result *error, registered *bool, f func(context.Context) error) {
+	if *result != nil && !*registered {
+		*result = errors.Join(*result, f(context.WithoutCancel(ctx)))
+	}
+}
+
 func (c *Cleanup) run(ctx context.Context) {
 	c.hasRun.Store(true)
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	priorityCleanup := c.priorityCleanup
+	normalCleanup := c.cleanup
+	c.mu.Unlock()
 
 	var errs []error
 
-	for _, cleanup := range slices.Backward(c.priorityCleanup) {
-		err := cleanup(ctx)
+	for _, f := range slices.Backward(priorityCleanup) {
+		err := f(ctx)
 		if err != nil {
 			errs = append(errs, err)
 		}
 	}
 
-	for _, cleanup := range slices.Backward(c.cleanup) {
-		err := cleanup(ctx)
+	for _, f := range slices.Backward(normalCleanup) {
+		err := f(ctx)
 		if err != nil {
 			errs = append(errs, err)
 		}

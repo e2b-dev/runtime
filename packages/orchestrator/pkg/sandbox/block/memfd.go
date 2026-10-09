@@ -286,9 +286,10 @@ func (m *MemfdCache) Size() (int64, error) { return m.cache.Size() }
 // still-mapped memfd during the drain window instead of blocking on done, so a
 // resume overlapping the pause is not delayed by the dedup drain.
 type DedupedMemfdCache struct {
-	outPath string
-	cancel  context.CancelFunc
-	done    *utils.SetOnce[*Cache]
+	outPath  string
+	cancel   context.CancelFunc
+	done     *utils.SetOnce[*Cache]
+	finished chan struct{}
 
 	inflight bool
 	// freeIndex frees the packed index with the memfd when it is released.
@@ -393,6 +394,7 @@ func NewCacheFromMemfdDeduped(
 		outPath:   outPath,
 		cancel:    cancel,
 		done:      utils.NewSetOnce[*Cache](),
+		finished:  make(chan struct{}),
 		swapped:   utils.NewSetOnce[struct{}](),
 		inflight:  inflightServe,
 		freeIndex: freeIndex,
@@ -402,7 +404,10 @@ func NewCacheFromMemfdDeduped(
 		// after the drain.
 		memfd: memfd,
 	}
-	go d.runDedup(drainCtx, base, blockSize, memfd, dirty, bestEffort, directIO, budget, inputEmpty, metaOut)
+	go func() {
+		defer close(d.finished)
+		d.runDedup(drainCtx, base, blockSize, memfd, dirty, bestEffort, directIO, budget, inputEmpty, metaOut)
+	}()
 
 	return d, nil
 }
@@ -699,6 +704,7 @@ func (d *DedupedMemfdCache) ServeMemfd(b []byte, off int64) (int, error) {
 func (d *DedupedMemfdCache) Close() error {
 	d.cancel()
 	c, _ := d.done.Wait()
+	<-d.finished
 	if c != nil {
 		return c.Close()
 	}

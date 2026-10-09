@@ -157,7 +157,7 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		assert.NoError(b, err)
 	})
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())

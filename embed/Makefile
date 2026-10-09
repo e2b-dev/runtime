@@ -21,7 +21,7 @@ lint: config vector-validate otel-validate kubernetes-render terraform-validate
 kubernetes-render:
 	kubectl kustomize kubernetes >/dev/null
 
-# All four roots share one plugin cache, so each provider is downloaded once.
+# All six roots share one plugin cache, so each provider is downloaded once.
 # Terraform reads that cache only for providers a lock file already lists
 # unless told otherwise, and none of these roots tracks a lock file
 # (.gitignore), so there is none to keep. The examples are validated too: a
@@ -39,6 +39,11 @@ terraform-validate:
 	terraform -chdir=terraform/aws validate
 	$(TF_CACHE) terraform -chdir=terraform/aws/examples/basic init -backend=false -input=false >/dev/null
 	terraform -chdir=terraform/aws/examples/basic validate
+	$(TF_CACHE) terraform -chdir=terraform/azure init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/azure fmt -check -recursive
+	terraform -chdir=terraform/azure validate
+	$(TF_CACHE) terraform -chdir=terraform/azure/examples/basic init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/azure/examples/basic validate
 
 # Vector parses the config and compiles its VRL without connecting to sinks.
 # Catches a broken remap or a misspelled sink option before a host does.

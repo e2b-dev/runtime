@@ -109,6 +109,16 @@ func NewMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod tim
 
 	opts = append(opts, extraOption...)
 	opts = append(opts, sdkmetric.WithView(snapshotBytesView, uploadBytesView))
+	// Export these as explicit histograms so collectors can forward them to
+	// Prometheus without adding them to an exponential-conversion allowlist.
+	for _, name := range []HistogramType{NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName} {
+		opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
+			sdkmetric.Instrument{Name: string(name), Kind: sdkmetric.InstrumentKindHistogram},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: []float64{0, 1, 10, 100, 500, 1000, 3000, 5000, 10000, 30000, 60000, 120000, 300000, 600000},
+			}},
+		)))
+	}
 
 	return sdkmetric.NewMeterProvider(opts...), nil
 }

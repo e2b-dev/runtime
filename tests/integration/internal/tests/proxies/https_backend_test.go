@@ -92,7 +92,7 @@ server.serve_forever()
 			Args: []string{"-c", serverScript, strconv.Itoa(port)},
 		},
 	})
-	setup.SetSandboxHeader(t, serverReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, serverReq.Header(), sbx)
 	setup.SetUserHeader(t, serverReq.Header(), "user")
 	serverStream, err := envdClient.ProcessClient.Start(serverCtx, serverReq)
 	require.NoError(t, err)

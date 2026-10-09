@@ -51,6 +51,7 @@ type Addon struct {
 	ExtraMaxDiskSizeMb            pgtype.Int8
 	ExtraMaxFreeDiskSizeMb        pgtype.Int8
 	ExtraApiTeamRpsList           int64
+	ExtraApiTeamRpsDelete         int64
 }
 
 type AuthUser struct {
@@ -81,6 +82,7 @@ type Cluster struct {
 	SandboxProxyDomain pgtype.Text
 	AuthOrgID          pgtype.Text
 	Name               string
+	DeletionProtection bool
 }
 
 type Env struct {
@@ -167,11 +169,20 @@ type ProjectLimit struct {
 	ApiTeamRpsList           int64
 }
 
+type ProjectionProjectBlock struct {
+	ProjectID uuid.UUID
+	Revision  int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DecidedAt *time.Time
+}
+
 type ProjectionProjectLimit struct {
 	ProjectID uuid.UUID
 	Revision  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	DecidedAt *time.Time
 }
 
 type ProjectionProjectMember struct {
@@ -252,6 +263,7 @@ type TeamLimit struct {
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        int64
 	ApiTeamRpsList           int64
+	ApiTeamRpsDelete         int64
 }
 
 type Tier struct {
@@ -270,6 +282,7 @@ type Tier struct {
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        pgtype.Int8
 	ApiTeamRpsList           int64
+	ApiTeamRpsDelete         int64
 }
 
 type User struct {

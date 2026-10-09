@@ -561,7 +561,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	sandboxes := sandbox.NewSandboxesMap()
 
 	// feature flags
-	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, "")
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, version)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
@@ -922,6 +922,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 		Info:             serviceInfo,
 		Proxy:            sandboxProxy,
 		Persistence:      persistence,
+		TemplateStorage:  templateSpec,
 		FeatureFlags:     featureFlags,
 		SbxEventsService: eventsService,
 		PeerRegistry:     peerRegistry,
@@ -980,7 +981,10 @@ func run(config cfg.Config, opts Options) (success bool) {
 	})
 	closers = append(closers, closer{"hyperloop server", hyperloopSrv.Shutdown})
 
-	grpcServer := e2bgrpc.NewGRPCServer(tel, e2bgrpc.WithSandboxResumeMetrics())
+	// No connection age: ChunkService and VolumeService streams may outlive the
+	// shared default's age plus grace, and how their clients behave on the
+	// GOAWAY has not been measured.
+	grpcServer := e2bgrpc.NewGRPCServer(tel, e2bgrpc.WithSandboxResumeMetrics(), e2bgrpc.WithMaxConnectionAge(0, 0))
 	orchestrator.RegisterSandboxServiceServer(grpcServer, orchestratorService)
 	orchestrator.RegisterVolumeServiceServer(grpcServer, volumeService)
 	orchestrator.RegisterChunkServiceServer(grpcServer, orchestratorService)
@@ -1193,6 +1197,8 @@ func startNFSProxy(
 		RecordHandleCalls: config.NFSProxyRecordHandleCalls,
 		RecordStatCalls:   config.NFSProxyRecordStatCalls,
 		NFSLogLevel:       config.NFSProxyLogLevel,
+		HandleCacheLimit:  config.NFSProxyHandleCacheLimit,
+		DirVerifierLimit:  config.NFSProxyDirVerifierLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create nfs proxy: %w", err)

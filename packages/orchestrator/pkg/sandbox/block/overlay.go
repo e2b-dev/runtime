@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sync/atomic"
 
@@ -164,6 +165,29 @@ func (o *Overlay) FoldSealing() (*Cache, error) {
 	}
 
 	return o.ReleaseSealing(), nil
+}
+
+// CacheSize reports what the writable cache and, while one is sealing, the
+// sealing cache occupy on disk together: the bytes a rootfs export copies. A
+// cache whose file is already gone counts as nothing.
+func (o *Overlay) CacheSize(ctx context.Context) (int64, error) {
+	var total int64
+	for _, c := range []*Cache{o.cache.Load(), o.sealing.Load()} {
+		if c == nil {
+			continue
+		}
+
+		size, err := c.FileSize(ctx)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		total += size
+	}
+
+	return total, nil
 }
 
 func (o *Overlay) EjectCache() (*Cache, error) {

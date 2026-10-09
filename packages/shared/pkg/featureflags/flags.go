@@ -55,6 +55,8 @@ const (
 )
 
 // All flags must be defined here: https://app.launchdarkly.com/projects/default/flags/
+// A flag read through StringReader is the exception: its caller owns the key
+// and the fallback.
 
 type JSONFlag struct {
 	name     string
@@ -102,6 +104,8 @@ const (
 
 var RateLimitV2Mode = NewStringFlag("rate-limit-v2-mode", APIGroupRateLimitDisabled)
 
+var RateLimitDeleteMode = NewStringFlag("rate-limit-delete-mode", APIGroupRateLimitDisabled)
+
 type BoolFlag struct {
 	name     string
 	fallback bool
@@ -130,6 +134,21 @@ func envBoolOr(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+// envIntOr reads key as an integer, falling back when it is unset or
+// unparseable, for the same reason as envBoolOr.
+func envIntOr(key string, fallback int) int {
+	raw := env.GetEnv(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
 	}
@@ -521,7 +540,9 @@ var (
 	// future retirements.
 	EgressRetirementTimeoutMsFlag = NewIntFlag("egress-retirement-timeout-ms", 60000)
 
-	MaxSandboxesPerNode = NewIntFlag("max-sandboxes-per-node", 200)
+	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", 200)
+	APIIdempotencyRoutes     = NewJSONFlag("api-idempotency-routes", ldvalue.Null())
+	APIIdempotencyTTLSeconds = NewIntFlag("api-idempotency-ttl-seconds", 86400)
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
 	StorageConcurrentUploadLimit  = NewIntFlag("gcloud-concurrent-upload-limit", 8)
 	StorageMaxUploadTasks         = NewIntFlag("gcloud-max-tasks", 16)
@@ -542,6 +563,16 @@ var (
 	// 0 probes the parent header's readiness without waiting; a positive value
 	// waits up to that long before refusing retryably.
 	PauseAdmissionGraceMs = NewIntFlag("pause-admission-grace-milliseconds", -1)
+	// PauseAdmissionDiskHeadroomMiB makes a node refuse a pause, retryably and
+	// before anything destructive, when the filesystem holding its build
+	// directory cannot take the snapshot's capture (guest memory plus the
+	// rootfs cache plus a snapfile allowance, twice that when template storage
+	// is a directory on the same filesystem, counting captures already admitted
+	// and not yet on disk) and still keep this many MiB free. Negative, the
+	// default, turns the check off; the fallback reads
+	// PAUSE_ADMISSION_DISK_HEADROOM_MIB so a deployment without LaunchDarkly can
+	// turn it on, as E2B Embed does.
+	PauseAdmissionDiskHeadroomMiB = NewIntFlag("pause-admission-disk-headroom-mib", envIntOr("PAUSE_ADMISSION_DISK_HEADROOM_MIB", -1))
 	// OrchestratorGOGCPercentFlag sets the orchestrator's Go GC percent. 10 to
 	// 100 is written with debug.SetGCPercent. -1 (default) and any other
 	// value, 0 included, keep the percent read when the controller was built:
@@ -1021,9 +1052,10 @@ var (
 	BuildCPUTemplate = NewJSONFlag("build-cpu-template", ldvalue.Null())
 
 	// RebootCPUTemplateOverride replaces the build's CPU template on a filesystem-only cold
-	// boot, as the PUT /cpu-config body; {} boots with none. Null (the default) boots the
-	// build's template. The applied template is recorded as the running one, so the next
-	// pause stores it, while the build's template is kept and returns once the flag clears.
+	// boot: {"template": <PUT /cpu-config body>}; {"template": {}} boots with none. {} or null
+	// (the default) boots the build's template. The applied template is recorded as the
+	// running one, so the next pause stores it, while the build's template is kept and
+	// returns once the flag clears.
 	// A value that does not parse is logged and ignored; one the resolved Firecracker version
 	// or host cannot apply fails the boot, like a stored template would.
 	RebootCPUTemplateOverride = NewJSONFlag("reboot-cpu-template-override", ldvalue.Null())
@@ -1498,10 +1530,13 @@ func ResolveFirecrackerVersion(ctx context.Context, ff *Client, buildVersion str
 // injected so this shared package does not depend on the orchestrator.
 //
 // The "should we upgrade?" test compares baked version *strings* (built-with vs
-// the target's version). This is sufficient because CLAUDE.md mandates bumping
-// packages/envd/pkg/version.go on every behavioral change; if that ever stops
-// holding, a same-version binary swap would be skipped and this must switch to
-// comparing by git SHA.
+// the target's version). That holds as long as every upgrade target bakes a
+// distinct version. A published build does: it bakes its release identity
+// (LINK_VERSION), the SemVer of an envd release or the per-commit auto-deploy
+// identity of any other main commit. A build without one bakes
+// packages/envd/pkg/version.go, which release-please moves only once per envd
+// release (nobody bumps it by hand), so two such builds cut between releases
+// compare equal and a swap between them would be skipped.
 // It returns the target binary's path and baked version ("" path = no upgrade),
 // plus a reason for the no-upgrade case — off | not_staged | invalid_target |
 // getversion_failed | same_version | downgrade | source_stalled, and "" when an

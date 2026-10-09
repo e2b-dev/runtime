@@ -10,11 +10,25 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+)
+
+// The connection age applied when WithMaxConnectionAge is not passed.
+//
+// Every connection rotates, so a client finds replicas added after it
+// connected and a transport-security change reaches long-lived connections
+// within minutes. The grace exceeds every unary deadline in use, so a call
+// in flight at rotation completes; a stream still open when age plus grace
+// elapses is cut. A server whose streams may outlive that, or that must never
+// rotate, passes WithMaxConnectionAge(0, 0).
+const (
+	DefaultMaxConnectionAge      = 5 * time.Minute
+	DefaultMaxConnectionAgeGrace = 5 * time.Minute
 )
 
 // ServerOption configures NewGRPCServer.
@@ -27,8 +41,22 @@ type serverOptions struct {
 	recoveryHandler          recovery.RecoveryHandlerFunc
 	unaryDeadline            grpc.UnaryServerInterceptor
 	unaryInterceptors        []grpc.UnaryServerInterceptor
+	streamInterceptors       []grpc.StreamServerInterceptor
+	creds                    credentials.TransportCredentials
 	maxConnectionAge         time.Duration
 	maxConnectionAgeGrace    time.Duration
+	maxConnectionAgeSet      bool
+	waitForHandlers          bool
+}
+
+// connectionAge returns the age and grace to apply: the explicit values when
+// WithMaxConnectionAge was passed, the defaults otherwise.
+func (o serverOptions) connectionAge() (time.Duration, time.Duration) {
+	if o.maxConnectionAgeSet {
+		return o.maxConnectionAge, o.maxConnectionAgeGrace
+	}
+
+	return DefaultMaxConnectionAge, DefaultMaxConnectionAgeGrace
 }
 
 // WithMaxMessageSize sets both send and receive message limits in bytes.
@@ -58,6 +86,27 @@ func WithUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) ServerOp
 	return func(o *serverOptions) { o.unaryInterceptors = append(o.unaryInterceptors, interceptors...) }
 }
 
+// WithStreamInterceptors appends interceptors after the logging interceptor,
+// so streams see the ordering WithUnaryInterceptors promises for unary calls.
+func WithStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) ServerOption {
+	return func(o *serverOptions) { o.streamInterceptors = append(o.streamInterceptors, interceptors...) }
+}
+
+// WithTransportCredentials sets the server's transport credentials. Without
+// it the server speaks plaintext, as before.
+func WithTransportCredentials(creds credentials.TransportCredentials) ServerOption {
+	return func(o *serverOptions) { o.creds = creds }
+}
+
+// WithWaitForHandlers makes Stop, including the forced fallback of
+// GracefulStopWithTimeout, return only after every method handler has
+// returned. Stop still closes connections and cancels handler contexts first.
+// Without it, Stop can return while handlers run, so a caller that closes
+// their dependencies afterwards races them.
+func WithWaitForHandlers() ServerOption {
+	return func(o *serverOptions) { o.waitForHandlers = true }
+}
+
 // WithUnaryDeadline bounds unary requests while preserving an earlier caller deadline.
 func WithUnaryDeadline(timeout time.Duration) ServerOption {
 	return func(o *serverOptions) {
@@ -75,11 +124,13 @@ func WithUnaryDeadline(timeout time.Duration) ServerOption {
 // that resolves its target again when a connection closes uses the rotation to
 // find servers added after it connected. Calls in flight at rotation keep
 // running on the old connection until they finish or grace ends. Without this
-// option connections have no age limit.
+// option DefaultMaxConnectionAge and DefaultMaxConnectionAgeGrace apply;
+// zero for both removes the age limit.
 func WithMaxConnectionAge(age, grace time.Duration) ServerOption {
 	return func(o *serverOptions) {
 		o.maxConnectionAge = age
 		o.maxConnectionAgeGrace = grace
+		o.maxConnectionAgeSet = true
 	}
 }
 
@@ -96,7 +147,6 @@ func NewGRPCServer(tel *telemetry.Client, opts ...ServerOption) *grpc.Server {
 	logOpts := []logging.Option{
 		logging.WithLogOnEvents(logEvents...),
 		logging.WithLevels(logging.DefaultServerCodeToLevel),
-		logging.WithFieldsFromContext(logging.ExtractFields),
 	}
 
 	ignoredLoggingRoutes := logger.WithoutRoutes(
@@ -131,15 +181,24 @@ func NewGRPCServer(tel *telemetry.Client, opts ...ServerOption) *grpc.Server {
 	}
 	unaryInterceptors = append(unaryInterceptors, cfg.unaryInterceptors...)
 
+	streamInterceptors := []grpc.StreamServerInterceptor{
+		selector.StreamServerInterceptor(
+			logging.StreamServerInterceptor(logger.GRPCLogger(logger.L()), logOpts...),
+			ignoredLoggingRoutes,
+		),
+	}
+	streamInterceptors = append(streamInterceptors, cfg.streamInterceptors...)
+
+	age, grace := cfg.connectionAge()
 	serverOpts := []grpc.ServerOption{
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,
 			PermitWithoutStream: true,
 		}),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			// Zero age and grace are gRPC's defaults: no age limit.
-			MaxConnectionAge:      cfg.maxConnectionAge,
-			MaxConnectionAgeGrace: cfg.maxConnectionAgeGrace,
+			// Zero age and grace mean no age limit, gRPC's own default.
+			MaxConnectionAge:      age,
+			MaxConnectionAgeGrace: grace,
 			Time:                  15 * time.Second,
 			Timeout:               5 * time.Second,
 		}),
@@ -147,15 +206,16 @@ func NewGRPCServer(tel *telemetry.Client, opts ...ServerOption) *grpc.Server {
 			NewStatsWrapper(
 				otelgrpc.NewServerHandler(otelOpts...))),
 		grpc.ChainUnaryInterceptor(unaryInterceptors...),
-		grpc.ChainStreamInterceptor(
-			selector.StreamServerInterceptor(
-				logging.StreamServerInterceptor(logger.GRPCLogger(logger.L()), logOpts...),
-				ignoredLoggingRoutes,
-			),
-		),
+		grpc.ChainStreamInterceptor(streamInterceptors...),
 	}
 	if cfg.maxMessageSize != nil {
 		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(*cfg.maxMessageSize), grpc.MaxSendMsgSize(*cfg.maxMessageSize))
+	}
+	if cfg.creds != nil {
+		serverOpts = append(serverOpts, grpc.Creds(cfg.creds))
+	}
+	if cfg.waitForHandlers {
+		serverOpts = append(serverOpts, grpc.WaitForHandlers(true))
 	}
 
 	return grpc.NewServer(serverOpts...)

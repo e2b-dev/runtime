@@ -82,6 +82,9 @@ type DevicePool struct {
 	// We use the bitset to speedup the free device lookup.
 	usedSlots *bitset.BitSet
 	mu        sync.Mutex
+	// populateDone is non-nil only while the sole Populate owner is active.
+	// Close publishes done under mu, then joins this owner before snapshotting.
+	populateDone chan struct{}
 
 	slots chan DeviceSlot
 
@@ -169,6 +172,11 @@ func isDeviceConnectedIn(blockDir string, slot DeviceSlot) (bool, error) {
 }
 
 func (d *DevicePool) Populate(ctx context.Context) {
+	finish, ok := d.beginPopulate()
+	if !ok {
+		return
+	}
+	defer finish()
 	defer close(d.slots)
 
 	failedCount := 0
@@ -211,6 +219,22 @@ func (d *DevicePool) Populate(ctx context.Context) {
 	}
 }
 
+func (d *DevicePool) beginPopulate() (finish func(), ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return nil, false
+	default:
+	}
+	if d.populateDone != nil {
+		return nil, false
+	}
+	d.populateDone = make(chan struct{})
+
+	return func() { close(d.populateDone) }, true
+}
+
 // The following files and resources are useful for checking if the device is free:
 // /sys/devices/virtual/block/nbdX/pid
 // /sys/block/nbdX/pid
@@ -249,6 +273,11 @@ func (d *DevicePool) isDeviceFree(slot DeviceSlot) (bool, error) {
 func (d *DevicePool) getMaybeEmptySlot(start DeviceSlot) (DeviceSlot, func(), bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return 0, func() {}, false
+	default:
+	}
 
 	slot, ok := d.usedSlots.NextClear(uint(start))
 
@@ -314,11 +343,22 @@ func (d *DevicePool) GetDevice(ctx context.Context) (DeviceSlot, error) {
 			return 0, noSlotErr(ctx)
 		}
 
-		acquired.Add(ctx, 1)
-		slotCounter.Add(ctx, -1)
-
-		return slot, nil
+		return d.claimReceivedSlot(ctx, slot)
 	}
+}
+
+func (d *DevicePool) claimReceivedSlot(ctx context.Context, slot DeviceSlot) (DeviceSlot, error) {
+	slotCounter.Add(ctx, -1)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return 0, noSlotErr(ctx)
+	default:
+	}
+	acquired.Add(ctx, 1)
+
+	return slot, nil
 }
 
 // noSlotErr classifies a wakeup that carried no slot: a caller whose own
@@ -407,13 +447,18 @@ func GetDevicePath(slot DeviceSlot) DevicePath {
 }
 
 func (d *DevicePool) Close(ctx context.Context) error {
-	logger.L().Info(ctx, "Closing device pool", zap.Uint("used_slots", d.usedSlots.Count()))
-
+	d.mu.Lock()
 	d.doneOnce.Do(func() {
 		close(d.done)
 	})
+	populateDone := d.populateDone
+	d.mu.Unlock()
+	if populateDone != nil {
+		<-populateDone
+	}
 
 	d.mu.Lock()
+	usedCount := d.usedSlots.Count()
 
 	var slotsToRelease []DeviceSlot
 	for slotIdx, e := d.usedSlots.NextSet(0); e; slotIdx, e = d.usedSlots.NextSet(slotIdx + 1) {
@@ -421,6 +466,7 @@ func (d *DevicePool) Close(ctx context.Context) error {
 	}
 
 	d.mu.Unlock()
+	logger.L().Info(ctx, "Closing device pool", zap.Uint("used_slots", usedCount))
 
 	// Release concurrently so every device runs against its own fresh
 	// deadline. Done serially, one stuck device burns the whole budget and

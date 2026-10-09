@@ -130,7 +130,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - Process management API: `packages/envd/spec/process/process.proto`
 - Filesystem API: `packages/envd/spec/filesystem/filesystem.proto`
 - Port: 49983
-- **Version in `pkg/version.go` must be bumped on every behavioral change** (not comments/docs-only changes)
+- **`pkg/version.go` is release-please's**: it is set from the Conventional Commits merged since the last envd release, so do not bump it by hand. A behavioral change ships under a `feat` or `fix` type so a version exists for the orchestrator to gate on; comment or docs-only changes use `docs`, which the changelog hides, and cut no release (`chore` and `refactor` are visible and cut one)
 
 **Client Proxy (`packages/client-proxy/`)** - Edge routing layer
 - Service discovery via `packages/shared/pkg/servicediscovery`

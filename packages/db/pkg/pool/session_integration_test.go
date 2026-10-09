@@ -1,11 +1,14 @@
 package pool
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +27,7 @@ import (
 
 const testPostgresImage = "postgres:18-alpine"
 
-func TestSerializableRetryDelay(t *testing.T) {
+func TestTransactionRetryDelay(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -43,7 +47,7 @@ func TestSerializableRetryDelay(t *testing.T) {
 
 			delays := make(map[time.Duration]struct{})
 			for range 32 {
-				delay := serializableRetryDelay(tc.attempt)
+				delay := transactionRetryDelay(tc.attempt)
 				require.GreaterOrEqual(t, delay, tc.minimum)
 				require.Less(t, delay, tc.maximum)
 				delays[delay] = struct{}{}
@@ -123,6 +127,197 @@ func TestAdvisoryLockSerializesOneKeyAndReleases(t *testing.T) {
 	regained, err := client.AcquireAdvisoryLock(t.Context(), "held")
 	require.NoError(t, err)
 	require.NoError(t, regained.Release(t.Context()))
+}
+
+func TestPoolTransactionRetriesOnlyAbortedTransactions(t *testing.T) {
+	t.Parallel()
+	client := testClient(t)
+	_, err := client.Pool().Exec(t.Context(), "CREATE TABLE counters (code text PRIMARY KEY, value integer NOT NULL)")
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		code     string
+		attempts int
+	}{
+		{pgerrcode.SerializationFailure, 2},
+		{pgerrcode.DeadlockDetected, 2},
+		{pgerrcode.TransactionResolutionUnknown, 1},
+		{pgerrcode.CheckViolation, 1},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			t.Parallel()
+			_, err := client.Pool().Exec(t.Context(), "INSERT INTO counters VALUES ($1, 0)", tc.code)
+			require.NoError(t, err)
+			attempts := 0
+			result, err := InTxReturn1(t.Context(), client.Pool(), func(ctx context.Context, tx pgx.Tx) (int, error) {
+				attempts++
+				var isolation string
+				if err := tx.QueryRow(ctx, "SHOW transaction_isolation").Scan(&isolation); err != nil {
+					return 0, err
+				}
+				require.Equal(t, "read committed", isolation)
+				if _, err := tx.Exec(ctx, "UPDATE counters SET value=value+1 WHERE code=$1", tc.code); err != nil {
+					return 0, err
+				}
+				if attempts == 1 {
+					_, err := tx.Exec(ctx, fmt.Sprintf("DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '%s'; END $$", tc.code))
+
+					return attempts, err
+				}
+
+				return attempts, nil
+			})
+			require.Equal(t, tc.attempts, attempts)
+			var stored int
+			require.NoError(t, client.Pool().QueryRow(t.Context(), "SELECT value FROM counters WHERE code=$1", tc.code).Scan(&stored))
+			if tc.attempts == 2 {
+				require.NoError(t, err)
+				require.Equal(t, 2, result)
+				require.Equal(t, 1, stored, "the failed attempt must roll back")
+			} else {
+				var pgErr *pgconn.PgError
+				require.ErrorAs(t, err, &pgErr)
+				require.Equal(t, tc.code, pgErr.Code)
+				require.Zero(t, result, "a failed transaction must not return its value")
+				require.Zero(t, stored)
+			}
+		})
+	}
+}
+
+// A COMMIT that was never sent, or that PostgreSQL rejected with an ordinary
+// ERROR, is a known abort. Any other failure after PostgreSQL received the
+// COMMIT reports an unknown outcome with the original error, and is never
+// replayed, even when that error carries a serialization SQLSTATE.
+func TestPoolTransactionMarksOnlyUnknownCommitOutcomes(t *testing.T) {
+	t.Parallel()
+	dsn := testDatabaseURL(t)
+	client, err := Connect(t.Context(), dsn, "session-test", WithMaxConnections(4))
+	require.NoError(t, err)
+	t.Cleanup(func() { closeBounded(t, client) })
+	_, err = client.Pool().Exec(t.Context(), `
+		CREATE TABLE parents (id integer PRIMARY KEY);
+		CREATE TABLE children (id integer PRIMARY KEY, parent integer REFERENCES parents DEFERRABLE INITIALLY DEFERRED)`)
+	require.NoError(t, err)
+	committed := func(id int) bool {
+		var found bool
+		require.NoError(t, client.Pool().QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM parents WHERE id = $1)", id).Scan(&found))
+
+		return found
+	}
+
+	attempts := 0
+	_, err = InTxReturn1(t.Context(), client.Pool(), func(ctx context.Context, tx pgx.Tx) (int, error) {
+		attempts++
+		_, err := tx.Exec(ctx, "INSERT INTO children VALUES (1, 1)")
+
+		return 0, err
+	})
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr, "the deferred check fails at commit")
+	require.Equal(t, pgerrcode.ForeignKeyViolation, pgErr.Code)
+	require.NotErrorIs(t, err, ErrCommitOutcomeUnknown)
+	require.Equal(t, 1, attempts)
+
+	// The caller is cancelled after a successful write, so pgx never sends
+	// the COMMIT.
+	ctx, cancel := context.WithCancel(t.Context())
+	attempts = 0
+	_, err = InTxReturn1(ctx, client.Pool(), func(ctx context.Context, tx pgx.Tx) (int, error) {
+		attempts++
+		_, err := tx.Exec(ctx, "INSERT INTO parents VALUES (1)")
+		cancel()
+
+		return 0, err
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, pgconn.SafeToRetry(err))
+	require.NotErrorIs(t, err, ErrCommitOutcomeUnknown)
+	require.Equal(t, 1, attempts)
+	require.False(t, committed(1))
+
+	// PostgreSQL commits each of these, then the client loses the reply or
+	// receives a FATAL or connection-exception error instead.
+	for i, reply := range []*pgproto3.ErrorResponse{
+		nil,
+		{Severity: "ERROR", SeverityUnlocalized: "ERROR", Code: pgerrcode.ConnectionFailure, Message: "server conn crashed?"},
+		{Severity: "FATAL", Code: pgerrcode.SerializationFailure, Message: "server conn crashed?"},
+	} {
+		var encoded []byte
+		if reply != nil {
+			encoded, err = reply.Encode(nil)
+			require.NoError(t, err)
+		}
+		config, err := pgxpool.ParseConfig(dsn)
+		require.NoError(t, err)
+		config.ConnConfig.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+
+			return &commitReply{Conn: conn, reply: encoded}, nil
+		}
+		lossy, err := pgxpool.NewWithConfig(t.Context(), config)
+		require.NoError(t, err)
+		t.Cleanup(lossy.Close)
+		id := 10 + i
+		attempts = 0
+		_, err = InTxReturn1(t.Context(), lossy, func(ctx context.Context, tx pgx.Tx) (int, error) {
+			attempts++
+			_, err := tx.Exec(ctx, "INSERT INTO parents VALUES ($1)", id)
+
+			return 0, err
+		})
+		require.ErrorIs(t, err, ErrCommitOutcomeUnknown, reply)
+		if reply == nil {
+			// pgx reports the dead connection as safe to retry after sending.
+			require.ErrorIs(t, err, pgconn.ErrConnClosed)
+			require.True(t, pgconn.SafeToRetry(err))
+		} else {
+			require.ErrorAs(t, err, &pgErr)
+			require.Equal(t, reply.Code, pgErr.Code)
+		}
+		require.Equal(t, 1, attempts, "an unknown outcome is never replayed")
+		require.True(t, committed(id), "PostgreSQL applied the transaction")
+	}
+}
+
+// commitReply receives PostgreSQL's successful reply to a COMMIT, then
+// discards it and closes the connection or, given an encoded ErrorResponse,
+// delivers that in place of the reply's CommandComplete.
+type commitReply struct {
+	net.Conn
+
+	reply      []byte
+	committing atomic.Bool
+}
+
+func (c *commitReply) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("commit\x00")) {
+		c.committing.Store(true)
+	}
+
+	return c.Conn.Write(p)
+}
+
+func (c *commitReply) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	tag := bytes.Index(p[:n], []byte("COMMIT\x00"))
+	if !c.committing.Load() || tag < 0 {
+		return n, err
+	}
+	c.committing.Store(false)
+	if c.reply == nil {
+		_ = c.Conn.Close()
+
+		return 0, io.EOF
+	}
+	// CommandComplete is a type byte and a four-byte length before its tag.
+	rest := slices.Clone(p[tag+len("COMMIT\x00") : n])
+	n = tag - 5 + copy(p[tag-5:], c.reply)
+
+	return n + copy(p[n:], rest), err
 }
 
 func TestAdvisoryLockRetriesSerializableTransactionOnItsSession(t *testing.T) {
@@ -265,7 +460,7 @@ func TestSerializableTransactionCleansUpAndBoundsReplays(t *testing.T) {
 		return &pgconn.PgError{Code: pgerrcode.SerializationFailure}
 	})
 	require.Error(t, err)
-	assert.Equal(t, serializableAttempts, attempts)
+	assert.Equal(t, transactionAttempts, attempts)
 
 	cancelled, cancel := context.WithCancel(t.Context())
 	attempts = 0

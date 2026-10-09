@@ -11,6 +11,8 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 )
 
 // eagainStartError mirrors a real spawn failure: os/exec returns
@@ -27,6 +29,12 @@ func TestStartErrorCode(t *testing.T) {
 		name string
 		want connect.Code
 	}{
+		{
+			// Both spawn sites wrap it: Handler.Start and the PTY start inside New.
+			name: "a frozen workload is retryable",
+			err:  fmt.Errorf("error starting process '%s': %w", "sleep 1", cgroups.ErrWorkloadFrozen),
+			want: connect.CodeUnavailable,
+		},
 		{
 			name: "fork/exec EAGAIN is resource exhaustion",
 			err:  eagainStartError(),

@@ -94,6 +94,15 @@ const (
 	// through every thaw attempt (ErrSandboxLost tagged ErrRootfsThawFailed),
 	// so the orchestrator tore down a guest that ran but could not write.
 	killReasonThawFailed = "thaw_failed"
+
+	// pause_mode on paused events: what the snapshot holds. The values are the
+	// SDK's snapshot mode, so a customer reads back the mode they passed.
+	pauseModeFull       = "full"
+	pauseModeFilesystem = "filesystem"
+	// resume_mode on resumed events: how the sandbox started, in the values of
+	// the SDK's onResume option.
+	resumeModeRestore = "restore"
+	resumeModeReboot  = "reboot"
 )
 
 // lostSandboxKillReason names the kill behind an ErrSandboxLost from the
@@ -114,6 +123,19 @@ func lostSandboxKillReason(err error) string {
 // memory restore of a snapshot that has none.
 func filesystemBoot(meta metadata.Template, req *orchestrator.SandboxCreateRequest) bool {
 	return meta.IsFilesystemOnly() || req.GetFilesystemBoot()
+}
+
+func validateColdBootVcpus(vcpu, maxVcpus, recordedVcpus int64) error {
+	// An explicit maximum replaces the snapshot's size; otherwise inherit it.
+	if maxVcpus == 0 {
+		maxVcpus = recordedVcpus
+	}
+	machineVcpus := max(vcpu, maxVcpus)
+	if !fc.ValidMachineVcpus(machineVcpus) {
+		return status.Errorf(codes.InvalidArgument, "cannot cold-boot a VM with %d vcpus on this host", machineVcpus)
+	}
+
+	return nil
 }
 
 // firecrackerSupports reports whether the sandbox's RUNNING Firecracker
@@ -156,6 +178,19 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	defer childSpan.End()
 
 	isResume := req.GetSandbox().GetSnapshot()
+	vcpu, maxVcpus := req.GetSandbox().GetVcpu(), req.GetSandbox().GetMaxVcpus()
+	if vcpu < 1 {
+		return nil, status.Errorf(codes.InvalidArgument, "vcpu %d must be at least 1", vcpu)
+	}
+	if vcpu > fc.MaxVcpus {
+		return nil, status.Errorf(codes.InvalidArgument, "vcpu %d is above the %d a VM can have", vcpu, fc.MaxVcpus)
+	}
+	if maxVcpus != 0 && maxVcpus < vcpu {
+		return nil, status.Errorf(codes.InvalidArgument, "vcpu %d must be 1..max_vcpus %d", vcpu, maxVcpus)
+	}
+	if maxVcpus > fc.MaxVcpus {
+		return nil, status.Errorf(codes.InvalidArgument, "max_vcpus %d is above the %d a VM can have", maxVcpus, fc.MaxVcpus)
+	}
 	// fsOnly reports the ARTIFACT kind (filesystem-only snapshot), mirroring the
 	// fs_only pause label, so the historical fs-only latency cohort stays pure.
 	// Combined with fs_boot_requested the population decomposes fully: the boot
@@ -298,10 +333,11 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	config := sandbox.NewConfig(sandbox.Config{
 		BaseTemplateID: req.GetSandbox().GetBaseTemplateId(),
 
-		Vcpu:            req.GetSandbox().GetVcpu(),
-		RamMB:           req.GetSandbox().GetRamMb(),
-		TotalDiskSizeMB: req.GetSandbox().GetTotalDiskSizeMb(),
-		HugePages:       req.GetSandbox().GetHugePages(),
+		Vcpu:              req.GetSandbox().GetVcpu(),
+		ConfiguredVmVcpus: req.GetSandbox().GetMaxVcpus(),
+		RamMB:             req.GetSandbox().GetRamMb(),
+		TotalDiskSizeMB:   req.GetSandbox().GetTotalDiskSizeMb(),
+		HugePages:         req.GetSandbox().GetHugePages(),
 
 		Network: network,
 
@@ -339,6 +375,11 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 	fsOnly = meta.IsFilesystemOnly()
 	filesystemBooted = filesystemBoot(meta, req)
+	if filesystemBooted {
+		if err := validateColdBootVcpus(vcpu, maxVcpus, meta.VcpuCount); err != nil {
+			return nil, err
+		}
+	}
 
 	var sbx *sandbox.Sandbox
 	if filesystemBooted {
@@ -376,6 +417,16 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 			telemetry.ReportError(ctx, "sandbox files not found", err, telemetry.WithSandboxID(req.GetSandbox().GetSandboxId()))
 
 			return nil, status.Errorf(codes.FailedPrecondition, "sandbox files for '%s' not found", req.GetSandbox().GetSandboxId())
+		}
+		if errors.Is(err, sandbox.ErrVcpuExceedsSnapshot) {
+			logger.L().Warn(ctx, "resume refused: vcpu exceeds snapshot", zap.Error(err),
+				zap.Int64("vcpu", vcpu),
+				zap.Int64("max_vcpus", maxVcpus),
+				logger.WithSandboxID(runtime.SandboxID),
+				logger.WithBuildID(runtime.BuildID),
+				logger.WithTemplateID(runtime.TemplateID))
+
+			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 
 		err = errors.Join(err, context.Cause(ctx))
@@ -429,12 +480,14 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		schedulingMetadata = provider.SchedulingMetadata(ctx)
 	}
 
+	teamID, buildId, eventsTTLDays, eventData := s.prepareSandboxEventData(ctx, sbx)
+
 	eventType := events.SandboxCreatedEventPair
 	if req.GetSandbox().GetSnapshot() {
 		eventType = events.SandboxResumedEventPair
+		addResumeMode(eventData, filesystemBooted)
 	}
 
-	teamID, buildId, eventsTTLDays, eventData := s.prepareSandboxEventData(ctx, sbx)
 	s.publishEventAsync(
 		ctx,
 		teamID,
@@ -818,6 +871,31 @@ func addKillReason(eventData map[string]any, killReason string) {
 	eventData["kill_reason"] = killReason
 }
 
+// addPauseMode records on paused events whether the snapshot is full (memory
+// and filesystem) or filesystem-only, whose resume cold-boots. Every paused
+// event carries the key, so its absence means the event predates it.
+func addPauseMode(eventData map[string]any, filesystemOnly bool) {
+	pauseMode := pauseModeFull
+	if filesystemOnly {
+		pauseMode = pauseModeFilesystem
+	}
+
+	eventData["pause_mode"] = pauseMode
+}
+
+// addResumeMode records on resumed events the boot path that actually ran:
+// restore when memory was restored, reboot when the sandbox cold-booted from
+// its filesystem, either because the snapshot has no memory or because the
+// resume asked to drop it.
+func addResumeMode(eventData map[string]any, filesystemBooted bool) {
+	resumeMode := resumeModeRestore
+	if filesystemBooted {
+		resumeMode = resumeModeReboot
+	}
+
+	eventData["resume_mode"] = resumeMode
+}
+
 // recordSandboxKill increments the kill counter with a bounded reason label.
 func recordSandboxKill(ctx context.Context, counter metric.Int64Counter, killReason string) {
 	if killReason == "" {
@@ -970,6 +1048,26 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		}
 	}
 
+	// Refuse retryably, still before anything destructive, a capture the build
+	// filesystem cannot hold (pause_disk_admission.go). A sandbox that can never
+	// be persisted again is not refused but killed below, which a refusal would
+	// only defer. The estimate stays reserved until the capture is on disk and
+	// its upload has ended, or until this call fails before that.
+	var diskReservation *pauseDiskReservation
+	if latchedErr == nil && sbx.EnsurePausable() == nil {
+		reservation, refuseErr := s.admitPauseDisk(ctx, sbx, in.GetFilesystemOnly())
+		if refuseErr != nil {
+			return nil, refuseErr
+		}
+		diskReservation = reservation
+	}
+	diskHandedOff := false
+	defer func() {
+		if !diskHandedOff {
+			diskReservation.Release()
+		}
+	}()
+
 	marked := s.sandboxFactory.Sandboxes.MarkStopping(ctx, sbx.Runtime.SandboxID, sbx.LifecycleID)
 	if !marked {
 		telemetry.ReportCriticalError(ctx, "failed to mark sandbox as stopping", nil, telemetry.WithSandboxID(in.GetSandboxId()))
@@ -1030,6 +1128,16 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		return nil, status.Errorf(codes.Internal, "error snapshotting sandbox '%s': %s", in.GetSandboxId(), err)
 	}
 
+	// The disk reservation follows the capture from here: most of it goes
+	// once the diffs are on disk, the upload's copy once the upload ends.
+	s.releasePauseDiskWhenWritten(context.WithoutCancel(ctx), res, diskReservation)
+	completeUpload := res.completeUpload
+	res.completeUpload = func(ctx context.Context, err error) {
+		completeUpload(ctx, err)
+		diskReservation.Release()
+	}
+	diskHandedOff = true
+
 	s.uploadSnapshotAsync(ctx, sbx, res)
 
 	// Best-effort: the local snapshot is now in the cache and the remote upload
@@ -1049,6 +1157,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 	teamID, buildId, eventsTTLDays, eventData := s.prepareSandboxEventData(ctx, sbx)
 	eventData[executionEventDataKey] = s.getSandboxExecutionData(sbx)
+	addPauseMode(eventData, res.filesystemOnly)
 
 	eventType := events.SandboxPausedEventPair
 	s.publishEventAsync(
@@ -1659,6 +1768,7 @@ func (s *Server) checkpointResumeFresh(ctx context.Context, sbx *sandbox.Sandbox
 		if prefetchMapping != nil {
 			res.meta = res.meta.WithPrefetch(&metadata.Prefetch{
 				Memory: prefetchMapping,
+				Origin: metadata.PrefetchOriginCheckpoint,
 			})
 
 			if err := s.templateCache.UpdateMetadata(ctx, in.GetBuildId(), res.meta); err != nil {
@@ -1709,7 +1819,11 @@ func (s *Server) prepareSandboxEventData(ctx context.Context, sbx *sandbox.Sandb
 }
 
 func (s *Server) getSandboxExecutionData(sbx *sandbox.Sandbox) map[string]any {
+	// ExecutionStartedAt survives Checkpoint's handler rebuild, which resets StartedAt, so the earlier of the two is the execution start.
 	startedAt := sbx.GetStartedAt()
+	if executionStartedAt := sbx.GetExecutionStartedAt(); !executionStartedAt.IsZero() && executionStartedAt.Before(startedAt) {
+		startedAt = executionStartedAt
+	}
 
 	return map[string]any{
 		"started_at":     startedAt.UTC().Format(time.RFC3339),
@@ -1761,6 +1875,10 @@ type snapshotResult struct {
 	// so the prefetch harvest waits on its CachePath before its throwaway resume
 	// (a warm resume reads the rootfs). Nil-safe callers only: always set here.
 	rootfsDiff build.Diff
+	// memoryDiff is the snapshot's memory diff. With the memfd background copy
+	// its CachePath resolves only once the copy has finished streaming into the
+	// build directory, which is when the capture's bytes are all on disk.
+	memoryDiff build.Diff
 	// objectMetadata is the storage object metadata the snapshot was uploaded
 	// with. The prefetch harvest reuses it verbatim when re-uploading the
 	// metadata object, so the two can never drift.
@@ -1815,6 +1933,9 @@ func (s *Server) snapshotAndCacheSandbox(
 	if err != nil {
 		return nil, fmt.Errorf("error snapshotting sandbox: %w", err)
 	}
+	// The prefetch writers rewrite the metafile from res.meta, so it must carry
+	// what Pause stamped (vCPU count, balloon mode), not the pre-pause copy.
+	meta = snapshot.Metadata
 
 	finishUpload, err := s.templateCache.AddSnapshot(
 		ctx,
@@ -1897,6 +2018,7 @@ func (s *Server) snapshotAndCacheSandbox(
 		objectMetadata:       objectMetadata,
 		filesystemOnly:       filesystemOnly,
 		rootfsDiff:           snapshot.RootfsDiff,
+		memoryDiff:           snapshot.MemorySnapshot.Diff,
 		memoryExportDeferred: snapshot.MemoryExportDeferred,
 		waitMemorySealed:     snapshot.WaitMemorySealed,
 	}, nil

@@ -15,6 +15,7 @@ Open source, Apache-2.0.
 [Docker Compose](#docker-compose)
 | [Terraform on GCP](#terraform-on-gcp)
 | [Terraform on AWS](#terraform-on-aws)
+| [Terraform on Azure](#terraform-on-azure)
 | [Kubernetes](#kubernetes)
 | [Reference](docs/REFERENCE.md)
 
@@ -27,6 +28,7 @@ Choose the setup that fits what you already have.
 | Docker Compose | a Linux host you own | `docker compose up -d --wait` | [Docker Compose](#docker-compose) |
 | Terraform on GCP | a Google Cloud project | `terraform apply` | [Terraform on GCP](#terraform-on-gcp) |
 | Terraform on AWS | an AWS account | `terraform apply` | [Terraform on AWS](#terraform-on-aws) |
+| Terraform on Azure | an Azure subscription | `terraform apply` | [Terraform on Azure](#terraform-on-azure) |
 | Kubernetes | one node in your cluster | `kubectl apply -k` | [Kubernetes](#kubernetes) |
 
 Every guide ends with your first sandbox, a few minutes after you start. If
@@ -45,9 +47,8 @@ through the SDK, your team through the dashboard. The control plane is the
 same API as E2B Cloud, the data plane runs the same E2B sandboxes, storage
 keeps your templates and snapshots, and telemetry keeps your logs and
 metrics. Nothing leaves the node. It is the same node wherever you run it,
-on a Linux host you own with Docker Compose, on one VM on Google Cloud or
-one instance on AWS with Terraform, or on one node in your Kubernetes
-cluster.
+on a Linux host you own with Docker Compose, on one VM on Google Cloud,
+AWS or Azure with Terraform, or on one node in your Kubernetes cluster.
 
 ## What you get
 
@@ -102,6 +103,26 @@ Create the machine in your AWS account. [Full guide](terraform/aws/README.md#ins
 ```hcl
 module "e2b" {
   source       = "github.com/e2b-dev/runtime//embed/terraform/aws?ref=main"
+  client_cidrs = ["203.0.113.0/24"]   # where your SDK clients connect from
+}
+```
+
+```bash
+terraform init && terraform apply
+```
+
+### Terraform on Azure
+
+Create the machine in your Azure subscription. [Full guide](terraform/azure/README.md#install).
+
+```hcl
+provider "azurerm" {
+  features {}
+  storage_use_azuread = true
+}
+
+module "e2b" {
+  source       = "github.com/e2b-dev/runtime//embed/terraform/azure?ref=main"
   client_cidrs = ["203.0.113.0/24"]   # where your SDK clients connect from
 }
 ```

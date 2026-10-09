@@ -31,6 +31,10 @@ const (
 	awsMultipartUploadPartSize = 10 * 1024 * 1024
 )
 
+// normalizeAWSUploadConcurrency preserves the SDK's zero-as-default contract
+// while preventing negative values from reaching multipart channel capacities.
+func normalizeAWSUploadConcurrency(tasks int) int { return max(tasks, 0) }
+
 type awsStorage struct {
 	client        *s3.Client
 	presignClient *s3.PresignClient
@@ -297,7 +301,9 @@ func (o *awsObject) StoreFile(ctx context.Context, path string, opts ...PutOptio
 		o.client,
 		func(u *manager.Uploader) {
 			u.PartSize = awsMultipartUploadPartSize
-			u.Concurrency = o.limiter.MaxUploadTasks(ctx)
+			// The SDK maps zero to its default; negative values survive into
+			// multipart channel capacities and panic before useful I/O.
+			u.Concurrency = normalizeAWSUploadConcurrency(o.limiter.MaxUploadTasks(ctx))
 		},
 	)
 

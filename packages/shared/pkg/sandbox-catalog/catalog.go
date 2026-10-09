@@ -15,6 +15,15 @@ type SandboxInfo struct {
 	ExecutionID      string    `json:"execution_id"`
 	StartedAt        time.Time `json:"sandbox_started_at"`          // when sandbox was started
 	MaxLengthInHours int64     `json:"sandbox_max_length_in_hours"` // how long can sandbox can possibly run (in hours)
+
+	// LifecycleID is the Firecracker process serving this execution; it changes
+	// on every VM start, including a move of the same execution to another
+	// worker. OrchestratorID above is the worker process instance.
+	LifecycleID string `json:"lifecycle_id,omitempty"`
+
+	// NetworkPlacement is the routed-network placement. Absent means the
+	// sandbox uses the legacy per-worker network.
+	NetworkPlacement *NetworkPlacement `json:"network_placement,omitempty"`
 }
 
 type SandboxesCatalog interface {

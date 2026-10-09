@@ -60,3 +60,18 @@ func TestCORSSetsExposeHeaders(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Access-Control-Expose-Headers"), "X-Next-Token")
 }
+
+func TestCORSAllowsIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	r := gin.New()
+	r.Use(CORS())
+	r.POST("/v2/sandboxes", func(c *gin.Context) { c.Status(http.StatusCreated) })
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/v2/sandboxes", nil)
+	req.Header.Set("Origin", "https://app.e2b.dev")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "content-type,idempotency-key")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Idempotency-Key")
+}

@@ -28,7 +28,7 @@ Signed-off-by: Jack Thomson <jackabt@amazon.com>
  2 files changed, 17 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
-index fba0d8c5dcdf..d9fffefa4a05 100644
+index fba0d8c5dcdf..856031c14311 100644
 --- a/drivers/virtio/virtio_balloon.c
 +++ b/drivers/virtio/virtio_balloon.c
 @@ -575,7 +575,8 @@ static int init_vqs(struct virtio_balloon *vb)
@@ -76,14 +76,11 @@ index fba0d8c5dcdf..d9fffefa4a05 100644
  		spin_lock_irq(&vb->free_page_list_lock);
  		balloon_page_push(&vb->free_page_list, page);
  		vb->num_free_page_blocks++;
-@@ -1152,6 +1161,9 @@ static int virtballoon_validate(struct virtio_device *vdev)
- 	else if (!virtio_has_feature(vdev, VIRTIO_BALLOON_F_PAGE_POISON))
- 		__virtio_clear_bit(vdev, VIRTIO_BALLOON_F_REPORTING);
- 
+@@ -1155,3 +1164,6 @@ static int virtballoon_validate(struct virtio_device *vdev)
+ 	__virtio_clear_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
 +	if (!virtio_has_feature(vdev, VIRTIO_BALLOON_F_FREE_PAGE_HINT))
 +		__virtio_clear_bit(vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK);
 +
- 	__virtio_clear_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
  	return 0;
  }
 @@ -1163,6 +1175,7 @@ static unsigned int features[] = {

@@ -79,7 +79,7 @@ func TestUpgrade_RejectsUnexpectedBinary(t *testing.T) {
 
 	s := newHandoverTestService(t, &spyCgroupManager{})
 
-	err := s.Upgrade("/tmp/attacker-controlled", "0.6.11", nil, nil, nil)
+	err := s.Upgrade("/tmp/attacker-controlled", "0.6.11", nil, nil, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing upgrade")
 }
@@ -183,6 +183,7 @@ func TestHandoverState_ProtoRoundTrip(t *testing.T) {
 		Forwards: []*upgrade.ForwardedPort{{
 			Key: "100-8080", Port: 8080, ListenerPid: 100, Family: 4, SocatPid: 555,
 		}},
+		HelperPids: []int32{777},
 	}
 
 	blob, err := proto.Marshal(orig)
@@ -207,6 +208,7 @@ func TestHandoverState_ProtoRoundTrip(t *testing.T) {
 	require.Len(t, got.GetForwards(), 1)
 	assert.Equal(t, "100-8080", got.GetForwards()[0].GetKey())
 	assert.Equal(t, int32(555), got.GetForwards()[0].GetSocatPid())
+	assert.Equal(t, []int32{777}, got.GetHelperPids())
 }
 
 // TestResumeFromHandover_RejectsNewerSchema is the §6.4 version gate: a blob

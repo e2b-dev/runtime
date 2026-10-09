@@ -301,7 +301,7 @@ func TestStartFetchOnlyNeverPrefaults(t *testing.T) {
 	log, err := logger.NewDevelopmentLogger()
 	require.NoError(t, err)
 
-	ff, err := featureflags.NewClient("", "")
+	ff, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
 

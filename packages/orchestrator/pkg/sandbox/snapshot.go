@@ -11,6 +11,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/scheduling"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -32,10 +33,13 @@ type Snapshot struct {
 	// empty (NoDiff) for filesystem-only snapshots (see FilesystemSnapshot).
 	MemorySnapshot MemorySnapshot
 
-	RootfsDiff         build.Diff
-	RootfsDiffHeader   *DiffHeader
-	Snapfile           template.File
-	Metafile           template.File
+	RootfsDiff       build.Diff
+	RootfsDiffHeader *DiffHeader
+	Snapfile         template.File
+	Metafile         template.File
+	// Metadata is what Metafile holds: the caller's metadata plus the fields
+	// Pause stamps. Later rewrites of the metafile must start from it.
+	Metadata           metadata.Template
 	BuildID            uuid.UUID
 	SchedulingMetadata *orchestrator.SchedulingMetadata
 

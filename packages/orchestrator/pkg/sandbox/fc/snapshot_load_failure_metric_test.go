@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -34,8 +33,7 @@ const msrFaultResponse = `{"fault_message":"Load snapshot error: Failed to resto
 //
 //nolint:paralleltest // otel.SetMeterProvider mutates process state
 func TestLoadSnapshotRecordsRefusal(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	reader := sharedMeterReader()
 
 	// Not t.TempDir(): its path embeds the full test name and overflows the
 	// 108-char unix sun_path limit.

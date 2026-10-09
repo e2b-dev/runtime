@@ -129,7 +129,7 @@ func dupKeep(oldfd, target int) (int, error) {
 // responsibility — see main's /upgrade handler). It serializes the process
 // table, carries the I/O fds across execve, and re-execs newBin with the same
 // PID. It does not return on success.
-func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWatcher, mounts []*upgrade.MountEntry, forwards []*upgrade.ForwardedPort) error {
+func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWatcher, mounts []*upgrade.MountEntry, forwards []*upgrade.ForwardedPort, helpers []int32) error {
 	// Only re-exec self (empty) or the fixed delivered-binary path — never an
 	// arbitrary caller-supplied path. Checked first, before any side effects.
 	if newBin != "" && newBin != DefaultUpgradeBinPath {
@@ -137,10 +137,11 @@ func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWa
 	}
 
 	st := &upgrade.HandoverState{
-		FromVer:  fromVer,
-		Watchers: watchers,
-		Mounts:   mounts,
-		Forwards: forwards,
+		FromVer:    fromVer,
+		Watchers:   watchers,
+		Mounts:     mounts,
+		Forwards:   forwards,
+		HelperPids: helpers,
 		// Which cgroups the GUEST had frozen before the pre-pause sweep. Read from the
 		// freezer here rather than plumbed in by the caller: it is the freezer's own
 		// state, and the new image needs it before its /init thaws anything.
@@ -318,13 +319,14 @@ type HandoverResult struct {
 	// returned rather than applied via a callback.
 	Mounts   []*upgrade.MountEntry
 	Forwards []*upgrade.ForwardedPort
+	Helpers  []int32
 }
 
 func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatcher) (rearmed, failed int)) (HandoverResult, error) {
 	// Thaw the workload on every FAILURE path — a bad blob, partial re-adopt, or
 	// panic must never leave the sandbox frozen (a degraded-but-running workload
 	// beats a hung one). On SUCCESS the workload is deliberately left frozen: the
-	// orchestrator's post-upgrade /init thaws it (deferred unfreeze in PostInit)
+	// orchestrator's post-upgrade /init thaws it (the thaw in PostInit)
 	// only after it has re-established the access token. This closes the window
 	// in which a re-adopted — and possibly hostile — guest process could run
 	// before /init restores auth and reach the unauthenticated /upgrade endpoint
@@ -500,11 +502,20 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 	s.workloadFreezer.SetGuestFrozenPaths(st.GetGuestFrozenCgroups())
 
 	// The workload stays frozen past this point, so tell the freezer it owns a live freeze
-	// again: neither the freeze-active state nor the watchdog timer crossed the execve, and
-	// without them a freeze before the post-upgrade /init would adopt our own frozen cgroups
-	// as the guest's, and an /init that never arrives would leave the guest frozen with no
-	// backstop.
-	s.workloadFreezer.ResumeFrozen(context.Background())
+	// again: neither the freeze-active state, nor the watchdog timer, nor the spawn barrier
+	// crossed the execve, and without them a freeze before the post-upgrade /init would adopt
+	// our own frozen cgroups as the guest's, an /init that never arrives would leave the guest
+	// frozen with no backstop, and a process start would be refused only by the pre-spawn
+	// probe, which a failed read or a race with the clone can get past.
+	//
+	// Logged rather than returned: only the barrier can fail here, after the watchdog is
+	// armed, and only by failing to drain spawns that a just-execve'd image cannot have.
+	// Failing the handover over it would trip the deferred thaw and release a re-adopted
+	// workload before /init restores auth, which is a worse outcome than a window guarded
+	// only by the probe before a thaw that is already due.
+	if err := s.workloadFreezer.ResumeFrozen(context.Background()); err != nil {
+		s.logger.Error().Err(err).Msg("inherited a frozen workload without the spawn barrier: only the pre-spawn probe guards process starts until /init")
+	}
 
 	keepFrozen = true
 
@@ -519,6 +530,7 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 		// are constructed after this returns.
 		Mounts:   st.GetMounts(),
 		Forwards: st.GetForwards(),
+		Helpers:  st.GetHelperPids(),
 	}, nil
 }
 

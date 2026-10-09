@@ -405,7 +405,7 @@ func (h *prefetchHarvester) run(
 	// Carry the mapping through the same-version pause metadata. The local cache
 	// update is enough for a same-node resume, so do it regardless of whether the
 	// remote upload succeeded.
-	meta = meta.WithPrefetch(&metadata.Prefetch{Memory: mapping})
+	meta = meta.WithPrefetch(&metadata.Prefetch{Memory: mapping, Origin: metadata.PrefetchOriginHarvest})
 	var localUpdateErr error
 	if err := h.templates.UpdateMetadata(persistCtx, buildID, meta); err != nil {
 		localUpdateErr = fmt.Errorf("update local metadata: %w", err)

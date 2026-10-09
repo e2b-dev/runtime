@@ -345,6 +345,7 @@ func (bb *BaseBuilder) Layer(
 			FromImage:    &bb.Config.FromImage,
 			FromTemplate: nil,
 			Start:        nil,
+			VcpuCount:    bb.Config.VCpuCount,
 		}
 
 		notCachedResult := phases.LayerResult{

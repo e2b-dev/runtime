@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	sessionReleaseTimeout    = 5 * time.Second
-	serializableAttempts     = 10
-	serializableRetryBase    = 10 * time.Millisecond
-	serializableRetryMax     = 500 * time.Millisecond
-	serializableRetryTimeout = 5 * time.Second
+	sessionReleaseTimeout   = 5 * time.Second
+	transactionAttempts     = 10
+	transactionRetryBase    = 10 * time.Millisecond
+	transactionRetryMax     = 500 * time.Millisecond
+	transactionRetryTimeout = 5 * time.Second
 )
 
 var (
@@ -28,6 +28,15 @@ var (
 
 // ErrAdvisoryLockBusy reports that a non-blocking lock attempt found a holder.
 var ErrAdvisoryLockBusy = errors.New("database advisory lock is held")
+
+// ErrCommitOutcomeUnknown marks a COMMIT that was sent but not answered with a
+// rollback or an ordinary ERROR outside SQLSTATE class 08. A lost reply, a
+// closed connection, a FATAL error and a connection exception all carry it,
+// because the server may have applied the transaction first. It wraps the
+// original error and is never replayed, whatever SQLSTATE that error carries.
+// A COMMIT pgx reports as never sent does not carry it, unless pgx cannot
+// tell, as with "conn closed".
+var ErrCommitOutcomeUnknown = errors.New("transaction commit outcome is unknown")
 
 // AdvisoryLock is a PostgreSQL session lock held on one pool connection. One
 // lock belongs to one goroutine and must be released when its work finishes.
@@ -85,6 +94,26 @@ func (c *Client) TryAcquireAdvisoryLock(ctx context.Context, key string) (*Advis
 	return &AdvisoryLock{key: key, conn: conn}, nil
 }
 
+// InTxReturn1 runs fn in a READ COMMITTED transaction without advisory locks.
+// Serialization failures and deadlocks replay the whole callback, so fn must
+// only perform work inside the transaction. Only a committed value is returned.
+// Connection errors and uncertain commit outcomes are not retried. An uncertain
+// commit outcome wraps ErrCommitOutcomeUnknown.
+// Attempts and backoff share a five-second budget, bounded by the caller's deadline.
+func InTxReturn1[T any](ctx context.Context, pool *pgxpool.Pool, fn func(context.Context, pgx.Tx) (T, error)) (T, error) {
+	return replayTransaction(ctx, func(ctx context.Context) (T, error) {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			var zero T
+
+			return zero, err
+		}
+		defer conn.Release()
+
+		return runInTxReturn1(ctx, conn, pgx.ReadCommitted, fn)
+	}, isSerializationConflict)
+}
+
 // InSerializableTx runs fn in a SERIALIZABLE transaction on the session that
 // holds the lock. Serialization failures and deadlocks replay the whole
 // callback, so fn must not perform work outside PostgreSQL.
@@ -106,7 +135,7 @@ func InSerializableTxReturn1[T any](
 	fn func(context.Context, pgx.Tx) (T, error),
 ) (T, error) {
 	return replaySerializable(ctx, lock, func(ctx context.Context) (T, error) {
-		return runInTxReturn1(ctx, lock.conn, fn)
+		return runInTxReturn1(ctx, lock.conn, pgx.Serializable, fn)
 	})
 }
 
@@ -146,7 +175,7 @@ func InSerializableTxUnderAdvisoryLockReturn1[T any](
 				lock.destroy(ctx)
 			}
 		}()
-		value, err := runInTxReturn1(ctx, lock.conn, fn)
+		value, err := runInTxReturn1(ctx, lock.conn, pgx.Serializable, fn)
 		finished = true
 
 		if unlockErr := lock.unlock(ctx, key); unlockErr != nil {
@@ -169,11 +198,19 @@ func replaySerializable[T any](
 		return zero, errLockReleased
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, serializableRetryTimeout)
+	return replayTransaction(ctx, run, func(err error) bool {
+		// A destroyed session cannot replay anything.
+		return lock.conn != nil && isSerializationConflict(err)
+	})
+}
+
+func replayTransaction[T any](ctx context.Context, run func(context.Context) (T, error), retryable func(error) bool) (T, error) {
+	var zero T
+	ctx, cancel := context.WithTimeout(ctx, transactionRetryTimeout)
 	defer cancel()
 
 	var conflict error
-	for attempt := 1; attempt <= serializableAttempts; attempt++ {
+	for attempt := 1; attempt <= transactionAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return zero, errors.Join(err, conflict)
 		}
@@ -182,14 +219,15 @@ func replaySerializable[T any](
 		switch {
 		case err == nil:
 			return value, nil
-		// A destroyed session cannot replay anything.
-		case isSerializationConflict(err) && lock.conn != nil:
+		case errors.Is(err, ErrCommitOutcomeUnknown):
+			return zero, err
+		case retryable(err):
 			conflict = err
 		default:
 			return zero, err
 		}
 
-		if attempt == serializableAttempts {
+		if attempt == transactionAttempts {
 			break
 		}
 		if err := waitToReplay(ctx, attempt); err != nil {
@@ -197,20 +235,21 @@ func replaySerializable[T any](
 		}
 	}
 
-	return zero, fmt.Errorf("serializable transaction did not commit in %d attempts: %w",
-		serializableAttempts, conflict)
+	return zero, fmt.Errorf("transaction did not commit in %d attempts: %w",
+		transactionAttempts, conflict)
 }
 
 func runInTxReturn1[T any](
 	ctx context.Context,
 	conn *pgxpool.Conn,
+	isolation pgx.TxIsoLevel,
 	fn func(context.Context, pgx.Tx) (T, error),
 ) (T, error) {
 	var zero T
 
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: isolation})
 	if err != nil {
-		return zero, fmt.Errorf("begin a serializable transaction: %w", err)
+		return zero, fmt.Errorf("begin a transaction: %w", err)
 	}
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionReleaseTimeout)
@@ -224,10 +263,37 @@ func runInTxReturn1[T any](
 		return zero, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return zero, fmt.Errorf("commit a serializable transaction: %w", err)
+		if isKnownCommitAbort(err) {
+			return zero, fmt.Errorf("commit a transaction: %w", err)
+		}
+
+		return zero, fmt.Errorf("commit a transaction: %w: %w", ErrCommitOutcomeUnknown, err)
 	}
 
 	return value, nil
+}
+
+// isKnownCommitAbort reports whether a failed COMMIT certainly did not apply:
+// it was never sent, the server rolled it back, or the server answered with an
+// ordinary ERROR. pgx also marks "conn closed" safe to retry when the
+// connection died while it read the reply, so that error counts as unknown. A
+// FATAL error or a connection exception, which a pooler can report after its
+// server connection died during the COMMIT, counts as unknown too, as does a
+// localized severity sent without the unlocalized field.
+func isKnownCommitAbort(err error) bool {
+	if (pgconn.SafeToRetry(err) && !errors.Is(err, pgconn.ErrConnClosed)) || errors.Is(err, pgx.ErrTxCommitRollback) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	severity := pgErr.SeverityUnlocalized
+	if severity == "" {
+		severity = pgErr.Severity
+	}
+
+	return severity == "ERROR" && !pgerrcode.IsConnectionException(pgErr.Code)
 }
 
 func isSerializationConflict(err error) bool {
@@ -246,7 +312,7 @@ func isLockTimeout(err error) bool {
 }
 
 func waitToReplay(ctx context.Context, attempt int) error {
-	timer := time.NewTimer(serializableRetryDelay(attempt))
+	timer := time.NewTimer(transactionRetryDelay(attempt))
 	defer timer.Stop()
 
 	select {
@@ -257,10 +323,10 @@ func waitToReplay(ctx context.Context, attempt int) error {
 	}
 }
 
-func serializableRetryDelay(attempt int) time.Duration {
+func transactionRetryDelay(attempt int) time.Duration {
 	// Equal jitter keeps retries apart without allowing an immediate replay.
-	// attempt is bounded by serializableAttempts, so the shift cannot overflow.
-	window := min(2*serializableRetryBase<<(attempt-1), serializableRetryMax)
+	// attempt is bounded by transactionAttempts, so the shift cannot overflow.
+	window := min(2*transactionRetryBase<<(attempt-1), transactionRetryMax)
 
 	return window/2 + rand.N(window/2)
 }

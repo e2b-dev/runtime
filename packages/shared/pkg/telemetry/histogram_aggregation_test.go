@@ -1,7 +1,9 @@
 package telemetry
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -9,6 +11,32 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestNetworkReleaseHistogramExport(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader(sdkmetric.WithAggregationSelector(histogramAggregation))
+	provider, err := NewMeterProvider(noopMetricExporter{}, time.Hour, nil, sdkmetric.WithReader(reader))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, name := range []HistogramType{NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName} {
+		histogram, err := GetHistogram(provider.Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry"), name)
+		require.NoError(t, err)
+		histogram.Record(t.Context(), 60_001)
+	}
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &collected))
+	require.Len(t, collected.ScopeMetrics, 1)
+	require.Len(t, collected.ScopeMetrics[0].Metrics, 2)
+	for _, m := range collected.ScopeMetrics[0].Metrics {
+		data, ok := m.Data.(metricdata.Histogram[int64])
+		require.Truef(t, ok, "%s must export explicit buckets, got %T", m.Name, m.Data)
+		require.Len(t, data.DataPoints, 1)
+		assert.Equal(t, int64(60_001), data.DataPoints[0].Sum)
+		assert.Contains(t, data.DataPoints[0].Bounds, float64(60_000))
+		assert.Contains(t, data.DataPoints[0].Bounds, float64(120_000))
+	}
+}
 
 // Histograms here measure everything from sub-millisecond cache hits to
 // multi-day sandbox lifetimes, which no fixed boundary set covers. Exponential

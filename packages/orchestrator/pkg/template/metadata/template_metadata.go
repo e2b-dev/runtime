@@ -143,8 +143,40 @@ func (p *MemoryPrefetchMapping) Count() int {
 	return len(p.Indices)
 }
 
+// PrefetchOrigin names the producer of a prefetch mapping, so a resume can
+// report where the mapping it replays came from.
+type PrefetchOrigin string
+
+const (
+	// PrefetchOriginBuild is the template builder's optimize phase, or the
+	// resume-build tool: recorded before the build is published.
+	PrefetchOriginBuild PrefetchOrigin = "build"
+	// PrefetchOriginCheckpoint is the resume-fresh checkpoint, which traces
+	// its own resume and embeds the mapping before the upload.
+	PrefetchOriginCheckpoint PrefetchOrigin = "checkpoint"
+	// PrefetchOriginHarvest is the throwaway resume after a pause or an
+	// in-place checkpoint, persisted after the build is published.
+	PrefetchOriginHarvest PrefetchOrigin = "harvest"
+)
+
 type Prefetch struct {
 	Memory *MemoryPrefetchMapping `json:"memory"`
+	// Origin is the producer of Memory. Empty on a mapping written before the
+	// field existed, which every reader treats like any other mapping.
+	Origin PrefetchOrigin `json:"origin,omitempty"`
+}
+
+// InitOrigin reports the origin of the init mapping p carries, "none" when
+// there is no mapping and "unknown" when the mapping predates origins.
+func (p *Prefetch) InitOrigin() string {
+	if p == nil || p.Memory.Count() == 0 {
+		return "none"
+	}
+	if p.Origin == "" {
+		return "unknown"
+	}
+
+	return string(p.Origin)
 }
 
 // Balloon is the balloon device configuration a template was built with.
@@ -199,6 +231,11 @@ type Template struct {
 	// build, while CPUTemplate follows what the guest runs: a reboot override replaces
 	// CPUTemplate only, so clearing the override boots BuildCPUTemplate again.
 	BuildCPUTemplate *cputemplate.Template `json:"build_cpu_template,omitempty"`
+
+	// VcpuCount is how many vCPUs the VM in this snapshot has, which a resume limits the sandbox
+	// below without trusting the request. 0 is a legacy snapshot whose stored original count must
+	// arrive as max_vcpus (or vcpu when the allocation is unchanged).
+	VcpuCount int64 `json:"vcpu_count,omitempty"`
 
 	// FilesystemOnly marks a snapshot that persists only the filesystem (no
 	// memory snapshot); resuming it must cold-boot (reboot) from the rootfs. The
@@ -268,8 +305,8 @@ func V1TemplateVersion() Template {
 
 // BasedOn derives the metadata of a build that starts FROM another template.
 //
-// Deliberately does NOT carry CmdlineArgs or the CPU templates: a new build resolves both flags
-// for its own team, and a cold boot must not replay a parent's settings.
+// Deliberately does NOT carry CmdlineArgs, CPU templates or VcpuCount: a new build resolves its
+// own settings and cold-boots a VM at its own size, which Pause records in its snapshot.
 func (t Template) BasedOn(
 	ft FromTemplate,
 ) Template {
@@ -295,6 +332,7 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 		Balloon:          t.Balloon,
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
+		VcpuCount:        t.VcpuCount,
 	}
 }
 
@@ -310,6 +348,7 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 		Balloon:          t.Balloon,
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
+		VcpuCount:        t.VcpuCount,
 	}
 }
 
@@ -317,6 +356,15 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 // mechanisms the device actually runs.
 func (t Template) WithBalloon(reporting, hinting bool) Template {
 	t.Balloon = &Balloon{Reporting: reporting, Hinting: hinting}
+
+	return t
+}
+
+// WithVcpuCount returns a copy of the template stamped with the vCPUs the VM has. A V1 file keeps only
+// its version, so the count is lost there; lifting the version would change the rootfs path a memory
+// snapshot was taken with, so a V1 lineage stays unrecorded and resumes by the request's maximum.
+func (t Template) WithVcpuCount(vcpus int64) Template {
+	t.VcpuCount = vcpus
 
 	return t
 }
@@ -335,6 +383,7 @@ func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 		Balloon:          t.Balloon,
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
+		VcpuCount:        t.VcpuCount,
 	}
 }
 

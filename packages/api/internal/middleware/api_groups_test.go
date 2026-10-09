@@ -26,6 +26,7 @@ func TestWithAPIGroupPopulatesGinContextFromMatchedOperation(t *testing.T) {
 		authCalls                        int
 	}{
 		{"list", http.MethodGet, "/sandboxes", "/sandboxes", "list", 1},
+		{"delete", http.MethodDelete, "/sandboxes/:sandboxID", "/sandboxes/sbx-a", "delete", 1},
 		{"sandbox creation", http.MethodPost, "/sandboxes", "/sandboxes", "", 1},
 		{"v2 list", http.MethodGet, "/v2/sandboxes", "/v2/sandboxes", "list", 1},
 		{"path parameter", http.MethodGet, "/templates/:templateID/tags", "/templates/template-a/tags", "list", 1},
@@ -164,29 +165,59 @@ func TestWithAPIGroupPreservesValidatedRequestBody(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, response.Code)
 }
 
-func TestListGroupCoversTeamScopedListOperations(t *testing.T) {
+func TestWithAPIGroupLeavesTemplateTagDeletesUngrouped(t *testing.T) {
 	t.Parallel()
 
 	spec, err := api.GetSpec()
 	require.NoError(t, err)
-	expected := map[string]bool{
-		"/sandboxes": true, "/v2/sandboxes": true, "/sandboxes/metrics": true,
-		"/snapshots": true, "/templates": true, "/v2/templates": true,
-		"/templates/{templateID}": true, "/templates/{templateID}/tags": true,
-		"/api-keys": true, "/volumes": true, "/secrets": true,
+	spec.Servers = nil
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/templates/tags", strings.NewReader(`{"name":"template-a","tags":["old","unused"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	r := gin.New()
+	r.Use(ginmiddleware.OapiRequestValidatorWithOptions(spec, &ginmiddleware.Options{
+		Options: openapi3filter.Options{AuthenticationFunc: WithAPIGroup(openapi3filter.NoopAuthenticationFunc)},
+	}))
+	called := false
+	r.DELETE("/templates/tags", func(c *gin.Context) {
+		called = true
+		assert.Same(t, request, c.Request)
+		assert.Empty(t, APIGroupFromContext(c))
+		var body api.DeleteTemplateTagsRequest
+		require.NoError(t, c.ShouldBindJSON(&body))
+		assert.Equal(t, "template-a", body.Name)
+		assert.Equal(t, []string{"old", "unused"}, body.Tags)
+		c.Status(http.StatusNoContent)
+	})
+	response := httptest.NewRecorder()
+	r.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
+	assert.True(t, called)
+}
+
+func TestAPIGroupsCoverTeamScopedOperations(t *testing.T) {
+	t.Parallel()
+
+	spec, err := api.GetSpec()
+	require.NoError(t, err)
+	expected := map[string]string{
+		"GET /sandboxes": "list", "GET /v2/sandboxes": "list", "GET /sandboxes/metrics": "list",
+		"GET /snapshots": "list", "GET /templates": "list", "GET /v2/templates": "list",
+		"GET /templates/{templateID}": "list", "GET /templates/{templateID}/tags": "list",
+		"GET /api-keys": "list", "GET /volumes": "list", "GET /secrets": "list",
+		"DELETE /sandboxes/{sandboxID}": "delete", "DELETE /templates/{templateID}": "delete",
 	}
 	count := 0
 	for path, item := range spec.Paths.Map() {
 		for method, operation := range item.Operations() {
-			if method == http.MethodGet && expected[path] {
-				assert.Equal(t, "list", operation.Extensions[APIGroupExtension], "%s %s", method, path)
+			if group, grouped := expected[method+" "+path]; grouped {
+				assert.Equal(t, group, operation.Extensions[APIGroupExtension], "%s %s", method, path)
 				require.NotNil(t, operation.Security, path)
 				require.NotEmpty(t, *operation.Security, path)
 				for _, security := range *operation.Security {
 					_, apiKey := security["ApiKeyAuth"]
 					_, userTeam := security["AuthProviderTeamAuth"]
 					_, adminTeam := security["AdminTeamAuth"]
-					assert.True(t, apiKey || userTeam || adminTeam, "list auth must identify a team: %s", path)
+					assert.True(t, apiKey || userTeam || adminTeam, "grouped auth must identify a team: %s %s", method, path)
 				}
 				count++
 			} else {

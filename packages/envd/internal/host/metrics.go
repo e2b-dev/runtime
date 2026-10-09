@@ -12,8 +12,16 @@ import (
 type Metrics struct {
 	Timestamp int64 `json:"ts"` // Unix Timestamp in UTC
 
-	CPUCount       uint32  `json:"cpu_count"`    // Total CPU cores
+	CPUCount       uint32  `json:"cpu_count"`    // CPU cores online
 	CPUUsedPercent float32 `json:"cpu_used_pct"` // Percent rounded to 2 decimal places
+	// CPUPossible and CPUTarget are filled by the API from the CPU manager, not here.
+	CPUPossible uint32 `json:"cpu_possible"` // CPUs the guest can bring online
+	CPUTarget   uint32 `json:"cpu_target"`   // Online count last requested
+	// CPUTargetAttempts counts attempts at reaching CPUTarget since it was set.
+	CPUTargetAttempts uint32 `json:"cpu_target_attempts"`
+	// CPUWritePendingMs is how long a CPU online/offline write has been stuck in the
+	// kernel, 0 when none is.
+	CPUWritePendingMs uint64 `json:"cpu_write_pending_ms"`
 
 	MemTotal uint64 `json:"mem_total"` // Total virtual memory in bytes
 	MemUsed  uint64 `json:"mem_used"`  // Used virtual memory in bytes

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,48 +17,45 @@ import (
 	"github.com/e2b-dev/infra/tests/integration/internal/utils"
 )
 
-var (
-	networkTestTemplateID   string
-	networkTestTemplateOnce sync.Once
-)
-
 // gpg has no connect timeout of its own, and keyserver.ubuntu.com round-robins
 // over addresses that black-hole packets. Keep this under the sandbox TTL.
 const gpgKeyserverTimeout = 25 * time.Second
 
-// ensureNetworkTestTemplate builds the custom template for network tests (called once)
+// ensureNetworkTestTemplate returns the template the network tests run on:
+// the suite's prebuilt base template. It already carries every tool they
+// exec (curl, ssh, gpg, python3), so nothing is built or installed for them.
+// The former custom template installed those tools with apt on top of
+// ubuntu:22.04, and one slow Ubuntu mirror then timed its build out and
+// failed every network test in the shard at once.
 func ensureNetworkTestTemplate(t *testing.T) string {
 	t.Helper()
 
-	networkTestTemplateOnce.Do(func() {
-		t.Log("Building custom template for network egress tests...")
-
-		template := utils.BuildTemplate(t, utils.TemplateBuildOptions{
-			Name: "network-egress-test",
-			BuildData: api.TemplateBuildStartV2{
-				FromImage: new("ubuntu:22.04"),
-				Steps: new([]api.TemplateStep{
-					{
-						Type: "RUN",
-						Args: new([]string{"sudo apt-get update && sudo apt-get install -y curl iputils-ping dnsutils openssh-client gnupg && sudo rm -rf /var/lib/apt/lists/*"}),
-					},
-				}),
-			},
-			LogHandler:  utils.DefaultBuildLogHandler(t),
-			ReqEditors:  []api.RequestEditorFn{setup.WithAPIKey()},
-			EnableDebug: false,
-		})
-
-		networkTestTemplateID = template.TemplateID
-		t.Logf("Network test template built: %s", networkTestTemplateID)
-	})
-
-	if networkTestTemplateID == "" {
-		t.Fatal("Network test template was not built successfully")
-	}
-
-	return networkTestTemplateID
+	return setup.SandboxTemplateID
 }
+
+// dnsProbe is a UDP DNS query for an A record, sent to the server in the
+// first argument for the name in the second, as many times as the third says
+// with a three-second wait each, as dig does with +timeout=3 and +tries: it
+// exits 0 on a reply and 1 on none. It stands in for dig, which the base
+// template does not carry.
+const dnsProbe = `import socket, struct, sys
+server, domain, tries = sys.argv[1], sys.argv[2], int(sys.argv[3])
+query = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+for label in domain.rstrip(".").split("."):
+    query += bytes([len(label)]) + label.encode()
+query += b"\x00" + struct.pack(">HH", 1, 1)
+for _ in range(tries):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(3)
+    try:
+        sock.sendto(query, (server, 53))
+        reply, _ = sock.recvfrom(512)
+    except OSError:
+        continue
+    if reply[:2] == query[:2]:
+        sys.exit(0)
+sys.exit(1)
+`
 
 // =============================================================================
 // Test helper functions for network egress assertions
@@ -82,17 +78,19 @@ func assertBlockedHTTPRequest(t *testing.T, ctx context.Context, sbx *api.Sandbo
 	require.Contains(t, err.Error(), "failed with exit code", "Expected connection failure message")
 }
 
-// assertSuccessfulDNSQuery asserts that a DNS query to the given server succeeds
+// assertSuccessfulDNSQuery asserts that a UDP DNS query to the given server
+// is answered, within the three tries dig would make.
 func assertSuccessfulDNSQuery(t *testing.T, ctx context.Context, sbx *api.Sandbox, envdClient *setup.EnvdClient, dnsServer, domain string, msg string) {
 	t.Helper()
-	err := utils.ExecCommand(t, ctx, sbx, envdClient, "dig", "+short", "+timeout=3", fmt.Sprintf("@%s", dnsServer), domain)
+	err := utils.ExecCommand(t, ctx, sbx, envdClient, "python3", "-c", dnsProbe, dnsServer, domain, "3")
 	require.NoError(t, err, msg)
 }
 
-// assertBlockedDNSQuery asserts that a DNS query to the given server is blocked
+// assertBlockedDNSQuery asserts that a UDP DNS query to the given server gets
+// no answer, in the single try a blocked server deserves.
 func assertBlockedDNSQuery(t *testing.T, ctx context.Context, sbx *api.Sandbox, envdClient *setup.EnvdClient, dnsServer, domain string, msg string) {
 	t.Helper()
-	err := utils.ExecCommand(t, ctx, sbx, envdClient, "dig", "+short", "+timeout=3", "+tries=1", fmt.Sprintf("@%s", dnsServer), domain)
+	err := utils.ExecCommand(t, ctx, sbx, envdClient, "python3", "-c", dnsProbe, dnsServer, domain, "1")
 	require.Error(t, err, msg)
 }
 

@@ -23,6 +23,12 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
+// CacheSize reports what the writable cache, and the sealing one while there
+// is one, occupy on disk.
+func (o *NBDProvider) CacheSize(ctx context.Context) (int64, error) {
+	return o.overlay.CacheSize(ctx)
+}
+
 type NBDProvider struct {
 	overlay      *block.Overlay
 	mnt          *nbd.DirectPathMount

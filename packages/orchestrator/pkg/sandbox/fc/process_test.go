@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -34,6 +36,39 @@ func TestValidateFirecrackerBinaryReportsBothMissingPaths(t *testing.T) {
 	require.ErrorContains(t, err, "firecracker binary not found; checked architecture-specific path")
 	require.ErrorContains(t, err, archPath)
 	require.ErrorContains(t, err, legacyPath)
+}
+
+func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "firecracker.sock")
+	cmd := exec.CommandContext(t.Context(), "/bin/sh", "-c", "exit 0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} //nolint:exhaustruct_v5 // focused process-lifetime fixture
+	p := &Process{                                       //nolint:exhaustruct_v5 // focused process-lifetime fixture
+		cmd:                   cmd,
+		Exit:                  utils.NewErrorOnce(),
+		firecrackerSocketPath: socketPath,
+		metricsPath:           filepath.Join(dir, "metrics.fifo"),
+		files:                 &storage.SandboxFiles{SandboxID: "test"}, //nolint:exhaustruct_v5 // only identity is read
+	}
+	returned := make(chan error, 1)
+	go func() {
+		returned <- p.configure(
+			t.Context(),
+			sbxlogger.SandboxMetadata{SandboxID: "test"}, //nolint:exhaustruct_v5 // only sandbox identity is logged
+			nil,
+			nil,
+			cgroup.NoCgroupFD,
+		)
+	}()
+
+	<-p.Exit.Done()
+	require.NoError(t, os.WriteFile(socketPath, nil, 0o600))
+
+	err := <-returned
+	require.ErrorIs(t, err, errFirecrackerExitedBeforeSocketReadiness)
+	require.NoError(t, p.Exit.Error(), "startup refusal must not relabel a clean process exit")
 }
 
 func TestProcessStopIsIdempotent(t *testing.T) {

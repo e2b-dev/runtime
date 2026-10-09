@@ -22,6 +22,10 @@ func TestMetricsJSONKeys(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"ts",
 		"cpu_count",
+		"cpu_possible",
+		"cpu_target",
+		"cpu_target_attempts",
+		"cpu_write_pending_ms",
 		"cpu_used_pct",
 		"mem_total",
 		"mem_used",

@@ -290,7 +290,7 @@ func doBuild(
 	if verbose {
 		logLevel = ldlog.Info
 	}
-	featureFlags, _ := featureflags.NewClientWithLogLevel(builderConfig.DeploymentEnvironment, "", logLevel)
+	featureFlags, _ := featureflags.NewClientWithLogLevel(builderConfig.DeploymentEnvironment, "", "", logLevel)
 
 	sandboxes := sandbox.NewSandboxesMap()
 

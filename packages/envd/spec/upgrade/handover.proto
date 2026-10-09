@@ -51,6 +51,12 @@ message HandoverState {
   // fallback -- the behaviour that predates this field. A subsequent /init carrying a
   // non-empty user still wins: the host owns this state, the blob is a backstop.
   HandoverDefaults defaults = 9;
+  // helper_pids are children the outgoing envd forked for its own work and that
+  // need nothing but reaping, such as a CPU hotplug write still in the kernel.
+  // They survive the execve as children of the new envd, which wait4s each. A
+  // reader that predates this field leaves at most a few zombies, so the field
+  // does not raise the schema.
+  repeated int32 helper_pids = 10;
 }
 
 // HandoverDefaults is the outgoing envd's execcontext.Defaults, minus the env vars

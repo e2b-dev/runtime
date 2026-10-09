@@ -93,7 +93,7 @@ func TestSandboxAutoPauseResumePersisted(t *testing.T) {
 			Path:     &path,
 			Username: new("user"),
 		},
-		setup.WithSandbox(t, sbxId),
+		setup.WithSandbox(t, sbx),
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, fileResponse.StatusCode())
@@ -133,7 +133,7 @@ func TestSandboxAutoPauseResumePersisted(t *testing.T) {
 			Path:     &path,
 			Username: new("user"),
 		},
-		setup.WithSandbox(t, sbxId),
+		setup.WithSandbox(t, sbx),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, fileResponse.StatusCode())

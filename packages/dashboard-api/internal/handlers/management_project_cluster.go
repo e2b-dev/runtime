@@ -27,6 +27,10 @@ func (s *APIStore) ManagementRegisterCluster(c *gin.Context, clusterID api.Clust
 		Token:              body.Token,
 		SandboxProxyDomain: body.SandboxProxyDomain,
 		AuthOrgID:          body.AuthOrgId,
+		// A cluster registered through the management API belongs to a
+		// deployment its caller also tears down, so it starts unprotected.
+		// Registering an existing cluster again keeps its stored protection.
+		DeletionProtection: false,
 	})
 	switch {
 	case errors.Is(err, errInvalidClusterRegistration):

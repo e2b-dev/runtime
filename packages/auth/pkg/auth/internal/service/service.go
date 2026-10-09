@@ -16,6 +16,7 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/token"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
+	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
@@ -117,10 +118,18 @@ func (s *AuthService) ValidateAPIKey(ctx context.Context, ginCtx *gin.Context, a
 			}
 		}
 
+		if dberrors.IsNotFoundError(err) {
+			return nil, &APIError{
+				Err:       fmt.Errorf("no team for the api key: %w", err),
+				ClientMsg: "Cannot get the team for the given API key",
+				Code:      http.StatusUnauthorized,
+			}
+		}
+
 		return nil, &APIError{
 			Err:       fmt.Errorf("failed to get the team from db for an api key: %w", err),
-			ClientMsg: "Cannot get the team for the given API key",
-			Code:      http.StatusUnauthorized,
+			ClientMsg: "Cannot verify the API key, please try again",
+			Code:      http.StatusInternalServerError,
 		}
 	}
 

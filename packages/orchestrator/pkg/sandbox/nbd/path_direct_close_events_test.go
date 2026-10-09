@@ -57,7 +57,7 @@ func TestCloseClosesTheDescriptorBeforeTheHandlerTeardown(t *testing.T) {
 	overlay := block.NewOverlay(device, cache)
 	t.Cleanup(func() { _ = overlay.Close() })
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = featureFlags.Close(context.WithoutCancel(t.Context())) })
 

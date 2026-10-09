@@ -31,7 +31,7 @@ func TestPathDirect_CloseFlushesAfterOpenContextEnds(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = featureFlags.Close(context.WithoutCancel(t.Context())) })
 

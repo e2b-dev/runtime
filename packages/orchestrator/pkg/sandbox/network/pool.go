@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -33,6 +34,8 @@ const (
 
 var (
 	meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network")
+
+	slotReturnDuration = utils.Must(telemetry.GetHistogram(meter, telemetry.NetworkSlotReturnDurationName))
 
 	newSlotsAvailableCounter = utils.Must(meter.Int64UpDownCounter("orchestrator.network.slots_pool.new",
 		metric.WithDescription("Number of new network slots ready to be used."),
@@ -281,10 +284,24 @@ func (p *Pool) Get(ctx context.Context, network *orchestrator.SandboxNetworkConf
 			return nil, ErrClosed
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case s := <-p.newSlots:
+		case s, ok := <-p.newSlots:
+			if !ok {
+				// Populate closes this channel when it exits; a closed channel is
+				// not a new slot.
+				return nil, ErrClosed
+			}
+
 			newSlotsAvailableCounter.Add(ctx, -1)
 			acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "new")))
 			telemetry.ReportEvent(ctx, "new network slot")
+
+			slot = s
+		case s := <-p.reusedSlots:
+			// ReturnAsync may publish a reusable slot after the fast-path miss
+			// while this caller waits for new-slot production.
+			reusableSlotsAvailableCounter.Add(ctx, -1)
+			acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "reused")))
+			telemetry.ReportEvent(ctx, "reused network slot")
 
 			slot = s
 		}
@@ -321,25 +338,57 @@ func (p *Pool) configureSlot(ctx context.Context, slot *Slot, network *orchestra
 // sandbox drain. Release notifications must succeed before teardown or reuse,
 // including on cancellation or pool shutdown. A failure keeps the slot allocated
 // and unavailable until orchestrator recovery, since connections may still exist.
-func (p *Pool) returnSlot(ctx context.Context, slot *Slot, releasedFn ReleaseNotify, returnDelay time.Duration) error {
-	var cause error
-	select {
-	case <-ctx.Done():
-		cause = ctx.Err()
-	case <-p.done:
-		cause = ErrClosed
-	case <-time.After(returnDelay):
-	}
+func (p *Pool) returnSlot(ctx context.Context, slot *Slot, releasedFn ReleaseNotify, returnDelay time.Duration) (retErr error) {
+	started := time.Now()
+	cleanupStarted := started
+	defer func() { RecordSlotReturnDuration(ctx, started, cleanupStarted, 1, retErr) }()
 
-	// Every path notifies before the slot can be torn down or reused.
-	if err := releasedFn(ctx, slot.HostIPString()); err != nil {
-		return errors.Join(cause, fmt.Errorf("%w: slot '%d': %w", ErrSlotRetained, slot.Idx, err))
-	}
-	if cause != nil {
-		return p.cleanupWith(ctx, slot, cause)
-	}
+	return telemetry.Observe0(ctx, tracer, "clean network-slot", func(ctx context.Context) error {
+		var cause error
+		select {
+		case <-ctx.Done():
+			cause = ctx.Err()
+		case <-p.done:
+			cause = ErrClosed
+		case <-time.After(returnDelay):
+		}
 
-	return p.recycle(ctx, slot)
+		cleanupStarted = time.Now()
+
+		// Every path notifies before the slot can be torn down or reused.
+		if err := releasedFn(ctx, slot.HostIPString()); err != nil {
+			telemetry.SetAttributes(ctx, attribute.Bool("network.slot.retained", true))
+
+			return errors.Join(cause, fmt.Errorf("%w: slot '%d': %w", ErrSlotRetained, slot.Idx, err))
+		}
+		if cause != nil {
+			return p.cleanupWith(ctx, slot, cause)
+		}
+
+		return p.recycle(ctx, slot)
+	}, trace.WithAttributes(attribute.Int("network_version", 1)))
+}
+
+// RecordSlotReturnDuration records both the full return attempt and cleanup
+// after the reuse delay. Both network pools use the same metric and result labels.
+func RecordSlotReturnDuration(ctx context.Context, started, cleanupStarted time.Time, version int, err error) {
+	result := "error"
+	switch err {
+	case nil:
+		result = "success"
+	case ErrClosed, context.Canceled, context.DeadlineExceeded: //nolint:errorlint // Wrapped or joined errors also represent a failed cleanup operation.
+		// Successful cleanup returns the shutdown cause directly. A joined
+		// cleanup failure must still be reported as an error.
+		result = "shutdown"
+	default:
+		if errors.Is(err, ErrSlotRetained) {
+			result = "retained"
+		}
+	}
+	finished := time.Now()
+	attrs := metric.WithAttributes(attribute.Int("network_version", version), attribute.String("result", result))
+	slotReturnDuration.Record(ctx, finished.Sub(started).Milliseconds(), attrs, metric.WithAttributes(attribute.String("phase", "total")))
+	slotReturnDuration.Record(ctx, finished.Sub(cleanupStarted).Milliseconds(), attrs, metric.WithAttributes(attribute.String("phase", "cleanup")))
 }
 
 // tryTrackReturn registers an in-flight slot return so Close can wait for

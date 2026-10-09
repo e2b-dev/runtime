@@ -1,4 +1,4 @@
-package handlers
+package template_manager
 
 import (
 	"context"
@@ -26,12 +26,14 @@ type cancelRecorder struct {
 	onSetStatus func()
 
 	statusCalls  int
+	reason       string
 	deleteCalls  int
 	deleteCtxErr error
 }
 
-func (c *cancelRecorder) SetTerminalStatus(context.Context, uuid.UUID, dbtypes.BuildStatusGroup, *templatemanagergrpc.TemplateBuildStatusReason) (bool, error) {
+func (c *cancelRecorder) SetTerminalStatus(_ context.Context, _ uuid.UUID, _ dbtypes.BuildStatusGroup, reason *templatemanagergrpc.TemplateBuildStatusReason) (bool, error) {
 	c.statusCalls++
+	c.reason = reason.GetMessage()
 
 	if c.onSetStatus != nil {
 		c.onSetStatus()
@@ -63,10 +65,20 @@ func TestCancelBuild_StopsTheBuildItEnded(t *testing.T) {
 
 	tm := &cancelRecorder{}
 
-	require.NoError(t, cancelBuild(t.Context(), tm, cancellableBuild()))
+	require.NoError(t, cancelBuild(t.Context(), tm, cancellableBuild(), "cancelled by admin"))
 
 	require.Equal(t, 1, tm.statusCalls)
 	require.Equal(t, 1, tm.deleteCalls, "a build this call ended must be stopped on its node")
+}
+
+func TestCancelBuild_RecordsTheCallersReason(t *testing.T) {
+	t.Parallel()
+
+	tm := &cancelRecorder{}
+
+	require.NoError(t, cancelBuild(t.Context(), tm, cancellableBuild(), "cancelled: team deleted"))
+
+	require.Equal(t, "cancelled: team deleted", tm.reason)
 }
 
 func TestCancelBuild_LeavesABuildThatEndedOnItsOwn(t *testing.T) {
@@ -77,7 +89,7 @@ func TestCancelBuild_LeavesABuildThatEndedOnItsOwn(t *testing.T) {
 	// them while the row still points at them.
 	tm := &cancelRecorder{lost: true}
 
-	require.NoError(t, cancelBuild(t.Context(), tm, cancellableBuild()))
+	require.NoError(t, cancelBuild(t.Context(), tm, cancellableBuild(), "cancelled by admin"))
 
 	require.Equal(t, 1, tm.statusCalls)
 	require.Zero(t, tm.deleteCalls, "a build this call did not end must keep its artifacts")
@@ -94,7 +106,7 @@ func TestCancelBuild_StopsTheBuildAfterTheCallerHasGone(t *testing.T) {
 
 	tm := &cancelRecorder{onSetStatus: cancel}
 
-	require.NoError(t, cancelBuild(ctx, tm, cancellableBuild()))
+	require.NoError(t, cancelBuild(ctx, tm, cancellableBuild(), "cancelled by admin"))
 
 	require.Equal(t, 1, tm.deleteCalls)
 	require.NoError(t, tm.deleteCtxErr, "the delete must not be issued on the request context")
@@ -105,7 +117,7 @@ func TestCancelBuild_DoesNotDeleteWhenTheStatusWriteFails(t *testing.T) {
 
 	tm := &cancelRecorder{setStatusErr: errors.New("database is down")}
 
-	require.Error(t, cancelBuild(t.Context(), tm, cancellableBuild()))
+	require.Error(t, cancelBuild(t.Context(), tm, cancellableBuild(), "cancelled by admin"))
 
 	require.Zero(t, tm.deleteCalls, "a build still recorded as running must keep its artifacts")
 }
@@ -117,5 +129,5 @@ func TestCancelBuild_ReportsAFailedNodeDelete(t *testing.T) {
 	// needs to see.
 	tm := &cancelRecorder{deleteBuildErr: errors.New("node unreachable")}
 
-	require.Error(t, cancelBuild(t.Context(), tm, cancellableBuild()))
+	require.Error(t, cancelBuild(t.Context(), tm, cancellableBuild(), "cancelled by admin"))
 }

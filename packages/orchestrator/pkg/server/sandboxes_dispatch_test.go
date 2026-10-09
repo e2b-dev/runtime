@@ -61,3 +61,35 @@ func TestFilesystemBoot_OldShapedRequestPreservesDispatch(t *testing.T) {
 		assert.Equal(t, meta.IsFilesystemOnly(), filesystemBoot(meta, &req))
 	}
 }
+
+// The resumed event reports the boot path that ran, not the one requested: a
+// cold-boot request on a memory snapshot reads reboot, and a memory-restore
+// request on a filesystem-only snapshot still reads reboot.
+func TestResumeModeFollowsBootPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		filesystemOnly bool
+		filesystemBoot *bool
+		want           string
+	}{
+		{"memory snapshot, plain resume", false, nil, "restore"},
+		{"memory snapshot, cold boot requested", false, new(true), "reboot"},
+		{"filesystem-only snapshot, plain resume", true, nil, "reboot"},
+		{"filesystem-only snapshot, memory restore requested", true, new(false), "reboot"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := metadata.Template{FilesystemOnly: tt.filesystemOnly}
+			req := &orchestrator.SandboxCreateRequest{FilesystemBoot: tt.filesystemBoot}
+			eventData := map[string]any{}
+			addResumeMode(eventData, filesystemBoot(meta, req))
+
+			assert.Equal(t, tt.want, eventData["resume_mode"])
+		})
+	}
+}

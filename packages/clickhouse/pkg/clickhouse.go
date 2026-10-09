@@ -25,6 +25,8 @@ type Clickhouse interface {
 	QueryTeamMetrics(ctx context.Context, teamID string, start time.Time, end time.Time, step time.Duration) ([]TeamMetrics, error)
 	QueryMaxStartRateTeamMetrics(ctx context.Context, teamID string, start time.Time, end time.Time, step time.Duration) (MaxTeamMetric, error)
 	QueryMaxConcurrentTeamMetrics(ctx context.Context, teamID string, start time.Time, end time.Time) (MaxTeamMetric, error)
+
+	QuerySandboxLifecycle(ctx context.Context, sandboxID string) (SandboxLifecycle, error)
 }
 
 type Client struct {

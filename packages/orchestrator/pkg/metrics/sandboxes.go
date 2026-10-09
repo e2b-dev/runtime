@@ -30,6 +30,8 @@ const (
 
 	sbxMemThresholdPct = 80
 	sbxCpuThresholdPct = 80
+	// A CPU online/offline write older than this is stuck in the guest kernel.
+	sbxCpuWriteStuckMs = 10_000
 
 	// Caps the guest-supplied process name, in runes. Real names are escaped to ASCII, 60 at most.
 	maxOomProcessLen = 64
@@ -62,6 +64,10 @@ type SandboxObserver struct {
 	meter       metric.Meter
 	cpuTotal    metric.Int64ObservableGauge
 	cpuUsed     metric.Float64ObservableGauge
+	cpuPossible metric.Int64ObservableGauge
+	cpuTarget   metric.Int64ObservableGauge
+	cpuAttempts metric.Int64ObservableGauge
+	cpuPending  metric.Int64ObservableGauge
 	memoryTotal metric.Int64ObservableGauge
 	memoryUsed  metric.Int64ObservableGauge
 	memoryCache metric.Int64ObservableGauge
@@ -112,6 +118,26 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		return nil, fmt.Errorf("failed to create CPU used gauge: %w", err)
 	}
 
+	cpuPossible, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuPossibleGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU possible gauge: %w", err)
+	}
+
+	cpuTarget, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuTargetGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU target gauge: %w", err)
+	}
+
+	cpuAttempts, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuTargetAttemptsGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU target attempts gauge: %w", err)
+	}
+
+	cpuPending, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuWritePendingGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU write pending gauge: %w", err)
+	}
+
 	memoryTotal, err := telemetry.GetGaugeInt(meter, telemetry.SandboxRamTotalGaugeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memory total gauge: %w", err)
@@ -144,6 +170,10 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		meter:          meter,
 		cpuTotal:       cpuTotal,
 		cpuUsed:        cpuUsed,
+		cpuPossible:    cpuPossible,
+		cpuTarget:      cpuTarget,
+		cpuAttempts:    cpuAttempts,
+		cpuPending:     cpuPending,
 		memoryTotal:    memoryTotal,
 		memoryUsed:     memoryUsed,
 		memoryCache:    memoryCache,
@@ -225,6 +255,24 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 					o.ObserveInt64(so.cpuTotal, sbxMetrics.CPUCount, attributes)
 					o.ObserveFloat64(so.cpuUsed, sbxMetrics.CPUUsedPercent, attributes)
+					// An envd that predates CPU hotplug reports none of these. One that does reports cpu_possible,
+					// except when its sysfs read fails: then it still carries the target, so both are checked.
+					if sbxMetrics.CPUPossible > 0 || sbxMetrics.CPUTarget > 0 {
+						o.ObserveInt64(so.cpuPossible, sbxMetrics.CPUPossible, attributes)
+						o.ObserveInt64(so.cpuTarget, sbxMetrics.CPUTarget, attributes)
+						o.ObserveInt64(so.cpuAttempts, sbxMetrics.CPUTargetAttempts, attributes)
+						o.ObserveInt64(so.cpuPending, sbxMetrics.CPUWritePendingMs, attributes)
+
+						// Logged on entering the stuck state only; the gauge carries it from there.
+						stuck := sbxMetrics.CPUWritePendingMs >= sbxCpuWriteStuckMs
+						if sbx.CPUWriteStuck.Swap(stuck) != stuck && stuck {
+							sbxlogger.E(sbx).Warn(ctx, "CPU hotplug write stuck in the guest kernel",
+								zap.Int64("cpu_write_pending_ms", sbxMetrics.CPUWritePendingMs),
+								zap.Int64("cpu_online", sbxMetrics.CPUCount),
+								zap.Int64("cpu_target", sbxMetrics.CPUTarget),
+							)
+						}
+					}
 
 					memoryTotal, memoryUsed, memoryReported, err := sandboxMemory(sbx.Config.Envd.Version, sbxMetrics)
 					if err != nil {
@@ -292,7 +340,8 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 			}
 
 			return nil
-		}, so.cpuTotal, so.cpuUsed, so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed)
+		}, so.cpuTotal, so.cpuUsed, so.cpuPossible, so.cpuTarget, so.cpuAttempts, so.cpuPending,
+		so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed)
 	if err != nil {
 		return nil, err
 	}

@@ -100,7 +100,7 @@ func run() int {
 
 	l.Info(ctx, "Starting client proxy", zap.String("commit", commitSHA), zap.String("instance_id", instanceID))
 
-	featureFlagsClient, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName)
+	featureFlagsClient, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, version, featureflags.WithStartOnInitTimeout())
 	if err != nil {
 		l.Error(ctx, "Failed to create feature flags client", zap.Error(err))
 

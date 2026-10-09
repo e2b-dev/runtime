@@ -30,8 +30,10 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/handlers"
 	customMiddleware "github.com/e2b-dev/infra/packages/api/internal/middleware"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/ratelimit"
 	"github.com/e2b-dev/infra/packages/api/internal/oauth"
+	"github.com/e2b-dev/infra/packages/api/internal/openapispec"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
@@ -99,6 +101,13 @@ var (
 )
 
 func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T, port int) *http.Server {
+	// Rendered before the servers are cleared below, so the served document
+	// keeps them.
+	openAPISpec, err := openapispec.Handler(swagger)
+	if err != nil {
+		l.Fatal(ctx, "failed to render the OpenAPI document", zap.Error(err))
+	}
+
 	// Clear out the servers array in the swagger spec, that skips validating
 	// that server names match. We don't know how this thing will be run.
 	swagger.Servers = nil
@@ -181,6 +190,11 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	r.POST("/templates/:templateID/builds/:buildID", templateBuildV1Gone)
 	r.POST("/v2/templates", templateBuildV1Gone)
 
+	// The spec does not declare its own document, so it is registered before
+	// the validator, like the removed routes.
+	r.GET(openapispec.Path, openAPISpec)
+	r.HEAD(openapispec.Path, openAPISpec)
+
 	// Create a team API Key auth validator
 	AuthenticationFunc := auth.CreateAuthenticationFunc(
 		[]auth.Authenticator{
@@ -227,6 +241,7 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// EnforceBlockedTeam. Must run after auth (which populates team info on
 	// the gin context) and before the handlers.
 	r.Use(customMiddleware.EnforceBlockedTeam())
+	r.Use(idempotency.Middleware(redisClient, ff)) //nolint:contextcheck // Gin middleware gets context from the request.
 
 	// We now register our store above as the handler for the interface
 	api.RegisterHandlersWithOptions(r, apiStore, api.GinServerOptions{
@@ -414,7 +429,7 @@ func run() int {
 		return redisClient.Close()
 	})
 
-	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName)
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, serviceVersion, featureflags.WithStartOnInitTimeout())
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
@@ -441,6 +456,13 @@ func run() int {
 	//   context so it doesn't exit first.)
 	apiStore := handlers.NewAPIStore(ctx, tel, redisClient, featureFlags, config)
 	cleanupFns = append(cleanupFns, apiStore.Close)
+
+	riverOutbox, err := apiStore.NewOutbox(l)
+	if err != nil {
+		l.Error(ctx, "initializing the outbox", zap.Error(err))
+
+		return 1
+	}
 
 	adminJWTVerifier, err := auth.NewJWKSVerifier(ctx, config.AdminAuthProvider, http.DefaultClient)
 	if err != nil {
@@ -479,6 +501,12 @@ func run() int {
 
 	// Pass ctx so in-flight requests survive the serve goroutines' exit during graceful shutdown.
 	s := NewGinServer(ctx, config, tel, l, apiStore, adminJWTVerifier, redisClient, featureFlags, swagger, port)
+
+	if err := riverOutbox.Start(ctx); err != nil {
+		l.Error(ctx, "starting the outbox", zap.Error(err))
+
+		return 1
+	}
 
 	// ////////////////////////
 	//
@@ -610,6 +638,14 @@ func run() int {
 		// the database and Redis clients it is still using.
 		if err := apiStore.Drain(ctx); err != nil {
 			l.Error(ctx, "sandbox work did not finish before shutdown", zap.Error(err))
+		}
+
+		// Outbox jobs use the same clients. One still running at the deadline
+		// is rescued and retried by another replica; every step is idempotent.
+		outboxStopCtx, outboxStopCancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer outboxStopCancel()
+		if err := riverOutbox.Stop(outboxStopCtx); err != nil {
+			l.Error(ctx, "outbox shutdown error", zap.Error(err))
 		}
 
 		// Drain pprof after, so that it is still available during the shutdown process for debugging if needed.

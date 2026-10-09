@@ -73,7 +73,7 @@ func ExecCommandWithOutput(tb testing.TB, ctx context.Context, sbx *api.Sandbox,
 		Stdin: &f,
 	})
 
-	setup.SetSandboxHeader(tb, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(tb, req.Header(), sbx)
 	// An empty user omits the auth header so envd uses its default user.
 	if user != "" {
 		setup.SetUserHeader(tb, req.Header(), user)

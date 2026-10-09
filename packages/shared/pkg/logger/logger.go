@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel/log"
@@ -13,7 +14,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type edgeTraceIDContextKey struct{}
+type contextFieldsKey struct{}
 
 const edgeTraceIDField = "edge_trace_id"
 
@@ -196,10 +197,6 @@ func (t *TracedLogger) generateFields(ctx context.Context, fields ...zap.Field) 
 	if ctx != nil {
 		contextFields := make([]zap.Field, 0)
 
-		if edgeTraceID, ok := GetEdgeTraceID(ctx); ok {
-			contextFields = append(contextFields, zap.String(edgeTraceIDField, edgeTraceID))
-		}
-
 		span := trace.SpanFromContext(ctx)
 		spanContext := span.SpanContext()
 		if spanContext.HasTraceID() {
@@ -209,23 +206,66 @@ func (t *TracedLogger) generateFields(ctx context.Context, fields ...zap.Field) 
 			contextFields = append(contextFields, zap.String("span_id", spanContext.SpanID().String()))
 		}
 
+		for _, field := range fieldsFromContext(ctx) {
+			if !keyIn(contextFields, field) && !keyIn(fields, field) {
+				contextFields = append(contextFields, field)
+			}
+		}
+
 		return append(contextFields, fields...)
 	}
 
 	return fields
 }
 
+// ContextWithFields returns a context whose log lines carry fields. The last
+// field under a key replaces the others. A field passed to the log call, and
+// the trace_id and span_id the logger adds, replace a context field under the
+// same key. Fields bound with With do not, because zap does not expose them,
+// so keep context keys distinct from bound ones. Fields without a key, such as
+// Time's, are never replaced.
+func ContextWithFields(ctx context.Context, fields ...zap.Field) context.Context {
+	if len(fields) == 0 {
+		return ctx
+	}
+
+	combined := slices.Concat(fieldsFromContext(ctx), fields)
+	merged := make([]zap.Field, 0, len(combined))
+	for i, field := range combined {
+		if !keyIn(combined[i+1:], field) {
+			merged = append(merged, field)
+		}
+	}
+
+	return context.WithValue(ctx, contextFieldsKey{}, merged)
+}
+
+func keyIn(fields []zap.Field, field zap.Field) bool {
+	return field.Key != "" && slices.ContainsFunc(fields, func(other zap.Field) bool { return other.Key == field.Key })
+}
+
+func fieldsFromContext(ctx context.Context) []zap.Field {
+	fields, _ := ctx.Value(contextFieldsKey{}).([]zap.Field)
+
+	return fields
+}
+
 func ContextWithEdgeTraceID(ctx context.Context, edgeTraceID string) context.Context {
-	return context.WithValue(ctx, edgeTraceIDContextKey{}, edgeTraceID)
+	if edgeTraceID == "" {
+		return ctx
+	}
+
+	return ContextWithFields(ctx, zap.String(edgeTraceIDField, edgeTraceID))
 }
 
 func GetEdgeTraceID(ctx context.Context) (string, bool) {
-	edgeTraceID, ok := ctx.Value(edgeTraceIDContextKey{}).(string)
-	if !ok || edgeTraceID == "" {
-		return "", false
+	for _, field := range fieldsFromContext(ctx) {
+		if field.Key == edgeTraceIDField && field.Type == zapcore.StringType {
+			return field.String, true
+		}
 	}
 
-	return edgeTraceID, true
+	return "", false
 }
 
 func ReplaceGlobals(ctx context.Context, logger Logger) func() {

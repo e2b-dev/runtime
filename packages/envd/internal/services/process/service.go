@@ -50,10 +50,10 @@ type Service struct {
 	// with no carried handler and be left unconnectable/unreaped. RWMutex so
 	// concurrent Starts don't serialize against each other, only against Upgrade.
 	snapshotMu sync.RWMutex
-	// cgroupManager places spawned processes into their cgroup; workloadFreezer
-	// freezes/thaws the workload during a live-upgrade handover. The freezer is
-	// shared with the HTTP API so both serialize on one lock.
-	cgroupManager   cgroups.Manager
+	// workloadFreezer places spawned processes into their cgroup (through its
+	// manager), admits each fork, and freezes/thaws the workload during a
+	// live-upgrade handover. It is shared with the HTTP API so every freeze,
+	// thaw and spawn serializes against the same state.
 	workloadFreezer *cgroups.WorkloadFreezer
 
 	// handoverMaxWait bounds how long the pre-handover freeze waits for the
@@ -68,7 +68,6 @@ func newService(l *zerolog.Logger, defaults *execcontext.Defaults, workloadFreez
 		processes:       utils.NewMap[uint32, *handler.Handler](),
 		terminated:      utils.NewMap[uint32, *retainedExit](),
 		defaults:        defaults,
-		cgroupManager:   workloadFreezer.Manager(),
 		workloadFreezer: workloadFreezer,
 		handoverMaxWait: cgroups.HandoverMaxWait,
 	}

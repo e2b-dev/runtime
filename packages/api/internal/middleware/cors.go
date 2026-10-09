@@ -14,6 +14,7 @@ var allowedRequestHeaders = []string{
 	"Origin",
 	"Content-Length",
 	"Content-Type",
+	"Idempotency-Key",
 	"User-Agent",
 	// API Key header
 	"Authorization",

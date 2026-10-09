@@ -67,7 +67,7 @@ func TestPeriodicHintGates_HostAdmission(t *testing.T) {
 // returns without starting a loop or touching the process.
 func TestRunPeriodicHinting_StaticDisabledReturns(t *testing.T) {
 	t.Parallel()
-	ff, err := featureflags.NewClient("", "")
+	ff, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
 	require.False(t, ff.Live(), "the test environment has no LaunchDarkly key")
@@ -258,9 +258,17 @@ type servedMemory struct {
 	*uffd.NoopMemory
 
 	pages, deferred atomic.Int64
+	// extra is served pages that land in the next snapshot the loop takes, so a
+	// test can place faults in a specific window rather than at whatever point
+	// of the tick cycle the test goroutine happens to run.
+	extra atomic.Int64
 }
 
 func (m *servedMemory) ServeStats() userfaultfd.ServeSnapshot {
+	if n := m.extra.Swap(0); n > 0 {
+		m.pages.Add(n)
+	}
+
 	return userfaultfd.ServeSnapshot{Pages: m.pages.Load(), Deferred: m.deferred.Load()}
 }
 
@@ -278,6 +286,19 @@ func TestRunPeriodicHintingLoop_RunFaultsRecorded(t *testing.T) {
 
 		return nil
 	}}
+	// The re-faults are placed from the run record's hook: the loop calls it
+	// once a run's closing snapshot is taken, and the next snapshot it takes is
+	// the following tick's, so they land in that interval and in no run. Added
+	// from the test goroutine instead, they would land wherever the loop
+	// happened to be: inside a run window, or between a tick's snapshot and the
+	// run's opening one, where no record sees them.
+	var inject atomic.Bool
+	s.fphObserveFaults = func(kind, window, outcome string, n int64) {
+		o.hookFaults(kind, window, outcome, n)
+		if window == hintWindowRun && kind == "served" && inject.CompareAndSwap(true, false) {
+			mem.extra.Store(50)
+		}
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	go s.runPeriodicHintingLoop(ctx, fixedCfg(fphTestConfig()), openGates(), r)
@@ -290,7 +311,7 @@ func TestRunPeriodicHintingLoop_RunFaultsRecorded(t *testing.T) {
 	assert.Equal(t, int64(0), o.faultsFor(hintWindowInterval, "ok")["served"][0], "nothing faulted between the run and the next tick")
 
 	// Faults between runs belong to the interval after the last run.
-	mem.pages.Add(50)
+	inject.Store(true)
 	require.Eventually(t, func() bool {
 		return slices.Contains(o.faultsFor(hintWindowInterval, "ok")["served"], int64(50))
 	}, 2*time.Second, 5*time.Millisecond, "the interval record carries the re-faults, the run record never does")
@@ -696,7 +717,10 @@ func TestRunPeriodicHintingLoop_UnresponsiveGuestBacksOffAndRecovers(t *testing.
 	assert.True(t, s.hintUnresponsive.Load())
 
 	recovered.Store(true)
-	require.Eventually(t, func() bool { return !s.hintUnresponsive.Load() }, 5*time.Second, 5*time.Millisecond, "a completed run releases the latch")
+	// Wait on the record, not the flag: the loop clears the flag before recording
+	// the release, so the flag alone can be observed before the record lands.
+	require.Eventually(t, func() bool { return o.has("released") }, 5*time.Second, 5*time.Millisecond, "a completed run releases the latch")
+	assert.False(t, s.hintUnresponsive.Load())
 	assert.Equal(t, 1, o.count("released"))
 	cancel()
 	<-done

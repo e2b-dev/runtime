@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -874,4 +875,57 @@ func TestDedupedMemfdCache_FreeIndexUnderConcurrentReads(t *testing.T) {
 		t.Fatal(e)
 	default:
 	}
+}
+
+func TestDedupedMemfdCache_CloseWaitsForReleaseOwner(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		ps := int64(header.PageSize)
+		memfd, _ := newTestMemfd(t, ps)
+		drained, err := NewCache(ps, ps, t.TempDir()+"/drained", false)
+		require.NoError(t, err)
+
+		done := utils.NewSetOnce[*Cache]()
+		require.NoError(t, done.SetValue(drained))
+		_, cancel := context.WithCancel(t.Context())
+		d := &DedupedMemfdCache{ //nolint:exhaustruct_v5 // focused release-owner fixture
+			outPath:   t.TempDir() + "/dedup",
+			cancel:    cancel,
+			done:      done,
+			finished:  make(chan struct{}),
+			freeIndex: true,
+			memfd:     memfd,
+			index:     packedIndex{{packedStart: 0, absStart: 0, length: ps}},
+		}
+
+		ownerEntered := make(chan struct{})
+		releaseOwner := make(chan struct{})
+		ownerDone := make(chan error, 1)
+		go func() {
+			close(ownerEntered)
+			<-releaseOwner
+			ownerDone <- d.releaseMemfd(t.Context())
+			close(d.finished)
+		}()
+		<-ownerEntered
+
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- d.Close() }()
+		synctest.Wait()
+		select {
+		case err := <-closeDone:
+			t.Fatalf("Close returned before the release owner finished: %v", err)
+		default:
+		}
+
+		close(releaseOwner)
+		require.NoError(t, <-ownerDone)
+		require.NoError(t, <-closeDone)
+
+		d.mu.RLock()
+		defer d.mu.RUnlock()
+		assert.Nil(t, d.memfd)
+		assert.Nil(t, d.index)
+	})
 }

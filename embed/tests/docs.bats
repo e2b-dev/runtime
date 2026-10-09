@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-# Checks on the hub, the four install guides and the reference: the text they
+# Checks on the hub, the five install guides and the reference: the text they
 # quote, the links and pictures they point at, and the snippets they share.
 # No Docker needed.
 
@@ -64,7 +64,7 @@ PY
 @test "every FIX line a guide quotes is printed by a script" {
   local quoted checked=0 line
   quoted="$(python3 - README.md compose/README.md terraform/gcp/README.md \
-    terraform/aws/README.md kubernetes/README.md <<'PY'
+    terraform/aws/README.md terraform/azure/README.md kubernetes/README.md <<'PY'
 import re, sys
 
 for path in sys.argv[1:]:
@@ -99,16 +99,17 @@ PY
   [ "$checked" -gt 0 ]
 }
 
-# The hub and the four install guides cross-link each other, the diagrams,
+# The hub and the five install guides cross-link each other, the diagrams,
 # the manifests and the tests. A relative link that does not resolve is a dead
 # end for whoever follows it, and nothing else checks them. URLs and bare
 # in-page anchors are somebody else's business; every other target has to
 # exist on disk, relative to the README that names it. Fenced code blocks are
 # dropped first: a `](` inside one is not a link.
-@test "every relative Markdown link in the five READMEs and the reference resolves" {
+@test "every relative Markdown link in the six READMEs and the reference resolves" {
   local checked=0 readme dir target
   for readme in README.md compose/README.md terraform/gcp/README.md \
-                terraform/aws/README.md kubernetes/README.md docs/REFERENCE.md; do
+                terraform/aws/README.md terraform/azure/README.md \
+                kubernetes/README.md docs/REFERENCE.md; do
     [ -f "$readme" ] || { echo "$readme is missing" >&2; return 1; }
     dir="$(dirname "$readme")"
     while IFS= read -r target; do
@@ -127,16 +128,16 @@ PY
   [ "$checked" -gt 0 ]
 }
 
-# The four install guides each end in the same Try-it snippet: the shapes
+# The five install guides each end in the same Try-it snippet: the shapes
 # differ in how the reader gets the SDK variables into their shell, but the
 # sandbox they then create is deliberately the same few lines, so someone who
 # has run one shape recognises it in the next. Kept byte-identical here
 # because nothing else compares them, and a snippet edited in one guide alone
 # reads as a difference between the shapes that does not exist.
-@test "the four guides' Try-it snippets are one snippet" {
+@test "the five guides' Try-it snippets are one snippet" {
   local guide out first=""
   for guide in compose/README.md terraform/gcp/README.md terraform/aws/README.md \
-               kubernetes/README.md; do
+               terraform/azure/README.md kubernetes/README.md; do
     out="$BATS_TEST_TMPDIR/${guide//\//_}"
     try_it_snippet "$guide" > "$out" || return 1
     [ -s "$out" ] || { echo "$guide: the Try-it snippet came out empty" >&2; return 1; }

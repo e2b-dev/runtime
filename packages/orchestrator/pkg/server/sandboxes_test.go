@@ -149,6 +149,44 @@ func TestGetSandboxExecutionData(t *testing.T) {
 	assert.Positive(t, result["execution_time"].(int64))
 }
 
+func TestGetSandboxExecutionDataSurvivesCheckpointHandlerRebuild(t *testing.T) {
+	t.Parallel()
+
+	executionStartedAt := time.Now().Add(-7 * time.Hour)
+	handlerStartedAt := time.Now().Add(-13 * time.Second)
+
+	sbx := &sandbox.Sandbox{
+		Metadata: &sandbox.Metadata{
+			Config: sandbox.NewConfig(sandbox.Config{}),
+		},
+	}
+	sbx.SetExecutionStartedAt(executionStartedAt)
+	sbx.SetStartedAt(handlerStartedAt)
+
+	result := (&Server{}).getSandboxExecutionData(sbx)
+
+	assert.Equal(t, executionStartedAt.UTC().Format(time.RFC3339), result["started_at"])
+	assert.GreaterOrEqual(t, result["execution_time"].(int64), (7 * time.Hour).Milliseconds())
+}
+
+func TestGetSandboxExecutionDataKeepsReadinessStartOnFreshSandbox(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+
+	sbx := &sandbox.Sandbox{
+		Metadata: &sandbox.Metadata{
+			Config: sandbox.NewConfig(sandbox.Config{}),
+		},
+	}
+	sbx.SetStartedAt(startedAt)
+	sbx.SetExecutionStartedAt(startedAt.Add(2 * time.Second))
+
+	result := (&Server{}).getSandboxExecutionData(sbx)
+
+	assert.Equal(t, startedAt.UTC().Format(time.RFC3339), result["started_at"])
+}
+
 func TestAddKillReason(t *testing.T) {
 	t.Parallel()
 
@@ -169,6 +207,55 @@ func TestAddKillReason(t *testing.T) {
 
 		assert.Equal(t, killReasonUnknown, eventData["kill_reason"])
 	})
+}
+
+func TestAddPauseMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		filesystemOnly bool
+		want           string
+	}{
+		{"full snapshot", false, "full"},
+		{"filesystem-only snapshot", true, "filesystem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			eventData := map[string]any{executionEventDataKey: map[string]any{}}
+			addPauseMode(eventData, tt.filesystemOnly)
+
+			assert.Equal(t, tt.want, eventData["pause_mode"])
+			assert.Contains(t, eventData, executionEventDataKey, "existing keys are kept")
+		})
+	}
+}
+
+func TestAddResumeMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		filesystemBooted bool
+		want             string
+	}{
+		{"memory restored", false, "restore"},
+		{"cold-booted from the filesystem", true, "reboot"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			eventData := map[string]any{}
+			addResumeMode(eventData, tt.filesystemBooted)
+
+			assert.Equal(t, tt.want, eventData["resume_mode"])
+		})
+	}
 }
 
 func TestRecordSandboxKill(t *testing.T) {

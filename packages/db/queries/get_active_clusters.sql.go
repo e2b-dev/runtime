@@ -10,7 +10,7 @@ import (
 )
 
 const getActiveClusters = `-- name: GetActiveClusters :many
-SELECT DISTINCT c.id, c.endpoint, c.endpoint_tls, c.token, c.sandbox_proxy_domain, c.auth_org_id, c.name
+SELECT DISTINCT c.id, c.endpoint, c.endpoint_tls, c.token, c.sandbox_proxy_domain, c.auth_org_id, c.name, c.deletion_protection
 FROM public.clusters c
 JOIN public.teams t ON t.cluster_id = c.id
 `
@@ -36,6 +36,7 @@ func (q *Queries) GetActiveClusters(ctx context.Context) ([]GetActiveClustersRow
 			&i.Cluster.SandboxProxyDomain,
 			&i.Cluster.AuthOrgID,
 			&i.Cluster.Name,
+			&i.Cluster.DeletionProtection,
 		); err != nil {
 			return nil, err
 		}

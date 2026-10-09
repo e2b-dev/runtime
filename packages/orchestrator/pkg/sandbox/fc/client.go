@@ -26,6 +26,16 @@ import (
 
 const archARM64 = "arm64"
 
+// MaxVcpus is the most vCPUs Firecracker accepts in a machine config.
+const MaxVcpus = 32
+
+// ValidMachineVcpus reports whether Firecracker accepts a physical VM size on this host.
+// With SMT enabled on x86, vCPUs above one must come in sibling pairs.
+func ValidMachineVcpus(vcpus int64) bool {
+	return vcpus >= 1 && vcpus <= MaxVcpus &&
+		(runtime.GOARCH == archARM64 || vcpus == 1 || vcpus%2 == 0)
+}
+
 type apiClient struct {
 	client *client.Firecracker
 }

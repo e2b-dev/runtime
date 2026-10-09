@@ -3,13 +3,10 @@ package testutils
 import (
 	"context"
 	"database/sql"
-	"io/fs"
 	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // this allows goose to function
-	"github.com/pressly/goose/v3"
-	"github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -27,7 +24,7 @@ const (
 	// TrackingTable is goose's bookkeeping table for this database. Exported
 	// because migration tests step the schema through their own provider and
 	// must target the same table the harness migrated.
-	TrackingTable = "_migrations"
+	TrackingTable = dbmodule.TrackingTable
 
 	testPostgresImage = "postgres:18-alpine"
 	testDatabaseName  = "test_db"
@@ -113,57 +110,24 @@ func SetupDatabase(t *testing.T) *Database {
 	}
 }
 
-// ApplyMigrations applies each goose migration stream to the database, in
-// order. Streams come from the binary (dbmodule.Migrations) rather than from
-// a directory on disk: go test caches a result by the inputs the binary
-// observed, and a file outside the test's own module is not one of them, so
-// a schema edit read from a checkout would leave dependent modules' cached
-// passes standing.
-func (db *Database) ApplyMigrations(t *testing.T, migrations ...fs.FS) {
-	t.Helper()
-
-	db.applyGooseMigrations(t, migrations...)
-}
-
 func (db *Database) ConnStr() string {
 	return db.connStr
 }
 
-func (db *Database) applyGooseMigrations(t *testing.T, migrations ...fs.FS) {
+// runDatabaseMigrations applies the schema the way the migrator does, from the
+// copy embedded in the binary rather than a directory on disk: go test caches
+// a result by the inputs the binary observed, and a file outside the test's
+// own module is not one of them, so a schema edit read from a checkout would
+// leave dependent modules' cached passes standing.
+func runDatabaseMigrations(t *testing.T, connStr string) {
 	t.Helper()
 
-	sqlDB, err := sql.Open("pgx", db.connStr)
+	sqlDB, err := sql.Open("pgx", connStr)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err := sqlDB.Close()
 		assert.NoError(t, err)
 	})
 
-	// A provider per directory, each carrying its own store, so nothing here
-	// depends on goose's package-level dialect and tracking-table globals. That
-	// is what the mutex this replaced was guarding: parallel tests raced on
-	// those globals, and the race detector caught it on ARM64.
-	store, err := database.NewStore(goose.DialectPostgres, TrackingTable)
-	require.NoError(t, err)
-
-	for _, stream := range migrations {
-		provider, err := goose.NewProvider(
-			"", // Has to be empty when using a custom store
-			sqlDB,
-			stream,
-			goose.WithStore(store),
-		)
-		require.NoError(t, err)
-
-		_, err = provider.Up(t.Context())
-		require.NoError(t, err)
-	}
-}
-
-// runDatabaseMigrations executes all required database migrations
-func runDatabaseMigrations(t *testing.T, connStr string) {
-	t.Helper()
-
-	db := &Database{connStr: connStr}
-	db.ApplyMigrations(t, dbmodule.Migrations())
+	require.NoError(t, dbmodule.Migrate(t.Context(), sqlDB))
 }

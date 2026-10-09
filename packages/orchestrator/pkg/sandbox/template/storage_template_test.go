@@ -3,10 +3,12 @@
 package template
 
 import (
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -255,12 +257,32 @@ type countingFile struct {
 	closes atomic.Int32
 }
 
+func newCountingFile(path string) *countingFile {
+	f := new(countingFile)
+	f.path = path
+
+	return f
+}
+
 func (f *countingFile) Path() string { return f.path }
 
 func (f *countingFile) Close() error {
 	f.closes.Add(1)
 
 	return nil
+}
+
+func newCloseTestTemplate(t *testing.T) *storageTemplate {
+	t.Helper()
+
+	var config cfg.BuilderConfig
+	config.StorageConfig.TemplateCacheDir = t.TempDir()
+
+	var metrics blockmetrics.Metrics
+	tmpl, err := newTemplateFromStorage(config, uuid.NewString(), nil, nil, nil, metrics, nil, nil, nil)
+	require.NoError(t, err)
+
+	return tmpl
 }
 
 // The cache can close one instance from two paths at once: a retired entry's
@@ -270,8 +292,8 @@ func (f *countingFile) Close() error {
 func TestStorageTemplate_CloseRunsOnce(t *testing.T) {
 	t.Parallel()
 
-	paths, err := storage.Paths{BuildID: uuid.NewString()}.Cache(storage.Config{TemplateCacheDir: t.TempDir()})
-	require.NoError(t, err)
+	tmpl := newCloseTestTemplate(t)
+	paths := tmpl.paths
 
 	var memCloses, rootfsCloses atomic.Int32
 	memDev := blockmocks.NewMockReadonlyDevice(t)
@@ -286,17 +308,12 @@ func TestStorageTemplate_CloseRunsOnce(t *testing.T) {
 
 		return nil
 	}).Maybe()
-	snapfile := &countingFile{path: paths.CacheSnapfile()}
-
-	tmpl := &storageTemplate{
-		paths:    paths,
-		memfile:  utils.NewSetOnce[block.ReadonlyDevice](),
-		rootfs:   utils.NewSetOnce[block.ReadonlyDevice](),
-		snapfile: utils.NewSetOnce[File](),
-	}
+	snapfile := newCountingFile(paths.CacheSnapfile())
+	metafile := newCountingFile(paths.CacheMetadata())
 	require.NoError(t, tmpl.memfile.SetValue(memDev))
 	require.NoError(t, tmpl.rootfs.SetValue(rootfsDev))
 	require.NoError(t, tmpl.snapfile.SetValue(snapfile))
+	require.NoError(t, tmpl.metafile.SetValue(metafile))
 
 	const callers = 8
 
@@ -321,6 +338,75 @@ func TestStorageTemplate_CloseRunsOnce(t *testing.T) {
 	assert.Equal(t, int32(1), memCloses.Load(), "memfile closed more than once")
 	assert.Equal(t, int32(1), rootfsCloses.Load(), "rootfs closed more than once")
 	assert.Equal(t, int32(1), snapfile.closes.Load(), "snapfile closed more than once")
+	assert.Equal(t, int32(1), metafile.closes.Load(), "metafile must close exactly once")
+	assert.NoDirExists(t, filepath.Dir(paths.CacheSnapfile()))
+}
+
+// Close is the completion owner for every Fetch child. It cannot report a
+// terminal close or remove the instance-private directory until the metadata
+// child has published its result.
+func TestStorageTemplate_CloseWaitsForMetafile(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		tmpl := newCloseTestTemplate(t)
+		paths := tmpl.paths
+
+		memDev := blockmocks.NewMockReadonlyDevice(t)
+		memDev.EXPECT().Close().Return(nil)
+		rootfsDev := blockmocks.NewMockReadonlyDevice(t)
+		rootfsDev.EXPECT().Close().Return(nil)
+		snapfile := newCountingFile(paths.CacheSnapfile())
+		metafile := newCountingFile(paths.CacheMetadata())
+		require.NoError(t, tmpl.memfile.SetValue(memDev))
+		require.NoError(t, tmpl.rootfs.SetValue(rootfsDev))
+		require.NoError(t, tmpl.snapfile.SetValue(snapfile))
+
+		closed := make(chan error, 1)
+		go func() { closed <- tmpl.Close(t.Context()) }()
+
+		synctest.Wait()
+		select {
+		case err := <-closed:
+			t.Fatalf("Close returned before metadata publication: %v", err)
+		default:
+		}
+		assert.DirExists(t, filepath.Dir(paths.CacheMetadata()))
+
+		require.NoError(t, tmpl.metafile.SetValue(metafile))
+		synctest.Wait()
+		require.NoError(t, <-closed)
+		assert.Equal(t, int32(1), metafile.closes.Load())
+		assert.NoDirExists(t, filepath.Dir(paths.CacheMetadata()))
+		require.ErrorIs(t, tmpl.metafile.SetValue(new(countingFile)), utils.ErrAlreadySet,
+			"metadata cannot publish again after Close returns")
+	})
+}
+
+// Metadata is one of Fetch's four independently completed children. Close must
+// observe its terminal result just like it observes memfile, rootfs and
+// snapfile; otherwise it can remove the private cache directory and report
+// success while the metadata child is still writing into it.
+func TestStorageTemplate_CloseReportsMetafileError(t *testing.T) {
+	t.Parallel()
+
+	tmpl := newCloseTestTemplate(t)
+	paths := tmpl.paths
+
+	memDev := blockmocks.NewMockReadonlyDevice(t)
+	memDev.EXPECT().Close().Return(nil)
+	rootfsDev := blockmocks.NewMockReadonlyDevice(t)
+	rootfsDev.EXPECT().Close().Return(nil)
+	snapfile := newCountingFile(paths.CacheSnapfile())
+	metafileErr := errors.New("metafile fetch failed")
+	require.NoError(t, tmpl.memfile.SetValue(memDev))
+	require.NoError(t, tmpl.rootfs.SetValue(rootfsDev))
+	require.NoError(t, tmpl.snapfile.SetValue(snapfile))
+	require.NoError(t, tmpl.metafile.SetError(metafileErr))
+
+	err := tmpl.Close(t.Context())
+	require.ErrorIs(t, err, metafileErr)
+	assert.Equal(t, int32(1), snapfile.closes.Load())
 	assert.NoDirExists(t, filepath.Dir(paths.CacheSnapfile()))
 }
 

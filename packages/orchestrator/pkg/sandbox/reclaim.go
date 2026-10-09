@@ -728,9 +728,9 @@ func (s *Sandbox) bestEffortFreeze(ctx context.Context) {
 }
 
 // bestEffortUnfreeze calls envd's native /unfreeze endpoint with a tight
-// deadline. Reserved for the Pause error-cleanup chain so a failed pause
-// doesn't leave a live sandbox permanently frozen; the resume thaw is handled
-// by /init's defer and must not be moved here. Gated on envd version;
+// deadline. Used by the Pause error-cleanup chain, so a failed pause doesn't
+// leave a live sandbox permanently frozen, and after an in-place checkpoint;
+// the resume thaw runs inside /init and must not be moved here. Gated on envd version;
 // failures are logged. Uses context.WithoutCancel because callers run it from
 // cleanup paths whose parent ctx may already be done.
 func (s *Sandbox) bestEffortUnfreeze(ctx context.Context) {

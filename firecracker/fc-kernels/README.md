@@ -49,6 +49,10 @@ Then add the version to `kernel_versions.txt` and build.
 
 `make build` builds every version in the file, so keep the list to the versions you still want built. Dropping a pin is safe: published artifacts are never overwritten or deleted, and a template records the kernel version it was built with.
 
+## Flavours
+
+A flavour is the same upstream tree and patches built under a different config, named `<version>-<flavour>`: `6.1.158-android` is `6.1.158` with binder, DMA-BUF heaps, Android's networking options, a small patch that answers Android's ashmem ioctls on memfd files instead of an ashmem driver, and PSI (pressure stall information) on by default, so a sandbox can run Android in a container. The other configs build PSI in but leave it off unless the guest cmdline says `psi=1`; Android's low-memory killer daemon needs `/proc/pressure`, and without it the UI never comes up. `build.sh` takes the upstream tag and the `patches/` directory from the stem (`6.1.158`) and everything else — the config, the output directory, and so the published name a template selects — from the full name. Seed a flavour's config from its stem's and settle it the same way as a new version (`sudo env CONFIG_ONLY=1 ./build.sh 6.1.158-android`, per architecture). A flavour is a sibling of its stem, not a patch release: the weekly bump neither seeds from it nor bumps it. A flavour may also carry patches of its own under `patches/<version>-<flavour>/`; they apply after the stem's, and a change there rebuilds only that flavour.
+
 ## New kernel in E2B's infra
 _Note: these steps should give you a new kernel on your self-hosted E2B using https://github.com/e2b-dev/infra_
 

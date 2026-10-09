@@ -68,7 +68,7 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 		t.Skip("the nbd requires root privileges to run")
 	}
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 
 	const size = 10 * 1024 * 1024

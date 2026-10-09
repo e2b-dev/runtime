@@ -70,7 +70,7 @@ func TestApplyRules_MaxBoundaryCIDRs(t *testing.T) { //nolint:paralleltest // mu
 		"240.0.0.0/5", "224.0.0.0/4", "255.255.255.254/32", "10.0.0.0/8",
 	}
 
-	for _, cidr := range cidrs { //nolint:paralleltest // shares the test's single netns/nftables slot, cannot run in parallel
+	for _, cidr := range cidrs {
 		t.Run("deny/"+cidr, func(t *testing.T) {
 			require.NoErrorf(t, slot.Firewall.ApplyRules(t.Context(), false, nil, []string{cidr}),
 				"denyOut %s must apply without error", cidr)
@@ -93,7 +93,7 @@ func TestApplyRules_MaxBoundaryCIDRs(t *testing.T) { //nolint:paralleltest // mu
 		{"128.0.0.0/1", "200.0.0.0/8"}, // ordinary nested inside a non-zero boundary
 		{"128.0.0.0/1", "10.0.0.0/8"},  // ordinary below the boundary, kept
 	}
-	for _, b := range batches { //nolint:paralleltest // shares the test's single netns/nftables slot, cannot run in parallel
+	for _, b := range batches {
 		t.Run("deny-batch/"+strings.Join(b, ","), func(t *testing.T) {
 			require.NoErrorf(t, slot.Firewall.ApplyRules(t.Context(), false, nil, b),
 				"denyOut %v must apply without error", b)

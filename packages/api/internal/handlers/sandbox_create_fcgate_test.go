@@ -40,7 +40,7 @@ func TestPostSandboxes_FsOnlyAutoPauseVersionGate(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, db)
 	teamSlug := testutils.GetTeamSlug(t, ctx, db, teamID)
 
-	flags, err := featureflags.NewClientWithLogLevel("", "", ldlog.Error)
+	flags, err := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 	require.NoError(t, err)
 
 	store := &APIStore{

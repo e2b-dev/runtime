@@ -4,8 +4,10 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,16 +87,33 @@ func checkRebootCPUTemplate(tmpl *cputemplate.Template, fcVersion string) error 
 // boot ran, unless override (the reboot-cpu-template-override flag) replaces it. An invalid
 // override is returned as an error alongside the build's template.
 func rebootCPUTemplate(meta metadata.Template, override ldvalue.Value) (*cputemplate.Template, bool, error) {
-	if override.IsNull() {
+	var o struct {
+		Template *json.RawMessage `json:"template"`
+	}
+	dec := json.NewDecoder(strings.NewReader(override.JSONString()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&o); err != nil {
+		return meta.BuildCPUTemplate, false, fmt.Errorf("invalid CPU template override: %w", err)
+	}
+	if o.Template == nil {
 		return meta.BuildCPUTemplate, false, nil
 	}
 
-	tmpl, err := cputemplate.Parse([]byte(override.JSONString()))
+	tmpl, err := cputemplate.Parse(*o.Template)
 	if err != nil {
 		return meta.BuildCPUTemplate, false, err
 	}
 
 	return tmpl, true, nil
+}
+
+// rebootMaxVcpus inherits recorded capacity only when no maximum was requested.
+func rebootMaxVcpus(requested, recorded int64) int64 {
+	if requested != 0 {
+		return requested
+	}
+
+	return recorded
 }
 
 // rebootAllowed reports whether a snapshot may be cold-booted: it is marked
@@ -153,6 +172,9 @@ func (f *Factory) RebootSandbox(
 		return nil, fmt.Errorf("refusing to reboot build %s: not a filesystem-only snapshot and the request did not demand a filesystem boot", buildID)
 	}
 
+	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
+	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+
 	// It becomes the running template, so the next pause stores what this boot applied.
 	override := f.featureFlags.JSONFlag(ctx, featureflags.RebootCPUTemplateOverride,
 		featureflags.SandboxContext(runtime.SandboxID),
@@ -160,7 +182,9 @@ func (f *Factory) RebootSandbox(
 		featureflags.TeamContext(runtime.TeamID))
 	cpuTemplate, overridden, err := rebootCPUTemplate(meta, override)
 	if err != nil {
-		logger.L().Error(ctx, "ignoring invalid reboot CPU template override", zap.Error(err))
+		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
+			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
+			logger.WithSandboxID(runtime.SandboxID))
 	}
 	if overridden {
 		logger.L().Info(ctx, "reboot CPU template overridden",
@@ -171,6 +195,7 @@ func (f *Factory) RebootSandbox(
 	span.SetAttributes(
 		attribute.String("sandbox.build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
 		attribute.Bool("sandbox.cpu_template_overridden", overridden),
+		attribute.Bool("sandbox.cpu_template_override_invalid", err != nil),
 	)
 
 	if err := checkRebootCPUTemplate(meta.CPUTemplate, config.FirecrackerConfig.FirecrackerVersion); err != nil {

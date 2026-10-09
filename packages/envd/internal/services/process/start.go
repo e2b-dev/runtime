@@ -58,7 +58,10 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 		req.Msg,
 		&handlerL,
 		s.defaults,
-		s.cgroupManager,
+		// The freezer also admits the fork, refusing it while the workload cgroups are frozen
+		// for a pause. The handler takes it right around the clone -- inside New for a PTY,
+		// in Start otherwise -- and answers unavailable.
+		s.workloadFreezer,
 		cancelProc,
 	)
 	if err != nil {
@@ -170,9 +173,13 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 		}
 	}()
 
-	pid, err := proc.Start(requestTimeout)
+	pid, err := proc.Start(ctx, requestTimeout)
 	if err != nil {
 		s.snapshotMu.RUnlock()
+		// Handler.Wait releases the process context on the normal path; a start that never
+		// happened never reaches it. A refused plain start takes this branch on every poll during
+		// a pause, so the timer must not be left to run out on its own.
+		cancelProc()
 
 		return connect.NewError(handler.StartErrorCode(err), err)
 	}

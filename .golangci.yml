@@ -189,6 +189,7 @@ linters:
         - { disabled: true, name: line-length-limit }
         - { disabled: true, name: max-control-nesting }
         - { disabled: true, name: max-public-structs }
+        - { disabled: true, name: multiline-if-init }
         - { disabled: true, name: nested-structs }
         - { disabled: true, name: package-comments }
         - { disabled: true, name: package-directory-mismatch }

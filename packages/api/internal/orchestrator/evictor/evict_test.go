@@ -31,7 +31,7 @@ func TestEvictSandbox_ReasonByAction(t *testing.T) {
 	// Offline flags client: resolution falls back to the built-in
 	// FirecrackerVersionMap, so each declared version resolves within its
 	// own line — exactly the degrade semantics under test.
-	flags, err := featureflags.NewClientWithLogLevel("", "", ldlog.Error)
+	flags, err := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 	require.NoError(t, err)
 
 	counter, err := telemetry.GetCounter(noop.NewMeterProvider().Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/evictor"), telemetry.ApiEvictorFsOnlyAutoPause)
@@ -308,7 +308,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		var flags *featureflags.Client
 		if sw.budgetMs == nil {
-			flags, err = featureflags.NewClientWithLogLevel("", "", ldlog.Error)
+			flags, err = featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 		} else {
 			td := ldtestdata.DataSource()
 			td.Update(td.Flag(featureflags.AutoPauseOverstayBudgetMs.Key()).ValueForAll(ldvalue.Int(*sw.budgetMs)))

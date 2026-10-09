@@ -235,7 +235,7 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		assert.NoError(b, devicePool.Close(ctx))
 	})
 
-	featureFlags, err := featureflags.NewClient("", "")
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())

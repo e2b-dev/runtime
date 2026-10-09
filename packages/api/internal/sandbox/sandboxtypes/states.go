@@ -55,6 +55,7 @@ const (
 	KillReasonAdmin               KillReason = "admin"
 	KillReasonOrphaned            KillReason = "orphaned"
 	KillReasonBaseTemplateMissing KillReason = "base_template_missing"
+	KillReasonTeamDeleted         KillReason = "team_deleted"
 )
 
 // String returns the reason as a string, normalizing the empty value to

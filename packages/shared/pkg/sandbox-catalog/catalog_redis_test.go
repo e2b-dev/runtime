@@ -37,6 +37,26 @@ func TestRedisSandboxCatalog(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want.ExecutionID, got.ExecutionID)
 		require.Equal(t, want.OrchestratorID, got.OrchestratorID)
+		require.Nil(t, got.NetworkPlacement)
+	})
+
+	t.Run("a routed record round-trips its placement", func(t *testing.T) {
+		t.Parallel()
+
+		id := "sbx-routed"
+		want := testSandboxInfo("exec-1", "orch-A")
+		want.LifecycleID = "lifecycle-1"
+		want.NetworkPlacement = &NetworkPlacement{
+			NetworkMode: NetworkModeFullRouter,
+			RouterID:    "router-1",
+			PortableIP:  "10.4.0.7",
+		}
+		require.NoError(t, catalog.StoreSandbox(ctx, id, want, time.Minute))
+
+		got, err := catalog.GetSandbox(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
 	})
 
 	t.Run("get on an absent key returns ErrSandboxNotFound", func(t *testing.T) {
