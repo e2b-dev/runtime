@@ -83,7 +83,41 @@ func (s *Storage) healExpirationIndex(ctx context.Context) (int, error) {
 		return healed, err
 	}
 
+	s.recordTeamIndexSizes(ctx)
+
 	return healed, nil
+}
+
+// recordTeamIndexSizes pipelines SCARD over every team's sandbox index SET and
+// records each result as a histogram observation. Called once per heal pass
+// (every 5 min) so the cost is negligible. Use the p99/max to detect
+// unbounded growth caused by stale entries that Remove() never cleaned up.
+func (s *Storage) recordTeamIndexSizes(ctx context.Context) {
+	teams, err := s.redisClient.ZRange(ctx, globalTeamsSet, 0, -1).Result()
+	if err != nil {
+		logger.L().Warn(ctx, "Failed to list teams for index-size metrics", zap.Error(err))
+		return
+	}
+	if len(teams) == 0 {
+		return
+	}
+
+	pipe := s.redisClient.Pipeline()
+	cmds := make([]*redis.IntCmd, len(teams))
+	for i, teamID := range teams {
+		cmds[i] = pipe.SCard(ctx, GetSandboxStorageTeamIndexKey(teamID))
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		logger.L().Warn(ctx, "Failed to pipeline SCARD for index-size metrics", zap.Error(err))
+		return
+	}
+
+	for _, cmd := range cmds {
+		if n := cmd.Val(); n > 0 {
+			s.metrics.teamIndexSize.Record(ctx, n)
+		}
+	}
 }
 
 // healSandboxBatch re-adds missing expiration index members for one bounded
