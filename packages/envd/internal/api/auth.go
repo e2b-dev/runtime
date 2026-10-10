@@ -145,18 +145,21 @@ func (a *API) validateSigning(r *http.Request, signature *string, signatureExpir
 		return errors.New("invalid signature")
 	}
 
-	// signature validation
-	// Use constant-time comparison to prevent timing attacks.
-	if subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(*signature)) != 1 {
-		return errors.New("invalid signature")
-	}
-
-	// signature expiration
+	// Check expiration before HMAC comparison. Doing the expiration check
+	// after ConstantTimeCompare leaks a timing oracle: a correct-but-expired
+	// signature takes measurably longer than an incorrect one because only the
+	// former reaches this block. Moving expiration first ensures the HMAC is
+	// only evaluated for non-expired requests, eliminating the side-channel.
 	if signatureExpiration != nil {
 		exp := int64(*signatureExpiration)
 		if exp < time.Now().Unix() {
 			return errors.New("signature is already expired")
 		}
+	}
+
+	// HMAC validation -- constant-time comparison to prevent timing attacks.
+	if subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(*signature)) != 1 {
+		return errors.New("invalid signature")
 	}
 
 	return nil
