@@ -2,9 +2,11 @@
 -- Returns builds that are ONLY assigned to this template (safe to delete).
 -- Builds shared with other templates are excluded.
 -- DISTINCT needed because builds may have multiple tag assignments to the same template.
-SELECT DISTINCT eb.id as build_id, eb.cluster_node_id
+-- Joins envs (not active_envs) so the query works after the template is soft-deleted.
+SELECT DISTINCT eb.id as build_id, eb.cluster_node_id, e.cluster_id
 FROM "public"."env_build_assignments" eba
 JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+JOIN "public"."envs" e ON e.id = eba.env_id
 WHERE eba.env_id = @template_id
   AND NOT EXISTS (
     -- Exclude builds that have assignments to OTHER templates

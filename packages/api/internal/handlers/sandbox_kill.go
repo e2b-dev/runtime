@@ -33,6 +33,10 @@ func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID 
 	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), snapshot.TemplateID, aliasKeys)
 	a.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
 
+	// Delete GCS/S3 artifacts in the background; DB deletion is already committed
+	// so artifact cleanup failures must not block or fail the response.
+	go a.deleteTemplateArtifacts(context.WithoutCancel(ctx), snapshot.TemplateID)
+
 	return nil
 }
 
