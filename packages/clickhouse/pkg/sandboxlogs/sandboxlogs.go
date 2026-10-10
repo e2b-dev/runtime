@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/clickhouse/pkg/timestamp"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs"
 )
@@ -104,10 +105,6 @@ func atLeastLevels(minLevel logs.LogLevel) []string {
 	}
 }
 
-func unixNano(t time.Time) int64 {
-	return t.UTC().UnixNano()
-}
-
 const sandboxLogsSelect = `
 SELECT
     timestamp,
@@ -135,8 +132,8 @@ func (r *Reader) QuerySandboxLogs(ctx context.Context, teamID uuid.UUID, sandbox
 	args := []any{
 		clickhouse.Named("team_id", teamID.String()),
 		clickhouse.Named("sandbox_id", sandboxID),
-		clickhouse.Named("start", unixNano(start)),
-		clickhouse.Named("end", unixNano(end)),
+		clickhouse.Named("start", timestamp.UnixNano(start)),
+		clickhouse.Named("end", timestamp.UnixNano(end)),
 	}
 
 	if level != nil {
@@ -172,8 +169,8 @@ func (r *Reader) QueryBuildLogs(ctx context.Context, templateID, buildID string,
 	args := []any{
 		clickhouse.Named("build_id", buildID),
 		clickhouse.Named("template_id", templateID),
-		clickhouse.Named("start", unixNano(start)),
-		clickhouse.Named("end", unixNano(end)),
+		clickhouse.Named("start", timestamp.UnixNano(start)),
+		clickhouse.Named("end", timestamp.UnixNano(end)),
 	}
 
 	if level != nil {
