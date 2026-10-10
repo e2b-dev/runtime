@@ -23,7 +23,12 @@ const transitionRecheckDelay = 10 * time.Second
 // ExpiredItems returns running sandboxes whose EndTime has passed.
 // It bounds per-cycle work via LIMIT and cleans up orphaned ZSET entries.
 func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, error) {
-	now := time.Now()
+	sweepStart := time.Now()
+	defer func() {
+		s.metrics.sweepDuration.Record(ctx, time.Since(sweepStart).Milliseconds())
+	}()
+
+	now := sweepStart
 	nowMs := float64(now.UnixMilli())
 
 	// Fetch members whose score (EndTime in ms) is <= now, bounded to 256 per cycle.
