@@ -22,7 +22,7 @@ func (s *Server) waitForAcquire(ctx context.Context) error {
 	if err != nil {
 		telemetry.ReportEvent(ctx, "too many resuming sandboxes on node")
 
-		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node, please retry")
+		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node: current=%d, max=%d, please retry", s.startingSandboxes.Current(), s.startingSandboxes.Limit())
 	}
 
 	return nil
