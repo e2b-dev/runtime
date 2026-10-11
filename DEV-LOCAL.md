@@ -7,6 +7,8 @@
 | Requirement | Minimum | Notes |
 |---|---|---|
 | OS | Linux (bare metal or VM with nested virtualization) | KVM support required for Firecracker |
+| Linux kernel | 6.8 or newer | Snapshot restore needs userfaultfd write-protect support (`UFFD_FEATURE_WP_ASYNC`); same floor as [E2B Embed](embed/compose/README.md). `uname -r` to verify |
+| iptables | - | The orchestrator sets up sandbox networking with it. `iptables --version` to verify |
 | CPU | 4+ cores recommended | Firecracker spawns microVMs |
 | RAM | 8 GB minimum, 16 GB recommended | Huge pages alone reserve ~4 GB |
 | Go | - | See `go.work` for the exact version |
@@ -35,7 +37,13 @@ ls -l /dev/kvm
    ```
    Verify: `grep HugePages_Total /proc/meminfo` should show `2048`.
 
-> To persist these across reboots, add `nbd nbds_max=64` to `/etc/modules-load.d/nbd.conf` and `vm.nr_hugepages=2048` to `/etc/sysctl.d/99-hugepages.conf`.
+3. Allow unprivileged userfaultfd (Firecracker restores sandbox memory from snapshots through it):
+   ```bash
+   sudo sysctl -w vm.unprivileged_userfaultfd=1
+   ```
+   Verify: `cat /proc/sys/vm/unprivileged_userfaultfd` should show `1`.
+
+> To persist these across reboots, add `nbd nbds_max=64` to `/etc/modules-load.d/nbd.conf`, and `vm.nr_hugepages=2048` and `vm.unprivileged_userfaultfd=1` to `/etc/sysctl.d/99-e2b.conf`.
 
 ## Download prebuilt artifacts (customized firecrackers and linux kernels)
 
@@ -217,7 +225,20 @@ The orchestrator requires KVM to run Firecracker microVMs.
 
 - **Bare metal**: Load the module: `sudo modprobe kvm_intel` (Intel) or `sudo modprobe kvm_amd` (AMD).
 - **Cloud VM**: Enable nested virtualization. On GCP: stop the VM, set `--enable-nested-virtualization`, restart. On AWS: use a `.metal` instance type.
-- **WSL2**: KVM is not supported. Use a Linux VM with nested virtualization instead.
+- **WSL2**: On Windows 11, `/dev/kvm` appears once `kvm_intel` or `kvm_amd` is loaded, but the WSL2 kernel (6.6) is older than the 6.8 minimum, so snapshot restores fail (see below). Use a Linux VM with nested virtualization instead.
+
+### Snapshot load fails with `Failed to UFFD object`
+
+Template builds get past the base layer and then fail, or sandbox creation fails, and the orchestrator log shows:
+
+```
+Load snapshot error: Failed to restore from snapshot: Failed to load guest memory: Error creating guest memory from uffd: Failed to UFFD object: System error
+```
+
+Firecracker could not set up userfaultfd for the restored VM's memory. Check both causes:
+
+- `cat /proc/sys/vm/unprivileged_userfaultfd` must be `1` (see [System prep](#system-prep)).
+- `uname -r` must be 6.8 or newer. Older kernels lack `UFFD_FEATURE_WP_ASYNC`.
 
 ### Port conflicts
 
@@ -251,6 +272,16 @@ Ensure ClickHouse is fully started before running migrations. After `make local-
 
 ```bash
 make -C packages/clickhouse migrate-local
+```
+
+### `clickhouse-config-generated.xml` is a directory
+
+`make local-infra` generates this file before starting the containers. Starting services with `docker compose up` directly skips that step, so Docker creates an empty root-owned directory in its place and ClickHouse starts without the local configuration. Remove the directory, generate the file, and recreate ClickHouse:
+
+```bash
+sudo rmdir packages/local-dev/clickhouse-config-generated.xml
+make -C packages/local-dev clickhouse-config-generated.xml
+docker compose -f packages/local-dev/docker-compose.yaml up -d --force-recreate clickhouse
 ```
 
 ### Huge pages warning
