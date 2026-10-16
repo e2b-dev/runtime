@@ -13,6 +13,11 @@ import (
 type reservationResult struct {
 	Sandbox sandboxtypes.Sandbox `json:"sandbox,omitzero"`
 	Error   *reservationError    `json:"error,omitempty"`
+	// LeaderLeft marks a result the leader published only because its own
+	// context was cancelled (client disconnect / deadline), not a genuine
+	// start failure. A waiter decodes it as ErrReservationLeaderLeft so it can
+	// re-contend instead of adopting the leader's cancellation.
+	LeaderLeft bool `json:"leader_left,omitempty"`
 }
 
 // reservationError preserves api.APIError fields for cross-instance error propagation.
@@ -36,6 +41,7 @@ func encodeResult(sbx sandboxtypes.Sandbox, err error) ([]byte, error) {
 			re.ErrorCode = apiErr.ErrorCode
 		}
 		result.Error = re
+		result.LeaderLeft = errors.Is(err, sandboxtypes.ErrReservationLeaderLeft)
 	}
 
 	return json.Marshal(result)
@@ -45,6 +51,18 @@ func decodeResult(data []byte) (sandboxtypes.Sandbox, error) {
 	var result reservationResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to unmarshal reservation result: %w", err)
+	}
+
+	if result.LeaderLeft {
+		// The leader gave up only because its own context was cancelled.
+		// Surface the typed sentinel so a waiter with a live context can
+		// re-contend; preserve the leader's message for the logs.
+		msg := "leader left"
+		if result.Error != nil {
+			msg = result.Error.Message
+		}
+
+		return sandboxtypes.Sandbox{}, fmt.Errorf("%w: %s", sandboxtypes.ErrReservationLeaderLeft, msg)
 	}
 
 	if result.Error != nil {
