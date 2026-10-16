@@ -522,7 +522,8 @@ var (
 	ExpirationIndexHealerFlag = NewBoolFlag("expiration-index-healer", true)
 
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
-	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
+	// Embed has no LaunchDarkly instance, so allow it to opt in through the environment.
+	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", envBoolOr("BUILD_ENSURE_FREE_DISK_SPACE", false))
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")

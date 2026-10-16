@@ -303,6 +303,8 @@ services:
       # pause-admission-disk-headroom-mib flag, which has no LaunchDarkly to
       # come from here; orchestrator releases that predate the knob ignore it.
       PAUSE_ADMISSION_DISK_HEADROOM_MIB: "1024"
+      # Grow the build rootfs after build steps so larger code tasks have room.
+      BUILD_ENSURE_FREE_DISK_SPACE: "true"
       BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
       ARTIFACTS_REGISTRY_PROVIDER: Local
       LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008
