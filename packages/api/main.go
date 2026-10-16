@@ -270,8 +270,12 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 }
 
 func run() int {
-	ctx, cancel := context.WithCancel(context.Background()) // root context
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.Background()) // root context
+	// Cancelling with ErrServerShuttingDown as the cause lets the request
+	// middleware tell a request cut by teardown (this cancel propagating
+	// through http.Server BaseContext) apart from a client disconnect, so the
+	// former is not logged/recorded as a 499 client-closed request.
+	defer cancel(sharedmiddleware.ErrServerShuttingDown)
 
 	// TODO: additional improvements to signal handling/shutdown:
 	//   - provide access to root context in the signal handling

@@ -122,9 +122,13 @@ func Middleware(tracerProvider oteltrace.TracerProvider, service string) gin.Han
 
 		status := c.Writer.Status()
 		cause := sharedmiddleware.CancelCause(c)
-		if errors.Is(cause, sharedmiddleware.ErrRequestTimeout) {
+		switch {
+		case errors.Is(cause, sharedmiddleware.ErrRequestTimeout):
 			span.SetAttributes(attribute.Bool("request.timeout", true))
-		} else if errors.Is(cause, context.Canceled) {
+		case sharedmiddleware.IsServerShutdown(cause):
+			// Cut by server teardown, not the client; keep the real status.
+			span.SetAttributes(attribute.Bool("server.shutdown", true))
+		case sharedmiddleware.IsClientDisconnect(cause):
 			status = sharedmiddleware.StatusClientClosedRequest
 			span.SetAttributes(attribute.Bool("client.canceled", true))
 		}
