@@ -87,9 +87,15 @@ message ProcessEvent {
     }
     
     message EndEvent {
+        // The exit code of the process. Meaningful only when exited is true.
         sint32 exit_code = 1;
+        // Whether the process exited normally (as opposed to being signaled).
         bool exited = 2;
+        // Human-readable description of the process exit status (e.g. "exit status 1", "signal: killed").
         string status = 3;
+        // Runtime/infrastructure-level error encountered while starting, waiting for,
+        // or observing the process. This is NOT set for normal non-zero exits;
+        // use exit_code and status to inspect the process result.
         optional string error = 4;
     }
 
