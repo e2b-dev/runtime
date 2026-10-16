@@ -270,15 +270,28 @@ func placeSandbox(
 
 				return PlacementResult{}, SandboxCreateError{Attempts: attempt + 1, LastErr: err}
 			}
+			// A create cut by its own context (the caller cancelled or its
+			// deadline fired) says nothing about the node: it is the client
+			// leaving, not a node that refused the sandbox. Don't exclude it,
+			// don't count it as a failure sample, and don't log it at ERROR —
+			// doing so pollutes the ERROR stream and inflates createFails with
+			// client behaviour. Still Skip to drop the in-progress reservation,
+			// still count the attempt so deadline() classifies the timeout, and
+			// end with the caller through deadline().
+			if createCut {
+				failedNode.PlacementMetrics.Skip(sbxRequest.GetSandbox().GetSandboxId())
+				logger.L().Warn(ctx, "Sandbox create cut by the caller before it completed", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithTemplateID(sbxRequest.GetSandbox().GetTemplateId()), logger.WithBuildID(sbxRequest.GetSandbox().GetBuildId()), logger.WithNodeID(failedNode.ID), zap.Int("attempt", attempt+1), zap.Error(utils.UnwrapGRPCError(err)))
+				lastCreateErr = err
+				attempt++
+
+				return deadline()
+			}
 			nodesExcluded[failedNode.ID] = struct{}{}
 			failedNode.PlacementMetrics.Fail(sbxRequest.GetSandbox().GetSandboxId())
 			logger.L().Error(ctx, "Failed to create sandbox", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithTemplateID(sbxRequest.GetSandbox().GetTemplateId()), logger.WithBuildID(sbxRequest.GetSandbox().GetBuildId()), logger.WithNodeID(failedNode.ID), zap.Int("attempt", attempt+1), zap.Error(utils.UnwrapGRPCError(err)))
 			lastCreateErr = err
 			attempt++
 
-			if createCut {
-				return deadline()
-			}
 			// The loop ends with the caller.
 			if createDetached && ctx.Err() != nil {
 				return answered()
