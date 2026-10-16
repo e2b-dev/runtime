@@ -581,7 +581,7 @@ sequenceDiagram
     O->>O: fetch template (local cache / NFS / object storage)
     O->>O: acquire network slot + NBD rootfs overlay + uffd memory
     O->>FC: load snapshot, resume VM
-    O->>E: POST /init (env vars, access token) — held until envd reads it; older envds: retried until ready
+    O->>E: POST /init (env vars, access token) — held until envd reads it (older envds: retried until ready)
     E-->>O: 204
     O-->>API: Create OK
     API->>R: store running sandbox
