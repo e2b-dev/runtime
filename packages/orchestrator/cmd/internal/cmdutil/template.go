@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 const nilUUID = "00000000-0000-0000-0000-000000000000"
@@ -24,18 +25,22 @@ type templateInfo struct {
 
 // ResolveTemplateID fetches the build ID for a template from the E2B API.
 // Input can be a template ID, alias, or full name (e.g. "e2b/base").
+//
+// API endpoint resolution order:
+//  1. E2B_API_URL  — full base URL, e.g. http://localhost:3000 (self-hosted / local dev)
+//  2. E2B_DOMAIN   — domain suffix, produces https://api.<domain>
+//  3. default      — https://api.e2b.dev
 func ResolveTemplateID(input string) (string, error) {
 	apiKey := os.Getenv("E2B_API_KEY")
 	if apiKey == "" {
 		return "", errors.New("E2B_API_KEY environment variable required for -template flag")
 	}
 
-	apiURL := "https://api.e2b.dev/templates"
-	if domain := os.Getenv("E2B_DOMAIN"); domain != "" {
-		apiURL = fmt.Sprintf("https://api.%s/templates", domain)
-	}
+	apiURL := resolveAPIURL() + "/templates"
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
@@ -80,4 +85,18 @@ func ResolveTemplateID(input string) (string, error) {
 	}
 
 	return match.BuildID, nil
+}
+
+// resolveAPIURL returns the E2B API base URL (no trailing slash).
+// Priority: E2B_API_URL > E2B_DOMAIN > default (api.e2b.dev).
+func resolveAPIURL() string {
+	// E2B_API_URL accepts a full base URL — useful for self-hosted deployments
+	// and local dev where the API does not sit behind a domain (e.g. http://localhost:3000).
+	if u := strings.TrimRight(os.Getenv("E2B_API_URL"), "/"); u != "" {
+		return u
+	}
+	if domain := os.Getenv("E2B_DOMAIN"); domain != "" {
+		return fmt.Sprintf("https://api.%s", domain)
+	}
+	return "https://api.e2b.dev"
 }
