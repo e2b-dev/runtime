@@ -12,9 +12,10 @@ import (
 )
 
 const getExclusiveBuildsForTemplateDeletion = `-- name: GetExclusiveBuildsForTemplateDeletion :many
-SELECT DISTINCT eb.id as build_id, eb.cluster_node_id
+SELECT DISTINCT eb.id as build_id, eb.cluster_node_id, e.cluster_id
 FROM "public"."env_build_assignments" eba
 JOIN "public"."env_builds" eb ON eb.id = eba.build_id
+JOIN "public"."envs" e ON e.id = eba.env_id
 WHERE eba.env_id = $1
   AND NOT EXISTS (
     -- Exclude builds that have assignments to OTHER templates
@@ -26,11 +27,13 @@ WHERE eba.env_id = $1
 type GetExclusiveBuildsForTemplateDeletionRow struct {
 	BuildID       uuid.UUID
 	ClusterNodeID *string
+	ClusterID     *uuid.UUID
 }
 
 // Returns builds that are ONLY assigned to this template (safe to delete).
 // Builds shared with other templates are excluded.
 // DISTINCT needed because builds may have multiple tag assignments to the same template.
+// Joins envs (not active_envs) so the query works after the template is soft-deleted.
 func (q *Queries) GetExclusiveBuildsForTemplateDeletion(ctx context.Context, templateID string) ([]GetExclusiveBuildsForTemplateDeletionRow, error) {
 	rows, err := q.db.Query(ctx, getExclusiveBuildsForTemplateDeletion, templateID)
 	if err != nil {
@@ -40,7 +43,7 @@ func (q *Queries) GetExclusiveBuildsForTemplateDeletion(ctx context.Context, tem
 	var items []GetExclusiveBuildsForTemplateDeletionRow
 	for rows.Next() {
 		var i GetExclusiveBuildsForTemplateDeletionRow
-		if err := rows.Scan(&i.BuildID, &i.ClusterNodeID); err != nil {
+		if err := rows.Scan(&i.BuildID, &i.ClusterNodeID, &i.ClusterID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
