@@ -31,6 +31,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -485,4 +486,85 @@ func TestPausingTransitionsPinRestoreEdge(t *testing.T) {
 	assert.Equal(t,
 		map[sandbox.State]bool{sandbox.StateKilling: true, sandbox.StateRunning: true},
 		sandbox.AllowedTransitions[sandbox.StatePausing])
+}
+
+type deleteResultStub struct {
+	orchestrator.SandboxServiceClient
+
+	err error
+}
+
+func (c *deleteResultStub) Delete(context.Context, *orchestrator.SandboxDeleteRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+func TestKillSandboxOnNode_ResourceAccounting(t *testing.T) {
+	t.Parallel()
+
+	const (
+		mibBytes      = uint64(1024 * 1024)
+		hugePageBytes = uint64(2 * 1024 * 1024)
+	)
+
+	resource := sandbox.NodeSandbox{SandboxID: "sandbox-to-delete", VCpu: 2, RamMB: 512}
+	cases := []struct {
+		name      string
+		deleteErr error
+		wantError bool
+		want      func(nodemanager.Metrics) nodemanager.Metrics
+	}{
+		{
+			name:      "not found after a newer allocation report",
+			deleteErr: status.Error(codes.NotFound, "sandbox is absent"),
+			want:      func(before nodemanager.Metrics) nodemanager.Metrics { return before },
+		},
+		{
+			name: "acknowledged delete debits the sandbox",
+			want: func(before nodemanager.Metrics) nodemanager.Metrics {
+				before.CpuAllocated -= uint32(resource.VCpu)
+				before.MemoryAllocatedBytes -= uint64(resource.RamMB) * mibBytes
+				before.HugePagesUsed -= 256
+
+				return before
+			},
+		},
+		{
+			name:      "other delete error preserves the allocation",
+			deleteErr: status.Error(codes.Unavailable, "node is unavailable"),
+			wantError: true,
+			want:      func(before nodemanager.Metrics) nodemanager.Metrics { return before },
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
+			node.SetSandboxClient(&deleteResultStub{err: tt.deleteErr})
+			node.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{
+				MetricCpuAllocated:         4,
+				MetricCpuCount:             8,
+				MetricMemoryAllocatedBytes: 1024 * mibBytes,
+				MetricMemoryTotalBytes:     2 * 1024 * mibBytes,
+				MetricHugepagesTotal:       1000,
+				MetricHugepagesUsed:        512,
+				MetricHugepageSizeBytes:    hugePageBytes,
+			})
+			before := node.Metrics()
+
+			err := (&Orchestrator{}).killSandboxOnNode(t.Context(), node, resource, sandbox.KillReasonUnknown)
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.want(before), node.Metrics())
+		})
+	}
 }

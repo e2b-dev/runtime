@@ -371,6 +371,8 @@ func (o *Orchestrator) killSandboxOnNode(
 			logger.WithNodeID(node.ID),
 			zap.String("kill_reason", killReason),
 		)
+
+		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
