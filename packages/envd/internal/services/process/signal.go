@@ -29,7 +29,7 @@ func (s *Service) SendSignal(
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("invalid signal: %s", req.Msg.GetSignal()))
 	}
 
-	err = handler.SendSignal(signal)
+	err = handler.SendSignal(signal, req.Msg.GetDescendants())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error sending signal: %w", err))
 	}
