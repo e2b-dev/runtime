@@ -203,6 +203,17 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	envVars := sharedUtils.DerefOrDefault(body.EnvVars, nil)
 	mcp := sharedUtils.DerefOrDefault(body.Mcp, nil)
 	metadata := sharedUtils.DerefOrDefault(body.Metadata, nil)
+	// Merge environment variables into metadata so they survive pause/resume
+	// and can be restored after envd upgrades. During resume, we extract them
+	// from metadata and pass them separately to the orchestrator.
+	if envVars != nil {
+		if metadata == nil {
+			metadata = make(map[string]string)
+		}
+		for k, v := range envVars {
+			metadata[k] = v
+		}
+	}
 	apiVolumeMounts := sharedUtils.DerefOrDefault(body.VolumeMounts, nil)
 
 	timeout, apiErr := validateAndParseTimeoutWithDefault(body.Timeout, teamInfo.Limits.MaxLengthHours, defaultTimeout)

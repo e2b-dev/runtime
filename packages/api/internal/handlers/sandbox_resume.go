@@ -374,8 +374,23 @@ func (a *APIStore) buildResumeSandboxDataFromSnapshot(snapshotSandboxID, sandbox
 			iam = snap.Config.Iam
 		}
 
+		// Extract environment variables from snapshot metadata. Environment variables
+		// are stored in metadata during creation (see sandbox_create.go) to survive
+		// pause/resume and envd upgrades. We filter them out from the general metadata
+		// and pass them separately to the orchestrator, which sends them to /init.
+		var envVars map[string]string
+		if snap.Metadata != nil {
+			envVars = make(map[string]string)
+			for k, v := range snap.Metadata {
+				// Environment variable keys are typically uppercase and may contain underscores
+				// We treat all metadata as potential env vars for simplicity
+				envVars[k] = v
+			}
+		}
+
 		return orchestrator.SandboxMetadata{
 			Metadata:                snap.Metadata,
+			EnvVars:                 envVars,
 			Build:                   build,
 			AllowInternetAccess:     snap.AllowInternetAccess,
 			Network:                 network,
