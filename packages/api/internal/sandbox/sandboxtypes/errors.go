@@ -37,6 +37,14 @@ func (e *NotRunningError) Error() string {
 
 var ErrAlreadyExists = errors.New("sandbox already exists")
 
+// ErrReservationLeaderLeft is the result a joined waiter sees when the leader
+// request that held the reservation gave up only because its own context was
+// cancelled (a client disconnect or deadline), not because the start genuinely
+// failed. It says nothing about whether the sandbox can start, so a waiter
+// whose own context is still alive should re-contend for the reservation
+// rather than adopt it as a terminal failure.
+var ErrReservationLeaderLeft = errors.New("sandbox start reservation leader left before completing")
+
 var ErrEvictionInProgress = errors.New("sandbox eviction already in progress")
 
 var ErrEvictionNotNeeded = errors.New("sandbox eviction not needed")

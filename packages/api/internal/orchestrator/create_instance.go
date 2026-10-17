@@ -215,6 +215,12 @@ const (
 	resumePublishMargin    = 5 * time.Second
 )
 
+// maxReserveRecontend bounds how many times a joined waiter re-contends for the
+// start reservation after the leader left before completing (its own context
+// was cancelled). Each re-contend requires a leader to have released, so a small
+// bound covers the common hand-off while preventing a retry storm.
+const maxReserveRecontend = 2
+
 // CreateOption adjusts one CreateSandbox call.
 type CreateOption func(*createOptions)
 
@@ -257,33 +263,51 @@ func (o *Orchestrator) CreateSandbox(
 	// Calculate total concurrent instances including addons
 	totalConcurrentInstances := team.Limits.SandboxConcurrency
 
-	// Check if team has reached max instances
-	reservedAt := time.Now()
-	finishStart, waitForStart, err := o.sandboxStore.Reserve(ctx, team.Team.ID, sandboxID, int(totalConcurrentInstances))
-	if err != nil {
-		var limitErr *sandbox.LimitExceededError
+	// Reserve a start slot. A joined waiter whose leader gave up only because
+	// the leader's own context was cancelled (ErrReservationLeaderLeft) does
+	// not inherit that cancellation — it re-contends here, becoming the new
+	// leader or joining whoever won the re-contention, bounded by
+	// maxReserveRecontend.
+	var (
+		finishStart  func(sandbox.Sandbox, error)
+		waitForStart func(ctx context.Context) (sandbox.Sandbox, error)
+		reservedAt   time.Time
+	)
+	for recontend := 0; ; recontend++ {
+		// Check if team has reached max instances
+		reservedAt = time.Now()
 
-		switch {
-		case errors.As(err, &limitErr):
-			return sandbox.Sandbox{}, &api.APIError{
-				Code: http.StatusTooManyRequests,
-				ClientMsg: fmt.Sprintf(
-					"you have reached the maximum number of concurrent E2B sandboxes (%d). If you need more, "+
-						"please visit 'https://e2b.dev/docs/billing'", totalConcurrentInstances),
-				Err: fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
-			}
-		default:
-			logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(err))
+		var reserveErr error
+		finishStart, waitForStart, reserveErr = o.sandboxStore.Reserve(ctx, team.Team.ID, sandboxID, int(totalConcurrentInstances))
+		if reserveErr != nil {
+			var limitErr *sandbox.LimitExceededError
 
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusInternalServerError,
-				ClientMsg: fmt.Sprintf("Failed to create sandbox: %s", err),
-				Err:       err,
+			switch {
+			case errors.As(reserveErr, &limitErr):
+				return sandbox.Sandbox{}, &api.APIError{
+					Code: http.StatusTooManyRequests,
+					ClientMsg: fmt.Sprintf(
+						"you have reached the maximum number of concurrent E2B sandboxes (%d). If you need more, "+
+							"please visit 'https://e2b.dev/docs/billing'", totalConcurrentInstances),
+					Err: fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
+				}
+			default:
+				logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(reserveErr))
+
+				return sandbox.Sandbox{}, &api.APIError{
+					Code:      http.StatusInternalServerError,
+					ClientMsg: fmt.Sprintf("Failed to create sandbox: %s", reserveErr),
+					Err:       reserveErr,
+				}
 			}
 		}
-	}
 
-	if waitForStart != nil {
+		if waitForStart == nil {
+			// We won the reservation: we are the leader. Fall through to the
+			// start below.
+			break
+		}
+
 		// A joined request rides whatever start is already in flight — which may
 		// be a memory restore (e.g. a traffic-triggered auto-resume) that an
 		// explicit memory:false must never be silently answered with.
@@ -301,22 +325,41 @@ func (o *Orchestrator) CreateSandbox(
 
 		logger.L().Info(ctx, "sandbox is already being started, waiting for it to be ready", logger.WithSandboxID(sandboxID))
 
-		sbx, err = waitForStart(ctx)
-		if err != nil {
-			logger.L().Warn(ctx, "Error waiting for sandbox to start", zap.Error(err), logger.WithSandboxID(sandboxID))
+		var waitErr error
+		sbx, waitErr = waitForStart(ctx)
+		if waitErr == nil {
+			return sbx, nil
+		}
 
-			if apiErr, ok := errors.AsType[*api.APIError](err); ok {
-				return sandbox.Sandbox{}, apiErr
+		// The leader gave up only because its own context was cancelled, not
+		// because the start failed. If our own context is still alive and we
+		// have budget, re-contend rather than adopting the leader's cut.
+		if errors.Is(waitErr, sandbox.ErrReservationLeaderLeft) {
+			if ctx.Err() == nil && recontend < maxReserveRecontend {
+				logger.L().Info(ctx, "start reservation leader left before completing, re-contending",
+					logger.WithSandboxID(sandboxID), zap.Int("attempt", recontend+1))
+
+				continue
 			}
 
 			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusInternalServerError,
-				ClientMsg: "Error waiting for sandbox to start",
-				Err:       err,
+				Code:      http.StatusServiceUnavailable,
+				ClientMsg: "Sandbox start was interrupted, please retry",
+				Err:       waitErr,
 			}
 		}
 
-		return sbx, nil
+		logger.L().Warn(ctx, "Error waiting for sandbox to start", zap.Error(waitErr), logger.WithSandboxID(sandboxID))
+
+		if apiErr, ok := errors.AsType[*api.APIError](waitErr); ok {
+			return sandbox.Sandbox{}, apiErr
+		}
+
+		return sandbox.Sandbox{}, &api.APIError{
+			Code:      http.StatusInternalServerError,
+			ClientMsg: "Error waiting for sandbox to start",
+			Err:       waitErr,
+		}
 	}
 
 	telemetry.ReportEvent(ctx, "Reserved sandbox for team")
@@ -341,7 +384,18 @@ func (o *Orchestrator) CreateSandbox(
 		// Don't change this handling
 		// https://go.dev/play/p/4oy02s7BDMc
 		if apiErr != nil {
-			finishStart(sbx, apiErr)
+			// A failure caused only by this leader's own context ending (the
+			// client disconnected or the deadline fired) says nothing about
+			// whether the sandbox can start. Publish it wrapped as
+			// ErrReservationLeaderLeft so a joined waiter with a live context
+			// re-contends instead of inheriting the cut; the caller still gets
+			// the original apiErr.
+			publishErr := error(apiErr)
+			if ctx.Err() != nil {
+				publishErr = fmt.Errorf("%w: %w", sandbox.ErrReservationLeaderLeft, apiErr)
+			}
+
+			finishStart(sbx, publishErr)
 		} else {
 			finishStart(sbx, nil)
 		}

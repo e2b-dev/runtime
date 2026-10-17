@@ -193,6 +193,44 @@ func TestReservation_MultipleTeams(t *testing.T) {
 	require.ErrorAs(t, err, new(&sandboxtypes.LimitExceededError{}))
 }
 
+// TestReservation_LeaderLeftLetsWaiterRecontend proves the #3686 fix at the
+// storage layer: when the leader publishes a failure wrapping
+// ErrReservationLeaderLeft (its own context was cut), a waiter decodes the
+// sentinel, and — because that result is terminal and clears the pending entry
+// — a fresh Reserve wins the reservation again (the waiter becomes the new
+// leader). A genuine failure, by contrast, does not carry the sentinel.
+func TestReservation_LeaderLeftLetsWaiterRecontend(t *testing.T) {
+	t.Parallel()
+	storage, _ := setupTestReservationStorage(t)
+
+	teamID := uuid.New()
+	sbxID := "leader-left-sandbox"
+
+	// Leader reserves, a waiter joins.
+	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart)
+
+	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, waitForStart)
+
+	// Leader gives up only because its own context was cut.
+	finishStart(sandboxtypes.Sandbox{}, fmt.Errorf("%w: placement timed out", sandboxtypes.ErrReservationLeaderLeft))
+
+	// The waiter sees the re-contend sentinel, not a terminal failure.
+	_, waitErr := waitForStart(t.Context())
+	require.Error(t, waitErr)
+	require.ErrorIs(t, waitErr, sandboxtypes.ErrReservationLeaderLeft)
+
+	// Re-contending wins the reservation (the entry was cleared): the waiter
+	// can become the new leader rather than inheriting the cut.
+	finishStart2, waitForStart2, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart2, "re-contend should win the reservation")
+	require.Nil(t, waitForStart2)
+}
+
 func TestReservation_FailedStart(t *testing.T) {
 	t.Parallel()
 	storage, _ := setupTestReservationStorage(t)

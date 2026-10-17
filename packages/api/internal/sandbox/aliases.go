@@ -53,14 +53,15 @@ const (
 
 // Errors and pre-defined state actions / transition tables.
 var (
-	ErrAlreadyExists      = sandboxtypes.ErrAlreadyExists
-	ErrNotFound           = sandboxtypes.ErrNotFound
-	ErrEvictionInProgress = sandboxtypes.ErrEvictionInProgress
-	ErrEvictionNotNeeded  = sandboxtypes.ErrEvictionNotNeeded
-	ErrExecutionMismatch  = sandboxtypes.ErrExecutionMismatch
-	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
-	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
-	ErrDraining           = sandboxtypes.ErrDraining
+	ErrAlreadyExists         = sandboxtypes.ErrAlreadyExists
+	ErrNotFound              = sandboxtypes.ErrNotFound
+	ErrEvictionInProgress    = sandboxtypes.ErrEvictionInProgress
+	ErrEvictionNotNeeded     = sandboxtypes.ErrEvictionNotNeeded
+	ErrExecutionMismatch     = sandboxtypes.ErrExecutionMismatch
+	ErrRestoreConflict       = sandboxtypes.ErrRestoreConflict
+	ErrTransitionRestored    = sandboxtypes.ErrTransitionRestored
+	ErrDraining              = sandboxtypes.ErrDraining
+	ErrReservationLeaderLeft = sandboxtypes.ErrReservationLeaderLeft
 
 	AllowedTransitions = sandboxtypes.AllowedTransitions
 
