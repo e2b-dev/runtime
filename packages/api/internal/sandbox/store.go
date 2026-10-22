@@ -53,6 +53,10 @@ type Callbacks struct {
 	// with nothing kept, as a kill would. Called during sync for every such
 	// sandbox the node lists, which it does for a while after the end.
 	EndEndedSandbox OrphanCallback
+	// GoTracked, if non-nil, runs the asynchronous AsyncNewlyCreatedSandbox event
+	// as a drain-tracked tail so the shutdown path waits for in-flight creation
+	// analytics instead of abandoning them. Nil falls back to a bare goroutine.
+	GoTracked func(func())
 }
 
 type Store struct {
@@ -104,7 +108,13 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 
 	if creation != nil {
 		meta := *creation
-		go s.callbacks.AsyncNewlyCreatedSandbox(context.WithoutCancel(ctx), sandbox, meta)
+		bgCtx := context.WithoutCancel(ctx)
+		event := func() { s.callbacks.AsyncNewlyCreatedSandbox(bgCtx, sandbox, meta) }
+		if s.callbacks.GoTracked != nil {
+			s.callbacks.GoTracked(event)
+		} else {
+			go event()
+		}
 	}
 
 	return nil
