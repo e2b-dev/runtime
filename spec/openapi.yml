@@ -4400,6 +4400,47 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /snapshots/{snapshotID}/fork:
+    post:
+      summary: Fork snapshot
+      description: >-
+        Create one or more sandboxes from a named snapshot. The snapshot must be
+        owned by the team. Each fork boots independently from the same snapshot
+        and succeeds or fails independently; the outcome of each is reported in
+        its entry of the response list.
+      tags: [snapshots]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/snapshotID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SandboxForkRequest"
+      responses:
+        "201":
+          description: The forks were attempted; each entry reports one fork's outcome
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SandboxForkResult"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
   /v3/templates:
     post:
       summary: Create template (v3)
