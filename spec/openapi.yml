@@ -654,6 +654,23 @@ components:
           items:
             type: string
           description: Full names of the snapshot template including team namespace and tag (e.g. team-slug/my-snapshot:v2)
+        cpuCount:
+          type: integer
+          format: int32
+          description: Number of virtual CPUs the snapshot was built with.
+        memoryMB:
+          type: integer
+          format: int32
+          description: Memory in MiB the snapshot was built with.
+        diskSizeMB:
+          type: integer
+          format: int32
+          nullable: true
+          description: Total disk size in MiB the snapshot was built with, when recorded.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the snapshot template was created.
 
     EnvVars:
       additionalProperties:
