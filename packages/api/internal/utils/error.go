@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,17 @@ import (
 // recorded as. The validator's own message can quote the request body, the
 // selector or the query, so it is dropped rather than reported.
 var errSecretsRejected = errors.New("secrets request rejected before the handler")
+
+const (
+	// clientDisconnectPrefix tags a validation failure that is really a failed
+	// request-body read caused by a network error, so ErrorHandler can treat it
+	// as a client disconnect instead of an authentication failure.
+	clientDisconnectPrefix = "client disconnected: "
+
+	// clientClosedRequestStatus is the non-standard 499 "Client Closed Request":
+	// the client went away before the server produced a response.
+	clientClosedRequestStatus = 499
+)
 
 // secretsErrorMessage is the fixed text such a request gets back.
 func secretsErrorMessage(statusCode int) string {
@@ -39,6 +51,22 @@ func ErrorHandler(c *gin.Context, message string, statusCode int) {
 	var errMsg error
 
 	ctx := c.Request.Context()
+
+	// Client dropped the connection (or the server read deadline fired) before
+	// the request body was fully received. kin-openapi reads the body before
+	// auth, so a failed read is wrapped as a SecurityRequirementsError and
+	// MultiErrorHandler tags it with clientDisconnectPrefix. This is a
+	// client-side network event, not a server or auth error: record it
+	// informationally and return 499 so logs and metrics keep it separate from
+	// real authentication failures.
+	if after, ok := strings.CutPrefix(message, clientDisconnectPrefix); ok {
+		telemetry.ReportEvent(ctx, "client disconnected before request body received",
+			attribute.String("disconnect.reason", after),
+		)
+		c.AbortWithStatus(clientClosedRequestStatus)
+
+		return
+	}
 
 	// Secret management routes answer with fixed text and report a fixed
 	// error: neither the raw body (which GetRawData would read below) nor the
@@ -157,10 +185,39 @@ func MultiErrorHandler(me openapi3.MultiError) error {
 
 		return fmt.Errorf("error in openapi3filter.RequestError: %s", errorLines[0])
 	case *openapi3filter.SecurityRequirementsError:
+		// A failed request-body read (client timeout / dropped connection) is
+		// returned by kin-openapi as a RequestError{Reason:"reading failed"}
+		// wrapped in the SecurityRequirementsError, because the body is read
+		// before auth runs. Classify it as a client disconnect so it is not
+		// reported as an authentication failure.
+		if reason, ok := clientDisconnectReason(e); ok {
+			return fmt.Errorf("%s%s", clientDisconnectPrefix, reason)
+		}
+
 		return sharedauth.ProcessSecurityErrors(e)
 	default:
 		// This should never happen today, but if our upstream code changes,
 		// we don't want to crash the server, so handle the unexpected error.
 		return fmt.Errorf("error validating request: %w", err)
 	}
+}
+
+// clientDisconnectReason reports whether a SecurityRequirementsError is really a
+// failed request-body read caused by a network error (the client went away or
+// the server read deadline fired) rather than a genuine auth rejection, and
+// returns the underlying network error text when so.
+func clientDisconnectReason(e *openapi3filter.SecurityRequirementsError) (string, bool) {
+	for _, err := range e.Errors {
+		var reqErr *openapi3filter.RequestError
+		if !errors.As(err, &reqErr) || reqErr.Reason != "reading failed" {
+			continue
+		}
+
+		var netErr net.Error
+		if errors.As(reqErr.Err, &netErr) {
+			return reqErr.Err.Error(), true
+		}
+	}
+
+	return "", false
 }
