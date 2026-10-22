@@ -42,12 +42,13 @@ func (a *APIStore) DeleteVolumesVolumeID(c *gin.Context, volumeID api.VolumeID) 
 		Set("volume_name", volume.Name),
 	)
 
-	go func(ctx context.Context) {
+	bgCtx := context.WithoutCancel(ctx)
+	a.orchestrator.GoTrackedTail(func() {
 		// if this fails, we can clean it up later
-		if err := a.deleteVolume(ctx, clusterID, volume); err != nil {
-			telemetry.ReportCriticalError(ctx, fmt.Sprintf("failed to delete data in volume %q", volume.ID.String()), err)
+		if err := a.deleteVolume(bgCtx, clusterID, volume); err != nil {
+			telemetry.ReportCriticalError(bgCtx, fmt.Sprintf("failed to delete data in volume %q", volume.ID.String()), err)
 		}
-	}(context.WithoutCancel(ctx))
+	})
 
 	c.Status(http.StatusNoContent)
 }
