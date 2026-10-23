@@ -210,6 +210,8 @@ message SandboxUpdateRequest {
 message SandboxDeleteRequest {
   string sandbox_id = 1;
   optional string kill_reason = 2;
+  optional string requester_ip = 3;
+  optional string requester_user_agent = 4;
 }
 
 message SandboxPauseRequest {
