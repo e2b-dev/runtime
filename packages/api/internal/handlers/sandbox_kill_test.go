@@ -80,8 +80,9 @@ func TestDeleteTemplateArtifacts_SnapshotBuildIsDeleted(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &APIStore{
-		sqlcDB:        db.SqlcClient,
-		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
 	}
 
 	var mu sync.Mutex
@@ -94,7 +95,7 @@ func TestDeleteTemplateArtifacts_SnapshotBuildIsDeleted(t *testing.T) {
 		return nil
 	}
 
-	store.deleteTemplateArtifactsWithDeleter(ctx, snapshotTemplateID, deleteFn)
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, snapshotTemplateID, deleteFn)
 
 	assert.Len(t, deleted, 1, "snapshot build should be passed to the deleter")
 }

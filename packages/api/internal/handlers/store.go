@@ -88,6 +88,10 @@ type APIStore struct {
 	snapshotUpsertSem     *sharedutils.AdjustableSemaphore
 	sandboxListSem        *sharedutils.AdjustableSemaphore
 	snapshotBuildQuerySem *sharedutils.AdjustableSemaphore
+	// buildAncestors resolves a build's header-mapping ancestor closure for the
+	// template-deletion reachability guard. Nil when template storage is not
+	// configured for the API, in which case artifact cleanup fails closed.
+	buildAncestors buildAncestorReader
 }
 
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config) *APIStore {
@@ -286,6 +290,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		snapshotUpsertSem:     snapshotUpsertSem,
 		sandboxListSem:        sandboxListSem,
 		snapshotBuildQuerySem: snapshotBuildQuerySem,
+		buildAncestors:        newTemplateBuildAncestorReader(ctx),
 	}
 
 	go a.updateDBThrottleLimits(ctx)

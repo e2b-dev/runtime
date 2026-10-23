@@ -46,8 +46,9 @@ func TestDeleteTemplateArtifacts_ExclusiveBuildsAreDeleted(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildNoNode, "v2")
 
 	store := &APIStore{
-		sqlcDB:        db.SqlcClient,
-		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
 	}
 
 	var mu sync.Mutex
@@ -60,7 +61,7 @@ func TestDeleteTemplateArtifacts_ExclusiveBuildsAreDeleted(t *testing.T) {
 		return nil
 	}
 
-	store.deleteTemplateArtifactsWithDeleter(ctx, templateID, deleteFn)
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, deleteFn)
 
 	assert.Equal(t, []uuid.UUID{buildWithNode}, deleted,
 		"only the build with a cluster node should be passed to the deleter")
@@ -89,8 +90,9 @@ func TestDeleteTemplateArtifacts_SharedBuildsSkipped(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateA, exclusive, "v2")
 
 	store := &APIStore{
-		sqlcDB:        db.SqlcClient,
-		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
 	}
 
 	var mu sync.Mutex
@@ -103,7 +105,7 @@ func TestDeleteTemplateArtifacts_SharedBuildsSkipped(t *testing.T) {
 		return nil
 	}
 
-	store.deleteTemplateArtifactsWithDeleter(ctx, templateA, deleteFn)
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateA, deleteFn)
 
 	assert.Equal(t, []uuid.UUID{exclusive}, deleted,
 		"shared build must not be deleted; only the exclusive build should be")
@@ -129,8 +131,9 @@ func TestDeleteTemplateArtifacts_DeleterErrorIsNonFatal(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build2, "v2")
 
 	store := &APIStore{
-		sqlcDB:        db.SqlcClient,
-		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
 	}
 
 	var mu sync.Mutex
@@ -145,7 +148,7 @@ func TestDeleteTemplateArtifacts_DeleterErrorIsNonFatal(t *testing.T) {
 
 	// Must not panic or return early; all builds should be attempted.
 	assert.NotPanics(t, func() {
-		store.deleteTemplateArtifactsWithDeleter(ctx, templateID, deleteFn)
+		store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, deleteFn)
 	})
 
 	assert.Len(t, attempted, 2, "both builds should be attempted even when the first fails")
@@ -173,8 +176,9 @@ func TestDeleteTemplateArtifacts_WorksAfterSoftDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &APIStore{
-		sqlcDB:        db.SqlcClient,
-		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
 	}
 
 	var mu sync.Mutex
@@ -187,7 +191,7 @@ func TestDeleteTemplateArtifacts_WorksAfterSoftDelete(t *testing.T) {
 		return nil
 	}
 
-	store.deleteTemplateArtifactsWithDeleter(ctx, templateID, deleteFn)
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, deleteFn)
 
 	assert.Equal(t, []uuid.UUID{buildID}, deleted,
 		"build should still be found and deleted after the template is soft-deleted")

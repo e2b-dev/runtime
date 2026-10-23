@@ -62,11 +62,11 @@ type deleteBuildFn func(ctx context.Context, buildID uuid.UUID, templateID strin
 // exclusively owned by the given template. It is called after the template has
 // been soft-deleted from the database; failures are logged but do not affect the
 // HTTP response because the DB deletion is already committed.
-func (a *APIStore) deleteTemplateArtifacts(ctx context.Context, templateID string) {
-	a.deleteTemplateArtifactsWithDeleter(ctx, templateID, a.templateManager.DeleteBuild)
+func (a *APIStore) deleteTemplateArtifacts(ctx context.Context, teamID uuid.UUID, templateID string) {
+	a.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, a.templateManager.DeleteBuild)
 }
 
-func (a *APIStore) deleteTemplateArtifactsWithDeleter(ctx context.Context, templateID string, deleteFn deleteBuildFn) {
+func (a *APIStore) deleteTemplateArtifactsWithDeleter(ctx context.Context, teamID uuid.UUID, templateID string, deleteFn deleteBuildFn) {
 	builds, err := a.sqlcDB.GetExclusiveBuildsForTemplateDeletion(ctx, templateID)
 	if err != nil {
 		logger.L().Error(ctx, "Failed to query exclusive builds for artifact cleanup",
@@ -77,8 +77,42 @@ func (a *APIStore) deleteTemplateArtifactsWithDeleter(ctx context.Context, templ
 		return
 	}
 
+	// A build being "exclusive" in the database (no env_build_assignments row
+	// for any other template) does NOT make it safe to delete: intermediate
+	// cache layers are never written to the DB, so a build that is DB-exclusive
+	// to this template can still be a header-mapping ancestor of another live
+	// template's build. Deleting its storage prefix would orphan that ancestor
+	// and surface later as a silent, unrecoverable "Input/output error" when
+	// the other template's image is reconstructed. Guard against that by only
+	// deleting candidates that are NOT reachable from a live root's header
+	// closure; fail closed (delete nothing) if reachability cannot be proven.
+	candidateIDs := make([]uuid.UUID, 0, len(builds))
+	for _, b := range builds {
+		candidateIDs = append(candidateIDs, b.BuildID)
+	}
+
+	deletable, err := a.deletableAfterReachabilityGuard(ctx, teamID, templateID, candidateIDs)
+	if err != nil {
+		logger.L().Warn(ctx, "Skipping template artifact cleanup: could not prove build reachability",
+			logger.WithTemplateID(templateID),
+			logger.WithTeamID(teamID.String()),
+			zap.Error(err),
+		)
+
+		return
+	}
+
 	for _, b := range builds {
 		if b.ClusterNodeID == nil {
+			continue
+		}
+
+		if _, ok := deletable[b.BuildID]; !ok {
+			logger.L().Warn(ctx, "Keeping build: still referenced by a live template's header closure",
+				logger.WithTemplateID(templateID),
+				logger.WithBuildID(b.BuildID.String()),
+			)
+
 			continue
 		}
 
@@ -96,6 +130,43 @@ func (a *APIStore) deleteTemplateArtifactsWithDeleter(ctx context.Context, templ
 			)
 		}
 	}
+}
+
+// deletableAfterReachabilityGuard returns the subset of candidate builds that
+// are safe to physically delete: those NOT reachable from the header closure of
+// any other live template of the team. It fails closed (returns an error) when
+// the ancestor reader is unavailable or any live root's headers cannot be read,
+// so the caller deletes nothing rather than risk corrupting a shared ancestor.
+func (a *APIStore) deletableAfterReachabilityGuard(ctx context.Context, teamID uuid.UUID, templateID string, candidates []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+	if len(candidates) == 0 {
+		return map[uuid.UUID]struct{}{}, nil
+	}
+
+	if a.buildAncestors == nil {
+		return nil, fmt.Errorf("build ancestor reader not configured; cannot prove reachability")
+	}
+
+	liveRoots, err := a.sqlcDB.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
+		TeamID:     teamID,
+		TemplateID: templateID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query live build roots: %w", err)
+	}
+
+	keep, err := reachableKeepSet(ctx, a.buildAncestors, liveRoots)
+	if err != nil {
+		return nil, err
+	}
+
+	deletable, _ := partitionDeletableBuilds(candidates, keep)
+
+	out := make(map[uuid.UUID]struct{}, len(deletable))
+	for _, b := range deletable {
+		out[b] = struct{}{}
+	}
+
+	return out, nil
 }
 
 // DeleteTemplatesTemplateID serves to delete a template (e.g. in CLI)
@@ -175,7 +246,7 @@ func (a *APIStore) DeleteTemplatesTemplateID(c *gin.Context, aliasOrTemplateID a
 
 	// Delete GCS/S3 artifacts in the background; DB deletion is already committed
 	// so artifact cleanup failures must not block or fail the HTTP response.
-	go a.deleteTemplateArtifacts(context.WithoutCancel(ctx), templateID)
+	go a.deleteTemplateArtifacts(context.WithoutCancel(ctx), team.ID, templateID)
 
 	telemetry.ReportEvent(ctx, "deleted template from db")
 
