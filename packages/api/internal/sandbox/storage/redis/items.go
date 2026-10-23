@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -107,12 +108,21 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 		for i, raw := range batch.cmd.Val() {
 			ref := batch.refs[i]
 
-			// Sandbox key gone but ZSET entry remains — orphaned. Members are
-			// execution-scoped, so this removal can never unindex a fresh
-			// execution concurrently re-added under the same sandbox ID.
+			// Sandbox key gone but ZSET entry remains — orphaned. Remove the
+			// stale ZSET member, and also prune the leftover team-index entry so
+			// it does not accumulate indefinitely (the healer never repairs the
+			// team index). The prune is an atomic EXISTS-guarded SREM so a resume
+			// that re-creates the key under the same sandbox ID between the MGET
+			// above and here is never unindexed.
 			if raw == nil {
 				staleMembers = append(staleMembers, ref.member)
 				orphanCount++
+
+				teamIndexKey := GetSandboxStorageTeamIndexKey(batch.teamID)
+				sandboxKey := getSandboxKey(batch.teamID, ref.sandboxID)
+				if err := pruneOrphanIndexScript.Run(ctx, s.redisClient, []string{sandboxKey, teamIndexKey}, ref.sandboxID).Err(); err != nil && !errors.Is(err, redis.Nil) {
+					logger.L().Warn(ctx, "Failed to prune orphan from team index", zap.Error(err), logger.WithSandboxID(ref.sandboxID))
+				}
 
 				continue
 			}
