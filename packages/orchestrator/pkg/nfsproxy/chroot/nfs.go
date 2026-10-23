@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -132,6 +135,12 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 		}
 
 		chroot := mounted.chroot
+
+		// The sandbox VM is already dead by the time OnNetworkRelease fires, so all
+		// of its file descriptors are gone and any .nfs* silly-rename orphans in the
+		// volume can be safely removed before the chroot is torn down.
+		h.removeNFSOrphans(ctx, sbx.Runtime.SandboxID, chroot.Root())
+
 		err := chroot.Close()
 		if err != nil {
 			logger.L().Warn(ctx, "failed to close chroot",
@@ -145,6 +154,52 @@ func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox)
 	}
 
 	return nil
+}
+
+// removeNFSOrphans removes .nfs* files left by the NFS silly-rename mechanism.
+// When an NFS client deletes a file that still has open file descriptors, the
+// client renames it to .nfsXXXX on the server instead of removing it, and sends
+// the REMOVE only once the last descriptor is closed. If the sandbox VM is
+// killed before closing its descriptors, that REMOVE never arrives and the
+// .nfsXXXX file (as large as the original, often several GiB) is leaked on the
+// server permanently. OnNetworkRelease runs after the VM is dead and all its
+// descriptors are gone, so these orphans are safe to delete here. Best-effort:
+// failures are logged and never abort teardown.
+func (h *NFSHandler) removeNFSOrphans(ctx context.Context, sandboxID, dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.L().Warn(ctx, "failed to read volume dir for NFS orphan cleanup",
+				logger.WithSandboxID(sandboxID),
+				zap.String("dir", dir),
+				zap.Error(err),
+			)
+		}
+
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".nfs") {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logger.L().Warn(ctx, "failed to remove NFS orphan file",
+				logger.WithSandboxID(sandboxID),
+				zap.String("path", path),
+				zap.Error(err),
+			)
+
+			continue
+		}
+
+		logger.L().Info(ctx, "removed NFS orphan file",
+			logger.WithSandboxID(sandboxID),
+			zap.String("path", path),
+		)
+	}
 }
 
 func (h *NFSHandler) Mount(
