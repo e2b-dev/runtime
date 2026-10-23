@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -27,6 +28,16 @@ type buildAncestorReader interface {
 	// rootfs header mappings, including buildID itself. An error means the
 	// dependency set could not be established and the caller must fail closed.
 	AncestorBuilds(ctx context.Context, buildID uuid.UUID) ([]uuid.UUID, error)
+}
+
+// runtimeSandboxLister enumerates the team's sandboxes that are live in the
+// orchestrator for the given states. A running/pausing/snapshotting sandbox can
+// pin a build that is no longer the current DB assignment of any template (it
+// was superseded by a newer build), so its BuildID would be missed by the
+// DB-only live-root query. It must therefore be added to the live roots. The
+// orchestrator's GetSandboxes satisfies this.
+type runtimeSandboxLister interface {
+	GetSandboxes(ctx context.Context, teamID uuid.UUID, states []sandbox.State) ([]sandbox.Sandbox, error)
 }
 
 // reachableKeepSet unions the ancestor closure of every live root build into a

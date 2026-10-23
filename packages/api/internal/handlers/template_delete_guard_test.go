@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 )
 
 // stubAncestorReader is a test buildAncestorReader. AncestorBuilds returns the
@@ -27,6 +29,16 @@ func (s stubAncestorReader) AncestorBuilds(_ context.Context, buildID uuid.UUID)
 	out = append(out, s.ancestors[buildID]...)
 
 	return out, nil
+}
+
+// stubSandboxLister is a test runtimeSandboxLister.
+type stubSandboxLister struct {
+	sandboxes []sandbox.Sandbox
+	err       error
+}
+
+func (s stubSandboxLister) GetSandboxes(_ context.Context, _ uuid.UUID, _ []sandbox.State) ([]sandbox.Sandbox, error) {
+	return s.sandboxes, s.err
 }
 
 // TestReachabilityGuard_ProtectsReferencedAncestor reproduces the corruption

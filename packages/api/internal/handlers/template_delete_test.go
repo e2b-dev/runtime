@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
@@ -46,9 +47,10 @@ func TestDeleteTemplateArtifacts_ExclusiveBuildsAreDeleted(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildNoNode, "v2")
 
 	store := &APIStore{
-		sqlcDB:         db.SqlcClient,
-		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
-		buildAncestors: stubAncestorReader{},
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{},
 	}
 
 	var mu sync.Mutex
@@ -90,9 +92,10 @@ func TestDeleteTemplateArtifacts_SharedBuildsSkipped(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateA, exclusive, "v2")
 
 	store := &APIStore{
-		sqlcDB:         db.SqlcClient,
-		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
-		buildAncestors: stubAncestorReader{},
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{},
 	}
 
 	var mu sync.Mutex
@@ -131,9 +134,10 @@ func TestDeleteTemplateArtifacts_DeleterErrorIsNonFatal(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build2, "v2")
 
 	store := &APIStore{
-		sqlcDB:         db.SqlcClient,
-		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
-		buildAncestors: stubAncestorReader{},
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{},
 	}
 
 	var mu sync.Mutex
@@ -176,9 +180,10 @@ func TestDeleteTemplateArtifacts_WorksAfterSoftDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &APIStore{
-		sqlcDB:         db.SqlcClient,
-		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
-		buildAncestors: stubAncestorReader{},
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{},
 	}
 
 	var mu sync.Mutex
@@ -195,4 +200,87 @@ func TestDeleteTemplateArtifacts_WorksAfterSoftDelete(t *testing.T) {
 
 	assert.Equal(t, []uuid.UUID{buildID}, deleted,
 		"build should still be found and deleted after the template is soft-deleted")
+}
+
+// TestDeleteTemplateArtifacts_RuntimeSandboxRootProtectsBuild proves that a
+// build pinned by a live sandbox (reported by the runtime sandbox lister) is
+// protected from deletion even though it is DB-exclusive to the template being
+// deleted. This covers the Redis/runtime-root gap: a sandbox can still read a
+// build that is no longer any template's current DB assignment.
+func TestDeleteTemplateArtifacts_RuntimeSandboxRootProtectsBuild(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	redis := redis_utils.SetupInstance(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, teamID)
+
+	// A build exclusive to the doomed template at the DB level.
+	pinned := testutils.CreateTestBuild(t, ctx, db, templateID, "success")
+	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, pinned, "v1")
+
+	// A live sandbox pins that build via the runtime lister. Its header closure
+	// (self-only stub) therefore protects it.
+	store := &APIStore{
+		sqlcDB:         db.SqlcClient,
+		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors: stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{
+			sandboxes: []sandbox.Sandbox{{BuildID: pinned}},
+		},
+	}
+
+	var mu sync.Mutex
+	deleted := []uuid.UUID{}
+	deleteFn := func(_ context.Context, buildID uuid.UUID, _ string, _ uuid.UUID, _ string) error {
+		mu.Lock()
+		deleted = append(deleted, buildID)
+		mu.Unlock()
+
+		return nil
+	}
+
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, deleteFn)
+
+	assert.Empty(t, deleted,
+		"a build pinned by a live sandbox must not be deleted even if DB-exclusive to the doomed template")
+}
+
+// TestDeleteTemplateArtifacts_FailsClosedWhenSandboxListerErrors proves that if
+// the runtime sandbox source cannot be read, nothing is deleted (fail closed).
+func TestDeleteTemplateArtifacts_FailsClosedWhenSandboxListerErrors(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	redis := redis_utils.SetupInstance(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, teamID)
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "success")
+	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "v1")
+
+	store := &APIStore{
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{err: errors.New("orchestrator unreachable")},
+	}
+
+	var mu sync.Mutex
+	deleted := []uuid.UUID{}
+	deleteFn := func(_ context.Context, id uuid.UUID, _ string, _ uuid.UUID, _ string) error {
+		mu.Lock()
+		deleted = append(deleted, id)
+		mu.Unlock()
+
+		return nil
+	}
+
+	store.deleteTemplateArtifactsWithDeleter(ctx, teamID, templateID, deleteFn)
+
+	assert.Empty(t, deleted,
+		"when the runtime sandbox source cannot be read, deletion must fail closed")
 }

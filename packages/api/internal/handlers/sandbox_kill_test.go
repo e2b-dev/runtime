@@ -80,9 +80,10 @@ func TestDeleteTemplateArtifacts_SnapshotBuildIsDeleted(t *testing.T) {
 	require.NoError(t, err)
 
 	store := &APIStore{
-		sqlcDB:         db.SqlcClient,
-		templateCache:  templatecache.NewTemplateCache(db.SqlcClient, redis),
-		buildAncestors: stubAncestorReader{},
+		sqlcDB:           db.SqlcClient,
+		templateCache:    templatecache.NewTemplateCache(db.SqlcClient, redis),
+		buildAncestors:   stubAncestorReader{},
+		runtimeSandboxes: stubSandboxLister{},
 	}
 
 	var mu sync.Mutex

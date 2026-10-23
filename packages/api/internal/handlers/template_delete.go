@@ -146,12 +146,9 @@ func (a *APIStore) deletableAfterReachabilityGuard(ctx context.Context, teamID u
 		return nil, fmt.Errorf("build ancestor reader not configured; cannot prove reachability")
 	}
 
-	liveRoots, err := a.sqlcDB.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
-		TeamID:     teamID,
-		TemplateID: templateID,
-	})
+	liveRoots, err := a.collectLiveRoots(ctx, teamID, templateID)
 	if err != nil {
-		return nil, fmt.Errorf("query live build roots: %w", err)
+		return nil, err
 	}
 
 	keep, err := reachableKeepSet(ctx, a.buildAncestors, liveRoots)
@@ -167,6 +164,70 @@ func (a *APIStore) deletableAfterReachabilityGuard(ctx context.Context, teamID u
 	}
 
 	return out, nil
+}
+
+// liveSandboxStates are the sandbox states whose build must be protected: any
+// state in which the sandbox may still read the build's data. A sandbox in one
+// of these states can pin a build that is no longer any template's current
+// assignment.
+var liveSandboxStates = []sandbox.State{
+	sandbox.StateRunning,
+	sandbox.StatePausing,
+	sandbox.StateSnapshotting,
+	sandbox.StateKilling,
+}
+
+// collectLiveRoots unions the live-root build IDs from all three sources whose
+// data a deletion must not orphan: (1) builds assigned to the team's other
+// active templates (DB), (2) the team's in-progress builds still writing to
+// storage (DB), and (3) builds pinned by the team's live sandboxes in the
+// orchestrator (Redis) — which may reference a build no longer tracked as any
+// template's current assignment. Any source failing returns an error so the
+// caller fails closed.
+func (a *APIStore) collectLiveRoots(ctx context.Context, teamID uuid.UUID, templateID string) ([]uuid.UUID, error) {
+	seen := make(map[uuid.UUID]struct{})
+	var roots []uuid.UUID
+	add := func(id uuid.UUID) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+
+		seen[id] = struct{}{}
+		roots = append(roots, id)
+	}
+
+	dbRoots, err := a.sqlcDB.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
+		TeamID:     teamID,
+		TemplateID: templateID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query live build roots: %w", err)
+	}
+	for _, id := range dbRoots {
+		add(id)
+	}
+
+	inProgress, err := a.sqlcDB.GetInProgressBuildRootsForTeam(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("query in-progress build roots: %w", err)
+	}
+	for _, id := range inProgress {
+		add(id)
+	}
+
+	if a.runtimeSandboxes == nil {
+		return nil, fmt.Errorf("runtime sandbox lister not configured; cannot prove reachability")
+	}
+
+	sandboxes, err := a.runtimeSandboxes.GetSandboxes(ctx, teamID, liveSandboxStates)
+	if err != nil {
+		return nil, fmt.Errorf("list live sandboxes: %w", err)
+	}
+	for _, sbx := range sandboxes {
+		add(sbx.BuildID)
+	}
+
+	return roots, nil
 }
 
 // DeleteTemplatesTemplateID serves to delete a template (e.g. in CLI)

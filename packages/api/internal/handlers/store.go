@@ -92,6 +92,10 @@ type APIStore struct {
 	// template-deletion reachability guard. Nil when template storage is not
 	// configured for the API, in which case artifact cleanup fails closed.
 	buildAncestors buildAncestorReader
+	// runtimeSandboxes lists the team's live sandboxes so their pinned builds
+	// are protected roots during template-deletion cleanup. Nil makes the guard
+	// fail closed.
+	runtimeSandboxes runtimeSandboxLister
 }
 
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config) *APIStore {
@@ -291,6 +295,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		sandboxListSem:        sandboxListSem,
 		snapshotBuildQuerySem: snapshotBuildQuerySem,
 		buildAncestors:        newTemplateBuildAncestorReader(ctx),
+		runtimeSandboxes:      orch,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
