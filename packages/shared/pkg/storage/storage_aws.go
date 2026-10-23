@@ -580,3 +580,35 @@ func (m *awsPartUploader) Close() error {
 
 	return err
 }
+
+// ListObjects enumerates every object under prefix, paginating through the full
+// result set. Implements the ObjectLister optional capability.
+func (s *awsStorage) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucketName),
+		Prefix: aws.String(prefix),
+	})
+
+	var out []ObjectInfo
+	for paginator.HasMorePages() {
+		pageCtx, cancel := context.WithTimeout(ctx, awsOperationTimeout)
+		list, err := paginator.NextPage(pageCtx)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, obj := range list.Contents {
+			info := ObjectInfo{Path: aws.ToString(obj.Key)}
+			if obj.Size != nil {
+				info.Size = *obj.Size
+			}
+			if obj.LastModified != nil {
+				info.LastModified = *obj.LastModified
+			}
+			out = append(out, info)
+		}
+	}
+
+	return out, nil
+}
