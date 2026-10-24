@@ -288,11 +288,12 @@ func isValidVolumeName(name string) bool {
 // created before the database row could be persisted, so we don't leak the
 // underlying directory. It runs in the background and only logs on failure.
 func (a *APIStore) cleanupOrchestratorVolume(ctx context.Context, clusterID uuid.UUID, volume queries.Volume) {
-	go func(ctx context.Context) {
-		if err := a.deleteVolume(ctx, clusterID, volume); err != nil {
-			telemetry.ReportCriticalError(ctx, "failed to clean up volume after failing to persist it", err)
+	bgCtx := context.WithoutCancel(ctx)
+	a.orchestrator.GoTrackedTail(func() {
+		if err := a.deleteVolume(bgCtx, clusterID, volume); err != nil {
+			telemetry.ReportCriticalError(bgCtx, "failed to clean up volume after failing to persist it", err)
 		}
-	}(context.WithoutCancel(ctx))
+	})
 }
 
 func (a *APIStore) createVolume(ctx context.Context, clusterID uuid.UUID, volume queries.Volume) (response *orchestrator.CreateVolumeResponse, err error) {
