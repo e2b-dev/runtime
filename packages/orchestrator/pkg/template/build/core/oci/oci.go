@@ -431,6 +431,9 @@ func createExport(ctx context.Context, logger logger.Logger, srcImage containerr
 			if err != nil {
 				return fmt.Errorf("failed to untar layer %d: %w", i, err)
 			}
+			if err := markWhiteoutParents(ctx, layerPath); err != nil {
+				return fmt.Errorf("failed to prepare whiteouts in layer %d: %w", i, err)
+			}
 
 			return nil
 		})
