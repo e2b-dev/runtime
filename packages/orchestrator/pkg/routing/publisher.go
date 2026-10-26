@@ -29,7 +29,7 @@ var _ sandbox.MapSubscriber = (*Publisher)(nil)
 // Store is the subset of the Redis catalog the publisher needs.
 type Store interface {
 	StoreSandbox(ctx context.Context, sandboxID string, info *catalog.SandboxInfo, expiration time.Duration) error
-	DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error
+	DeleteSandboxIfOwner(ctx context.Context, sandboxID string, owner catalog.SandboxOwner) (catalog.DeleteOutcome, error)
 }
 
 var _ Store = (*catalog.RedisSandboxCatalog)(nil)
@@ -120,6 +120,7 @@ func (p *Publisher) OnInsert(ctx context.Context, sbx *sandbox.Sandbox) {
 		OrchestratorID:   p.orchestratorID,
 		OrchestratorIP:   p.nodeIP,
 		ExecutionID:      sbx.Runtime.ExecutionID,
+		LifecycleID:      sbx.LifecycleID,
 		StartedAt:        sbx.GetStartedAt(),
 		MaxLengthInHours: sbx.Config.MaxSandboxLengthHours,
 	}
@@ -150,8 +151,8 @@ func (p *Publisher) OnInsert(ctx context.Context, sbx *sandbox.Sandbox) {
 }
 
 // OnStopping deletes the routing record this publisher wrote for the lifecycle.
-// The delete is guarded by execution ID in Redis, so a stale lifecycle never
-// removes the record of a newer execution.
+// Redis compares the execution, VM lifecycle, and orchestrator process, so a
+// stale stop cannot remove a replacement route within the same execution.
 func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 	if sbx.Runtime.SandboxType != sandboxtypes.SandboxTypeSandbox {
 		return
@@ -177,8 +178,12 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 		return
 	}
 
-	err := telemetry.Observe0(ctx, tracer, "routing-delete", func(ctx context.Context) error {
-		return p.store.DeleteSandbox(ctx, sbx.Runtime.SandboxID, sbx.Runtime.ExecutionID)
+	outcome, err := telemetry.Observe1(ctx, tracer, "routing-delete", func(ctx context.Context) (catalog.DeleteOutcome, error) {
+		return p.store.DeleteSandboxIfOwner(ctx, sbx.Runtime.SandboxID, catalog.SandboxOwner{
+			ExecutionID:    sbx.Runtime.ExecutionID,
+			LifecycleID:    sbx.LifecycleID,
+			OrchestratorID: p.orchestratorID,
+		})
 	})
 	if err != nil {
 		p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "error")))
@@ -191,7 +196,11 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 		return
 	}
 
-	p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "ok")))
+	result := string(outcome)
+	if outcome == catalog.DeleteOutcomeDeleted {
+		result = "ok"
+	}
+	p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 }
 
 // OnNetworkRelease is not used by the publisher.

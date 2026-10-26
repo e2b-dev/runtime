@@ -8,20 +8,25 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 type memoryCatalog struct {
-	mu        sync.Mutex
-	records   map[string]*catalog.SandboxInfo
-	ttls      map[string]time.Duration
-	storeErr  error
-	deleteErr error
+	mu              sync.Mutex
+	records         map[string]*catalog.SandboxInfo
+	ttls            map[string]time.Duration
+	storeErr        error
+	storeAppliedErr error
+	deleteErr       error
 
 	// storeStarted is closed when StoreSandbox begins; storeRelease blocks it until closed.
 	storeStarted chan struct{}
@@ -63,22 +68,35 @@ func (c *memoryCatalog) StoreSandbox(_ context.Context, sandboxID string, info *
 	c.records[sandboxID] = info
 	c.ttls[sandboxID] = ttl
 
-	return nil
+	return c.storeAppliedErr
 }
 
-func (c *memoryCatalog) DeleteSandbox(_ context.Context, sandboxID string, executionID string) error {
+func (c *memoryCatalog) DeleteSandboxIfOwner(_ context.Context, sandboxID string, owner catalog.SandboxOwner) (catalog.DeleteOutcome, error) {
+	if owner.ExecutionID == "" || owner.LifecycleID == "" || owner.OrchestratorID == "" {
+		return "", catalog.ErrInvalidSandboxOwner
+	}
+
 	if c.deleteErr != nil {
-		return c.deleteErr
+		return "", c.deleteErr
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if info, ok := c.records[sandboxID]; ok && info.ExecutionID == executionID {
-		delete(c.records, sandboxID)
+	info, ok := c.records[sandboxID]
+	if !ok {
+		return catalog.DeleteOutcomeAbsent, nil
+	}
+	if info.ExecutionID == "" || info.LifecycleID == "" || info.OrchestratorID == "" {
+		return catalog.DeleteOutcomeUnverifiable, nil
+	}
+	if info.ExecutionID != owner.ExecutionID || info.LifecycleID != owner.LifecycleID || info.OrchestratorID != owner.OrchestratorID {
+		return catalog.DeleteOutcomeSuperseded, nil
 	}
 
-	return nil
+	delete(c.records, sandboxID)
+
+	return catalog.DeleteOutcomeDeleted, nil
 }
 
 // has reports whether the record of the sandbox every test uses ("sbx-1") exists.
@@ -142,6 +160,7 @@ func TestPublisher_OnInsertWritesRecord(t *testing.T) {
 	require.Equal(t, "orch-1", got.OrchestratorID)
 	require.Equal(t, "10.1.2.3", got.OrchestratorIP)
 	require.Equal(t, "exec-1", got.ExecutionID)
+	require.Equal(t, "lc-1", got.LifecycleID)
 	require.Equal(t, sbx.GetStartedAt(), got.StartedAt)
 	require.EqualValues(t, 2, got.MaxLengthInHours)
 	require.Equal(t, 2*time.Hour, c.ttls["sbx-1"])
@@ -159,6 +178,133 @@ func TestPublisher_OnStoppingDeletesRecord(t *testing.T) {
 
 	_, err := c.GetSandbox(t.Context(), "sbx-1")
 	require.ErrorIs(t, err, catalog.ErrSandboxNotFound)
+}
+
+func TestPublisher_OnStoppingPreservesReplacementOwner(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		executionID    string
+		lifecycleID    string
+		orchestratorID string
+	}{
+		{
+			name:           "new execution",
+			executionID:    "exec-2",
+			lifecycleID:    "lc-1",
+			orchestratorID: "orch-1",
+		},
+		{
+			name:           "new lifecycle in same execution",
+			executionID:    "exec-1",
+			lifecycleID:    "lc-2",
+			orchestratorID: "orch-1",
+		},
+		{
+			name:           "new orchestrator process",
+			executionID:    "exec-1",
+			lifecycleID:    "lc-1",
+			orchestratorID: "orch-2",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := newMemoryCatalog()
+			p := newPublisher(t, c)
+			sbx := testSandbox(t, "sbx-1", "lc-1", sandboxtypes.SandboxTypeSandbox)
+			p.OnInsert(t.Context(), sbx)
+
+			// A replacement route lands before this lifecycle's delayed stop.
+			replacement := &catalog.SandboxInfo{
+				ExecutionID:    test.executionID,
+				LifecycleID:    test.lifecycleID,
+				OrchestratorID: test.orchestratorID,
+				OrchestratorIP: "10.2.3.4",
+			}
+			require.NoError(t, c.StoreSandbox(t.Context(), "sbx-1", replacement, time.Hour))
+
+			p.OnStopping(t.Context(), sbx)
+
+			got, err := c.GetSandbox(t.Context(), "sbx-1")
+			require.NoError(t, err, "a stale stop must preserve the replacement route")
+			require.Equal(t, replacement, got)
+		})
+	}
+}
+
+func TestPublisher_OnStoppingReportsDeleteOutcome(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		replacement *catalog.SandboxInfo
+		absent      bool
+		deleteErr   error
+		wantResult  string
+	}{
+		{name: "deleted", wantResult: "ok"},
+		{name: "absent", absent: true, wantResult: "absent"},
+		{
+			name: "superseded",
+			replacement: &catalog.SandboxInfo{
+				ExecutionID: "exec-1", LifecycleID: "lc-2", OrchestratorID: "orch-1",
+			},
+			wantResult: "superseded",
+		},
+		{
+			name: "unverifiable",
+			replacement: &catalog.SandboxInfo{
+				ExecutionID: "exec-1", OrchestratorID: "orch-1",
+			},
+			wantResult: "unverifiable",
+		},
+		{name: "error", deleteErr: errors.New("redis down"), wantResult: "error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			reader := sdkmetric.NewManualReader()
+			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+			t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
+			c := newMemoryCatalog()
+			p, err := New(provider, c, "orch-1", "10.1.2.3")
+			require.NoError(t, err)
+			sbx := testSandbox(t, "sbx-1", "lc-1", sandboxtypes.SandboxTypeSandbox)
+			p.OnInsert(t.Context(), sbx)
+
+			if test.absent {
+				delete(c.records, "sbx-1")
+			}
+			if test.replacement != nil {
+				require.NoError(t, c.StoreSandbox(t.Context(), "sbx-1", test.replacement, time.Hour))
+			}
+			c.deleteErr = test.deleteErr
+			p.OnStopping(t.Context(), sbx)
+
+			var metrics metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(t.Context(), &metrics))
+			for _, scope := range metrics.ScopeMetrics {
+				for _, metric := range scope.Metrics {
+					if metric.Name != string(telemetry.RoutingDeleteTotal) {
+						continue
+					}
+
+					sum, ok := metric.Data.(metricdata.Sum[int64])
+					require.True(t, ok)
+					require.Len(t, sum.DataPoints, 1)
+					require.EqualValues(t, 1, sum.DataPoints[0].Value)
+					result, ok := sum.DataPoints[0].Attributes.Value(attribute.Key("result"))
+					require.True(t, ok)
+					require.Equal(t, test.wantResult, result.AsString())
+
+					return
+				}
+			}
+			t.Fatal("routing delete outcome was not recorded")
+		})
+	}
 }
 
 func TestPublisher_OnStoppingCollectsLifecycleState(t *testing.T) {
@@ -202,6 +348,24 @@ func TestPublisher_StoreErrorIsSwallowed(t *testing.T) {
 	// have landed before a timeout) and then forgets the lifecycle.
 	p.OnStopping(t.Context(), sbx)
 	require.Empty(t, p.routes)
+}
+
+func TestPublisher_StopAfterTimedOutStoreDeletesAppliedRecord(t *testing.T) {
+	t.Parallel()
+
+	c := newMemoryCatalog()
+	c.storeAppliedErr = context.DeadlineExceeded
+	p := newPublisher(t, c)
+	sbx := testSandbox(t, "sbx-1", "lc-1", sandboxtypes.SandboxTypeSandbox)
+
+	// Redis may apply the SET before the caller sees its timeout.
+	p.OnInsert(t.Context(), sbx)
+	_, err := c.GetSandbox(t.Context(), "sbx-1")
+	require.NoError(t, err)
+
+	p.OnStopping(t.Context(), sbx)
+	_, err = c.GetSandbox(t.Context(), "sbx-1")
+	require.ErrorIs(t, err, catalog.ErrSandboxNotFound)
 }
 
 func TestPublisher_StopBeforeInsertLeavesTombstoneAndSkipsWrite(t *testing.T) {

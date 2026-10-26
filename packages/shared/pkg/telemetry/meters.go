@@ -853,7 +853,7 @@ var counterDesc = map[CounterType]string{
 	CmuxErrorsTotal:                     "Total number of cmux connection multiplexer errors",
 
 	RoutingPublishTotal: "Total number of sandbox routing record writes on MarkRunning (result=ok/error)",
-	RoutingDeleteTotal:  "Total number of sandbox routing record deletes on MarkStopping (result=ok/error)",
+	RoutingDeleteTotal:  "Total number of sandbox routing record cleanup attempts on MarkStopping (result=ok/absent/superseded/unverifiable/error; ok means deleted)",
 
 	SandboxFCNetFails:         "Total Firecracker VMM errors transmitting or receiving data (direction=tx/rx)",
 	SandboxFCNetNoAvailBuffer: "Total Firecracker VMM events where no virtqueue buffer was available (direction=tx/rx)",

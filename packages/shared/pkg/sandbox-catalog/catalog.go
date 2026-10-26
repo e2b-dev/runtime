@@ -26,6 +26,23 @@ type SandboxInfo struct {
 	NetworkPlacement *NetworkPlacement `json:"network_placement,omitempty"`
 }
 
+// SandboxOwner identifies one VM lifecycle on one orchestrator process.
+// Matching a routing record does not prove that the corresponding VM has stopped.
+type SandboxOwner struct {
+	ExecutionID    string
+	LifecycleID    string
+	OrchestratorID string
+}
+
+type DeleteOutcome string
+
+const (
+	DeleteOutcomeAbsent       DeleteOutcome = "absent"
+	DeleteOutcomeDeleted      DeleteOutcome = "deleted"
+	DeleteOutcomeSuperseded   DeleteOutcome = "superseded"
+	DeleteOutcomeUnverifiable DeleteOutcome = "unverifiable"
+)
+
 type SandboxesCatalog interface {
 	GetSandbox(ctx context.Context, sandboxID string) (*SandboxInfo, error)
 	StoreSandbox(ctx context.Context, sandboxID string, sandboxInfo *SandboxInfo, expiration time.Duration) error
@@ -36,3 +53,5 @@ type SandboxesCatalog interface {
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog")
 
 var ErrSandboxNotFound = errors.New("sandbox not found")
+
+var ErrInvalidSandboxOwner = errors.New("sandbox owner requires execution, lifecycle, and orchestrator IDs")

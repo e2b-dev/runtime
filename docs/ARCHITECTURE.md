@@ -882,7 +882,7 @@ sequenceDiagram
 client-proxy resolves the node IP of a sandbox from one routing record in Redis, written by the
 orchestrator. Its JSON shape (`sandbox_catalog.SandboxInfo` in `packages/shared/pkg/sandbox-catalog`):
 `orchestrator_id`, `orchestrator_ip`, `execution_id`, `sandbox_started_at`,
-`sandbox_max_length_in_hours`.
+`sandbox_max_length_in_hours`, `lifecycle_id`.
 
 | Record | Key | Writer | Written | Deleted |
 |---|---|---|---|---|
@@ -891,14 +891,25 @@ orchestrator. Its JSON shape (`sandbox_catalog.SandboxInfo` in `packages/shared/
 **The orchestrator-owned record is the routing source.** The orchestrator writes
 `sandbox:routing:{id}` on `MarkRunning` and deletes it on `MarkStopping`. A failed write is logged
 and counted (`orchestrator.routing.publish.total{result=error}`); the sandbox keeps running. Build
-sandboxes are skipped. The delete is guarded by `execution_id` in a Lua script, so a stale
-lifecycle never removes the record of a newer execution. On a miss client-proxy goes to the
-auto-resume path (`ResumeSandbox` gRPC to the API).
+sandboxes are skipped. The publisher writes the actual Firecracker `lifecycle_id` for every
+network mode. Its delete atomically compares all three nonempty owner fields: `execution_id`,
+`lifecycle_id`, and `orchestrator_id` (the orchestrator process instance, not the API node ID).
+This protects a replacement lifecycle even when a resume-fresh checkpoint retains the execution ID.
+The Redis script leaves both the value and expiration unchanged on a mismatch or unverifiable
+owner. Cleanup metrics distinguish deleted (`ok`), absent, superseded, unverifiable, and error.
+On a miss client-proxy goes to the auto-resume path (`ResumeSandbox` gRPC to the API).
+
+The execution-only catalog delete remains for legacy callers, but refuses any record carrying
+a `lifecycle_id` field. The full-owner delete refuses legacy records missing owner fields. Reads
+remain compatible with both shapes. Older deployed binaries still contain the old deletion
+script, so this protection requires upgrading publishers; a mixed-version fleet is not fenced
+by the new library. Store/refresh writes remain unconditional. These ownership checks do not
+prove that an old VM is dead and do not enable stale-node recovery or request replay.
 
 The TTL of the record is `sandbox_max_length_in_hours` from the write time. The record is
 deleted earlier in every normal stop path.
 
-A routed sandbox adds `lifecycle_id` (its Firecracker process) and `network_placement` with the
+A routed sandbox adds `network_placement` with the
 mode, Router, Portable IP and ingress endpoint (`ingress_address`, `ingress_port`). The endpoint is
 the Router for full-router and the worker for egress-router. The record carries location only. The
 orchestrator owns the Router configuration, which never travels through this record. An absent

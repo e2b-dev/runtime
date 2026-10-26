@@ -64,7 +64,13 @@ func TestRedisSandboxCatalog(t *testing.T) {
 		got, err := catalog.GetSandbox(ctx, id)
 		require.NoError(t, err)
 		require.Equal(t, want, got)
-		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
+		outcome, err := catalog.DeleteSandboxIfOwner(ctx, id, SandboxOwner{
+			ExecutionID: want.ExecutionID, LifecycleID: want.LifecycleID, OrchestratorID: want.OrchestratorID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, DeleteOutcomeDeleted, outcome)
+		_, err = catalog.GetSandbox(ctx, id)
+		require.ErrorIs(t, err, ErrSandboxNotFound)
 	})
 
 	t.Run("get on an absent key returns ErrSandboxNotFound", func(t *testing.T) {
@@ -122,6 +128,82 @@ func TestDeleteSandboxReturnsRedisError(t *testing.T) {
 	ctx := t.Context()
 
 	require.Error(t, broken.DeleteSandbox(ctx, "sbx-closed", "exec-1"))
+}
+
+func TestDeleteSandboxKeepsLifecycleRecord(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]string{
+		"nonempty lifecycle": `{"execution_id":"exec-1","lifecycle_id":"lifecycle-2","orchestrator_id":"orch-B"}`,
+		"empty lifecycle":    `{"execution_id":"exec-1","lifecycle_id":"","orchestrator_id":"orch-B"}`,
+		"null lifecycle":     `{"execution_id":"exec-1","lifecycle_id":null,"orchestrator_id":"orch-B"}`,
+		"numeric lifecycle":  `{"execution_id":"exec-1","lifecycle_id":2,"orchestrator_id":"orch-B"}`,
+		"object lifecycle":   `{"execution_id":"exec-1","lifecycle_id":{},"orchestrator_id":"orch-B"}`,
+		"array lifecycle":    `{"execution_id":"exec-1","lifecycle_id":[],"orchestrator_id":"orch-B"}`,
+		"boolean lifecycle":  `{"execution_id":"exec-1","lifecycle_id":false,"orchestrator_id":"orch-B"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			client := redis_utils.SetupInstance(t)
+			catalog := NewRedisSandboxCatalog(client)
+			ctx := t.Context()
+			id := "sbx-legacy-delete-lifecycle"
+			key := catalog.getCatalogKey(id)
+			require.NoError(t, client.Set(ctx, key, value, time.Minute).Err())
+			expiresAt, err := client.PExpireTime(ctx, key).Result()
+			require.NoError(t, err)
+
+			// Execution IDs survive a resume-fresh checkpoint. An old caller cannot
+			// prove it owns the new Firecracker lifecycle with that ID alone.
+			require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
+
+			got, err := client.Get(ctx, key).Result()
+			require.NoError(t, err)
+			require.Equal(t, value, got)
+			gotExpiresAt, err := client.PExpireTime(ctx, key).Result()
+			require.NoError(t, err)
+			require.Equal(t, expiresAt, gotExpiresAt)
+		})
+	}
+}
+
+func TestDeleteSandboxKeepsUnverifiableExecution(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		value       string
+		executionID string
+	}{
+		"malformed JSON":    {value: `{"execution_id":"exec-1"`, executionID: "exec-1"},
+		"missing execution": {value: `{"orchestrator_id":"orch-A"}`, executionID: "exec-1"},
+		"null execution":    {value: `{"execution_id":null}`, executionID: "exec-1"},
+		"numeric execution": {value: `{"execution_id":1}`, executionID: "exec-1"},
+		"empty execution":   {value: `{"execution_id":""}`, executionID: ""},
+		"empty expected":    {value: `{"execution_id":"exec-1"}`, executionID: ""},
+		"JSON null":         {value: `null`, executionID: "exec-1"},
+		"JSON array":        {value: `[]`, executionID: "exec-1"},
+		"JSON string":       {value: `"exec-1"`, executionID: "exec-1"},
+		"JSON number":       {value: `1`, executionID: "exec-1"},
+		"JSON boolean":      {value: `true`, executionID: "exec-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			client := redis_utils.SetupInstance(t)
+			catalog := NewRedisSandboxCatalog(client)
+			ctx := t.Context()
+			id := "sbx-legacy-delete-unverifiable"
+			key := catalog.getCatalogKey(id)
+			require.NoError(t, client.Set(ctx, key, tc.value, time.Minute).Err())
+
+			require.NoError(t, catalog.DeleteSandbox(ctx, id, tc.executionID))
+
+			got, err := client.Get(ctx, key).Result()
+			require.NoError(t, err)
+			require.Equal(t, tc.value, got)
+		})
+	}
 }
 
 func TestDeleteIfSameExecutionOutcomes(t *testing.T) {
