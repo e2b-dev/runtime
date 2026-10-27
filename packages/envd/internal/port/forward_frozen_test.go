@@ -45,7 +45,7 @@ func (m *socatCgroupManager) FrozenAt(string) (bool, error) { return m.frozen.Lo
 
 // TestStartForwarding_RetriesAPortSkippedWhileFrozen pins that a refused forward is not
 // remembered as a forwarded one. The scan loop records a port before starting its socat,
-// and the map is keyed by listener pid+port; left in place after a refusal, the entry reads
+// and the map is keyed by listener pid+port+ip; left in place after a refusal, the entry reads
 // as forwarded on every later scan and the port stays dark until the listener reopens.
 func TestStartForwarding_RetriesAPortSkippedWhileFrozen(t *testing.T) {
 	t.Parallel()
@@ -71,7 +71,9 @@ func TestStartForwarding_RetriesAPortSkippedWhileFrozen(t *testing.T) {
 		Status: "LISTEN",
 		Pid:    4242,
 	}
-	key := fmt.Sprintf("%d-%d", listener.Pid, listener.Laddr.Port)
+	// Key includes the listener IP (pid-port-ip) so dual-stack listeners get
+	// independent entries; mirror that here when looking the entry back up.
+	key := fmt.Sprintf("%d-%d-%s", listener.Pid, listener.Laddr.Port, listener.Laddr.IP)
 	scan := func() { f.scannerSubscriber.Messages <- []net.ConnectionStat{listener} }
 	tracked := func() bool {
 		f.mu.Lock()

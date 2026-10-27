@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -81,7 +82,10 @@ func NewForwarder(
 		"port-forwarder",
 		// We only want to forward ports that are actively listening on localhost.
 		&ScannerFilter{
-			IPs:   []string{"127.0.0.1", "localhost", "::1"},
+			// "::" is included for IPv6 wildcard sockets (:::PORT): on a dual-stack
+			// kernel many frameworks bind "::" rather than "0.0.0.0", so gopsutil
+			// reports Laddr.IP = "::" for those listeners.
+			IPs:   []string{"127.0.0.1", "localhost", "::1", "::"},
 			State: "LISTEN",
 		},
 	)
@@ -129,7 +133,10 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 			// Let's refresh our map of currently forwarded ports and mark the currently opened ones with the "FORWARD" state.
 			// This will make sure we won't delete them later.
 			for _, p := range procs {
-				key := fmt.Sprintf("%d-%d", p.Pid, p.Laddr.Port)
+				// Include IP in the key so a service listening on both 127.0.0.1:PORT
+				// and ::1:PORT gets two independent socats instead of the second
+				// entry silently overwriting the first.
+				key := fmt.Sprintf("%d-%d-%s", p.Pid, p.Laddr.Port, p.Laddr.IP)
 
 				// We check if the opened port is in our map of forwarded ports.
 				val, portOk := f.ports[key]
@@ -138,10 +145,18 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 					// The actual socat process that handles forwarding should be running from the last iteration.
 					val.state = PortStateForward
 				} else {
+					// A "::" wildcard socket accepts both IPv4 and IPv6; connect via
+					// IPv4 so socat targets 127.0.0.1 and does not depend on /etc/hosts
+					// containing "::1 localhost" (absent on minimal images).
+					family := familyToIPVersion(p.Family)
+					if p.Laddr.IP == "::" {
+						family = 4
+					}
+
 					f.logger.Debug().
 						Str("ip", p.Laddr.IP).
 						Uint32("port", p.Laddr.Port).
-						Uint32("family", familyToIPVersion(p.Family)).
+						Uint32("family", family).
 						Str("state", p.Status).
 						Msg("Detected new opened port on localhost that is not forwarded")
 
@@ -150,7 +165,7 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 						pid:    p.Pid,
 						port:   p.Laddr.Port,
 						state:  PortStateForward,
-						family: familyToIPVersion(p.Family),
+						family: family,
 					}
 					f.ports[key] = ptf
 					if retry := f.startPortForwarding(ctx, ptf); retry {
@@ -186,7 +201,10 @@ func (f *Forwarder) startPortForwarding(ctx context.Context, p *PortToForward) (
 	cmd := exec.CommandContext(ctx,
 		"socat", "-d", "-d", "-d",
 		fmt.Sprintf("TCP4-LISTEN:%v,bind=%s,reuseaddr,fork", p.port, f.sourceIP.To4()),
-		fmt.Sprintf("TCP%d:localhost:%v", p.family, p.port),
+		// Use a literal backend address rather than "localhost" so socat does
+		// not depend on /etc/hosts resolving "::1 localhost" (absent on Alpine
+		// and many minimal images).
+		fmt.Sprintf("TCP%d:%s:%v", p.family, backendAddr(p.family), p.port),
 	)
 
 	cgroupFD, ok := f.freezer.Manager().GetFileDescriptor(cgroups.ProcessTypeSocat)
@@ -344,7 +362,7 @@ func (f *Forwarder) ImportForwards(forwards []*upgrade.ForwardedPort) (readopted
 		if syscall.Kill(pid, 0) != nil {
 			continue
 		}
-		f.ports[fp.GetKey()] = &PortToForward{
+		f.ports[normalizeForwardKey(fp)] = &PortToForward{
 			pid:      fp.GetListenerPid(),
 			port:     fp.GetPort(),
 			family:   fp.GetFamily(),
@@ -356,6 +374,32 @@ func (f *Forwarder) ImportForwards(forwards []*upgrade.ForwardedPort) (readopted
 	}
 
 	return readopted
+}
+
+// backendAddr returns the literal loopback address socat should connect to
+// for the given IP family, avoiding reliance on "localhost" name resolution.
+func backendAddr(family uint32) string {
+	if family == 6 {
+		return "[::1]"
+	}
+	return "127.0.0.1"
+}
+
+// normalizeForwardKey returns the canonical map key for a re-adopted port.
+// Old envd binaries exported Key as "<pid>-<port>" (one dash); new binaries
+// use "<pid>-<port>-<ip>" (two dashes). When the old format is detected the
+// IP is inferred from Family so the seeded key matches what the scan loop
+// produces, preventing a duplicate socat after a live upgrade.
+func normalizeForwardKey(fp *upgrade.ForwardedPort) string {
+	key := fp.GetKey()
+	if strings.Count(key, "-") == 1 {
+		ip := "127.0.0.1"
+		if fp.GetFamily() == 6 {
+			ip = "::1"
+		}
+		key += "-" + ip
+	}
+	return key
 }
 
 func familyToIPVersion(family uint32) uint32 {

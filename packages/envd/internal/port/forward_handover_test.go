@@ -76,8 +76,11 @@ func TestForwarder_ImportForwards_ReadoptsLiveSocat(t *testing.T) {
 	})
 	require.Equal(t, 1, n)
 
-	p, ok := f.ports["100-8080"]
-	require.True(t, ok, "a live socat must be re-adopted into the ports map")
+	// ImportForwards normalizes an old single-dash key ("pid-port") to the new
+	// "pid-port-ip" format (IP inferred from Family) so a live upgrade does not
+	// spawn a duplicate socat alongside the scan loop's own entry.
+	p, ok := f.ports["100-8080-127.0.0.1"]
+	require.True(t, ok, "a live socat must be re-adopted into the ports map under the normalized key")
 	assert.Equal(t, pid, p.socatPID())
 	assert.Nil(t, p.socat, "a re-adopted socat has no *exec.Cmd")
 }
