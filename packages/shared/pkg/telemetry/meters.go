@@ -119,6 +119,15 @@ const (
 	// A non-zero rate means lost snapshots.
 	OrchestratorSnapshotUploadFailedCounterName CounterType = "orchestrator.snapshot.upload.failed"
 
+	// OrchestratorCheckpointChangeFootprintCounterName counts each per-pause
+	// snapshot diff by file_type (memfile|rootfs) and whether it was clean
+	// (dirty bytes at or below a small block-sized threshold). It is the
+	// measurement that answers "how often is a checkpoint a no-op?" — the
+	// per-dimension clean rate is the filesystem-only-downgrade / skip
+	// opportunity on real traffic; the full-skip rate is both dimensions clean
+	// on the same pause (join by sandbox/trace in the dashboard).
+	OrchestratorCheckpointChangeFootprintCounterName CounterType = "orchestrator.sandbox.checkpoint.change_footprint"
+
 	// OrchestratorTemplateCacheAncestorResolutionsCounterName counts each
 	// ancestor build once per ancestor walk, by the path that resolved it
 	// (verdict) and what landed in the child header's Builds map (resolution).
@@ -820,6 +829,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorFPHFreedCounterName:              "Bytes discarded by completed free-page-hinting drains and runs (FC free_page_hint_freed before the drain and after a metrics flush that follows it), labeled by phase",
 	OrchestratorFPHLatchCounterName:              "Guests the periodic hinter latched as unable to hint after consecutive sat-out runs, released by a completed run, or dropped with the loop that held the latch (state: latched, released, dropped)",
 	OrchestratorSnapshotUploadFailedCounterName:  "Number of pause-snapshot uploads that never landed durably",
+	OrchestratorCheckpointChangeFootprintCounterName: "Per-pause snapshot diffs by file_type (memfile|rootfs) and clean (dirty bytes <= one block); the clean rate is the fs-only-downgrade / skip opportunity",
 	OrchestratorDeadStructureOutcomeCounterName:  "Passes through a per-pause structure's drop site, by structure and outcome",
 	OrchestratorDeadStructureBytesCounterName:    "Bytes of per-pause structures dropped or kept at their drop site, by structure and outcome",
 	SandboxPauseFsQuiescedCounterName:            "Filesystem-only pauses by whether the rootfs was frozen (quiesced) vs sync fallback",
@@ -911,6 +921,7 @@ var counterUnits = map[CounterType]string{
 	OrchestratorFPHFreedCounterName:              "By",
 	OrchestratorFPHLatchCounterName:              "{transition}",
 	OrchestratorSnapshotUploadFailedCounterName:  "{snapshot}",
+	OrchestratorCheckpointChangeFootprintCounterName: "{pause}",
 	OrchestratorDeadStructureOutcomeCounterName:  "{pass}",
 	OrchestratorDeadStructureBytesCounterName:    "By",
 	SandboxPauseFsQuiescedCounterName:            "{snapshot}",
