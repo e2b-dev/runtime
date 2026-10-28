@@ -84,13 +84,15 @@ type RemoveOpts struct {
 	// When set, StartRemoving fails with ErrExecutionMismatch if the stored
 	// record carries a different execution ID.
 	//
-	// For callers that decide from a snapshot taken earlier — a background
-	// scan, a queued batch — the sandbox ID alone is not a stable identity:
-	// the record can be removed and the ID reused by a resume before the
-	// removal runs, and the transition would then land on a live sandbox that
-	// was never in scope. Empty means "remove whatever is stored", which is
-	// correct for callers acting on a fresh read or on user intent.
 	ExpectExecutionID string
+
+	// RequesterIP and UserAgent attribute an explicit API kill (KillReasonRequest)
+	// to the client that issued DELETE /sandboxes/{id}, so the sandbox.lifecycle.killed
+	// event can record who initiated it. Both are empty for timeout, eviction and
+	// orchestrator-internal kills. They ride the event's existing per-team TTL, so
+	// no new unbounded store of client data is introduced.
+	RequesterIP string
+	UserAgent   string
 }
 
 var AllowedTransitions = map[State]map[State]bool{

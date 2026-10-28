@@ -869,7 +869,7 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 		}
 	}()
 
-	s.emitSandboxKilled(ctx, sbx, killReason)
+	s.emitSandboxKilled(ctx, sbx, killReason, requesterAttribution(in))
 
 	return &emptypb.Empty{}, nil
 }
@@ -946,10 +946,13 @@ func (s *Server) reportCheckpointStepError(ctx context.Context, msg string, err 
 // are the Delete RPC and the paths that destroy a live-registered sandbox
 // in-request without passing through it: the pause-path seal-failure kill and
 // the in-place resume-failure teardown.
-func (s *Server) emitSandboxKilled(ctx context.Context, sbx *sandbox.Sandbox, killReason string) {
+func (s *Server) emitSandboxKilled(ctx context.Context, sbx *sandbox.Sandbox, killReason string, decorate ...func(map[string]any)) {
 	teamID, buildId, eventsTTLDays, eventData := s.prepareSandboxEventData(ctx, sbx)
 	eventData[executionEventDataKey] = s.getSandboxExecutionData(sbx)
 	addKillReason(eventData, killReason)
+	for _, d := range decorate {
+		d(eventData)
+	}
 	recordSandboxKill(ctx, s.sandboxKilledCounter, sbx.Runtime.TeamID, killReason)
 	s.publishEventAsync(
 		ctx,
@@ -973,6 +976,23 @@ func (s *Server) emitSandboxKilled(ctx context.Context, sbx *sandbox.Sandbox, ki
 
 // addKillReason records the kill reason on killed events. Empty input is
 // normalized to "unknown" so killed events always carry a kill_reason key.
+// requesterAttribution returns an event-data decorator that records who issued
+// an explicit API kill. The API populates requester_ip / requester_user_agent
+// only on a user-issued DELETE (KillReasonRequest); for timeout, eviction and
+// orchestrator-internal kills both are empty and the decorator adds nothing.
+// The fields ride the killed event's existing per-team TTL, so no new unbounded
+// store of client data is created.
+func requesterAttribution(in *orchestrator.SandboxDeleteRequest) func(map[string]any) {
+	return func(eventData map[string]any) {
+		if ip := in.GetRequesterIp(); ip != "" {
+			eventData["requester_ip"] = ip
+		}
+		if ua := in.GetRequesterUserAgent(); ua != "" {
+			eventData["requester_user_agent"] = ua
+		}
+	}
+}
+
 func addKillReason(eventData map[string]any, killReason string) {
 	if killReason == "" {
 		killReason = killReasonUnknown

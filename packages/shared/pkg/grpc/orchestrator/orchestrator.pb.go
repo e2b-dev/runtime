@@ -1241,11 +1241,13 @@ func (x *SandboxUpdateRequest) GetEgress() *SandboxNetworkEgressConfig {
 }
 
 type SandboxDeleteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	KillReason    *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId          string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	KillReason         *string                `protobuf:"bytes,2,opt,name=kill_reason,json=killReason,proto3,oneof" json:"kill_reason,omitempty"`
+	RequesterIp        *string                `protobuf:"bytes,3,opt,name=requester_ip,json=requesterIp,proto3,oneof" json:"requester_ip,omitempty"`
+	RequesterUserAgent *string                `protobuf:"bytes,4,opt,name=requester_user_agent,json=requesterUserAgent,proto3,oneof" json:"requester_user_agent,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SandboxDeleteRequest) Reset() {
@@ -1288,6 +1290,20 @@ func (x *SandboxDeleteRequest) GetSandboxId() string {
 func (x *SandboxDeleteRequest) GetKillReason() string {
 	if x != nil && x.KillReason != nil {
 		return *x.KillReason
+	}
+	return ""
+}
+
+func (x *SandboxDeleteRequest) GetRequesterIp() string {
+	if x != nil && x.RequesterIp != nil {
+		return *x.RequesterIp
+	}
+	return ""
+}
+
+func (x *SandboxDeleteRequest) GetRequesterUserAgent() string {
+	if x != nil && x.RequesterUserAgent != nil {
+		return *x.RequesterUserAgent
 	}
 	return ""
 }
@@ -2006,13 +2022,17 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\bend_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\aendTime\x88\x01\x01\x128\n" +
 	"\x06egress\x18\x03 \x01(\v2\x1b.SandboxNetworkEgressConfigH\x01R\x06egress\x88\x01\x01B\v\n" +
 	"\t_end_timeB\t\n" +
-	"\a_egress\"k\n" +
+	"\a_egress\"\xf4\x01\n" +
 	"\x14SandboxDeleteRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
-	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\x99\x01\n" +
+	"killReason\x88\x01\x01\x12&\n" +
+	"\frequester_ip\x18\x03 \x01(\tH\x01R\vrequesterIp\x88\x01\x01\x125\n" +
+	"\x14requester_user_agent\x18\x04 \x01(\tH\x02R\x12requesterUserAgent\x88\x01\x01B\x0e\n" +
+	"\f_kill_reasonB\x0f\n" +
+	"\r_requester_ipB\x17\n" +
+	"\x15_requester_user_agent\"\x99\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
