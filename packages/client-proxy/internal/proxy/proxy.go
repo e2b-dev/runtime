@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -205,6 +206,14 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		resumeCloser = flights
 	}
 
+	outcomeCounter, err := telemetry.GetCounter(meter, telemetry.ClientProxyRequestOutcomeCounterName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error registering client proxy request outcome metric (%s): %w", telemetry.ClientProxyRequestOutcomeCounterName, err)
+	}
+	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome) {
+		outcomeCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", string(outcome))))
+	}
+
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
 	forwardedHostDomains = normalizeForwardedHostDomains(forwardedHostDomains)
 	proxy := reverseproxy.New(
@@ -317,9 +326,10 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		nil,
 		false,
 		reverseproxy.WithProbe(),
+		reverseproxy.WithOutcomeRecorder(recordOutcome),
 	)
 
-	_, err := telemetry.GetObservableUpDownCounter(
+	_, err = telemetry.GetObservableUpDownCounter(
 		meter, telemetry.ClientProxyPoolConnectionsMeterCounterName, func(_ context.Context, observer metric.Int64Observer) error {
 			observer.Observe(proxy.CurrentPoolConnections())
 

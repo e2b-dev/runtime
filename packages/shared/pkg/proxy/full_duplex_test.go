@@ -768,7 +768,7 @@ func TestHandlerEnablesFullDuplex(t *testing.T) {
 	backendURL, err := url.Parse(backend.URL)
 	require.NoError(t, err)
 
-	p := pool.New(maxClientConns, 1, time.Second, false)
+	p := pool.New(maxClientConns, 1, time.Second, false, nil)
 
 	recorder := &fullDuplexRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx-1-00000000.localhost/", nil)

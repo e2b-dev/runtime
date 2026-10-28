@@ -1670,7 +1670,7 @@ func TestSharedIngressPolicy(t *testing.T) {
 				r.Header.Set("Origin", "https://caller.example")
 				r.Header.Set("Access-Control-Request-Method", "POST")
 				recorder := httptest.NewRecorder()
-				p := pool.New(4, 1, time.Second, false)
+				p := pool.New(4, 1, time.Second, false, nil)
 				handler(p, resolver, nil, options{}).ServeHTTP(recorder, r)
 				assert.GreaterOrEqual(t, recorder.Code, 200)
 				assert.Less(t, recorder.Code, 300)

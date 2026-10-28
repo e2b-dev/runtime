@@ -3,6 +3,8 @@ package proxy
 import (
 	"errors"
 	"net/http"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/proxy/pool"
 )
 
 // HeaderProbe asks a proxy whether it can route the request's sandbox,
@@ -17,7 +19,8 @@ const HeaderProbe = "X-E2b-Sandbox-Probe"
 type Option func(*options)
 
 type options struct {
-	probe bool
+	probe     bool
+	onOutcome pool.OutcomeRecorder
 }
 
 // WithProbe makes the proxy answer HeaderProbe requests. Without it the
@@ -25,6 +28,14 @@ type options struct {
 func WithProbe() Option {
 	return func(o *options) {
 		o.probe = true
+	}
+}
+
+// WithOutcomeRecorder records each request's terminal outcome through r.
+// Without it outcomes are not recorded.
+func WithOutcomeRecorder(r pool.OutcomeRecorder) Option {
+	return func(o *options) {
+		o.onOutcome = r
 	}
 }
 

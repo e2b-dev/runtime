@@ -227,6 +227,12 @@ func TestProxyShutdownReleasesFailedH2CPreface(t *testing.T) {
 			proxy := New(0, SandboxProxyRetries, time.Minute, func(*http.Request) (*pool.Destination, error) {
 				return nil, errors.New("unexpected proxy request")
 			}, nil, false)
+			hijacked := make(chan struct{})
+			proxy.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateHijacked {
+					close(hijacked)
+				}
+			}
 			var listenConfig net.ListenConfig
 			listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(t, err)
