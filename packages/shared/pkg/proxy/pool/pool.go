@@ -46,8 +46,10 @@ const (
 )
 
 // OutcomeRecorder is the callback the proxy calls once per request with its
-// terminal outcome. Nil is valid and means "do not record".
-type OutcomeRecorder func(ctx context.Context, outcome RequestOutcome)
+// terminal outcome and the destination node it was routed to (empty when no
+// destination was resolved or the embedder has no node identity). Nil is valid
+// and means "do not record".
+type OutcomeRecorder func(ctx context.Context, outcome RequestOutcome, node string)
 
 type ProxyPool struct {
 	clients               atomic.Int64
@@ -72,11 +74,12 @@ func New(maxClientConns int, maxConnectionAttempts int, idleTimeout time.Duratio
 	}
 }
 
-// RecordOutcome reports a request outcome through the configured recorder, if
-// any. Safe to call with a nil recorder.
-func (p *ProxyPool) RecordOutcome(ctx context.Context, outcome RequestOutcome) {
+// RecordOutcome reports a request outcome (with the destination node, which may
+// be empty) through the configured recorder, if any. Safe to call with a nil
+// recorder.
+func (p *ProxyPool) RecordOutcome(ctx context.Context, outcome RequestOutcome, node string) {
 	if p.onOutcome != nil {
-		p.onOutcome(ctx, outcome)
+		p.onOutcome(ctx, outcome, node)
 	}
 }
 

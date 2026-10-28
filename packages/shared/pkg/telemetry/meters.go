@@ -996,7 +996,7 @@ var counterDesc = map[CounterType]string{
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
-	ClientProxyRequestOutcomeCounterName:        "Client proxy requests by terminal outcome (ok | routing_failed | upstream_unreachable | client_closed | sandbox_not_found | too_many_connections).",
+	ClientProxyRequestOutcomeCounterName:        "Client proxy requests by terminal outcome (ok | routing_failed | upstream_unreachable | client_closed | sandbox_not_found | too_many_connections) and destination node (orchestrator instance, or unknown).",
 	OrchestratorProxyRequestOutcomeCounterName:  "Orchestrator sandbox proxy requests by terminal outcome (ok | routing_failed | upstream_unreachable | client_closed | sandbox_not_found | too_many_connections).",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "Hugepage sandboxes placed under a hugepage limit on a node the limit could not bound, by node and reason (no_capacity | no_page_size).",

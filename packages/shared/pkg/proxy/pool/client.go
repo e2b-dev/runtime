@@ -50,9 +50,9 @@ func newProxyClient(
 	insecureSkipTLSVerify bool,
 	onOutcome OutcomeRecorder,
 ) *ProxyClient {
-	recordOutcome := func(ctx context.Context, outcome RequestOutcome) {
+	recordOutcome := func(ctx context.Context, outcome RequestOutcome, node string) {
 		if onOutcome != nil {
-			onOutcome(ctx, outcome)
+			onOutcome(ctx, outcome, node)
 		}
 	}
 	activeConnections := smap.New[*tracking.Connection]()
@@ -170,7 +170,7 @@ func newProxyClient(
 			t, ok := pc.getDestination(r)
 			if !ok {
 				logger.L().Error(ctx, "proxy request without sandbox received error", zap.Error(err))
-				recordOutcome(ctx, OutcomeRoutingFailed)
+				recordOutcome(ctx, OutcomeRoutingFailed, "")
 				cors.Error(w, "Failed to route request to sandbox", http.StatusInternalServerError)
 
 				return
@@ -178,7 +178,7 @@ func newProxyClient(
 
 			if r.Host == "" { // kept around for historical reasons, unsure of usefulness. todo: find out if this is useful.
 				t.RequestLogger.Error(ctx, "error handler called from rewrite because of missing DestinationContext", zap.Error(err))
-				recordOutcome(ctx, OutcomeRoutingFailed)
+				recordOutcome(ctx, OutcomeRoutingFailed, t.Node)
 				cors.Error(w, "Failed to route request to sandbox", http.StatusInternalServerError)
 
 				return
@@ -204,9 +204,9 @@ func newProxyClient(
 			}
 
 			if clientGone {
-				recordOutcome(ctx, OutcomeClientClosed)
+				recordOutcome(ctx, OutcomeClientClosed, t.Node)
 			} else {
-				recordOutcome(ctx, OutcomeUpstreamUnreachable)
+				recordOutcome(ctx, OutcomeUpstreamUnreachable, t.Node)
 			}
 
 			if t.DefaultToPortError {
@@ -236,7 +236,7 @@ func newProxyClient(
 			// The upstream answered and the response is being forwarded: the
 			// request succeeded as far as the proxy is concerned, whatever the
 			// backend's own status code.
-			recordOutcome(ctx, OutcomeOK)
+			recordOutcome(ctx, OutcomeOK, t.Node)
 
 			if r.StatusCode >= 500 {
 				t.RequestLogger.Warn(
