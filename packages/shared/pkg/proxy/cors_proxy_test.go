@@ -313,7 +313,7 @@ func TestNoRawHTTPErrorInProxyPackage(t *testing.T) {
 
 func TestRetiredOwnerAnswersPreflight(t *testing.T) {
 	t.Parallel()
-	p := pool.New(4, 1, time.Minute, false)
+	p := pool.New(4, 1, time.Minute, false, nil)
 	target := &url.URL{Scheme: "http", Host: "127.0.0.1:1"}
 	d, err := destinationFor(target, "retired")(nil)
 	require.NoError(t, err)

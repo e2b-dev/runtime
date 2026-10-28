@@ -65,6 +65,7 @@ func New(
 		int(maxConnectionAttempts),
 		idleTimeout,
 		disableKeepAlives,
+		o.onOutcome,
 	)
 
 	proxy := &Proxy{

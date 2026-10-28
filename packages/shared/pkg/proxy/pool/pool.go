@@ -22,6 +22,33 @@ const hostConnectionSplit = 4
 // by different sandboxes cause failed connections.
 const ClientProxyConnectionKey = "client-proxy"
 
+// RequestOutcome names how a proxied request ended. It is reported through the
+// OnOutcome callback so each service can count it on its own meter. The shared
+// proxy stays telemetry-agnostic: it only classifies, the caller counts.
+type RequestOutcome string
+
+const (
+	// OutcomeOK: the upstream answered and the response was forwarded.
+	OutcomeOK RequestOutcome = "ok"
+	// OutcomeRoutingFailed: the request could not be routed to a destination
+	// (no destination resolved, or an input the proxy rejected). Answered 4xx/500.
+	OutcomeRoutingFailed RequestOutcome = "routing_failed"
+	// OutcomeUpstreamUnreachable: the destination resolved but the proxy could
+	// not reach it (dial/transport failure, or a closed sandbox port). Answered 502.
+	OutcomeUpstreamUnreachable RequestOutcome = "upstream_unreachable"
+	// OutcomeClientClosed: the client went away before the proxy answered
+	// (context cancelled, connection reset, EOF). Nobody is left to read a page.
+	OutcomeClientClosed RequestOutcome = "client_closed"
+	// OutcomeSandboxNotFound: no sandbox matched the request.
+	OutcomeSandboxNotFound RequestOutcome = "sandbox_not_found"
+	// OutcomeTooManyConnections: the per-sandbox connection limit shed the request.
+	OutcomeTooManyConnections RequestOutcome = "too_many_connections"
+)
+
+// OutcomeRecorder is the callback the proxy calls once per request with its
+// terminal outcome. Nil is valid and means "do not record".
+type OutcomeRecorder func(ctx context.Context, outcome RequestOutcome)
+
 type ProxyPool struct {
 	clients               atomic.Int64
 	pool                  *smap.Map[*ProxyClient]
@@ -31,15 +58,25 @@ type ProxyPool struct {
 	totalConnsCounter     atomic.Uint64
 	currentConnsCounter   atomic.Int64
 	disableKeepAlives     bool
+	onOutcome             OutcomeRecorder
 }
 
-func New(maxClientConns int, maxConnectionAttempts int, idleTimeout time.Duration, disableKeepAlives bool) *ProxyPool {
+func New(maxClientConns int, maxConnectionAttempts int, idleTimeout time.Duration, disableKeepAlives bool, onOutcome OutcomeRecorder) *ProxyPool {
 	return &ProxyPool{
 		pool:                  smap.New[*ProxyClient](),
 		maxClientConns:        maxClientConns,
 		maxConnectionAttempts: maxConnectionAttempts,
 		idleTimeout:           idleTimeout,
 		disableKeepAlives:     disableKeepAlives,
+		onOutcome:             onOutcome,
+	}
+}
+
+// RecordOutcome reports a request outcome through the configured recorder, if
+// any. Safe to call with a nil recorder.
+func (p *ProxyPool) RecordOutcome(ctx context.Context, outcome RequestOutcome) {
+	if p.onOutcome != nil {
+		p.onOutcome(ctx, outcome)
 	}
 }
 
@@ -103,6 +140,7 @@ func (p *ProxyPool) newClient(ctx context.Context, d *Destination, owner *Owner)
 		stdLogger,
 		p.disableKeepAlives,
 		d.InsecureSkipTLSVerify,
+		p.onOutcome,
 	)
 }
 
