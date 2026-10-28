@@ -121,7 +121,9 @@ func NewSandboxProxy(meterProvider metric.MeterProvider, port uint16, sandboxes 
 	if err != nil {
 		return nil, fmt.Errorf("error registering orchestrator proxy request outcome metric (%s): %w", telemetry.OrchestratorProxyRequestOutcomeCounterName, err)
 	}
-	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome) {
+	// node is unused here: the orchestrator sandbox proxy's node is itself, so
+	// its destinations carry no Node and the label would always be "unknown".
+	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome, _ string) {
 		outcomeCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", string(outcome))))
 	}
 

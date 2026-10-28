@@ -210,8 +210,14 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 	if err != nil {
 		return nil, nil, fmt.Errorf("error registering client proxy request outcome metric (%s): %w", telemetry.ClientProxyRequestOutcomeCounterName, err)
 	}
-	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome) {
-		outcomeCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", string(outcome))))
+	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome, node string) {
+		if node == "" {
+			node = "unknown"
+		}
+		outcomeCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("outcome", string(outcome)),
+			attribute.String("node", node),
+		))
 	}
 
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
@@ -314,6 +320,9 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 				SandboxPort:         port,
 				ConnectionKey:       pool.ClientProxyConnectionKey,
 				Url:                 url,
+				// Label outcomes by the worker instance so an unreachable-upstream
+				// spike points straight at a drained/stale node.
+				Node: route.OrchestratorID,
 				MaskRequestHost: clientProxyMaskRequestHost(
 					ctx,
 					featureFlagsClient,

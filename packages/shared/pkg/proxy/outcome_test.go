@@ -21,12 +21,14 @@ import (
 type outcomeRecorder struct {
 	mu       sync.Mutex
 	outcomes []pool.RequestOutcome
+	nodes    []string
 }
 
-func (o *outcomeRecorder) add(_ context.Context, outcome pool.RequestOutcome) {
+func (o *outcomeRecorder) add(_ context.Context, outcome pool.RequestOutcome, node string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.outcomes = append(o.outcomes, outcome)
+	o.nodes = append(o.nodes, node)
 }
 
 func (o *outcomeRecorder) last() (pool.RequestOutcome, bool) {
@@ -37,6 +39,16 @@ func (o *outcomeRecorder) last() (pool.RequestOutcome, bool) {
 	}
 
 	return o.outcomes[len(o.outcomes)-1], true
+}
+
+func (o *outcomeRecorder) lastNode() (string, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.nodes) == 0 {
+		return "", false
+	}
+
+	return o.nodes[len(o.nodes)-1], true
 }
 
 // startOutcomeProxy stands up a proxy whose destination resolver returns
@@ -87,6 +99,7 @@ func TestProxyRecordsOutcome_OK(t *testing.T) {
 			SandboxPort:   backendPort,
 			ConnectionKey: "ok",
 			RequestLogger: logger.L(),
+			Node:          "node-42",
 		}, nil
 	})
 
@@ -99,6 +112,11 @@ func TestProxyRecordsOutcome_OK(t *testing.T) {
 
 		return ok && o == pool.OutcomeOK
 	}, 2*time.Second, 10*time.Millisecond, "expected an ok outcome")
+
+	// The destination's node is carried through to the recorder.
+	node, ok := rec.lastNode()
+	require.True(t, ok)
+	assert.Equal(t, "node-42", node)
 }
 
 func TestProxyRecordsOutcome_UpstreamUnreachable(t *testing.T) {
