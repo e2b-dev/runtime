@@ -44,6 +44,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/retry"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -217,6 +218,8 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	// Set by maybeUpgradeEnvd below; labels the resume-latency histogram so the
 	// treated (upgraded) vs untreated cohorts can be compared during the rollout.
 	var envdUpgraded bool
+	// Empty when the start failed before the sandbox had a network.
+	var networkMode catalog.NetworkMode
 	defer func() {
 		s.sandboxCreateDuration.Record(ctx, time.Since(createStart).Milliseconds(),
 			metric.WithAttributes(
@@ -226,6 +229,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 				attribute.Bool("success", createErr == nil),
 				attribute.Bool("envd.upgraded", envdUpgraded),
 				attribute.String("fs_recovery", string(fsRecovery)),
+				attribute.String("network_mode", string(networkMode)),
 				telemetry.WithTeamID(req.GetSandbox().GetTeamId()),
 			),
 		)
@@ -480,6 +484,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 		return nil, status.Errorf(codes.Internal, "failed to create sandbox: %s", err)
 	}
+	networkMode = sbx.NetworkMode()
 
 	rollback.Add(ctx, func(ctx context.Context) error { return stopAndCloseSandbox(ctx, sbx) })
 	s.setupSandboxLifecycle(ctx, sbx, releaseTemplate)

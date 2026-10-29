@@ -26,6 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -284,6 +285,31 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to register sandbox count metric: %w", err)
+	}
+	type sandboxGroup struct {
+		teamID string
+		mode   catalog.NetworkMode
+	}
+	networkModes := []catalog.NetworkMode{catalog.NetworkModeLegacy, catalog.NetworkModeEgressRouter, catalog.NetworkModeFullRouter}
+	_, err = telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorSandboxNetworkModeCountMeterName, func(_ context.Context, observer metric.Int64Observer) error {
+		// Every mode is observed without a project on each collection, so an idle
+		// node keeps reporting. A project reports only the modes it runs; once it
+		// has none it is no longer observed and the SDK drops its series.
+		counts := make(map[sandboxGroup]int64)
+		for _, mode := range networkModes {
+			counts[sandboxGroup{mode: mode}] = 0
+		}
+		for _, sbx := range server.sandboxFactory.Sandboxes.Items() {
+			counts[sandboxGroup{sbx.Runtime.TeamID, sbx.NetworkMode()}]++
+		}
+		for group, count := range counts {
+			observer.Observe(count, metric.WithAttributes(telemetry.WithTeamID(group.teamID), attribute.String("network_mode", string(group.mode))))
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register sandbox network mode count metric: %w", err)
 	}
 
 	sandboxLimitGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorSandboxLimitGaugeName)

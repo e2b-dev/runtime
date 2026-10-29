@@ -46,6 +46,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -665,6 +666,19 @@ func (s *Sandbox) UseSyncWP() bool {
 	return s.useSyncWP
 }
 
+// NetworkMode is the mode of the network this execution started on.
+func (s *Sandbox) NetworkMode() catalog.NetworkMode {
+	return networkModeOf(s.NetworkPlacement)
+}
+
+func networkModeOf(placement *orchestrator.SandboxNetworkPlacement) catalog.NetworkMode {
+	if placement == nil {
+		return catalog.NetworkModeLegacy
+	}
+
+	return catalog.NetworkMode(placement.GetNetworkMode())
+}
+
 // MachineVcpus is how many vCPUs the Firecracker VM has, online or not. Pause records it
 // as the snapshot's vcpu_count. 0 when unknown (a legacy snapshot that never recorded it).
 func (s *Sandbox) MachineVcpus() int64 {
@@ -1032,12 +1046,13 @@ func (f *Factory) runNetworkAssignHook(ctx context.Context, sbx *Sandbox, reason
 		sbx.log().Warn(ctx, "sandbox network-assign hook failed, continuing",
 			logger.WithLifecycleID(sbx.LifecycleID),
 			zap.Error(err))
-
-		return placement, nil
+		err = nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to complete the sandbox network: %w", err)
 	}
+	// Set on the start span so failures later in the start keep the mode.
+	telemetry.SetAttributes(ctx, attribute.String("sandbox.network_mode", string(networkModeOf(placement))))
 
 	return placement, nil
 }
