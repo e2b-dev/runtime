@@ -186,9 +186,13 @@ func OverrideJSONFlag(flag JSONFlag, value ldvalue.Value) {
 }
 
 var (
-	SnapshotFeatureFlag                 = NewBoolFlag("use-nfs-for-snapshots", env.IsDevelopment())
-	TemplateFeatureFlag                 = NewBoolFlag("use-nfs-for-templates", env.IsDevelopment())
-	EnableWriteThroughCacheFlag         = NewBoolFlag("write-to-cache-on-writes", false)
+	SnapshotFeatureFlag         = NewBoolFlag("use-nfs-for-snapshots", env.IsDevelopment())
+	TemplateFeatureFlag         = NewBoolFlag("use-nfs-for-templates", env.IsDevelopment())
+	EnableWriteThroughCacheFlag = NewBoolFlag("write-to-cache-on-writes", false)
+	// SandboxDensityMetricsFlag exports per-sandbox host-pool working-set and
+	// reclaimable-estimate gauges (density observability). Off by default: no new
+	// metric series are produced until it is enabled.
+	SandboxDensityMetricsFlag           = NewBoolFlag("sandbox-density-metrics", false)
 	UseNFSCacheForBuildingTemplatesFlag = NewBoolFlag("use-nfs-for-building-templates", env.IsDevelopment())
 	CreateStorageCacheSpansFlag         = NewBoolFlag("create-storage-cache-spans", env.IsDevelopment())
 	OrchAcceptsCombinedHostFlag         = NewBoolFlag("orch-accepts-combined-host", false)

@@ -753,7 +753,10 @@ const (
 	SandboxRamUsedGaugeName  GaugeIntType = "e2b.sandbox.ram.used"
 	SandboxRamTotalGaugeName GaugeIntType = "e2b.sandbox.ram.total"
 	SandboxRamCacheGaugeName GaugeIntType = "e2b.sandbox.ram.cache"
-	SandboxCpuTotalGaugeName GaugeIntType = "e2b.sandbox.cpu.total"
+	// Host-side pool footprint and reclaim estimate (density observability).
+	SandboxMemWorkingSetGaugeName  GaugeIntType = "orchestrator.sandbox.mem.working_set"
+	SandboxMemReclaimableGaugeName GaugeIntType = "orchestrator.sandbox.mem.reclaimable_estimate"
+	SandboxCpuTotalGaugeName       GaugeIntType = "e2b.sandbox.cpu.total"
 	// CPU hotplug, reported by envd: how many CPUs the guest can online, how many the orchestrator
 	// asked for, how many tries that took, and how long a sysfs online/offline write has been stuck.
 	SandboxCpuPossibleGaugeName       GaugeIntType = "e2b.sandbox.cpu.possible"
@@ -1045,6 +1048,8 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	SandboxRamUsedGaugeName:              "Amount of RAM used by the sandbox.",
 	SandboxRamTotalGaugeName:             "Amount of RAM available to the sandbox.",
 	SandboxRamCacheGaugeName:             "Amount of RAM used by the page cache in the sandbox.",
+	SandboxMemWorkingSetGaugeName:        "Host memory faulted into the hugepage pool for this sandbox since resume (its pool footprint, an upper bound on current residency).",
+	SandboxMemReclaimableGaugeName:       "Estimate of pool memory the node holds for this sandbox that the guest is not actively using; 0 when the sandbox's balloon returns freed pages itself (free-page-reporting).",
 	SandboxCpuTotalGaugeName:             "Amount of CPU available to the sandbox.",
 	SandboxCpuPossibleGaugeName:          "Number of CPUs the sandbox guest can bring online.",
 	SandboxCpuTargetGaugeName:            "Number of online CPUs last requested from the sandbox guest, 0 when none was.",
@@ -1086,6 +1091,8 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	SandboxRamUsedGaugeName:              "{By}",
 	SandboxRamTotalGaugeName:             "{By}",
 	SandboxRamCacheGaugeName:             "{By}",
+	SandboxMemWorkingSetGaugeName:        "{By}",
+	SandboxMemReclaimableGaugeName:       "{By}",
 	SandboxCpuTotalGaugeName:             "{count}",
 	SandboxCpuPossibleGaugeName:          "{count}",
 	SandboxCpuTargetGaugeName:            "{count}",
