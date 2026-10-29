@@ -349,8 +349,8 @@ it leaves a snapshot); and enqueues the teardown again, which is a no-op while o
 
 Afterwards the API's deleted-project middleware, running after authentication, answers 404 to every
 non-GET route under `/unstable/management/` that names `{projectID}`: the upsert, member, limits,
-block and settings writes. The DELETE is exempt so a retry still reaches it. dashboard-api guards its own
-management and admin writes the same way. Shared auth refuses a membership or API key still left
+block and settings writes, and cluster assignment and detachment. The DELETE is exempt so a retry
+still reaches it. dashboard-api guards its own management and admin writes the same way. Shared auth refuses a membership or API key still left
 for the project with 403, and the API leaves the project out of a user's team list. Volumes, builds
 and stored artifacts are not reclaimed.
 
@@ -373,6 +373,44 @@ a time, then contains the banned teams, five at a time, all under the one budget
 into banned, not found or failed; one team's failure does not stop the others. A deleted project
 answers 404 to the single-team routes and counts as not found in the bulk route. The logic lives
 in `internal/team`.
+
+#### Cluster lifecycle (`/unstable/management/clusters`)
+
+The owning management service also drives a replay-safe cluster lifecycle under
+`/unstable/management/clusters/{clusterID}` and
+`/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. A caller
+registers a stable cluster UUID, assigns it only to the named project, detaches that exact
+assignment before provider cleanup, and deletes the cluster only after no project references it.
+Replaying the same registration or assignment succeeds. Registering the cluster again with the same
+name and auth organization may change its endpoint, TLS setting, sandbox proxy domain and token, for
+example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
+sync and gives sandboxes the new domain. A changed name or auth organization, a different
+assignment, an inexact detach, or deletion of a referenced cluster returns a conflict. The
+assignment does not check the project's tier; the caller decides which projects may use a cluster.
+A cluster first registered through this surface starts without deletion protection; one created any
+other way starts protected, a later registration never changes it, and deleting a protected cluster
+or checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
+A caller that deletes a cluster's projects before the cluster first lists them with
+`GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
+assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
+with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
+request locks the cluster row, returns a conflict while deletion protection is on, and sets
+`clusters.deletion_requested_at`; it succeeds for an absent cluster and on repeat. From then on a
+check constraint keeps deletion protection off, and a trigger on `teams` refuses to newly assign a
+team to the cluster (`cluster_assignment_cluster_deleting` from the assignment route, a conflict
+from the project upsert carrying the cluster ID). The trigger takes a key-share lock on the cluster
+row before it checks, so an assignment either commits before the deletion is recorded, where the
+caller's next listing finds it, or is refused. Deleting each project clears its team's cluster,
+the cluster delete clears it from any team deleted earlier, and then succeeds.
+Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
+`cluster_assignment_*`) in the shared error response; callers use that code rather than the
+human-readable message, and treat uncoded or unknown reasons as generic errors.
+
+The operator dashboard manages clusters through `/unstable/admin/clusters`, with an admin token or
+a service JWT: it lists clusters with their team counts, reads one cluster with its teams, creates
+a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
+its token, and deletes it with the same checks as the management delete. No route returns a
+cluster's token.
 
 ### Orchestrator (`packages/orchestrator`)
 

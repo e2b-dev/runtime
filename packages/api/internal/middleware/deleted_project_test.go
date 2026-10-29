@@ -26,11 +26,13 @@ func TestRefuseDeletedProjectGuardsExactlyTheProjectWrites(t *testing.T) {
 	}
 
 	require.Equal(t, map[string]struct{}{
-		"PUT /unstable/management/projects/:projectID":                 {},
-		"PUT /unstable/management/projects/:projectID/members/:userID": {},
-		"PUT /unstable/management/projects/:projectID/limits":          {},
-		"PUT /unstable/management/projects/:projectID/settings":        {},
-		"PUT /unstable/management/projects/:projectID/block":           {},
+		"PUT /unstable/management/projects/:projectID":                       {},
+		"PUT /unstable/management/projects/:projectID/members/:userID":       {},
+		"PUT /unstable/management/projects/:projectID/limits":                {},
+		"PUT /unstable/management/projects/:projectID/settings":              {},
+		"PUT /unstable/management/projects/:projectID/block":                 {},
+		"PUT /unstable/management/projects/:projectID/cluster/:clusterID":    {},
+		"DELETE /unstable/management/projects/:projectID/cluster/:clusterID": {},
 	}, guarded)
 	require.False(t, guardsDeletedProject(http.MethodDelete, "/unstable/management/projects/:projectID"),
 		"a retried deletion must reach its handler")

@@ -1581,6 +1581,198 @@ components:
         limits:
           $ref: "#/components/schemas/TeamLimits"
 
+    ClusterDetail:
+      type: object
+      description: A cluster's configuration. The cluster's token is never returned.
+      required:
+        - id
+        - name
+        - endpoint
+        - endpointTls
+        - deletionProtection
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        endpoint:
+          type: string
+        endpointTls:
+          type: boolean
+        sandboxProxyDomain:
+          type: string
+          nullable: true
+        authOrgId:
+          type: string
+          nullable: true
+        deletionProtection:
+          type: boolean
+          description: While true, deleting the cluster is refused.
+
+    ClusterDetailWithTeams:
+      type: object
+      required:
+        - cluster
+        - teams
+        - teamCount
+        - templateCount
+      properties:
+        cluster:
+          $ref: "#/components/schemas/ClusterDetail"
+        teams:
+          $ref: "#/components/schemas/ClusterTeamListResponse"
+        teamCount:
+          type: integer
+          format: int64
+          description: Teams assigned to the cluster. Must be 0 before the cluster can be deleted.
+        templateCount:
+          type: integer
+          format: int64
+          description: Live templates on the cluster. Deleting the cluster deletes them.
+
+    ClusterListItem:
+      type: object
+      required:
+        - id
+        - name
+        - endpoint
+        - teamCount
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        endpoint:
+          type: string
+        sandboxProxyDomain:
+          type: string
+          nullable: true
+        teamCount:
+          type: integer
+          format: int64
+          description: Number of teams assigned to the cluster.
+
+    ClusterListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterListItem"
+        total:
+          type: integer
+          format: int64
+          description: Number of clusters matching the search, ignoring limit and offset
+
+    ClusterTeamListItem:
+      type: object
+      required:
+        - id
+        - email
+        - isBanned
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+          nullable: true
+        slug:
+          type: string
+          nullable: true
+        isBanned:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    ClusterTeamListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterTeamListItem"
+        total:
+          type: integer
+          format: int64
+          description: Number of teams assigned to the cluster, ignoring limit and offset
+
+    AdminClusterCreateRequest:
+      type: object
+      required:
+        - name
+        - endpoint
+        - endpoint_tls
+        - token
+      properties:
+        cluster_id:
+          type: string
+          format: uuid
+          description: Optional stable identifier for idempotent creation. Reuse succeeds only when the immutable configuration is identical.
+        name:
+          type: string
+          minLength: 1
+        endpoint:
+          type: string
+          minLength: 1
+        endpoint_tls:
+          type: boolean
+        token:
+          type: string
+          minLength: 1
+        sandbox_proxy_domain:
+          type: string
+          nullable: true
+        auth_org_id:
+          type: string
+          nullable: true
+
+    ClusterUpdateRequest:
+      type: object
+      description: >-
+        Partial update; only the properties present are written. An explicit
+        null or an empty string clears `sandboxProxyDomain` or `authOrgId`.
+      properties:
+        name:
+          type: string
+          minLength: 1
+        endpoint:
+          type: string
+          minLength: 1
+        endpointTls:
+          type: boolean
+        sandboxProxyDomain:
+          type: string
+          nullable: true
+        authOrgId:
+          type: string
+          nullable: true
+        deletionProtection:
+          type: boolean
+
+    ClusterTokenRotateRequest:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+          minLength: 1
+          format: password
+          description: New cluster access token. Write-only.
+
     AdminSandboxKillResult:
       required:
         - killedCount
@@ -3256,7 +3448,10 @@ components:
             count out of bounds in the stored build; a server error, since no
             request field reaches that check), internal_server_error,
             secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress,
-            idempotency_outcome_unknown.
+            idempotency_outcome_unknown, cluster_registration_invalid,
+            cluster_registration_conflict, cluster_assignment_invalid,
+            cluster_assignment_project_not_found, cluster_assignment_cluster_not_found,
+            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting.
         message:
           type: string
           description: Error
@@ -3748,6 +3943,42 @@ components:
           type: string
           nullable: true
           description: Cursor to pass to the next list request, or null when there is no next page.
+    ManagementClusterRegistrationRequest:
+      type: object
+      required:
+        - name
+        - endpoint
+        - endpoint_tls
+        - token
+      properties:
+        name:
+          type: string
+          minLength: 1
+        endpoint:
+          type: string
+          minLength: 1
+        endpoint_tls:
+          type: boolean
+        token:
+          type: string
+          minLength: 1
+        sandbox_proxy_domain:
+          type: string
+          nullable: true
+        auth_org_id:
+          type: string
+          nullable: true
+
+    ManagementClusterProjects:
+      type: object
+      required: [project_ids]
+      properties:
+        project_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
     ManagementProjectSettingsRequest:
       type: object
       required: [revision, settings]
@@ -6450,6 +6681,179 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /unstable/management/clusters/{clusterID}:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    put:
+      operationId: managementRegisterCluster
+      summary: Register a cluster.
+      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagementClusterRegistrationRequest"
+      responses:
+        "204":
+          description: Cluster registration is present.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+    delete:
+      operationId: managementDeleteCluster
+      summary: Delete a cluster and its environments.
+      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: Cluster is absent.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/management/clusters/{clusterID}/projects:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    get:
+      operationId: managementListClusterProjects
+      summary: List the projects assigned to a cluster.
+      description: Returns the ID of every project whose team is assigned to the cluster, whichever way it was assigned. A deleted project is never assigned. An absent cluster has no projects.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "200":
+          description: The projects assigned to the cluster.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagementClusterProjects"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/management/clusters/{clusterID}/deletion:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    put:
+      operationId: managementRequestClusterDeletion
+      summary: Record that a cluster is being deleted.
+      description: Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before the deletion is recorded, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: The deletion is recorded, or the cluster is absent.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          description: The cluster has deletion protection turned on.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/management/clusters/{clusterID}/destroy-readiness:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    get:
+      operationId: managementClusterDestroyReadiness
+      summary: Check cluster destroy readiness.
+      description: Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: At most one team uses the cluster.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          description: The cluster has deletion protection turned on, or more than one team uses it and the other teams and their templates must move off it before destroying the cluster.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/management/projects/{projectID}/cluster/{clusterID}:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: "#/components/parameters/clusterID"
+    put:
+      operationId: managementAssignProjectCluster
+      summary: Assign a cluster to a project.
+      description: >-
+        Assigns the cluster when the project has no cluster assigned. Replaying the identical
+        assignment succeeds; replacing a different assigned cluster returns a conflict.
+        Answers 404 when the project is missing or deleted.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: Cluster is assigned to the project.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+    delete:
+      operationId: managementDetachProjectCluster
+      summary: Detach a cluster assignment from a project.
+      description: Answers 404 when the project is missing or deleted.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: The matching assignment is absent.
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
   /unstable/management/projects/{projectID}:
     parameters:
       - name: projectID
@@ -6881,6 +7285,310 @@ paths:
           $ref: "#/components/responses/404"
         "429":
           $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/clusters:
+    get:
+      operationId: adminListClusters
+      summary: List clusters as admin
+      description: Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of clusters to return
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: Number of matching clusters to skip
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - name: search
+          in: query
+          required: false
+          description: Case-insensitive substring match on the cluster name or endpoint
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          required: false
+          description: Column to order by
+          schema:
+            type: string
+            enum:
+              - endpoint
+              - name
+              - teamCount
+            default: endpoint
+        - name: sortOrder
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+            default: asc
+            x-enum-varnames:
+              - AdminListClustersSortOrderAsc
+              - AdminListClustersSortOrderDesc
+      responses:
+        "200":
+          description: The page of matching clusters and the number of all matching clusters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterListResponse"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "500":
+          $ref: "#/components/responses/500"
+    post:
+      operationId: adminCreateCluster
+      summary: Create a cluster as admin
+      description: Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClusterCreateRequest"
+      responses:
+        "201":
+          description: Cluster created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetail"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/clusters/{clusterID}:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    get:
+      operationId: adminGetCluster
+      summary: Cluster as admin
+      description: Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - name: teamsLimit
+          in: query
+          required: false
+          description: Page size for the embedded teams page
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: teamsOffset
+          in: query
+          required: false
+          description: Offset for the embedded teams page
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: The cluster
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetailWithTeams"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+    patch:
+      operationId: adminUpdateCluster
+      summary: Update a cluster as admin
+      description: >-
+        Writes only the properties present in the body. `endpoint` and
+        `endpointTls` change where orchestration traffic for every team on the
+        cluster goes, `sandboxProxyDomain` changes the public URL of every
+        sandbox on it, and `authOrgId` changes how the cluster authenticates.
+        A body with no property returns 400. Another cluster using the auth organization
+        returns 409, and so does turning deletion protection on after the
+        cluster's deletion is recorded. The token is rotated through
+        `PUT /unstable/admin/clusters/{clusterID}/token`.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterUpdateRequest"
+      responses:
+        "200":
+          description: The cluster as updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetail"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+    delete:
+      operationId: adminDeleteCluster
+      summary: Delete a cluster and its environments as admin
+      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: Cluster deleted or already absent.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/clusters/{clusterID}/teams:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    get:
+      operationId: adminListClusterTeams
+      summary: List a cluster's teams as admin
+      description: Lists the teams assigned to the cluster.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of teams to return
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: Number of teams to skip
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - name: sortBy
+          in: query
+          required: false
+          description: Column to order by
+          schema:
+            type: string
+            enum:
+              - createdAt
+              - name
+            default: createdAt
+        - name: sortOrder
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+            default: desc
+            x-enum-varnames:
+              - AdminListClusterTeamsSortOrderAsc
+              - AdminListClusterTeamsSortOrderDesc
+      responses:
+        "200":
+          description: The page of teams assigned to the cluster
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterTeamListResponse"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/clusters/{clusterID}/token:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    put:
+      operationId: adminRotateClusterToken
+      summary: Rotate a cluster's token as admin
+      description: Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterTokenRotateRequest"
+      responses:
+        "204":
+          description: Token rotated.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
 

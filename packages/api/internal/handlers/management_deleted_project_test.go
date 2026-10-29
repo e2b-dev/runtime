@@ -19,16 +19,20 @@ func TestWritesToADeletedProjectAnswerNotFoundAndChangeNothing(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
+	clusterID := uuid.New()
+	insertCluster(t, db, clusterID, false)
 
 	for name, tc := range map[string]struct {
 		method string
 		path   string
 		body   string
 	}{
-		"project upsert":  {http.MethodPut, "/unstable/management/projects/%s", `{"name":"restored","slug":"restored","email":"restored@example.test"}`},
-		"member delivery": {http.MethodPut, "/unstable/management/projects/%s/members/" + uuid.NewString(), `{"revision":1,"present":true,"identities":[{"issuer":"https://issuer.test","subject":"member"}]}`},
-		"limits delivery": {http.MethodPut, "/unstable/management/projects/%s/limits", validLimitsBody},
-		"block delivery":  {http.MethodPut, "/unstable/management/projects/%s/block", `{"revision":1,"blocked":false}`},
+		"project upsert":     {http.MethodPut, "/unstable/management/projects/%s", `{"name":"restored","slug":"restored","email":"restored@example.test"}`},
+		"member delivery":    {http.MethodPut, "/unstable/management/projects/%s/members/" + uuid.NewString(), `{"revision":1,"present":true,"identities":[{"issuer":"https://issuer.test","subject":"member"}]}`},
+		"limits delivery":    {http.MethodPut, "/unstable/management/projects/%s/limits", validLimitsBody},
+		"block delivery":     {http.MethodPut, "/unstable/management/projects/%s/block", `{"revision":1,"blocked":false}`},
+		"cluster assignment": {http.MethodPut, "/unstable/management/projects/%s/cluster/" + clusterID.String(), ""},
+		"cluster detachment": {http.MethodDelete, "/unstable/management/projects/%s/cluster/" + clusterID.String(), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
