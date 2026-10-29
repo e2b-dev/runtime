@@ -62,20 +62,21 @@ type SandboxObserver struct {
 
 	sandboxes *sandbox.Map
 
-	meter          metric.Meter
-	cpuTotal       metric.Int64ObservableGauge
-	cpuUsed        metric.Float64ObservableGauge
-	cpuPossible    metric.Int64ObservableGauge
-	cpuTarget      metric.Int64ObservableGauge
-	cpuAttempts    metric.Int64ObservableGauge
-	cpuPending     metric.Int64ObservableGauge
-	memoryTotal    metric.Int64ObservableGauge
-	memoryUsed     metric.Int64ObservableGauge
-	memoryCache    metric.Int64ObservableGauge
-	memWorkingSet  metric.Int64ObservableGauge
-	memReclaimable metric.Int64ObservableGauge
-	diskTotal      metric.Int64ObservableGauge
-	diskUsed       metric.Int64ObservableGauge
+	meter            metric.Meter
+	cpuTotal         metric.Int64ObservableGauge
+	cpuUsed          metric.Float64ObservableGauge
+	cpuPossible      metric.Int64ObservableGauge
+	cpuTarget        metric.Int64ObservableGauge
+	cpuAttempts      metric.Int64ObservableGauge
+	cpuPending       metric.Int64ObservableGauge
+	memoryTotal      metric.Int64ObservableGauge
+	memoryUsed       metric.Int64ObservableGauge
+	memoryCache      metric.Int64ObservableGauge
+	memWorkingSet    metric.Int64ObservableGauge
+	memReclaimable   metric.Int64ObservableGauge
+	memShareableBase metric.Int64ObservableGauge
+	diskTotal        metric.Int64ObservableGauge
+	diskUsed         metric.Int64ObservableGauge
 
 	featureFlags *featureflags.Client
 }
@@ -93,6 +94,29 @@ type SandboxObserver struct {
 //     the host itself. When true the pool is largely self-reclaiming, so the
 //     standing reclaim opportunity is reported as 0 rather than double-counting
 //     pages the device already discards.
+//
+// shareableBaseBytes is a per-template lower bound on the pool memory a
+// same-template page-sharing scheme could reclaim on this node: with N
+// sandboxes of one template each holding a private copy of the base image, one
+// shared copy would keep one and free the other N-1. Using the SMALLEST
+// base-image footprint among them keeps it a lower bound — it never claims more
+// than every sandbox demonstrably faulted. Fewer than two sandboxes share
+// nothing, so it returns 0.
+func shareableBaseBytes(sourceBytes []int64) int64 {
+	if len(sourceBytes) < 2 {
+		return 0
+	}
+
+	minBytes := sourceBytes[0]
+	for _, b := range sourceBytes[1:] {
+		if b < minBytes {
+			minBytes = b
+		}
+	}
+
+	return int64(len(sourceBytes)-1) * minBytes
+}
+
 func reclaimableBytes(faultedBytes, guestInUseBytes int64, freePageReporting bool) int64 {
 	if freePageReporting {
 		return 0
@@ -204,25 +228,31 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		return nil, fmt.Errorf("failed to create memory reclaimable gauge: %w", err)
 	}
 
+	memShareableBase, err := telemetry.GetGaugeInt(meter, telemetry.SandboxMemShareableBaseGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory shareable-base gauge: %w", err)
+	}
+
 	so := &SandboxObserver{
-		exportInterval: sandboxMetricExportPeriod,
-		meterExporter:  externalMeterExporter,
-		sandboxes:      sandboxes,
-		meter:          meter,
-		cpuTotal:       cpuTotal,
-		cpuUsed:        cpuUsed,
-		cpuPossible:    cpuPossible,
-		cpuTarget:      cpuTarget,
-		cpuAttempts:    cpuAttempts,
-		cpuPending:     cpuPending,
-		memoryTotal:    memoryTotal,
-		memoryUsed:     memoryUsed,
-		memoryCache:    memoryCache,
-		diskTotal:      diskTotal,
-		diskUsed:       diskUsed,
-		memWorkingSet:  memWorkingSet,
-		memReclaimable: memReclaimable,
-		featureFlags:   featureFlags,
+		exportInterval:   sandboxMetricExportPeriod,
+		meterExporter:    externalMeterExporter,
+		sandboxes:        sandboxes,
+		meter:            meter,
+		cpuTotal:         cpuTotal,
+		cpuUsed:          cpuUsed,
+		cpuPossible:      cpuPossible,
+		cpuTarget:        cpuTarget,
+		cpuAttempts:      cpuAttempts,
+		cpuPending:       cpuPending,
+		memoryTotal:      memoryTotal,
+		memoryUsed:       memoryUsed,
+		memoryCache:      memoryCache,
+		diskTotal:        diskTotal,
+		diskUsed:         diskUsed,
+		memWorkingSet:    memWorkingSet,
+		memReclaimable:   memReclaimable,
+		memShareableBase: memShareableBase,
+		featureFlags:     featureFlags,
 	}
 
 	registration, err := so.startObserving()
@@ -242,6 +272,24 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 			// Size the limit from the snapshot it iterates: a limit of 0 blocks the
 			// first Go forever, and with it this callback and the SDK pipeline.
 			sbxs := so.sandboxes.Items()
+
+			// Density observability (off by default): per-template lower bound on
+			// pool memory a same-template page-sharing scheme could reclaim. In
+			// memory only (no RPC): group the resident sandboxes by build and emit
+			// (N-1) x min(base footprint) per build with >= 2 sandboxes.
+			if so.featureFlags != nil && so.featureFlags.BoolFlag(ctx, featureflags.SandboxDensityMetricsFlag) {
+				byBuild := make(map[string][]int64)
+				for _, sbx := range sbxs {
+					byBuild[sbx.Runtime.BuildID] = append(byBuild[sbx.Runtime.BuildID], sbx.MemorySourceBytes())
+				}
+				for buildID, srcBytes := range byBuild {
+					est := shareableBaseBytes(srcBytes)
+					if est == 0 {
+						continue
+					}
+					o.ObserveInt64(so.memShareableBase, est, metric.WithAttributes(attribute.String("build_id", buildID)))
+				}
+			}
 
 			wg := errgroup.Group{}
 			// Run concurrently to prevent blocking if there are many sandboxes other callbacks
@@ -404,7 +452,7 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 			return nil
 		}, so.cpuTotal, so.cpuUsed, so.cpuPossible, so.cpuTarget, so.cpuAttempts, so.cpuPending,
 		so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed,
-		so.memWorkingSet, so.memReclaimable)
+		so.memWorkingSet, so.memReclaimable, so.memShareableBase)
 	if err != nil {
 		return nil, err
 	}
