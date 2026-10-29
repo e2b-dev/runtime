@@ -260,6 +260,44 @@ func TestGetFiles_GzipDownload(t *testing.T) {
 	assert.Equal(t, originalContent, decompressed)
 }
 
+func TestGetFiles_IdentityDownload_EmptyFile(t *testing.T) {
+	t.Parallel()
+
+	currentUser, err := user.Current()
+	require.NoError(t, err)
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "empty.txt")
+	err = os.WriteFile(tempFile, nil, 0o644)
+	require.NoError(t, err)
+
+	logger := zerolog.Nop()
+	defaults := &execcontext.Defaults{
+		EnvVars: utils.NewEnvVars(),
+		User:    currentUser.Username,
+	}
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(tempFile), nil)
+	w := httptest.NewRecorder()
+
+	params := GetFilesParams{
+		Path:     &tempFile,
+		Username: &currentUser.Username,
+	}
+	api.GetFiles(w, req, params)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "0", resp.Header.Get("Content-Length"))
+	assert.Empty(t, body)
+}
+
 func TestPostFiles_GzipUpload(t *testing.T) {
 	t.Parallel()
 

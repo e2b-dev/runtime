@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -10,11 +11,81 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"time"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/logs"
 	"github.com/e2b-dev/infra/packages/envd/internal/permissions"
 )
+
+// maxFileSizeForIdentityFallback is the maximum file size to read into memory
+// when the stat size can't be trusted (virtual files like procfs/sysfs). Files
+// that outgrow it are streamed without a known length instead of being truncated.
+const maxFileSizeForIdentityFallback = 1 << 20 // 1 MiB
+
+// needsBuffering reports whether http.ServeContent can't serve the file:
+// it sizes the response by seeking to the end, which for virtual files doesn't
+// match their content (procfs reports 0, sysfs a page size), so the body comes
+// back empty, cut short, or as a seek error. Devices are left to ServeContent:
+// block devices seek to their real size and /dev/zero must not be read.
+// Virtual files over the cap already report their real size.
+func needsBuffering(path string, stat os.FileInfo) (buffer, virtual bool) {
+	if !stat.Mode().IsRegular() {
+		return false, false
+	}
+
+	virtual = isVirtualFS(path)
+
+	return stat.Size() == 0 || virtual && stat.Size() <= maxFileSizeForIdentityFallback, virtual
+}
+
+// serveBuffered reads the file into memory and serves a bytes.Reader, which
+// keeps Range/conditional request semantics. It returns an error only before
+// anything has been written.
+func (a *API) serveBuffered(w http.ResponseWriter, r *http.Request, name string, file *os.File, stat os.FileInfo, virtual bool, operationID string) error {
+	reader, err := newAvailableReader(file)
+	if err != nil {
+		return err
+	}
+
+	content, err := io.ReadAll(io.LimitReader(reader, maxFileSizeForIdentityFallback+1))
+	if err != nil {
+		return err
+	}
+
+	// A virtual file's mtime doesn't change with its content, so it must not
+	// answer conditional requests.
+	modTime := stat.ModTime()
+	if virtual {
+		modTime = time.Time{}
+	}
+
+	if len(content) <= maxFileSizeForIdentityFallback {
+		http.ServeContent(w, r, name, modTime, bytes.NewReader(content))
+
+		return nil
+	}
+
+	// The file outgrew the buffer; stream the rest without a known length,
+	// like the gzip path does.
+	contentType := mime.TypeByExtension(filepath.Ext(name))
+	if contentType == "" {
+		contentType = http.DetectContentType(content)
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	if _, err := w.Write(content); err != nil {
+		a.logger.Error().Err(err).Str(string(logs.OperationIDKey), operationID).Msg("error writing response")
+
+		return nil
+	}
+
+	if _, err := io.Copy(w, reader); err != nil {
+		a.logger.Error().Err(err).Str(string(logs.OperationIDKey), operationID).Msg("error writing response")
+	}
+
+	return nil
+}
 
 func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesParams) {
 	defer r.Body.Close()
@@ -164,6 +235,16 @@ func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesPa
 		_, err = io.Copy(gw, file)
 		if err != nil {
 			a.logger.Error().Err(err).Str(string(logs.OperationIDKey), operationID).Msg("error writing gzip response")
+		}
+
+		return
+	}
+
+	if buffer, virtual := needsBuffering(resolvedPath, stat); buffer {
+		if err := a.serveBuffered(w, r, path, file, stat, virtual, operationID); err != nil {
+			errMsg = fmt.Errorf("error reading file '%s': %w", resolvedPath, err)
+			errorCode = http.StatusInternalServerError
+			jsonError(w, errorCode, errMsg)
 		}
 
 		return
