@@ -169,7 +169,7 @@ func startProxyWithIdleTimeout(t *testing.T, getDestination func(r *http.Request
 	limits := &ConnectionLimitConfig{Limiter: limiter, GetMaxLimit: func(context.Context) int { return -1 }}
 	serverLog := &lockedBuffer{}
 	port := listener.Addr().(*net.TCPAddr).Port
-	proxy := New(uint16(port), 1, idleTimeout, getDestination, limits, false)
+	proxy := New(uint16(port), 1, idleTimeout, getDestination, limits, false, nil)
 	proxy.IdleTimeout = 2 * idleTimeout
 	proxy.ErrorLog = log.New(serverLog, "", 0)
 	go func() {
@@ -733,7 +733,7 @@ func TestHandlerEnablesFullDuplex(t *testing.T) {
 	backendURL, err := url.Parse(backend.URL)
 	require.NoError(t, err)
 
-	p := pool.New(maxClientConns, 1, time.Second, false)
+	p := pool.New(maxClientConns, 1, time.Second, false, nil)
 
 	recorder := &fullDuplexRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx-1-00000000.localhost/", nil)

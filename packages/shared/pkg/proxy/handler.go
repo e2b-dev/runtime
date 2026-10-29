@@ -53,6 +53,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// request ended; a client that is gone reads nothing either way.
 		if ctxErr := ctx.Err(); err != nil && ctxErr != nil && errors.Is(err, ctxErr) {
 			l.Debug(ctx, "request ended before it was routed", zap.String("host", r.Host))
+			p.RecordOutcome(ctx, pool.OutcomeClientClosed, "")
 			cors.Error(w, "Request ended before it was routed", http.StatusRequestTimeout)
 
 			return
@@ -96,6 +97,8 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 			l.Warn(ctx, "sandbox not found",
 				zap.String("host", r.Host),
 				logger.WithSandboxID(notFoundErr.SandboxId))
+
+			p.RecordOutcome(ctx, pool.OutcomeSandboxNotFound, "")
 
 			err := template.
 				NewSandboxNotFoundError(notFoundErr.SandboxId, r.Host).
@@ -250,6 +253,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 
 		if err != nil {
 			l.Error(ctx, "failed to route request", zap.Error(err), zap.String("host", r.Host))
+			p.RecordOutcome(ctx, pool.OutcomeRoutingFailed, "")
 			cors.Error(w, fmt.Sprintf("Unexpected error when routing request: %s", err), http.StatusInternalServerError)
 
 			return
@@ -279,6 +283,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 			if uploading {
 				closeUnreadBody(w)
 			}
+			p.RecordOutcome(ctx, pool.OutcomeUpstreamUnreachable, d.Node)
 			cors.Error(w, "Failed to route request to sandbox", http.StatusBadGateway)
 
 			return
@@ -321,6 +326,8 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 				if connLimitConfig.OnConnectionBlocked != nil {
 					connLimitConfig.OnConnectionBlocked(ctx)
 				}
+
+				p.RecordOutcome(ctx, pool.OutcomeTooManyConnections, d.Node)
 
 				// The sandbox is reachable, but the proxy is refusing to dial it,
 				// so the proxy is the only party that can answer this preflight.

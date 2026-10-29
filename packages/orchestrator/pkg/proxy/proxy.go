@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
@@ -116,6 +117,16 @@ func NewSandboxProxy(meterProvider metric.MeterProvider, port uint16, sandboxes 
 		OnConnectionBlocked:  metrics.RecordConnectionBlocked,
 	}
 
+	outcomeCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorProxyRequestOutcomeCounterName)
+	if err != nil {
+		return nil, fmt.Errorf("error registering orchestrator proxy request outcome metric (%s): %w", telemetry.OrchestratorProxyRequestOutcomeCounterName, err)
+	}
+	// node is unused here: the orchestrator sandbox proxy's node is itself, so
+	// its destinations carry no Node and the label would always be "unknown".
+	recordOutcome := func(ctx context.Context, outcome pool.RequestOutcome, _ string) {
+		outcomeCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", string(outcome))))
+	}
+
 	sandboxProxy := &SandboxProxy{limiter: limiter, sandboxes: sandboxes, owners: make(map[string]*pool.Owner), retirement: retirementTimeout}
 	proxy := reverseproxy.New(
 		port,
@@ -128,9 +139,10 @@ func NewSandboxProxy(meterProvider metric.MeterProvider, port uint16, sandboxes 
 		// because the servers inside of the sandbox can be unstable (restarts),
 		// and we are also on the same host, so the overhead is minimal.
 		true,
+		recordOutcome,
 	)
 
-	_, err := telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorProxyServerConnectionsMeterCounterName, func(_ context.Context, observer metric.Int64Observer) error {
+	_, err = telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorProxyServerConnectionsMeterCounterName, func(_ context.Context, observer metric.Int64Observer) error {
 		observer.Observe(proxy.CurrentServerConnections())
 
 		return nil

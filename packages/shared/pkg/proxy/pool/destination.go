@@ -24,6 +24,12 @@ type Destination struct {
 	// Embedders should pick a value that is unique per lifecycle.
 	ConnectionKey                      string
 	IncludeSandboxIdInProxyErrorLogger bool
+	// Node identifies the destination node (e.g. the orchestrator instance
+	// serving the sandbox), used only to label the request-outcome metric so an
+	// unreachable-upstream spike can be attributed to a single node. Empty when
+	// the embedder has no meaningful node identity (the orchestrator sandbox
+	// proxy, whose node is itself); recorded as "unknown" then.
+	Node string
 	// MaskRequestHost is used to mask the request host.
 	MaskRequestHost *string
 	// InsecureSkipTLSVerify is read once, when the pool builds the client for

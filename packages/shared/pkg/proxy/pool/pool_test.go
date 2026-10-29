@@ -45,7 +45,7 @@ func TestPoolReusesClientAcrossInsecureSkipTLSVerify(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			p := New(4, 1, time.Second, false)
+			p := New(4, 1, time.Second, false, nil)
 
 			client := p.Get(t.Context(), testDestination("lifecycle", tt.first))
 			require.NotNil(t, client)
@@ -59,7 +59,7 @@ func TestPoolReusesClientAcrossInsecureSkipTLSVerify(t *testing.T) {
 func TestPoolBuildsOneClientPerConnectionKey(t *testing.T) {
 	t.Parallel()
 
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 
 	first := p.Get(t.Context(), testDestination("lifecycle-a", true))
 	second := p.Get(t.Context(), testDestination("lifecycle-b", false))
@@ -74,7 +74,7 @@ func TestPoolBuildsOneClientPerConnectionKey(t *testing.T) {
 // register it. Cleanup must wait for that socket, not just its registry.
 func TestOwnerJoinsLateDial(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 	d := testDestination("lifetime", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -133,7 +133,7 @@ func TestOwnerJoinsLateDial(t *testing.T) {
 
 func TestOwnerCancelsReadinessRetry(t *testing.T) {
 	t.Parallel()
-	p := New(4, 5, time.Second, false)
+	p := New(4, 5, time.Second, false, nil)
 	d := testDestination("retry", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -161,7 +161,7 @@ func TestOwnerCancelsReadinessRetry(t *testing.T) {
 
 func TestOwnerStopsTLSHandshake(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
@@ -214,7 +214,7 @@ func (c resetErrorConn) Close() error {
 
 func TestResetErrorDoesNotRetainSettledOwner(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 	d := testDestination("reset-error", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -241,7 +241,7 @@ func TestResetErrorDoesNotRetainSettledOwner(t *testing.T) {
 // to be refused through; that client is not counted as a pool member.
 func TestClientBuiltAfterStopIsNotCounted(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 	d := testDestination("late", false)
 	d.Owner = p.NewOwner()
 	require.NoError(t, d.Owner.Close(t.Context()))
@@ -254,7 +254,7 @@ func TestClientBuiltAfterStopIsNotCounted(t *testing.T) {
 // that the eventual settlement does not give back.
 func TestRetriedCloseLeavesNothingBehind(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false)
+	p := New(4, 1, time.Second, false, nil)
 	d := testDestination("retried", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)

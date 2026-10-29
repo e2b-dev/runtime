@@ -142,7 +142,7 @@ func TestSandboxProxyRefusesFullRouterIngress(t *testing.T) {
 
 			sandboxes := sandbox.NewSandboxesMap()
 			p := &SandboxProxy{sandboxes: sandboxes, owners: make(map[string]*pool.Owner), limiter: connlimit.NewConnectionLimiter(), retirement: retirementTimeout}
-			p.proxy = reverseproxy.New(0, 1, time.Minute, p.resolveDestination, nil, true)
+			p.proxy = reverseproxy.New(0, 1, time.Minute, p.resolveDestination, nil, true, nil)
 			defer p.proxy.Close()
 			frontend := httptest.NewServer(p.proxy.Handler)
 			defer frontend.Close()
@@ -207,7 +207,7 @@ func TestSandboxProxyResetAndLifecycleRetirement(t *testing.T) {
 		}
 
 		return 8
-	}}, true)
+	}}, true, nil)
 	defer p.proxy.Close()
 	hold := func() *limitGate {
 		g := &limitGate{reachedCh: make(chan struct{}), releaseCh: make(chan struct{})}
