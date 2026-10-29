@@ -1182,6 +1182,32 @@ func FirecrackerVersionsFallback(base map[string]string, raw string) (map[string
 // A malformed override keeps the baked map here and fails NewClient, so the service stops with the message instead of a package-init panic.
 var firecrackerVersionsFallback, firecrackerVersionsEnvErr = FirecrackerVersionsFallback(FirecrackerVersionMap, env.GetEnv(FirecrackerVersionsEnv, ""))
 
+// ExtraCompatibleNodeModelsEnv overrides the extra-compatible-node-models fallback where
+// there is no LaunchDarkly: a JSON object of build CPU model to the node CPU models that
+// build may run on, e.g. {"106":["173"]}. Pairs are one-way and architecture and family
+// must still match at placement; this only decides where the value comes from, not the rule.
+// LaunchDarkly, where present, still overrides it.
+const ExtraCompatibleNodeModelsEnv = "EXTRA_COMPATIBLE_NODE_MODELS"
+
+// parseExtraCompatibleNodeModels turns the ExtraCompatibleNodeModelsEnv raw value into the
+// flag fallback. Empty is null (no extra pairs). A malformed value fails NewClient via
+// extraCompatibleNodeModelsEnvErr, like FirecrackerVersions, so the service stops with the
+// message instead of silently placing on the base compatibility rule.
+func parseExtraCompatibleNodeModels(raw string) (ldvalue.Value, error) {
+	if strings.TrimSpace(raw) == "" {
+		return ldvalue.Null(), nil
+	}
+
+	var m map[string][]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return ldvalue.Null(), fmt.Errorf("%s: expected a JSON object of build model to node models: %w", ExtraCompatibleNodeModelsEnv, err)
+	}
+
+	return ldvalue.FromJSONMarshal(m), nil
+}
+
+var extraCompatibleNodeModelsValue, extraCompatibleNodeModelsEnvErr = parseExtraCompatibleNodeModels(env.GetEnv(ExtraCompatibleNodeModelsEnv, ""))
+
 // BuildIoEngine Sync is used by default as there seems to be a bad interaction between Async and a lot of io operations.
 var (
 	BuildFirecrackerVersion = NewStringFlag("build-firecracker-version", env.GetEnv("DEFAULT_FIRECRACKER_VERSION", DefaultFirecrackerVersion))
@@ -1311,7 +1337,7 @@ var (
 	//
 	// Null (the default) or a malformed value adds nothing. It applies to every
 	// placement, and FsOnlyResumeCPUModelFlag still narrows on top of it.
-	ExtraCompatibleNodeModelsFlag = NewJSONFlag("extra-compatible-node-models", ldvalue.Null())
+	ExtraCompatibleNodeModelsFlag = NewJSONFlag("extra-compatible-node-models", extraCompatibleNodeModelsValue)
 
 	DefaultPersistentVolumeType = NewStringFlag("default-persistent-volume-type", "")
 	BuildNodeInfo               = NewJSONFlag("preferred-build-node", ldvalue.Null())

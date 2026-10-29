@@ -498,3 +498,43 @@ func TestResolveFirecrackerVersion_OverriddenLineServesNewRelease(t *testing.T) 
 	assert.Equal(t, "v1.14-0.3.1", ResolveFirecrackerVersion(t.Context(), client, "v1.14-0.3.1"))
 	assert.Equal(t, "v1.14.1_431f1fc", ResolveFirecrackerVersion(t.Context(), client, "v1.14.1_431f1fc"))
 }
+
+func TestParseExtraCompatibleNodeModels(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty is null without error", func(t *testing.T) {
+		t.Parallel()
+		v, err := parseExtraCompatibleNodeModels("")
+		require.NoError(t, err)
+		assert.True(t, v.IsNull())
+	})
+
+	t.Run("whitespace is null without error", func(t *testing.T) {
+		t.Parallel()
+		v, err := parseExtraCompatibleNodeModels("  \n ")
+		require.NoError(t, err)
+		assert.True(t, v.IsNull())
+	})
+
+	t.Run("object parses to the flag value", func(t *testing.T) {
+		t.Parallel()
+		v, err := parseExtraCompatibleNodeModels(`{"106":["173"]}`)
+		require.NoError(t, err)
+
+		td := ldtestdata.DataSource()
+		td.Update(td.Flag(ExtraCompatibleNodeModelsFlag.Key()).ValueForAll(v))
+		client, err := NewClientWithDatasource(td)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+
+		assert.Equal(t, map[string][]string{"106": {"173"}}, GetExtraCompatibleNodeModels(t.Context(), client))
+	})
+
+	t.Run("malformed JSON errors and is null", func(t *testing.T) {
+		t.Parallel()
+		v, err := parseExtraCompatibleNodeModels(`{"106":`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), ExtraCompatibleNodeModelsEnv)
+		assert.True(t, v.IsNull())
+	})
+}
