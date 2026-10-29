@@ -2748,6 +2748,18 @@ func (s *Sandbox) MemoryWorkingSetBytes() int64 {
 	return s.memory.ServeStats().Bytes
 }
 
+// MemorySourceBytes is the base-image content this sandbox faulted in from the
+// shared template source (SourcePages in bytes) — the portion of its pool
+// footprint that a same-template page-sharing scheme could collapse to one
+// shared physical copy. 0 when no memory backend is attached.
+func (s *Sandbox) MemorySourceBytes() int64 {
+	if s.Resources == nil || s.memory == nil {
+		return 0
+	}
+
+	return s.memory.ServeStats().SourceBytes
+}
+
 // FreePageReportingActive reports whether this sandbox's balloon returns freed
 // guest pages to the host on its own, so the pool is largely self-reclaiming.
 // Read from the cached balloon mode; no device round-trip.
