@@ -98,6 +98,20 @@ var (
 		redis.call('SET', KEYS[3], '', 'EX', ARGV[4])
 		return 1
 	`)
+
+	// pruneOrphanIndexScript removes a sandbox ID from the team index ONLY if the
+	// sandbox key is still absent, atomically. The orphan sweep found the key gone
+	// via MGET, but between that read and this call a resume can re-create the key
+	// under the same (reused) sandbox ID and re-add it to the index; the EXISTS
+	// guard makes sure we never unindex such a live sandbox. The team index is not
+	// repaired by the healer, so a wrong SREM here would be permanent.
+	// KEYS[1] = sandbox key, KEYS[2] = team index key, ARGV[1] = sandbox ID.
+	pruneOrphanIndexScript = redis.NewScript(`
+		if redis.call('EXISTS', KEYS[1]) == 0 then
+			return redis.call('SREM', KEYS[2], ARGV[1])
+		end
+		return 0
+	`)
 )
 
 const (
