@@ -17,16 +17,33 @@ type MultiplexedChannel[T any] struct {
 	exited   atomic.Bool
 }
 
+// subscriberBufSize is how many fan-out events a subscriber channel buffers
+// before the consumer is treated as a ghost. It absorbs normal bursts past a
+// briefly-slow consumer; a consumer that falls this far behind (e.g. one whose
+// client TCP connection died after a resume and is stuck in stream.Send) is
+// dropped so it cannot wedge the fan-out for everyone else.
+const subscriberBufSize = 64
+
 type subscriber[T any] struct {
 	ch   chan T
 	done chan struct{}
 	once sync.Once
+	// chOnce guards closing ch; separate from once (which guards done) so cancel
+	// and closeCh are independent and each idempotent.
+	chOnce sync.Once
 }
 
 // cancel marks the subscriber as gone. Idempotent and non-blocking.
 func (s *subscriber[T]) cancel() {
 	s.once.Do(func() {
 		close(s.done)
+	})
+}
+
+// closeCh closes the consumer channel so a ranging consumer exits. Idempotent.
+func (s *subscriber[T]) closeCh() {
+	s.chOnce.Do(func() {
+		close(s.ch)
 	})
 }
 
@@ -67,6 +84,14 @@ func (m *MultiplexedChannel[T]) run() {
 			select {
 			case s.ch <- v:
 			case <-s.done:
+			default:
+				// Buffer full and the consumer is not draining it — a ghost
+				// (e.g. a dead client TCP connection stuck in stream.Send).
+				// Drop it: cancel so later iterations skip it, and close its
+				// channel so its consumer goroutine exits. Healthy subscribers
+				// are untouched; their sends buffered or completed above.
+				s.cancel()
+				s.closeCh()
 			}
 		}
 	}
@@ -79,7 +104,7 @@ func (m *MultiplexedChannel[T]) run() {
 
 	for _, s := range m.channels {
 		s.cancel()
-		close(s.ch)
+		s.closeCh()
 	}
 	m.channels = nil
 }
@@ -120,7 +145,7 @@ func (m *MultiplexedChannel[T]) Fork() (<-chan T, func()) {
 	}
 
 	s := &subscriber[T]{
-		ch:   make(chan T),
+		ch:   make(chan T, subscriberBufSize),
 		done: make(chan struct{}),
 	}
 
