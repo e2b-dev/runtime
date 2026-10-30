@@ -17,16 +17,13 @@ import (
 func TestIsTerminalEvent(t *testing.T) {
 	t.Parallel()
 
-	terminal := []string{
-		sharedevents.SandboxKilledEvent,
+	require.True(t, isTerminalEvent(sharedevents.SandboxKilledEvent), "killed should be terminal")
+
+	// Scoped to killed for now: paused/checkpointed are recoverable and kept on
+	// the non-blocking path (see isTerminalEvent doc).
+	nonTerminal := []string{
 		sharedevents.SandboxPausedEvent,
 		sharedevents.SandboxCheckpointedEvent,
-	}
-	for _, et := range terminal {
-		require.Truef(t, isTerminalEvent(et), "%s should be terminal", et)
-	}
-
-	nonTerminal := []string{
 		sharedevents.SandboxCreatedEvent,
 		sharedevents.SandboxResumedEvent,
 		sharedevents.SandboxUpdatedEvent,
