@@ -387,6 +387,14 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		return nil, fmt.Errorf("failed to read template metadata: %w", err)
 	}
 
+	// Propagate the template's Docker image ENV vars to the sandbox runtime.
+	// They form the base layer; user-provided env vars (already in config from
+	// the SDK create call) override them, and per-command env vars from
+	// process.start override both. Mutating config here reaches both the resume
+	// and the filesystem-only cold-boot branch below, since each sends
+	// config.Envd.Vars to envd via POST /init (newEnvdInitRequest).
+	config.Envd.Vars = mergeTemplateEnvVars(meta.Context.EnvVars, config.Envd.Vars)
+
 	fsOnly = meta.IsFilesystemOnly()
 	filesystemBooted = filesystemBoot(meta, req)
 	if filesystemBooted {
