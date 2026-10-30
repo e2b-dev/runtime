@@ -109,6 +109,11 @@ type Config struct {
 	NBDPoolSize                 int               `env:"NBD_POOL_SIZE"                 envDefault:"64"`
 	Services                    []string          `env:"ORCHESTRATOR_SERVICES"         envDefault:"orchestrator"`
 	PersistentVolumeMounts      map[string]string `env:"PERSISTENT_VOLUME_MOUNTS"`
+	// VolumeExpectedFSType, when set, makes volume create fail fast unless the
+	// volume path is on a mount of this filesystem type (e.g. "fuse.juicefs",
+	// "ceph"), guarding against the configured distributed FS not being mounted.
+	// Empty (default) keeps the local-disk behavior with no mount check.
+	VolumeExpectedFSType string `env:"VOLUME_EXPECTED_FSTYPE"`
 
 	// TLS is the mutual TLS settings of the shared port and the peer hop.
 	TLS TLSConfig
