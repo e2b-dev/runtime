@@ -34,11 +34,15 @@ func TestEnvdErrorBodyMatchesAFullRead(t *testing.T) {
 		"exactly 100 four-byte runes":    strings.Repeat("😀", 100),
 		"invalid utf-8":                  strings.Repeat("\xff", 1_000),
 		"two-byte runes":                 strings.Repeat("é", 1_000),
+		// The bug this cap fixes: a volume-mount failure carries the full chroot/bind
+		// path plus the errno text (~300 chars). At the old 100-rune cap it was cut
+		// mid-path; at 512 it survives whole.
+		"volume mount failure (~300 chars)": `/init returned 400: failed to mount "vol-885b": failed to chroot into "/data1/orchestrator/volumes/team-f079aa21-3c4d-4e2a-9b1f-0123456789ab/vol-885b1234-abcd-ef01-2345-6789abcdef01": failed to bind mount "/srv/nfs/team-f079/vol-885b/ws_123.img": no such file or directory`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, utils.Truncate(body, 100), envdErrorBody(strings.NewReader(body)))
+			assert.Equal(t, utils.Truncate(body, envdErrorBodyRunes), envdErrorBody(strings.NewReader(body)))
 		})
 	}
 }
@@ -73,7 +77,7 @@ func TestEnvdCallsReadABoundedBody(t *testing.T) {
 	t.Parallel()
 
 	const timeout = 10 * time.Second
-	truncated := strings.Repeat("e", 97) + "..."
+	truncated := strings.Repeat("e", envdErrorBodyRunes-len("...")) + "..."
 
 	upgradeBin := filepath.Join(t.TempDir(), "envd")
 	require.NoError(t, os.WriteFile(upgradeBin, []byte("binary"), 0o600))

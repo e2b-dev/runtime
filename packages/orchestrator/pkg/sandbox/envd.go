@@ -44,7 +44,10 @@ const (
 	maxEnvdResultBodySize = 1 << 20
 
 	// envdErrorBodyRunes is the length, in runes, an error or log line cuts a failed call's body to.
-	envdErrorBodyRunes = 100
+	// envd error bodies are short server-generated diagnostics; 512 is enough to keep the actual
+	// cause of a failure intact (e.g. a volume-mount error carries the full chroot/bind path plus
+	// the errno text, ~300 chars) instead of cutting it mid-path, while still bounding the body.
+	envdErrorBodyRunes = 512
 	// envdErrorBodyLimit is the most of a failed call's body worth reading. Any
 	// envdErrorBodyRunes runes fit in that many times utf8.UTFMax bytes, and the
 	// extra byte lets Truncate still tell that a longer body was cut.
