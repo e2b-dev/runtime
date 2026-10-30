@@ -1131,6 +1131,11 @@ const (
 	// balloon reporting-pause API; filesystem-only snapshots ship with every
 	// e2b release from 0.1.0 — the per-feature floors live in fcversion.
 	DefaultFirecrackerV1_14_0Version = "v1.14-0.2.0"
+	// The v1.17-0 release line: upstream Firecracker v1.17 with the v1.14-0
+	// patches, and it restores snapshots taken by every older line. It starts
+	// at 0.4.0 because e2b release numbers rise across lines and v1.14-0
+	// already shipped 0.3.x; the version gates key on that number.
+	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.0"
 	// New template builds get the current release; existing builds keep
 	// resolving within their own line below (cross-line upgrades are an
 	// operator decision via the firecracker-versions flag, never a baked
@@ -1143,6 +1148,7 @@ var FirecrackerVersionMap = map[string]string{
 	"v1.12":   DefaultFirecrackerV1_12Version,
 	"v1.14":   DefaultFirecrackerV1_14Version,
 	"v1.14-0": DefaultFirecrackerV1_14_0Version,
+	"v1.17-0": DefaultFirecrackerV1_17_0Version,
 }
 
 // FirecrackerVersionsEnv overrides the firecracker-versions fallback where there is no LaunchDarkly: a JSON object of release line to served version, e.g. {"v1.14-0":"v1.14-0.3.1"}.

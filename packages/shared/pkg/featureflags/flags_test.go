@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -101,6 +102,7 @@ func TestResolveFirecrackerVersion_MixedFormatMap(t *testing.T) {
 	client := newResolverTestClient(t, map[string]string{
 		"v1.14":   "v1.14.1_431f1fc",
 		"v1.14-0": "v1.14-0.2.0",
+		"v1.17-0": "v1.17-0.4.0",
 	})
 
 	cases := []struct {
@@ -110,6 +112,7 @@ func TestResolveFirecrackerVersion_MixedFormatMap(t *testing.T) {
 		{"v1.14.1_431f1fc", "v1.14.1_431f1fc"},
 		{"v1.14-0.1.0", "v1.14-0.2.0"},
 		{"v1.14-1.0.0", "v1.14-1.0.0"},
+		{"v1.17-0.4.0", "v1.17-0.4.0"},
 	}
 
 	for _, tc := range cases {
@@ -119,6 +122,28 @@ func TestResolveFirecrackerVersion_MixedFormatMap(t *testing.T) {
 			assert.Equal(t, tc.want, ResolveFirecrackerVersion(t.Context(), client, tc.stored))
 		})
 	}
+}
+
+// The v1.17-0 line carries every feature the orchestrator gates on, so its
+// baked default must pass every gate; a lower release number would silently
+// switch features off for templates built on it.
+func TestDefaultFirecrackerV1_17_0Version_PassesEveryGate(t *testing.T) {
+	t.Parallel()
+
+	info, err := fcversion.New(DefaultFirecrackerV1_17_0Version)
+	require.NoError(t, err)
+
+	key, ok := info.LDKey()
+	require.True(t, ok)
+	assert.Equal(t, "v1.17-0", key)
+
+	assert.True(t, info.HasMemfd(), "memfd")
+	assert.True(t, info.HasHugePages(), "huge pages")
+	assert.True(t, info.HasFreePageReporting(), "free-page reporting")
+	assert.True(t, info.HasFreePageHinting(), "free-page hinting")
+	assert.True(t, info.HasInPlaceCheckpoint(), "in-place checkpoint")
+	assert.True(t, info.HasFilesystemSnapshots(), "filesystem snapshots")
+	assert.True(t, info.HasTscKhzTemplate(), "TSC frequency in CPU templates")
 }
 
 // testMetricReader collects the package's OTel metrics; the provider is
