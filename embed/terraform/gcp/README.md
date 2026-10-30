@@ -154,6 +154,26 @@ sudo journalctl -u google-startup-scripts -f
 The `ssh_command` output is a shell snippet that looks the current instance
 name up, which is why it is used through `eval`.
 
+### Limitations on nested virtualization
+
+This module runs Firecracker inside a GCE nested-virtualization VM, where the
+host KVM is itself exposed by Google's hypervisor. **Cold-boot sandboxes
+(`filesystem_boot`) work; memory-snapshot resume does not.** On this platform
+Firecracker's snapshot/restore path cannot reliably restore device state:
+the guest resumes with a dead `virtio-net` (its vCPU and lazily-faulted memory
+are fine, but `envd` is unreachable, so the sandbox fails its health check and
+is marked stopping about 15 seconds after create). This is a limitation of the
+nested KVM, not of the runtime — pristine upstream Firecracker on the same
+instance type fails even earlier, exiting the moment a VM is paused.
+
+The normal `POST /sandboxes` path resumes from a memory snapshot and is
+therefore affected. If you need working sandboxes on GCE nested virt, use the
+cold-boot path (gRPC `SandboxService.Create` with `filesystem_boot: true`),
+which does not restore device state. For the full memory-resume economics
+(sub-second resume, shared guest memory), run on a bare-metal instance whose
+`/dev/kvm` is real hardware rather than a nested VM — GCE's metal machine
+types, for example.
+
 ### Secrets
 
 `ADMIN_TOKEN`, `SANDBOX_ACCESS_TOKEN_HASH_SEED` and the team API key are all
