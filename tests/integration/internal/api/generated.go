@@ -1336,6 +1336,18 @@ type ManagementProject struct {
 	Slug string `json:"slug"`
 }
 
+// ManagementProjectBanRequest Desired project ban state. A newer revision replaces the state, including any intervening manual ban or unban.
+type ManagementProjectBanRequest struct {
+	// Banned Whether the project is refused at authentication.
+	Banned bool `json:"banned"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
+
+	// Revision Monotonic per-project revision. Older or duplicate revisions succeed without changing stored state.
+	Revision int64 `json:"revision"`
+}
+
 // ManagementProjectBlockRequest Desired project block state. A newer revision replaces the state, including any intervening manual block or unblock.
 type ManagementProjectBlockRequest struct {
 	// Blocked Whether the project is refused billable work.
@@ -3526,6 +3538,9 @@ type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationReq
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
 
+// ManagementApplyProjectBanJSONRequestBody defines body for ManagementApplyProjectBan for application/json ContentType.
+type ManagementApplyProjectBanJSONRequestBody = ManagementProjectBanRequest
+
 // ManagementApplyProjectBlockJSONRequestBody defines body for ManagementApplyProjectBlock for application/json ContentType.
 type ManagementApplyProjectBlockJSONRequestBody = ManagementProjectBlockRequest
 
@@ -5095,6 +5110,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
 	ManagementUpsertProject(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBanWithBody Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBan Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBan(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementApplyProjectBlockWithBody Apply a project's block state.
 	//
@@ -7699,6 +7732,44 @@ func (c *Client) ManagementUpsertProjectWithBody(ctx context.Context, projectID 
 // Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
 func (c *Client) ManagementUpsertProject(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementUpsertProjectRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBanWithBody Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *Client) ManagementApplyProjectBanWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBanRequestWithBody(c.Server, projectID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBan Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *Client) ManagementApplyProjectBan(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBanRequest(c.Server, projectID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13268,6 +13339,53 @@ func NewManagementUpsertProjectRequestWithBody(server string, projectID openapi_
 	return req, nil
 }
 
+// NewManagementApplyProjectBanRequest calls the generic ManagementApplyProjectBan builder with application/json body
+func NewManagementApplyProjectBanRequest(server string, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementApplyProjectBanRequestWithBody(server, projectID, "application/json", bodyReader)
+}
+
+// NewManagementApplyProjectBanRequestWithBody constructs an http.Request for the ManagementApplyProjectBan method, with any body, and a specified content type
+func NewManagementApplyProjectBanRequestWithBody(server string, projectID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/ban", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewManagementApplyProjectBlockRequest calls the generic ManagementApplyProjectBlock builder with application/json body
 func NewManagementApplyProjectBlockRequest(server string, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -15647,6 +15765,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
 	ManagementUpsertProjectWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectResponse, error)
+
+	// ManagementApplyProjectBanWithBodyWithResponse Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error)
+
+	// ManagementApplyProjectBanWithResponse Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error)
 
 	// ManagementApplyProjectBlockWithBodyWithResponse Apply a project's block state.
 	//
@@ -23546,6 +23682,68 @@ func (r ManagementUpsertProjectResponse) ContentType() string {
 	return ""
 }
 
+type ManagementApplyProjectBanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementApplyProjectBanResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementApplyProjectBanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementApplyProjectBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementApplyProjectBanResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementApplyProjectBlockResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -27227,6 +27425,36 @@ func (c *ClientWithResponses) ManagementUpsertProjectWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseManagementUpsertProjectResponse(rsp)
+}
+
+// ManagementApplyProjectBanWithBodyWithResponse Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBanWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error) {
+	rsp, err := c.ManagementApplyProjectBanWithBody(ctx, projectID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBanResponse(rsp)
+}
+
+// ManagementApplyProjectBanWithResponse Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBanWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error) {
+	rsp, err := c.ManagementApplyProjectBan(ctx, projectID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBanResponse(rsp)
 }
 
 // ManagementApplyProjectBlockWithBodyWithResponse Apply a project's block state.
@@ -34315,6 +34543,56 @@ func ParseManagementUpsertProjectResponse(rsp *http.Response) (*ManagementUpsert
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementApplyProjectBanResponse parses an HTTP response from a ManagementApplyProjectBanWithResponse call
+func ParseManagementApplyProjectBanResponse(rsp *http.Response) (*ManagementApplyProjectBanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementApplyProjectBanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500

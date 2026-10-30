@@ -65,3 +65,19 @@ func (a *APIStore) sendProjectBlockError(c *gin.Context, err error, attrs ...att
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error applying project block")
 	}
 }
+
+func (a *APIStore) sendProjectBanError(c *gin.Context, err error, attrs ...attribute.KeyValue) {
+	ctx := c.Request.Context()
+
+	switch {
+	case errors.Is(err, management.ErrProjectNotFound):
+		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "apply project ban failed", err, attrs...)
+		a.sendAPIStoreError(c, http.StatusNotFound, "Project not found")
+	case errors.Is(err, management.ErrInvalidProjectBan):
+		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "apply project ban failed", err, attrs...)
+		a.sendAPIStoreError(c, http.StatusBadRequest, "Invalid project ban state")
+	default:
+		telemetry.ReportCriticalError(ctx, "apply project ban failed", err, attrs...)
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error applying project ban")
+	}
+}

@@ -82,7 +82,7 @@ func (s *Service) Ban(ctx context.Context, teamID uuid.UUID) (Containment, error
 		return Containment{}, err
 	}
 
-	return s.contain(ctx, teamID), nil
+	return s.Contain(ctx, teamID), nil
 }
 
 func (s *Service) Unban(ctx context.Context, teamID uuid.UUID) error {
@@ -115,7 +115,7 @@ func (s *Service) BanTeams(ctx context.Context, teamIDs []uuid.UUID) []BanOutcom
 		}
 
 		containments.Go(func() error {
-			outcomes[i].Containment = s.contain(ctx, outcomes[i].TeamID)
+			outcomes[i].Containment = s.Contain(ctx, outcomes[i].TeamID)
 
 			return nil
 		})
@@ -143,12 +143,12 @@ func (s *Service) setBanned(ctx context.Context, teamID uuid.UUID, banned bool) 
 	return nil
 }
 
-// contain kills the team's sandboxes and cancels its builds side by side, so a
+// Contain kills the team's sandboxes and cancels its builds side by side, so a
 // kill that uses up the budget cannot keep the builds from being cancelled. It
 // reports a step the budget cut short as failed: the kill and cancel count the
 // items they could not finish, but only return an error for a listing that
 // failed.
-func (s *Service) contain(ctx context.Context, teamID uuid.UUID) Containment {
+func (s *Service) Contain(ctx context.Context, teamID uuid.UUID) Containment {
 	var containment Containment
 	var wg sync.WaitGroup
 

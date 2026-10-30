@@ -24,6 +24,7 @@ type projectionKind string
 const (
 	projectionProjectLimits projectionKind = "project_limits"
 	projectionProjectBlocks projectionKind = "project_blocks"
+	projectionProjectBans   projectionKind = "project_bans"
 )
 
 type applyLag struct {

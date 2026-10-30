@@ -236,7 +236,7 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   client-proxy can wake paused sandboxes on incoming traffic.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
   works jobs that need the orchestrator connections. Its job arguments live in
-  `packages/db/pkg/outbox`. The one kind today, `teardown_team_resources`, stops a deleted
+  `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
   and the job retries rather than kill a live team's sandboxes; a missing team row does not
@@ -249,7 +249,19 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   Builds are not cancelled: they end on their own build timeout. An attempt is bounded at
   30 minutes; retries back off from 30 seconds to a 15-minute cap, so the 100 attempts last
   about a day before River discards the job and keeps it. Volumes, templates, snapshots and
-  the team row are left alone. Steps report
+  the team row are left alone. `contain_banned_team` kills a banned team's running sandboxes
+  and cancels its builds through the same cleanup as the admin ban; a management ban that
+  turns on enqueues it. Every attempt first reads the team and completes without touching
+  anything when the team is no longer banned or its row is gone. Otherwise it evicts the
+  team's auth cache before the sweep, so no cached credential admits new work behind it, and
+  fails the attempt if the eviction fails. A kill or cancel that fails, or leaves any sandbox
+  or build it could not stop, fails the attempt so the job retries. The job records in its
+  output when its first eviction succeeded, and completes only after a sweep that started a
+  request timeout plus 30 seconds after then; an earlier sweep snoozes the job until that
+  point and sweeps again, so work admitted before that eviction cannot outlive it. It
+  is not unique: a job already running may have read the team before a later ban, so each ban
+  that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
+  follow the teardown's. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) and `OUTBOX_BACKLOG_INTERVAL` (default 30s) configure it;
@@ -311,17 +323,26 @@ retries.
   auth cache; a failed eviction answers an error so the retry finishes it after commit. The API
   reads this state when admitting billable work. Apart from project deletion, which blocks the
   team for good, this is the only route that writes it.
+- `PUT .../ban` applies a revision-fenced ban state the same way: the `projection.project_bans`
+  revision and `teams.is_banned` commit together, an older or duplicate revision leaves stored
+  state unchanged, and every accepted delivery evicts the team's auth cache, answering an error
+  when the eviction fails. Authentication refuses a banned team's API keys and members. A
+  revision that turns the ban on enqueues `contain_banned_team` (see the outbox above) in the
+  same transaction, so the team's sandboxes and builds are stopped after the call answers; a
+  stale delivery, an unban, or a ban of a team already banned enqueues nothing. A newer
+  revision replaces a ban or unban written by the admin ban routes in between. No ban reason
+  is sent or stored.
 - `DELETE /unstable/management/projects/{projectID}` soft-deletes the project, described below.
 
 The revision fences are the target's for the same reason: the caller can only fence what it
 sends, so two deliveries in flight arrive in whichever order the network gives them, and the older
-one has to be refused where it lands. The project, membership, limits and block writes live in
-`internal/management` with their post-commit cache evictions rather than in the handlers.
+one has to be refused where it lands. The project, membership, limits, block and ban writes live
+in `internal/management` with their post-commit cache evictions rather than in the handlers.
 
-A limits or block delivery may carry `decided_at`, when the caller decided that revision; the
+A limits, block or ban delivery may carry `decided_at`, when the caller decided that revision; the
 ledger row stores it beside the revision. Each delivery the ledger accepts records the seconds
-since then in `dashboard-api.management.apply_lag` with `projection` `project_limits` or
-`project_blocks`; one without `decided_at`
+since then in `dashboard-api.management.apply_lag` with `projection` `project_limits`,
+`project_blocks` or `project_bans`; one without `decided_at`
 counts in `dashboard-api.management.origin_unknown` instead, never as zero lag. Dropped, refused
 and failed deliveries record nothing. The names keep the dashboard-api prefix from when
 dashboard-api served these writes, so the alert and dashboard reading them carry on unchanged.
@@ -349,7 +370,7 @@ it leaves a snapshot); and enqueues the teardown again, which is a no-op while o
 
 Afterwards the API's deleted-project middleware, running after authentication, answers 404 to every
 non-GET route under `/unstable/management/` that names `{projectID}`: the upsert, member, limits,
-block and settings writes, and cluster assignment and detachment. The DELETE is exempt so a retry
+block, ban and settings writes, and cluster assignment and detachment. The DELETE is exempt so a retry
 still reaches it. dashboard-api guards its own management and admin writes the same way. Shared auth refuses a membership or API key still left
 for the project with 403, and the API leaves the project out of a user's team list. Volumes, builds
 and stored artifacts are not reclaimed.
@@ -372,7 +393,8 @@ caller's retry repeats the ban and its containment; banning a banned team contai
 a time, then contains the banned teams, five at a time, all under the one budget, and sorts each team
 into banned, not found or failed; one team's failure does not stop the others. A deleted project
 answers 404 to the single-team routes and counts as not found in the bulk route. The logic lives
-in `internal/team`.
+in `internal/team`. These routes keep no revision; the next management ban delivery the fence accepts
+replaces what they wrote.
 
 #### Cluster lifecycle (`/unstable/management/clusters`)
 

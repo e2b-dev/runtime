@@ -190,6 +190,14 @@ type ProjectLimit struct {
 	ApiTeamRpsDelete         int64
 }
 
+type ProjectionProjectBan struct {
+	ProjectID uuid.UUID
+	Revision  int64
+	DecidedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type ProjectionProjectBlock struct {
 	ProjectID uuid.UUID
 	Revision  int64

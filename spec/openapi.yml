@@ -4114,6 +4114,26 @@ components:
         decided_at:
           $ref: "#/components/schemas/ManagementDecidedAt"
 
+    ManagementProjectBanRequest:
+      type: object
+      description: >-
+        Desired project ban state. A newer revision replaces the state,
+        including any intervening manual ban or unban.
+      required: [revision, banned]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Monotonic per-project revision. Older or duplicate revisions
+            succeed without changing stored state.
+        banned:
+          type: boolean
+          description: Whether the project is refused at authentication.
+        decided_at:
+          $ref: "#/components/schemas/ManagementDecidedAt"
+
     ManagementDecidedAt:
       type: string
       format: date-time
@@ -7068,6 +7088,46 @@ paths:
       responses:
         "204":
           description: Block state is applied or already superseded.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/management/projects/{projectID}/ban:
+    parameters:
+      - name: projectID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      operationId: managementApplyProjectBan
+      summary: Apply a project's ban state.
+      description: >-
+        Records whether the project is banned. Authentication refuses a banned
+        project's API keys and members. A revision that turns the ban on also
+        kills the project's running sandboxes and cancels its builds in the
+        background, and retries while the project stays banned and any of
+        them remain. The newest revision wins: an older or duplicate revision is
+        accepted without changing target state. Answers 404 when the project
+        is missing or deleted.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManagementProjectBanRequest"
+      responses:
+        "204":
+          description: Ban state is applied or already superseded.
         "400":
           $ref: "#/components/responses/400"
         "401":

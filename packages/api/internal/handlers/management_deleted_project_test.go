@@ -31,6 +31,7 @@ func TestWritesToADeletedProjectAnswerNotFoundAndChangeNothing(t *testing.T) {
 		"member delivery":    {http.MethodPut, "/unstable/management/projects/%s/members/" + uuid.NewString(), `{"revision":1,"present":true,"identities":[{"issuer":"https://issuer.test","subject":"member"}]}`},
 		"limits delivery":    {http.MethodPut, "/unstable/management/projects/%s/limits", validLimitsBody},
 		"block delivery":     {http.MethodPut, "/unstable/management/projects/%s/block", `{"revision":1,"blocked":false}`},
+		"ban delivery":       {http.MethodPut, "/unstable/management/projects/%s/ban", `{"revision":1,"banned":true}`},
 		"cluster assignment": {http.MethodPut, "/unstable/management/projects/%s/cluster/" + clusterID.String(), ""},
 		"cluster detachment": {http.MethodDelete, "/unstable/management/projects/%s/cluster/" + clusterID.String(), ""},
 	} {

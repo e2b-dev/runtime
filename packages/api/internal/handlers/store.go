@@ -497,11 +497,13 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 // client. Stop it before Close.
 func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
 	riverOutbox, err := outbox.New(outbox.Dependencies{
-		Pool:      a.sqlcDB.Pool(),
-		Sandboxes: a.orchestrator,
-		Teams:     a.authDB,
-		Logger:    l,
-		Telemetry: a.Telemetry,
+		Pool:        a.sqlcDB.Pool(),
+		Sandboxes:   a.orchestrator,
+		Containment: a.teamService,
+		TeamCache:   a.authService,
+		Teams:       a.authDB,
+		Logger:      l,
+		Telemetry:   a.Telemetry,
 		Config: outbox.Config{
 			MaxWorkers:      a.config.OutboxMaxWorkers,
 			BacklogInterval: a.config.OutboxBacklogInterval,
