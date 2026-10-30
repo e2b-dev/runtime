@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/events"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 const InsertSandboxEventQuery = `INSERT INTO sandbox_events
@@ -64,6 +67,18 @@ type GatedClickhouseDelivery struct {
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/clickhouse/pkg/events")
 
+var meter = otel.Meter("github.com/e2b-dev/infra/packages/clickhouse/pkg/events")
+
+// mEventDropped counts sandbox lifecycle events dropped before reaching
+// ClickHouse, broken out by event type and whether the type is terminal, so a
+// loss of terminal (billing/audit) events is directly alertable rather than
+// hidden inside the generic batcher.items.dropped counter.
+var mEventDropped = utils.Must(meter.Int64Counter(
+	"sandbox_events.delivery.dropped",
+	metric.WithDescription("Sandbox lifecycle events dropped before reaching ClickHouse, by event type and terminality"),
+	metric.WithUnit("{event}"),
+))
+
 const DefaultBatcherName = "sandbox-events"
 
 func NewDefaultClickhouseSandboxEventsDelivery(ctx context.Context, conn driver.Conn, featureFlags *featureflags.Client, batcherName string) (*ClickhouseDelivery, error) {
@@ -101,7 +116,7 @@ func NewClickhouseSandboxEventsDelivery(ctx context.Context, conn driver.Conn, o
 	return delivery, nil
 }
 
-func (c *ClickhouseDelivery) Publish(_ context.Context, _ string, event events.SandboxEvent) error {
+func (c *ClickhouseDelivery) Publish(ctx context.Context, _ string, event events.SandboxEvent) error {
 	eventDataJson, err := json.Marshal(event.EventData)
 	if err != nil {
 		return err
@@ -117,7 +132,7 @@ func (c *ClickhouseDelivery) Publish(_ context.Context, _ string, event events.S
 		ttlDays = events.MaxEventsTTLDays
 	}
 
-	return c.batcher.Push(SandboxEvent{
+	row := SandboxEvent{
 		Version:   event.Version,
 		ID:        event.ID,
 		Type:      event.Type,
@@ -130,7 +145,66 @@ func (c *ClickhouseDelivery) Publish(_ context.Context, _ string, event events.S
 		SandboxTeamID:      event.SandboxTeamID,
 		SandboxExecutionID: event.SandboxExecutionID,
 		EventsTTLDays:      ttlDays,
-	})
+	}
+
+	if err := c.enqueue(ctx, event.Type, row); err != nil {
+		mEventDropped.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("event_type", event.Type),
+			attribute.Bool("terminal", isTerminalEvent(event.Type)),
+		))
+
+		return err
+	}
+
+	return nil
+}
+
+// enqueue routes an event into the batcher. Terminal lifecycle events (sandbox
+// killed/paused/checkpointed) are the terminal, billing/audit-relevant surfaces,
+// so they use a bounded-blocking push that applies back-pressure instead of
+// dropping the event the instant the queue is full. All other (high-volume,
+// non-terminal) events keep the non-blocking push, so the hot path is unchanged.
+// The publish runs in a TrackWork-guarded goroutine, so bounded blocking here
+// does not block the Delete RPC and is awaited on graceful drain.
+func (c *ClickhouseDelivery) enqueue(ctx context.Context, eventType string, row SandboxEvent) error {
+	if !isTerminalEvent(eventType) {
+		return c.batcher.Push(row)
+	}
+
+	timeout := terminalPushTimeout(ctx, c.ff)
+	if timeout <= 0 {
+		return c.batcher.Push(row)
+	}
+
+	pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+
+	return c.batcher.PushWithContext(pushCtx, row)
+}
+
+// isTerminalEvent reports whether an event type is the terminal/irrecoverable
+// lifecycle surface whose loss corrupts billing or audit. Scoped to killed —
+// the event the sandbox cannot be running after and the one the incident in
+// #3770 lost. paused/checkpointed also stop billing and may warrant the same
+// treatment, but they are recoverable (a paused sandbox can resume) and can be
+// higher volume, so they are intentionally left on the non-blocking path for
+// now; widen this set (ideally behind a per-type flag) if they prove lossy too.
+func isTerminalEvent(eventType string) bool {
+	return eventType == events.SandboxKilledEvent
+}
+
+// terminalPushTimeout reads the bounded-blocking push timeout for terminal
+// events. Non-positive disables blocking (legacy non-blocking drop).
+func terminalPushTimeout(ctx context.Context, ff *featureflags.Client) time.Duration {
+	if ff == nil {
+		return 0
+	}
+	ms := ff.IntFlag(ctx, featureflags.ClickhouseBatcherTerminalPushTimeoutMs)
+	if ms <= 0 {
+		return 0
+	}
+
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (c *GatedClickhouseDelivery) Publish(ctx context.Context, key string, event events.SandboxEvent) error {
@@ -141,9 +215,39 @@ func (c *GatedClickhouseDelivery) Publish(ctx context.Context, key string, event
 	return nil
 }
 
-// Close drains the batcher. ctx is ignored to avoid leaking the flush goroutine.
-func (c *ClickhouseDelivery) Close(_ context.Context) error {
-	return c.batcher.Stop()
+// Close drains the batcher, bounding the final flush by the shutdown ctx and the
+// drain-timeout flag so a ClickHouse stall during a graceful stop cannot outlast
+// the scheduler's kill window. A non-positive timeout keeps the legacy unbounded
+// drain. The flush goroutine is always awaited (never leaked); ctx only caps how
+// long the last batch is retried before it is dropped.
+func (c *ClickhouseDelivery) Close(ctx context.Context) error {
+	timeout := drainTimeout(ctx, c.ff)
+	if timeout <= 0 {
+		// Unbounded drain, but still honor ctx: a forced shutdown (closeCtx
+		// already cancelled) ends the drain immediately instead of hanging.
+		return c.batcher.StopWithContext(ctx)
+	}
+
+	// On a forced shutdown closeCtx is already cancelled, so the drain ends
+	// immediately instead of waiting the full budget; on a graceful stop the
+	// timeout is the bound.
+	drainCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return c.batcher.StopWithContext(drainCtx)
+}
+
+// drainTimeout reads the shutdown drain budget. Non-positive disables bounding.
+func drainTimeout(ctx context.Context, ff *featureflags.Client) time.Duration {
+	if ff == nil {
+		return 0
+	}
+	ms := ff.IntFlag(ctx, featureflags.ClickhouseBatcherDrainTimeoutMs)
+	if ms <= 0 {
+		return 0
+	}
+
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (c *ClickhouseDelivery) batchInserter(ctx context.Context, events []SandboxEvent) error {

@@ -622,6 +622,27 @@ var (
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)
+
+	// ClickhouseBatcherTerminalPushTimeoutMs bounds how long a terminal lifecycle
+	// event (sandbox killed) blocks waiting for room in the batcher queue before
+	// it is dropped. 0 or negative keeps the legacy non-blocking behavior (drop
+	// immediately when the queue is full), which is the default so the behavior
+	// is dark-launched and enabled per-environment via LaunchDarkly. Only
+	// terminal events block; high-volume non-terminal events are unaffected.
+	ClickhouseBatcherTerminalPushTimeoutMs = NewIntFlag("clickhouse-batcher-terminal-push-timeout-ms", 0)
+	// ClickhouseBatcherFlushMaxRetries is the number of extra attempts to flush a
+	// batch to ClickHouse after the first attempt fails, before the batch is
+	// dropped. 0 keeps the legacy behavior (one attempt, drop the batch on error)
+	// and is the default so the behavior is dark-launched via LaunchDarkly.
+	ClickhouseBatcherFlushMaxRetries = NewIntFlag("clickhouse-batcher-flush-max-retries", 0)
+	// ClickhouseBatcherDrainTimeoutMs bounds the final drain flush at shutdown so
+	// a ClickHouse stall during a graceful stop cannot exceed the scheduler's
+	// kill window (after which the process is SIGKILLed and the whole in-memory
+	// queue is lost anyway). It caps the retry/flush wait once the batcher is
+	// stopping; it does not affect steady-state flushes. 0 or negative keeps the
+	// legacy unbounded drain.
+	ClickhouseBatcherDrainTimeoutMs = NewIntFlag("clickhouse-batcher-drain-timeout-ms", 10000)
+
 	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
 	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
 	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
