@@ -990,6 +990,15 @@ type PeriodicHintingConfig struct {
 	UnresponsiveRetry time.Duration
 	HostSlots         int
 	Stop              HintStopConfig
+	// PressureInterval, when > 0, is the hinting interval used while the node's
+	// hugepage pool is at or above PressureThresholdPct utilization. It is meant
+	// to be shorter than Interval: under pool pressure, free-page hinting runs
+	// more often so a guest's just-freed pages return to the pool sooner,
+	// shrinking the reclaim-lag window between a guest freeing a page and the
+	// pool getting it back. 0 disables the adaptation — the fixed Interval is
+	// always used (the historical behaviour).
+	PressureInterval     time.Duration
+	PressureThresholdPct int
 }
 
 func (c PeriodicHintingConfig) Enabled() bool { return c.Interval > 0 }
@@ -1039,14 +1048,27 @@ func GetPeriodicHintingConfig(ctx context.Context, ff *Client, contexts ...ldcon
 		return false
 	}
 	cfg := PeriodicHintingConfig{
-		Interval:          max(ms("interval", 0), 0),
-		Timeout:           ms("timeout", defaultPeriodicHintTimeout.Milliseconds()),
-		QuietAfterStart:   max(ms("quiet_after_start", 10000), 0),
-		SilentRuns:        int(max(num("silent_runs", 3), 0)),
-		UnresponsiveRetry: max(ms("unresponsive_retry", 300000), 0),
-		HostSlots:         int(max(num("host_slots", 16), 0)),
-		Stop:              hintStopConfig(top),
-		ObserveOnly:       boolean("observe_only"),
+		Interval:             max(ms("interval", 0), 0),
+		Timeout:              ms("timeout", defaultPeriodicHintTimeout.Milliseconds()),
+		QuietAfterStart:      max(ms("quiet_after_start", 10000), 0),
+		SilentRuns:           int(max(num("silent_runs", 3), 0)),
+		UnresponsiveRetry:    max(ms("unresponsive_retry", 300000), 0),
+		HostSlots:            int(max(num("host_slots", 16), 0)),
+		Stop:                 hintStopConfig(top),
+		ObserveOnly:          boolean("observe_only"),
+		PressureInterval:     max(ms("pressure_interval", 0), 0),
+		PressureThresholdPct: int(num("pressure_threshold_pct", 0)),
+	}
+	// A pressure interval below the floor (but non-zero) would hint too hot;
+	// clamp it off rather than silently flooring, same policy as Interval.
+	if cfg.PressureInterval > 0 && cfg.PressureInterval < minPeriodicHintingInterval {
+		complain("pressure_interval", "below the one-second floor; pressure adaptation off", v.GetByKey("pressure_interval"))
+		cfg.PressureInterval = 0
+	}
+	// An out-of-range threshold disables the adaptation rather than triggering
+	// on every tick (0) or never (>100).
+	if cfg.PressureThresholdPct <= 0 || cfg.PressureThresholdPct > 100 {
+		cfg.PressureInterval = 0
 	}
 	if cfg.Interval > 0 && cfg.Interval < minPeriodicHintingInterval {
 		complain("interval", "below the one-second floor; periodic hinting off", v.GetByKey("interval"))

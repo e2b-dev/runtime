@@ -353,7 +353,7 @@ func (s *Sandbox) hintTicks(ctx context.Context, cfg featureflags.PeriodicHintin
 			return true
 		case <-timer.C:
 		}
-		timer.Reset(cfg.Interval)
+		timer.Reset(effectiveHintInterval(cfg, nodeHugePagePressurePct()))
 
 		if cfg = cfgFn(); !cfg.Enabled() {
 			return false
