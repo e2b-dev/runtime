@@ -2504,6 +2504,18 @@ func (s *Server) sandboxAlreadyRunning(ctx context.Context, sandboxID, execution
 	return status.Errorf(codes.AlreadyExists, "sandbox '%s' is already running on this node: %s", sandboxID, cause)
 }
 
+// isExpectedPostCrashFlushError reports whether a sandbox Close error is the
+// expected consequence of flushing an NBD device whose VM has already exited.
+// After a crash or OOM-kill the device is in error state, so the rootfs flush
+// (fsync + BLKFLSBUF on /dev/nbdX) returns EIO or ENXIO; the data is already
+// gone with the VM, so at the post-exit cleanup these are noise, not failures.
+// The error is wrapped several layers deep (cleanup.Run -> errors.Join ->
+// NBDProvider.Close -> path flush), all with %w/errors.Join, so errors.Is
+// reaches the underlying syscall.Errno.
+func isExpectedPostCrashFlushError(err error) bool {
+	return errors.Is(err, syscall.EIO) || errors.Is(err, syscall.ENXIO)
+}
+
 // setupSandboxLifecycle starts the goroutine that waits for the sandbox to end
 // and tears it down. releaseTemplate lifts this sandbox's pin on its template;
 // it runs after the sandbox is closed, on every ending (kill, pause, checkpoint
@@ -2545,7 +2557,18 @@ func (s *Server) setupSandboxLifecycle(ctx context.Context, sbx *sandbox.Sandbox
 		// joined when its network slot is released.
 		cleanupErr := sbx.Close(ctx)
 		if cleanupErr != nil {
-			sbxlogger.I(sbx).Error(ctx, "failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
+			if isExpectedPostCrashFlushError(cleanupErr) {
+				// Every ending passes here, including a VM crash / OOM-kill. After
+				// the VM dies the NBD device is in error state, so Close's flush of
+				// /dev/nbdX (fsync + BLKFLSBUF) returns EIO (device error) or ENXIO
+				// (already disconnected). Nothing is lost — the VM already exited —
+				// so this is expected noise, not a cleanup failure; log it at Warn.
+				// Sandbox.Shutdown() (pause/snapshot) flushes through a different
+				// path and still surfaces a genuine EIO as an error.
+				sbxlogger.I(sbx).Warn(ctx, "sandbox device flush failed after VM exit (expected, ignoring)", zap.Error(cleanupErr))
+			} else {
+				sbxlogger.I(sbx).Error(ctx, "failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
+			}
 		}
 
 		sbxlogger.E(sbx).Info(ctx, "Sandbox stopped")
