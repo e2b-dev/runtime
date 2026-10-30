@@ -102,34 +102,53 @@ func saveWorkdirMeta(
 	cmdMetadata metadata.Context,
 	workdir string,
 ) (m metadata.Context, e error) {
-	var outputErr error
+	var stdout strings.Builder
+	var stderr strings.Builder
 	err := sandboxtools.RunCommandWithOutput(
 		ctx,
 		proxy,
 		sandboxID,
-		fmt.Sprintf(`cd "%s" && pwd`, workdir),
+		fmt.Sprintf(`cd "%s" && printf '\n%s%%s\n' "$PWD"`, workdir, workdirOutputMarker),
 		metadata.Context{
-			User: "root",
+			User:    "root",
+			EnvVars: cmdMetadata.EnvVars,
 			// Workdir can't be set here to not error when current workdir is deleted
 		},
-		func(stdout, stderr string) {
-			if stderr != "" {
-				outputErr = fmt.Errorf("error getting absolute path of workdir: %s", stderr)
-
-				return
-			}
-			workdir = strings.TrimSpace(stdout)
+		func(out, errOut string) {
+			_, _ = stdout.WriteString(out)
+			_, _ = stderr.WriteString(errOut)
 		},
 	)
-	if outputErr != nil {
-		return metadata.Context{}, outputErr
-	}
+	return saveWorkdirMetaFromOutput(cmdMetadata, workdir, stdout.String(), stderr.String(), err)
+}
 
+const workdirOutputMarker = "__E2B_WORKDIR__:"
+
+func saveWorkdirMetaFromOutput(
+	cmdMetadata metadata.Context,
+	workdir, stdout, stderr string,
+	commandErr error,
+) (metadata.Context, error) {
+	resolved, err := absoluteWorkdirFromOutput(stdout, stderr, commandErr)
 	if err != nil {
 		return metadata.Context{}, fmt.Errorf("failed to save workdir %s: %w", workdir, err)
 	}
-
-	cmdMetadata.WorkDir = &workdir
-
+	cmdMetadata.WorkDir = &resolved
 	return cmdMetadata, nil
+}
+
+// absoluteWorkdirFromOutput uses a marked line so unrelated login-hook output
+// cannot be mistaken for pwd. The caller collects all stream chunks first.
+func absoluteWorkdirFromOutput(stdout, stderr string, commandErr error) (string, error) {
+	if commandErr != nil {
+		return "", fmt.Errorf("workdir command failed: %w", commandErr)
+	}
+	marker := strings.LastIndex(stdout, workdirOutputMarker)
+	if marker >= 0 {
+		path := strings.TrimSpace(strings.SplitN(stdout[marker+len(workdirOutputMarker):], "\n", 2)[0])
+		if filepath.IsAbs(path) {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("error getting absolute path of workdir: stdout=%q stderr=%q", stdout, stderr)
 }
