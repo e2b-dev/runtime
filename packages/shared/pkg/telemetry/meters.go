@@ -29,6 +29,10 @@ const (
 	// superseded: the ID was reclaimed by a new incarnation meanwhile; nothing
 	// was restored, removed, or killed.
 	ApiOrchestratorPauseRefusalRestore CounterType = "api.orchestrator.pause_refusal_restore"
+	// ApiOrchestratorNetworkUpdateUnstored counts network updates a node
+	// applied that the store then failed to record: the live egress differs
+	// from the stored config until the next update replaces both.
+	ApiOrchestratorNetworkUpdateUnstored CounterType = "api.orchestrator.network_update_unstored"
 	// ApiOrchestratorPlacementsWithoutHugepageCeiling counts hugepage sandboxes
 	// placed under a hugepage limit on a node the limit could not bound, by
 	// node.id and reason: no_capacity (the orchestrator reports no pool
@@ -812,6 +816,7 @@ var counterDesc = map[CounterType]string{
 	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without the envd probe (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
+	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
@@ -904,6 +909,7 @@ var counterUnits = map[CounterType]string{
 	ApiEvictorAutoPauseDegraded:                  "{pause}",
 	ApiOrchestratorResumeOriginNodeRemap:         "{snapshot}",
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
+	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
 	ApiSandboxListReads:                          "{request}",
 	BuildResultCounterName:                       "{build}",
 	BuildCacheResultCounterName:                  "{layer}",

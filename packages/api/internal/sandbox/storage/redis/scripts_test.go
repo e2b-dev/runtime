@@ -60,6 +60,41 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	require.Equal(t, uint64(1), durations[durationAttrs("failing")])
 }
 
+// An update's fenced record write is counted and timed like every other
+// script run.
+//
+//nolint:paralleltest // replaces the package's script metrics
+func TestUpdate_RecordsTheFencedWriteAsAScriptRun(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
+	metrics, err := newScriptMetrics(provider.Meter(meterScope))
+	require.NoError(t, err)
+
+	previous := defaultScriptMetrics
+	defaultScriptMetrics = metrics
+	t.Cleanup(func() { defaultScriptMetrics = previous })
+
+	// Not started: the update needs no notifications, and a started storage here made the parallel pub/sub tests flakier.
+	storage := newTestStorage(t, redis_utils.SetupInstance(t))
+	sbx := createTestSandbox("sbx-fenced-metric")
+	require.NoError(t, storage.Add(t.Context(), sbx))
+
+	updated, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
+	require.NoError(t, err)
+	require.Equal(t, "after", updated.TemplateID)
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &collected))
+
+	calls := counterPoints(t, collected, string(telemetry.ApiRedisScriptCalls))
+	require.Equal(t, int64(1), calls[scriptAttrs("add_sandbox", scriptOutcomeOK)])
+	require.Equal(t, int64(1), calls[scriptAttrs("fenced_set", scriptOutcomeOK)])
+
+	durations := histogramCounts(t, collected, string(telemetry.ApiRedisScriptDuration))
+	require.Equal(t, uint64(1), durations[durationAttrs("fenced_set")])
+}
+
 func scriptAttrs(script, outcome string) attribute.Distinct {
 	set := attribute.NewSet(attribute.String(scriptAttr, script), attribute.String(scriptOutcomeAttr, outcome))
 

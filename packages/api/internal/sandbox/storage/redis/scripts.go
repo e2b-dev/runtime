@@ -31,6 +31,19 @@ var (
 		return 1
 	`)
 
+	// fencedSetScript writes a record, keeping its TTL, only while the lock
+	// key still holds the writer's value. The keys share a slot: the lock key
+	// is the record key with a prefix.
+	// KEYS[1] = lock key, KEYS[2] = record key
+	// ARGV[1] = lock value (token and metadata), ARGV[2] = serialized record
+	fencedSetScript = redis.NewScript(`
+		if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+			return 0
+		end
+		redis.call('SET', KEYS[2], ARGV[2], 'KEEPTTL')
+		return 1
+	`)
+
 	finishTransitionScript = redis.NewScript(`
 		redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 		if ARGV[4] ~= '' then

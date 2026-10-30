@@ -193,8 +193,9 @@ func (s *Storage) Update(ctx context.Context, teamID uuid.UUID, sandboxID string
 		return sandboxtypes.Sandbox{}, err
 	}
 
-	// Execute transaction
-	err = s.redisClient.Set(ctx, key, newData, redis.KeepTTL).Err()
+	// The update may have acted outside the store already (a network update
+	// applies on the node first), so the write is retried, and fenced by the lock.
+	err = s.setUnderLock(ctx, lock, key, newData)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
@@ -274,4 +275,41 @@ func (s *Storage) TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]int6
 	}
 
 	return teams, nil
+}
+
+// updateWriteAttempts bounds the write of an update.
+const updateWriteAttempts = 3
+
+const updateWriteBackoff = 50 * time.Millisecond
+
+// ErrLockLost refuses an update's write because the record's lock no longer
+// holds this caller's token: it expired, and another caller may have written.
+var ErrLockLost = errors.New("the record's lock was lost before the update was written")
+
+// setUnderLock writes an updated record only while lock still holds this
+// caller's token, checked and written in one script, so a write that lands
+// late cannot overwrite what a later lock holder stored. A failed write is
+// retried a bounded number of times; a lost lock is not.
+func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key string, data []byte) error {
+	var err error
+	for attempt := range updateWriteAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return errors.Join(err, ctx.Err())
+			case <-time.After(time.Duration(attempt) * updateWriteBackoff):
+			}
+		}
+		var written int64
+		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key}, lock.Token()+lock.Metadata(), data).Int64()
+		if err == nil {
+			if written == 1 {
+				return nil
+			}
+
+			return ErrLockLost
+		}
+	}
+
+	return err
 }
