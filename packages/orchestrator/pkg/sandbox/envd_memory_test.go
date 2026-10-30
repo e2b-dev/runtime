@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -159,11 +160,15 @@ func newMemoryTestSandbox(t *testing.T, url string) (*Sandbox, string) {
 	require.NoError(t, err)
 	id := hex.EncodeToString(b)
 
-	s := &Sandbox{Metadata: &Metadata{
-		internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second, envdServerURLOverride: url},
-		Config:         NewConfig(Config{Envd: EnvdMetadata{Version: "test-" + id}, RamMB: testSandboxRamMB}),
-		Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + id},
-	}}
+	s := &Sandbox{
+		Metadata: &Metadata{
+			internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second, envdServerURLOverride: url},
+			Config:         NewConfig(Config{Envd: EnvdMetadata{Version: "test-" + id}, RamMB: testSandboxRamMB}),
+			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + id},
+		},
+		egressProxy: network.NewNoopEgressProxy(),
+		networkHook: NoopNetworkAssignHook{},
+	}
 
 	return s, id
 }

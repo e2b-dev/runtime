@@ -514,7 +514,7 @@ func (h *prefetchHarvester) resumeMapping(
 	// unfrozen workload) must not reach the network.
 	// The source's envd version, which a live upgrade may have moved past the cloned
 	// config's baked one, decides the throwaway's init loop.
-	resumedSbx, err := h.resumer.ResumeForHarvest(ctx, tmpl, harvestConfig, runtime, sbx.GetStartedAt(), sbx.GetEndAt(), sbx.InheritableEnvdVersion())
+	resumedSbx, err := h.resumer.ResumeForHarvest(ctx, tmpl, harvestConfig, runtime, sbx.GetStartedAt(), sbx.GetEndAt(), sbx.RunningEnvdVersion())
 	if err != nil {
 		return nil, harvestResumeFailed, fmt.Errorf("resume throwaway: %w", err)
 	}

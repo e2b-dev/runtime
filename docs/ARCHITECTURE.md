@@ -600,9 +600,9 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
   sandbox URLs. **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and
   the orchestrator gate features on the envd version recorded in each template build — the
-  orchestrator's held `/init` is the one gate that reads the version of the envd expected to
-  answer instead (see sandbox creation) — so a behavioral change ships under a `feat`/`fix`
-  commit type that cuts a version it can be gated on.
+  orchestrator's held `/init`, the CA bundle each `/init` sends and the network-assign hook read
+  the version of the envd expected to answer instead (see sandbox creation) — so a behavioral
+  change ships under a `feat`/`fix` commit type that cuts a version it can be gated on.
 
 ### Client proxy (`packages/client-proxy`)
 
@@ -815,6 +815,14 @@ the running envd last reported on `/init` when it parses as a version, else the 
 the snapshot recorded at pause, else the version baked into the template build. The first two
 are binaries the orchestrator staged itself; the rest are the guest's word, which only ever
 chooses between the two loops for that guest.
+
+The egress proxy chooses the CA bundle each `/init` carries for the envd version expected to
+answer: the version the last `/init` reported, else the version an offline upgrade put on the
+rootfs, else the version the snapshot recorded, else the template's. After envd answers, the
+network-assign hook may refuse the start, which then fails and cleans up rather than restarting
+on another network. The guest-reported version can steer which bundle later `/init`s carry and,
+through the snapshot record, how the next execution is admitted. A false claim can only keep
+that guest on its worker's network or break its own trust store.
 
 #### Opt-in request idempotency
 

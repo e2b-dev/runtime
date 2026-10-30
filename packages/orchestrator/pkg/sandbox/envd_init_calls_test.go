@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -126,11 +127,15 @@ func loggedAttempts(t *testing.T, version string) int64 {
 func newInitTestSandbox(url string, attempt time.Duration) (*Sandbox, string) {
 	version := uniqueEnvdVersion("0.9.0")
 
-	return &Sandbox{Metadata: &Metadata{
-		internalConfig: internalConfig{EnvdInitRequestTimeout: attempt, envdServerURLOverride: url},
-		Config:         NewConfig(Config{Envd: EnvdMetadata{Version: version}, RamMB: testSandboxRamMB}),
-		Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + version},
-	}}, version
+	return &Sandbox{
+		Metadata: &Metadata{
+			internalConfig: internalConfig{EnvdInitRequestTimeout: attempt, envdServerURLOverride: url},
+			Config:         NewConfig(Config{Envd: EnvdMetadata{Version: version}, RamMB: testSandboxRamMB}),
+			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + version},
+		},
+		egressProxy: network.NewNoopEgressProxy(),
+		networkHook: NoopNetworkAssignHook{},
+	}, version
 }
 
 // stallingEnvd answers /init with 204 and reportedVersion, after holding the first

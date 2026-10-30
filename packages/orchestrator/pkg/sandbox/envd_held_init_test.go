@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
@@ -174,6 +176,8 @@ func newHeldSandbox(t *testing.T, url, base string, on bool) (*Sandbox, string) 
 			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + version},
 		},
 		featureFlags: heldFlags(t, on),
+		egressProxy:  network.NewNoopEgressProxy(),
+		networkHook:  NoopNetworkAssignHook{},
 	}
 
 	return s, version
@@ -801,7 +805,7 @@ func TestThrowawayGateReadsTheInheritedVersion(t *testing.T) {
 	}
 }
 
-func TestInheritableEnvdVersion(t *testing.T) {
+func TestRunningEnvdVersion(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -834,7 +838,7 @@ func TestInheritableEnvdVersion(t *testing.T) {
 			if tc.delivered != "" {
 				s.MarkEnvdDelivered(tc.delivered)
 			}
-			assert.Equal(t, tc.want, s.InheritableEnvdVersion())
+			assert.Equal(t, tc.want, s.RunningEnvdVersion())
 		})
 	}
 }
@@ -858,7 +862,7 @@ func TestThrowawayInheritsTheEnvdThatAnsweredTheLastInit(t *testing.T) {
 
 	e := newHeldEnvd(t)
 	throwaway, _ := newHeldSandbox(t, e.srv.URL, "0.9.0", true)
-	throwaway.inheritedEnvdVersion = resumeGateEnvdVersion(source.InheritableEnvdVersion(), recorded.RunningEnvdVersion)
+	throwaway.inheritedEnvdVersion = resumeGateEnvdVersion(source.RunningEnvdVersion(), recorded.RunningEnvdVersion)
 	throwaway.skipThaw = true
 	require.NoError(t, initHeld(t, throwaway))
 
@@ -960,6 +964,149 @@ func TestResumedLifeGatesOnTheVersionItsSnapshotRecorded(t *testing.T) {
 				want = envdInitLoopHeld
 			}
 			assert.Equal(t, want, s.envdInitLoop())
+		})
+	}
+}
+
+// TestEnvdInitCABundleFollowsTheExpectedEnvd: each /init carries the bundle for the envd
+// expected at that moment, and the next call follows what the last one reported.
+func TestEnvdInitCABundleFollowsTheExpectedEnvd(t *testing.T) {
+	t.Parallel()
+
+	const (
+		bundle = "BUNDLE\n"
+		roots  = "ROOTS\n"
+	)
+	for _, tc := range []struct {
+		name                      string
+		baked, offline, inherited string
+		// upgrade runs a post-upgrade re-check, marked delivered when delivered is set.
+		upgrade   bool
+		delivered string
+		throwaway bool
+		// answers is the version envd reports on each /init, its last one repeated.
+		answers []string
+		// roots is whether each /init carried the roots, in order.
+		roots []bool
+	}{
+		{name: "a compatible template", baked: "0.10.2", answers: []string{"0.10.2"}, roots: []bool{true, true}},
+		{name: "an older template", baked: "0.10.0", answers: []string{"0.10.0"}, roots: []bool{false, false}},
+		{name: "a confirmed live upgrade", baked: "0.10.0", upgrade: true, delivered: "0.10.2", answers: []string{"0.10.0", "0.10.2"}, roots: []bool{false, false, true}},
+		{name: "a delivered binary the guest replaced with its rootfs one", baked: "0.10.0", upgrade: true, delivered: "0.10.2", answers: []string{"0.10.0"}, roots: []bool{false, false, false}},
+		{name: "a snapshot that recorded its upgraded envd", baked: "0.10.0", inherited: "0.10.2", answers: []string{"0.10.2"}, roots: []bool{true, true}},
+		{name: "a snapshot that recorded an older envd than its template", baked: "0.10.2", inherited: "0.10.0", answers: []string{"0.10.0"}, roots: []bool{false, false}},
+		{name: "an upgraded snapshot from before the record", baked: "0.10.0", answers: []string{"0.10.2"}, roots: []bool{false, true}},
+		{name: "a throwaway of an upgraded snapshot from before the record", baked: "0.10.0", throwaway: true, answers: []string{"0.10.2"}, roots: []bool{false, true}},
+		{name: "an offline upgrade", baked: "0.10.0", offline: "0.10.2", answers: []string{"0.10.2"}, roots: []bool{true, true}},
+		{name: "an envd that reports no admissible version", baked: "0.10.2", answers: []string{"not-a-version"}, roots: []bool{true, true}},
+	} {
+		for _, held := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/held=%t", tc.name, held), func(t *testing.T) {
+				t.Parallel()
+
+				e := newHeldEnvd(t)
+				e.init = func(w http.ResponseWriter, n int, read func() envd.PostInitJSONBody) {
+					read()
+					w.Header().Set("X-Envd-Version", tc.answers[min(n, len(tc.answers))-1])
+					w.WriteHeader(http.StatusNoContent)
+				}
+				s, version := newHeldSandbox(t, e.srv.URL, tc.baked, held)
+				s.egressProxy = &mockEgressProxy{bundle: bundle, roots: roots}
+				s.inheritedEnvdVersion = tc.inherited
+				if tc.offline != "" {
+					s.offlineEnvdVersion.Store(&tc.offline)
+				}
+				s.skipThaw = tc.throwaway
+				s.skipStartupMetrics = tc.throwaway
+
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				opts := envdInitOptions{budget: 5 * time.Second}
+				require.NoError(t, s.initEnvd(ctx, StartTypeResume, true, opts))
+				if tc.upgrade {
+					if tc.delivered != "" {
+						s.MarkEnvdDelivered(tc.delivered)
+					}
+					require.NoError(t, s.initEnvd(ctx, StartTypeResume, false, opts))
+				}
+				require.NoError(t, s.initEnvd(ctx, StartTypeResume, false, opts))
+
+				var got []bool
+				wantThaw := envd.PostInitJSONBodyThaw("")
+				if held && tc.throwaway {
+					wantThaw = envd.Skip
+				}
+				for _, r := range e.requests() {
+					assert.Contains(t, []string{bundle, bundle + roots}, r.body.CaBundle)
+					got = append(got, r.body.CaBundle == bundle+roots)
+					assert.Equal(t, wantThaw, r.body.Thaw, "each /init keeps the start's thaw")
+				}
+				assert.Equal(t, tc.roots, got)
+
+				wantCalls := map[string]int64{"success/": 1}
+				if tc.throwaway {
+					wantCalls = map[string]int64{}
+				}
+				assert.Equal(t, wantCalls, exitsByType(counterPointsFor(t, telemetry.EnvdInitCalls, version)),
+					"a re-check is no start of its own")
+			})
+		}
+	}
+}
+
+// envdReadyHook is a network-assign hook whose OnEnvdReady is ready.
+type envdReadyHook struct {
+	NoopNetworkAssignHook
+
+	ready func(envdVersion string) error
+}
+
+func (h envdReadyHook) OnEnvdReady(_ context.Context, _ *Sandbox, envdVersion string) error {
+	return h.ready(envdVersion)
+}
+
+// TestEnvdInitFailsWhenTheNetworkRefusesItsEnvd: the network-assign hook hears the version
+// envd reported when it is admissible, and its refusal fails the start as network_refused.
+func TestEnvdInitFailsWhenTheNetworkRefusesItsEnvd(t *testing.T) {
+	t.Parallel()
+
+	refusal := errors.New("refused")
+	for _, tc := range []struct {
+		name   string
+		answer string
+		want   string
+	}{
+		{name: "an admissible report", answer: "0.10.2", want: "0.10.2"},
+		{name: "no report", answer: ""},
+		{name: "a malformed report", answer: "not-a-version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			e := newHeldEnvd(t)
+			e.init = func(w http.ResponseWriter, _ int, read func() envd.PostInitJSONBody) {
+				read()
+				if tc.answer != "" {
+					w.Header().Set("X-Envd-Version", tc.answer)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}
+			s, version := newHeldSandbox(t, e.srv.URL, "0.10.2", false)
+			var heard []string
+			s.networkHook = envdReadyHook{ready: func(envdVersion string) error {
+				heard = append(heard, envdVersion)
+
+				return refusal
+			}}
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			err := s.initEnvd(ctx, StartTypeResume, true, envdInitOptions{budget: 5 * time.Second})
+			require.ErrorIs(t, err, errEnvdRefusedByNetwork)
+			require.ErrorIs(t, err, refusal)
+			assert.Equal(t, []string{tc.want}, heard)
+			assert.Equal(t, map[string]int64{"network_refused/response": 1},
+				exitsByType(counterPointsFor(t, telemetry.EnvdInitCalls, version)))
 		})
 	}
 }

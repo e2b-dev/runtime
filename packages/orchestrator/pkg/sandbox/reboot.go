@@ -302,13 +302,10 @@ func (f *Factory) RebootSandbox(
 		opt(&processOptions)
 	}
 
-	// The version an offline upgrade swaps onto the rootfs, read by the running-version
-	// label once the sandbox exists; the pre-boot hook runs inside CreateSandbox.
-	var offlineEnvdVersion string
-	preBoot := chainPreBoot(
-		f.fsRecoverPreBoot(ctx, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery),
-		f.envdOfflineUpgradePreBoot(ctx, config, runtime, meta.IsFsQuiesced(), &offlineEnvdVersion),
-	)
+	// CreateSandbox runs the filesystem recovery, then the offline envd swap, whose version
+	// the sandbox carries from before its network is assigned.
+	fsRecover := f.fsRecoverPreBoot(ctx, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery)
+	swap := f.envdOfflineUpgradePreBoot(ctx, config, runtime, meta.IsFsQuiesced())
 
 	sbx, err := f.CreateSandbox(
 		ctx,
@@ -322,17 +319,13 @@ func (f *Factory) RebootSandbox(
 		"",
 		processOptions,
 		apiConfigToStore,
-		preBoot,
+		WithPreBoot(fsRecover, swap),
 		WithDeferredMarkRunning(),
 		withNetworkAssignReason(NetworkAssignReasonReboot),
 		withEndAt(endAt),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox from rootfs: %w", err)
-	}
-
-	if offlineEnvdVersion != "" {
-		sbx.offlineEnvdVersion.Store(&offlineEnvdVersion)
 	}
 
 	if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeout); err != nil {
@@ -431,38 +424,13 @@ func decideOfflineSwap(resolverPath, reason string, fsQuiesced bool) offlineSwap
 	return offlineSwapDecision{swap: true}
 }
 
-// chainPreBoot composes pre-boot steps in order, skipping nils; the first
-// failure stops the chain. Nil when every step is nil, preserving the
-// no-callback fast path.
-func chainPreBoot(fns ...PreBootFn) PreBootFn {
-	steps := make([]PreBootFn, 0, len(fns))
-	for _, fn := range fns {
-		if fn != nil {
-			steps = append(steps, fn)
-		}
-	}
-	if len(steps) == 0 {
-		return nil
-	}
-
-	return func(ctx context.Context, rootfsPath string) error {
-		for _, fn := range steps {
-			if err := fn(ctx, rootfsPath); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
-}
-
 // fsRecoverPreBoot returns a PreBootFn that repairs the rootfs filesystem
 // before the cold boot, or nil when there is nothing to do: a quiesced
 // snapshot was frozen at pause and is consistent by construction, and with
 // the flag off cold boots keep today's behavior (the guest kernel replays
-// the journal at mount time). It is one step of the reboot pre-boot chain,
-// mutually exclusive in practice with the offline envd swap (that swaps only
-// quiesced snapshots, this runs only on non-quiesced ones).
+// the journal at mount time). It runs before the reboot's offline envd swap,
+// and is mutually exclusive with it in practice (that swaps only quiesced
+// snapshots, this runs only on non-quiesced ones).
 //
 // A clean journal replay proceeds to boot; anything else fails the start with
 // rootfs.ErrRecoveryFailed (snapshot untouched) instead of booting a possibly
@@ -569,8 +537,8 @@ func (f *Factory) fsRecoverPreBoot(
 		return nil
 	}
 
-	return func(ctx context.Context, rootfsPath string) error {
-		return telemetry.Observe0(ctx, tracer, "fs-recover", func(ctx context.Context) error {
+	return func(ctx context.Context, rootfsPath string) (string, error) {
+		return "", telemetry.Observe0(ctx, tracer, "fs-recover", func(ctx context.Context) error {
 			return recoverFS(ctx, rootfsPath)
 		}, trace.WithAttributes(attribute.String("fs_recovery.trigger", trigger)))
 	}
@@ -635,14 +603,12 @@ func (f *Factory) resolveOfflineTarget(
 // down and the dirty overlay is discarded. Every other failure boots the ORIGINAL
 // envd.
 //
-// A successful swap stores the version it put on the rootfs in swappedTo, when it is not
-// nil.
+// The swap returns the version it put on the rootfs, "" when it put none.
 func (f *Factory) envdOfflineUpgradePreBoot(
 	ctx context.Context,
 	config *Config,
 	runtime sandboxtypes.RuntimeMetadata,
 	fsQuiesced bool,
-	swappedTo *string,
 ) PreBootFn {
 	from := config.Envd.Version
 
@@ -685,7 +651,7 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 		return nil
 	}
 
-	return func(ctx context.Context, rootfsPath string) error {
+	return func(ctx context.Context, rootfsPath string) (string, error) {
 		start := time.Now()
 		// The swap stages its source into a directory bound into the jail, a copy
 		// that is read off the gcsfuse mount unless the cache holds it. Resolved
@@ -699,7 +665,8 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 			// The copy that carried the resolved version is gone, so nothing on local
 			// disk holds the bytes that version describes. Boot the original, which is
 			// this path's best-effort default anyway, and let a later resume retry
-			// once a warm has republished the copy.
+			// once a warm has republished the copy. A rootfs an earlier reboot already
+			// swapped still boots that envd while this start expects the template's version.
 			runtime.Logger().Warn(ctx, "skipping offline envd upgrade: cached binary went away after its version was resolved",
 				zap.String("target", path),
 				zap.String("built_with", from),
@@ -716,7 +683,7 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 				attribute.String("to_version", toVersion),
 			))
 
-			return nil
+			return "", nil
 		}
 
 		// Cancel-free but time-bounded: a request cancellation must not kill
@@ -738,9 +705,6 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 		result := "success"
 		switch {
 		case err == nil:
-			if swappedTo != nil {
-				*swappedTo = toVersion
-			}
 			runtime.Logger().Info(ctx, "swapped envd binary before reboot",
 				zap.String("target", path),
 				zap.String("to_version", toVersion),
@@ -833,11 +797,17 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 			metric.WithAttributes(attribute.String("result", result)))
 
 		if unrecoverable {
-			return fmt.Errorf("offline envd upgrade left rootfs unbootable: %w", err)
+			return "", fmt.Errorf("offline envd upgrade left rootfs unbootable: %w", err)
 		}
 
 		// Best-effort: swallow a recoverable failure so the cold boot proceeds on
-		// the original envd rather than failing the whole resume.
-		return nil
+		// the original envd rather than failing the whole resume. Only a swap that
+		// succeeded reports its version.
+		swappedTo := ""
+		if err == nil {
+			swappedTo = toVersion
+		}
+
+		return swappedTo, nil
 	}
 }

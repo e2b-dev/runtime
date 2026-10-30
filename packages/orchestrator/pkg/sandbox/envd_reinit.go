@@ -322,7 +322,12 @@ func (s *Sandbox) bestEffortEnvdReinit(ctx, initCtx context.Context, r *envdRein
 	case held && err != nil && errors.Is(err, ErrFcProcessExited):
 		envdReinitCut.Add(ctx, 1, metric.WithAttributes(attribute.String("by", "kill"), s.teamAttr()))
 	}
-	if err != nil && !cut {
+	switch {
+	case err == nil || cut:
+	case errors.Is(err, errEnvdRefusedByNetwork):
+		// The sandbox keeps running.
+		s.log().Warn(ctx, "envd re-init: the sandbox's network refused the envd that answered", zap.Error(err))
+	default:
 		s.log().Warn(ctx, "envd re-init after in-place resume failed (guest clock may lag)", zap.Error(err))
 	}
 	// Last, after the counter and the warning: a waiter reads both once done is closed.
