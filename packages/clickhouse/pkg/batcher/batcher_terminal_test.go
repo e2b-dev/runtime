@@ -94,6 +94,44 @@ func TestBatcherPushWithContextNotStarted(t *testing.T) {
 	require.ErrorIs(t, b.PushWithContext(t.Context(), 1), ErrBatcherNotStarted)
 }
 
+// StopWithContext bounds the final drain: when the drain ctx is already done, a
+// persistently failing flush is not retried forever — Stop returns promptly and
+// the goroutine is not leaked.
+func TestBatcherStopWithContextBoundsDrainRetry(t *testing.T) {
+	t.Parallel()
+	source := ldtestdata.DataSource()
+	// Many retries with a long backoff would hang for minutes if unbounded.
+	source.Update(source.Flag(featureflags.ClickhouseBatcherFlushMaxRetries.Key()).ValueForAll(ldvalue.Int(1_000_000)))
+	source.Update(source.Flag(featureflags.ClickhouseBatcherMaxBatchSize.Key()).ValueForAll(ldvalue.Int(1)))
+	ff, err := featureflags.NewClientWithDatasource(source)
+	require.NoError(t, err)
+	defer ff.Close(context.WithoutCancel(t.Context()))
+
+	var calls atomic.Int32
+	b, err := NewBatcher(func(_ context.Context, _ []int) error {
+		calls.Add(1)
+
+		return errors.New("clickhouse down")
+	}, BatcherOptions{Name: "drain-test", FeatureFlags: ff, MaxDelay: time.Hour, MaxBatchSize: 1, QueueSize: 4})
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
+
+	require.NoError(t, b.Push(1))
+	time.Sleep(20 * time.Millisecond) // let the processor pick it up and start failing
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // drain budget already exhausted
+
+	done := make(chan error, 1)
+	go func() { done <- b.StopWithContext(ctx) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopWithContext did not return; drain retried past its cancelled ctx")
+	}
+}
+
 // A transient flush failure is retried (per the flag) and the batch is
 // delivered rather than dropped on the first error.
 func TestBatcherFlushRetriesThenSucceeds(t *testing.T) {

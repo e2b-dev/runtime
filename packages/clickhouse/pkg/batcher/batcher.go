@@ -68,6 +68,10 @@ type Batcher[T any] struct {
 	ch      chan T
 	doneCh  chan struct{}
 	started bool
+	// flushCancel aborts the in-flight (and any subsequent) flush. It is set in
+	// Start and invoked by StopWithContext once its drain budget expires, so a
+	// stalled flush at shutdown cannot outlast the scheduler's kill window.
+	flushCancel context.CancelFunc
 
 	flags *featureflags.Client
 	name  string
@@ -158,16 +162,34 @@ func (b *Batcher[T]) Start(ctx context.Context) error {
 	b.doneCh = make(chan struct{})
 	b.started = true
 
+	// flushCtx lets a bounded StopWithContext abort a stalled flush during the
+	// final drain. In steady state it is never cancelled, so flushes are
+	// unbounded as before.
+	flushCtx, flushCancel := context.WithCancel(ctx)
+	b.flushCancel = flushCancel
+
 	go func() {
-		b.processBatches(ctx)
+		b.processBatches(flushCtx)
 		close(b.doneCh)
 	}()
 
 	return nil
 }
 
-// Stop stops batch processing and flushes remaining items.
+// Stop stops batch processing and flushes remaining items, waiting as long as it
+// takes. Use StopWithContext to bound the final drain.
 func (b *Batcher[T]) Stop() error {
+	return b.StopWithContext(context.Background())
+}
+
+// StopWithContext stops batch processing and flushes remaining items, bounding
+// the drain (including a flush already in progress and its retries) by ctx. When
+// ctx is done before the drain finishes, the in-flight flush is cancelled and
+// the remaining batch is dropped rather than retried, so a graceful stop stays
+// within the scheduler's kill window instead of being SIGKILLed mid-drain (which
+// would lose the whole queue). It always waits on doneCh, so the flush goroutine
+// is never leaked.
+func (b *Batcher[T]) StopWithContext(ctx context.Context) error {
 	b.mu.Lock()
 	if !b.started {
 		b.mu.Unlock()
@@ -176,8 +198,23 @@ func (b *Batcher[T]) Stop() error {
 	}
 
 	b.started = false
+	flushCancel := b.flushCancel
 	close(b.ch)
 	b.mu.Unlock()
+
+	// Cancel the drain's flush when the budget expires. Stop early once the
+	// processor is done so we don't leak this goroutine on an unbounded ctx.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	if flushCancel != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				flushCancel()
+			case <-stopped:
+			}
+		}()
+	}
 
 	<-b.doneCh
 
