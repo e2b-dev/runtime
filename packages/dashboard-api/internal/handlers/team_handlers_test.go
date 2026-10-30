@@ -39,15 +39,3 @@ func (noopAuthService) InvalidateTeamCache(context.Context, uuid.UUID) error {
 func (noopAuthService) Close(context.Context) error {
 	return nil
 }
-
-type recordingCacheAuthService struct {
-	noopAuthService
-
-	invalidated []uuid.UUID
-}
-
-func (s *recordingCacheAuthService) InvalidateTeamCache(_ context.Context, teamID uuid.UUID) error {
-	s.invalidated = append(s.invalidated, teamID)
-
-	return nil
-}

@@ -154,12 +154,6 @@ WHERE cluster_id = sqlc.arg(cluster_id)::uuid
 DELETE FROM public.clusters
 WHERE id = sqlc.arg(cluster_id)::uuid;
 
--- name: TeamClusterAssignment :one
-SELECT cluster_id
-FROM public.teams
-WHERE id = sqlc.arg(team_id)::uuid
-  AND cluster_id IS NOT NULL;
-
 -- name: AssignTeamCluster :one
 WITH locked_team AS MATERIALIZED (
     SELECT cluster_id

@@ -454,8 +454,8 @@ services:
   # The dashboard's backend. It reads the same databases as the api and the
   # same admin token: the wrapper below is the api's, reading GEN_ADMIN_TOKEN
   # from the file api-secrets writes, so both processes hold the one token
-  # this install generated. It starts without an identity provider; the
-  # /v1/management routes then answer 401, and nothing here calls them.
+  # this install generated. It starts without an admin JWT issuer, so its
+  # admin routes accept only that token.
   dashboard-api:
     logging: *logging
     image: ${E2B_DASHBOARD_API_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}

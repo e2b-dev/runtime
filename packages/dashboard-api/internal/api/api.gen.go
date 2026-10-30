@@ -20,39 +20,6 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for ErrorCode.
-const (
-	ClusterAssignmentAlreadyAssigned ErrorCode = "cluster_assignment_already_assigned"
-	ClusterAssignmentClusterDeleting ErrorCode = "cluster_assignment_cluster_deleting"
-	ClusterAssignmentClusterNotFound ErrorCode = "cluster_assignment_cluster_not_found"
-	ClusterAssignmentInvalid         ErrorCode = "cluster_assignment_invalid"
-	ClusterAssignmentProjectNotFound ErrorCode = "cluster_assignment_project_not_found"
-	ClusterRegistrationConflict      ErrorCode = "cluster_registration_conflict"
-	ClusterRegistrationInvalid       ErrorCode = "cluster_registration_invalid"
-)
-
-// Valid indicates whether the value is a known member of the ErrorCode enum.
-func (e ErrorCode) Valid() bool {
-	switch e {
-	case ClusterAssignmentAlreadyAssigned:
-		return true
-	case ClusterAssignmentClusterDeleting:
-		return true
-	case ClusterAssignmentClusterNotFound:
-		return true
-	case ClusterAssignmentInvalid:
-		return true
-	case ClusterAssignmentProjectNotFound:
-		return true
-	case ClusterRegistrationConflict:
-		return true
-	case ClusterRegistrationInvalid:
-		return true
-	default:
-		return false
-	}
-}
-
 // AdminAuthProviderProfile defines model for AdminAuthProviderProfile.
 type AdminAuthProviderProfile struct {
 	// Email Email address from the configured auth provider.
@@ -72,29 +39,6 @@ type AdminAuthProviderProfilesResponse struct {
 	Profiles []AdminAuthProviderProfile `json:"profiles"`
 }
 
-// AdminClusterCreateRequest defines model for AdminClusterCreateRequest.
-type AdminClusterCreateRequest struct {
-	AuthOrgId *string `json:"auth_org_id,omitempty"`
-
-	// ClusterId Optional stable identifier for idempotent creation. Reuse succeeds only when the immutable configuration is identical.
-	ClusterId          *openapi_types.UUID `json:"cluster_id,omitempty"`
-	Endpoint           string              `json:"endpoint"`
-	EndpointTls        bool                `json:"endpoint_tls"`
-	Name               string              `json:"name"`
-	SandboxProxyDomain *string             `json:"sandbox_proxy_domain,omitempty"`
-	Token              string              `json:"token"`
-}
-
-// AdminClusterCreateResponse defines model for AdminClusterCreateResponse.
-type AdminClusterCreateResponse struct {
-	ClusterId openapi_types.UUID `json:"cluster_id"`
-}
-
-// AdminTeamClusterAssignmentResponse defines model for AdminTeamClusterAssignmentResponse.
-type AdminTeamClusterAssignmentResponse struct {
-	ClusterId openapi_types.UUID `json:"cluster_id"`
-}
-
 // CPUCount CPU cores for the sandbox
 type CPUCount = int64
 
@@ -106,35 +50,14 @@ type Error struct {
 	// Code Error code.
 	Code int32 `json:"code"`
 
-	// ErrorCode Stable machine-readable reason for an API error. New codes may be added as other errors adopt this contract. Clients must handle absent or unknown codes without interpreting the human-readable message.
-	ErrorCode *ErrorCode `json:"error_code,omitempty"`
-
 	// Message Error message.
 	Message string `json:"message"`
 }
-
-// ErrorCode Stable machine-readable reason for an API error. New codes may be added as other errors adopt this contract. Clients must handle absent or unknown codes without interpreting the human-readable message.
-type ErrorCode string
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	// Message Human-readable health check result.
 	Message string `json:"message"`
-}
-
-// ManagementClusterProjects defines model for ManagementClusterProjects.
-type ManagementClusterProjects struct {
-	ProjectIds []openapi_types.UUID `json:"project_ids"`
-}
-
-// ManagementClusterRegistrationRequest defines model for ManagementClusterRegistrationRequest.
-type ManagementClusterRegistrationRequest struct {
-	AuthOrgId          *string `json:"auth_org_id,omitempty"`
-	Endpoint           string  `json:"endpoint"`
-	EndpointTls        bool    `json:"endpoint_tls"`
-	Name               string  `json:"name"`
-	SandboxProxyDomain *string `json:"sandbox_proxy_domain,omitempty"`
-	Token              string  `json:"token"`
 }
 
 // MemoryMB Memory for the sandbox in MiB
@@ -176,17 +99,8 @@ type SandboxRecord struct {
 	TemplateID string `json:"templateID"`
 }
 
-// ClusterID defines model for clusterID.
-type ClusterID = openapi_types.UUID
-
-// ProjectID defines model for projectID.
-type ProjectID = openapi_types.UUID
-
 // SandboxID defines model for sandboxID.
 type SandboxID = string
-
-// TeamID defines model for teamID.
-type TeamID = openapi_types.UUID
 
 // N400 defines model for 400.
 type N400 = Error
@@ -200,32 +114,14 @@ type N403 = Error
 // N404 defines model for 404.
 type N404 = Error
 
-// N409 defines model for 409.
-type N409 = Error
-
 // N500 defines model for 500.
 type N500 = Error
-
-// PostAdminClustersJSONRequestBody defines body for PostAdminClusters for application/json ContentType.
-type PostAdminClustersJSONRequestBody = AdminClusterCreateRequest
 
 // PostAdminUserProfilesResolveJSONRequestBody defines body for PostAdminUserProfilesResolve for application/json ContentType.
 type PostAdminUserProfilesResolveJSONRequestBody = AdminAuthProviderProfilesResolveRequest
 
-// ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
-type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// PostAdminClusters Create a cluster
-	// (POST /admin/clusters)
-	PostAdminClusters(c *gin.Context)
-	// DeleteAdminClustersClusterID Delete a cluster and its environments
-	// (DELETE /admin/clusters/{clusterID})
-	DeleteAdminClustersClusterID(c *gin.Context, clusterID ClusterID)
-	// GetAdminTeamsTeamIDCluster Get a team's assigned cluster
-	// (GET /admin/teams/{teamID}/cluster)
-	GetAdminTeamsTeamIDCluster(c *gin.Context, teamID TeamID)
 	// PostAdminUserProfilesResolve Resolve user profiles
 	// (POST /admin/user-profiles/resolve)
 	PostAdminUserProfilesResolve(c *gin.Context)
@@ -235,27 +131,6 @@ type ServerInterface interface {
 	// GetSandboxesSandboxIDRecord Sandbox record
 	// (GET /sandboxes/{sandboxID}/record)
 	GetSandboxesSandboxIDRecord(c *gin.Context, sandboxID SandboxID)
-	// ManagementDeleteCluster Delete a cluster and its environments (v1).
-	// (DELETE /v1/management/clusters/{clusterID})
-	ManagementDeleteCluster(c *gin.Context, clusterID ClusterID)
-	// ManagementRegisterCluster Register a cluster (v1).
-	// (PUT /v1/management/clusters/{clusterID})
-	ManagementRegisterCluster(c *gin.Context, clusterID ClusterID)
-	// ManagementRequestClusterDeletion Record that a cluster is being deleted (v1).
-	// (PUT /v1/management/clusters/{clusterID}/deletion)
-	ManagementRequestClusterDeletion(c *gin.Context, clusterID ClusterID)
-	// ManagementClusterDestroyReadiness Check cluster destroy readiness
-	// (GET /v1/management/clusters/{clusterID}/destroy-readiness)
-	ManagementClusterDestroyReadiness(c *gin.Context, clusterID ClusterID)
-	// ManagementListClusterProjects List the projects assigned to a cluster (v1).
-	// (GET /v1/management/clusters/{clusterID}/projects)
-	ManagementListClusterProjects(c *gin.Context, clusterID ClusterID)
-	// ManagementDetachProjectCluster Detach a cluster assignment from a project (v1).
-	// (DELETE /v1/management/projects/{projectID}/cluster/{clusterID})
-	ManagementDetachProjectCluster(c *gin.Context, projectID ProjectID, clusterID ClusterID)
-	// ManagementAssignProjectCluster Assign a cluster to a project (v1).
-	// (PUT /v1/management/projects/{projectID}/cluster/{clusterID})
-	ManagementAssignProjectCluster(c *gin.Context, projectID ProjectID, clusterID ClusterID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -266,69 +141,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
-
-// PostAdminClusters operation middleware
-func (siw *ServerInterfaceWrapper) PostAdminClusters(c *gin.Context) {
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.PostAdminClusters(c)
-}
-
-// DeleteAdminClustersClusterID operation middleware
-func (siw *ServerInterfaceWrapper) DeleteAdminClustersClusterID(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.DeleteAdminClustersClusterID(c, clusterID)
-}
-
-// GetAdminTeamsTeamIDCluster operation middleware
-func (siw *ServerInterfaceWrapper) GetAdminTeamsTeamIDCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "teamID" -------------
-	var teamID TeamID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetAdminTeamsTeamIDCluster(c, teamID)
-}
 
 // PostAdminUserProfilesResolve operation middleware
 func (siw *ServerInterfaceWrapper) PostAdminUserProfilesResolve(c *gin.Context) {
@@ -381,199 +193,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDRecord(c *gin.Context) {
 	siw.Handler.GetSandboxesSandboxIDRecord(c, sandboxID)
 }
 
-// ManagementDeleteCluster operation middleware
-func (siw *ServerInterfaceWrapper) ManagementDeleteCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementDeleteCluster(c, clusterID)
-}
-
-// ManagementRegisterCluster operation middleware
-func (siw *ServerInterfaceWrapper) ManagementRegisterCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementRegisterCluster(c, clusterID)
-}
-
-// ManagementRequestClusterDeletion operation middleware
-func (siw *ServerInterfaceWrapper) ManagementRequestClusterDeletion(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementRequestClusterDeletion(c, clusterID)
-}
-
-// ManagementClusterDestroyReadiness operation middleware
-func (siw *ServerInterfaceWrapper) ManagementClusterDestroyReadiness(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementClusterDestroyReadiness(c, clusterID)
-}
-
-// ManagementListClusterProjects operation middleware
-func (siw *ServerInterfaceWrapper) ManagementListClusterProjects(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementListClusterProjects(c, clusterID)
-}
-
-// ManagementDetachProjectCluster operation middleware
-func (siw *ServerInterfaceWrapper) ManagementDetachProjectCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "projectID" -------------
-	var projectID ProjectID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementDetachProjectCluster(c, projectID, clusterID)
-}
-
-// ManagementAssignProjectCluster operation middleware
-func (siw *ServerInterfaceWrapper) ManagementAssignProjectCluster(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "projectID" -------------
-	var projectID ProjectID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "clusterID" -------------
-	var clusterID ClusterID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ManagementAssignProjectCluster(c, projectID, clusterID)
-}
-
 // GinServerOptions provides options for the Gin server.
 type GinServerOptions struct {
 	BaseURL      string
@@ -603,17 +222,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/health", wrapper.GetHealth)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/record", wrapper.GetSandboxesSandboxIDRecord)
-	router.POST(options.BaseURL+"/admin/clusters", wrapper.PostAdminClusters)
-	router.DELETE(options.BaseURL+"/admin/clusters/:clusterID", wrapper.DeleteAdminClustersClusterID)
-	router.GET(options.BaseURL+"/v1/management/clusters/:clusterID/projects", wrapper.ManagementListClusterProjects)
-	router.PUT(options.BaseURL+"/v1/management/clusters/:clusterID/deletion", wrapper.ManagementRequestClusterDeletion)
-	router.GET(options.BaseURL+"/v1/management/clusters/:clusterID/destroy-readiness", wrapper.ManagementClusterDestroyReadiness)
-	router.GET(options.BaseURL+"/admin/teams/:teamID/cluster", wrapper.GetAdminTeamsTeamIDCluster)
 	router.POST(options.BaseURL+"/admin/user-profiles/resolve", wrapper.PostAdminUserProfilesResolve)
-	router.DELETE(options.BaseURL+"/v1/management/clusters/:clusterID", wrapper.ManagementDeleteCluster)
-	router.PUT(options.BaseURL+"/v1/management/clusters/:clusterID", wrapper.ManagementRegisterCluster)
-	router.DELETE(options.BaseURL+"/v1/management/projects/:projectID/cluster/:clusterID", wrapper.ManagementDetachProjectCluster)
-	router.PUT(options.BaseURL+"/v1/management/projects/:projectID/cluster/:clusterID", wrapper.ManagementAssignProjectCluster)
 }
 
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
@@ -621,63 +230,30 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"pAL6zfp/jQAmWt2u/hsAAP//",
+	"vFjrb9s2EP9XCG7AvsiPPDYM/ha36ZoOHYwkRQcExnAWTxZbiVRJKokb6H8fjpRk2ZbttGv2yQ+e7vn7",
+	"He/0xGOdF1qhcpZPnngBBnJ0aPwvC0os9OPVa/oh0MZGFk5qxSf8SqByMpFomE6YS5HVwkMecUkSBbiU",
+	"R1xBjnzSURVxg19KaVDwiTMlRtzGKeZANtyq8MLOSLXkVVWRsC20sugdOh+P6SPWyqFy9BWKIpMxkFej",
+	"T5Zce+ro+9lgwif8p9E6ylE4taNLY7QJNjZDm4Jg5CJax6uIn49PXt7mRelSSmjQyjDIkfGzlzf+RpuF",
+	"FAJVsHj+8hb/0o4lulSCLP76fxT1Bs09miaxVQM6j6oLkUtFFZgZfS8FmpnRiczQE8LoAo2TAX+Yg8x2",
+	"yXBJfzMQwqC1LDE694yItUrksjQoGJQuZUWtniiiyiyDBdkIHNhCfsRLi+ZK9BBPOTQKMnZ5OmUkxGRL",
+	"RVKcaJOD4xNellLwHcVVl353jZWojmzeyuvFJ4w9/vdlx16j1dk9XtdU2UlW0O2/Soe5/3LEu4jn8HgV",
+	"hE/G44jnUjU/W2EwBlY84qWSX0qsjymL/cHZb47K95vdeIpaYiOgQ2Dci6tqK5Ztx1tLfZ6/mn14pctA",
+	"lE1ovJp9YLE2aFmiTbcnd2EhlfvtnPvMyrzMu4mVyuESfd95Le3nG/kV3093zdAZs/IrbpthUrH3cnrQ",
+	"2rjPWmDtTsJjLbCHbCTM6Gy4ZenslPdpz9FaWO7VVB8Pj3LFu7NW11ebtwiZS/dDaK8rb8sc1MAgCGoK",
+	"LPV6WJxi/JkZtGXmjvt3yLH3mGuz6qtmOPmeUp6c/t6X7pug4RpjbcRuCiCToetuXYD0dzNKOMyLDBz2",
+	"NYi4KFv4HyJfSxO6CjbQfOipDu7pOZ2DVLvOTsEiC4fsIUWDG6lzBpJExkxaBnGM1krq889o+XhPvlwj",
+	"XYNSq8vHIpR22/zHFF2Km/VCJVCwXHtfQNVphPwXy4JaZhq97EEqoR8YLHXErGbStTICHJDfSrNMqyUa",
+	"Bvcgg9etwwutMwQVqLWG1aG0tvDzkP1R8SXyEcXhuHKtpNOUYAZKsEwvvz3I75mC+5BrHRiH4qKnc9/K",
+	"HAlJaiPmB7CsfqhLRAEOB07m2G9EF8W3G/EP7TNyFLgNX5+XokY6DEoPqYxTKkfXqdgghKgPt7yO4Whj",
+	"xVjnutMxOnjd6Ak9mNxLxt3mSknHuDTSrW4I7tiZKQv5J65oAvAzA6UjRRBo1nvR3wMvObjVn1Gt4wX/",
+	"ZDuovPt422hZIBg0b5o6vft4y+th1sPWn671pM4VXsuzPJldDchqnxedKWbqbezxJ3S8f1wdznHHOopv",
+	"EfIjLpLIwFd4y0Uqg1SJ9lukdARWThPya7DpQoMR7GJ2xSN+j8YGYI6HJ8MxuaALVFBIPuFnw/FwzCO/",
+	"uvoqjoCyP6JBctAMZSMT5l5/tekw+NIF59cVmtj5TFvny/bB7kzL9fqL1k21WP2wvee5Q3q1ySA/NW/t",
+	"2Kc/cB07PmX3rWqlx1BSZtmK1ckWrEn/MCyp432m21hGJLTe34/JnnRW0cOyJNRlPZ/c9fD9bl5FT1vs",
+	"vZtX84jbMs/BrPiE18UJa1w79EfcwdJSe/Po43MyNgojIXm3xB7M/YEuDJ/8Bcu5Nd721O5td3C1bSFD",
+	"vtq4u1L+aFT3brSjp7aNVyPTzpD7Yr5pnrtpnqrnzmjjVdZdf1xrkdH68qASvVgGN4fj4+B3pVEo2ntR",
+	"oAOZNRx4Pq7r10jHZM86L4COyZ7/R77suVDu5vvuhG3y1Klkpil4w5oWS8Scqv3/aetVJFpezat/AwAA",
+	"//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

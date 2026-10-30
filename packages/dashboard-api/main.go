@@ -245,7 +245,7 @@ func run() int {
 	}
 
 	if adminVerifier == nil {
-		l.Warn(ctx, "ADMIN_AUTH_PROVIDER_CONFIG is not configured; /v1/management endpoints will reject requests with 401")
+		l.Warn(ctx, "ADMIN_AUTH_PROVIDER_CONFIG is not configured; admin endpoints accept only the admin token")
 	}
 
 	authenticationFunc := sharedauth.CreateAuthenticationFunc(
@@ -259,7 +259,7 @@ func run() int {
 		nil,
 	)
 
-	s := newHTTPServer(config.Port, l, tel, swagger, authenticationFunc, apiStore, dashboardmiddleware.RefuseDeletedProject(db.Dashboard))
+	s := newHTTPServer(config.Port, l, tel, swagger, authenticationFunc, apiStore)
 	httpInner, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.Addr)
 	if err != nil {
 		l.Error(ctx, "Listening on the HTTP port", zap.Error(err))
@@ -343,7 +343,6 @@ func newHTTPServer(
 	swagger *openapi3.T,
 	authenticationFunc openapi3filter.AuthenticationFunc,
 	store api.ServerInterface,
-	refuseDeletedProject gin.HandlerFunc,
 ) *http.Server {
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -417,7 +416,7 @@ func newHTTPServer(
 
 	// After authentication, so an unauthenticated request never reads the
 	// database.
-	r.Use(dashboardmiddleware.EnforceBlockedTeam(), refuseDeletedProject)
+	r.Use(dashboardmiddleware.EnforceBlockedTeam())
 
 	api.RegisterHandlers(r, store)
 
