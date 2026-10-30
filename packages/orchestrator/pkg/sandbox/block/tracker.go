@@ -373,6 +373,21 @@ func (t *Tracker) Export() (dirty, empty *roaring.Bitmap) {
 	return t.dirty.Clone(), roaring.Or(t.zero, t.removed)
 }
 
+// Counts returns how many pages are in each state. NotPresent stays 0: the
+// tracker records the pages that left it, not the size of the memory.
+func (t *Tracker) Counts() (counts [NumStates]uint64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for state := range numStates {
+		if bm := t.bitmapFor(state); bm != nil {
+			counts[state] = bm.GetCardinality()
+		}
+	}
+
+	return counts
+}
+
 // ExportStates returns clones of the four installed/removed per-state
 // bitmaps, without the empty-set merging Export applies. Installing pages
 // are absent, like NotPresent.

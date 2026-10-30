@@ -384,6 +384,11 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to register orchestrator sandbox resource gauges: %w", err)
 	}
 
+	err = registerGuestMemoryGauge(meter, server.sandboxFactory.Sandboxes.Items)
+	if err != nil {
+		return nil, err
+	}
+
 	if server.hugePages != nil {
 		hugePagesFreeGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorHugePagesFreeGaugeName)
 		if err != nil {

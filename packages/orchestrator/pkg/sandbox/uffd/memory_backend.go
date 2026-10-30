@@ -72,3 +72,11 @@ type MemoryBackend interface {
 type BalloonModeLabeler interface {
 	SetBalloonMode(mode userfaultfd.BalloonMode)
 }
+
+// PageStateReporter is implemented by backends whose page tracker sees the
+// guest's memory faults.
+type PageStateReporter interface {
+	// PageStateBytes returns the guest memory in each page-tracker state, in
+	// bytes, and false until the tracker exists.
+	PageStateBytes() ([block.NumStates]int64, bool)
+}

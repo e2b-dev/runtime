@@ -758,6 +758,18 @@ const (
 	OrchestratorMemoryAllocatedGaugeName GaugeIntType = "orchestrator.sandbox.memory.allocated"
 	OrchestratorDiskAllocatedGaugeName   GaugeIntType = "orchestrator.sandbox.disk.allocated"
 
+	// OrchestratorMemoryGuestGaugeName is the guest memory of running sandboxes
+	// by the page_state their memory handler records: not_present (never
+	// faulted in), installing (a fault being served), clean and zero (read
+	// faults, and pages a checkpoint captured since their last write), dirty
+	// (write faults, and reads written since; under async write-protect the
+	// handler sees no later write, so those stay clean) and removed (released
+	// by the guest). Summed over page_state it is the memory allocated gauge
+	// less the guests no handler serves: cold boots, template builds, and
+	// starts whose Firecracker has not connected yet. It counts the memory
+	// Firecracker registered, not the configured RAM.
+	OrchestratorMemoryGuestGaugeName GaugeIntType = "orchestrator.sandbox.memory.guest"
+
 	// OrchestratorHugePagesFreeGaugeName is the host pool ceiling less used and
 	// reserved pages, before the admission subtracts its pending starts.
 	OrchestratorHugePagesFreeGaugeName GaugeIntType = "orchestrator.hugepages.free"
@@ -1060,6 +1072,7 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	OrchestratorCpuAllocatedGaugeName:    "Total vCPUs allocated to running sandboxes on the orchestrator node.",
 	OrchestratorMemoryAllocatedGaugeName: "Total memory allocated to running sandboxes on the orchestrator node.",
 	OrchestratorDiskAllocatedGaugeName:   "Total disk space allocated to running sandboxes on the orchestrator node.",
+	OrchestratorMemoryGuestGaugeName:     "Guest memory of running sandboxes on the orchestrator node, by page state.",
 	OrchestratorHugePagesFreeGaugeName:   "Hugepages the orchestrator node can still allocate: the pool ceiling less used and reserved pages.",
 	SandboxRamUsedGaugeName:              "Amount of RAM used by the sandbox.",
 	SandboxRamTotalGaugeName:             "Amount of RAM available to the sandbox.",
@@ -1101,6 +1114,7 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	OrchestratorCpuAllocatedGaugeName:    "{count}",
 	OrchestratorMemoryAllocatedGaugeName: "{By}",
 	OrchestratorDiskAllocatedGaugeName:   "{By}",
+	OrchestratorMemoryGuestGaugeName:     "{By}",
 	OrchestratorHugePagesFreeGaugeName:   "{page}",
 	SandboxRamUsedGaugeName:              "{By}",
 	SandboxRamTotalGaugeName:             "{By}",

@@ -2258,6 +2258,20 @@ func (s *Sandbox) MemoryHandlerErr() error {
 	}
 }
 
+// MemoryPageStates returns the guest memory in each page-tracker state, in
+// bytes, and false when no page tracker serves the guest.
+func (s *Sandbox) MemoryPageStates() ([block.NumStates]int64, bool) {
+	if s.Resources == nil {
+		return [block.NumStates]int64{}, false
+	}
+	reporter, ok := s.memory.(uffd.PageStateReporter)
+	if !ok {
+		return [block.NumStates]int64{}, false
+	}
+
+	return reporter.PageStateBytes()
+}
+
 func (s *Sandbox) Close(ctx context.Context) error {
 	// Stop admission, then join the exact live callback before any teardown.
 	// No admission or update lock is held across resource cleanup.
