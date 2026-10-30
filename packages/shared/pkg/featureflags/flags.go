@@ -675,6 +675,18 @@ var (
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)
+
+	// ClickhouseBatcherTerminalPushTimeoutMs bounds how long a terminal lifecycle
+	// event (sandbox killed/paused/checkpointed) blocks waiting for room in the
+	// batcher queue before it is dropped. 0 or negative keeps the legacy
+	// non-blocking behavior (drop immediately when the queue is full). Only
+	// terminal events block; high-volume non-terminal events are unaffected.
+	ClickhouseBatcherTerminalPushTimeoutMs = NewIntFlag("clickhouse-batcher-terminal-push-timeout-ms", 5000)
+	// ClickhouseBatcherFlushMaxRetries is the number of extra attempts to flush a
+	// batch to ClickHouse after the first attempt fails, before the batch is
+	// dropped. 0 keeps the legacy behavior (one attempt, drop the batch on error).
+	ClickhouseBatcherFlushMaxRetries = NewIntFlag("clickhouse-batcher-flush-max-retries", 3)
+
 	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
 	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
 	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)

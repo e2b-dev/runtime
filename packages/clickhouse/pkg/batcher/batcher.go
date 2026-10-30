@@ -206,6 +206,37 @@ func (b *Batcher[T]) Push(item T) error {
 	}
 }
 
+// PushWithContext enqueues an item, blocking until the queue has room or ctx is
+// done. Unlike Push (which drops immediately when the queue is full), it gives
+// bounded back-pressure so a caller can avoid silently losing an item it cares
+// about. On ctx cancellation/timeout the item is dropped and ErrBatcherQueueFull
+// is returned, matching Push's drop accounting.
+//
+// The RLock is held for the duration of the blocking send. Stop takes the write
+// lock before closing the channel, so it cannot close ch while a send is in
+// flight here; it instead waits (bounded by ctx) for this to return. That both
+// prevents a send-on-closed panic and lets in-flight terminal events settle
+// during a graceful stop.
+func (b *Batcher[T]) PushWithContext(ctx context.Context, item T) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if !b.started {
+		return ErrBatcherNotStarted
+	}
+
+	select {
+	case b.ch <- item:
+		mQueueLen.Record(ctx, int64(len(b.ch)), b.attrs)
+
+		return nil
+	case <-ctx.Done():
+		mItemsDropped.Add(ctx, 1, b.attrs)
+
+		return ErrBatcherQueueFull
+	}
+}
+
 // QueueLen returns the number of items pending in the queue.
 func (b *Batcher[T]) QueueLen() int {
 	return len(b.ch)
@@ -219,6 +250,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 
 	// Runtime limits belong to this goroutine; public fields remain startup options.
 	maxBatchSize, maxDelay := b.limits(ctx, b.MaxBatchSize, b.MaxDelay)
+	maxRetries := b.flushRetries(ctx)
 	recordConfig := func() {
 		mMaxBatchSize.Record(ctx, int64(maxBatchSize), b.attrs)
 		mMaxDelay.Record(ctx, maxDelay.Milliseconds(), b.attrs)
@@ -242,7 +274,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		mFlushWaitDuration.Record(ctx, time.Since(batchStartTime).Milliseconds(), b.attrs)
 		start := time.Now()
 		result := "success"
-		if err := b.Func(ctx, batch); err != nil {
+		if err := b.flushWithRetry(ctx, batch, maxRetries); err != nil {
 			result = "error"
 			b.ErrorHandler(err)
 		}
@@ -278,6 +310,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		case <-refreshC:
 			previousDelay := maxDelay
 			maxBatchSize, maxDelay = b.limits(ctx, maxBatchSize, maxDelay)
+			maxRetries = b.flushRetries(ctx)
 			if maxDelay != previousDelay {
 				remaining := maxDelay
 				if len(batch) > 0 {
@@ -311,4 +344,54 @@ func (b *Batcher[T]) limits(ctx context.Context, size int, delay time.Duration) 
 	}
 
 	return size, delay
+}
+
+// flushRetries is the number of extra flush attempts after the first failure.
+// Static batchers (no feature-flag client) do not retry, preserving legacy
+// drop-on-first-error behavior. A negative flag value is treated as zero.
+func (b *Batcher[T]) flushRetries(ctx context.Context) int {
+	if b.flags == nil {
+		return 0
+	}
+	if n := b.flags.IntFlag(ctx, featureflags.ClickhouseBatcherFlushMaxRetries, featureflags.BatcherContext(b.name)); n > 0 {
+		return n
+	}
+
+	return 0
+}
+
+// flushWithRetry calls Func, retrying up to maxRetries extra times with a short
+// capped exponential backoff when it fails, so a transient ClickHouse blip does
+// not discard an entire batch. It returns the last error if every attempt
+// fails (the caller then drops the batch, as before). Each retry increments
+// batcher.flushes{result="retry"} so repeated failures are visible before loss.
+// Retrying here blocks the batch loop, which is the intended back-pressure; the
+// total added delay is bounded (maxRetries * capped backoff).
+func (b *Batcher[T]) flushWithRetry(ctx context.Context, batch []T, maxRetries int) error {
+	const (
+		baseBackoff = 50 * time.Millisecond
+		maxBackoff  = 2 * time.Second
+	)
+
+	var err error
+	for attempt := 0; ; attempt++ {
+		if err = b.Func(ctx, batch); err == nil {
+			return nil
+		}
+		if attempt >= maxRetries {
+			return err
+		}
+
+		mFlushes.Add(ctx, 1, b.attrs, metric.WithAttributes(attribute.String("result", "retry")))
+
+		backoff := baseBackoff << attempt
+		if backoff <= 0 || backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return err
+		}
+	}
 }
