@@ -825,7 +825,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	closers = append(closers, closer{"sandbox events deliveries (all)", eventsService.Close})
 
 	// sandbox observer
-	sandboxObserver, err := metrics.NewSandboxObserver(ctx, nodeID, serviceName, commitSHA, version, serviceInstanceID, sandboxes)
+	sandboxObserver, err := metrics.NewSandboxObserver(ctx, nodeID, serviceName, commitSHA, version, serviceInstanceID, sandboxes, featureFlags)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create sandbox observer", zap.Error(err))
 	}
