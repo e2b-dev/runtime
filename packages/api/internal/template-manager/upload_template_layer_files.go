@@ -18,7 +18,7 @@ func (tm *TemplateManager) InitLayerFileUpload(ctx context.Context, clusterID uu
 
 	resp, err := client.Template.InitLayerFileUpload(
 		ctx, &templatemanager.InitLayerFileUploadRequest{
-			CacheScope: new(teamID.String()),
+			CacheScope: new(cacheScopeFor(teamID)),
 			TemplateID: templateID,
 			Hash:       hash,
 		},

@@ -157,7 +157,7 @@ func (tm *TemplateManager) CreateTemplate(
 	_, err = client.Template.TemplateCreate(
 		ctx, &templatemanagergrpc.TemplateCreateRequest{
 			Template:   template,
-			CacheScope: new(teamID.String()),
+			CacheScope: new(cacheScopeFor(teamID)),
 			Version:    &version,
 		},
 	)
