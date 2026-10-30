@@ -336,7 +336,7 @@ func (b *mintedInitBody) mintedAt() (time.Time, bool) {
 func (r *envdInitRequest) newHeldHTTPRequest(ctx context.Context) (*http.Request, *mintedInitBody, error) {
 	body := newMintedInitBody(r.body)
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, body)
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, r.sandbox), http.MethodPost, r.address, body)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -96,7 +97,7 @@ func uploadFile(ctx context.Context, proxyHost, sandboxID, user, sourcePath, tar
 	uploadURL := fmt.Sprintf("%s/files?%s", proxyHost, params.Encode())
 
 	// Create HTTP request with streaming body
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, pr)
+	req, err := http.NewRequestWithContext(sandbox.WithEnvdSandbox(ctx, sbxlogger.SandboxMetadata{SandboxID: sandboxID}), http.MethodPost, uploadURL, pr)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

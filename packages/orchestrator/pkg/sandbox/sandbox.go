@@ -63,6 +63,7 @@ var (
 	envdInitSlowDials             = utils.Must(telemetry.GetCounter(meter, telemetry.EnvdInitSlowDials))
 	harvestThaw                   = utils.Must(telemetry.GetCounter(meter, telemetry.PauseResumePrefetchHarvestThaw))
 	envdReinitCut                 = utils.Must(telemetry.GetCounter(meter, telemetry.EnvdReinitCut))
+	envdRedirectsRefused          = utils.Must(telemetry.GetCounter(meter, telemetry.EnvdRedirectsRefused))
 	envdCpuReports                = utils.Must(telemetry.GetCounter(meter, telemetry.EnvdCpuReport))
 	waitForEnvdDurationHistogram  = utils.Must(telemetry.GetHistogram(meter, telemetry.WaitForEnvdDurationHistogramName))
 	envdCollapseDurationHistogram = utils.Must(telemetry.GetHistogram(meter, telemetry.EnvdCollapseDurationHistogramName))

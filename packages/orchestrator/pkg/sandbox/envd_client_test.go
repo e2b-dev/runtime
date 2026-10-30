@@ -16,14 +16,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process/processconnect"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 // redirectPair is a stand-in envd that answers every request with a redirect to
@@ -97,10 +102,11 @@ func TestEnvdHTTPClientsDoNotFollowRedirects(t *testing.T) {
 						t.Parallel()
 
 						p := newRedirectPair(t, code, relative)
-						ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+						ctx, cancel := context.WithTimeout(sandboxContext(t), 5*time.Second)
 						defer cancel()
 						req, err := http.NewRequestWithContext(ctx, method, p.envd.URL+"/health", strings.NewReader("{}"))
 						require.NoError(t, err)
+						req.Header.Set("X-Access-Token", "secret-token")
 
 						resp, err := client(t, p.envd.URL).Do(req)
 						require.NoError(t, err)
@@ -109,6 +115,18 @@ func TestEnvdHTTPClientsDoNotFollowRedirects(t *testing.T) {
 						assert.Equal(t, code, resp.StatusCode, "the redirect is returned to the caller")
 						assert.Equal(t, int64(1), p.envdHits.Load(), "no follow-up request to envd")
 						assert.Zero(t, p.otherHits.Load(), "the redirect target is never reached")
+
+						redirectHost := p.other.Listener.Addr().String()
+						if relative {
+							redirectHost = p.envd.Listener.Addr().String()
+						}
+						warning := envdRedirectWarning(t)
+						assert.Equal(t, int64(code), warning["status_code"])
+						assert.Equal(t, method, warning["method"])
+						assert.Equal(t, "/health", warning["path"])
+						assert.Equal(t, p.envd.Listener.Addr().String(), warning["envd_host"])
+						assert.Equal(t, redirectHost, warning["redirect_host"])
+						assert.NotContains(t, fmt.Sprint(warning), "secret-token")
 					})
 				}
 			}
@@ -172,13 +190,95 @@ func TestEnvdProcessClientDoesNotFollowRedirects(t *testing.T) {
 			t.Parallel()
 
 			p := newRedirectPair(t, code, false)
-			err := startAndReceive(t.Context(), NewEnvdProcessClient(p.envd.URL, 5*time.Second))
+			err := startAndReceive(sandboxContext(t), NewEnvdProcessClient(p.envd.URL, 5*time.Second))
 
 			require.Error(t, err)
 			assert.Equal(t, int64(1), p.envdHits.Load())
 			assert.Zero(t, p.otherHits.Load(), "the redirect target is never reached")
+
+			warning := envdRedirectWarning(t)
+			assert.Equal(t, int64(code), warning["status_code"])
+			assert.Equal(t, p.envd.Listener.Addr().String(), warning["envd_host"])
+			assert.Equal(t, p.other.Listener.Addr().String(), warning["redirect_host"])
 		})
 	}
+}
+
+func TestEnvdRefusedRedirectIsCounted(t *testing.T) { //nolint:paralleltest // reads a delta of a counter with no per-test key
+	read := func() map[int64]int64 {
+		var rm metricdata.ResourceMetrics
+		require.NoError(t, testMetricReader.Collect(t.Context(), &rm))
+		out := map[int64]int64{}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != string(telemetry.EnvdRedirectsRefused) {
+					continue
+				}
+				for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					code, _ := dp.Attributes.Value("status_code")
+					out[code.AsInt64()] += dp.Value
+				}
+			}
+		}
+
+		return out
+	}
+
+	p := newRedirectPair(t, http.StatusTemporaryRedirect, false)
+	before := read()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.envd.URL+"/init", nil)
+	require.NoError(t, err)
+	resp, err := NewEnvdHTTPClient(5 * time.Second).Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	after := read()
+
+	assert.Equal(t, before[http.StatusTemporaryRedirect]+1, after[http.StatusTemporaryRedirect])
+}
+
+// sandboxContext returns a context naming a sandbox unique to this test, so
+// its warnings can be told apart; listener ports repeat across tests.
+func sandboxContext(t *testing.T) context.Context {
+	t.Helper()
+
+	return WithEnvdSandbox(t.Context(), sbxlogger.SandboxMetadata{
+		SandboxID:  t.Name(),
+		TeamID:     "team-" + t.Name(),
+		TemplateID: "template-" + t.Name(),
+	})
+}
+
+// envdRedirectWarning returns the fields of the one refused-redirect warning
+// logged for this test's sandbox, after checking its identity fields.
+func envdRedirectWarning(t *testing.T) map[string]any {
+	t.Helper()
+
+	var found []map[string]any
+	for _, e := range testLogObserver.FilterMessage("envd answered with a redirect, refused it").All() {
+		fields := e.ContextMap()
+		if fields["sandbox.id"] == t.Name() {
+			assert.Equal(t, zapcore.WarnLevel, e.Level)
+			found = append(found, fields)
+		}
+	}
+	require.Len(t, found, 1, "one warning per refused redirect")
+	assert.Equal(t, "team-"+t.Name(), found[0]["team.id"])
+	assert.Equal(t, "template-"+t.Name(), found[0]["template.id"])
+
+	return found[0]
+}
+
+// A redirect host cut to its cap never ends in half a rune.
+func TestTruncateRedirectHost(t *testing.T) {
+	t.Parallel()
+
+	short := "envd.example"
+	assert.Equal(t, short, truncateRedirectHost(short))
+
+	host := strings.Repeat("a", envdRedirectHostMaxLen-1) + "é"
+	got := truncateRedirectHost(host)
+	assert.True(t, utf8.ValidString(got), "%q", got[len(got)-4:])
+	assert.Equal(t, strings.Repeat("a", envdRedirectHostMaxLen-1), got)
 }
 
 func startAndReceive(ctx context.Context, c processconnect.ProcessClient) error {

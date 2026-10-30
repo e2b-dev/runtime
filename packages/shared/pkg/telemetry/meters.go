@@ -70,6 +70,8 @@ const (
 	// Held post-checkpoint envd re-inits stopped before they returned, by what stopped
 	// them: a following pause, or the sandbox's Firecracker exiting.
 	EnvdReinitCut CounterType = "orchestrator.sandbox.envd.reinit.cut"
+	// Redirects envd answered the host with, which the host refused, by status code.
+	EnvdRedirectsRefused CounterType = "orchestrator.sandbox.envd.redirects_refused"
 	// EnvdCpuReport counts /init responses for VMs with spare vCPUs by the guest's
 	// reported capacity outcome and by why the /init was sent (init: first start,
 	// reinit after a checkpoint, or repeat). The report is diagnostic, not trusted for CPU limits.
@@ -818,6 +820,7 @@ var counterDesc = map[CounterType]string{
 	EnvdInitCalls:                                "Number of envd initialization calls",
 	EnvdReinitCut:                                "Post-checkpoint envd re-inits stopped before they returned, by what first stopped them, recorded when it did and counted once the re-init returns: pause (a following pause stopped a held one before its pre-pause freeze: cancelled it whatever it had written, or, before its gate chose the held loop, kept it from writing), kill (the sandbox's Firecracker process exited during a held one) or replace (a fresh re-init took its place: cancelled a held one in flight, or kept one from writing on either loop before its gate chose one)",
 	EnvdInitSlowDials:                            "Held envd init dials that took over 500 ms on a first customer start, by how that attempt ended: connect, write, response or success",
+	EnvdRedirectsRefused:                         "Redirects envd answered a host request with, refused rather than followed, by status_code; envd never redirects, so any is unexpected",
 	EnvdInitUnobservedHandlers:                   "Envd /init handlers that thawed the workload inline and completed after their client had gone, as envd counts them on the served /init of a first customer start that succeeded (X-Envd-Init-Unobserved)",
 	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
@@ -910,6 +913,7 @@ var counterUnits = map[CounterType]string{
 	EnvdInitUnobservedHandlers:                   "{handler}",
 	EnvdInitSlowDials:                            "{dial}",
 	EnvdReinitCut:                                "{reinit}",
+	EnvdRedirectsRefused:                         "{redirect}",
 	EnvdCpuReport:                                "{response}",
 	EnvdCollapseChunks:                           "{chunk}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",

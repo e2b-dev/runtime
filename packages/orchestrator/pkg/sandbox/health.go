@@ -17,7 +17,7 @@ func (c *Checks) getHealth(ctx context.Context, timeout time.Duration) (bool, er
 
 	address := c.sandbox.envdServerURL() + "/health"
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, c.sandbox), http.MethodGet, address, nil)
 	if err != nil {
 		return false, err
 	}

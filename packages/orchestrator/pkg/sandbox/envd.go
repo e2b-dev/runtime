@@ -31,6 +31,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -254,11 +255,13 @@ type envdInitRequest struct {
 	address     string
 	body        envd.PostInitJSONBody
 	accessToken *string
+	sandbox     sbxlogger.SandboxMetadata
 }
 
 func (s *Sandbox) newEnvdInitRequest(address string) *envdInitRequest {
 	return &envdInitRequest{
 		address: address,
+		sandbox: s.LoggerMetadata(),
 		body: envd.PostInitJSONBody{
 			LifecycleID:    s.LifecycleID,
 			EnvVars:        s.Config.Envd.Vars,
@@ -284,7 +287,7 @@ func (r *envdInitRequest) marshal(ts time.Time) ([]byte, error) {
 
 // newHTTPRequest builds the POST carrying body on ctx.
 func (r *envdInitRequest) newHTTPRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, r.sandbox), http.MethodPost, r.address, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +489,7 @@ func (s *Sandbox) CallEnvdUpgrade(ctx context.Context, localSrcPath, guestBinPat
 	}
 	defer f.Close()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.envdServerURL()+"/upgrade", f)
+	req, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, s), http.MethodPost, s.envdServerURL()+"/upgrade", f)
 	if err != nil {
 		return false, fmt.Errorf("build upgrade request: %w", err)
 	}
@@ -759,7 +762,7 @@ func (s *Sandbox) doEnvdPost(ctx context.Context, path string, query ...string) 
 	if len(query) > 0 && query[0] != "" {
 		address += "?" + query[0]
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, nil)
+	req, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, s), http.MethodPost, address, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build %s request: %w", path, err)
 	}
