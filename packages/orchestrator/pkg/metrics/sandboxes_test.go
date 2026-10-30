@@ -110,6 +110,9 @@ func newTestSandboxObserver(t *testing.T, meter metric.Meter, sandboxes *sandbox
 		{&so.memoryCache, telemetry.SandboxRamCacheGaugeName},
 		{&so.diskTotal, telemetry.SandboxDiskTotalGaugeName},
 		{&so.diskUsed, telemetry.SandboxDiskUsedGaugeName},
+		{&so.memWorkingSet, telemetry.SandboxMemWorkingSetGaugeName},
+		{&so.memReclaimable, telemetry.SandboxMemReclaimableGaugeName},
+		{&so.memShareableBase, telemetry.SandboxMemShareableBaseGaugeName},
 	} {
 		gauge, err := telemetry.GetGaugeInt(meter, g.name)
 		require.NoError(t, err)

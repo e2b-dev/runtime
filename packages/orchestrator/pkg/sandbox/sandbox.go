@@ -2197,6 +2197,37 @@ func (s *Sandbox) FirecrackerExit() *fc.ExitInfo {
 
 // MemoryHandlerErr reports why the memory handler exited, and nil if it has
 // not exited or exited cleanly. Only meaningful once the execution has ended.
+// MemoryWorkingSetBytes is the host memory faulted into the hugepage pool for
+// this sandbox since resume — its pool footprint and an upper bound on current
+// residency (UFFD serves are cumulative and hugetlbfs pages are not returned
+// without explicit reclaim). 0 when no memory backend is attached.
+func (s *Sandbox) MemoryWorkingSetBytes() int64 {
+	if s.Resources == nil || s.memory == nil {
+		return 0
+	}
+
+	return s.memory.ServeStats().Bytes
+}
+
+// MemorySourceBytes is the base-image content this sandbox faulted in from the
+// shared template source (SourcePages in bytes) — the portion of its pool
+// footprint that a same-template page-sharing scheme could collapse to one
+// shared physical copy. 0 when no memory backend is attached.
+func (s *Sandbox) MemorySourceBytes() int64 {
+	if s.Resources == nil || s.memory == nil {
+		return 0
+	}
+
+	return s.memory.ServeStats().SourceBytes
+}
+
+// FreePageReportingActive reports whether this sandbox's balloon returns freed
+// guest pages to the host on its own, so the pool is largely self-reclaiming.
+// Read from the cached balloon mode; no device round-trip.
+func (s *Sandbox) FreePageReportingActive() bool {
+	return s.BalloonModeValue() == userfaultfd.BalloonModeReporting
+}
+
 func (s *Sandbox) MemoryHandlerErr() error {
 	if s.Resources == nil || s.memory == nil {
 		return nil
