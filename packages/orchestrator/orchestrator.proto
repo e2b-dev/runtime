@@ -123,6 +123,17 @@ message SandboxNetworkEgressConfig {
   repeated string allowed_domains = 3;
   map<string, SandboxNetworkDomainRules> rules = 4;
 
+  // Opt-in default-deny egress posture. When false (default) egress is
+  // default-allow and only denied_cidrs/denied_domains subtract from it, which
+  // is the historical behaviour. When true the sandbox is default-deny: only
+  // allowed_cidrs/allowed_domains (and the runtime's own control-plane path,
+  // which is redirected before the egress proxy and never judged here) may
+  // leave; everything else — TCP, non-DNS UDP and other non-TCP — is dropped.
+  bool default_deny = 9;
+  // Domains blocked even under default-allow; takes effect before the
+  // default-allow fallthrough and is subtractive like denied_cidrs.
+  repeated string denied_domains = 10;
+
   // BYOP SOCKS5 egress proxy.
   string egress_proxy_address = 5;
   string egress_proxy_username = 6;
