@@ -423,6 +423,19 @@ const (
 	// ClientProxyResumeParkingRejectedCounterName counts callers shed with a
 	// 503 because the parking lot was full when their flight first retried.
 	ClientProxyResumeParkingRejectedCounterName CounterType = "client_proxy.resume.parking.rejected"
+
+	// ClientProxyRequestOutcomeCounterName counts proxied requests by how they
+	// ended (outcome): ok | routing_failed | upstream_unreachable |
+	// client_closed | sandbox_not_found | too_many_connections. routing_failed
+	// vs upstream_unreachable separates a 500 (no destination) from a 502
+	// (destination resolved, node unreachable) without scraping logs; a spike
+	// in upstream_unreachable is the signal for stale routing records pointing
+	// at a drained node.
+	ClientProxyRequestOutcomeCounterName CounterType = "client_proxy.request.outcome"
+	// OrchestratorProxyRequestOutcomeCounterName is the orchestrator sandbox
+	// proxy's equivalent of ClientProxyRequestOutcomeCounterName, same outcome
+	// values; upstream_unreachable here is a closed sandbox port / unreachable guest.
+	OrchestratorProxyRequestOutcomeCounterName CounterType = "orchestrator.proxy.request.outcome"
 )
 
 const (
@@ -887,6 +900,8 @@ var counterDesc = map[CounterType]string{
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
+	ClientProxyRequestOutcomeCounterName:        "Client proxy requests by terminal outcome (ok | routing_failed | upstream_unreachable | client_closed | sandbox_not_found | too_many_connections).",
+	OrchestratorProxyRequestOutcomeCounterName:  "Orchestrator sandbox proxy requests by terminal outcome (ok | routing_failed | upstream_unreachable | client_closed | sandbox_not_found | too_many_connections).",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "Hugepage sandboxes placed under a hugepage limit on a node the limit could not bound, by node and reason (no_capacity | no_page_size).",
 }
@@ -948,6 +963,8 @@ var counterUnits = map[CounterType]string{
 	TCPFirewallErrorsTotal:                       "{error}",
 	ClientProxyResumeFlightCounterName:           "{request}",
 	ClientProxyResumeParkingRejectedCounterName:  "{request}",
+	ClientProxyRequestOutcomeCounterName:         "{request}",
+	OrchestratorProxyRequestOutcomeCounterName:   "{request}",
 	TCPFirewallDecisionsTotal:                    "{decision}",
 
 	OrchestratorTemplateCacheAncestorResolutionsCounterName: "{ancestor}",
