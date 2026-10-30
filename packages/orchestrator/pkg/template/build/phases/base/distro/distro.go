@@ -102,6 +102,26 @@ var Profiles = []Profile{
 		CARefresh: `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
 	},
 	{
+		// TencentOS Server, OpenCloudOS and OpenCloudOS Stream
+		Key:  "tencentos",
+		Init: InitSystemd,
+		IDs:  []string{"tencentos", "opencloudos"},
+		Packages: []string{
+			"systemd", "shadow-utils", "passwd", "openssh-server", "sudo", "chrony",
+			"socat", "curl", "ca-certificates", "fuse3", "iptables", "git",
+			"nfs-utils", "less", "nftables", "iputils", "jq", "bash", "tar",
+			"iproute", "findutils",
+		},
+		PkgQueryBody: `rpm -q "$1" >/dev/null 2>&1`,
+		PkgInstall:   `dnf -y install --allowerasing "$@"`,
+		InitBinary:   "/usr/lib/systemd/systemd",
+		TimeSyncUnit: "chronyd",
+		SSHUnit:      "sshd",
+		AdminGroup:   "wheel",
+		CABundle:     "/etc/ssl/certs/ca-certificates.crt",
+		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
+	},
+	{
 		Key:  "arch",
 		Init: InitSystemd,
 		IDs:  []string{"arch", "archarm"},
