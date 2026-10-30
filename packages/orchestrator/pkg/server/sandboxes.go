@@ -436,6 +436,13 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 			return nil, status.Errorf(codes.FailedPrecondition, "sandbox files for '%s' not found", req.GetSandbox().GetSandboxId())
 		}
+		if errors.Is(err, storage.ErrObjectArchived) {
+			// The template's objects were lifecycle-transitioned to an archived
+			// storage class and cannot be read directly; the template must be rebuilt.
+			telemetry.ReportError(ctx, "sandbox files archived", err, telemetry.WithSandboxID(req.GetSandbox().GetSandboxId()))
+
+			return nil, status.Errorf(codes.FailedPrecondition, "sandbox files for '%s' are archived and not directly accessible, please rebuild the template", req.GetSandbox().GetSandboxId())
+		}
 		if errors.Is(err, sandbox.ErrVcpuExceedsSnapshot) {
 			logger.L().Warn(ctx, "resume refused: vcpu exceeds snapshot", zap.Error(err),
 				zap.Int64("vcpu", vcpu),

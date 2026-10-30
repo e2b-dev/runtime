@@ -38,6 +38,9 @@ const (
 	OutcomeErrIO        = "err_io"
 	OutcomeErrTimeout   = "err_timeout"
 	OutcomeTransitioned = "transitioned"
+	// OutcomeArchived: the object exists but is in an archived storage class
+	// that does not allow direct reads.
+	OutcomeArchived = "archived"
 	// OutcomeContended is a writeback skipped because another goroutine held the
 	// NFS chunk lock — normal cache dedup, nothing written.
 	OutcomeContended = "contended"
@@ -82,6 +85,8 @@ func Outcome(err error) string {
 		return OutcomeOK
 	case errors.Is(err, ErrObjectNotExist), errors.Is(err, fs.ErrNotExist):
 		return OutcomeNotFound
+	case errors.Is(err, ErrObjectArchived):
+		return OutcomeArchived
 	case errors.Is(err, context.Canceled):
 		return OutcomeErrCanceled
 	case errors.Is(err, context.DeadlineExceeded):

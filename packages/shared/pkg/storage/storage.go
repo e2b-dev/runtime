@@ -21,6 +21,11 @@ var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/shared/pkg/storage")
 
 var ErrObjectNotExist = errors.New("object does not exist")
 
+// ErrObjectArchived means the object exists but is in an archived storage class
+// (e.g. GLACIER, DEEP_ARCHIVE) that does not allow direct reads. It must be
+// restored or the template rebuilt before the object can be used.
+var ErrObjectArchived = errors.New("object is archived and not directly accessible")
+
 // ErrSignedUploadURLUnsupported means the provider cannot sign an upload URL usable by an
 // external client. Callers that only need the URL on a cache miss may tolerate it.
 var ErrSignedUploadURLUnsupported = errors.New("signed upload URLs are not supported by this storage provider")
