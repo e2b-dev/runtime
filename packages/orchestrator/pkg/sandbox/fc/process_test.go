@@ -4,6 +4,8 @@ package fc
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +40,10 @@ func TestValidateFirecrackerBinaryReportsBothMissingPaths(t *testing.T) {
 	require.ErrorContains(t, err, legacyPath)
 }
 
+// TestConfigureRejectsProcessExitBeforeSocketReadiness: a process that exits
+// before its API socket accepts fails the start with that cause, whether the
+// start context or the guard sees the exit first; the guard alone is
+// TestRefuseReapedProcess's.
 func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
 	t.Parallel()
 
@@ -64,11 +70,31 @@ func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
 	}()
 
 	<-p.Exit.Done()
-	require.NoError(t, os.WriteFile(socketPath, nil, 0o600))
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
+	require.NoError(t, err)
+	defer l.Close()
 
-	err := <-returned
+	err = <-returned
 	require.ErrorIs(t, err, errFirecrackerExitedBeforeSocketReadiness)
 	require.NoError(t, p.Exit.Error(), "startup refusal must not relabel a clean process exit")
+}
+
+// TestRefuseReapedProcess: a socket that accepts is not readiness for a
+// process already reaped, whichever way it exited.
+func TestRefuseReapedProcess(t *testing.T) {
+	t.Parallel()
+
+	running := utils.NewErrorOnce()
+	require.NoError(t, refuseReapedProcess(running), "a running process is ready")
+
+	clean := utils.NewErrorOnce()
+	require.NoError(t, clean.SetSuccess())
+	require.ErrorIs(t, refuseReapedProcess(clean), errFirecrackerExitedBeforeSocketReadiness)
+
+	crashed := utils.NewErrorOnce()
+	boom := errors.New("boom")
+	require.NoError(t, crashed.SetError(boom))
+	require.ErrorIs(t, refuseReapedProcess(crashed), boom)
 }
 
 func TestProcessStopIsIdempotent(t *testing.T) {

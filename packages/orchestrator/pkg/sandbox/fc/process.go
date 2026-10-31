@@ -286,6 +286,21 @@ func NewProcess(
 	return p, nil
 }
 
+// refuseReapedProcess refuses readiness for a process the wait owner already
+// reaped: its API socket can accept a connection just before it exits.
+func refuseReapedProcess(exit *utils.ErrorOnce) error {
+	select {
+	case <-exit.Done():
+		if err := exit.Error(); err != nil {
+			return err
+		}
+
+		return errFirecrackerExitedBeforeSocketReadiness
+	default:
+		return nil
+	}
+}
+
 func (p *Process) configure(
 	ctx context.Context,
 	sbxMetadata sbxlogger.LoggerMetadata,
@@ -352,16 +367,7 @@ func (p *Process) configure(
 	// Wait for the FC process to start so we can use FC API
 	err = socket.WaitAccepting(startCtx, p.firecrackerSocketPath)
 	if err == nil {
-		// The socket file and process exit can become observable together. Do
-		// not publish readiness for a process the wait owner already reaped.
-		select {
-		case <-p.Exit.Done():
-			err = p.Exit.Error()
-			if err == nil {
-				err = errFirecrackerExitedBeforeSocketReadiness
-			}
-		default:
-		}
+		err = refuseReapedProcess(p.Exit)
 	}
 	if err != nil {
 		errMsg := fmt.Errorf("error waiting for fc socket: %w", err)
