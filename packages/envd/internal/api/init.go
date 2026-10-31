@@ -369,11 +369,13 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	go func() { //nolint:contextcheck // TODO: fix this later
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
-	}()
+	if !a.isNotFC {
+		go func() { //nolint:contextcheck // TODO: fix this later
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
+		}()
+	}
 
 	// After SetData, so this reports what is actually in effect rather than what was
 	// requested. Set before WriteHeader.
