@@ -2133,7 +2133,10 @@ func (f *Factory) ResumeSandbox(
 		ctx, span := tracer.Start(execCtx, "sandbox-exit-wait")
 		defer span.End()
 
-		// Wait for either uffd or fc process to exit
+		// Wait for either uffd or fc process to exit. A userfaultfd serve-loop
+		// failure completes fcUffd.Exit(), so on this resume path a dead UFFD
+		// handler is turned into a sandbox stop here rather than leaving a VM
+		// with no page-fault handler.
 		select {
 		case <-fcUffd.Exit().Done():
 		case <-fcHandle.Exit.Done():

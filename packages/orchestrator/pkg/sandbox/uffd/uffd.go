@@ -132,7 +132,6 @@ func (u *Uffd) Start(ctx context.Context) error {
 		ctx, span := tracer.Start(ctx, "serve uffd")
 		defer span.End()
 
-		// TODO: If the handle function fails, we should kill the sandbox
 		handleErr := u.handle(ctx, fdExit)
 
 		// If handle failed before setting the handler value, set an error to unblock
@@ -146,6 +145,14 @@ func (u *Uffd) Start(ctx context.Context) error {
 		u.handshakeMu.Unlock()
 		if stopping && (errors.Is(handleErr, net.ErrClosed) || errors.Is(handleErr, context.Canceled)) {
 			exitErr = nil
+		}
+
+		// A non-nil exitErr here is a genuine userfaultfd serve failure (not an
+		// expected close during stop). Surface it: without this the failure was
+		// invisible in production, and it propagates through u.exit below, which
+		// the resume-path lifecycle watcher turns into a sandbox stop.
+		if exitErr != nil {
+			u.logger.Error(ctx, "uffd serve loop failed", zap.String("socket_path", u.socketPath), zap.Error(exitErr))
 		}
 
 		closeErr := u.lis.Close()
