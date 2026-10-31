@@ -61,7 +61,6 @@ const (
 	maxUploadLimit     = 1 << 24 // 16 MiB
 
 	maxReadHeaderTimeout = 5 * time.Second
-	maxReadTimeout       = 10 * time.Second
 	// maxWriteTimeout must exceed cfg.RequestTimeout so the request context
 	// cancels before the server's write deadline kills the connection.
 	maxWriteTimeout = 75 * time.Second
@@ -257,7 +256,6 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 		// Configure request timeouts.
 		ReadHeaderTimeout: maxReadHeaderTimeout,
-		ReadTimeout:       maxReadTimeout,
 		WriteTimeout:      maxWriteTimeout,
 
 		// Configure timeouts to be greater than the proxy timeouts.
