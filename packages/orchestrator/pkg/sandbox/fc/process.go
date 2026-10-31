@@ -350,7 +350,7 @@ func (p *Process) configure(
 	}()
 
 	// Wait for the FC process to start so we can use FC API
-	err = socket.Wait(startCtx, p.firecrackerSocketPath)
+	err = socket.WaitAccepting(startCtx, p.firecrackerSocketPath)
 	if err == nil {
 		// The socket file and process exit can become observable together. Do
 		// not publish readiness for a process the wait owner already reaped.
