@@ -129,6 +129,23 @@ func (lb *LayerExecutor) BuildLayer(
 		}
 	}
 
+	// A cold-booted guest answers through envd while systemd is still starting
+	// units, and a snapshot taken then resumes with PID 1 unresponsive. Settling
+	// before the action also lets the action's disk sync capture boot's writes.
+	if _, coldBooted := cmd.SandboxCreator.(*CreateSandbox); coldBooted {
+		state, settleErr := sandboxtools.WaitForInitToSettle(ctx, lb.proxy, sbx.Runtime.SandboxID)
+		if settleErr != nil || sandboxtools.StillBooting(state) {
+			lb.logger.Warn(
+				ctx,
+				"guest init did not settle before the build step",
+				logger.WithSandboxID(sbx.Runtime.SandboxID),
+				logger.WithExecutionID(sbx.Runtime.ExecutionID),
+				zap.String("systemd_state", state),
+				zap.Error(settleErr),
+			)
+		}
+	}
+
 	// Execute the action using the executor
 	meta, err := cmd.ActionExecutor.Execute(ctx, sbx, cmd.CurrentLayer)
 	if err != nil {
