@@ -327,6 +327,19 @@ func (o *Orchestrator) CreateSandbox(
 				ClientMsg: fmt.Sprintf("Sandbox '%s' was deleted", sandboxID),
 				Err:       fmt.Errorf("resume of '%s' refused: %w", sandboxID, err),
 			}
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			// The caller left (client disconnect or its deadline) while the
+			// reservation was being taken. That is the client leaving, not a
+			// server failure: don't log it at ERROR. The access-log/metrics
+			// middleware already maps the request to 499/408 by the cancel
+			// cause, so this never reaches the client as a 500.
+			logger.L().Warn(ctx, "sandbox reservation cut by the caller", logger.WithSandboxID(sandboxID), zap.Error(err))
+
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusInternalServerError,
+				ClientMsg: fmt.Sprintf("Failed to create sandbox: %s", err),
+				Err:       err,
+			}
 		default:
 			logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(err))
 
