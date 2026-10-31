@@ -56,6 +56,11 @@ runs:
         # Enable unprivileged uffd mode
         echo 1 | sudo tee /proc/sys/vm/unprivileged_userfaultfd
 
+        # Sandboxes reach the network through NAT. Docker's daemon turns this
+        # on when it starts, so a job that never starts it had sandboxes with
+        # no route out.
+        sudo sysctl -qw net.ipv4.ip_forward=1
+
         # Enable hugepages
         sudo mkdir -p /mnt/hugepages
         sudo mount -t hugetlbfs none /mnt/hugepages
