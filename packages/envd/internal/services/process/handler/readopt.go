@@ -151,7 +151,7 @@ func (p *Handler) BeginReaping() {
 
 			select {
 			case <-t.C:
-				_ = p.SendSignal(syscall.SIGKILL)
+				_ = p.SendSignal(syscall.SIGKILL, false)
 			case <-p.outCtx.Done():
 			}
 		}()
