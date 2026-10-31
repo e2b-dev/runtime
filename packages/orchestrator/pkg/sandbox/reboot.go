@@ -184,7 +184,8 @@ func (f *Factory) RebootSandbox(
 	if err != nil {
 		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
 			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
-			logger.WithSandboxID(runtime.SandboxID))
+			logger.WithSandboxID(runtime.SandboxID),
+			logger.WithTeamID(runtime.TeamID))
 	}
 	if overridden {
 		logger.L().Info(ctx, "reboot CPU template overridden",

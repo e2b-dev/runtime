@@ -330,6 +330,7 @@ func (s *Server) harvestResumePrefetchAsync(
 			span.SetStatus(codes.Error, err.Error())
 			logger.L().Warn(hCtx, "resume prefetch harvest failed",
 				logger.WithSandboxID(sbx.Runtime.SandboxID),
+				logger.WithTeamID(sbx.Runtime.TeamID),
 				logger.WithBuildID(buildID),
 				zap.String("path", string(source)),
 				zap.Error(err),
@@ -527,10 +528,10 @@ func (h *prefetchHarvester) resumeMapping(
 		reapCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), harvestReapTimeout)
 		defer cancel()
 		if stopErr := resumedSbx.Stop(reapCtx); stopErr != nil {
-			logger.L().Warn(reapCtx, "harvest: failed to stop throwaway", logger.WithSandboxID(runtime.SandboxID), zap.Error(stopErr))
+			logger.L().Warn(reapCtx, "harvest: failed to stop throwaway", logger.WithSandboxID(runtime.SandboxID), logger.WithTeamID(runtime.TeamID), zap.Error(stopErr))
 		}
 		if closeErr := resumedSbx.Close(reapCtx); closeErr != nil {
-			logger.L().Warn(reapCtx, "harvest: failed to close throwaway", logger.WithSandboxID(runtime.SandboxID), zap.Error(closeErr))
+			logger.L().Warn(reapCtx, "harvest: failed to close throwaway", logger.WithSandboxID(runtime.SandboxID), logger.WithTeamID(runtime.TeamID), zap.Error(closeErr))
 		}
 	}()
 

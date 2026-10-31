@@ -291,7 +291,7 @@ func (s *Server) killForAcknowledgedDelete(ctx context.Context, op *detachedChec
 	}
 	if !s.sandboxFactory.Sandboxes.MarkStopping(ctx, live.Runtime.SandboxID, live.LifecycleID) {
 		logger.L().Warn(ctx, "sandbox a delete acknowledged during its checkpoint left the live map under another operation before the kill",
-			logger.WithSandboxID(sandboxID), logger.WithLifecycleID(live.LifecycleID), zap.String("kill_reason", killReason))
+			logger.WithSandboxID(sandboxID), logger.WithTeamID(live.Runtime.TeamID), logger.WithLifecycleID(live.LifecycleID), zap.String("kill_reason", killReason))
 
 		return
 	}

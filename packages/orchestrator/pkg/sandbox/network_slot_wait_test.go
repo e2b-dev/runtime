@@ -125,6 +125,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 			sandboxes.NetworkRelease("pool-wait-replacement", "replacement-lifecycle"),
 			sandboxtypes.EgressClassSandbox,
 			"pool-wait-replacement",
+			"pool-wait-team",
 		)
 		synctest.Wait()
 		select {

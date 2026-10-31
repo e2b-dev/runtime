@@ -976,7 +976,7 @@ func (p *Process) Stop(ctx context.Context) error {
 	// Always remove the metrics FIFO, even if the process already exited,
 	// to avoid leaving orphaned files behind.
 	if removeErr := os.Remove(p.metricsPath); removeErr != nil && !os.IsNotExist(removeErr) {
-		logger.L().Warn(ctx, "failed to remove fc metrics FIFO", zap.Error(removeErr), logger.WithSandboxID(p.files.SandboxID))
+		logger.L().Warn(ctx, "failed to remove fc metrics FIFO", zap.Error(removeErr), logger.WithSandboxID(p.files.SandboxID), logger.WithTeamID(p.teamID))
 	}
 
 	pid := p.cmd.Process.Pid
@@ -1003,7 +1003,7 @@ func (p *Process) Stop(ctx context.Context) error {
 			return nil
 		}
 
-		logger.L().Warn(ctx, "failed to send SIGTERM to fc process", zap.Error(err), logger.WithSandboxID(p.files.SandboxID))
+		logger.L().Warn(ctx, "failed to send SIGTERM to fc process", zap.Error(err), logger.WithSandboxID(p.files.SandboxID), logger.WithTeamID(p.teamID))
 	}
 
 	termDeadline := time.NewTimer(10 * time.Second)
@@ -1025,7 +1025,7 @@ func (p *Process) Stop(ctx context.Context) error {
 			return nil
 		}
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			logger.L().Warn(ctx, "failed to send SIGKILL to fc process", zap.Error(killErr), logger.WithSandboxID(p.files.SandboxID))
+			logger.L().Warn(ctx, "failed to send SIGKILL to fc process", zap.Error(killErr), logger.WithSandboxID(p.files.SandboxID), logger.WithTeamID(p.teamID))
 		}
 
 		killDeadline := time.NewTimer(time.Second)

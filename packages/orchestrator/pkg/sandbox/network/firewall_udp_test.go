@@ -274,7 +274,7 @@ func TestFirewall_NonDNSUDP_ResetRestoresMode(t *testing.T) { //nolint:parallelt
 	require.Equal(t, dropChain, filterChainShapes(t, slot.NamespaceID()), "a tenant's rules build with the current mode")
 
 	reader := swapNonDNSUDPCounter(t)
-	slot.AssignSandbox("sandbox-reset")
+	slot.AssignSandbox("sandbox-reset", "team-reset")
 
 	mode.Store("count")
 	require.NoError(t, slot.ResetInternet(t.Context()))
@@ -403,7 +403,7 @@ func TestSlot_WithoutFirewallRefusesEveryOperation(t *testing.T) {
 
 	slot, err := NewSlot("fw-no-firewall", 1, Config{}, NewNoopEgressProxy())
 	require.NoError(t, err)
-	slot.AssignSandbox("sandbox-no-firewall")
+	slot.AssignSandbox("sandbox-no-firewall", "team-no-firewall")
 
 	withRules := &orchestrator.SandboxNetworkConfig{
 		Egress: &orchestrator.SandboxNetworkEgressConfig{DeniedCidrs: []string{"10.0.0.0/8"}},
