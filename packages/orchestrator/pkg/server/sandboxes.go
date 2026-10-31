@@ -77,8 +77,8 @@ const (
 	// is given up. Covers a long GCS outage without retrying forever.
 	uploadTotalBudget = 2 * time.Hour
 	// redisPeerKeyTTL keeps the peer routing key valid across the whole retry
-	// window so a long retry doesn't drop peer routing mid-upload. It is
-	// unregistered promptly once the upload finishes (success or give-up).
+	// window so a long retry doesn't drop peer routing mid-upload. A retained
+	// snapshot with a failed upload keeps the key until this TTL expires.
 	redisPeerKeyTTL = uploadTotalBudget + 2*time.Minute
 
 	// uploadRetryInitialBackoff is the wait before the first retry; it grows
@@ -1352,7 +1352,7 @@ func (s *Server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 	deferRootfsExport := s.featureFlags.BoolFlag(ctx, featureflags.DeferRootfsExportFlag)
 
 	// Fire and forget - upload completes in the background
-	res, err := s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), map[string]string{storage.ObjectMetadataTemplateID: in.GetTemplateId()}, storage.ObjectOriginPause, in.GetFilesystemOnly(), deferRootfsExport, false)
+	res, err := s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), map[string]string{storage.ObjectMetadataTemplateID: in.GetTemplateId()}, storage.ObjectOriginPause, in.GetFilesystemOnly(), deferRootfsExport, sandboxStops)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error snapshotting sandbox", err, telemetry.WithSandboxID(in.GetSandboxId()))
 
@@ -1820,7 +1820,7 @@ func (s *Server) checkpointInPlace(ctx context.Context, sbx *sandbox.Sandbox, in
 		storage.ObjectOriginSnapshotTemplate,
 		in.GetFilesystemOnly(),
 		deferRootfsExport,
-		true, // maintainSandbox: resume in place
+		sandboxKeepsRunning,
 	)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error snapshotting sandbox for checkpoint", err, telemetry.WithSandboxID(in.GetSandboxId()))
@@ -2233,9 +2233,24 @@ type snapshotResult struct {
 	waitMemorySealed     func(ctx context.Context) error
 }
 
+// afterSnapshot is what happens to a sandbox once its snapshot is taken.
+type afterSnapshot int
+
+const (
+	// sandboxStops stops the sandbox (pause, resume-fresh checkpoint).
+	sandboxStops afterSnapshot = iota
+	// sandboxKeepsRunning resumes it in place (sandbox.WithMaintainSandbox).
+	sandboxKeepsRunning
+	// sandboxStaysPaused leaves it paused for the caller (sandbox.WithRetainedPause).
+	sandboxStaysPaused
+)
+
 // snapshotAndCacheSandbox creates a snapshot of a sandbox and adds it to the
 // local template cache. The caller is responsible for starting the remote
 // storage upload via uploadSnapshotAsync.
+//
+// With sandboxStaysPaused, the caller owns the paused sandbox whenever Pause
+// succeeded, including when this returns a cache or upload setup error.
 func (s *Server) snapshotAndCacheSandbox(
 	ctx context.Context,
 	sbx *sandbox.Sandbox,
@@ -2244,7 +2259,7 @@ func (s *Server) snapshotAndCacheSandbox(
 	buildOrigin storage.ObjectOrigin,
 	filesystemOnly bool,
 	deferRootfsExport bool,
-	maintainSandbox bool,
+	after afterSnapshot,
 ) (*snapshotResult, error) {
 	meta, err := sbx.Template.Metadata()
 	if err != nil {
@@ -2264,8 +2279,11 @@ func (s *Server) snapshotAndCacheSandbox(
 	if deferRootfsExport {
 		pauseOpts = append(pauseOpts, sandbox.WithDeferredRootfsExport())
 	}
-	if maintainSandbox {
+	switch after {
+	case sandboxKeepsRunning:
 		pauseOpts = append(pauseOpts, sandbox.WithMaintainSandbox())
+	case sandboxStaysPaused:
+		pauseOpts = append(pauseOpts, sandbox.WithRetainedPause())
 	}
 
 	snapshot, err := sbx.Pause(ctx, meta, sandbox.SnapshotUseCasePause, pauseOpts...)
@@ -2279,7 +2297,7 @@ func (s *Server) snapshotAndCacheSandbox(
 	finishUpload, err := s.templateCache.AddSnapshot(
 		ctx,
 		meta.Template.BuildID,
-		snapshotLineage(buildOrigin, sbx.Template, maintainSandbox),
+		snapshotLineage(buildOrigin, sbx.Template, after != sandboxStops),
 		snapshot.MemorySnapshot.DiffHeader,
 		snapshot.RootfsDiffHeader,
 		snapshot.Snapfile,
@@ -2311,42 +2329,7 @@ func (s *Server) snapshotAndCacheSandbox(
 
 	telemetry.ReportEvent(ctx, "added snapshot to template cache")
 
-	// Capture once so Register and the symmetric Unregister inside
-	// completeUpload don't drift if the flag flips mid-upload.
-	peerEnabled := s.featureFlags.BoolFlag(ctx, featureflags.PeerToPeerChunkTransferFlag)
-
-	finishPeer := func(ctx context.Context, landed bool) {
-		if !peerEnabled {
-			return
-		}
-
-		// Only advertise the build as fully uploaded when it actually landed.
-		// On abandon/failure the bytes are not in storage, so marking it would
-		// make chunk-serving falsely report "already uploaded".
-		if landed {
-			s.uploadedBuilds.Set(meta.Template.BuildID, struct{}{}, ttlcache.DefaultTTL)
-		}
-
-		if err := s.peerRegistry.Unregister(ctx, meta.Template.BuildID); err != nil {
-			logger.L().Warn(ctx, "failed to unregister peer address from routing", zap.String("build_id", meta.Template.BuildID), zap.Error(err))
-		}
-	}
-
-	completeUpload := func(ctx context.Context, uploadErr error) {
-		upload.Finish(ctx, uploadErr)
-		finishPeer(ctx, uploadErr == nil)
-	}
-
-	abandonUpload := func(ctx context.Context, err error) {
-		upload.Abandon(ctx, err)
-		finishPeer(ctx, false)
-	}
-
-	if peerEnabled {
-		if err := s.peerRegistry.Register(ctx, meta.Template.BuildID, redisPeerKeyTTL); err != nil {
-			logger.L().Warn(ctx, "failed to register peer address for routing", zap.String("build_id", meta.Template.BuildID), zap.Error(err))
-		}
-	}
+	completeUpload, abandonUpload := s.advertiseSnapshot(ctx, upload, meta.Template.BuildID, after == sandboxStaysPaused)
 
 	return &snapshotResult{
 		meta:                 meta,
@@ -2361,6 +2344,56 @@ func (s *Server) snapshotAndCacheSandbox(
 		memoryExportDeferred: snapshot.MemoryExportDeferred,
 		waitMemorySealed:     snapshot.WaitMemorySealed,
 	}, nil
+}
+
+// advertiseSnapshot offers buildID's cached snapshot to peers while its upload
+// runs, when peer transfer is on, and returns the calls that end the upload:
+// complete with its outcome, or abandon when nothing will read the snapshot.
+// Either withdraws the offer, except after a retained capture's failed upload:
+// this node may hold the only copy, so peers can read it while the key and
+// the local cache entry last.
+func (s *Server) advertiseSnapshot(ctx context.Context, upload *sandbox.Upload, buildID string, retained bool) (complete, abandon func(context.Context, error)) {
+	// Capture once so Register and the symmetric Unregister inside
+	// completeUpload don't drift if the flag flips mid-upload.
+	peerEnabled := s.featureFlags.BoolFlag(ctx, featureflags.PeerToPeerChunkTransferFlag)
+
+	finishPeer := func(ctx context.Context, landed bool) {
+		if !peerEnabled {
+			return
+		}
+
+		// Only advertise the build as fully uploaded when it actually landed.
+		// On abandon/failure the bytes are not in storage, so marking it would
+		// make chunk-serving falsely report "already uploaded".
+		if landed {
+			s.uploadedBuilds.Set(buildID, struct{}{}, ttlcache.DefaultTTL)
+		}
+
+		if err := s.peerRegistry.Unregister(ctx, buildID); err != nil {
+			logger.L().Warn(ctx, "failed to unregister peer address from routing", logger.WithBuildID(buildID), zap.Error(err))
+		}
+	}
+
+	complete = func(ctx context.Context, uploadErr error) {
+		upload.Finish(ctx, uploadErr)
+		if uploadErr != nil && retained {
+			return
+		}
+		finishPeer(ctx, uploadErr == nil)
+	}
+
+	abandon = func(ctx context.Context, err error) {
+		upload.Abandon(ctx, err)
+		finishPeer(ctx, false)
+	}
+
+	if peerEnabled {
+		if err := s.peerRegistry.Register(ctx, buildID, redisPeerKeyTTL); err != nil {
+			logger.L().Warn(ctx, "failed to register peer address for routing", logger.WithBuildID(buildID), zap.Error(err))
+		}
+	}
+
+	return complete, abandon
 }
 
 // snapshotLineage describes the snapshot of a sandbox running on predecessor.

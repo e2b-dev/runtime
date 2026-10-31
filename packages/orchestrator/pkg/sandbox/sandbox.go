@@ -233,14 +233,11 @@ type EnvdMetadata struct {
 	Version        string
 }
 
-// inPlaceStateFlipTimeout bounds the FC pause and resume calls of an in-place
-// checkpoint. The PATCH is a state flip that normally completes in
-// milliseconds, but the bound must exceed Firecracker's own internal 30s
-// vcpu-ack deadline (RECV_TIMEOUT_SEC — FC's deadlock detector on the same
-// wait), so a Go-side trip means FC itself has given up on the flip, not that
-// we abandoned one still in progress on FC's serial API loop. Tripping it is
-// not just a failed call: the pause path answers it with the cleanup resume,
-// and a failed resume tears the sandbox down (ErrSandboxLost).
+// inPlaceStateFlipTimeout bounds the FC pause and resume PATCH calls made on a
+// live VM (in-place checkpoint, ResumeVM). The flip normally takes
+// milliseconds, but the bound must exceed Firecracker's internal 30s vcpu-ack
+// deadline (RECV_TIMEOUT_SEC), so a Go-side trip means FC itself gave up on
+// the flip, not that we abandoned one still running on FC's serial API loop.
 const inPlaceStateFlipTimeout = 40 * time.Second
 
 // StopReason says why a sandbox execution ended. It is a metric label, so the
@@ -586,17 +583,11 @@ type Sandbox struct {
 	// again. nil until the first in-place seal runs.
 	rootfsSealDone *utils.SetOnce[struct{}]
 
-	// startupRecorded guards ALL first-WaitForEnvd recording — the envd-init
-	// duration + uffd.startup.* histograms, the envd init instruments initEnvd
-	// records on a start (it also skips them for a throwaway), and SetStartedAt — so
-	// they fire only on the actual sandbox start. A later WaitForEnvd on the same
-	// handler (the post-upgrade readiness
-	// re-check, or the envd-binary swap + restart in a template build) re-runs
-	// /init to re-capture state but must not re-record these: ServeStats() is
-	// lifetime-cumulative, the duration/counter would double-count the resume
-	// KPI, and SetStartedAt would overwrite the real start with a later time.
-	// CAS'd true by the first WaitForEnvd; later calls see false and skip.
+	// startupRecorded limits startup metrics to the first WaitForEnvd attempt,
+	// including failures. Readiness retries and post-upgrade checks do not recount it.
 	startupRecorded atomic.Bool
+	// startedAtOnce records the first successful readiness, which may follow a failed attempt.
+	startedAtOnce sync.Once
 
 	// skipStartupMetrics suppresses the per-start KPI histograms (envd-init
 	// duration, uffd startup pages/source-pages/bytes) and the envd init
@@ -1480,6 +1471,8 @@ type resumeOptions struct {
 	// pre-/init auth window after the upgrade re-exec. Unlike skipLiveRegistration
 	// the sandbox IS meant to go live — just later.
 	deferMarkRunning bool
+	// vmPaused returns the sandbox with its VM paused. See WithVMPaused.
+	vmPaused bool
 }
 
 // describesCustomerStart reports whether this resume's start-path telemetry describes a
@@ -1538,6 +1531,16 @@ func WithoutLiveRegistration() ResumeOption {
 // soon-to-be-live sandbox, not a throwaway.
 func WithDeferredLiveRegistration() ResumeOption {
 	return func(o *resumeOptions) { o.deferMarkRunning = true }
+}
+
+// WithVMPaused returns the sandbox once its snapshot is loaded into a paused
+// Firecracker VM, so the guest has executed nothing. It skips the envd wait,
+// live registration and health checks, and keeps every resource and the exit
+// watch of an ordinary resume. The network assignment hook still runs before
+// the load. The caller owns the sandbox: it runs it with Factory.ResumeVM or
+// closes it.
+func WithVMPaused() ResumeOption {
+	return func(o *resumeOptions) { o.vmPaused = true }
 }
 
 // ThrowawayResumeOptions are the resume options for a caller-reaped throwaway
@@ -2095,36 +2098,34 @@ func (f *Factory) ResumeSandbox(
 
 		cancelUffdStartCtx(fmt.Errorf("uffd process exited: %w", errors.Join(uffdWaitErr, context.Cause(uffdStartCtx))))
 	}()
-	fcStartErr := fcHandle.Resume(
-		uffdStartCtx,
-		sbxlogger.SandboxMetadata{
-			SandboxID:  runtime.SandboxID,
-			TemplateID: runtime.TemplateID,
-			TeamID:     runtime.TeamID,
-		},
-		fcUffdPath,
-		snapfile,
-		fcUffd.Ready(),
-		config.Envd.AccessToken,
-		cgroupHandle,
-		useMemfd,
-		useSyncWP,
-		cpuTemplate,
-		fc.RateLimiterConfig{
-			Ops:       fc.TokenBucketConfig(resumeThrottleConfig.Ops),
-			Bandwidth: fc.TokenBucketConfig(resumeThrottleConfig.Bandwidth),
-		},
-		fc.RateLimiterConfig{
-			Ops:       fc.TokenBucketConfig(resumeDriveThrottleConfig.Ops),
-			Bandwidth: fc.TokenBucketConfig(resumeDriveThrottleConfig.Bandwidth),
-		},
-		fc.ResumeVcpus{
-			Target:          config.Vcpu,
-			Snapshot:        resolvedVmVcpus,
-			Recorded:        meta.VcpuCount > 0,
-			RefuseSmallerVM: config.ConfiguredVmVcpus > 0,
-		},
-	)
+	fcMetadata := sbxlogger.SandboxMetadata{
+		SandboxID:  runtime.SandboxID,
+		TemplateID: runtime.TemplateID,
+		TeamID:     runtime.TeamID,
+	}
+	txRateLimit := fc.RateLimiterConfig{
+		Ops:       fc.TokenBucketConfig(resumeThrottleConfig.Ops),
+		Bandwidth: fc.TokenBucketConfig(resumeThrottleConfig.Bandwidth),
+	}
+	driveRateLimit := fc.RateLimiterConfig{
+		Ops:       fc.TokenBucketConfig(resumeDriveThrottleConfig.Ops),
+		Bandwidth: fc.TokenBucketConfig(resumeDriveThrottleConfig.Bandwidth),
+	}
+	resumeVcpus := fc.ResumeVcpus{
+		Target:          config.Vcpu,
+		Snapshot:        resolvedVmVcpus,
+		Recorded:        meta.VcpuCount > 0,
+		RefuseSmallerVM: config.ConfiguredVmVcpus > 0,
+	}
+	var fcStartErr error
+	if ropts.vmPaused {
+		// ResumeVM sets the MMDS metadata after it runs the vCPUs.
+		fcStartErr = fcHandle.RestorePaused(uffdStartCtx, fcMetadata, fcUffdPath, snapfile, fcUffd.Ready(),
+			cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
+	} else {
+		fcStartErr = fcHandle.Resume(uffdStartCtx, fcMetadata, fcUffdPath, snapfile, fcUffd.Ready(), config.Envd.AccessToken,
+			cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
+	}
 
 	if fcStartErr != nil {
 		return nil, fmt.Errorf("failed to start FC: %w", fcStartErr)
@@ -2139,6 +2140,32 @@ func (f *Factory) ResumeSandbox(
 	}
 
 	telemetry.ReportEvent(ctx, "initialized FC")
+
+	watchExit := func() {
+		defer execSpan.End()
+
+		ctx, span := tracer.Start(execCtx, "sandbox-exit-wait")
+		defer span.End()
+
+		// Wait for either uffd or fc process to exit
+		select {
+		case <-fcUffd.Exit().Done():
+		case <-fcHandle.Exit.Done():
+		}
+
+		err := sbx.Stop(ctx)
+
+		uffdWaitErr := fcUffd.Exit().Wait()
+		fcErr := fcHandle.Exit.Wait()
+		exit.SetError(errors.Join(err, fcErr, uffdWaitErr))
+	}
+
+	if ropts.vmPaused {
+		// Readiness, live registration and health checks follow ResumeVM.
+		go watchExit()
+
+		return sbx, nil
+	}
 
 	if config.SkipEnvdWait {
 		// gdb debugging: the guest is frozen at the entry breakpoint and never
@@ -2174,26 +2201,42 @@ func (f *Factory) ResumeSandbox(
 		go sbx.Checks().Start(execCtx)
 	}
 
-	go func() {
-		defer execSpan.End()
-
-		ctx, span := tracer.Start(execCtx, "sandbox-exit-wait")
-		defer span.End()
-
-		// Wait for either uffd or fc process to exit
-		select {
-		case <-fcUffd.Exit().Done():
-		case <-fcHandle.Exit.Done():
-		}
-
-		err := sbx.Stop(ctx)
-
-		uffdWaitErr := fcUffd.Exit().Wait()
-		fcErr := fcHandle.Exit.Wait()
-		exit.SetError(errors.Join(err, fcErr, uffdWaitErr))
-	}()
+	go watchExit()
 
 	return sbx, nil
+}
+
+// ResumeVM runs the vCPUs of a sandbox restored with WithVMPaused, sets its
+// MMDS metadata and waits for its envd, as an ordinary resume does. The caller
+// then registers it live and starts its health checks, as after
+// WithDeferredLiveRegistration.
+//
+// On any error the sandbox is left as it is, possibly running, and nothing
+// tears it down: the caller retries on the same VM, which a running VM answers
+// as resumed without loading the snapshot again, or closes it.
+func (f *Factory) ResumeVM(ctx context.Context, sbx *Sandbox) error {
+	// WithoutCancel: a caller disconnect must not abandon an ambiguous state
+	// flip, nor leave a running guest without its metadata.
+	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inPlaceStateFlipTimeout)
+	defer cancel()
+	err := sbx.process.ResumeInPlace(resumeCtx)
+	if err != nil {
+		return fmt.Errorf("failed to resume the restored VM: %w", err)
+	}
+	err = sbx.process.SetMmds(resumeCtx, sbx.LoggerMetadata(), sbx.Config.Envd.AccessToken)
+	if err != nil {
+		return fmt.Errorf("failed to set the restored VM's MMDS metadata: %w", err)
+	}
+	if sbx.Config.SkipEnvdWait {
+		return nil
+	}
+
+	err = sbx.WaitForEnvd(ctx, StartTypeResume, envdWaitForVolumes(ctx, f.GetEnvdTimeout(ctx), len(sbx.Config.VolumeMounts)))
+	if err != nil {
+		return fmt.Errorf("failed to wait for sandbox start: %w", err)
+	}
+
+	return nil
 }
 
 func startExecutionSpan(ctx context.Context, runtime sandboxtypes.RuntimeMetadata) (context.Context, trace.Span) {
@@ -2390,9 +2433,37 @@ type pauseOptions struct {
 	filesystemSnapshot bool
 	deferRootfsExport  bool
 	maintainSandbox    bool
+	retainPaused       bool
 }
 
 type PauseOption func(*pauseOptions)
+
+// newPauseOptions applies opts and resolves the combinations a retained pause
+// changes or rejects.
+func newPauseOptions(opts ...PauseOption) (pauseOptions, error) {
+	var o pauseOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	// A filesystem-only snapshot has no memory to restore, and the retained
+	// guest would be left with a frozen rootfs.
+	if o.retainPaused && o.filesystemSnapshot {
+		return pauseOptions{}, errors.New("a retained pause needs a memory snapshot")
+	}
+	// A retained pause shortens no freeze by deferring, and a deferred export
+	// could still fail after the snapshot is offered to readers.
+	if o.retainPaused {
+		o.deferRootfsExport = false
+	}
+
+	return o, nil
+}
+
+// mayDeferMemoryExport reports whether the memory copy may run through a CoW
+// window after the guest resumes. A retained guest never resumes to drain it.
+func (o pauseOptions) mayDeferMemoryExport() bool {
+	return !o.retainPaused
+}
 
 // WithMaintainSandbox keeps the sandbox process and all its resources alive
 // through the snapshot and resumes it in place afterwards (an in-place
@@ -2401,6 +2472,20 @@ type PauseOption func(*pauseOptions)
 // background; without it the in-place export is synchronous.
 func WithMaintainSandbox() PauseOption {
 	return func(o *pauseOptions) { o.maintainSandbox = true }
+}
+
+// WithRetainedPause keeps the sandbox process and its resources alive like
+// WithMaintainSandbox, but on success leaves the guest paused with health
+// checks off, owned by the caller. The returned snapshot is exported
+// synchronously and does not depend on the process. If Pause fails, its
+// cleanup resumes the guest, as for an in-place checkpoint.
+//
+// To abandon the move, resume the retained guest with Factory.ResumeVM, then
+// register it live and start its health checks as after
+// WithDeferredLiveRegistration. Process.ResumeInPlace alone runs the vCPUs but
+// does not set the MMDS metadata, wait for envd, or start health checks.
+func WithRetainedPause() PauseOption {
+	return func(o *pauseOptions) { o.maintainSandbox, o.retainPaused = true, true }
 }
 
 // WithFilesystemSnapshot makes the pause produce a filesystem-only snapshot:
@@ -2450,9 +2535,9 @@ func (s *Sandbox) Pause(
 	useCase SnapshotUseCase,
 	opts ...PauseOption,
 ) (st *Snapshot, e error) {
-	var pauseOpts pauseOptions
-	for _, opt := range opts {
-		opt(&pauseOpts)
+	pauseOpts, err := newPauseOptions(opts...)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, span := tracer.Start(ctx, "sandbox-snapshot", trace.WithAttributes(
@@ -2775,7 +2860,7 @@ func (s *Sandbox) Pause(
 	// invoked after the guest has resumed in place (next to startSeal).
 	var startMemSeal func(context.Context)
 	if !pauseOpts.filesystemSnapshot {
-		mem, startMemSeal, err = s.processMemorySnapshot(ctx, buildID, pauseOpts.maintainSandbox, cleanup)
+		mem, startMemSeal, err = s.processMemorySnapshot(ctx, buildID, pauseOpts.maintainSandbox, pauseOpts.mayDeferMemoryExport(), cleanup)
 		if err != nil {
 			return nil, err
 		}
@@ -2822,16 +2907,17 @@ func (s *Sandbox) Pause(
 		return nil, err
 	}
 
-	// In-place checkpoint: resume the same VM now that the snapshot's metadata is
-	// written, BEFORE the (possibly deferred) rootfs seal runs, so the reflink
-	// stall stays off the resume critical path. The destroy path skips this — its
-	// sandbox is already stopped.
+	// The snapshot is complete: the resume below, or a retained pause's
+	// caller, owns the sandbox from here, not the error cleanup.
 	if pauseOpts.maintainSandbox {
-		// From here the final resume owns the sandbox's fate: on success it
-		// starts the checks itself, on failure it tears the sandbox down.
 		resumeOnError = false
 		restartChecksOnError = false
 		thawOrLose = false
+	}
+	// A retained pause leaves the VM paused for its caller to run or close.
+	if pauseOpts.maintainSandbox && !pauseOpts.retainPaused {
+		// Resume the same VM before a possibly deferred rootfs seal runs, so
+		// the reflink stays off the critical path. A failed resume tears it down.
 
 		// WithoutCancel: a client disconnect that cancels the request context
 		// must not fail this resume — the VM is paused and a failure here tears
@@ -2971,21 +3057,15 @@ type MemorySnapshot struct {
 	waitSealed func(ctx context.Context) error
 }
 
-// processMemorySnapshot copies the dirty guest memory pages into a local diff
-// and builds its header — steps 3-5 of Pause. Only called for a full memory
-// snapshot; a filesystem-only pause skips it. The returned diff's Close must be
-// registered for cleanup by the caller.
 // processMemorySnapshot copies the dirty guest memory to a local diff. When
-// keepMemfdOpen is set (an in-place snapshot that resumes the same VM) it borrows
-// the memfd without consuming it and skips dedup/provisional serving, since the
-// running guest still faults on that fd.
+// keepMemfdOpen is set (an in-place snapshot that keeps the VM) it borrows the
+// memfd without consuming it and skips dedup/provisional serving, since the
+// guest can still fault on that fd.
 //
-// On the in-place path with defer-memory-export enabled, the copy is deferred
-// through a CoW window instead: the returned startMemSeal (nil otherwise) is
-// invoked by the caller after ResumeInPlace and drives the background
-// capture; the memory diff is a DeferredDiff resolving when the capture
-// completes.
-func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, keepMemfdOpen bool, cleanup *Cleanup) (MemorySnapshot, func(context.Context), error) {
+// On the in-place path with mayDefer and defer-memory-export enabled, the copy
+// is deferred through a CoW window instead: the returned startMemSeal (nil
+// otherwise) is invoked after ResumeInPlace and drives the background capture.
+func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, keepMemfdOpen, mayDefer bool, cleanup *Cleanup) (MemorySnapshot, func(context.Context), error) {
 	originalMemfile, err := s.Template.Memfile(ctx)
 	if err != nil {
 		return MemorySnapshot{}, nil, fmt.Errorf("failed to get original memfile: %w", err)
@@ -3030,7 +3110,7 @@ func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, 
 	// this point, so hinting needs no pause. The guest is unaffected beyond
 	// a deferred RSS reduction: its driver holds reported pages isolated
 	// until the ACK.)
-	deferOK := keepMemfdOpen && s.DeferredMemoryExport(ctx)
+	deferOK := keepMemfdOpen && mayDefer && s.DeferredMemoryExport(ctx)
 	fprPaused := false
 	if deferOK {
 		caps, fprErr := s.process.BalloonCaps(ctx)
@@ -4705,14 +4785,14 @@ func (s *Sandbox) WaitForEnvd(
 	ctx, span := tracer.Start(ctx, "sandbox-wait-for-start")
 	defer span.End()
 
-	// Record the per-start KPIs, the envd-init counter and protection histogram,
-	// and StartedAt only on the FIRST WaitForEnvd for this handler (see
-	// startupRecorded). A later call — the
-	// post-upgrade readiness re-check, or the envd-binary swap during a template
-	// build — re-runs /init to re-capture state but must not re-record.
+	// Count the first attempt, but establish StartedAt on the first success.
 	firstStart := s.startupRecorded.CompareAndSwap(false, true)
 
 	defer func() {
+		if e == nil {
+			s.startedAtOnce.Do(func() { s.SetStartedAt(time.Now()) })
+		}
+
 		if !firstStart {
 			return
 		}
@@ -4750,13 +4830,6 @@ func (s *Sandbox) WaitForEnvd(
 				go s.recordPostStartFaultIn(context.WithoutCancel(ctx), &postStartBase{at: time.Now(), stats: stats, startType: startType})
 			}
 		}
-
-		if e != nil {
-			return
-		}
-
-		// Update the sandbox as started now
-		s.SetStartedAt(time.Now())
 	}()
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)

@@ -732,10 +732,10 @@ func (p *Process) moveLimitToVcpuThreads(ctx context.Context, h *cgroup.CgroupHa
 	})
 }
 
-// ResumeInPlace resumes the already-running Firecracker process after an
-// in-place snapshot (Pause + CreateSnapshot). Unlike Resume it does not
-// reconfigure FC, wait for a UFFD socket or load a snapshot — the process,
-// memory and rootfs overlay are all still live; it only un-pauses the VM.
+// ResumeInPlace runs the vCPUs of the live Firecracker process after an
+// in-place snapshot (Pause + CreateSnapshot) or RestorePaused. It loads
+// nothing, so a retry after an uncertain result acts on the same VM, and a
+// running VM answers it as resumed.
 func (p *Process) ResumeInPlace(
 	ctx context.Context,
 ) error {
@@ -749,6 +749,8 @@ func (p *Process) ResumeInPlace(
 	return nil
 }
 
+// Resume restores the snapshot with RestorePaused, runs its vCPUs and then
+// sets the MMDS metadata. A failure stops the process.
 func (p *Process) Resume(
 	ctx context.Context,
 	sbxMetadata sbxlogger.SandboxMetadata,
@@ -767,6 +769,52 @@ func (p *Process) Resume(
 	ctx, span := tracer.Start(ctx, "resume-fc")
 	defer span.End()
 
+	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
+	if err != nil {
+		return err
+	}
+
+	err = p.client.resumeVM(ctx)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error resuming vm: %w", err), fcStopErr)
+	}
+
+	err = p.SetMmds(ctx, sbxMetadata, accessToken)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(err, fcStopErr)
+	}
+
+	telemetry.SetAttributes(
+		ctx,
+		attribute.String("sandbox.cmd.dir", p.cmd.Dir),
+		attribute.String("sandbox.cmd.path", p.cmd.Path),
+	)
+
+	return nil
+}
+
+// RestorePaused starts the process and loads the snapshot into a paused VM,
+// configured except for the MMDS metadata, so the guest has executed nothing
+// when it returns. The sandbox package's Factory.ResumeVM runs it, sets the
+// metadata and waits for envd. A failure stops the process.
+func (p *Process) RestorePaused(
+	ctx context.Context,
+	sbxMetadata sbxlogger.SandboxMetadata,
+	uffdSocketPath string,
+	snapfile template.File,
+	uffdReady chan struct{},
+	cgroupHandle *cgroup.CgroupHandle,
+	useMemfd bool,
+	useSyncWP bool,
+	cpuTemplate string,
+	txRateLimit RateLimiterConfig,
+	driveRateLimit RateLimiterConfig,
+	vcpus ResumeVcpus,
+) error {
 	// Symlink /dev/null to the rootfs link path, so we can start the FC process without the rootfs and then symlink the real rootfs.
 	err := utils.SymlinkForce("/dev/null", p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
 	if err != nil {
@@ -877,7 +925,7 @@ func (p *Process) Resume(
 	telemetry.ReportEvent(ctx, "configured drive rate limit")
 
 	// The snapshot is loaded and the vCPU threads exist, paused: limit them before the guest runs.
-	// Keep this before resumeVM and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
+	// Keep this before any resume and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
 	err = p.limitVcpusBeforeResume(ctx, cgroupHandle, vcpus.Target, p.resolveVmVcpus(ctx, vcpus.Snapshot, vcpus.Recorded))
 	if err := vcpuCapResumeErr(err, vcpus.RefuseSmallerVM); err != nil {
 		fcStopErr := p.Stop(ctx)
@@ -885,13 +933,12 @@ func (p *Process) Resume(
 		return errors.Join(err, fcStopErr)
 	}
 
-	err = p.client.resumeVM(ctx)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
+	return nil
+}
 
-		return errors.Join(fmt.Errorf("error resuming vm: %w", err), fcStopErr)
-	}
-
+// SetMmds writes the sandbox's MMDS metadata into the running process. A
+// failure leaves the process to the caller.
+func (p *Process) SetMmds(ctx context.Context, sbxMetadata sbxlogger.SandboxMetadata, accessToken *string) error {
 	meta := &MmdsMetadata{
 		SandboxID:            sbxMetadata.SandboxID,
 		TemplateID:           sbxMetadata.TemplateID,
@@ -904,18 +951,9 @@ func (p *Process) Resume(
 		meta.AccessTokenHash = keys.HashAccessToken("")
 	}
 
-	err = p.client.setMmds(ctx, meta)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting mmds: %w", err), fcStopErr)
+	if err := p.client.setMmds(ctx, meta); err != nil {
+		return fmt.Errorf("error setting mmds: %w", err)
 	}
-
-	telemetry.SetAttributes(
-		ctx,
-		attribute.String("sandbox.cmd.dir", p.cmd.Dir),
-		attribute.String("sandbox.cmd.path", p.cmd.Path),
-	)
 
 	return nil
 }
