@@ -217,6 +217,7 @@ func New(
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
+			GoTracked:                o.GoTrackedTail,
 		},
 	)
 
@@ -276,6 +277,28 @@ func (o *Orchestrator) TrackWork() (func(), bool) {
 		o.outstandingWork.Add(-1)
 		o.work.Done()
 	}, true
+}
+
+// GoTrackedTail runs fn in a background goroutine that is the tail of an
+// already-admitted operation (a billing/analytics event, an orphan-sandbox
+// kill, a volume cleanup) rather than new work. When the drain has not started
+// the goroutine is registered with TrackWork, so Drain waits for it. Once the
+// drain has started TrackWork refuses new counts (adding to the WaitGroup after
+// Drain called Wait would panic), so fn still runs — untracked, fire-and-forget
+// — because dropping it would lose a billing event or leak a sandbox. Callers
+// must bind any request-scoped context with context.WithoutCancel before
+// calling, since the caller may return first.
+func (o *Orchestrator) GoTrackedTail(fn func()) {
+	if release, ok := o.TrackWork(); ok {
+		go func() {
+			defer release()
+			fn()
+		}()
+
+		return
+	}
+
+	go fn()
 }
 
 func (o *Orchestrator) OutstandingWork() int64 {
