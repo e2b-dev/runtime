@@ -546,7 +546,7 @@ var (
 	ResumeOriginNodeRemapFlag = NewBoolFlag("resume-origin-node-remap", false)
 
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
-	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
+	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", envBoolOr("BUILD_ENSURE_FREE_DISK_SPACE", false))
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")
