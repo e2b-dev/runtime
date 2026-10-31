@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -227,10 +228,28 @@ func (d *Dispatch) completeAsync(ctx context.Context, cmd command, perform func(
 		select {
 		case d.fatal <- err:
 		default:
-			d.logger.Error(ctx, "nbd command failed while the dispatcher was already failing",
-				append(cmd.fields(), zap.Error(err))...)
+			// A failure is already on its way to the read loop. When the sandbox VM
+			// is torn down, its reply socket closes and the remaining in-flight
+			// responses all fail with EPIPE at once; that burst is expected on a
+			// normal shutdown, so log it at WARN. Anything else here is a genuine,
+			// unexpected reply-path failure and stays at ERROR.
+			if isSocketClosed(err) {
+				d.logger.Warn(ctx, "nbd reply dropped: socket already closed while dispatcher was failing",
+					append(cmd.fields(), zap.Error(err))...)
+			} else {
+				d.logger.Error(ctx, "nbd command failed while the dispatcher was already failing",
+					append(cmd.fields(), zap.Error(err))...)
+			}
 		}
 	}()
+}
+
+// isSocketClosed reports whether err is the NBD reply socket being closed
+// by the peer: EPIPE (writing to a closed socket) or io.ErrClosedPipe. Both
+// are the expected outcome when the sandbox VM is torn down with responses
+// still in flight, and are logged at WARN rather than ERROR.
+func isSocketClosed(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, io.ErrClosedPipe)
 }
 
 func (d *Dispatch) Drain() {
