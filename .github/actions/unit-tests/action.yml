@@ -179,24 +179,10 @@ runs:
         echo "Cached test results keyed by this kernel (ci.kernel=${salt})"
         echo "TEST_LDFLAGS=-ldflags=-X=ci.kernel=${salt}" >> "$GITHUB_ENV"
 
-    # sudo strips PATH; pass it through so gotestsum/go resolve to the
-    # runner's toolchain instead of /usr/bin/go. The rest of the environment
-    # (Go cache settings, HOST_BUSYBOX_DIR, NBD_POOL_SIZE) goes over as an
-    # explicit --preserve-env list: sudo-rs, the sudo on Ubuntu 25.10 and
-    # later images, ignores a bare -E, and both implementations take the
-    # list form.
-    - name: Run tests that require sudo
-      if: inputs.sudo == 'true'
-      shell: bash
-      working-directory: ${{ inputs.package }}
-      run: |
-        RACE=""; TEST_TIMEOUT=20m
-        if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
-        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" gotestsum --format=standard-verbose \
-          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 ${TEST_LDFLAGS:-} ${{ inputs.test-path }}
-
     # Ordinary unit runs skip native slot and kernel-mount tests. Private
     # namespaces keep network and mount changes off the runner's namespace.
+    # Compile first: a preceding sudo Go run can create root-owned module-cache
+    # directories that prevent this unprivileged compile from fetching dependencies.
     - name: Run native NFS network and kernel-mount lifecycle tests
       if: inputs.package == 'packages/orchestrator'
       shell: bash
@@ -221,6 +207,22 @@ runs:
             exec "$1" -test.v -test.count=1 -test.timeout=5m \
               -test.run="^Test(NetworkPoolNative(NFSReleaseBeforeMountDrain|PendingShutdown|HandledRecycleFailure)|KernelMountRetainsRootAcrossLifecycleReplacement)$"
           ' bash "$binary"
+
+    # sudo strips PATH; pass it through so gotestsum/go resolve to the
+    # runner's toolchain instead of /usr/bin/go. The rest of the environment
+    # (Go cache settings, HOST_BUSYBOX_DIR, NBD_POOL_SIZE) goes over as an
+    # explicit --preserve-env list: sudo-rs, the sudo on Ubuntu 25.10 and
+    # later images, ignores a bare -E, and both implementations take the
+    # list form.
+    - name: Run tests that require sudo
+      if: inputs.sudo == 'true'
+      shell: bash
+      working-directory: ${{ inputs.package }}
+      run: |
+        RACE=""; TEST_TIMEOUT=20m
+        if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" gotestsum --format=standard-verbose \
+          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 ${TEST_LDFLAGS:-} ${{ inputs.test-path }}
 
     - name: Run tests
       if: inputs.sudo != 'true'

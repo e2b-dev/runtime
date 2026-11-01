@@ -26,16 +26,12 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	nfscfg "github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
-const (
-	defaultDockerHost = "172.17.0.1"
-	portMapperPort    = 111
-)
+const defaultDockerHost = "172.17.0.1"
 
 //go:embed e2e_start.sh
 var e2eStartScript []byte
@@ -177,21 +173,14 @@ func TestIntegrationTest(t *testing.T) {
 	nfsListenPort, err := strconv.Atoi(nfsListenPortStr)
 	require.NoError(t, err)
 
-	// launch portmapper
-	pmListener := getListener(t, portMapperPort)
-	pm := portmap.NewPortMap(t.Context())
-	go func() {
-		err := pm.Serve(t.Context(), pmListener)
-		assert.NoError(t, err)
-	}()
-
-	// this spawns a container, runs our script, then exits
+	// The mount specifies both NFS and MOUNT ports. An unused portmapper on
+	// port 111 would conflict with parallel clients using reserved source ports.
 	testCtr, err := testcontainers.Run(t.Context(), "ubuntu:24.04",
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.NetworkMode = "host"
 			hostConfig.Privileged = true
 		}),
-		testcontainers.WithHostPortAccess(nfsListenPort, portMapperPort),
+		testcontainers.WithHostPortAccess(nfsListenPort),
 		testcontainers.WithEnv(map[string]string{
 			"NFS_HOST": nfsListener.Addr().String(),
 		}),

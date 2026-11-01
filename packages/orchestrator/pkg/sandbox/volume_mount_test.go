@@ -42,7 +42,7 @@ func TestEnvdInitSendsLifecycleQualifiedVolumeTargets(t *testing.T) { //nolint:p
 	for _, lifecycle := range []string{oldLifecycle, oldLifecycle, newLifecycle} {
 		sbx.LifecycleID = lifecycle
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		response, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init"))
+		response, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init", sbx.ExpectedEnvdVersion()))
 		cancel()
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
