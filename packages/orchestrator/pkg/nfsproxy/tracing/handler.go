@@ -72,12 +72,11 @@ func (e *tracingHandler) ToHandle(ctx context.Context, fs billy.Filesystem, path
 }
 
 func (e *tracingHandler) FromHandle(ctx context.Context, fh []byte) (fs billy.Filesystem, paths []string, err error) {
-	if !e.config.RecordHandleCalls {
-		return e.inner.FromHandle(ctx, fh)
+	if e.config.RecordHandleCalls {
+		var finish finishFunc
+		ctx, finish = startSpan(ctx, "NFS.FromHandle")
+		defer func() { finish(err) }()
 	}
-
-	ctx, finish := startSpan(ctx, "NFS.FromHandle")
-	defer func() { finish(err) }()
 
 	fs, paths, err = e.inner.FromHandle(ctx, fh)
 	if fs != nil {

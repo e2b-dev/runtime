@@ -431,8 +431,8 @@ github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25Kn
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/dvyukov/go-fuzz v0.0.0-20210914135545-4980593459a1/go.mod h1:11Gm+ccJnvAhCNLlf5+cS9KjtbaD5I5zaZpFMsTHWTw=
-github.com/e2b-dev/go-nfs v0.0.0-20261010192153-cc5dba21129a h1:4L+QqCAuF/lkJH3PEuzpbrk3jicyS+T57FwGAvcdV04=
-github.com/e2b-dev/go-nfs v0.0.0-20261010192153-cc5dba21129a/go.mod h1:UwvBkdtJJSM7M2RN0aRCnN5ESEbDpFkQ+5i9yKPUbnk=
+github.com/e2b-dev/go-nfs v0.0.0-20261014235539-3a68f3e14752 h1:ijkNeylPYVzZzuJrsdf2s4yRB2xWd61TVVq1ZF+GIMM=
+github.com/e2b-dev/go-nfs v0.0.0-20261014235539-3a68f3e14752/go.mod h1:UwvBkdtJJSM7M2RN0aRCnN5ESEbDpFkQ+5i9yKPUbnk=
 github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/qyY=
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/edsrzf/mmap-go v1.2.1-0.20241212181136-fad1cd13edbd h1:I4PrRZuNMeDP3VbFrak4QsqwO5tWkQf0tqrrr1L2DsU=

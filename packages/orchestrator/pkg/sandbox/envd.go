@@ -804,7 +804,7 @@ func (s *Sandbox) convertMounts(mounts []VolumeMountConfig) []envd.VolumeMount {
 
 	for _, mount := range mounts {
 		results = append(results, envd.VolumeMount{
-			NfsTarget: fmt.Sprintf("%s:/%s", s.config.NetworkConfig.OrchestratorInSandboxIPAddress, mount.Name),
+			NfsTarget: fmt.Sprintf("%s:%s", s.config.NetworkConfig.OrchestratorInSandboxIPAddress, s.NFSMountPath(mount.Name)),
 			Path:      mount.Path,
 		})
 	}

@@ -139,22 +139,24 @@ func TestReturnAsync_DoesNotBlockOnReturnDelay(t *testing.T) {
 	pool := NewPool(2, 4, storage, Config{})
 	close(pool.newSlots)
 
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		defer close(done)
-
-		_ = pool.ReturnAsync(t.Context(), newTestSlot(1), noopRelease, time.Hour)
+		done <- pool.ReturnAsync(t.Context(), newTestSlot(1), noopRelease, time.Hour)
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("ReturnAsync blocked on the return delay")
 	}
 
 	// Close short-circuits the hour-long delay into the cleanup path and
-	// must not return before the slot is released.
-	require.NoError(t, pool.Close(t.Context()))
+	// must not return before the slot is released. The synthetic slot has no
+	// real network configuration, so teardown errors are not the leak signal.
+	if err := pool.Close(t.Context()); err != nil {
+		t.Logf("synthetic slot network cleanup: %v", err)
+	}
 	assert.Equal(t, int64(1), storage.released.Load(), "Close returned before the in-flight return released the slot")
 }
 
@@ -211,13 +213,17 @@ func TestReturn_AfterClose_CleanupFailure_PreservesErrClosed(t *testing.T) { //n
 }
 
 // A failed release notification keeps the slot allocated and out of reuse on
-// the normal, canceled and closed paths. An async return still finishes, so
-// Close does not wait on it.
+// the normal and canceled paths. Close physically removes every retained
+// slot, and a return after Close removes it immediately without reuse.
 func TestReturn_FailedReleaseRetainsSlot(t *testing.T) {
 	t.Parallel()
 
 	boom := errors.New("boom")
-	failRelease := func(context.Context, string) error { return boom }
+	failRelease := func(ctx context.Context, _ string) error {
+		assert.NoError(t, ctx.Err(), "caller cancellation must not skip lifecycle cleanup")
+
+		return boom
+	}
 	storage := &fakeStorage{}
 	pool := NewPool(2, 4, storage, Config{})
 	close(pool.newSlots)
@@ -229,12 +235,12 @@ func TestReturn_FailedReleaseRetainsSlot(t *testing.T) {
 	require.ErrorIs(t, err, ErrSlotRetained)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NoError(t, pool.ReturnAsync(t.Context(), newTestSlot(3), failRelease, time.Hour))
-	require.NoError(t, pool.Close(t.Context()))
+	require.ErrorIs(t, pool.Close(t.Context()), ErrSlotRetained)
 	err = pool.returnSlot(t.Context(), newTestSlot(4), failRelease, time.Hour)
-	require.ErrorIs(t, err, ErrSlotRetained)
+	require.NotErrorIs(t, err, ErrSlotRetained)
 	require.ErrorIs(t, err, ErrClosed)
 
-	assert.Zero(t, storage.released.Load(), "a retained slot must not be released for reuse")
+	assert.Equal(t, int64(4), storage.released.Load(), "shutdown must physically remove all four slots, including earlier failed returns")
 	assert.Empty(t, pool.reusedSlots)
 }
 
@@ -392,8 +398,8 @@ func TestPool_GetRejectsAdmissionWhenClosed(t *testing.T) {
 // A Get tracked before Close can receive a reusable slot immediately before
 // Close owns admission. Its final claim must reject and clean the slot, and
 // Close must join that admission-owned cleanup before returning.
-func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) {
-	t.Parallel()
+func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) { //nolint:paralleltest // native slot setup mutates the caller's netns
+	returned := newFirewallTestSlot(t, "pool-close-final-claim")
 
 	synctest.Test(t, func(t *testing.T) {
 		cleanupStarted := make(chan struct{})
@@ -405,7 +411,7 @@ func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) {
 
 			return nil
 		}
-		pool := NewPool(NewSlotsPoolSize, 0, storage, poolTestConfig())
+		pool := NewPool(NewSlotsPoolSize, 0, storage, returned.config)
 
 		getDone := make(chan poolGetResult, 1)
 		go func() {
@@ -418,7 +424,6 @@ func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) {
 		// Publishing the exact Close state after that receive forces the final
 		// claim to observe closed when the lock is released.
 		pool.closeMu.Lock()
-		returned := newTestSlot(72)
 		reusableSlotsAvailableCounter.Add(t.Context(), 1)
 		pool.reusedSlots <- returned
 		pool.closed = true
@@ -447,4 +452,40 @@ func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) {
 		require.NoError(t, <-closeDone)
 		assert.Equal(t, int64(1), storage.released.Load(), "the rejected slot is released exactly once")
 	})
+}
+
+// Close preserves an unresolved error of each kind without collecting every
+// later return failure. Individual callers still receive their own diagnostic.
+func TestPool_CloseRetainsBoundedUnresolvedErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, notification := range []bool{true, false} {
+		name := "teardown"
+		if notification {
+			name = "notification"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			storage := &fakeStorage{}
+			pool := NewPool(2, 4, storage, Config{})
+			close(pool.newSlots)
+			first := errors.New("first unresolved failure")
+			later := errors.New("later unresolved failure")
+			for i, failure := range []error{first, later} {
+				released := func(context.Context, string) error { return nil }
+				if notification {
+					released = func(context.Context, string) error { return failure }
+				} else {
+					storage.releaseFn = func(*Slot) error { return failure }
+				}
+				err := pool.returnSlot(t.Context(), newTestSlot(i+1), released, 0)
+				require.ErrorIs(t, err, failure, "each return must report its own failure")
+			}
+			err := pool.Close(t.Context())
+			require.ErrorIs(t, err, first, "shutdown must preserve an unresolved failure")
+			require.NotErrorIs(t, err, later, "shutdown must not collect a lifetime history")
+			require.Equal(t, int64(2), storage.released.Load(), "all slots must reach physical cleanup")
+		})
+	}
 }

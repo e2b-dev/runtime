@@ -245,6 +245,11 @@ type Pool struct {
 	// returnsWG tracks in-flight asynchronous slot returns; Close waits for
 	// it before draining the pool.
 	returnsWG sync.WaitGroup
+	// First unresolved failures only, guarded by closeMu; returns report every error.
+	releaseErr error
+	cleanupErr error
+	// Retained slots cannot be reused, but Close still owns their teardown.
+	retainedSlots map[*Slot]struct{}
 
 	slotStorage Storage
 
@@ -263,7 +268,7 @@ func WithNonDNSUDPFlag(flags *featureflags.Client) PoolOption {
 var ErrClosed = errors.New("cannot read from a closed pool")
 
 // ErrSlotRetained reports a slot kept allocated because its release
-// notification failed. It stays out of reuse until the orchestrator restarts.
+// notification failed. It stays out of reuse and is physically removed by Close.
 var ErrSlotRetained = errors.New("network slot retained after failed release")
 
 func NewPool(newSlotsPoolSize, reusedSlotsPoolSize int, slotStorage Storage, config Config, options ...PoolOption) *Pool {
@@ -426,9 +431,7 @@ func (p *Pool) configureSlot(ctx context.Context, slot *Slot, network *orchestra
 
 // returnSlot recycles a slot that was used by a sandbox. It waits returnDelay
 // before making the slot reusable to let inflight requests on the previous
-// sandbox drain. Release notifications must succeed before teardown or reuse,
-// including on cancellation or pool shutdown. A failure keeps the slot allocated
-// and unavailable until orchestrator recovery, since connections may still exist.
+// sandbox drain. Notifications must finish before teardown and succeed before reuse.
 func (p *Pool) returnSlot(ctx context.Context, slot *Slot, releasedFn ReleaseNotify, returnDelay time.Duration) (retErr error) {
 	started := time.Now()
 	cleanupStarted := started
@@ -447,10 +450,33 @@ func (p *Pool) returnSlot(ctx context.Context, slot *Slot, releasedFn ReleaseNot
 		cleanupStarted = time.Now()
 
 		// Every path notifies before the slot can be torn down or reused.
-		if err := releasedFn(ctx, slot.HostIPString()); err != nil {
+		if err := releasedFn(context.WithoutCancel(ctx), slot.HostIPString()); err != nil {
+			p.closeMu.Lock()
+			closed := p.closed
+			var releaseErr error
+			if closed {
+				releaseErr = errors.Join(ErrClosed, cause, err)
+			} else {
+				releaseErr = errors.Join(cause, fmt.Errorf("%w: slot '%d': %w", ErrSlotRetained, slot.Idx, err))
+			}
+			if p.releaseErr == nil {
+				p.releaseErr = releaseErr
+			}
+			if !closed {
+				if p.retainedSlots == nil {
+					p.retainedSlots = make(map[*Slot]struct{})
+				}
+				p.retainedSlots[slot] = struct{}{}
+			}
+			p.closeMu.Unlock()
+			if closed {
+				// No reuse is possible after Close. Remove the veth/netns even
+				// if a subscriber's independent cleanup is still pending.
+				return p.cleanupWith(ctx, slot, releaseErr)
+			}
 			telemetry.SetAttributes(ctx, attribute.Bool("network.slot.retained", true))
 
-			return errors.Join(cause, fmt.Errorf("%w: slot '%d': %w", ErrSlotRetained, slot.Idx, err))
+			return releaseErr
 		}
 		if cause != nil {
 			return p.cleanupWith(ctx, slot, cause)
@@ -609,7 +635,14 @@ func (p *Pool) tryReuse(ctx context.Context, slot *Slot) (reused bool, cause err
 // cleanupWith tears the slot down and attaches any cleanup error to cause.
 func (p *Pool) cleanupWith(ctx context.Context, slot *Slot, cause error) error {
 	if cerr := p.cleanup(ctx, slot); cerr != nil {
-		return errors.Join(cause, fmt.Errorf("cleanup slot '%d': %w", slot.Idx, cerr))
+		cleanupErr := fmt.Errorf("cleanup slot '%d': %w", slot.Idx, cerr)
+		p.closeMu.Lock()
+		if p.cleanupErr == nil {
+			p.cleanupErr = cleanupErr
+		}
+		p.closeMu.Unlock()
+
+		return errors.Join(cause, cleanupErr)
 	}
 
 	return cause
@@ -658,11 +691,18 @@ func (p *Pool) Close(ctx context.Context) error {
 	// a configuration-failure return; returnsWG below joins asynchronous returns.
 	p.admissionsWG.Wait()
 
-	// Wait for in-flight asynchronous returns: each either cleans its slot
-	// up itself or has already pushed it into reusedSlots, drained below.
 	p.returnsWG.Wait()
 
-	var errs []error
+	p.closeMu.Lock()
+	errs := []error{p.releaseErr, p.cleanupErr}
+	retained := p.retainedSlots
+	p.retainedSlots = nil
+	p.closeMu.Unlock()
+	for slot := range retained {
+		if err := p.cleanup(ctx, slot); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup retained slot '%d': %w", slot.Idx, err))
+		}
+	}
 
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)

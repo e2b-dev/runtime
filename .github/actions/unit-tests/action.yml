@@ -50,6 +50,16 @@ runs:
       if: inputs.package == 'packages/orchestrator'
       shell: bash
       run: |
+        sudo apt-get update
+        mount_tools="$RUNNER_TEMP/nfs-client"
+        mkdir -p "$mount_tools"
+        (
+          cd "$mount_tools"
+          apt-get download nfs-common
+          dpkg-deb -x nfs-common_*.deb .
+        )
+        chmod u-s "$mount_tools/usr/sbin/mount.nfs"
+        echo "NFS_TEST_MOUNT_HELPER=$mount_tools/usr/sbin/mount.nfs" >> "$GITHUB_ENV"
         make -C packages/orchestrator fetch-busybox
         echo "HOST_BUSYBOX_DIR=$(pwd)/packages/orchestrator/.busybox" >> "$GITHUB_ENV"
 
@@ -184,6 +194,33 @@ runs:
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
         sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" gotestsum --format=standard-verbose \
           -- -timeout $TEST_TIMEOUT $RACE -parallel 16 ${TEST_LDFLAGS:-} ${{ inputs.test-path }}
+
+    # Ordinary unit runs skip native slot and kernel-mount tests. Private
+    # namespaces keep network and mount changes off the runner's namespace.
+    - name: Run native NFS network and kernel-mount lifecycle tests
+      if: inputs.package == 'packages/orchestrator'
+      shell: bash
+      working-directory: ${{ inputs.package }}
+      run: |
+        set -euo pipefail
+        binary=$(mktemp "${RUNNER_TEMP}/nfs-network-test.XXXXXX")
+        trap 'rm -f "$binary"' EXIT
+        RACE=""
+        if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; fi
+        go test -c $RACE -o "$binary" ./pkg/nfsproxy
+        mount_helper="$NFS_TEST_MOUNT_HELPER"
+        "$mount_helper" -V
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" \
+          NFS_TEST_NATIVE_NETWORK=1 NFS_TEST_KERNEL_MOUNT=1 NFS_TEST_MOUNT_HELPER="$mount_helper" \
+          unshare --net --mount --propagation private bash -euo pipefail -c '
+            ip link set lo up
+            ip link add nfs-test-gw type dummy
+            ip addr add 192.0.2.1/30 dev nfs-test-gw
+            ip link set nfs-test-gw up
+            ip route add default via 192.0.2.2 dev nfs-test-gw
+            exec "$1" -test.v -test.count=1 -test.timeout=5m \
+              -test.run="^Test(NetworkPoolNative(NFSReleaseBeforeMountDrain|PendingShutdown|HandledRecycleFailure)|KernelMountRetainsRootAcrossLifecycleReplacement)$"
+          ' bash "$binary"
 
     - name: Run tests
       if: inputs.sudo != 'true'

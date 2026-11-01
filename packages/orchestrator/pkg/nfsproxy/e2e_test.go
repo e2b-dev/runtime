@@ -110,8 +110,10 @@ func TestIntegrationTest(t *testing.T) {
 	volumeType := "volume-type-1"
 	volumeName := "test-volume-1"
 	volumeID := uuid.New()
+	lifecycleID := uuid.NewString()
 	sandboxes := sandbox.NewSandboxesMap()
 	sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
+		LifecycleID: lifecycleID,
 		Metadata: &sandbox.Metadata{
 			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID: sandboxID,
@@ -128,9 +130,6 @@ func TestIntegrationTest(t *testing.T) {
 		},
 	})
 
-	// launch nfs proxy server
-	nfsListener := getListener(t, 0)
-
 	volumeTypePath := t.TempDir()
 
 	// make volume dir
@@ -145,10 +144,32 @@ func TestIntegrationTest(t *testing.T) {
 
 	s, err := NewProxy(t.Context(), builder, sandboxes, nfscfg.Config{})
 	require.NoError(t, err)
-	go func() {
-		err := s.Serve(nfsListener)
-		assert.NoError(t, err)
-	}()
+	// Register these in reverse cleanup order: release the lifecycle while
+	// the proxy is live, close its listener, then join Serve before removing
+	// the volume directory. Container cleanup registered below runs first.
+	var served chan error
+	t.Cleanup(func() {
+		if served == nil {
+			return
+		}
+		select {
+		case err := <-served:
+			assert.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Error("NFS listener closed but Serve did not join")
+		}
+	})
+	nfsListener := getListener(t, 0)
+	releaseNetwork := sandboxes.NetworkRelease(sandboxID, lifecycleID)
+	t.Cleanup(func() {
+		assert.NoError(t, releaseNetwork(context.WithoutCancel(t.Context()), slot.HostIPString()))
+		assert.Eventually(t, func() bool {
+			return s.retirement.count() == 0 && s.chroots.Count() == 0
+		}, 5*time.Second, time.Millisecond,
+			"mounted fixture must retire every root after exact-lifecycle network release")
+	})
+	served = make(chan error, 1)
+	go func() { served <- s.Serve(nfsListener) }()
 
 	_, nfsListenPortStr, err := net.SplitHostPort(nfsListener.Addr().String())
 	require.NoError(t, err)
@@ -209,7 +230,7 @@ func TestIntegrationTest(t *testing.T) {
 		exec.WithEnv([]string{
 			"NFS_HOST=" + defaultDockerHost,
 			"NFS_PORT=" + nfsListenPortStr,
-			"NFS_PATH=/" + volumeName,
+			"NFS_PATH=/" + lifecycleID + "/" + volumeName,
 		}),
 	)
 	require.NoError(t, err)

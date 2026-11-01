@@ -142,7 +142,7 @@ func TestHandler_FSStat_PanicRecovered(t *testing.T) {
 	require.ErrorIs(t, h.FSStat(t.Context(), nil, &stat), ErrPanic)
 }
 
-func TestHandler_Mount_Panic_NoCrash(t *testing.T) {
+func TestHandler_Mount_Panic_ReturnsServerFault(t *testing.T) {
 	t.Parallel()
 	mh := nfsproxymocks.NewMockHandler(t)
 	mh.EXPECT().Mount(mock.Anything, mock.Anything, mock.Anything).
@@ -151,20 +151,64 @@ func TestHandler_Mount_Panic_NoCrash(t *testing.T) {
 		})
 	h := WrapWithRecovery(t.Context(), mh)
 	status, fs, auth := h.Mount(t.Context(), nil, nfs.MountRequest{})
-	// On panic, zero values returned. Ensure it didn't panic and fs is nil.
+	// Returning zero status would send a successful MOUNT with no root handle.
+	require.Equal(t, nfs.MountStatusErrServerFault, status)
 	require.Nil(t, fs)
-	require.Zero(t, status)
-	require.Empty(t, auth)
+	require.Nil(t, auth)
 }
 
 func TestHandler_Mount_WrapsFS(t *testing.T) {
 	t.Parallel()
 	base := nfsproxymocks.NewMockFilesystem(t)
 	mh := nfsproxymocks.NewMockHandler(t)
-	mh.EXPECT().Mount(mock.Anything, mock.Anything, mock.Anything).Return(nfs.MountStatus(0), base, nil)
+	flavors := []nfs.AuthFlavor{nfs.AuthFlavor(1)}
+	mh.EXPECT().Mount(mock.Anything, mock.Anything, mock.Anything).Return(nfs.MountStatusOk, base, flavors)
 	h := WrapWithRecovery(t.Context(), mh)
-	_, fs, _ := h.Mount(t.Context(), nil, nfs.MountRequest{})
+	status, fs, auth := h.Mount(t.Context(), nil, nfs.MountRequest{})
+	require.Equal(t, nfs.MountStatusOk, status)
 	require.IsType(t, &filesystem{}, fs)
+	require.Same(t, base, fs.(*filesystem).inner)
+	require.Equal(t, flavors, auth)
+}
+
+func TestHandler_Mount_Error_Propagates(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status nfs.MountStatus
+	}{
+		{name: "permission denied", status: nfs.MountStatusErrAcces},
+		{name: "missing export", status: nfs.MountStatusErrNoEnt},
+		{name: "server fault", status: nfs.MountStatusErrServerFault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mh := nfsproxymocks.NewMockHandler(t)
+			mh.EXPECT().Mount(mock.Anything, mock.Anything, mock.Anything).Return(tc.status, nil, nil)
+			h := WrapWithRecovery(t.Context(), mh)
+			status, fs, auth := h.Mount(t.Context(), nil, nfs.MountRequest{})
+			require.Equal(t, tc.status, status)
+			require.Nil(t, fs)
+			require.Nil(t, auth)
+		})
+	}
+}
+
+func TestHandler_FromHandle_WrapsFSForOperationRecovery(t *testing.T) {
+	t.Parallel()
+	base := nfsproxymocks.NewMockFilesystem(t)
+	base.EXPECT().Open("file").RunAndReturn(func(string) (billy.File, error) { panic("FS.Open") })
+	mh := nfsproxymocks.NewMockHandler(t)
+	mh.EXPECT().FromHandle(mock.Anything, mock.Anything).Return(base, []string{"file"}, nil)
+	h := WrapWithRecovery(t.Context(), mh)
+	fs, path, err := h.FromHandle(t.Context(), []byte("handle"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"file"}, path)
+	require.IsType(t, &filesystem{}, fs)
+	_, err = fs.Open(path[0])
+	require.ErrorIs(t, err, ErrPanic)
 }
 
 func TestHandler_FromHandle_PanicRecovered(t *testing.T) {

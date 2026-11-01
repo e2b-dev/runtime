@@ -7,7 +7,7 @@ replace (
 	github.com/e2b-dev/infra/packages/shared v0.0.0 => ../shared
 )
 
-replace github.com/willscott/go-nfs v0.0.3 => github.com/e2b-dev/go-nfs v0.0.0-20261010192153-cc5dba21129a
+replace github.com/willscott/go-nfs v0.0.3 => github.com/e2b-dev/go-nfs v0.0.0-20261014235539-3a68f3e14752
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 

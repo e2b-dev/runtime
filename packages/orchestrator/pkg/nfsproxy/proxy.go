@@ -16,9 +16,9 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/chroot"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/dirverifier"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/handlecache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/logged"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/metrics"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/recovery"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/tracing"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
@@ -27,14 +27,20 @@ import (
 var setLogLevelOnce sync.Once
 
 type Proxy struct {
-	config cfg.Config
-	server *nfs.Server
+	config     cfg.Config
+	server     *nfs.Server
+	cache      *mountcache.Handler
+	chroots    *chroot.NFSHandler
+	gate       *mountcache.LifecycleGate
+	retirement *mountLifecycleSubscriber
 }
 
 func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox.Map, config cfg.Config) (*Proxy, error) {
-	handleCacheLimit := cmp.Or(config.HandleCacheLimit, cfg.DefaultHandleCacheLimit)
+	return newProxy(ctx, builder, sandboxes, config, cmp.Or(config.HandleCacheLimit, cfg.DefaultHandleCacheLimit))
+}
+
+func newProxy(ctx context.Context, builder chroot.Builder, sandboxes *sandbox.Map, config cfg.Config, handleCacheLimit int) (*Proxy, error) {
 	if handleCacheLimit < 2 {
-		// go-nfs needs room for a directory and an entry in it
 		return nil, fmt.Errorf("nfs proxy handle cache limit must be at least 2, got %d", handleCacheLimit)
 	}
 
@@ -42,17 +48,21 @@ func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox
 		nfs.Log.SetLevel(config.NFSLogLevel)
 	})
 
-	chrootHandler, err := chroot.NewNFSHandler(builder, sandboxes)
+	gate := mountcache.NewLifecycleGate()
+
+	var (
+		handler nfs.Handler
+		err     error
+	)
+	chrootHandler, err := chroot.NewNFSHandler(builder, sandboxes, gate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chroot NFS handler: %w", err)
 	}
-
-	handles := handlecache.Wrap(chrootHandler, handleCacheLimit)
-	chrootHandler.OnMount(handles.Register)
-	chrootHandler.OnRelease(handles.Release)
+	handler = chrootHandler
 
 	// wrap the handler in middleware
-	var handler nfs.Handler = handles
+	cachingHandler := mountcache.NewHandler(handler, handleCacheLimit)
+	handler = cachingHandler
 
 	if config.Tracing {
 		handler = tracing.WrapWithTracing(handler, config)
@@ -67,12 +77,16 @@ func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox
 	}
 
 	handler = recovery.WrapWithRecovery(ctx, handler)
-
-	// go-nfs looks for the verifier cache on the outermost handler only
 	handler, err = dirverifier.Wrap(handler, cmp.Or(config.DirVerifierLimit, cfg.DefaultDirVerifierLimit))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create nfs directory verifier cache: %w", err)
 	}
+
+	retirement, err := newMountLifecycleSubscriber(gate, chrootHandler, cachingHandler)
+	if err != nil {
+		return nil, err
+	}
+	sandboxes.Subscribe(retirement)
 
 	s := &nfs.Server{
 		Handler:      handler,
@@ -82,8 +96,12 @@ func NewProxy(ctx context.Context, builder *chrooted.Builder, sandboxes *sandbox
 	}
 
 	return &Proxy{
-		config: config,
-		server: s,
+		config:     config,
+		server:     s,
+		cache:      cachingHandler,
+		chroots:    chrootHandler,
+		gate:       gate,
+		retirement: retirement,
 	}, nil
 }
 

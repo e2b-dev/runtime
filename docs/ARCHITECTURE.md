@@ -524,6 +524,22 @@ Key mechanisms (all under `pkg/sandbox/`):
   (with SNI/Host-inspecting TCP firewall for domain allow/deny lists). Slots are pooled and
   reused; slot indexes are allocated locally against the node's netns state (leftover
   namespaces from a previous run are torn down by startup reclaim).
+  NFS release removes the old lifecycle's route, closes MOUNT admission and invalidates its
+  handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
+  tracked by `nfs.retirements.gauge` until it finishes; a stuck backing operation does not
+  retain the network slot. Pool shutdown removes retained networks while preserving failed
+  release-notification and teardown errors.
+  The `/init` caller supplies NFS exports as `/lifecycle_id/volume_name`; the proxy
+  checks the request lifecycle against the current IP route before MOUNT admission.
+  This prevents a queued or retried old MOUNT from inheriting a reused IP's owner;
+  it is not socket authentication. Plain-name exports are rejected. Resume supplies
+  a fresh lifecycle and target; a same-lifecycle envd live-upgrade preserves its
+  existing kernel mount and handles, rather than migrating its export target.
+  Changing the target alone does not migrate a carried same-lifecycle mount.
+  The target producer and validator change together in the node's orchestrator;
+  rollback to the old export format requires a matching remount/new lifecycle.
+  Lifecycle IDs are fresh random UUIDs at create/resume and appear in mount targets
+  and logs. They identify stale requests, not a secret credential or new auth policy.
 - **Sandbox proxy** (:5007, `pkg/proxy/`): reverse-proxies incoming traffic from client-proxy to
   the sandbox's slot IP and requested port over HTTP or configured HTTPS, enforcing per-sandbox
   traffic access tokens through the shared ingress policy. HTTPS backends may use self-signed certificates.
