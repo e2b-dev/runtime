@@ -42,6 +42,7 @@ func TestSandboxProxyWorkingPort(t *testing.T) {
 	setup.SetUserHeader(t, serverReq.Header(), "user")
 	serverStream, err := envdClient.ProcessClient.Start(serverCtx, serverReq)
 	require.NoError(t, err)
+	utils.RequireProcessStarted(t, serverStream)
 	defer func() {
 		serverCancel()
 		serverErr := serverStream.Close()
