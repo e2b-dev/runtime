@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -313,6 +314,38 @@ func (e serviceDoneError) Error() string {
 	return fmt.Sprintf("service %s finished", e.name)
 }
 
+// runService runs one service to its end. A service that returns an error is
+// recorded in failed, and every end is reported on serviceError, where only
+// the first one before the shutdown signal is read; to the group every end
+// is serviceDoneError.
+func runService(ctx context.Context, l logger.Logger, name string, f func() error, failed *atomic.Bool, serviceError chan<- error) error {
+	l.Info(ctx, "starting service")
+
+	err := f()
+	if err != nil {
+		l.Error(ctx, "service returned an error", zap.Error(err))
+		failed.Store(true)
+	}
+
+	reportServiceError(serviceError, err)
+
+	return serviceDoneError{name: name}
+}
+
+// shutdownFailed reports whether the service group ended in a failure: every
+// service returns serviceDoneError when it stops.
+func shutdownFailed(err error) bool {
+	var sde serviceDoneError
+
+	return err != nil && !errors.As(err, &sde)
+}
+
+// syncFailed reports whether a logger's Sync failed. Sync returns EINVAL when
+// the output is a pipe, as a container's stdout is.
+func syncFailed(err error) bool {
+	return err != nil && !errors.Is(err, syscall.EINVAL)
+}
+
 func newServiceErrorChannel() chan error {
 	return make(chan error, 1)
 }
@@ -535,13 +568,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	serviceError := newServiceErrorChannel()
 	defer close(serviceError)
+	// A service failure is recorded whenever it happens: the channel reports
+	// only the first service to end, and only before the shutdown signal.
+	var servicesFailed atomic.Bool
 
 	var g errgroup.Group
 	// defer waiting on the group so that this runs even when
 	// there's a panic.
 	defer func(g *errgroup.Group) {
-		err := g.Wait()
-		if err != nil {
+		if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
 			log.Printf("error while shutting down: %v", err)
 			success = false
 		}
@@ -583,7 +618,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}))
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down logger: %v", err)
 			success = false
 		}
@@ -601,7 +636,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -618,17 +653,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	startService := func(name string, f func() error) {
 		g.Go(func() error {
-			l := globalLogger.With(zap.String("service", name))
-			l.Info(ctx, "starting service")
-
-			err := f()
-			if err != nil {
-				l.Error(ctx, "service returned an error", zap.Error(err))
-			}
-
-			reportServiceError(serviceError, err)
-
-			return serviceDoneError{name: name}
+			return runService(ctx, globalLogger.With(zap.String("service", name)), name, f, &servicesFailed, serviceError)
 		})
 	}
 
@@ -701,7 +726,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -1225,7 +1250,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	case <-sig.Done():
 		logger.L().Info(ctx, "Shutdown signal received")
 	case serviceErr := <-serviceError:
+		// A service that stops before the signal is a failure, even with no error.
 		logger.L().Error(ctx, "Service error", zap.Error(serviceErr))
+		success = false
 	}
 
 	closeCtx, cancelCloseCtx := context.WithCancel(context.Background())
@@ -1272,9 +1299,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 
 	logger.L().Info(ctx, "Waiting for services to finish")
-	var sde serviceDoneError
-	if err := g.Wait(); err != nil && !errors.As(err, &sde) {
-		logger.L().Error(ctx, "service group error", zap.Error(err))
+	if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
+		logger.L().Error(ctx, "service group error", zap.Error(err), zap.Bool("service_failed", servicesFailed.Load()))
 		success = false
 	}
 
