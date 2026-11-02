@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -226,6 +227,11 @@ func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.Star
 	return ctx.Err()
 }
 
+// maxTimeoutMs is the largest Connect-Timeout-Ms value whose nanosecond
+// duration still fits in an int64: above it, time.Duration(timeout) *
+// time.Millisecond silently wraps to a wrong timeout.
+const maxTimeoutMs = math.MaxInt64 / int64(time.Millisecond)
+
 func determineTimeoutFromHeader(header http.Header) (time.Duration, error) {
 	timeoutHeader := header.Get("Connect-Timeout-Ms")
 
@@ -233,9 +239,16 @@ func determineTimeoutFromHeader(header http.Header) (time.Duration, error) {
 		return 0, nil
 	}
 
-	timeout, err := strconv.Atoi(timeoutHeader)
+	// ParseInt, not Atoi, so the accepted range does not depend on the platform int size.
+	timeout, err := strconv.ParseInt(timeoutHeader, 10, 64)
 	if err != nil {
 		return 0, err
+	}
+
+	// The millisecond count becomes nanoseconds below; reject values that would
+	// overflow or wrap to a wrong (possibly negative or instant) timeout.
+	if timeout < 0 || timeout > maxTimeoutMs {
+		return 0, fmt.Errorf("invalid Connect-Timeout-Ms %d: must be between 0 and %d", timeout, maxTimeoutMs)
 	}
 
 	return time.Duration(timeout) * time.Millisecond, nil
