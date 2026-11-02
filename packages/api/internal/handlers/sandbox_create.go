@@ -61,7 +61,6 @@ const (
 	maxNetworkRuleTransformsPerDomain = 1
 	maxNetworkRuleDomainLen           = 128
 	maxNetworkRuleHeaderNameLen       = 64
-	maxNetworkRuleHeaderValueLen      = 2048
 	maxNetworkRuleHeadersPerRule      = 20
 
 	maxIamTokens = 5
@@ -325,8 +324,8 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 
 	var network *types.SandboxNetworkConfig
 	if n := body.Network; n != nil {
-		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamInfo.Team.ID.String()))
-		if err := validateNetworkConfig(ctx, a.featureFlags, teamInfo.Team.ID, sharedUtils.DerefOrDefault(build.EnvdVersion, ""), maxDomains, n); err != nil {
+		limits := a.networkRuleLimits(ctx, teamInfo.Team.ID)
+		if err := validateNetworkConfig(ctx, a.featureFlags, teamInfo.Team.ID, sharedUtils.DerefOrDefault(build.EnvdVersion, ""), limits, n); err != nil {
 			telemetry.ReportError(ctx, "invalid network config", err.Err, telemetry.WithSandboxID(sandboxID))
 			err.Retryable = apierrors.NoRetry
 
@@ -827,7 +826,7 @@ func apiEgressProxyToConfig(ep *api.SandboxEgressProxyConfig) *sandbox_network.E
 	return cfg
 }
 
-func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, maxDomains int, network *api.SandboxNetworkConfig) *api.APIError {
+func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, limits networkRuleLimits, network *api.SandboxNetworkConfig) *api.APIError {
 	if network == nil {
 		return nil
 	}
@@ -908,7 +907,7 @@ func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient,
 		return err
 	}
 
-	return validateNetworkRules(ctx, featureFlags, teamID, envdVersion, maxDomains, network.Rules)
+	return validateNetworkRules(ctx, featureFlags, teamID, envdVersion, limits, network.Rules)
 }
 
 // validateEgressRules validates egress allow/deny rules:
@@ -977,7 +976,22 @@ func validateDNSServers(dnsServers *[]string) *api.APIError {
 	return nil
 }
 
-func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, maxDomains int, rules *map[string][]api.SandboxNetworkRule) *api.APIError {
+// networkRuleLimits holds the per-team network rule limits read from feature flags.
+type networkRuleLimits struct {
+	MaxDomains        int
+	MaxHeaderValueLen int
+}
+
+func (a *APIStore) networkRuleLimits(ctx context.Context, teamID uuid.UUID) networkRuleLimits {
+	teamCtx := featureflags.TeamContext(teamID.String())
+
+	return networkRuleLimits{
+		MaxDomains:        a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, teamCtx),
+		MaxHeaderValueLen: a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleHeaderValueLen, teamCtx),
+	}
+}
+
+func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, limits networkRuleLimits, rules *map[string][]api.SandboxNetworkRule) *api.APIError {
 	if rules == nil {
 		return nil
 	}
@@ -1006,11 +1020,11 @@ func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, 
 		}
 	}
 
-	if len(*rules) > maxDomains {
+	if len(*rules) > limits.MaxDomains {
 		return &api.APIError{
 			Code:      http.StatusBadRequest,
-			Err:       fmt.Errorf("too many rule domains: %d (max %d)", len(*rules), maxDomains),
-			ClientMsg: fmt.Sprintf("Network rules can have at most %d domains.", maxDomains),
+			Err:       fmt.Errorf("too many rule domains: %d (max %d)", len(*rules), limits.MaxDomains),
+			ClientMsg: fmt.Sprintf("Network rules can have at most %d domains.", limits.MaxDomains),
 		}
 	}
 
@@ -1111,11 +1125,11 @@ func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, 
 					}
 				}
 
-				if len(value) > maxNetworkRuleHeaderValueLen {
+				if len(value) > limits.MaxHeaderValueLen {
 					return &api.APIError{
 						Code:      http.StatusBadRequest,
-						Err:       fmt.Errorf("value for header %q in rule for domain %q exceeds max length %d", name, domain, maxNetworkRuleHeaderValueLen),
-						ClientMsg: fmt.Sprintf("Value for header %q in rule for domain %q exceeds maximum length of %d characters.", name, domain, maxNetworkRuleHeaderValueLen),
+						Err:       fmt.Errorf("value for header %q in rule for domain %q exceeds max length %d", name, domain, limits.MaxHeaderValueLen),
+						ClientMsg: fmt.Sprintf("Value for header %q in rule for domain %q exceeds maximum length of %d characters.", name, domain, limits.MaxHeaderValueLen),
 					}
 				}
 

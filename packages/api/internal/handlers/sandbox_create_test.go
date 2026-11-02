@@ -461,7 +461,7 @@ func TestValidateNetworkConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mockFF := handlersmocks.NewMockFeatureFlagsClient(t)
-			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", 10, tt.network)
+			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", networkRuleLimits{MaxDomains: 10, MaxHeaderValueLen: 2048}, tt.network)
 
 			if tt.wantErr {
 				if err == nil {
@@ -1164,7 +1164,11 @@ func TestValidateNetworkRules(t *testing.T) {
 	t.Parallel()
 
 	teamID := uuid.New()
-	const defaultMaxDomains = 10
+	const (
+		defaultMaxDomains        = 10
+		defaultMaxHeaderValueLen = 2048
+	)
+	defaultLimits := networkRuleLimits{MaxDomains: defaultMaxDomains, MaxHeaderValueLen: defaultMaxHeaderValueLen}
 
 	rulesWithDomains := func(count int) *map[string][]api.SandboxNetworkRule {
 		rules := make(map[string][]api.SandboxNetworkRule, count)
@@ -1510,7 +1514,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen),
 				})},
 			}),
 			setupFF: ffEnabled,
@@ -1520,7 +1524,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen+1),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
 				})},
 			}),
 			setupFF:  ffEnabled,
@@ -1547,7 +1551,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			t.Parallel()
 
 			ff := tt.setupFF(t)
-			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultMaxDomains, tt.rules)
+			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultLimits, tt.rules)
 
 			if tt.wantMsg == "" {
 				assert.Nil(t, apiErr)
@@ -1566,7 +1570,18 @@ func TestValidateNetworkRules(t *testing.T) {
 		})
 	}
 
-	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, defaultMaxDomains+1, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+	customDomains := defaultLimits
+	customDomains.MaxDomains = defaultMaxDomains + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customDomains, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+
+	longValue := new(map[string][]api.SandboxNetworkRule{
+		"api.openai.com": {simpleRule(map[string]string{
+			"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
+		})},
+	})
+	customHeaderLen := defaultLimits
+	customHeaderLen.MaxHeaderValueLen = defaultMaxHeaderValueLen + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customHeaderLen, longValue), "custom max header value length should override the boundary")
 }
 
 func createTestTemplateAliasWithName(ctx context.Context, t *testing.T, db *testutils.Database, templateID, aliasName string, namespace *string) {

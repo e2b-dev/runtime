@@ -469,6 +469,9 @@ var (
 
 	NetworkTransformRulesFlag = NewBoolFlag("network-transform-rules", env.IsDevelopment())
 	MaxNetworkRuleDomains     = NewIntFlag("max-network-rule-domains", 10)
+	// MaxNetworkRuleHeaderValueLen caps the length of a header value in a
+	// network transform rule, before placeholders are resolved. Evaluated per team.
+	MaxNetworkRuleHeaderValueLen = NewIntFlag("max-network-rule-header-value-len", 2048)
 
 	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", true)
 
