@@ -170,7 +170,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		logger.L().Info(ctx, "Sandbox was already in the process of being removed", logger.WithSandboxID(sandboxID), zap.String("state", string(sbx.State)))
 
 		if time.Since(sbx.EndTime) > sandbox.StaleCutoff && opts.Action.Effect == sandbox.TransitionExpires {
-			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 			go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 		}
 
@@ -195,7 +195,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		if preserveRecord {
 			return
 		}
-		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 	}()
 	err = o.removeSandboxFromNode(ctx, sbx, opts.Action, opts.Reason, opts.FilesystemOnly, opts.SkipEnvdHealthProbe)
@@ -320,8 +320,8 @@ func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandb
 		return restoreOutcomeRestoreFailed
 	}
 
-	// Add is lockless: a resume can install a new incarnation right after the
-	// restore, so the ownership check reads the record back.
+	// A resume can install a new incarnation right after the restore releases
+	// its lock, so the ownership check reads the record back.
 	current, err := o.sandboxStore.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	if errors.Is(err, sandbox.ErrNotFound) || (err == nil && current.ExecutionID != sbx.ExecutionID) {
 		return restoreOutcomeSuperseded

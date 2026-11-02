@@ -369,7 +369,8 @@ func TestCheckpointNeverServesAStalePlacement(t *testing.T) {
 			require.NoError(t, f.o.sandboxStore.WaitForStateChange(t.Context(), f.sbx.TeamID, f.sbx.SandboxID), "the transition ended")
 
 			// The record goes back to Running for the next case, and a
-			// successor replaces it just before the checkpoint's write.
+			// successor, written past the lock the restore holds, replaces it
+			// just before the checkpoint's write.
 			_, err = f.o.sandboxStore.Update(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, func(sbx sandbox.Sandbox) (sandbox.Sandbox, error) {
 				sbx.State = sandbox.StateRunning
 
@@ -380,8 +381,8 @@ func TestCheckpointNeverServesAStalePlacement(t *testing.T) {
 			successor.NetworkPlacement = routedPlacement(successor.ExecutionID)
 			var written sandbox.Sandbox
 			hook.fail = false
-			hook.before = func(ctx context.Context) error {
-				if err := f.o.sandboxStore.Add(ctx, successor, nil); err != nil {
+			hook.before = func(ctx context.Context, recordKey string) error {
+				if err := f.writePastLock(ctx, recordKey, successor); err != nil {
 					return err
 				}
 				var err error
@@ -414,7 +415,7 @@ func TestCheckpointRestoreConflictAndStateChange(t *testing.T) {
 				client.response = reportedNetwork(nil)
 				var written sandbox.Sandbox
 				rewrites := 0
-				hook.before = func(ctx context.Context) error {
+				hook.before = func(ctx context.Context, recordKey string) error {
 					var err error
 					written, err = f.o.sandboxStore.Get(ctx, f.sbx.TeamID, f.sbx.SandboxID)
 					if err != nil {
@@ -427,7 +428,7 @@ func TestCheckpointRestoreConflictAndStateChange(t *testing.T) {
 					// models another operation taking over before restoration.
 					hook.armed.Store(state == sandbox.StateSnapshotting)
 
-					return f.o.sandboxStore.Add(ctx, written, nil)
+					return f.writePastLock(ctx, recordKey, written)
 				}
 				hook.armed.Store(true)
 

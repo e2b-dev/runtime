@@ -32,7 +32,7 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	teamKey := GetSandboxStorageTeamIndexKey("team")
 	goneKey := getSandboxGoneKey("team", "sbx")
 
-	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, teamKey, goneKey}, "{}", "sbx", "exec", "0", 60).Err())
+	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey, teamKey}, "{}", "sbx", "exec", "0", 60).Err())
 
 	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, goneKey, teamKey}, "sbx", "", 60))
 	require.NoError(t, err)

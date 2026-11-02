@@ -39,7 +39,8 @@ func TestStartRemoving_JoinerIsAnsweredWithTheRestoredRefusalsClass(t *testing.T
 				joiner <- err
 			}()
 			go func() { waiter <- storage.WaitForStateChange(t.Context(), sbx.TeamID, sbx.SandboxID) }()
-			routingKey := getTransitionRoutingKey(sbx.TeamID.String(), sbx.SandboxID, transitionID(t, storage, sbx))
+			id := pendingTransitionID(t, storage.redisClient, formTeam, sbx.TeamID, sbx.SandboxID)
+			routingKey := transitionRoutingKey(transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, id))
 			require.Eventually(t, func() bool { return waitersOn(storage, routingKey) == 2 },
 				5*time.Second, 5*time.Millisecond, "both waiters must be on the transition before it is finished")
 
@@ -77,16 +78,6 @@ func waitersOn(storage *Storage, routingKey string) int {
 	defer storage.subManager.mu.RUnlock()
 
 	return len(storage.subManager.waiters[routingKey])
-}
-
-// transitionID reads the id of the transition in flight on the sandbox.
-func transitionID(t *testing.T, storage *Storage, sbx sandboxtypes.Sandbox) string {
-	t.Helper()
-
-	id, err := storage.redisClient.Get(t.Context(), getTransitionKey(sbx.TeamID.String(), sbx.SandboxID)).Result()
-	require.NoError(t, err)
-
-	return id
 }
 
 // A hold-only restore sets the retry window and nothing else: no refusal

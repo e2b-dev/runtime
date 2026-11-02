@@ -144,10 +144,11 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 
 // The tests above drive the pin through StartRemoving, which checks it in Go
 // before doing any work. That check is a fast path, not the guarantee: the lock
-// it holds excludes the other lock-taking operations but not Add, which is
-// lockless, so a resume can install a new incarnation between the comparison
-// and the write. Without an atomic guard the write would then overwrite the new
-// live record with the stale one, and the removal's own cleanup would delete it.
+// it holds excludes every other operation, Add included, only until it expires
+// under a stalled removal, after which a resume can install a new incarnation
+// between the comparison and the write. Without an atomic guard the write would
+// then overwrite the new live record with the stale one, and the removal's own
+// cleanup would delete it.
 //
 // The guard therefore lives inside startTransitionScript, and these exercise it
 // directly. There is no way to interleave an Add into the middle of a Lua
@@ -161,7 +162,7 @@ func transitionKeysFor(sbx sandboxtypes.Sandbox, transitionID string) []string {
 	return []string{
 		getSandboxKey(team, sbx.SandboxID),
 		getTransitionKey(team, sbx.SandboxID),
-		getTransitionResultKey(team, sbx.SandboxID, transitionID),
+		transitionResultKeyFor(formTeam, team, sbx.SandboxID, transitionID),
 	}
 }
 
@@ -231,7 +232,7 @@ func TestStartTransitionScript_RefusesADeletedRecord(t *testing.T) {
 
 	sbx := createTestSandbox("sbx-cas-deleted")
 	require.NoError(t, storage.Add(ctx, sbx))
-	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID))
+	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
 
 	transitionID := uuid.NewString()
 	keys := transitionKeysFor(sbx, transitionID)

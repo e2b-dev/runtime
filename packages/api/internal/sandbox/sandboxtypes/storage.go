@@ -21,7 +21,10 @@ type Storage interface {
 	// Replace stores a sandbox over whatever is stored under its ID.
 	Replace(ctx context.Context, sandbox Sandbox) error
 	Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, error)
-	Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+	// Remove deletes the record of the expected execution, or of any when
+	// none is expected; another execution's is left whole and
+	// ErrExecutionMismatch returned. A sandbox already gone is a success.
+	Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) error
 
 	TeamItems(ctx context.Context, teamID uuid.UUID, states []State) ([]Sandbox, error)
 	ExpiredItems(ctx context.Context) ([]Sandbox, error)
@@ -61,6 +64,9 @@ type StateTransitions interface {
 	// RestoreRunning does without a retry window. It refuses a record that
 	// is another execution, left the transition's state or changed under it.
 	RestoreCheckpointed(ctx context.Context, transition StateTransition, placement *orchestrator.SandboxNetworkPlacement) (Sandbox, error)
+	// WaitForStateChange waits out the sandbox's transition, if one is open.
+	// It takes no tenant guard, since the record may already be gone: the
+	// caller reads the record as the team's before it waits.
 	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 }
 

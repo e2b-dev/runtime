@@ -734,6 +734,7 @@ func TestObtainBothFailsWhenFirstLeaseLost(t *testing.T) {
 		require.FailNow(t, "ObtainBoth did not return")
 	}
 	require.ErrorIs(t, err, redislock.ErrNotObtained)
+	require.False(t, crashed(err))
 	require.False(t, lockHeld(t, locker, first))
 	require.False(t, lockHeld(t, locker, second))
 }

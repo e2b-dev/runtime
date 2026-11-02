@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -32,12 +31,8 @@ func seedTeamSandbox(t *testing.T, teamID uuid.UUID, sandboxID string, state san
 func writeTeamSandbox(t *testing.T, storage *Storage, sbx sandboxtypes.Sandbox) {
 	t.Helper()
 
-	data, err := json.Marshal(sbx)
-	require.NoError(t, err)
-
 	team := sbx.TeamID.String()
-	require.NoError(t, storage.redisClient.Set(t.Context(), getSandboxKey(team, sbx.SandboxID), data, 0).Err())
-	require.NoError(t, storage.redisClient.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(team), sbx.SandboxID).Err())
+	writeRecord(t, storage.redisClient, recordKey(formTeam, team, sbx.SandboxID), GetSandboxStorageTeamIndexKey(team), sbx)
 }
 
 func sandboxIDsOf(sbxs []sandboxtypes.Sandbox) []string {
@@ -132,9 +127,9 @@ func TestTeamItems_EmptyTeam(t *testing.T) {
 	assert.Empty(t, items)
 }
 
-// TestTeamItems_SpansSeveralBatches pins that a team larger than one
-// SSCAN/MGET batch is returned complete and without repeats. Sized so the scan
-// needs more than two full batches plus a partial one.
+// TestTeamItems_SpansSeveralBatches pins that a team larger than one scan
+// batch is returned complete and without repeats. Sized so the scan needs
+// more than two full batches plus a partial one.
 func TestTeamItems_SpansSeveralBatches(t *testing.T) {
 	t.Parallel()
 

@@ -419,7 +419,7 @@ func TestCreateSandbox_StaleDataAfterConcurrentPause(t *testing.T) {
 		assert.Equal(t, "base-tpl", sbx1.BaseTemplateID)
 
 		// Clean up reservation.
-		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID)
+		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID, sbx1.ExecutionID)
 
 		// Snapshot changes to V2.
 		snap.templateID = "tpl-v2"
@@ -1482,7 +1482,7 @@ func TestCreateSandbox_RetainsWinningPlacement(t *testing.T) {
 			requirePlacement(t, want, restored.NetworkPlacement)
 			requirePlacement(t, want, storedPlacement(t, o, team.ID, sandboxID))
 
-			o.sandboxStore.Remove(ctx, team.ID, sandboxID)
+			o.sandboxStore.Remove(ctx, team.ID, sandboxID, sbx.ExecutionID)
 			rpc.placement = nil
 			sbx, apiErr = o.CreateSandbox(ctx, sandboxID, uuid.NewString(), team, plainSandboxData,
 				now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{IsResume: true})

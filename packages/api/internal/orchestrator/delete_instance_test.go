@@ -113,6 +113,7 @@ func (r *recordingCollector) stoppedCount() int {
 
 type refusalFixture struct {
 	o        *Orchestrator
+	client   redis.UniversalClient
 	recorder *recordingCollector
 	sbx      sandbox.Sandbox
 	reader   *sdkmetric.ManualReader
@@ -230,7 +231,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 	}
 	require.NoError(t, o.sandboxStore.Add(t.Context(), sbx, nil))
 
-	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader}
+	return refusalFixture{o: o, client: redisClient, recorder: recorder, sbx: sbx, reader: reader}
 }
 
 func (f refusalFixture) removePause(t *testing.T) error {
@@ -404,7 +405,7 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 
 	stub := &pauseStubClient{err: refusedPauseErr()}
 	stub.onPause = func() {
-		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
 	}
 	node.SetSandboxClient(stub)

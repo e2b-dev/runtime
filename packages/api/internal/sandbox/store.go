@@ -106,9 +106,19 @@ func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sa
 	return s.storage.Get(ctx, teamID, sandboxID)
 }
 
-func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) {
-	err := s.storage.Remove(ctx, teamID, sandboxID)
-	if err != nil {
+// Remove deletes the sandbox's record when it is the expected execution's,
+// or any execution's when none is expected, and releases its reservation. A
+// record another execution took over is left in place with its reservation:
+// the successor's own lifecycle releases it, and a release here would drop
+// a start still pending and the result its waiters read.
+func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) {
+	err := s.storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
+	switch {
+	case errors.Is(err, ErrExecutionMismatch):
+		logger.L().Info(ctx, "Sandbox record superseded, left in place", logger.WithSandboxID(sandboxID))
+
+		return
+	case err != nil:
 		logger.L().Error(ctx, "Failed to remove sandbox from storage", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
 

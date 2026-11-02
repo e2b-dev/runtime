@@ -16,24 +16,16 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// failingWriteHook fails the next `failures` fenced writes of the record key.
-type failingWriteHook struct {
-	key      string
-	failures atomic.Int32
-	writes   atomic.Int32
-}
+// failingWrites returns a hook that fails the next failures fenced writes of
+// the record key, and the count of the writes it saw.
+func failingWrites(key string, failures int32) (cmdHook, *atomic.Int32) {
+	var remaining, writes atomic.Int32
+	remaining.Store(failures)
 
-func (h *failingWriteHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-
-func (h *failingWriteHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
-
-func (h *failingWriteHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return func(ctx context.Context, cmd redis.Cmder) error {
-		if isFencedWriteOf(cmd, h.key) {
-			h.writes.Add(1)
-			if h.failures.Add(-1) >= 0 {
+	return cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+		if isFencedWriteOf(cmd, key) {
+			writes.Add(1)
+			if remaining.Add(-1) >= 0 {
 				err := errors.New("injected write failure")
 				cmd.SetErr(err)
 
@@ -42,7 +34,7 @@ func (h *failingWriteHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook
 		}
 
 		return next(ctx, cmd)
-	}
+	}}, &writes
 }
 
 // isFencedWriteOf reports whether cmd runs a two-key script whose second key ends with key (the test client prefixes keys).
@@ -77,8 +69,7 @@ func TestUpdateRetriesAFailedWrite(t *testing.T) {
 	sbx := createTestSandbox("sbx-write-retry")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	hook := &failingWriteHook{key: getSandboxKey(sbx.TeamID.String(), sbx.SandboxID)}
-	hook.failures.Store(2)
+	hook, writes := failingWrites(getSandboxKey(sbx.TeamID.String(), sbx.SandboxID), 2)
 	// Loaded first, so a NOSCRIPT resend does not count one write twice.
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
@@ -86,7 +77,7 @@ func TestUpdateRetriesAFailedWrite(t *testing.T) {
 	updated, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
 	require.NoError(t, err)
 	assert.Equal(t, "after", updated.TemplateID)
-	assert.Equal(t, int32(3), hook.writes.Load(), "two failed writes and the one that landed")
+	assert.Equal(t, int32(3), writes.Load(), "two failed writes and the one that landed")
 
 	stored, err := storage.Get(t.Context(), sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)
@@ -102,15 +93,14 @@ func TestUpdateGivesUpOnAPersistentWriteFailure(t *testing.T) {
 	sbx := createTestSandbox("sbx-write-fails")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	hook := &failingWriteHook{key: getSandboxKey(sbx.TeamID.String(), sbx.SandboxID)}
-	hook.failures.Store(1 << 20)
+	hook, writes := failingWrites(getSandboxKey(sbx.TeamID.String(), sbx.SandboxID), 1<<20)
 	// Loaded first, so a NOSCRIPT resend does not count one write twice.
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
 
-	_, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
+	_, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("never-written"))
 	require.ErrorContains(t, err, "injected write failure")
-	assert.Equal(t, int32(updateWriteAttempts), hook.writes.Load())
+	assert.Equal(t, int32(updateWriteAttempts), writes.Load())
 
 	stored, err := storage.Get(t.Context(), sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)

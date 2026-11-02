@@ -94,7 +94,7 @@ func reinstallBeforeAssert(ctx context.Context, client redis.UniversalClient, sb
 	}
 
 	teamID := sbx.TeamID.String()
-	keys := []string{getSandboxKey(teamID, sbx.SandboxID), GetSandboxStorageTeamIndexKey(teamID), getSandboxGoneKey(teamID, sbx.SandboxID)}
+	keys := []string{getSandboxKey(teamID, sbx.SandboxID), getSandboxGoneKey(teamID, sbx.SandboxID), GetSandboxStorageTeamIndexKey(teamID)}
 
 	return RunScript(ctx, client, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, "1", int(goneExecutionsTTL.Seconds())).Err()
 }
@@ -191,51 +191,46 @@ func TestExpiredItems_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 	}
 }
 
-// Remove deleted the record; the Replace reinstalls the execution before
+// Remove deleted the record; a Replace reinstalls the execution before
 // Remove's removal of its member, which takes the member. Remove reads the
 // record again and puts the member back due now; the next sweep scores it by
-// the record.
+// the record. A complete Replace takes both form locks and waits for this
+// Remove, so the one that can land inside it was written past an expired
+// lock: the writes up to the record, without the assertion.
 func TestRemove_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 	t.Parallel()
 
-	for _, reinstall := range reinstalls {
-		t.Run("the Replace "+reinstall.name, func(t *testing.T) {
-			t.Parallel()
+	ctx := t.Context()
+	teamID := uuid.New()
+	sbx := makeIndexedSandbox(teamID, "sbx-reinstalled-in-remove", uuid.NewString(), time.Now(), time.Now().Add(time.Hour))
+	member := sandboxExpirationMember(sbx)
 
-			ctx := t.Context()
-			teamID := uuid.New()
-			sbx := makeIndexedSandbox(teamID, "sbx-reinstalled-in-remove", uuid.NewString(), time.Now(), time.Now().Add(time.Hour))
-			member := sandboxExpirationMember(sbx)
+	var client redis.UniversalClient
+	var reinstalled atomic.Bool
+	storage, client := hookedStorage(t, commandHook{single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+		if cmd.Name() == "zrem" && reinstalled.CompareAndSwap(false, true) {
+			if err := reinstallBeforeAssert(ctx, client, sbx); err != nil {
+				return err
+			}
+		}
 
-			var storage *Storage
-			var client redis.UniversalClient
-			var reinstalled atomic.Bool
-			storage, client = hookedStorage(t, commandHook{single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-				if cmd.Name() == "zrem" && reinstalled.CompareAndSwap(false, true) {
-					if err := reinstall.land(ctx, storage, client, sbx); err != nil {
-						return err
-					}
-				}
+		return next(ctx, cmd)
+	}})
 
-				return next(ctx, cmd)
-			}})
+	require.NoError(t, storage.Add(ctx, sbx))
+	before := time.Now()
+	require.NoError(t, storage.Remove(ctx, teamID, sbx.SandboxID, ""))
+	require.True(t, reinstalled.Load())
 
-			require.NoError(t, storage.Add(ctx, sbx))
-			before := time.Now()
-			require.NoError(t, storage.Remove(ctx, teamID, sbx.SandboxID))
-			require.True(t, reinstalled.Load())
+	got, err := storage.Get(ctx, teamID, sbx.SandboxID)
+	require.NoError(t, err, "the reinstalled record stays")
+	require.Equal(t, sbx.ExecutionID, got.ExecutionID)
+	requireMemberDue(t, client, member, before)
 
-			got, err := storage.Get(ctx, teamID, sbx.SandboxID)
-			require.NoError(t, err, "the reinstalled record stays")
-			require.Equal(t, sbx.ExecutionID, got.ExecutionID)
-			requireMemberDue(t, client, member, before)
-
-			items, err := storage.ExpiredItems(ctx)
-			require.NoError(t, err)
-			require.Empty(t, items)
-			requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
-		})
-	}
+	items, err := storage.ExpiredItems(ctx)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
 }
 
 // A removal lands inside the write: a whole sweep between the member's write

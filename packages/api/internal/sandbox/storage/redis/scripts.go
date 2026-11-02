@@ -18,7 +18,7 @@ import (
 // Lua scripts for atomic operations.
 // These scripts ensure true atomicity in Redis cluster mode
 var (
-	// Add bypasses the storage lock; compare the record atomically before restoring it.
+	// A write past an expired lock can replace the record; compare it atomically before restoring it.
 	restoreSandboxScript = redis.NewScript(`
 		local current = redis.call('GET', KEYS[1])
 		if current == ARGV[2] then
@@ -55,14 +55,15 @@ var (
 		return 0
 	`)
 
-	// addSandboxScript atomically stores a sandbox and adds it to the team index.
-	// Unless ARGV[4] is '1', the write is refused (nothing written) when it is
-	// a late duplicate (see Add): 0 when its execution is already stored, 2
-	// when its execution is in the gone set, which holds the executions
-	// removed or replaced under this sandbox ID for ARGV[5] seconds. A write
-	// that replaces another execution's record puts that execution in the
-	// gone set.
-	// KEYS[1] = sandbox key, KEYS[2] = team index key, KEYS[3] = gone set
+	// addSandboxScript atomically stores a record and, when KEYS[3] is given,
+	// adds it to the team index; the sandbox form passes no index key, its
+	// entry lives in another slot. Unless ARGV[4] is '1', the write is refused
+	// (nothing written) when it is a late duplicate (see Add): 0 when its
+	// execution is already stored, 2 when its execution is in the gone set
+	// (KEYS[2], in the record's slot), which holds the executions removed or
+	// replaced under this sandbox ID for ARGV[5] seconds. A write that
+	// replaces another execution's record puts that execution in the gone set.
+	// KEYS[1] = sandbox key, KEYS[2] = gone set, KEYS[3] = team index key, optional
 	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID,
 	// ARGV[3] = execution ID, ARGV[4] = '1' to replace a stored record of the
 	// same execution, ARGV[5] = gone set TTL in seconds
@@ -80,16 +81,18 @@ var (
 			if stored and stored == ARGV[3] then
 				return 0
 			end
-			if redis.call('SISMEMBER', KEYS[3], ARGV[3]) == 1 then
+			if redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 1 then
 				return 2
 			end
 		end
 		if stored and stored ~= ARGV[3] then
-			redis.call('SADD', KEYS[3], stored)
-			redis.call('EXPIRE', KEYS[3], ARGV[5])
+			redis.call('SADD', KEYS[2], stored)
+			redis.call('EXPIRE', KEYS[2], ARGV[5])
 		end
 		redis.call('SET', KEYS[1], ARGV[1])
-		redis.call('SADD', KEYS[2], ARGV[2])
+		if KEYS[3] then
+			redis.call('SADD', KEYS[3], ARGV[2])
+		end
 		return 1
 	`)
 
@@ -136,11 +139,11 @@ var (
 	//
 	// When ARGV[5] is set, the write only happens if the stored record is still
 	// that execution. This is the enforcement point for RemoveOpts.
-	// ExpectExecutionID, and it has to live in here rather than in Go: Add is
-	// lockless, so a resume can install a new incarnation between a Go-side
-	// comparison and this write, and the SET below would then overwrite the new
-	// live record with the stale one. Returns 0 without writing anything if the
-	// record is gone or is a different execution.
+	// ExpectExecutionID, and it has to live in here rather than in Go: once the
+	// lock expires under a stalled removal, a resume can install a new
+	// incarnation between a Go-side comparison and this write, and the SET below
+	// would then overwrite the new live record with the stale one. Returns 0
+	// without writing anything if the record is gone or is a different execution.
 	// KEYS[1] = sandbox key
 	// KEYS[2] = transition key
 	// KEYS[3] = transition result key

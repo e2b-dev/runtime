@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // TransitionKeyTTL bounds how long a removal owns its transition key. It must
@@ -52,7 +54,18 @@ type Storage struct {
 
 	reconcileSlots *semaphore.Weighted
 
+	// form is the keyForm new records are written with; see writeForm.
+	form atomic.Int32
+
 	metrics expirationIndexMetrics
+	// writeAnomalies counts writes that gave up after their retries, by kind.
+	writeAnomalies metric.Int64Counter
+	// readsFallback counts record reads the team form served after the
+	// sandbox form missed.
+	readsFallback metric.Int64Counter
+
+	// faults is the test hook of faults.go; nil in production.
+	faults func(faultPoint) error
 }
 
 // expirationIndexMetrics observes global expiration index consistency.
@@ -102,6 +115,24 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 	}, nil
 }
 
+// Write anomaly kinds, the metric's kind attribute: a sandbox-form record
+// left after its index entry was removed, when its delete kept failing,
+// which the healer deletes once it is stale; a record written without its
+// index entry, which the healer indexes once it is older than the grace
+// period; a record write that failed and whose cleanup failed too, so a
+// record of a killed VM may remain until the evictor removes it.
+const (
+	writeAnomalyKindAttr            = "kind"
+	writeAnomalyRemoveStranded      = "remove_stranded"
+	writeAnomalyAddUnindexed        = "add_unindexed"
+	writeAnomalyAddWriteUnconfirmed = "add_write_unconfirmed"
+)
+
+// countWriteAnomaly records a write that gave up after its retries.
+func (s *Storage) countWriteAnomaly(ctx context.Context, kind string) {
+	s.writeAnomalies.Add(ctx, 1, metric.WithAttributes(attribute.String(writeAnomalyKindAttr, kind)))
+}
+
 const meterScope = "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 
 func NewStorage(
@@ -121,14 +152,21 @@ func NewStorage(
 		return nil, fmt.Errorf("failed to create expiration index metrics: %w", err)
 	}
 
-	return &Storage{
+	// A misnamed instrument panics at construction, as the package-level
+	// instruments do.
+	s := &Storage{
 		redisClient:    redisClient,
 		locker:         newStorageLocker(redisClient, subManager, pub),
 		subManager:     subManager,
 		publisher:      pub,
 		reconcileSlots: semaphore.NewWeighted(maxConcurrentReconciles),
 		metrics:        metrics,
-	}, nil
+		writeAnomalies: utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageWriteAnomalies)),
+		readsFallback:  utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageReadsFallback)),
+	}
+	s.setWriteForm(formTeam)
+
+	return s, nil
 }
 
 // Start subscribes to the global PubSub channel and launches the publish
