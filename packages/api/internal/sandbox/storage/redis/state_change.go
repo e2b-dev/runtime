@@ -498,6 +498,8 @@ func (s *Storage) checkTransitionResult(ctx context.Context, resultKey string) e
 	assertSameSlot("transition_result", keys)
 	values, err := s.redisClient.MGet(ctx, keys...).Result()
 	if err != nil {
+		recordRedisError(ctx, err)
+
 		return fmt.Errorf("failed to check transition result: %w", err)
 	}
 	result, ok := values[0].(string)

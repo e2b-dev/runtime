@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -18,7 +17,9 @@ const expiredItemsBatchSize = 256
 
 // transitionRecheckDelay is how long an expired sandbox that is still in a
 // transition stays out of the expired window before ExpiredItems looks at it
-// again. It bounds how late a sandbox restored to Running is seen.
+// again. It bounds how late a sandbox restored to Running is seen. A member
+// whose record the reader skipped waits the same delay, which bounds how
+// often it is read and logged.
 const transitionRecheckDelay = 10 * time.Second
 
 // memberRef is a parsed member of the global expiration index.
@@ -36,6 +37,19 @@ func parseMemberRef(member string) (memberRef, bool) {
 	}
 
 	return memberRef{member: member, teamID: teamID, sandboxID: sandboxID, executionID: executionID}, true
+}
+
+func (r memberRef) record() recordRef {
+	return recordRef{TeamID: r.teamID, SandboxID: r.sandboxID}
+}
+
+func membersOf(refs []memberRef) []any {
+	members := make([]any, len(refs))
+	for i, ref := range refs {
+		members[i] = ref.member
+	}
+
+	return members
 }
 
 // ExpiredItems returns running sandboxes whose EndTime has passed.
@@ -58,8 +72,9 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 		return nil, nil
 	}
 
-	var refs []memberRef
 	var invalid []any
+	members := make([]memberRef, 0, len(expiredMembers))
+	refs := make([]recordRef, 0, len(expiredMembers))
 	for _, member := range expiredMembers {
 		ref, ok := parseMemberRef(member)
 		if !ok {
@@ -70,40 +85,45 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 			continue
 		}
 
-		refs = append(refs, ref)
+		members = append(members, ref)
+		refs = append(refs, ref.record())
 	}
 
-	raws, err := s.readRecords(ctx, refs)
+	// A failed read leaves the batch untouched: a member is swept only once
+	// both forms are known to hold no record.
+	found, absent, err := s.fetchRecords(ctx, refs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read the expired sandboxes' records: %w", err)
+	}
+	gone := make(map[recordRef]struct{}, len(absent))
+	for _, ref := range absent {
+		gone[ref] = struct{}{}
 	}
 
-	// Deserialize and filter.
 	var result []sandboxtypes.Sandbox
 	var rescores []redis.Z  // live members whose score drifted from EndTime
 	var deferrals []redis.Z // expired members whose sandbox is still in a transition
 	var orphans, deadExecutions []memberRef
 
-	for i, raw := range raws {
-		ref := refs[i]
-
+	for _, ref := range members {
 		// Sandbox key gone but ZSET entry remains — orphaned. Members are
 		// execution-scoped, so this removal can never unindex a fresh
 		// execution concurrently re-added under the same sandbox ID.
-		if raw == nil {
+		if _, ok := gone[ref.record()]; ok {
 			orphans = append(orphans, ref)
 
 			continue
 		}
 
-		str, ok := raw.(string)
+		// A record the reader skipped and logged: nothing is swept or killed
+		// for it, and its member leaves the expired window for a while, so
+		// the next ticks do not read and log it again.
+		sbx, ok := found[ref.record()]
 		if !ok {
-			continue
-		}
-
-		var sbx sandboxtypes.Sandbox
-		if err := json.Unmarshal([]byte(str), &sbx); err != nil {
-			logger.L().Error(ctx, "Failed to unmarshal sandbox", zap.Error(err))
+			deferrals = append(deferrals, redis.Z{
+				Score:  float64(now.Add(transitionRecheckDelay).UnixMilli()),
+				Member: ref.member,
+			})
 
 			continue
 		}
@@ -204,78 +224,33 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 	return result, nil
 }
 
-func membersOf(refs []memberRef) []any {
-	members := make([]any, len(refs))
-	for i, ref := range refs {
-		members[i] = ref.member
-	}
-
-	return members
-}
-
-// readRecords reads the records the members name, one MGET per team in one
-// pipeline (a team's keys share a slot), and returns the raw values in the
-// members' order, nil for an absent record.
-func (s *Storage) readRecords(ctx context.Context, refs []memberRef) ([]any, error) {
-	if len(refs) == 0 {
-		return nil, nil
-	}
-
-	var teams []string
-	byTeam := make(map[string][]int)
-	for i, ref := range refs {
-		if _, ok := byTeam[ref.teamID]; !ok {
-			teams = append(teams, ref.teamID)
-		}
-		byTeam[ref.teamID] = append(byTeam[ref.teamID], i)
-	}
-
-	pipe := s.redisClient.Pipeline()
-	cmds := make([]*redis.SliceCmd, len(teams))
-	for t, teamID := range teams {
-		keys := make([]string, 0, len(byTeam[teamID]))
-		for _, i := range byTeam[teamID] {
-			keys = append(keys, getSandboxKey(teamID, refs[i].sandboxID))
-		}
-		cmds[t] = pipe.MGet(ctx, keys...)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, fmt.Errorf("MGET pipeline failed: %w", err)
-	}
-
-	raws := make([]any, len(refs))
-	for t, teamID := range teams {
-		for k, i := range byTeam[teamID] {
-			raws[i] = cmds[t].Val()[k]
-		}
-	}
-
-	return raws, nil
-}
-
 // restoreReinstalled puts back the member of each execution among refs whose
 // record is stored, after a removal of those members by a caller that had
 // read the record absent or another execution's. A Replace reinstalling the
 // execution between that read and the removal wrote the same member before
 // its record, and the removal took it; the member and the record live in
 // different slots, so no one command can check the record as it removes the
-// member. A Replace landing after this read asserts its member again after
-// its record's write (see add), so the two reads together leave no stored
-// record unindexed by an acknowledged removal. The member comes back due
-// now, not scored by the record read here: that record can be older than
-// the one a later write stored, and a future score would hold the sandbox
-// past its end; the next sweep reads the record and scores the member by
-// it, or returns the sandbox if it has expired. NX: a score a concurrent
-// writer set stands. A failed read or write here, like a removal that
-// executes after the repair that followed its own retry, leaves the record
-// to the healer, as a failed index write does today.
+// member. The sweep holds no lock, so a complete Replace can land inside it;
+// a Remove holds its form's lock, so only a Replace written past an expired
+// lock can land inside that one. A Replace landing after this read asserts
+// its member again after its record's write (see add), so the two reads
+// together leave no stored record unindexed by an acknowledged removal. The
+// member comes back due now, not scored by the record read here: that
+// record can be older than the one a later write stored, and a future score
+// would hold the sandbox past its end; the next sweep reads the record and
+// scores the member by it, or returns the sandbox if it has expired. NX: a
+// score a concurrent writer set stands. A record the reader skips is left
+// to the healer, as is a failed read or write here.
 func (s *Storage) restoreReinstalled(ctx context.Context, refs []memberRef) {
 	if len(refs) == 0 {
 		return
 	}
 
-	raws, err := s.readRecords(ctx, refs)
+	records := make([]recordRef, len(refs))
+	for i, ref := range refs {
+		records[i] = ref.record()
+	}
+	found, _, err := s.fetchRecords(ctx, records)
 	if err != nil {
 		logger.L().Warn(ctx, "Failed to read the records of removed expiration index members", zap.Error(err), zap.Int("count", len(refs)))
 
@@ -284,19 +259,14 @@ func (s *Storage) restoreReinstalled(ctx context.Context, refs []memberRef) {
 
 	dueNow := float64(time.Now().UnixMilli())
 	var members []redis.Z
-	for i, raw := range raws {
-		str, ok := raw.(string)
-		if !ok {
-			continue
-		}
-
-		var sbx sandboxtypes.Sandbox
-		if err := json.Unmarshal([]byte(str), &sbx); err != nil || sbx.ExecutionID != refs[i].executionID {
+	for _, ref := range refs {
+		sbx, ok := found[ref.record()]
+		if !ok || sbx.ExecutionID != ref.executionID {
 			continue
 		}
 
 		logger.L().Warn(ctx, "Expiration index member of an execution reinstalled during its removal put back", logger.WithSandboxID(sbx.SandboxID), zap.String("execution_id", sbx.ExecutionID))
-		members = append(members, redis.Z{Score: dueNow, Member: refs[i].member})
+		members = append(members, redis.Z{Score: dueNow, Member: ref.member})
 	}
 
 	if len(members) == 0 {

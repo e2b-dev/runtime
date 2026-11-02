@@ -317,7 +317,7 @@ func TestWaitForStateChange_NoTransition(t *testing.T) {
 func TestWaitForStateChange_WaitForCompletion(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("wait-completion")
@@ -339,8 +339,7 @@ func TestWaitForStateChange_WaitForCompletion(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the goroutine time to start waiting
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -397,7 +396,7 @@ func TestWaitForStateChange_ContextCancellation(t *testing.T) {
 func TestWaitForStateChange_MultipleWaiters(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("multi-waiters")
@@ -423,8 +422,7 @@ func TestWaitForStateChange_MultipleWaiters(t *testing.T) {
 		}(i)
 	}
 
-	// Give the goroutines time to start waiting
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, numWaiters)
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -585,7 +583,7 @@ func TestStartRemoving_SetsEndTimeWhenNotExpired(t *testing.T) {
 func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("waiter-complete-success")
@@ -606,8 +604,7 @@ func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the waiter time to start
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition successfully
 	callback(ctx, nil)
@@ -631,7 +628,7 @@ func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 func TestStartRemoving_WaiterReceivesErrorOnCallbackFailure(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("waiter-complete-error")
@@ -652,8 +649,7 @@ func TestStartRemoving_WaiterReceivesErrorOnCallbackFailure(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the waiter time to start
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition with error
 	callback(ctx, errors.New("connection refused"))
@@ -1669,4 +1665,14 @@ func TestRestoreRunning_HeldSandboxLeavesTheExpiredWindow(t *testing.T) {
 
 		return false
 	}, 3*time.Second, 50*time.Millisecond, "once the window passes the sandbox is expired again")
+}
+
+// waitForTransitionWaiters blocks until n waiters subscribed to the sandbox's
+// pending transition: finished first, it leaves them nothing to wait for.
+func waitForTransitionWaiters(t *testing.T, storage *Storage, client redis.UniversalClient, sbx sandboxtypes.Sandbox, n int) {
+	t.Helper()
+
+	form := storage.writeForm()
+	id := pendingTransitionID(t, client, form, sbx.TeamID, sbx.SandboxID)
+	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(form, sbx.TeamID.String(), sbx.SandboxID, id)), n)
 }

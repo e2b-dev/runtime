@@ -2,11 +2,9 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
@@ -14,27 +12,34 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-// sandboxScanBatchSize bounds per-command work (SSCAN page, MGET keys) so
-// teams with many sandboxes can't produce huge single commands/replies that
-// stall Redis or explode service memory.
+// sandboxScanBatchSize bounds per-command work (SSCAN page, GETs per
+// pipeline) so teams with many sandboxes can't produce huge single
+// commands/replies that stall Redis or explode service memory.
 const sandboxScanBatchSize = 256
 
+// sandboxBatchFunc receives one bounded batch of a team's index: the records
+// that decode and are the team's, and the entries whose record is absent in
+// both forms or that no key can be built from.
+type sandboxBatchFunc func(teamID string, batch []sandboxtypes.Sandbox, absent []recordRef) error
+
 // forEachSandboxBatch walks every team's sandbox index and invokes fn with
-// bounded batches of decoded records (all states; stale index entries and
-// undecodable records are skipped).
+// bounded batches of decoded records (all states; undecodable records are
+// skipped) and of the index entries whose record is absent in both forms or
+// that no key can be built from.
 //
 // Per-team failures — including errors returned by fn — are isolated: the
-// failing team is skipped and the remaining teams are still scanned. Only a
-// failure to list the teams themselves is returned, because that yields no
-// data at all rather than partial data.
+// failing team is skipped and the remaining teams are still scanned, and the
+// number of teams skipped is returned. Only a failure to list the teams
+// themselves is an error, because that yields no data at all rather than
+// partial data.
 //
 // Callers must therefore treat a nil error as "best effort complete", not
 // "every sandbox was observed", and must not derive fleet-wide conclusions
 // from the absence of a record.
-func (s *Storage) forEachSandboxBatch(ctx context.Context, fn func(teamID string, batch []sandboxtypes.Sandbox) error) error {
+func (s *Storage) forEachSandboxBatch(ctx context.Context, fn sandboxBatchFunc) (skipped int, err error) {
 	teams, err := s.redisClient.ZRange(ctx, globalTeamsSet, 0, -1).Result()
 	if err != nil {
-		return fmt.Errorf("failed to list teams from global index: %w", err)
+		return 0, fmt.Errorf("failed to list teams from global index: %w", err)
 	}
 
 	for _, teamID := range teams {
@@ -43,17 +48,18 @@ func (s *Storage) forEachSandboxBatch(ctx context.Context, fn func(teamID string
 				zap.Error(err),
 				logger.WithTeamID(teamID),
 			)
+			skipped++
 
 			continue
 		}
 	}
 
-	return nil
+	return skipped, nil
 }
 
 // forEachTeamSandboxBatch pages through one team's sandbox index with SSCAN
-// and feeds fn bounded batches fetched via MGET.
-func (s *Storage) forEachTeamSandboxBatch(ctx context.Context, teamID string, fn func(teamID string, batch []sandboxtypes.Sandbox) error) error {
+// and feeds fn bounded batches fetched with pipelined GETs.
+func (s *Storage) forEachTeamSandboxBatch(ctx context.Context, teamID string, fn sandboxBatchFunc) error {
 	var cursor uint64
 
 	for {
@@ -63,19 +69,19 @@ func (s *Storage) forEachTeamSandboxBatch(ctx context.Context, teamID string, fn
 		}
 
 		// SSCAN COUNT is a hint, not a cap: split oversized pages so
-		// downstream MGET commands stay bounded.
+		// the downstream pipelines stay bounded.
 		for start := 0; start < len(sandboxIDs); start += sandboxScanBatchSize {
 			end := min(start+sandboxScanBatchSize, len(sandboxIDs))
 
-			batch, err := s.fetchSandboxBatch(ctx, teamID, sandboxIDs[start:end])
+			batch, absent, err := s.fetchSandboxBatch(ctx, teamID, sandboxIDs[start:end])
 			if err != nil {
 				return err
 			}
-			if len(batch) == 0 {
+			if len(batch) == 0 && len(absent) == 0 {
 				continue
 			}
 
-			if err := fn(teamID, batch); err != nil {
+			if err := fn(teamID, batch, absent); err != nil {
 				return err
 			}
 		}
@@ -87,50 +93,32 @@ func (s *Storage) forEachTeamSandboxBatch(ctx context.Context, teamID string, fn
 	}
 }
 
-// fetchSandboxBatch MGETs one bounded batch of sandbox records. Stale index
-// entries (key already deleted) and unparseable records are skipped.
-func (s *Storage) fetchSandboxBatch(ctx context.Context, teamID string, sandboxIDs []string) ([]sandboxtypes.Sandbox, error) {
+// fetchSandboxBatch reads one bounded batch of sandbox records, in both key
+// forms, and returns the records found and the refs of the index entries
+// whose record is absent in both forms (deleted already, or never written)
+// or that no key can be built from, which the healer removes. Unparseable
+// records are in neither.
+func (s *Storage) fetchSandboxBatch(ctx context.Context, teamID string, sandboxIDs []string) ([]sandboxtypes.Sandbox, []recordRef, error) {
 	if len(sandboxIDs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	// Per-team MGET: all keys share the team hash tag (cluster slot safe).
-	keys := utils.Map(sandboxIDs, func(id string) string { return getSandboxKey(teamID, id) })
-	vals, err := s.redisClient.MGet(ctx, keys...).Result()
+	refs := utils.Map(sandboxIDs, func(id string) recordRef { return recordRef{TeamID: teamID, SandboxID: id} })
+	found, absent, err := s.fetchRecords(ctx, refs)
 	if err != nil {
-		return nil, fmt.Errorf("MGET failed: %w", err)
+		return nil, nil, err
 	}
 
-	out := make([]sandboxtypes.Sandbox, 0, len(vals))
-	for _, raw := range vals {
-		str, ok := raw.(string)
-		if !ok {
-			continue // stale team index entry; TeamItems tolerates these too
+	out := make([]sandboxtypes.Sandbox, 0, len(found))
+	for _, ref := range refs {
+		if sbx, ok := found[ref]; ok {
+			out = append(out, sbx)
+		} else if validID(teamID) && !validID(ref.SandboxID) {
+			absent = append(absent, ref)
 		}
-
-		var sbx sandboxtypes.Sandbox
-		if err := json.Unmarshal([]byte(str), &sbx); err != nil {
-			// Warn, not Error: every scan pass re-reads the same record, so a
-			// single corrupt one would otherwise page on a loop.
-			logger.L().Warn(ctx, "Failed to unmarshal sandbox during scan",
-				zap.Error(err),
-				logger.WithTeamID(teamID),
-			)
-
-			continue
-		}
-
-		out = append(out, sbx)
 	}
 
-	return out, nil
-}
-
-// storedSandboxRef identifies one stored record. Team-scoped, because that is
-// how the records are keyed.
-type storedSandboxRef struct {
-	teamID    uuid.UUID
-	sandboxID string
+	return out, absent, nil
 }
 
 // scannedItems accumulates the sandboxes seen across scan batches, keeping one
@@ -144,12 +132,12 @@ type storedSandboxRef struct {
 // of being rediscovered by each of them.
 type scannedItems struct {
 	states []sandboxtypes.State
-	seen   map[storedSandboxRef]struct{}
+	seen   map[recordRef]struct{}
 	out    []sandboxtypes.Sandbox
 }
 
 func newScannedItems(states []sandboxtypes.State) *scannedItems {
-	return &scannedItems{states: states, seen: make(map[storedSandboxRef]struct{})}
+	return &scannedItems{states: states, seen: make(map[recordRef]struct{})}
 }
 
 func (r *scannedItems) add(batch []sandboxtypes.Sandbox) {
@@ -158,7 +146,7 @@ func (r *scannedItems) add(batch []sandboxtypes.Sandbox) {
 			continue
 		}
 
-		ref := storedSandboxRef{teamID: sbx.TeamID, sandboxID: sbx.SandboxID}
+		ref := recordRef{TeamID: sbx.TeamID.String(), SandboxID: sbx.SandboxID}
 		if _, ok := r.seen[ref]; ok {
 			continue
 		}
@@ -175,7 +163,7 @@ func (r *scannedItems) add(batch []sandboxtypes.Sandbox) {
 func (s *Storage) AllRunningItems(ctx context.Context) ([]sandboxtypes.Sandbox, error) {
 	items := newScannedItems([]sandboxtypes.State{sandboxtypes.StateRunning})
 
-	err := s.forEachSandboxBatch(ctx, func(_ string, batch []sandboxtypes.Sandbox) error {
+	_, err := s.forEachSandboxBatch(ctx, func(_ string, batch []sandboxtypes.Sandbox, _ []recordRef) error {
 		items.add(batch)
 
 		return nil

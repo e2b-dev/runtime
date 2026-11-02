@@ -481,9 +481,9 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 // TeamItems retrieves sandboxes for a specific team, filtered by states (all
 // states when empty).
 //
-// The team index is read with SSCAN and the records fetched in MGET batches of
-// sandboxScanBatchSize, which caps each command's work and reply size
-// regardless of how many sandboxes the team has.
+// The team index is read with SSCAN and the records fetched in pipelines of
+// at most sandboxScanBatchSize GETs, which caps each pipeline's work and reply
+// size regardless of how many sandboxes the team has.
 //
 // This is not a consistent snapshot, and neither was reading the whole index
 // at once: records removed between the index read and the record fetch are
@@ -492,7 +492,7 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 func (s *Storage) TeamItems(ctx context.Context, teamID uuid.UUID, states []sandboxtypes.State) ([]sandboxtypes.Sandbox, error) {
 	items := newScannedItems(states)
 
-	err := s.forEachTeamSandboxBatch(ctx, teamID.String(), func(_ string, batch []sandboxtypes.Sandbox) error {
+	err := s.forEachTeamSandboxBatch(ctx, teamID.String(), func(_ string, batch []sandboxtypes.Sandbox, _ []recordRef) error {
 		items.add(batch)
 
 		return nil

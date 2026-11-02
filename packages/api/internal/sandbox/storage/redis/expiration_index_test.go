@@ -213,7 +213,7 @@ func TestExpiredItems_SweepsInvalidMember(t *testing.T) {
 	requireMemberAbsent(t, client, legacyMember)
 
 	// Healer restores eviction coverage in the current member format.
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, healed)
 	requireMemberScore(t, client, execMember, float64(sbx.EndTime.UnixMilli()))
@@ -411,7 +411,7 @@ func TestHeal_RestoresMissingMember(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, items)
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, healed)
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
@@ -434,7 +434,7 @@ func TestHeal_SkipsYoungSandbox(t *testing.T) {
 	member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)
 	require.NoError(t, client.ZRem(t.Context(), globalExpirationSet, member).Err())
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 	requireMemberAbsent(t, client, member)
@@ -477,7 +477,7 @@ func TestHeal_ManySandboxesMultipleBatches(t *testing.T) {
 	_, err := pipe.Exec(t.Context())
 	require.NoError(t, err)
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, len(missingMembers), healed)
 
@@ -488,7 +488,7 @@ func TestHeal_ManySandboxesMultipleBatches(t *testing.T) {
 	}
 
 	// Idempotent: a second pass heals nothing.
-	healed, err = storage.healExpirationIndex(t.Context())
+	healed, _, err = storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 }
@@ -507,7 +507,7 @@ func TestHeal_DoesNotClobberExistingScore(t *testing.T) {
 	freshScore := float64(time.Now().Add(2 * time.Hour).UnixMilli())
 	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{Score: freshScore, Member: member}).Err())
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 	requireMemberScore(t, client, member, freshScore)

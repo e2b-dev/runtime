@@ -32,7 +32,7 @@ func TestAllRunningItems_MultipleBatchesAndStateFilter(t *testing.T) {
 	teamA := uuid.New()
 	teamB := uuid.New()
 
-	// Force >2 SSCAN/MGET batches with a partial tail for team A.
+	// Force >2 scan batches with a partial tail for team A.
 	totalA := sandboxScanBatchSize*2 + 37
 	seedTeamSandboxes(t, client, teamA, totalA, sandboxtypes.StateRunning)
 

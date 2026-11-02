@@ -7,22 +7,27 @@ import "errors"
 // returned by the command that follows it, which does not run, except at
 // faultAddRecordWrite, consulted after the record write ran so that its
 // error replaces the reply of a write that landed. errSimulatedCrash ends
-// the operation where it stands, locks left held as a crashed replica's
-// would be. In the team form the add script writes the index entry with the
+// the operation, or the healer's repair, where it stands, locks left held as
+// a crashed replica's would be. In the team form the add script writes the index entry with the
 // record, so faultAddAfterIndex follows the write there and
-// faultAddAfterRecordWrite is never consulted.
+// faultAddAfterRecordWrite is never consulted. faultHealerUnderLock is
+// consulted once the healer holds a nominee's lock, or both of a twin's,
+// before it reads anything under them.
 type faultPoint string
 
 const (
-	faultAddAfterLocks       faultPoint = "add.after_locks"
-	faultAddBeforeOtherDel   faultPoint = "add.before_other_del"
-	faultAddAfterOtherDel    faultPoint = "add.after_other_del"
-	faultAddRecordWrite      faultPoint = "add.record_write"
-	faultAddAfterRecordWrite faultPoint = "add.after_record_write"
-	faultAddAfterIndex       faultPoint = "add.after_index"
-	faultRemoveAfterSREM     faultPoint = "remove.after_srem"
-	faultRemoveAfterDelete   faultPoint = "remove.after_delete"
-	faultUpdateAfterResolve  faultPoint = "update.after_resolve"
+	faultAddAfterLocks         faultPoint = "add.after_locks"
+	faultAddBeforeOtherDel     faultPoint = "add.before_other_del"
+	faultAddAfterOtherDel      faultPoint = "add.after_other_del"
+	faultAddRecordWrite        faultPoint = "add.record_write"
+	faultAddAfterRecordWrite   faultPoint = "add.after_record_write"
+	faultAddAfterIndex         faultPoint = "add.after_index"
+	faultRemoveAfterSREM       faultPoint = "remove.after_srem"
+	faultRemoveAfterDelete     faultPoint = "remove.after_delete"
+	faultUpdateAfterResolve    faultPoint = "update.after_resolve"
+	faultReadersSecondPipeline faultPoint = "readers.second_pipeline"
+	faultHealerAfterNominate   faultPoint = "healer.after_nominate"
+	faultHealerUnderLock       faultPoint = "healer.under_lock"
 )
 
 var errSimulatedCrash = errors.New("simulated crash")

@@ -53,14 +53,6 @@ func counterByAttr(t *testing.T, reader *sdkmetric.ManualReader, name string, at
 	return counterPoints(t, collected, name)[attrs(attr)]
 }
 
-// attrs returns the identity of an attribute set, which keys a metric's
-// points.
-func attrs(kvs ...attribute.KeyValue) attribute.Distinct {
-	set := attribute.NewSet(kvs...)
-
-	return set.Equivalent()
-}
-
 // writeAnomalies returns the count of write anomalies of one kind.
 func writeAnomalies(t *testing.T, reader *sdkmetric.ManualReader, kind string) int64 {
 	t.Helper()

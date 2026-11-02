@@ -224,6 +224,47 @@ func newScriptMetrics(meter metric.Meter) (scriptMetrics, error) {
 // On the global provider the API installs at startup: the reservation storage runs scripts too and has no meter.
 var defaultScriptMetrics = utils.Must(newScriptMetrics(otel.Meter(meterScope)))
 
+// Error kinds, the errors counter's kind attribute: keys of one command in
+// several slots; a MOVED or ASK redirect the client's retries did not
+// resolve; a slot in migration; anything else, a lost connection included.
+const (
+	errorKindAttr           = "kind"
+	errorKindCrossSlot      = "crossslot"
+	errorKindMovedExhausted = "moved_exhausted"
+	errorKindTryAgain       = "tryagain"
+	errorKindOther          = "other"
+)
+
+// On the global provider like defaultScriptMetrics, so scripts and the record readers count into one instrument.
+var defaultErrors = utils.Must(telemetry.GetCounter(otel.Meter(meterScope), telemetry.ApiRedisStorageErrors))
+
+// redisErrorKind returns the kind a failed command is counted under, and
+// false for a nil reply or a cancelled context, which are not failures.
+func redisErrorKind(err error) (string, bool) {
+	switch {
+	case err == nil, errors.Is(err, redis.Nil), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "", false
+	case redis.HasErrorPrefix(err, "CROSSSLOT"):
+		return errorKindCrossSlot, true
+	case redis.HasErrorPrefix(err, "MOVED"), redis.HasErrorPrefix(err, "ASK"):
+		return errorKindMovedExhausted, true
+	case redis.HasErrorPrefix(err, "TRYAGAIN"):
+		return errorKindTryAgain, true
+	default:
+		return errorKindOther, true
+	}
+}
+
+// recordRedisError counts a failed command by the error it returned.
+func recordRedisError(ctx context.Context, err error) {
+	kind, ok := redisErrorKind(err)
+	if !ok {
+		return
+	}
+
+	defaultErrors.Add(ctx, 1, metric.WithAttributes(attribute.String(errorKindAttr, kind)))
+}
+
 // RunScript runs script on client as Script.Run does and records the run
 // under name. It returns the command unchanged, so callers read it as they
 // would Script.Run's. In the package's tests it first panics if keys span
@@ -243,6 +284,7 @@ func (m scriptMetrics) run(ctx context.Context, client redis.Scripter, name stri
 	outcome := scriptOutcomeOK
 	if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
 		outcome = scriptOutcomeError
+		recordRedisError(ctx, err)
 	}
 
 	m.calls.Add(ctx, 1, metric.WithAttributes(

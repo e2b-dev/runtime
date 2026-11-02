@@ -366,7 +366,7 @@ func TestAdd_AFailedAssertionIsLeftToTheHealer(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, items, "unindexed, the expired sandbox is invisible to the sweep")
 
-	healed, err := storage.healExpirationIndex(ctx)
+	healed, _, err := storage.healExpirationIndex(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, healed)
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
