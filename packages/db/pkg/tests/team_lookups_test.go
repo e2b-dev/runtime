@@ -33,8 +33,7 @@ func TestTeamLookupsDoNotReadTheTier(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// CASCADE takes the legacy team_limits view, which joins tiers on the column.
-	require.NoError(t, db.AuthDB.TestsRawSQL(ctx, `ALTER TABLE public.teams DROP COLUMN tier CASCADE`))
+	require.NoError(t, db.AuthDB.TestsRawSQL(ctx, `ALTER TABLE public.teams DROP COLUMN tier`))
 
 	byKey, err := db.AuthDB.GetTeamByAPIKey(ctx, apiKeyHash)
 	require.NoError(t, err)

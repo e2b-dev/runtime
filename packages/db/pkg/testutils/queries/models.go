@@ -289,23 +289,6 @@ type TeamApiKey struct {
 	ApiKeyMaskSuffix string
 }
 
-type TeamLimit struct {
-	ID                       uuid.UUID
-	MaxLengthHours           int64
-	ConcurrentSandboxes      int64
-	ConcurrentTemplateBuilds int64
-	MaxVcpu                  int64
-	MaxRamMb                 int64
-	DiskMb                   int64
-	EventsTtlDays            int64
-	DefaultFreeDiskSizeMb    int64
-	MaxDiskSizeMb            int64
-	MaxFreeDiskSizeMb        int64
-	ApiTeamRpsList           int64
-	ApiTeamRpsDelete         int64
-	MaxSecrets               int64
-}
-
 type Tier struct {
 	ID     string
 	Name   string
