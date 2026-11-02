@@ -141,7 +141,11 @@ func run() int {
 		}
 	}()
 
-	catalog := e2bcatalog.NewRedisSandboxCatalog(redisClient)
+	// Wrap the Redis catalog in a short-lived route cache so a brief Redis
+	// outage does not 5xx every request to an already-running sandbox: the last
+	// known route is served (bounded by the cache staleness window) while Redis
+	// is unreachable. A definitive not-found is never served from cache.
+	catalog := e2bcatalog.NewCachingSandboxCatalog(e2bcatalog.NewRedisSandboxCatalog(redisClient), 0)
 
 	info := &internal.ServiceInfo{}
 	info.SetStatus(ctx, internal.Healthy)
