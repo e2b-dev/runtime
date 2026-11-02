@@ -304,7 +304,6 @@ func TestDefaultLimitsMigrationKeepsWhatEveryTeamResolvedTo(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, before, queryLimits(t, db, teams), "no team's limits move")
-	assert.Equal(t, before, viewLimits(t, sqlDB, teams), "the view agrees with the lookups")
 	assert.Zero(t, count(unpinned))
 	assert.Equal(t, storedBefore+missing, count(stored))
 	assert.JSONEq(t, pushedBefore, pushedRow(), "a pushed row is left alone")

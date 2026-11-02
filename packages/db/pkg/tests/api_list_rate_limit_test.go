@@ -15,6 +15,8 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
+const apiListRateMigration = 20260910094221
+
 func TestAPIListRateResolvesDefaultsUntilPushed(t *testing.T) {
 	t.Parallel()
 
@@ -78,15 +80,15 @@ func TestAPIListRateMigrationRoundTrip(t *testing.T) {
 
 		return limits
 	}
-	before := resourceLimits()
-	// The Up re-adds api_team_rps_list as NOT NULL without a default, which
-	// only succeeds while project_limits is empty.
-	_, err = sqlDB.ExecContext(t.Context(), `DELETE FROM public.project_limits`)
+	// Pinned to the migration under test, so later schema changes stay out of
+	// the round trip.
+	_, err = provider.DownTo(t.Context(), apiListRateMigration)
 	require.NoError(t, err)
-	_, err = provider.DownTo(t.Context(), 20260826075153)
+	before := resourceLimits()
+	_, err = provider.DownTo(t.Context(), apiListRateMigration-1)
 	require.NoError(t, err)
 	assert.JSONEq(t, before, resourceLimits())
-	_, err = provider.Up(t.Context())
+	_, err = provider.UpTo(t.Context(), apiListRateMigration)
 	require.NoError(t, err)
 	assert.JSONEq(t, before, resourceLimits())
 	var rate int64

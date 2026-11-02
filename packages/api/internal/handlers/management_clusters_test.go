@@ -235,13 +235,12 @@ func TestManagementAssignProjectClusterRejectsDifferentAssignment(t *testing.T) 
 	require.Equal(t, firstID, assignedProjectCluster(t, db, projectID))
 }
 
-func TestManagementAssignProjectClusterIgnoresTheProjectTier(t *testing.T) {
+func TestManagementAssignProjectClusterAssignsAndEvictsTheProject(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	projectID := testutils.CreateTestTeam(t, db)
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET tier = 'base_v1' WHERE id = $1`, projectID))
 	store, auth := newManagementStore(t, db)
 	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, managementClusterRegistration()).Code)
 
