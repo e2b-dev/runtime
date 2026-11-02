@@ -228,12 +228,14 @@ func TestJWKSVerifierLoadsKeysAfterAnOptionalStartup(t *testing.T) {
 	require.NoError(t, err)
 
 	var ready atomic.Bool
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if !ready.Load() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 
 			return
 		}
+		requests.Add(1)
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
@@ -264,6 +266,10 @@ func TestJWKSVerifierLoadsKeysAfterAnOptionalStartup(t *testing.T) {
 
 		return err == nil
 	}, 5*time.Second, 100*time.Millisecond)
+
+	settled := requests.Load()
+	time.Sleep(2500 * time.Millisecond)
+	require.Equal(t, settled, requests.Load())
 }
 
 func TestJWKSVerifierStartsWhenStartupFetchIsOptional(t *testing.T) {

@@ -21,9 +21,9 @@ import (
 // httpTimeout is the timeout used for discovery and JWKS HTTP requests.
 const httpTimeout = 10 * time.Second
 
-// optionalRefreshInterval is how often an issuer that is allowed to start
-// without keys retries the JWKS fetch. The configured cache duration would
-// leave peer tokens rejected for that whole interval after the peer is up.
+// optionalRefreshInterval is how often an issuer that started without keys
+// retries until the first successful fetch. Later refreshes use the
+// configured cache duration.
 const optionalRefreshInterval = 2 * time.Second
 
 var errNoJWKSKeys = errors.New("JWKS contains no supported keys")
@@ -112,15 +112,11 @@ func validateConfig(entry Config, httpClient *http.Client) (Config, error) {
 }
 
 func newVerifier(ctx context.Context, entry Config, jwksURL string, httpClient *http.Client, options ...Option) (*Verifier, error) {
-	refreshInterval := entry.CacheDuration
-	if !entry.requiredAtStartup() {
-		refreshInterval = optionalRefreshInterval
-	}
 	storage, err := jwkset.NewStorageFromHTTP(jwksURL, jwkset.HTTPClientStorageOptions{
 		Client:                    httpClient,
 		Ctx:                       ctx,
 		HTTPTimeout:               httpTimeout,
-		RefreshInterval:           refreshInterval,
+		RefreshInterval:           entry.CacheDuration,
 		NoErrorReturnFirstHTTPReq: !entry.requiredAtStartup(),
 	})
 	if err != nil {
@@ -131,6 +127,7 @@ func newVerifier(ctx context.Context, entry Config, jwksURL string, httpClient *
 		if entry.requiredAtStartup() || !errors.Is(err, errNoJWKSKeys) {
 			return nil, fmt.Errorf("validate JWKS signing algorithms: %w", err)
 		}
+		go pollJWKS(ctx, storage, jwksURL, httpClient)
 	}
 
 	keyFunc, err := keyfunc.New(keyfunc.Options{
@@ -157,6 +154,65 @@ func newVerifier(ctx context.Context, entry Config, jwksURL string, httpClient *
 	}
 
 	return verifier, nil
+}
+
+func pollJWKS(ctx context.Context, storage jwkset.Storage, jwksURL string, httpClient *http.Client) {
+	ticker := time.NewTicker(optionalRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := replaceJWKS(ctx, storage, jwksURL, httpClient); err != nil {
+				continue
+			}
+			if _, err := validMethodsFromStorage(ctx, storage); err != nil {
+				continue
+			}
+
+			return
+		}
+	}
+}
+
+func replaceJWKS(ctx context.Context, storage jwkset.Storage, jwksURL string, httpClient *http.Client) error {
+	fetchCtx, cancel := context.WithTimeout(ctx, httpTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, jwksURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("JWKS fetch returned %d", resp.StatusCode)
+	}
+
+	var document jwkset.JWKSMarshal
+	if err := json.NewDecoder(resp.Body).Decode(&document); err != nil {
+		return err
+	}
+	keys := make([]jwkset.JWK, 0, len(document.Keys))
+	for _, marshal := range document.Keys {
+		key, err := jwkset.NewJWKFromMarshal(marshal, jwkset.JWKMarshalOptions{Private: true}, jwkset.JWKValidateOptions{})
+		if errors.Is(err, jwkset.ErrUnsupportedKey) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return errNoJWKSKeys
+	}
+
+	return storage.KeyReplaceAll(ctx, keys)
 }
 
 func validMethodsFromStorage(ctx context.Context, storage jwkset.Storage) ([]string, error) {
