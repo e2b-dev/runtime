@@ -133,6 +133,8 @@ func (p *Publisher) OnInsert(ctx context.Context, sbx *sandbox.Sandbox) {
 	// followed by a delete on stop.
 	state.written = true
 
+	ctx, cancel := recordContext(ctx)
+	defer cancel()
 	err := telemetry.Observe0(ctx, tracer, "routing-publish", func(ctx context.Context) error {
 		return p.store.StoreSandbox(ctx, sbx.Runtime.SandboxID, info, expiration)
 	})
@@ -178,6 +180,8 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 		return
 	}
 
+	ctx, cancel := recordContext(ctx)
+	defer cancel()
 	err := telemetry.Observe0(ctx, tracer, "routing-delete", func(ctx context.Context) error {
 		return p.store.DeleteSandbox(ctx, sbx.Runtime.SandboxID, sbx.Runtime.ExecutionID)
 	})
@@ -193,6 +197,18 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 	}
 
 	p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "ok")))
+}
+
+// recordTimeout bounds a write's or delete's wait for a Redis connection; the
+// client's own read and write timeouts bound its I/O, as for every write.
+const recordTimeout = 10 * time.Second
+
+// recordContext detaches a record's write or delete from its caller's
+// cancellation: a create past its budget still publishes the sandbox it made
+// live, and a stop whose caller has gone still removes the record, which
+// would otherwise route to a dead sandbox until its TTL.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 }
 
 // OnNetworkRelease is not used by the publisher.

@@ -148,6 +148,43 @@ func TestPublisher_OnInsertWritesRecord(t *testing.T) {
 	require.Equal(t, 2*time.Hour, c.ttls["sbx-1"])
 }
 
+// contextCatalog fails a write or delete whose context has ended, as Redis
+// does.
+type contextCatalog struct{ *memoryCatalog }
+
+func (c contextCatalog) StoreSandbox(ctx context.Context, sandboxID string, info *catalog.SandboxInfo, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return c.memoryCatalog.StoreSandbox(ctx, sandboxID, info, ttl)
+}
+
+func (c contextCatalog) DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return c.memoryCatalog.DeleteSandbox(ctx, sandboxID, executionID)
+}
+
+// TestPublisher_RecordOutlivesItsCallersContext: a create that ran past its
+// budget still publishes the sandbox it made live, and a stop whose caller
+// has gone still removes the record.
+func TestPublisher_RecordOutlivesItsCallersContext(t *testing.T) {
+	t.Parallel()
+	c := newMemoryCatalog()
+	p := newPublisher(t, contextCatalog{c})
+	sbx := testSandbox(t, testSandboxID, "lc-1", sandboxtypes.SandboxTypeSandbox)
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	p.OnInsert(ended, sbx)
+	require.True(t, c.has(), "the record is written though the create's context has ended")
+	p.OnStopping(ended, sbx)
+	require.False(t, c.has(), "the record is removed though the stop's caller has gone")
+}
+
 func TestPublisher_OnStoppingDeletesRecord(t *testing.T) {
 	t.Parallel()
 
