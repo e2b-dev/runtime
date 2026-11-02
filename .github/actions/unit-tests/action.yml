@@ -24,6 +24,10 @@ inputs:
     description: "Run with the race detector (roughly doubles runtime; raises the go test timeout to 40m)"
     required: false
     default: "false"
+  cluster:
+    description: "Run the Redis tests on a one-node cluster-mode Valkey instead of the standalone server"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -38,6 +42,31 @@ runs:
 
     - name: Use the Docker Hub mirror
       uses: ./.github/actions/docker-hub-mirror
+
+    # A one-node cluster-mode Valkey on 6380 (6379 stays the standalone
+    # server), reached through REDIS_TEST_CLUSTER_URL: the node holds every
+    # slot, so a command whose keys span slots fails as on a sharded
+    # deployment. Host networking: a cluster client dials the port the node
+    # announces, so the node must listen on the port the tests reach.
+    - name: Start a cluster-mode Valkey
+      if: inputs.cluster == 'true'
+      shell: bash
+      run: |
+        image=valkey/valkey:8.1.10
+        ./scripts/pull-retry.sh "$image"
+        docker run -d --name valkey-cluster --network host "$image" \
+          valkey-server --cluster-enabled yes --port 6380 --appendonly no --save ""
+        for _ in $(seq 30); do
+          docker exec valkey-cluster valkey-cli -p 6380 cluster addslotsrange 0 16383 >/dev/null 2>&1 || true
+          if docker exec valkey-cluster valkey-cli -p 6380 cluster info 2>/dev/null | grep -q cluster_state:ok; then
+            echo "REDIS_TEST_CLUSTER_URL=redis://localhost:6380/0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::error::the cluster-mode Valkey did not reach cluster_state:ok in 30 s"
+        docker logs valkey-cluster
+        exit 1
 
     - name: Setup envd tests
       if: inputs.package == 'packages/envd'
@@ -193,7 +222,10 @@ runs:
         trap 'rm -f "$binary"' EXIT
         RACE=""
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; fi
-        go test -c $RACE -o "$binary" ./pkg/nfsproxy
+        # The sudo'd test run above leaves whatever it fetched or built in the
+        # module and build caches owned by root, so on a cold cache this build
+        # fails as the runner user; it runs under the same identity.
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" go test -c $RACE -o "$binary" ./pkg/nfsproxy
         mount_helper="$NFS_TEST_MOUNT_HELPER"
         "$mount_helper" -V
         sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" \

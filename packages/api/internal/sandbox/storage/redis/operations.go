@@ -94,9 +94,9 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string
 
 	// Execute Lua script for atomic DEL + SREM; it returns the deleted JSON
 	// so the expiration-index cleanup below is scoped to the execution we
-	// actually removed.
-	raw, err := RunScript(ctx, s.redisClient, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, sandboxID).Text()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	// actually removed. No expected execution yet: any execution is removed.
+	_, raw, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, sandboxID, ""))
+	if err != nil {
 		return fmt.Errorf("failed to remove sandbox from Redis: %w", err)
 	}
 

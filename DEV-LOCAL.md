@@ -235,6 +235,17 @@ export REDIS_TEST_DATABASE_URL="redis://localhost:56379/0"
 
 Without the variable those tests fail; `go test -short` skips them. The few tests that rely on commands a namespaced client cannot isolate (SCAN patterns, raw key names in command hooks, the shared pub/sub channel) call `SetupContainerInstance` and still start a Redis container of their own.
 
+CI also runs the sandbox store's suites on a one-node cluster-mode Valkey, where a command or script whose keys span hash slots fails with `CROSSSLOT`, as it does on a sharded deployment. When `REDIS_TEST_CLUSTER_URL` is set, `SetupInstance` uses that server instead. A cluster client dials the port the node announces, so publish the port the server listens on, at 55535 or below (the cluster bus takes the port plus 10000):
+
+```bash
+docker run -d --rm --name e2b-test-valkey-cluster -p 46380:46380 valkey/valkey:8.1.10 \
+  valkey-server --port 46380 --cluster-enabled yes --save "" --appendonly no
+sleep 1
+docker exec e2b-test-valkey-cluster valkey-cli -p 46380 cluster addslotsrange 0 16383
+until docker exec e2b-test-valkey-cluster valkey-cli -p 46380 cluster info | grep -q cluster_state:ok; do sleep 1; done
+export REDIS_TEST_CLUSTER_URL="redis://localhost:46380/0"
+```
+
 # Troubleshooting
 
 ### `/dev/kvm` not found

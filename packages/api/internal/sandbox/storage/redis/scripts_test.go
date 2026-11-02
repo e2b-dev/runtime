@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -32,11 +33,12 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 
 	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, teamKey}, "{}", "sbx").Err())
 
-	raw, err := metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, "sbx").Text()
+	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, "sbx", ""))
 	require.NoError(t, err)
+	require.True(t, deleted)
 	require.Equal(t, "{}", raw)
 
-	_, err = metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, "sbx").Text()
+	err = metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, teamKey}, "sbx", "").Err()
 	require.ErrorIs(t, err, redis.Nil)
 
 	failing := redis.NewScript(`return redis.call('NOSUCHCOMMAND')`)
@@ -58,6 +60,32 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	require.Equal(t, uint64(1), durations[durationAttrs("add_sandbox")])
 	require.Equal(t, uint64(2), durations[durationAttrs("remove_sandbox")])
 	require.Equal(t, uint64(1), durations[durationAttrs("failing")])
+}
+
+// With slot assertions enabled, RunScript panics on keys that span hash
+// slots, naming the script and the keys, and runs keys that share a tag.
+func TestRunScriptAssertsSameSlot(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	script := redis.NewScript(`return 1`)
+
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		RunScript(t.Context(), client, "spans_slots", script, []string{"{a}:1", "{b}:2"})
+
+		return nil
+	}()
+	require.NotNil(t, recovered, "RunScript accepted keys in two hash slots")
+	assert.Contains(t, recovered, "spans_slots")
+	assert.Contains(t, recovered, "{b}:2")
+
+	var cmd *redis.Cmd
+	require.NotPanics(t, func() {
+		cmd = RunScript(t.Context(), client, "one_slot", script, []string{"{a}:1", "{a}:2"})
+	})
+	require.NoError(t, cmd.Err())
+	assert.Equal(t, int64(1), cmd.Val())
 }
 
 // An update's fenced record write is counted and timed like every other

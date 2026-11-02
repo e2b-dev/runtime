@@ -421,6 +421,13 @@ const (
 	// and outcome (ok|error). The store's load is mostly EVALSHA, which names
 	// no script; this does. A nil reply is a result, so it counts as ok.
 	ApiRedisScriptCalls CounterType = "api.redis.script.calls"
+	// Sandbox store key-form drain: reads the team-tagged key served after the
+	// sandbox-tagged key missed, the healer's index repairs, writes that gave
+	// up after their retries, and the cluster errors the store's commands hit.
+	ApiRedisStorageReadsFallback  CounterType = "api.redis_storage.reads.fallback"
+	ApiRedisStorageIndexHeal      CounterType = "api.redis_storage.index_heal"
+	ApiRedisStorageWriteAnomalies CounterType = "api.redis_storage.write_anomalies"
+	ApiRedisStorageErrors         CounterType = "api.redis_storage.errors"
 
 	// ClientProxyResumeFlightCounterName counts callers of the per-sandbox
 	// resume flight by role (leader|joiner|none) and result
@@ -707,6 +714,11 @@ const (
 	// longer than the lifetime mean the store is being read as fast as the
 	// allowance permits. Exported with explicit buckets (metrics.go).
 	ApiSandboxListAge HistogramType = "api.sandbox.list.age"
+	// ApiRedisStorageListGets is the commands one bulk record read issued, by
+	// the sandbox list, the evictor or the node reconcile: one GET per record
+	// on the sandbox-tagged keys, then one MGET per team chunk on the
+	// team-tagged keys of the records those missed.
+	ApiRedisStorageListGets HistogramType = "api.redis_storage.list.gets"
 
 	// Firecracker net histograms — per-sandbox distribution per metrics flush, no sandbox_id.
 	// Firecracker serializes SharedIncMetric as per-flush deltas (default flush interval: 60 s).
@@ -815,6 +827,16 @@ const (
 	// replicas, never the sum.
 	ApiOrchestratorNodesWithoutHugepageCeiling GaugeIntType = "api.orchestrator.nodes_without_hugepage_ceiling"
 
+	// Sandbox store key-form census, taken by every API replica's healer sweep
+	// over the whole store: read the max across replicas, never the sum.
+	ApiRedisStorageRecordsForm    GaugeIntType = "api.redis_storage.records.form"
+	ApiRedisStorageCensusComplete GaugeIntType = "api.redis_storage.census.complete"
+	// The repairs the healer's two most recent sweeps made on one replica, by
+	// kind, so a rule can compare consecutive sweeps: the interval is
+	// jittered, so counter windows cannot tell sweeps apart.
+	ApiRedisStorageIndexHealLastSweep     GaugeIntType = "api.redis_storage.index_heal.last_sweep"
+	ApiRedisStorageIndexHealPreviousSweep GaugeIntType = "api.redis_storage.index_heal.previous_sweep"
+
 	// Build resource metrics
 	BuildRootfsSizeHistogramName HistogramType = "template.build.rootfs.size"
 )
@@ -904,7 +926,11 @@ var counterDesc = map[CounterType]string{
 	ApiRedisStorageExpirationIndexSwept:    "Members removed from the global expiration index by the evictor scan (reason=orphan|dead_execution|invalid)",
 	ApiRedisStorageExpirationIndexRescored: "Live expiration index members re-scored after drifting from the stored EndTime",
 	ApiRedisStorageExpirationIndexDeferred: "Expired expiration index members moved out of the evictor scan window while their sandbox is in a transition",
-	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_sandbox|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release, outcome=ok|error)",
+	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_sandbox|remove_record|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
+	ApiRedisStorageReadsFallback:           "Sandbox record reads the team-tagged key served after the sandbox-tagged key missed; zero once the census reads no team-form records",
+	ApiRedisStorageIndexHeal:               "Repairs the healer made to sandbox records and their index entries (kind=readded|removed|deleted_stale|twins_deleted); healthy steady state is zero",
+	ApiRedisStorageWriteAnomalies:          "Sandbox store writes that gave up after their retries (kind=remove_stranded|add_unindexed|add_write_unconfirmed); the healer repairs what they left",
+	ApiRedisStorageErrors:                  "Cluster errors the sandbox store's commands returned (kind=crossslot|moved_exhausted|tryagain|other)",
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
@@ -1000,6 +1026,10 @@ var counterUnits = map[CounterType]string{
 	ApiRedisStorageExpirationIndexRescored: "{member}",
 	ApiRedisStorageExpirationIndexDeferred: "{member}",
 	ApiRedisScriptCalls:                    "{call}",
+	ApiRedisStorageReadsFallback:           "{read}",
+	ApiRedisStorageIndexHeal:               "{repair}",
+	ApiRedisStorageWriteAnomalies:          "{write}",
+	ApiRedisStorageErrors:                  "{error}",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "{placement}",
 }
@@ -1098,6 +1128,11 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "Resident pause layers whose own upload failed for good, so this node holds the only copy. Read against orchestrator.snapshot.upload.failed.",
 
 	ApiOrchestratorNodesWithoutHugepageCeiling: "Ready nodes the hugepage placement limit cannot bound, by reason (no_capacity | no_page_size). Every API replica reports the whole fleet: max across replicas, not sum.",
+
+	ApiRedisStorageRecordsForm:            "Sandbox records the healer's last sweep counted, by key form (form=team|sandbox). Every API replica reports the whole store: max across replicas, not sum.",
+	ApiRedisStorageCensusComplete:         "Whether the healer's last sweep counted every sandbox (1 or 0): 0 when a team's scan failed and was skipped, the expiration walk failed, or a probe was refused; the census authorises nothing unless complete.",
+	ApiRedisStorageIndexHealLastSweep:     "Repairs the healer's most recent sweep made on this replica, by kind (readded|removed|deleted_stale|twins_deleted); compared with previous_sweep by the rising-drift rule",
+	ApiRedisStorageIndexHealPreviousSweep: "Repairs the healer's sweep before the most recent made on this replica, by kind (readded|removed|deleted_stale|twins_deleted); absent until the replica's second sweep",
 }
 
 var gaugeIntUnits = map[GaugeIntType]string{
@@ -1140,6 +1175,11 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "{layer}",
 
 	ApiOrchestratorNodesWithoutHugepageCeiling: "{node}",
+
+	ApiRedisStorageRecordsForm:            "{record}",
+	ApiRedisStorageCensusComplete:         "1",
+	ApiRedisStorageIndexHealLastSweep:     "{repair}",
+	ApiRedisStorageIndexHealPreviousSweep: "{repair}",
 }
 
 func GetCounter(meter metric.Meter, name CounterType) (metric.Int64Counter, error) {
@@ -1198,6 +1238,7 @@ var histogramDesc = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 	ApiRedisScriptDuration:                  "Round trip of one Lua script run against the sandbox store, by script",
 	ApiSandboxListAge:                       "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
+	ApiRedisStorageListGets:                 "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys, then one MGET per team chunk on the team-tagged keys of the records those missed; falls toward one per record as the team-tagged records drain",
 
 	FPHRunDurationName:                                "Duration of a completed free-page-hinting drain or run, labeled by phase",
 	FPHStopDurationName:                               "Duration of the stop of an abandoned hinting cycle, acknowledgement wait included",
@@ -1292,6 +1333,7 @@ var histogramUnits = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "ms",
 	ApiRedisScriptDuration:                  "ms",
 	ApiSandboxListAge:                       "ms",
+	ApiRedisStorageListGets:                 "{command}",
 
 	FPHRunDurationName:                                "ms",
 	FPHStopDurationName:                               "ms",

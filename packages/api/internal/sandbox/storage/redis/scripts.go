@@ -64,17 +64,35 @@ var (
 		return 1
 	`)
 
-	// removeSandboxScript atomically removes a sandbox and its team index entry.
-	// It returns the stored JSON (or nil if the key was already gone) so the
-	// caller knows exactly which execution it removed and can scope the
-	// expiration-index cleanup to that execution.
-	// KEYS[1] = sandbox key, KEYS[2] = team index key
+	// removeSandboxScript atomically removes a record and, when KEYS[2] is
+	// given, its team index entry, and returns the removed JSON so the caller
+	// can scope the expiration-index cleanup to the execution it removed. The
+	// sandbox form passes no index key: its entry lives in another slot. With
+	// ARGV[2] set, a record of another execution is returned and left alone,
+	// index entry included: a script re-executed after a lost reply, or
+	// delayed past the lock, cannot remove a successor. An absent record is
+	// nil and writes nothing; its index entry may be a successor's in the
+	// other form.
+	// KEYS[1] = sandbox key, KEYS[2] = team index key, optional
 	// ARGV[1] = sandbox ID
+	// ARGV[2] = expected execution ID, or "" to remove any execution
+	// Replies, read by parseRemoveReply: nil, {0, JSON} refused, {1, JSON} removed.
 	removeSandboxScript = redis.NewScript(`
 		local data = redis.call('GET', KEYS[1])
+		if not data then
+			return nil
+		end
+		if ARGV[2] ~= '' then
+			local ok, decoded = pcall(cjson.decode, data)
+			if not ok or decoded['executionID'] ~= ARGV[2] then
+				return {0, data}
+			end
+		end
 		redis.call('DEL', KEYS[1])
-		redis.call('SREM', KEYS[2], ARGV[1])
-		return data
+		if KEYS[2] then
+			redis.call('SREM', KEYS[2], ARGV[1])
+		end
+		return {1, data}
 	`)
 
 	// startTransitionScript atomically updates sandbox and sets transition key with UUID.
@@ -113,6 +131,29 @@ var (
 	`)
 )
 
+// parseRemoveReply reads a remove script's reply: absent when the record was
+// already gone, else whether it was removed and the JSON the script found,
+// the removed record's or the other execution's.
+func parseRemoveReply(cmd *redis.Cmd) (deleted bool, json string, absent bool, err error) {
+	reply, err := cmd.Result()
+	if errors.Is(err, redis.Nil) {
+		return false, "", true, nil
+	}
+	if err != nil {
+		return false, "", false, err
+	}
+
+	if parts, ok := reply.([]any); ok && len(parts) == 2 {
+		flag, flagOK := parts[0].(int64)
+		data, dataOK := parts[1].(string)
+		if flagOK && dataOK {
+			return flag == 1, data, false, nil
+		}
+	}
+
+	return false, "", false, fmt.Errorf("remove script reply %#v: want [deleted, json]", reply)
+}
+
 const (
 	scriptAttr         = "script"
 	scriptOutcomeAttr  = "outcome"
@@ -146,8 +187,11 @@ var defaultScriptMetrics = utils.Must(newScriptMetrics(otel.Meter(meterScope)))
 
 // RunScript runs script on client as Script.Run does and records the run
 // under name. It returns the command unchanged, so callers read it as they
-// would Script.Run's.
+// would Script.Run's. In the package's tests it first panics if keys span
+// hash slots.
 func RunScript(ctx context.Context, client redis.Scripter, name string, script *redis.Script, keys []string, args ...any) *redis.Cmd {
+	assertSameSlot(name, keys)
+
 	return defaultScriptMetrics.run(ctx, client, name, script, keys, args...)
 }
 

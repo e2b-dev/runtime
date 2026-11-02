@@ -231,18 +231,19 @@ func TestSubscriptionManager_PubSubEndToEnd(t *testing.T) {
 	ch, cleanup := storage.subManager.subscribe(routingKey)
 	t.Cleanup(cleanup)
 
-	// Allow time for the PubSub subscription to be established
-	time.Sleep(50 * time.Millisecond)
-
-	// Publish via Redis (simulating what storage callbacks do)
-	err := client.Publish(t.Context(), globalStorageNotifyChannel, routingKey).Err()
-	require.NoError(t, err)
-
-	select {
-	case <-ch:
-		// OK — received the PubSub notification
-	case <-time.After(3 * time.Second):
-		require.FailNow(t, "did not receive PubSub notification")
+	// The subscription is established by Start's goroutine and a message
+	// published before it is lost, so publish (as the storage callbacks do)
+	// until the notification arrives.
+	deadline := time.After(10 * time.Second)
+	for {
+		require.NoError(t, client.Publish(t.Context(), globalStorageNotifyChannel, routingKey).Err())
+		select {
+		case <-ch:
+			return
+		case <-time.After(100 * time.Millisecond):
+		case <-deadline:
+			require.FailNow(t, "did not receive PubSub notification")
+		}
 	}
 }
 

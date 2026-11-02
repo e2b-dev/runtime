@@ -43,16 +43,22 @@ func sandboxExpirationMember(sbx sandboxtypes.Sandbox) string {
 	return expirationMember(sbx.TeamID.String(), sbx.SandboxID, sbx.ExecutionID)
 }
 
-// parseExpirationMember parses "teamID:sandboxID:executionID" members.
-// Sandbox IDs never contain ':' and execution IDs are always UUIDs.
+// parseExpirationMember parses "teamID:sandboxID:executionID" members. The
+// team and execution parts are always UUIDs, written from uuid.UUID.String,
+// and sandbox IDs never contain ':'. A member whose team or execution part
+// is not a UUID, or whose team or sandbox part no key can be built from,
+// does not parse, so it is swept as invalid instead of reaching a key
+// builder, or a reader that would skip and defer it on every pass.
 func parseExpirationMember(member string) (teamID, sandboxID, executionID string, ok bool) {
 	parts := strings.Split(member, ":")
-	if len(parts) != 3 {
+	if len(parts) != 3 || !validID(parts[0]) || !validID(parts[1]) {
 		return "", "", "", false
 	}
 
-	if _, err := uuid.Parse(parts[2]); err != nil {
-		return "", "", "", false
+	for _, part := range []string{parts[0], parts[2]} {
+		if _, err := uuid.Parse(part); err != nil {
+			return "", "", "", false
+		}
 	}
 
 	return parts[0], parts[1], parts[2], true
@@ -74,6 +80,13 @@ func GetSandboxStorageTeamIndexKey(teamID string) string {
 
 func getTransitionKey(teamID, sandboxID string) string {
 	return redis_utils.CreateKey(GetTeamPrefix(teamID), transitionKeyPrefix, sandboxID)
+}
+
+// validID reports whether id can be a hash tag: an empty tag makes Redis
+// hash the whole key, and a brace moves or ends the tag, so either splits a
+// sandbox's keys across slots.
+func validID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, "{}")
 }
 
 func getTransitionResultKey(teamID, sandboxID, transitionID string) string {
