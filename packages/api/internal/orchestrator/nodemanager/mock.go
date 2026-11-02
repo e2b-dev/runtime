@@ -216,6 +216,20 @@ func WithAllocatedMemoryBytes(bytes uint64) TestOptions {
 	}
 }
 
+// WithMemoryTotalBytes sets the total host memory the test node reports.
+func WithMemoryTotalBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryTotalBytes = bytes
+	}
+}
+
+// WithMemoryUsedBytes sets the used host memory the test node reports.
+func WithMemoryUsedBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryUsedBytes = bytes
+	}
+}
+
 // WithHugePages sets the hugepage pool the test node reports: page counts, as
 // the kernel exposes them (total / used / reserved), plus the page size.
 func WithHugePages(total, used, reserved, pageSizeBytes uint64) TestOptions {

@@ -182,10 +182,17 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   flags. With `placement-hugepage-limit-percent` above 0, a hugepage sandbox
   is also refused by any node whose committed hugepages would pass that share
   of the node's pool ceiling (base pool plus overcommit allowance, reported by
-  the orchestrator); within an API replica the check and the in-flight record
+  the orchestrator), and a sandbox without hugepages by any node whose used
+  memory outside the hugepage pool (counting surplus hugepages committed but
+  not yet borrowed) would pass that share of the memory outside the pool;
+  within an API replica the check and the in-flight record
   are one step per node, and when the compatible nodes are all full placement
-  answers with a capacity error, not "no compatible node". With the
-  orchestrator's `create-memory-refusal` flag on (`CREATE_MEMORY_REFUSAL` for a
+  answers with a capacity error, not "no compatible node". With
+  `placement-memory-max-overcommit` above 0 (a percentage), a sandbox is
+  likewise refused by any node where the configured RAM of its sandboxes
+  (allocated, in flight, and requested) would pass that multiple of its base
+  hugepage pool, or of its total memory for a sandbox without hugepages. With
+  the orchestrator's `create-memory-refusal` flag on (`CREATE_MEMORY_REFUSAL` for a
   deployment without LaunchDarkly), a create whose guest memory the pool
   cannot back while a sandbox on that node is still tearing down is refused
   with `ResourceExhausted`, so placement retries the node once the pages are

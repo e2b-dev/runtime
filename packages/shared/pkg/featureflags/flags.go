@@ -641,7 +641,8 @@ var (
 	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
 	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
 	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
-	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit; 0 disables the check
+	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit (of its memory outside the pool, for a sandbox without hugepages); 0 disables the check
+	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
 	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
 	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
 	// EnvdInitConnectTimeoutMilliseconds bounds each connect of the held envd init

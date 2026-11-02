@@ -31,7 +31,7 @@ type PlacementResult struct {
 	// Response is the successful create's RPC response; nil on failure.
 	Response *orchestrator.SandboxCreateResponse
 	// MissingHugepageCeiling is why the final memory check admitted Node
-	// unbounded (a MissingHugepageCeiling reason), "" when the check bounded
+	// unbounded (a reason MemoryAdmission names), "" when the check bounded
 	// it or no limit applied. Taken at admission: the node's metrics may
 	// change before the caller reads them.
 	MissingHugepageCeiling string
@@ -259,10 +259,9 @@ func placeSandbox(
 			// Optimistic update: assume resources are occupied after successful creation.
 			// Manually update node.metrics with the newly allocated resources.
 			// This will be overwritten by the next real Metrics report for auto-correction.
-			// Added before the in-flight entry is dropped, so a concurrent
-			// memory check always counts this sandbox somewhere.
-			node.OptimisticAdd(resources)
-			node.PlacementMetrics.Success(sbxRequest.GetSandbox().GetSandboxId())
+			// Moved from in flight in one step, so a concurrent memory check
+			// counts this sandbox exactly once.
+			node.CompletePlacement(sbxRequest.GetSandbox().GetSandboxId(), resources)
 
 			return PlacementResult{Node: node, Response: resp, MissingHugepageCeiling: missingCeiling}, nil
 		}

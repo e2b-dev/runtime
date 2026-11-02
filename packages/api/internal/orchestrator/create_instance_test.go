@@ -1080,9 +1080,9 @@ func TestCreateSandbox_CreatedCounterCarriesTeam(t *testing.T) {
 	assert.Equal(t, team.ID.String(), teamID.AsString())
 }
 
-// Under a hugepage limit, a placement on a node that reports no pool ceiling
-// went unchecked; the counter is the only sign of it. A placement the limit
-// never applied to (limit off, or a sandbox without hugepages) is not one.
+// Under the hugepage limit, a placement on a node that reports no pool ceiling
+// went unchecked; the counter is the only sign of it. Nothing else counts: the
+// other memory checks bound every node.
 func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -1090,6 +1090,7 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		limitPercent       int
+		overcommitPercent  int
 		firecrackerVersion string
 		nodeOpts           []nodemanager.TestOptions
 		want               map[string]int64
@@ -1111,9 +1112,23 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 			want:         map[string]int64{},
 		},
 		{
-			name:               "sandbox without hugepages",
+			name:               "limit, sandbox without hugepages",
 			limitPercent:       80,
 			firecrackerVersion: "v1.6.0_abc1234",
+			nodeOpts:           []nodemanager.TestOptions{nodemanager.WithMemoryTotalBytes(4096 << 20)},
+			want:               map[string]int64{},
+		},
+		{
+			name:              "overcommit cap",
+			overcommitPercent: 100,
+			nodeOpts:          []nodemanager.TestOptions{nodemanager.WithHugePages(1000, 0, 0, pageSize), nodemanager.WithHugePagesBase(1000)},
+			want:              map[string]int64{},
+		},
+		{
+			name:               "overcommit cap, sandbox without hugepages",
+			overcommitPercent:  100,
+			firecrackerVersion: "v1.6.0_abc1234",
+			nodeOpts:           []nodemanager.TestOptions{nodemanager.WithMemoryTotalBytes(4096 << 20)},
 			want:               map[string]int64{},
 		},
 	} {
@@ -1122,6 +1137,7 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 
 			source := ldtestdata.DataSource()
 			source.Update(source.Flag(featureflags.PlacementHugepageLimitPercent.Key()).ValueForAll(ldvalue.Int(tc.limitPercent)))
+			source.Update(source.Flag(featureflags.PlacementMemoryMaxOvercommit.Key()).ValueForAll(ldvalue.Int(tc.overcommitPercent)))
 			o := newCreateSandboxTestOrchestratorWithFlags(t, source, tc.nodeOpts...)
 
 			reader := sdkmetric.NewManualReader()
@@ -1145,6 +1161,115 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 			var rm metricdata.ResourceMetrics
 			require.NoError(t, reader.Collect(t.Context(), &rm))
 			assert.Equal(t, tc.want, placementsWithoutCeilingByReason(t, rm, "node-1"))
+		})
+	}
+}
+
+// The cap comes from the flag on each placement: past it, the only node is a
+// capacity shortage; raised, the same node takes the sandbox. A sandbox
+// without hugepages is measured against the node's total memory instead.
+func TestCreateSandbox_MemoryOvercommitCapRefusesAFullNode(t *testing.T) {
+	t.Parallel()
+
+	const pageSize = 2 << 20
+	for _, tc := range []struct {
+		name               string
+		overcommitPercent  int
+		allocatedMiB       uint64
+		firecrackerVersion string
+		wantErrCode        string
+	}{
+		// A base pool of 1000 pages is 2000 MiB, the node's total memory 4096
+		// MiB; every build asks for 512.
+		{name: "hugepages, past the pool", overcommitPercent: 100, allocatedMiB: 1600, wantErrCode: errCodeCapacityUnavailable},
+		{name: "hugepages, under a raised cap", overcommitPercent: 125, allocatedMiB: 1600},
+		{name: "no hugepages, past the pool but under total memory", overcommitPercent: 100, allocatedMiB: 1600, firecrackerVersion: "v1.6.0_abc1234"},
+		{name: "no hugepages, past total memory", overcommitPercent: 100, allocatedMiB: 3700, firecrackerVersion: "v1.6.0_abc1234", wantErrCode: errCodeCapacityUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := ldtestdata.DataSource()
+			source.Update(source.Flag(featureflags.PlacementMemoryMaxOvercommit.Key()).ValueForAll(ldvalue.Int(tc.overcommitPercent)))
+			o := newCreateSandboxTestOrchestratorWithFlags(t, source,
+				nodemanager.WithAllocatedMemoryBytes(tc.allocatedMiB<<20),
+				nodemanager.WithMemoryTotalBytes(4096<<20),
+				nodemanager.WithHugePages(1000, 0, 0, pageSize),
+				nodemanager.WithHugePagesBase(1000),
+			)
+
+			build := testBuild()
+			if tc.firecrackerVersion != "" {
+				build.FirecrackerVersion = tc.firecrackerVersion
+			}
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+
+			now := time.Now()
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-"+uuid.New().String()[:8], uuid.New().String(), testTeam(),
+				fetcher, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{})
+
+			if tc.wantErrCode == "" {
+				require.Nil(t, apiErr)
+
+				return
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+			assert.Equal(t, tc.wantErrCode, apiErr.ErrorCode)
+		})
+	}
+}
+
+// The limit measures a sandbox without hugepages against the node's used and
+// total memory, whatever room its hugepage pool has.
+func TestCreateSandbox_MemoryLimitRefusesABusyNodeForOrdinaryPages(t *testing.T) {
+	t.Parallel()
+
+	const pageSize = 2 << 20
+	for _, tc := range []struct {
+		name        string
+		usedMiB     uint64
+		wantErrCode string
+	}{
+		// The pool is 2000 of the node's 4096 MiB, so 0.95 of the other 2096
+		// is 1991; the build asks for 512.
+		{name: "room in memory", usedMiB: 3300},
+		{name: "memory nearly full", usedMiB: 3500, wantErrCode: errCodeCapacityUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := ldtestdata.DataSource()
+			source.Update(source.Flag(featureflags.PlacementHugepageLimitPercent.Key()).ValueForAll(ldvalue.Int(95)))
+			o := newCreateSandboxTestOrchestratorWithFlags(t, source,
+				nodemanager.WithMemoryTotalBytes(4096<<20),
+				nodemanager.WithMemoryUsedBytes(tc.usedMiB<<20),
+				nodemanager.WithHugePages(1000, 0, 0, pageSize),
+				nodemanager.WithHugePagesCapacity(1250),
+			)
+
+			build := testBuild()
+			build.FirecrackerVersion = "v1.6.0_abc1234"
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+
+			now := time.Now()
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-"+uuid.New().String()[:8], uuid.New().String(), testTeam(),
+				fetcher, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{})
+
+			if tc.wantErrCode == "" {
+				require.Nil(t, apiErr)
+
+				return
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+			assert.Equal(t, tc.wantErrCode, apiErr.ErrorCode)
 		})
 	}
 }
