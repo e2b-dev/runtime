@@ -18,11 +18,12 @@ import (
 )
 
 type memoryCatalog struct {
-	mu        sync.Mutex
-	records   map[string]*catalog.SandboxInfo
-	ttls      map[string]time.Duration
-	storeErr  error
-	deleteErr error
+	mu         sync.Mutex
+	records    map[string]*catalog.SandboxInfo
+	ttls       map[string]time.Duration
+	storeCalls map[string]int
+	storeErr   error
+	deleteErr  error
 
 	// storeStarted is closed when StoreSandbox begins; storeRelease blocks it until closed.
 	storeStarted chan struct{}
@@ -31,8 +32,9 @@ type memoryCatalog struct {
 
 func newMemoryCatalog() *memoryCatalog {
 	return &memoryCatalog{
-		records: map[string]*catalog.SandboxInfo{},
-		ttls:    map[string]time.Duration{},
+		records:    map[string]*catalog.SandboxInfo{},
+		ttls:       map[string]time.Duration{},
+		storeCalls: map[string]int{},
 	}
 }
 
@@ -61,10 +63,19 @@ func (c *memoryCatalog) StoreSandbox(_ context.Context, sandboxID string, info *
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.storeCalls[sandboxID]++
 	c.records[sandboxID] = info
 	c.ttls[sandboxID] = ttl
 
 	return nil
+}
+
+// calls reports how many successful StoreSandbox writes landed for a sandbox.
+func (c *memoryCatalog) calls(sandboxID string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.storeCalls[sandboxID]
 }
 
 func (c *memoryCatalog) DeleteSandbox(_ context.Context, sandboxID string, executionID string) error {
@@ -306,4 +317,80 @@ func TestPublisher_ViaSandboxMap(t *testing.T) {
 	require.True(t, sandboxes.MarkStopping(t.Context(), "sbx-1", "lc-1"))
 	_, err = c.GetSandbox(t.Context(), "sbx-1")
 	require.ErrorIs(t, err, catalog.ErrSandboxNotFound)
+}
+
+// republishSandbox builds a live sandbox whose max-length deadline is in the
+// future so Run would re-assert it, with a started-at close to now.
+func republishSandbox(t *testing.T) *sandbox.Sandbox {
+	t.Helper()
+
+	sbx := testSandbox(t, testSandboxID, "lc-1", sandboxtypes.SandboxTypeSandbox)
+	sbx.SetStartedAt(time.Now())
+
+	return sbx
+}
+
+func TestPublisher_RepublishRecoversAfterTransientStoreError(t *testing.T) {
+	t.Parallel()
+
+	c := newMemoryCatalog()
+	c.storeErr = errors.New("redis down")
+	p := newPublisher(t, c)
+	sbx := republishSandbox(t)
+
+	// The initial write loses a Redis blip: the sandbox is live but unroutable.
+	p.OnInsert(t.Context(), sbx)
+	require.False(t, c.has(), "the first write failed")
+	require.Len(t, p.routes, 1, "the publisher still tracks the live sandbox")
+
+	// Redis recovers; the next re-assert makes the sandbox routable again.
+	c.storeErr = nil
+	p.republishAll(t.Context())
+
+	got, err := c.GetSandbox(t.Context(), testSandboxID)
+	require.NoError(t, err)
+	require.Equal(t, "orch-1", got.OrchestratorID)
+	require.Equal(t, testExecutionID, got.ExecutionID)
+
+	// The refreshed TTL stays bounded by the sandbox max length (2h).
+	require.LessOrEqual(t, c.ttls[testSandboxID], 2*time.Hour)
+	require.Greater(t, c.ttls[testSandboxID], time.Duration(0))
+}
+
+func TestPublisher_RepublishSkipsStoppedSandbox(t *testing.T) {
+	t.Parallel()
+
+	c := newMemoryCatalog()
+	p := newPublisher(t, c)
+	sbx := republishSandbox(t)
+
+	p.OnInsert(t.Context(), sbx)
+	require.Equal(t, 1, c.calls(testSandboxID))
+
+	// Once stopped, the record is deleted and the lifecycle is forgotten; a
+	// re-assert must not resurrect a route to a dead sandbox.
+	p.OnStopping(t.Context(), sbx)
+	require.Empty(t, p.routes)
+
+	p.republishAll(t.Context())
+	require.Equal(t, 1, c.calls(testSandboxID), "no write after stop")
+	require.False(t, c.has())
+}
+
+func TestPublisher_RepublishStopsPastDeadline(t *testing.T) {
+	t.Parallel()
+
+	c := newMemoryCatalog()
+	p := newPublisher(t, c)
+
+	// A sandbox whose max length already elapsed: its record is left to expire
+	// on its own, never refreshed past the deadline.
+	sbx := testSandbox(t, testSandboxID, "lc-1", sandboxtypes.SandboxTypeSandbox)
+	sbx.SetStartedAt(time.Now().Add(-3 * time.Hour)) // MaxSandboxLengthHours is 2
+
+	p.OnInsert(t.Context(), sbx)
+	before := c.calls(testSandboxID)
+
+	p.republishAll(t.Context())
+	require.Equal(t, before, c.calls(testSandboxID), "no refresh past the max-length deadline")
 }

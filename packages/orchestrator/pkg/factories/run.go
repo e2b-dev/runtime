@@ -815,6 +815,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 			logger.L().Fatal(ctx, "failed to create sandbox routing publisher", zap.Error(err))
 		}
 		sandboxes.Subscribe(routingPublisher)
+		go routingPublisher.Run(ctx)
 	} else {
 		logger.L().Warn(ctx, "redis disabled; orchestrator sandbox routing records are not published")
 	}

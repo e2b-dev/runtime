@@ -622,8 +622,9 @@ const (
 	CmuxErrorsTotal CounterType = "orchestrator.cmux.errors.total"
 
 	// Sandbox routing record counters (result=ok/error)
-	RoutingPublishTotal CounterType = "orchestrator.routing.publish.total"
-	RoutingDeleteTotal  CounterType = "orchestrator.routing.delete.total"
+	RoutingPublishTotal   CounterType = "orchestrator.routing.publish.total"
+	RoutingRepublishTotal CounterType = "orchestrator.routing.republish.total"
+	RoutingDeleteTotal    CounterType = "orchestrator.routing.delete.total"
 
 	// Firecracker net counters — global totals, no sandbox_id (low cardinality).
 	// All carry a direction=tx/rx attribute. Per-sandbox distributions are histograms below.
@@ -863,8 +864,9 @@ var counterDesc = map[CounterType]string{
 	IngressProxyConnectionsBlockedTotal: "Total number of ingress proxy connections blocked by connection limit",
 	CmuxErrorsTotal:                     "Total number of cmux connection multiplexer errors",
 
-	RoutingPublishTotal: "Total number of sandbox routing record writes on MarkRunning (result=ok/error)",
-	RoutingDeleteTotal:  "Total number of sandbox routing record deletes on MarkStopping (result=ok/error)",
+	RoutingPublishTotal:   "Total number of sandbox routing record writes on MarkRunning (result=ok/error)",
+	RoutingRepublishTotal: "Total number of sandbox routing record re-assertions on the publisher periodic loop (result=ok/error)",
+	RoutingDeleteTotal:    "Total number of sandbox routing record deletes on MarkStopping (result=ok/error)",
 
 	SandboxFCNetFails:         "Total Firecracker VMM errors transmitting or receiving data (direction=tx/rx)",
 	SandboxFCNetNoAvailBuffer: "Total Firecracker VMM events where no virtqueue buffer was available (direction=tx/rx)",
@@ -956,8 +958,9 @@ var counterUnits = map[CounterType]string{
 	IngressProxyConnectionsBlockedTotal: "{connection}",
 	CmuxErrorsTotal:                     "{error}",
 
-	RoutingPublishTotal: "{record}",
-	RoutingDeleteTotal:  "{record}",
+	RoutingPublishTotal:   "{record}",
+	RoutingRepublishTotal: "{record}",
+	RoutingDeleteTotal:    "{record}",
 
 	SandboxFCNetFails:         "{error}",
 	SandboxFCNetNoAvailBuffer: "{event}",
