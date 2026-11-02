@@ -286,3 +286,36 @@ func TestGetTargetFromRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestExpectedUnroutableHost(t *testing.T) {
+	t.Parallel()
+
+	withHeaders := func(kv ...string) http.Header {
+		h := http.Header{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return h
+	}
+
+	tests := []struct {
+		name   string
+		host   string
+		header http.Header
+		want   bool
+	}{
+		{"bare-ipv4-no-headers", "118.196.30.209", http.Header{}, true},
+		{"bare-ipv4-with-port", "118.196.30.209:3002", http.Header{}, true},
+		{"localhost-no-headers", "localhost:3002", http.Header{}, true},
+		{"bare-ip-with-routing-headers", "118.196.30.209", withHeaders(headerSandboxID, "isv6ril5xadwn1k9t2jye", headerSandboxPort, "8000"), false},
+		{"bare-ip-with-only-sandbox-id", "118.196.30.209", withHeaders(headerSandboxID, "isv6ril5xadwn1k9t2jye"), false},
+		{"malformed-domain-host", "not-a-sandbox.e2b.app", http.Header{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, expectedUnroutableHost(tt.host, tt.header))
+		})
+	}
+}

@@ -72,6 +72,15 @@ func hasRoutingHeaders(h http.Header) bool {
 	return h.Get(headerSandboxID) != "" || h.Get(headerSandboxPort) != ""
 }
 
+// expectedUnroutableHost reports whether an ErrInvalidHost for this request is
+// the designed rejection of a host that can never carry sandbox routing: a bare
+// IP or localhost (isLocalRequestHost) that also provides no routing headers.
+// Such requests arrive continuously from external scanners, health probes and
+// stale clients on a public endpoint, so callers log them at Debug not Warn.
+func expectedUnroutableHost(host string, header http.Header) bool {
+	return isLocalRequestHost(host) && !hasRoutingHeaders(header)
+}
+
 func parseHost(host string) (sandboxID string, port uint64, err error) {
 	dot := strings.Index(host, ".")
 
