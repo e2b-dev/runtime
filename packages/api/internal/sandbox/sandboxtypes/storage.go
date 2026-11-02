@@ -15,7 +15,11 @@ const (
 
 // Storage is the persistence interface implemented by the redis backend.
 type Storage interface {
+	// Add stores a sandbox. A record of the same execution already stored is
+	// kept: the write is then a late duplicate of the one that landed.
 	Add(ctx context.Context, sandbox Sandbox) error
+	// Replace stores a sandbox over whatever is stored under its ID.
+	Replace(ctx context.Context, sandbox Sandbox) error
 	Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, error)
 	Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 

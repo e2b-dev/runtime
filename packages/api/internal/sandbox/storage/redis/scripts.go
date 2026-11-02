@@ -56,15 +56,44 @@ var (
 	`)
 
 	// addSandboxScript atomically stores a sandbox and adds it to the team index.
-	// KEYS[1] = sandbox key, KEYS[2] = team index key
-	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID
+	// Unless ARGV[4] is '1', the write is refused (nothing written) when it is
+	// a late duplicate (see Add): 0 when its execution is already stored, 2
+	// when its execution is in the gone set, which holds the executions
+	// removed or replaced under this sandbox ID for ARGV[5] seconds. A write
+	// that replaces another execution's record puts that execution in the
+	// gone set.
+	// KEYS[1] = sandbox key, KEYS[2] = team index key, KEYS[3] = gone set
+	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID,
+	// ARGV[3] = execution ID, ARGV[4] = '1' to replace a stored record of the
+	// same execution, ARGV[5] = gone set TTL in seconds
+	// Replies: 1 written, 0 already stored for this execution, 2 refused as gone.
 	addSandboxScript = redis.NewScript(`
+		local current = redis.call('GET', KEYS[1])
+		local stored = nil
+		if current then
+			local ok, decoded = pcall(cjson.decode, current)
+			if ok then
+				stored = decoded['executionID']
+			end
+		end
+		if ARGV[4] ~= '1' then
+			if stored and stored == ARGV[3] then
+				return 0
+			end
+			if redis.call('SISMEMBER', KEYS[3], ARGV[3]) == 1 then
+				return 2
+			end
+		end
+		if stored and stored ~= ARGV[3] then
+			redis.call('SADD', KEYS[3], stored)
+			redis.call('EXPIRE', KEYS[3], ARGV[5])
+		end
 		redis.call('SET', KEYS[1], ARGV[1])
 		redis.call('SADD', KEYS[2], ARGV[2])
 		return 1
 	`)
 
-	// removeSandboxScript atomically removes a record and, when KEYS[2] is
+	// removeSandboxScript atomically removes a record and, when KEYS[3] is
 	// given, its team index entry, and returns the removed JSON so the caller
 	// can scope the expiration-index cleanup to the execution it removed. The
 	// sandbox form passes no index key: its entry lives in another slot. With
@@ -72,25 +101,32 @@ var (
 	// index entry included: a script re-executed after a lost reply, or
 	// delayed past the lock, cannot remove a successor. An absent record is
 	// nil and writes nothing; its index entry may be a successor's in the
-	// other form.
-	// KEYS[1] = sandbox key, KEYS[2] = team index key, optional
+	// other form. The removed execution goes into the gone set (KEYS[2], in
+	// the record's slot), so a late duplicate of its create cannot bring it
+	// back.
+	// KEYS[1] = sandbox key, KEYS[2] = gone set, KEYS[3] = team index key, optional
 	// ARGV[1] = sandbox ID
 	// ARGV[2] = expected execution ID, or "" to remove any execution
+	// ARGV[3] = gone set TTL in seconds
 	// Replies, read by parseRemoveReply: nil, {0, JSON} refused, {1, JSON} removed.
 	removeSandboxScript = redis.NewScript(`
 		local data = redis.call('GET', KEYS[1])
 		if not data then
 			return nil
 		end
+		local ok, decoded = pcall(cjson.decode, data)
 		if ARGV[2] ~= '' then
-			local ok, decoded = pcall(cjson.decode, data)
 			if not ok or decoded['executionID'] ~= ARGV[2] then
 				return {0, data}
 			end
 		end
 		redis.call('DEL', KEYS[1])
-		if KEYS[2] then
-			redis.call('SREM', KEYS[2], ARGV[1])
+		if KEYS[3] then
+			redis.call('SREM', KEYS[3], ARGV[1])
+		end
+		if ok and decoded['executionID'] then
+			redis.call('SADD', KEYS[2], decoded['executionID'])
+			redis.call('EXPIRE', KEYS[2], ARGV[3])
 		end
 		return {1, data}
 	`)

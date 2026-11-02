@@ -73,6 +73,18 @@ func getSandboxKey(teamID, sandboxID string) string {
 	return redis_utils.CreateKey(GetTeamPrefix(teamID), sandboxesKey, sandboxID)
 }
 
+// goneKeyFor names the gone set beside a record key, in the record's slot
+// whatever the key's form.
+func goneKeyFor(recordKey string) string {
+	return redis_utils.CreateKey(recordKey, "gone")
+}
+
+// getSandboxGoneKey names the set of executions removed or replaced under a
+// sandbox ID, in the sandbox key's slot.
+func getSandboxGoneKey(teamID, sandboxID string) string {
+	return goneKeyFor(getSandboxKey(teamID, sandboxID))
+}
+
 // GetSandboxStorageTeamIndexKey returns the storage team index key for external packages (e.g. reservations).
 func GetSandboxStorageTeamIndexKey(teamID string) string {
 	return redis_utils.CreateKey(GetTeamPrefix(teamID), indexKey)

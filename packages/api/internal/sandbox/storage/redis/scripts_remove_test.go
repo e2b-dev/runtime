@@ -100,12 +100,12 @@ func removeScripts(client redis.UniversalClient, teamID uuid.UUID, index string)
 		{"remove_sandbox", formTeam, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
 			key := recordKey(formTeam, teamID.String(), sandboxID)
 
-			return RunScript(ctx, client, "remove_sandbox", removeSandboxScript, []string{key, index}, sandboxID, expected)
+			return RunScript(ctx, client, "remove_sandbox", removeSandboxScript, []string{key, goneKeyFor(key), index}, sandboxID, expected, 60)
 		}},
 		{"remove_record", formSandbox, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
 			key := recordKey(formSandbox, teamID.String(), sandboxID)
 
-			return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key}, sandboxID, expected)
+			return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key)}, sandboxID, expected, 60)
 		}},
 	}
 }
