@@ -1,9 +1,10 @@
 // Package distro makes template-build provisioning distro-aware: it selects a
 // declared per-family Profile by the base image's /etc/os-release ID rather than
 // probing for a package manager. Supported: the systemd family (Debian/Ubuntu,
-// Fedora/CentOS/Rocky/Alma, Arch) and Alpine on OpenRC. Derivatives are
-// provisioned via ID_LIKE as a best-effort guess with a warning; kernel-dependent
-// ids (RejectedIDs) and anything unmatched are rejected with a clear error.
+// Fedora/CentOS/Rocky/Alma, TencentOS/OpenCloudOS, Arch) and Alpine on OpenRC.
+// Derivatives are provisioned via ID_LIKE as a best-effort guess with a warning;
+// kernel-dependent ids (RejectedIDs) and anything unmatched are rejected with a
+// clear error.
 package distro
 
 import (
@@ -100,6 +101,28 @@ var Profiles = []Profile{
 		// update-ca-trust never writes ca-certificates.crt (a Debian name), so
 		// link the bundle envd's ExecStartPre expects to the extracted PEM.
 		CARefresh: `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
+	},
+	{
+		// TencentOS Server 2.x matches too, but its repos lack socat, fuse3,
+		// nftables and jq, so it fails at package install as it did via rhel.
+		Key:  "tencentos",
+		Init: InitSystemd,
+		IDs:  []string{"tencentos", "opencloudos"},
+		Packages: []string{
+			"systemd", "shadow-utils", "passwd", "openssh-server", "sudo", "chrony",
+			"socat", "curl", "ca-certificates", "fuse3", "iptables", "git",
+			"nfs-utils", "less", "nftables", "iputils", "jq", "bash", "tar",
+			"iproute", "findutils",
+		},
+		PkgQueryBody: `rpm -q "$1" >/dev/null 2>&1`,
+		// The -microdnf image variants ship no dnf binary.
+		PkgInstall:   `dnf -y install --allowerasing "$@" || microdnf -y install "$@" || yum -y install "$@"`,
+		InitBinary:   "/usr/lib/systemd/systemd",
+		TimeSyncUnit: "chronyd",
+		SSHUnit:      "sshd",
+		AdminGroup:   "wheel",
+		CABundle:     "/etc/ssl/certs/ca-certificates.crt",
+		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
 	},
 	{
 		Key:  "arch",
