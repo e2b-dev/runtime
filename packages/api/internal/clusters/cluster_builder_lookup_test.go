@@ -53,6 +53,7 @@ func TestTemplateBuilder_DrainingStatusesOnlyServeExistingWork(t *testing.T) {
 	for _, status := range []infogrpc.ServiceInfoStatus{
 		infogrpc.ServiceInfoStatus_Draining,
 		infogrpc.ServiceInfoStatus_ShuttingDown,
+		infogrpc.ServiceInfoStatus_NotReady,
 	} {
 		t.Run(status.String(), func(t *testing.T) {
 			t.Parallel()

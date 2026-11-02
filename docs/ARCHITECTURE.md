@@ -461,6 +461,14 @@ The sandbox drain ends only when no sandbox is live and the node's outstanding w
 zero, so a create or a resume-fresh checkpoint in flight, whose sandbox is briefly not live, holds
 it until its sandbox goes live and then ends.
 
+An orchestrator edition can make startup wait for its own readiness check (`EgressSetup.Ready`).
+The node then reports `NotReady` from before its servers start until the check first passes, polled
+every second, and `Healthy` from then on, even if the check later fails. Like `Draining`,
+`NotReady` excludes new sandboxes, builds and volume work. Unlike it, `/health` returns HTTP 503
+with status `unhealthy`, and the admin API shows `not_ready`. Only the node enters `NotReady`:
+status overrides cannot set it, but an override to another status ends the wait and stays. The
+OSS orchestrator registers no check and starts `Healthy`.
+
 After sandbox drain and snapshot uploads complete, sandbox proxy cleanup attempts graceful HTTP
 server shutdown with a separate deadline, then forces server closure if needed. Successful forced
 closure recovers graceful deadline expiry; other server errors still propagate. Pprof stays

@@ -2918,6 +2918,7 @@ components:
       description: |
         Status of the node.
         - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+        - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
       enum:
         - ready
         - draining
@@ -2925,6 +2926,7 @@ components:
         - unhealthy
         - standby
         - shutting_down
+        - not_ready
       x-enum-varnames:
         - NodeStatusReady
         - NodeStatusDraining
@@ -2932,6 +2934,7 @@ components:
         - NodeStatusUnhealthy
         - NodeStatusStandby
         - NodeStatusShuttingDown
+        - NodeStatusNotReady
 
     NodeStatusChange:
       required:

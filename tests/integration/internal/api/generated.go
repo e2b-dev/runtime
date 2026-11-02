@@ -194,6 +194,7 @@ func (e LogsSource) Valid() bool {
 const (
 	NodeStatusConnecting   NodeStatus = "connecting"
 	NodeStatusDraining     NodeStatus = "draining"
+	NodeStatusNotReady     NodeStatus = "not_ready"
 	NodeStatusReady        NodeStatus = "ready"
 	NodeStatusShuttingDown NodeStatus = "shutting_down"
 	NodeStatusStandby      NodeStatus = "standby"
@@ -206,6 +207,8 @@ func (e NodeStatus) Valid() bool {
 	case NodeStatusConnecting:
 		return true
 	case NodeStatusDraining:
+		return true
+	case NodeStatusNotReady:
 		return true
 	case NodeStatusReady:
 		return true
@@ -1600,6 +1603,7 @@ type Node struct {
 
 	// Status Status of the node.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
@@ -1644,6 +1648,7 @@ type NodeDetail struct {
 
 	// Status Status of the node.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
@@ -1691,6 +1696,7 @@ type NodeMetrics struct {
 
 // NodeStatus Status of the node.
 // - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 type NodeStatus string
 
 // NodeStatusChange defines model for NodeStatusChange.
@@ -1700,6 +1706,7 @@ type NodeStatusChange struct {
 
 	// Status Status of the node.
 	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 }
 

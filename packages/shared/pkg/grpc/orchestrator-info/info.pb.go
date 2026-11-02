@@ -35,6 +35,9 @@ const (
 	ServiceInfoStatus_Standby ServiceInfoStatus = 3
 	// ShuttingDown drains existing work before process exit and cannot be reversed.
 	ServiceInfoStatus_ShuttingDown ServiceInfoStatus = 4
+	// NotReady is a starting node that cannot take new work yet. Only the node
+	// sets it, and it becomes Healthy by itself once ready.
+	ServiceInfoStatus_NotReady ServiceInfoStatus = 5
 )
 
 // Enum value maps for ServiceInfoStatus.
@@ -45,6 +48,7 @@ var (
 		2: "Unhealthy",
 		3: "Standby",
 		4: "ShuttingDown",
+		5: "NotReady",
 	}
 	ServiceInfoStatus_value = map[string]int32{
 		"Healthy":      0,
@@ -52,6 +56,7 @@ var (
 		"Unhealthy":    2,
 		"Standby":      3,
 		"ShuttingDown": 4,
+		"NotReady":     5,
 	}
 )
 
@@ -672,13 +677,14 @@ const file_info_proto_rawDesc = "" +
 	"\x15metric_hugepages_base\x18w \x01(\x04H\x00R\x13metricHugepagesBase\x88\x01\x01B\x18\n" +
 	"\x16_metric_hugepages_base\"W\n" +
 	"\x1aServiceStatusChangeRequest\x129\n" +
-	"\x0eservice_status\x18\x02 \x01(\x0e2\x12.ServiceInfoStatusR\rserviceStatus*\\\n" +
+	"\x0eservice_status\x18\x02 \x01(\x0e2\x12.ServiceInfoStatusR\rserviceStatus*j\n" +
 	"\x11ServiceInfoStatus\x12\v\n" +
 	"\aHealthy\x10\x00\x12\f\n" +
 	"\bDraining\x10\x01\x12\r\n" +
 	"\tUnhealthy\x10\x02\x12\v\n" +
 	"\aStandby\x10\x03\x12\x10\n" +
-	"\fShuttingDown\x10\x04*8\n" +
+	"\fShuttingDown\x10\x04\x12\f\n" +
+	"\bNotReady\x10\x05*8\n" +
 	"\x0fServiceInfoRole\x12\x13\n" +
 	"\x0fTemplateBuilder\x10\x00\x12\x10\n" +
 	"\fOrchestrator\x10\x012\x98\x01\n" +

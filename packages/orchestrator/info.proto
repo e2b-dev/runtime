@@ -15,6 +15,9 @@ enum ServiceInfoStatus {
   Standby = 3;
   // ShuttingDown drains existing work before process exit and cannot be reversed.
   ShuttingDown = 4;
+  // NotReady is a starting node that cannot take new work yet. Only the node
+  // sets it, and it becomes Healthy by itself once ready.
+  NotReady = 5;
 }
 
 enum ServiceInfoRole {

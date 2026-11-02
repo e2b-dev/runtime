@@ -26,6 +26,7 @@ var ApiNodeToOrchestratorStateMapper = map[api.NodeStatus]orchestratorinfo.Servi
 	api.NodeStatusUnhealthy:    orchestratorinfo.ServiceInfoStatus_Unhealthy,
 	api.NodeStatusStandby:      orchestratorinfo.ServiceInfoStatus_Standby,
 	api.NodeStatusShuttingDown: orchestratorinfo.ServiceInfoStatus_ShuttingDown,
+	api.NodeStatusNotReady:     orchestratorinfo.ServiceInfoStatus_NotReady,
 }
 
 type StatusInfo struct {
@@ -140,6 +141,9 @@ func (n *Node) UnreachableSince() (time.Time, bool) {
 func (n *Node) SendStatusChange(ctx context.Context, s api.NodeStatus) error {
 	if s == api.NodeStatusShuttingDown {
 		return grpcstatus.Error(codes.FailedPrecondition, "shutting_down can only be entered during process shutdown")
+	}
+	if s == api.NodeStatusNotReady {
+		return grpcstatus.Error(codes.FailedPrecondition, "not_ready can only be entered during process startup")
 	}
 
 	nodeStatus, ok := ApiNodeToOrchestratorStateMapper[s]

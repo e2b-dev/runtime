@@ -16,6 +16,9 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
+// readinessPollInterval is how often a NotReady node asks whether it is ready.
+const readinessPollInterval = time.Second
+
 // ServiceStatus bundles the service status with the time of its last change.
 type ServiceStatus struct {
 	Status    orchestratorinfo.ServiceInfoStatus
@@ -86,8 +89,9 @@ func (s *ServiceInfo) OverrideStatus(ctx context.Context, status orchestratorinf
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 
-	// Only process shutdown may enter ShuttingDown.
-	if status == orchestratorinfo.ServiceInfoStatus_ShuttingDown {
+	// Only process shutdown may enter ShuttingDown, and only the node's
+	// startup NotReady.
+	if status == orchestratorinfo.ServiceInfoStatus_ShuttingDown || status == orchestratorinfo.ServiceInfoStatus_NotReady {
 		return false
 	}
 
@@ -96,6 +100,37 @@ func (s *ServiceInfo) OverrideStatus(ctx context.Context, status orchestratorinf
 	}
 
 	return s.setStatus(ctx, status)
+}
+
+// HoldUntilReady reports NotReady until ready answers true, then Healthy, and
+// never NotReady again. A status set in between, by an operator or the
+// shutdown, ends the wait and stays. It returns at once, and ready is polled
+// in the background until the wait ends.
+func (s *ServiceInfo) HoldUntilReady(ctx context.Context, ready func() bool) {
+	s.SetStatus(ctx, orchestratorinfo.ServiceInfoStatus_NotReady)
+	go func() {
+		ticker := time.NewTicker(readinessPollInterval)
+		defer ticker.Stop()
+		for !s.becomeReady(ctx, ready()) {
+			<-ticker.C
+		}
+	}()
+}
+
+// becomeReady makes a NotReady node Healthy when ready, and reports whether
+// the wait is over: the node is ready or another status replaced NotReady.
+func (s *ServiceInfo) becomeReady(ctx context.Context, ready bool) bool {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	if s.status.Status != orchestratorinfo.ServiceInfoStatus_NotReady {
+		return true
+	}
+	if ready {
+		s.setStatus(ctx, orchestratorinfo.ServiceInfoStatus_Healthy)
+	}
+
+	return ready
 }
 
 func (s *ServiceInfo) setStatus(ctx context.Context, status orchestratorinfo.ServiceInfoStatus) bool {

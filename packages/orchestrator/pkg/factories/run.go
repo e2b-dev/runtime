@@ -258,6 +258,11 @@ type EgressSetup struct {
 	// and strictly before its guest can run (or resume running). Its error
 	// fails the start; see sandbox.NetworkAssignHook.
 	NetworkAssignHook sandbox.NetworkAssignHook
+	// Ready reports whether the edition can serve new sandboxes (optional).
+	// The node reports NotReady from startup until Ready first answers true,
+	// and Healthy from then on. It is polled every second, so it reads
+	// memory only.
+	Ready func() bool
 
 	// StartupReclaim removes network state the edition's previous process
 	// left (optional). It runs only where the sandbox runtime's startup
@@ -902,6 +907,11 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 	if egressSetup.Close != nil {
 		closers = append(closers, closer{"egress proxy", egressSetup.Close})
+	}
+	// Before the gRPC and HTTP servers start, so no one sees the node
+	// Healthy first.
+	if egressSetup.Ready != nil {
+		serviceInfo.HoldUntilReady(ctx, egressSetup.Ready)
 	}
 
 	// Sandbox-runtime reclaim must run before NewStorageLocal below: reclaim
