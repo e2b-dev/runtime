@@ -17,7 +17,7 @@ import (
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
@@ -88,7 +88,7 @@ func TestGetSandboxesSandboxIDRecordReturns404WhenNotFound(t *testing.T) {
 
 	teamID := uuid.New()
 	auth.SetTeamInfoForTest(t, ctx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID: teamID,
 		},
 	})
@@ -150,7 +150,7 @@ func TestGetSandboxesSandboxIDRecordRetentionExpired(t *testing.T) {
 			ctx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sandboxes/sbx_1/record", nil)
 
 			auth.SetTeamInfoForTest(t, ctx, &authtypes.Team{
-				Team: &authqueries.Team{
+				Team: &dbtypes.Team{
 					ID: uuid.New(),
 				},
 				Limits: tc.limits,

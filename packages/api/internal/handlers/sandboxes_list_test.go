@@ -22,8 +22,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -109,7 +109,7 @@ func newSandboxListRequest(t *testing.T, teamID uuid.UUID, teamSlug string) (*ht
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v2/sandboxes", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{ID: teamID, Slug: teamSlug},
+		Team: &dbtypes.Team{ID: teamID, Slug: teamSlug},
 	})
 
 	return recorder, ginCtx

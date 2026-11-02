@@ -71,7 +71,7 @@ func (w *teamResourcesTeardownWorker) checkTeamBlocked(ctx context.Context, team
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
-	if !team.Team.IsBlocked {
+	if !team.IsBlocked {
 		return errTeamNotBlocked
 	}
 

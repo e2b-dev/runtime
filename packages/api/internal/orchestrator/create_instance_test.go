@@ -33,7 +33,6 @@ import (
 	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -125,7 +124,7 @@ func newCreateSandboxTestOrchestratorOnRedis(t *testing.T, client redis.Universa
 
 func testTeam() *teamtypes.Team {
 	return &teamtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   uuid.New(),
 			Name: "test-team",
 		},

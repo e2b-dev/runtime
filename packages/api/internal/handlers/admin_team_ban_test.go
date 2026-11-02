@@ -373,5 +373,5 @@ func teamIsBanned(t *testing.T, db *testutils.Database, teamID uuid.UUID) bool {
 	team, err := db.AuthDB.GetTeamByTeamID(t.Context(), teamID)
 	require.NoError(t, err)
 
-	return team.Team.IsBanned
+	return team.IsBanned
 }

@@ -133,10 +133,10 @@ func TestUpsertProjectCreatesWithoutATier(t *testing.T) {
 	project := newProjectFixture()
 
 	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	require.Equal(t, "true", teamColumn(t, db, project.id, "(tier IS NULL)::text"))
 
-	team, err := db.AuthDB.GetTeamByTeamID(t.Context(), project.id)
+	_, err := db.AuthDB.GetTeamByTeamID(t.Context(), project.id)
 	require.NoError(t, err)
-	require.Nil(t, team.Team.Tier)
 }
 
 // Every property in the contract is synchronized by the caller and sent on

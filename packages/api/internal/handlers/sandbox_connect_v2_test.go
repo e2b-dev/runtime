@@ -18,7 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -79,7 +79,7 @@ func TestConnectV2_Timeout(t *testing.T) {
 
 			recorder, ginCtx := newConnectV2Request(t, sandboxID, tt.body)
 			auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-				Team:   &authqueries.Team{ID: teamID, Slug: "test-team"},
+				Team:   &dbtypes.Team{ID: teamID, Slug: "test-team"},
 				Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 			})
 

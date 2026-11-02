@@ -113,7 +113,7 @@ func (w *bannedTeamContainmentWorker) teamBanned(ctx context.Context, teamID uui
 		return false, fmt.Errorf("read team: %w", err)
 	}
 
-	return row.Team.IsBanned, nil
+	return row.IsBanned, nil
 }
 
 func containmentErr(containment team.Containment) error {

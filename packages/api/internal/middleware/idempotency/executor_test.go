@@ -16,7 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	sharedmiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware"
@@ -33,7 +33,7 @@ func TestGenericExecutor(t *testing.T) {
 		"POST /blobs":         true,
 		"DELETE /widgets/:id": true,
 	})))
-	team := &types.Team{Team: &authqueries.Team{ID: uuid.New()}}
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		auth.SetTeamInfoForTest(t, c, team)
@@ -160,7 +160,7 @@ func TestExecutorRouteEnablement(t *testing.T) {
 			r := gin.New()
 			r.Use(func(c *gin.Context) {
 				if !tc.anonymous {
-					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: uuid.New()}})
+					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
 				}
 			})
 			r.Use(sharedmiddleware.RequestTimeout(time.Minute), middleware(faultStore{reserveErr: errors.New("redis unavailable")}, flags))
@@ -200,7 +200,7 @@ func TestExecutorRequiresRequestDeadline(t *testing.T) {
 	flags, _ := testFlags(t, false, 86400)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: uuid.New()}})
+		auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
 	})
 	r.Use(middleware(nil, flags))
 	r.POST("/v2/sandboxes", func(c *gin.Context) {
@@ -246,7 +246,7 @@ func TestExecuteUsesRequestContent(t *testing.T) {
 	flags, source := testFlags(t, true, 86400)
 	source.Update(source.Flag(featureflags.APIIdempotencyRoutes.Key()).ValueForAll(ldvalue.CopyArbitraryValue(map[string]bool{"POST /operations": true})))
 	r := gin.New()
-	team := &types.Team{Team: &authqueries.Team{ID: uuid.New()}}
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}}
 	r.Use(func(c *gin.Context) { auth.SetTeamInfoForTest(t, c, team) })
 	r.Use(sharedmiddleware.RequestTimeout(time.Minute), Middleware(client, flags))
 	calls := 0

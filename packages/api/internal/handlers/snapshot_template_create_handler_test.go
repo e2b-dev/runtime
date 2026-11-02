@@ -19,8 +19,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -81,7 +81,7 @@ func postSnapshot(t *testing.T, backend *snapshotBackendStub, flagOn bool, body 
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/snapshots", bytes.NewBufferString(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 

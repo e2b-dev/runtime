@@ -13,7 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 // A blocked team keeps read access to its own resources and loses mutations.
@@ -38,7 +38,7 @@ func TestBlockedTeamStillReadsItsStatusAndLimits(t *testing.T) {
 	t.Parallel()
 
 	reason := "payment required"
-	blocked := &types.Team{Team: &authqueries.Team{ID: uuid.New(), IsBlocked: true, BlockedReason: &reason}}
+	blocked := &types.Team{Team: &dbtypes.Team{ID: uuid.New(), IsBlocked: true, BlockedReason: &reason}}
 
 	for name, route := range map[string]string{
 		"status": "/unstable/teams/:teamID/status",
@@ -64,7 +64,7 @@ func TestBlockedTeamStillReadsItsBuilds(t *testing.T) {
 	t.Parallel()
 
 	reason := "payment required"
-	blocked := &types.Team{Team: &authqueries.Team{ID: uuid.New(), IsBlocked: true, BlockedReason: &reason}}
+	blocked := &types.Team{Team: &dbtypes.Team{ID: uuid.New(), IsBlocked: true, BlockedReason: &reason}}
 
 	for name, tc := range map[string]struct {
 		route string

@@ -22,7 +22,6 @@ import (
 	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -66,7 +65,7 @@ func templateClusterTeam(t *testing.T, db *testutils.Database, clusterID *uuid.U
 	t.Helper()
 	teamID := testutils.CreateTestTeam(t, db)
 	team := &types.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
+		Team:   &dbtypes.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
 		Limits: &types.TeamLimits{BuildConcurrency: 32, MaxVcpu: 8, MaxRamMb: 8192, DefaultFreeDiskSizeMb: 10240, MaxFreeDiskSizeMb: 25600},
 	}
 	assignTemplateClusterTeam(t, db, team, clusterID)

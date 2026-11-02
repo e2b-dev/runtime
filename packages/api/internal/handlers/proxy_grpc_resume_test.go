@@ -24,7 +24,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -114,7 +113,7 @@ func newFilesystemOnlyResumeStore(t *testing.T, backend *autoResumeBackendStub) 
 
 	store := &APIStore{
 		snapshotCache:             snapshotcache.NewSnapshotCache(db.SqlcClient, redisClient),
-		authService:               teamAuthServiceStub{team: &authtypes.Team{Team: &authqueries.Team{ID: teamID, Slug: "test-team"}}},
+		authService:               teamAuthServiceStub{team: &authtypes.Team{Team: &dbtypes.Team{ID: teamID, Slug: "test-team"}}},
 		autoResumeBackendOverride: backend,
 	}
 

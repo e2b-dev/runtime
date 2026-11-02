@@ -14,7 +14,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/metrics"
 )
 
@@ -27,7 +27,7 @@ func TestLabelMetricsWithTeam(t *testing.T) {
 		team *types.Team
 		want []string
 	}{
-		"authenticated":         {team: &types.Team{Team: &authqueries.Team{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}}, want: []string{"11111111-1111-1111-1111-111111111111"}},
+		"authenticated":         {team: &types.Team{Team: &dbtypes.Team{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}}, want: []string{"11111111-1111-1111-1111-111111111111"}},
 		"no team":               {team: nil, want: nil},
 		"team without a record": {team: &types.Team{}, want: nil},
 	} {

@@ -23,7 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -107,7 +107,7 @@ func postLimitedPause(t *testing.T, limiter *pauselimit.Limiter, backend *pauseR
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/pause", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 

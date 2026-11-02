@@ -21,9 +21,9 @@ func (a *APIStore) GetUnstableTeamsTeamIDStatus(c *gin.Context, teamID api.TeamI
 	}
 
 	c.JSON(http.StatusOK, api.TeamStatusResponse{
-		IsBanned:      row.Team.IsBanned,
-		IsBlocked:     row.Team.IsBlocked,
-		BlockedReason: row.Team.BlockedReason,
+		IsBanned:      row.IsBanned,
+		IsBlocked:     row.IsBlocked,
+		BlockedReason: row.BlockedReason,
 	})
 }
 

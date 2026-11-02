@@ -17,8 +17,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
@@ -70,7 +70,7 @@ func TestTemplateListsAcceptPublicProjectID(t *testing.T) {
 					recorder := httptest.NewRecorder()
 					c, _ := gin.CreateTestContext(recorder)
 					c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/templates", nil)
-					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: teamID}})
+					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: teamID}})
 
 					call(c)
 
@@ -109,7 +109,7 @@ func TestGetTemplatesCap(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/templates", nil)
-			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: teamID}})
+			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: teamID}})
 
 			store.GetTemplates(c, api.GetTemplatesParams{})
 

@@ -18,7 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -43,7 +43,7 @@ func postPause(t *testing.T, backendErr error) *httptest.ResponseRecorder {
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+testPauseSandboxID+"/pause", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 

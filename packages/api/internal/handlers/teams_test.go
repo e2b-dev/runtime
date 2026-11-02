@@ -90,7 +90,7 @@ func TestGetTeamsDefaultProject(t *testing.T) {
 			memberships, err := db.AuthDB.GetTeamsWithUsersTeams(t.Context(), userID)
 			require.NoError(t, err)
 			for _, membership := range memberships {
-				require.Equal(t, storedDefaults[membership.Team.ID], membership.IsDefault)
+				require.Equal(t, storedDefaults[membership.ID], membership.IsDefault)
 			}
 		})
 	}

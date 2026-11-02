@@ -138,7 +138,7 @@ func TestTeamLookupsResolveProjectLimitsElseDefaults(t *testing.T) {
 		"GetUserTeamsWithLimits": func(teamID uuid.UUID) (bool, any, error) {
 			rows, err := db.AuthDB.GetUserTeamsWithLimits(ctx, userID)
 			for _, row := range rows {
-				if row.Team.ID == teamID {
+				if row.ID == teamID {
 					return true, row, err
 				}
 			}
@@ -152,7 +152,7 @@ func TestTeamLookupsResolveProjectLimitsElseDefaults(t *testing.T) {
 		found, row, err := lookups[name](teamID)
 		require.NoError(t, err, name)
 		require.True(t, found, "%s finds team %s", name, teamID)
-		assert.Equal(t, teamID, reflect.ValueOf(row).FieldByName("Team").FieldByName("ID").Interface(), name)
+		assert.Equal(t, teamID, reflect.ValueOf(row).FieldByName("ID").Interface(), name)
 
 		return limitColumns(row)
 	}
@@ -423,11 +423,11 @@ func viewLimits(t *testing.T, sqlDB *sql.DB, teamIDs []uuid.UUID) map[uuid.UUID]
 	limits := map[uuid.UUID]map[string]int64{}
 	for rows.Next() {
 		var row authqueries.GetTeamByTeamIDRow
-		require.NoError(t, rows.Scan(&row.Team.ID, &row.MaxLengthHours, &row.ConcurrentSandboxes,
+		require.NoError(t, rows.Scan(&row.ID, &row.MaxLengthHours, &row.ConcurrentSandboxes,
 			&row.ConcurrentTemplateBuilds, &row.MaxVcpu, &row.MaxRamMb, &row.DiskMb, &row.EventsTtlDays,
 			&row.DefaultFreeDiskSizeMb, &row.MaxDiskSizeMb, &row.MaxFreeDiskSizeMb,
 			&row.ApiTeamRpsList, &row.ApiTeamRpsDelete, &row.MaxSecrets))
-		limits[row.Team.ID] = limitColumns(row)
+		limits[row.ID] = limitColumns(row)
 	}
 	require.NoError(t, rows.Err())
 
