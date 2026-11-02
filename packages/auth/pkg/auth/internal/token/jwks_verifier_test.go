@@ -5,6 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -200,4 +204,100 @@ func TestJWKSVerifierRejectsJWKSKeyWithoutAlgorithm(t *testing.T) {
 	}, server.Client())
 	require.Nil(t, verifier)
 	require.ErrorContains(t, err, "missing alg")
+}
+
+func TestJWKSVerifierRequiresKeysAtStartupByDefault(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewJWKSVerifier(t.Context(), unreachableIssuer(nil), http.DefaultClient)
+	require.Error(t, err)
+}
+
+func TestJWKSVerifierLoadsKeysAfterAnOptionalStartup(t *testing.T) {
+	t.Parallel()
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+		Key:       publicKey,
+		KeyID:     adminTestKeyID,
+		Algorithm: string(jose.EdDSA),
+		Use:       "sig",
+	}}})
+	require.NoError(t, err)
+
+	var ready atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+
+	optional := false
+	verifier, err := NewJWKSVerifier(t.Context(), ProviderConfig{
+		JWT: []jwks.Config{{
+			RequiredAtStartup: &optional,
+			Issuer: jwks.Issuer{
+				URL:       server.URL,
+				Audiences: []string{adminTestAudience},
+			},
+		}},
+	}, server.Client())
+	require.NoError(t, err)
+
+	signed := signAdminToken(t, privateKey, jwt.MapClaims{
+		"iss": server.URL,
+		"aud": adminTestAudience,
+		"exp": time.Now().Add(5 * time.Minute).Unix(),
+	})
+	_, err = verifier.Verify(t.Context(), signed)
+	require.Error(t, err)
+
+	ready.Store(true)
+	require.Eventually(t, func() bool {
+		_, err := verifier.Verify(t.Context(), signed)
+
+		return err == nil
+	}, 5*time.Second, 100*time.Millisecond)
+}
+
+func TestJWKSVerifierStartsWhenStartupFetchIsOptional(t *testing.T) {
+	t.Parallel()
+
+	optional := false
+	verifier, err := NewJWKSVerifier(t.Context(), unreachableIssuer(&optional), http.DefaultClient)
+	require.NoError(t, err)
+
+	_, err = verifier.Verify(t.Context(), "not-a-token")
+	require.Error(t, err)
+}
+
+func TestProviderConfigKeepsRequiredAtStartup(t *testing.T) {
+	t.Parallel()
+
+	config, err := ParseProviderConfig(`{"jwt":[{"requiredAtStartup":false,"issuer":{"url":"https://issuer.example","audiences":["test-audience"]}}]}`)
+	require.NoError(t, err)
+	require.NotNil(t, config.JWT[0].RequiredAtStartup)
+	require.False(t, *config.JWT[0].RequiredAtStartup)
+
+	omitted, err := ParseProviderConfig(`{"jwt":[{"issuer":{"url":"https://issuer.example","audiences":["test-audience"]}}]}`)
+	require.NoError(t, err)
+	require.Nil(t, omitted.JWT[0].RequiredAtStartup)
+}
+
+func unreachableIssuer(requiredAtStartup *bool) ProviderConfig {
+	return ProviderConfig{
+		JWT: []jwks.Config{{
+			RequiredAtStartup: requiredAtStartup,
+			Issuer: jwks.Issuer{
+				URL:       "http://127.0.0.1:1",
+				Audiences: []string{adminTestAudience},
+			},
+		}},
+	}
 }

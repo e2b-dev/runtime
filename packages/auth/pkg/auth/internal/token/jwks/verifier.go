@@ -21,6 +21,13 @@ import (
 // httpTimeout is the timeout used for discovery and JWKS HTTP requests.
 const httpTimeout = 10 * time.Second
 
+// optionalRefreshInterval is how often an issuer that is allowed to start
+// without keys retries the JWKS fetch. The configured cache duration would
+// leave peer tokens rejected for that whole interval after the peer is up.
+const optionalRefreshInterval = 2 * time.Second
+
+var errNoJWKSKeys = errors.New("JWKS contains no supported keys")
+
 // Option customizes a Verifier beyond the issuer configuration.
 type Option func(*Verifier)
 
@@ -46,9 +53,9 @@ type discoveryDocument struct {
 	JWKSURI string `json:"jwks_uri"`
 }
 
-// NewVerifier constructs a Verifier from the supplied Config. It performs the
-// OIDC discovery fetch synchronously and fails fast on configuration or
-// network errors.
+// NewVerifier constructs a Verifier from the supplied Config. OIDC discovery
+// is fetched synchronously and fails on configuration or network errors. The
+// JWKS fetch fails startup unless RequiredAtStartup is false.
 func NewVerifier(ctx context.Context, entry Config, httpClient *http.Client, options ...Option) (*Verifier, error) {
 	entry, err := validateConfig(entry, httpClient)
 	if err != nil {
@@ -105,18 +112,25 @@ func validateConfig(entry Config, httpClient *http.Client) (Config, error) {
 }
 
 func newVerifier(ctx context.Context, entry Config, jwksURL string, httpClient *http.Client, options ...Option) (*Verifier, error) {
+	refreshInterval := entry.CacheDuration
+	if !entry.requiredAtStartup() {
+		refreshInterval = optionalRefreshInterval
+	}
 	storage, err := jwkset.NewStorageFromHTTP(jwksURL, jwkset.HTTPClientStorageOptions{
-		Client:          httpClient,
-		Ctx:             ctx,
-		HTTPTimeout:     httpTimeout,
-		RefreshInterval: entry.CacheDuration,
+		Client:                    httpClient,
+		Ctx:                       ctx,
+		HTTPTimeout:               httpTimeout,
+		RefreshInterval:           refreshInterval,
+		NoErrorReturnFirstHTTPReq: !entry.requiredAtStartup(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create JWKS storage: %w", err)
 	}
 
 	if _, err := validMethodsFromStorage(ctx, storage); err != nil {
-		return nil, fmt.Errorf("validate JWKS signing algorithms: %w", err)
+		if entry.requiredAtStartup() || !errors.Is(err, errNoJWKSKeys) {
+			return nil, fmt.Errorf("validate JWKS signing algorithms: %w", err)
+		}
 	}
 
 	keyFunc, err := keyfunc.New(keyfunc.Options{
@@ -151,7 +165,7 @@ func validMethodsFromStorage(ctx context.Context, storage jwkset.Storage) ([]str
 		return nil, fmt.Errorf("read JWKS keys: %w", err)
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("JWKS contains no supported keys")
+		return nil, errNoJWKSKeys
 	}
 
 	methods := make([]string, 0, len(keys))
