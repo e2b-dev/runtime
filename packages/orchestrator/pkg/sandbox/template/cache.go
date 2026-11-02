@@ -1215,7 +1215,7 @@ func (c *Cache) useNFSCache(ctx context.Context, isBuilding bool, isSnapshot boo
 	useNFSCache := c.flags.BoolFlag(ctx, flagName)
 	if useNFSCache {
 		if c.rootCachePath == "" {
-			logger.L().Warn(ctx, "NFSCache feature flag is enabled but cache path is not set")
+			storage.WarnNFSCachePathUnsetOnce(ctx)
 
 			return "", false
 		}

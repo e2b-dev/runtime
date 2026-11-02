@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -49,6 +50,21 @@ type cache struct {
 }
 
 var _ StorageProvider = (*cache)(nil)
+
+// nfsCachePathUnsetWarnOnce guards the warning below so a missing cache path is
+// reported once per process instead of on every build/launch/resume. The path
+// comes from immutable config, so a single line is enough.
+var nfsCachePathUnsetWarnOnce sync.Once
+
+// WarnNFSCachePathUnsetOnce logs, at most once per process, that an NFS cache
+// feature flag is enabled while its cache path is unset, so NFS caching is
+// silently disabled. Callers on the hot path use this instead of logging the
+// same warning on every operation.
+func WarnNFSCachePathUnsetOnce(ctx context.Context) {
+	nfsCachePathUnsetWarnOnce.Do(func() {
+		logger.L().Warn(ctx, "NFS cache feature flag is enabled but its cache path is unset; NFS caching is disabled until the shared chunk cache dir is configured")
+	})
+}
 
 func WrapInNFSCache(
 	ctx context.Context,
