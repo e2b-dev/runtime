@@ -32,9 +32,7 @@ const (
 func serveStream(w http.ResponseWriter, r *http.Request, proxy http.Handler, message string) {
 	sw := &streamWriter{ResponseWriter: w}
 	if r.ProtoMajor == 1 && r.ContentLength != 0 {
-		sw.body = &requestBody{ReadCloser: r.Body}
-		sw.body.remaining.Store(r.ContentLength)
-		r.Body = sw.body
+		sw.body = trackBody(r)
 	}
 
 	defer func() {
@@ -140,6 +138,18 @@ func (w *streamWriter) settleBody() {
 func closeUnreadBody(w http.ResponseWriter) {
 	_ = http.NewResponseController(w).SetReadDeadline(time.Unix(1, 0))
 	_, _ = http.MaxBytesReader(w, io.NopCloser(strings.NewReader("+")), 0).Read(make([]byte, 1))
+}
+
+// trackBody has r's HTTP/1 body count what the transport takes of it, once.
+func trackBody(r *http.Request) *requestBody {
+	if b, ok := r.Body.(*requestBody); ok {
+		return b
+	}
+	b := &requestBody{ReadCloser: r.Body}
+	b.remaining.Store(r.ContentLength)
+	r.Body = b
+
+	return b
 }
 
 // requestBody tracks how much of the request body the transport has taken.

@@ -1726,6 +1726,76 @@ func TestRetiredConnectStreamPreservesFrontendReuse(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, next.StatusCode)
 }
 
+// TestRetiredStreamWithATakenBodyPreservesFrontendReuse: a request whose
+// body the sandbox has taken in full, as a process start's has, keeps its
+// frontend reusable when the sandbox is retired mid-stream: closing it after
+// the response cannot be announced, and a client reusing it meanwhile would
+// lose its next request. The handler is held until the retirement has
+// cancelled its owner, the order production reaches when the stream's end
+// outlasts Stop.
+func TestRetiredStreamWithATakenBodyPreservesFrontendReuse(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/next" {
+			w.WriteHeader(http.StatusNoContent)
+
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/connect+json")
+		_, _ = w.Write(dataEnvelope(`{}`))
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "retired-upload")
+	retired := make(chan struct{})
+	limits := &ConnectionLimitConfig{
+		Limiter:     connlimit.NewConnectionLimiter(),
+		GetMaxLimit: func(context.Context) int { return -1 },
+		OnConnectionReleased: func(context.Context, int64) {
+			select {
+			case <-retired:
+			case <-time.After(5 * time.Second):
+			}
+		},
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxy := New(0, 1, time.Minute, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, limits, false)
+	go func() { _ = proxy.Serve(listener) }()
+	t.Cleanup(func() { _ = proxy.Close() })
+	owner.Store(proxy.NewOwner())
+	conn, reader := dialProxy(t, listener.Addr().(*net.TCPAddr).Port)
+	_, err = fmt.Fprintf(conn, "POST /stream HTTP/1.1\r\nHost: example\r\nContent-Type: application/connect+json\r\nContent-Length: 2\r\n\r\n{}")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	first := make([]byte, len(dataEnvelope(`{}`)))
+	_, err = io.ReadFull(response.Body, first)
+	require.NoError(t, err)
+	retiring := owner.Load()
+	owner.Store(proxy.NewOwner())
+	retiring.Stop()
+	close(retired)
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.False(t, response.Close, "the response announced no close")
+	time.Sleep(2 * retiredWriteTimeout)
+	_, err = fmt.Fprintf(conn, "GET /next HTTP/1.1\r\nHost: example\r\nConnection: close\r\n\r\n")
+	require.NoError(t, err)
+	next, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err, "the frontend was not closed under the client")
+	defer next.Body.Close()
+	require.Equal(t, http.StatusNoContent, next.StatusCode)
+}
+
 func TestRetiredOwnerSettlesStalledUpload(t *testing.T) {
 	t.Parallel()
 	for _, framing := range []struct {

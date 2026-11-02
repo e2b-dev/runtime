@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -268,8 +269,19 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// background read of a body it has already taken, which cancels the
 		// connection's context, inherited by every later request on that
 		// frontend; so a frontend whose read was cut is closed after the
-		// response, never kept.
+		// response, never kept. A body already taken in full needs no cut, and
+		// its frontend stays reusable: closing it once the response is out
+		// cannot be announced, and the client may already be writing its next
+		// request into it.
 		uploading := r.ProtoMajor == 1 && r.ContentLength != 0
+		var body *requestBody
+		if uploading {
+			// On a copy: the server reads the original request's body type to
+			// decide how to answer before it arrives (Expect: 100-continue, or
+			// too much left to drain), as for a refusal below.
+			r = r.WithContext(ctx)
+			body = trackBody(r)
+		}
 		proxy := p.Get(ctx, d)
 		ctx, release, err := proxy.Acquire(ctx)
 		if err != nil {
@@ -287,10 +299,12 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// A canceled backend alone cannot unblock a slow frontend write.
 		// Join this callback before releasing ownership or reusing the frontend.
 		interrupted := make(chan struct{})
+		var cut atomic.Bool
 		//nolint:contextcheck // Retirement is independent of frontend request cancellation.
 		stop := context.AfterFunc(proxy.Context(), func() {
 			controller := http.NewResponseController(w)
-			if uploading {
+			if uploading && !body.finished() {
+				cut.Store(true)
 				_ = controller.SetReadDeadline(time.Now())
 			}
 			_ = controller.SetWriteDeadline(time.Now().Add(retiredWriteTimeout))
@@ -299,7 +313,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		defer func() {
 			if !stop() {
 				<-interrupted
-				if uploading {
+				if cut.Load() {
 					// Before the headers went out the server announces the
 					// close itself; after, HTTP/1 has no way to, and a client
 					// that reuses the frontend meanwhile sees EOF and retries.
