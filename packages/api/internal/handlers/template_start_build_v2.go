@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/posthog/posthog-go"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	apiclusters "github.com/e2b-dev/infra/packages/api/internal/clusters"
 	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -216,8 +218,28 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		return
 	}
 
-	builderNode, err := a.templateManager.GetAvailableBuildClient(ctx, clusterID)
+	minVersion := builderMinVersion(build)
+	builderNode, err := a.templateManager.GetAvailableBuildClient(
+		logger.ContextWithFields(ctx, logger.WithTeamID(team.ID.String()), logger.WithTemplateID(templateID), logger.WithBuildID(buildID)),
+		clusterID,
+		minVersion,
+	)
 	if err != nil {
+		if errors.Is(err, apiclusters.ErrTemplateBuilderVersionTooOld) {
+			logger.L().Warn(ctx, "No template builder supports resizable templates yet",
+				logger.WithTeamID(team.ID.String()),
+				logger.WithTemplateID(templateID),
+				logger.WithBuildID(buildID),
+				zap.String("required_version", minVersion.String()),
+				zap.String("cluster_id", clusterID.String()),
+				zap.Error(err),
+			)
+			a.sendAPIStoreError(c, http.StatusServiceUnavailable, "No template builder supports resizable templates yet")
+			telemetry.ReportErrorByCode(ctx, http.StatusServiceUnavailable, "no template builder at the required version", err, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID))
+
+			return
+		}
+
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Error when getting available build client")
 		telemetry.ReportCriticalError(ctx, "error when getting available build client", err, telemetry.WithTemplateID(templateID))
 
@@ -258,6 +280,7 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		team.Limits.DiskMb,   // Build-time working space available before customer steps run.
 		build.FreeDiskSizeMb, // Customer's free-space target after customer steps run.
 		build.RamMb,
+		build.MaxVcpu,
 		body.ReadyCmd,
 		body.FromImage,
 		body.FromTemplate,
@@ -284,6 +307,17 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 	}
 
 	c.Status(http.StatusAccepted)
+}
+
+// builderMinVersion is the oldest builder allowed to run the build. A builder
+// older than the gate drops maxVCpuCount and builds a fixed-size template, so a
+// resizable build must only go to one that honours it.
+func builderMinVersion(build queries.EnvBuild) *semver.Version {
+	if build.MaxVcpu != nil {
+		return apiclusters.ResizableTemplateBuildsMinVersion
+	}
+
+	return nil
 }
 
 // userAgentToTemplateVersion returns the template semver version based on the user agent string.

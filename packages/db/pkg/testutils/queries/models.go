@@ -157,6 +157,7 @@ type EnvBuild struct {
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
 	EnvdUnresponsive   pgtype.Bool
+	MaxVcpu            pgtype.Int8
 }
 
 type EnvBuildAssignment struct {

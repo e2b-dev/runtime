@@ -502,6 +502,15 @@ var (
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
 
+	// ResizableTemplatesFlag lets a team pass maxCpuCount on a template build.
+	// Off, a request carrying the field is refused.
+	ResizableTemplatesFlag = NewBoolFlag("resizable-templates", env.IsDevelopment())
+
+	// ResizableTemplateDefaultMaxCpuFlag is the max CPU count applied to a
+	// team's builds that omit maxCpuCount while ResizableTemplatesFlag is on;
+	// 0 applies no default.
+	ResizableTemplateDefaultMaxCpuFlag = NewIntFlag("resizable-template-default-max-cpu", 0)
+
 	// CustomerSecretsFlag gates the customer-facing secret management routes
 	// per project during rollout. It falls back to off, so a deployment that
 	// cannot reach LaunchDarkly keeps the routes dark.

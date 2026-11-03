@@ -74,6 +74,7 @@ type Orchestrator struct {
 	pauseRefusalRestoreCounter    metric.Int64Counter
 	networkUpdateUnstoredCounter  metric.Int64Counter
 	noCeilingPlacementsCounter    metric.Int64Counter
+	featureUnsupportedCounter     metric.Int64Counter
 	teamMetricsObserver           *metrics.TeamObserver
 	accessTokenGenerator          *sandbox.AccessTokenGenerator
 	createdCounter                metric.Int64Counter

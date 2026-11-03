@@ -187,6 +187,16 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		return
 	}
 
+	// Refuse a cpuCount the snapshot or the team cannot honour before the start
+	// is reserved, so the 400 reaches only this request and never a connect or
+	// auto-resume joined to the same start.
+	if apiErr := orchestrator.CheckSandboxCPUCount(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.CpuCount); apiErr != nil {
+		setMemoryOverrideOutcome(c, body.Memory, apiErr)
+		apierrors.SendAPIError(c, apiErr)
+
+		return
+	}
+
 	sbxlogger.E(&sbxlogger.SandboxMetadata{
 		SandboxID:  sandboxID,
 		TemplateID: lastSnapshot.Snapshot.EnvID,
@@ -203,6 +213,7 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		true,
 		demandsFilesystemBoot(body.Memory, lastSnapshot.Snapshot),
 		nil, // mcp
+		orchestrator.WithCPUCount(body.CpuCount),
 	)
 	setMemoryOverrideOutcome(c, body.Memory, createErr)
 	setResumeGateOutcome(c, body.Memory, lastSnapshot.EnvBuild, createErr)

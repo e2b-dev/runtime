@@ -261,7 +261,7 @@ func TestTemplateClusterConcurrentAliasHandoff(t *testing.T) {
 		go func() {
 			templateID := id.Generate()
 			alias := "base"
-			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 				ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: templateID,
 				ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 			})
@@ -319,7 +319,7 @@ func TestTemplateClusterUsesCurrentAssignment(t *testing.T) {
 	require.Contains(t, w.Body.String(), "is not available in the requested cluster")
 	alias := "base"
 	uncommittedID := id.Generate()
-	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 		ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: uncommittedID,
 		ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 	})

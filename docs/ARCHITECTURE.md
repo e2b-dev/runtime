@@ -733,7 +733,7 @@ dashboard-api serves no `/v1/management` route.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `tiers` and `addons` (legacy; no limit is read from them), `envs` (templates), `env_builds` (build rows: vcpu, ram_mb, status, versions), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
+| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `tiers` and `addons` (legacy; no limit is read from them), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by API and dashboard-api |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -1325,7 +1325,7 @@ sequenceDiagram
     participant FC as Firecracker build VMs
     participant OS as Object storage
 
-    C->>API: POST /v3/templates (register build: cpu, ram, free-disk target) → Postgres env_builds
+    C->>API: POST /v3/templates (register build: cpu, max cpu, ram, free-disk target) → Postgres env_builds
     C->>API: POST /v2/templates/{id}/builds/{buildID} (recipe: steps, start/ready cmd)
     API->>TM: gRPC TemplateCreate(TemplateConfig)
     TM->>TM: pull image → inject envd/provisioning → extract ext4 rootfs
@@ -1336,6 +1336,20 @@ sequenceDiagram
     API->>TM: poll TemplateBuildStatus
     API->>API: mark build ready in Postgres
 ```
+
+A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
+the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
+with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies
+`max_vcpu` from the source build into the snapshot build row. Create and explicit resume
+accept an optional `cpuCount` while the team's `resizable-templates` flag is on. The shared
+start path validates it against the build capacity and the caller's current CPU limit.
+A resizable build that inherits a count above that limit starts at the limit instead, so
+connect and auto-resume, which cannot name a count, still reach the sandbox. The resume handler
+refuses a `cpuCount` the snapshot or the team cannot honour before the start is reserved,
+so the 400 reaches only the request that named it, never a connect or auto-resume joined
+to the same start. A valid `cpuCount` returns 409 if another start is already in
+flight, since it cannot apply the override to that start. Connect, auto-resume, and fork
+inherit the stored CPU count.
 
 The project provisioning system enqueues a base build when a cluster-backed project becomes active.
 The job registers and starts an ordinary base build, then completes when the API accepts it.

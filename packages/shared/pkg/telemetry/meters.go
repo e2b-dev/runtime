@@ -19,10 +19,19 @@ type (
 )
 
 const (
-	ApiRateLimitRequests                 CounterType = "api.rate_limit.requests"
-	ApiSandboxPauseRateLimit             CounterType = "api.sandbox_pause.rate_limit"
-	ApiOrchestratorCreatedSandboxes      CounterType = "api.orchestrator.created_sandboxes"
-	ApiOrchestratorResumeOriginNodeRemap CounterType = "api.orchestrator.resume_origin_node_remapped"
+	ApiRateLimitRequests     CounterType = "api.rate_limit.requests"
+	ApiSandboxPauseRateLimit CounterType = "api.sandbox_pause.rate_limit"
+	// ApiTemplateBuildBuilderVersionRejected counts resizable template build
+	// starts refused because no template builder in the cluster runs a
+	// release that honours maxVCpuCount.
+	ApiTemplateBuildBuilderVersionRejected CounterType = "api.template.build.builder_version_rejected"
+	// ApiTemplateBuildBuilderPinFallback counts builder lookups that could
+	// not honour the pinned machine info at the required version and fell
+	// back to any builder at that version.
+	ApiTemplateBuildBuilderPinFallback       CounterType = "api.template.build.builder_pin_fallback"
+	ApiOrchestratorCreatedSandboxes          CounterType = "api.orchestrator.created_sandboxes"
+	ApiOrchestratorResumeOriginNodeRemap     CounterType = "api.orchestrator.resume_origin_node_remapped"
+	ApiOrchestratorSandboxFeatureUnsupported CounterType = "api.orchestrator.sandbox_feature_unsupported"
 	// ApiOrchestratorPauseRefusalRestore counts what became of a pause the
 	// node refused retryably: outcome restored | restore_failed |
 	// route_restore_failed | superseded, caller request | eviction.
@@ -846,11 +855,14 @@ const (
 var counterDesc = map[CounterType]string{
 	ApiRateLimitRequests:                         "Number of API group rate-limit checks, by team, group, mode, and decision",
 	ApiSandboxPauseRateLimit:                     "Pause requests checked against the per-sandbox pause rate limit, by team and decision (allowed|deduplicated|limited|error)",
+	ApiTemplateBuildBuilderVersionRejected:       "Resizable template build starts refused because no template builder runs a release that honours maxVCpuCount",
+	ApiTemplateBuildBuilderPinFallback:           "Template builder lookups that fell back to any builder because none with the pinned machine info is at the required version",
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
 	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without requiring a healthy guest agent, so the node takes it and records the miss (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
+	ApiOrchestratorSandboxFeatureUnsupported:     "Sandbox creates refused because no orchestrator in the cluster runs a release implementing a capability the request needs, by feature",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
@@ -943,11 +955,14 @@ var counterDesc = map[CounterType]string{
 var counterUnits = map[CounterType]string{
 	ApiRateLimitRequests:                         "{request}",
 	ApiSandboxPauseRateLimit:                     "{request}",
+	ApiTemplateBuildBuilderVersionRejected:       "{build}",
+	ApiTemplateBuildBuilderPinFallback:           "{lookup}",
 	SandboxCreateMeterName:                       "{sandbox}",
 	ApiOrchestratorCreatedSandboxes:              "{sandbox}",
 	ApiEvictorFsOnlyAutoPause:                    "{pause}",
 	ApiEvictorAutoPauseDegraded:                  "{pause}",
 	ApiOrchestratorResumeOriginNodeRemap:         "{snapshot}",
+	ApiOrchestratorSandboxFeatureUnsupported:     "{sandbox}",
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
 	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
 	ApiSandboxListReads:                          "{request}",

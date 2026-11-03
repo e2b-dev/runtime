@@ -1241,6 +1241,13 @@ components:
           minimum: 0
           default: 15
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the sandbox. Defaults to the template's
+            cpuCount; at most its maxCpuCount (fixed-size templates accept only
+            their cpuCount).
         autoPause:
           type: boolean
           default: false
@@ -1298,6 +1305,13 @@ components:
           minimum: 1
           default: 300
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the sandbox. Defaults to the template's
+            cpuCount; at most its maxCpuCount (fixed-size templates accept only
+            their cpuCount).
         autoPause:
           type: boolean
           default: false
@@ -1372,6 +1386,13 @@ components:
           minimum: 0
           default: 15
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the resumed sandbox. Defaults to the
+            snapshot's cpuCount; at most the template's maxCpuCount
+            (fixed-size templates accept only their cpuCount).
         autoPause:
           type: boolean
           deprecated: true
@@ -2676,6 +2697,10 @@ components:
           description: Identifier of the last successful build for given template
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count for resizable templates; absent for fixed-size templates."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         diskSizeMB:
@@ -2957,6 +2982,10 @@ components:
           description: Time when the build was finished
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count for resizable templates; absent for fixed-size templates."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         diskSizeMB:
@@ -3034,6 +3063,10 @@ components:
           description: Identifier of the team, as its UUID or its public project ID (prj_)
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         minFreeDiskMb:

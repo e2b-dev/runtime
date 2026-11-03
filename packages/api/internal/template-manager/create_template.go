@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
@@ -19,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 type FromTemplateError struct {
@@ -47,6 +50,7 @@ func (tm *TemplateManager) CreateTemplate(
 	diskSizeMB,
 	freeDiskSizeMB,
 	memoryMB int64,
+	maxVCpuCount *int64,
 	readyCommand *string,
 	fromImage *string,
 	fromTemplate *string,
@@ -89,7 +93,12 @@ func (tm *TemplateManager) CreateTemplate(
 		return fmt.Errorf("failed to get features for firecracker version '%s': %w", firecrackerVersion, err)
 	}
 
-	client, err := tm.GetClusterBuildClient(clusterID, nodeID)
+	var minVersion *semver.Version
+	if maxVCpuCount != nil {
+		minVersion = clusters.ResizableTemplateBuildsMinVersion
+	}
+
+	client, err := tm.buildDispatchClient(ctx, clusterID, nodeID, minVersion)
 	if err != nil {
 		return fmt.Errorf("failed to get builder: %w", err)
 	}
@@ -128,6 +137,7 @@ func (tm *TemplateManager) CreateTemplate(
 		Force:              force,
 		Steps:              convertTemplateSteps(steps),
 		FromImageRegistry:  imageRegistry,
+		MaxVCpuCount:       sharedutils.CastPtr(maxVCpuCount, func(v int64) int32 { return int32(v) }),
 	}
 
 	err = setTemplateSource(ctx, tm, teamID, teamSlug, template, fromImage, fromTemplate)

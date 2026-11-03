@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
@@ -59,7 +60,26 @@ type Cluster struct {
 var (
 	ErrTemplateBuilderNotFound          = errors.New("template builder not found")
 	ErrAvailableTemplateBuilderNotFound = errors.New("available template builder not found")
+	ErrTemplateBuilderVersionTooOld     = errors.New("no available template builder at the required version")
 )
+
+// ResizableTemplateBuildsMinVersion is the first orchestrator release whose
+// template builder honours TemplateConfig.maxVCpuCount; an older one drops the
+// field and builds a fixed-size template.
+var ResizableTemplateBuildsMinVersion = semver.New(0, 16, 202610191109, "", "")
+
+// InstanceAtLeast reports whether an instance's service version is at or above
+// minVersion. An empty or unparsable version fails the check. Compared without
+// the pre-release: distributions stamp a suffix onto the shared release
+// version, which semver sorts below the bare release.
+func InstanceAtLeast(version string, minVersion *semver.Version) bool {
+	parsed, err := semver.NewVersion(version)
+	if err != nil {
+		return false
+	}
+
+	return !semver.New(parsed.Major(), parsed.Minor(), parsed.Patch(), "", "").LessThan(minVersion)
+}
 
 func NewCluster(
 	clusterID uuid.UUID,
@@ -324,14 +344,19 @@ func (c *Cluster) getRandomInstance(isMatch func(InstanceInfo, machineinfo.Machi
 	return nil, false
 }
 
-func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo) (*Instance, error) {
+// GetAvailableTemplateBuilder picks a builder matching expectedInfo. A non-nil
+// minVersion skips builders below it; when that is the only reason nothing
+// qualified, and no builder at the version is merely draining or unhealthy,
+// the error is ErrTemplateBuilderVersionTooOld.
+func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo, minVersion *semver.Version) (*Instance, error) {
 	_, span := tracer.Start(ctx, "template-builder-get-available-instance")
 	span.SetAttributes(telemetry.WithClusterID(c.ID))
 	defer span.End()
 
+	versionTooOld := false        // an available builder was skipped only for its version
+	unavailableAtVersion := false // a builder at the version exists but cannot take work now
 	instance, ok := c.getRandomInstance(func(info InstanceInfo, machineInfo machineinfo.MachineInfo) bool {
-		// Check availability and builder role
-		if !info.Status.CanAcceptNewRequests() || !info.IsBuilder {
+		if !info.IsBuilder {
 			return false
 		}
 
@@ -341,9 +366,23 @@ func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo 
 			return false
 		}
 
-		return true
+		atVersion := minVersion == nil || InstanceAtLeast(info.ServiceVersion, minVersion)
+		switch {
+		case !info.Status.CanAcceptNewRequests():
+			unavailableAtVersion = unavailableAtVersion || atVersion
+		case !atVersion:
+			versionTooOld = true
+		default:
+			return true
+		}
+
+		return false
 	})
 	if !ok {
+		if versionTooOld && !unavailableAtVersion {
+			return nil, ErrTemplateBuilderVersionTooOld
+		}
+
 		return nil, ErrAvailableTemplateBuilderNotFound
 	}
 

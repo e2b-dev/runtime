@@ -136,6 +136,7 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 	return api.NewSandbox{
 		TemplateID:          body.TemplateID,
 		Timeout:             body.Timeout,
+		CpuCount:            body.CpuCount,
 		AutoPause:           body.AutoPause,
 		AutoPauseMemory:     body.AutoPauseMemory,
 		AutoResume:          body.AutoResume,
@@ -416,6 +417,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 		false,
 		false,
 		mcp,
+		apiorch.WithCPUCount(body.CpuCount),
 	)
 	if createErr != nil {
 		return nil, createErr

@@ -9,9 +9,12 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/constants"
 	"github.com/e2b-dev/infra/packages/api/internal/team"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
@@ -20,12 +23,29 @@ import (
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/template")
+var (
+	tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/template")
+	meter  = otel.Meter("github.com/e2b-dev/infra/packages/api/internal/template")
+
+	// maxVcpuCounter counts max CPU resolutions by source and outcome, one per registration.
+	maxVcpuCounter = mustCounter("api.template.build.max_vcpu", "Number of template build max CPU resolutions by source and outcome")
+)
+
+func mustCounter(name, description string) metric.Int64Counter {
+	counter, err := meter.Int64Counter(name, metric.WithDescription(description))
+	if err != nil {
+		return nil
+	}
+
+	return counter
+}
 
 type RegisterBuildData struct {
 	ReplacesTemplateID string
@@ -40,6 +60,7 @@ type RegisterBuildData struct {
 	StartCmd           *string
 	ReadyCmd           *string
 	CpuCount           *int32
+	MaxCpuCount        *int32
 	MemoryMB           *int32
 	Version            string
 
@@ -68,10 +89,11 @@ func RegisterBuild(
 	ctx context.Context,
 	templateCache *templatecache.TemplateCache,
 	db *sqlcdb.Client,
+	featureFlags *featureflags.Client,
 	data RegisterBuildData,
 ) (*RegisterBuildResponse, *api.APIError) {
 	return telemetry.Observe1(ctx, tracer, "register build", func(ctx context.Context) (*RegisterBuildResponse, *api.APIError) {
-		return registerBuild(ctx, templateCache, db, data)
+		return registerBuild(ctx, templateCache, db, featureFlags, data)
 	})
 }
 
@@ -79,6 +101,7 @@ func registerBuild(
 	ctx context.Context,
 	templateCache *templatecache.TemplateCache,
 	db *sqlcdb.Client,
+	featureFlags *featureflags.Client,
 	data RegisterBuildData,
 ) (*RegisterBuildResponse, *api.APIError) {
 	// On the span before the free-disk resolution below can return, so a refused
@@ -188,7 +211,27 @@ func registerBuild(
 		telemetry.SetAttributes(ctx, attribute.Int("env.memory_mb", int(*data.MemoryMB)))
 	}
 
+	if data.MaxCpuCount != nil {
+		telemetry.SetAttributes(ctx, attribute.Int("env.max_cpu", int(*data.MaxCpuCount)))
+	}
+
 	cpuCount, ramMB, apiError := team.LimitResources(data.Team.Limits, data.CpuCount, data.MemoryMB)
+	if apiError != nil {
+		return nil, apiError
+	}
+
+	maxVcpu, apiError := resolveMaxVcpu(ctx, featureFlags, data.Team.Limits, data.Team.ID, cpuCount, data.MaxCpuCount)
+	logger.L().Info(ctx, "template build max cpu resolved",
+		logger.WithTeamID(data.Team.ID.String()),
+		logger.WithTemplateID(data.TemplateID),
+		logger.WithBuildID(buildID.String()),
+		zap.Int64("cpu_count", cpuCount),
+		zap.Int64("max_cpu_count", utils.DerefOrDefault(maxVcpu.value, 0)),
+		zap.String("source", maxVcpu.source),
+		zap.String("outcome", maxVcpu.outcome),
+		zap.Int("default_max_cpu_flag", maxVcpu.flagValue),
+		zap.Int64("team_max_vcpu", data.Team.Limits.MaxVcpu),
+	)
 	if apiError != nil {
 		return nil, apiError
 	}
@@ -290,6 +333,7 @@ func registerBuild(
 		Status:             dbtypes.BuildStatusWaiting,
 		RamMb:              ramMB,
 		Vcpu:               cpuCount,
+		MaxVcpu:            maxVcpu.value,
 		KernelVersion:      data.KernelVersion,
 		FirecrackerVersion: data.FirecrackerVersion,
 		FreeDiskSizeMb:     freeDiskSizeMB,
@@ -486,4 +530,86 @@ func registerBuild(
 		Names:      names,
 		Tags:       tags,
 	}, nil
+}
+
+type maxVcpuResolution struct {
+	value *int64
+	// source is request, team_default or none.
+	source string
+	// outcome is accepted, rejected_flag_off, rejected_validation, default_clamped or default_invalid.
+	outcome string
+	// flagValue is ResizableTemplateDefaultMaxCpuFlag as read, 0 when not read.
+	flagValue int
+}
+
+// resolveMaxVcpu requires ResizableTemplatesFlag for both explicit and default
+// capacity. An explicit value takes precedence; otherwise the team's default is
+// clamped to [cpuCount, limits.MaxVcpu]. An invalid default is ignored.
+func resolveMaxVcpu(
+	ctx context.Context,
+	featureFlags *featureflags.Client,
+	limits *types.TeamLimits,
+	teamID uuid.UUID,
+	cpuCount int64,
+	requested *int32,
+) (resolved maxVcpuResolution, apiErr *api.APIError) {
+	defer func() {
+		if maxVcpuCounter != nil {
+			maxVcpuCounter.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("source", resolved.source),
+				attribute.String("outcome", resolved.outcome),
+			))
+		}
+	}()
+
+	teamContext := featureflags.TeamContext(teamID.String())
+	enabled := featureFlags.BoolFlag(ctx, featureflags.ResizableTemplatesFlag, teamContext)
+
+	if requested != nil {
+		if !enabled {
+			return maxVcpuResolution{source: "request", outcome: "rejected_flag_off"}, &api.APIError{
+				Err:       errors.New("max CPU count requested while resizable templates are off for the team"),
+				ClientMsg: "Resizable templates are not enabled for your team",
+				Code:      http.StatusBadRequest,
+			}
+		}
+
+		value, apiErr := team.LimitMaxCPU(limits, cpuCount, *requested)
+		if apiErr != nil {
+			return maxVcpuResolution{source: "request", outcome: "rejected_validation"}, apiErr
+		}
+
+		return maxVcpuResolution{value: &value, source: "request", outcome: "accepted"}, nil
+	}
+
+	if !enabled {
+		return maxVcpuResolution{source: "none", outcome: "accepted"}, nil
+	}
+
+	n := featureFlags.IntFlag(ctx, featureflags.ResizableTemplateDefaultMaxCpuFlag, teamContext)
+	if n == 0 {
+		return maxVcpuResolution{source: "none", outcome: "accepted", flagValue: n}, nil
+	}
+
+	flagValue := int64(n)
+	if flagValue < constants.MinTemplateCPU || flagValue > constants.MaxTemplateCPU || (flagValue != 1 && flagValue%2 != 0) {
+		return maxVcpuResolution{source: "team_default", outcome: "default_invalid", flagValue: n}, nil
+	}
+
+	effective := max(cpuCount, min(flagValue, limits.MaxVcpu))
+	// The builder rejects odd counts; cpuCount is 1 or even, so rounding down keeps effective >= cpuCount.
+	if effective > 1 && effective%2 != 0 {
+		effective--
+	}
+	// The inherited CPU default can exceed a team's allowance; clamping cannot
+	// satisfy both bounds in that case. Ignore an unusable capacity default.
+	if _, apiErr := team.LimitMaxCPU(limits, cpuCount, int32(effective)); apiErr != nil {
+		return maxVcpuResolution{source: "team_default", outcome: "default_invalid", flagValue: n}, nil
+	}
+	outcome := "accepted"
+	if effective != flagValue {
+		outcome = "default_clamped"
+	}
+
+	return maxVcpuResolution{value: &effective, source: "team_default", outcome: outcome, flagValue: n}, nil
 }

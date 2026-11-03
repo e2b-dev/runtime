@@ -102,6 +102,10 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 		return fmt.Errorf("failed to create sandbox list age histogram: %w", err)
 	}
 
+	if o.featureUnsupportedCounter, err = telemetry.GetCounter(meter, telemetry.ApiOrchestratorSandboxFeatureUnsupported); err != nil {
+		return fmt.Errorf("failed to create sandbox feature unsupported counter: %w", err)
+	}
+
 	// Observable gauge that reads sandbox counts from Redis on each collection interval.
 	// This replaces the old UpDownCounter which drifted across multiple API instances.
 	sandboxCountGauge, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCountGaugeName)

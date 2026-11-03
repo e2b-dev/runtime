@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	apiclusters "github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
@@ -116,6 +118,7 @@ func newCreateSandboxTestOrchestratorOnRedis(t *testing.T, client redis.Universa
 		createdSandboxesCounter:    counter,
 		noCeilingPlacementsCounter: noCeilingCounter,
 	}
+	o.featureUnsupportedCounter, _ = meter.Int64Counter("test-feature-unsupported")
 
 	o.registerNode(node)
 
@@ -131,6 +134,7 @@ func testTeam() *teamtypes.Team {
 		Limits: &teamtypes.TeamLimits{
 			SandboxConcurrency: 10,
 			MaxLengthHours:     24,
+			MaxVcpu:            8,
 		},
 	}
 }
@@ -1272,6 +1276,101 @@ func TestCreateSandbox_MemoryLimitRefusesABusyNodeForOrdinaryPages(t *testing.T)
 			assert.Equal(t, tc.wantErrCode, apiErr.ErrorCode)
 		})
 	}
+}
+
+// TestCreateSandbox_ResizableBuildNeedsNewOrchestrator: a build with
+// max_vcpu sends max_vcpus and is placed only on a node at the
+// resizable floor, including equal counts; a fixed-size build places on any node.
+func TestCreateSandbox_ResizableBuildNeedsNewOrchestrator(t *testing.T) {
+	t.Parallel()
+
+	floor := apiclusters.ResizableTemplateBuildsMinVersion
+	atFloor := floor.String() + "-abc1234-ee"
+	beforeFloor := semver.New(floor.Major(), floor.Minor(), floor.Patch()-1, "", "").String() + "-abc1234-ee"
+
+	tests := []struct {
+		name        string
+		maxVcpu     *int64
+		nodeVersion string
+		wantErrCode string
+	}{
+		{"fixed-size build, old node", nil, beforeFloor, ""},
+		{"equal counts, old node", new(int64(2)), beforeFloor, errCodeFeatureUnsupported},
+		{"resizable build, old node", new(int64(8)), beforeFloor, errCodeFeatureUnsupported},
+		{"equal counts, node at the floor", new(int64(2)), atFloor, ""},
+		{"resizable build, node at the floor", new(int64(8)), atFloor, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rpc := &cpuRecordingSandboxClient{}
+			o := newCreateSandboxTestOrchestrator(t, nodemanager.WithOrchestratorVersion(tt.nodeVersion),
+				func(node *nodemanager.TestNode) { node.SetSandboxClient(rpc) })
+			reader := sdkmetric.NewManualReader()
+			counter, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator"), telemetry.ApiOrchestratorSandboxFeatureUnsupported)
+			require.NoError(t, err)
+			o.featureUnsupportedCounter = counter
+
+			build := testBuild()
+			build.MaxVcpu = tt.maxVcpu
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+			now := time.Now()
+
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-resize-"+uuid.New().String()[:8], uuid.New().String(),
+				testTeam(), fetcher, now, now.Add(time.Hour), time.Hour, false, false, sandbox.CreationMetadata{})
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(t.Context(), &rm))
+
+			if tt.wantErrCode == "" {
+				require.Nil(t, apiErr)
+				assert.Equal(t, int32(1), rpc.calls.Load())
+				request := rpc.request.Load()
+				require.NotNil(t, request)
+				assert.Equal(t, build.Vcpu, request.GetSandbox().GetVcpu())
+				var wantMax int64
+				if tt.maxVcpu != nil {
+					wantMax = *tt.maxVcpu
+				}
+				assert.Equal(t, wantMax, request.GetSandbox().GetMaxVcpus())
+				assert.Empty(t, rm.ScopeMetrics, "counter must not fire on a placed sandbox")
+
+				return
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Zero(t, rpc.calls.Load(), "an incompatible node must never receive Create")
+			assert.Equal(t, tt.wantErrCode, apiErr.ErrorCode)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+
+			require.Len(t, rm.ScopeMetrics, 1)
+			require.Len(t, rm.ScopeMetrics[0].Metrics, 1)
+			sum, ok := rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			feature, ok := sum.DataPoints[0].Attributes.Value("feature")
+			require.True(t, ok)
+			assert.Equal(t, "resizable-vcpu", feature.AsString())
+		})
+	}
+}
+
+type cpuRecordingSandboxClient struct {
+	orchestrator.SandboxServiceClient
+
+	request atomic.Pointer[orchestrator.SandboxCreateRequest]
+	calls   atomic.Int32
+}
+
+func (c *cpuRecordingSandboxClient) Create(_ context.Context, req *orchestrator.SandboxCreateRequest, _ ...grpc.CallOption) (*orchestrator.SandboxCreateResponse, error) {
+	c.calls.Add(1)
+	c.request.Store(proto.Clone(req).(*orchestrator.SandboxCreateRequest))
+
+	return &orchestrator.SandboxCreateResponse{}, nil
 }
 
 // placementsWithoutCeilingByReason reads the counter's points, all of which

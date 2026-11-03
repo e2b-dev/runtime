@@ -736,6 +736,7 @@ func TestNewSandboxFromV2(t *testing.T) {
 		v2 := api.NewSandboxV2{
 			TemplateID:          "base",
 			Timeout:             &timeout,
+			CpuCount:            new(api.CPUCount(2)),
 			AutoPause:           &autoPause,
 			AutoPauseMemory:     &autoPauseMemory,
 			AutoResume:          &api.SandboxAutoResumeConfig{Enabled: true},

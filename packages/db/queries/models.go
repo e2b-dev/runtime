@@ -75,6 +75,7 @@ type EnvBuild struct {
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
 	EnvdUnresponsive   *bool
+	MaxVcpu            *int64
 }
 
 type EnvDefault struct {

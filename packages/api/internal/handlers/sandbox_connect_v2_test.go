@@ -84,7 +84,6 @@ func TestConnectV2_Timeout(t *testing.T) {
 			})
 
 			store := &APIStore{connectBackendOverride: stub}
-			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
 			store.PostV2SandboxesSandboxIDConnect(ginCtx, sandboxID)
 
 			require.Equal(t, tt.status, recorder.Code, recorder.Body.String())
