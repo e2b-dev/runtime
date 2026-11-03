@@ -6,9 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 // defaultCatalogCacheMaxStale bounds how long a cached routing record may be
@@ -40,6 +43,8 @@ type CachingSandboxCatalog struct {
 	inner    SandboxesCatalog
 	maxStale time.Duration
 
+	fallbackCounter metric.Int64Counter
+
 	mu      sync.Mutex
 	entries map[string]catalogCacheEntry
 }
@@ -47,16 +52,24 @@ type CachingSandboxCatalog struct {
 var _ SandboxesCatalog = (*CachingSandboxCatalog)(nil)
 
 // NewCachingSandboxCatalog wraps inner with an error-fallback cache. A maxStale
-// of 0 uses defaultCatalogCacheMaxStale.
-func NewCachingSandboxCatalog(inner SandboxesCatalog, maxStale time.Duration) *CachingSandboxCatalog {
+// of 0 uses defaultCatalogCacheMaxStale. meter may be nil (no counters).
+func NewCachingSandboxCatalog(inner SandboxesCatalog, maxStale time.Duration, meter metric.Meter) *CachingSandboxCatalog {
 	if maxStale <= 0 {
 		maxStale = defaultCatalogCacheMaxStale
 	}
 
+	var fallbackCounter metric.Int64Counter
+	if meter != nil {
+		if c, err := telemetry.GetCounter(meter, telemetry.CatalogCacheFallbackTotal); err == nil {
+			fallbackCounter = c
+		}
+	}
+
 	return &CachingSandboxCatalog{
-		inner:    inner,
-		maxStale: maxStale,
-		entries:  make(map[string]catalogCacheEntry),
+		inner:           inner,
+		maxStale:        maxStale,
+		fallbackCounter: fallbackCounter,
+		entries:         make(map[string]catalogCacheEntry),
 	}
 }
 
@@ -76,17 +89,36 @@ func (c *CachingSandboxCatalog) GetSandbox(ctx context.Context, sandboxID string
 		return nil, err
 
 	default:
+		// Only the caller abandoned the request (its context is done); a cached
+		// route is pointless, so surface the error without touching the cache.
+		if ctx.Err() != nil {
+			return nil, err
+		}
+
 		// Transient backing-store error (e.g. Redis blip). Serve the last known
 		// route if it is still within the staleness window.
 		if cached, ok := c.fresh(sandboxID); ok {
+			c.countFallback(ctx, "hit")
 			logger.L().Warn(ctx, "sandbox catalog error; serving cached route",
 				logger.WithSandboxID(sandboxID), zap.Error(err))
 
 			return cached, nil
 		}
 
+		// Either nothing cached or the entry aged out of the window; the Redis
+		// error stands. Count the stale miss so a flap that outlives the window
+		// is visible, not silent.
+		c.countFallback(ctx, "stale")
+
 		return nil, err
 	}
+}
+
+func (c *CachingSandboxCatalog) countFallback(ctx context.Context, result string) {
+	if c.fallbackCounter == nil {
+		return
+	}
+	c.fallbackCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 }
 
 func (c *CachingSandboxCatalog) StoreSandbox(ctx context.Context, sandboxID string, sandboxInfo *SandboxInfo, expiration time.Duration) error {
