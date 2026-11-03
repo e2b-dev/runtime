@@ -38,7 +38,7 @@ func TestCachingCatalog_ServesCachedRouteOnTransientError(t *testing.T) {
 	ctx := context.Background()
 	want := &SandboxInfo{OrchestratorIP: "10.0.0.7", ExecutionID: "exec-1"}
 	inner := &fakeCatalog{info: want}
-	c := NewCachingSandboxCatalog(inner, time.Minute)
+	c := NewCachingSandboxCatalog(inner, time.Minute, nil)
 
 	// Healthy: populates the cache.
 	got, err := c.GetSandbox(ctx, "sbx-1")
@@ -57,7 +57,7 @@ func TestCachingCatalog_DoesNotServeNotFoundFromCache(t *testing.T) {
 
 	ctx := context.Background()
 	inner := &fakeCatalog{info: &SandboxInfo{OrchestratorIP: "10.0.0.7"}}
-	c := NewCachingSandboxCatalog(inner, time.Minute)
+	c := NewCachingSandboxCatalog(inner, time.Minute, nil)
 
 	_, err := c.GetSandbox(ctx, "sbx-1")
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestCachingCatalog_StaleBeyondWindowPropagatesError(t *testing.T) {
 
 	ctx := context.Background()
 	inner := &fakeCatalog{info: &SandboxInfo{OrchestratorIP: "10.0.0.7"}}
-	c := NewCachingSandboxCatalog(inner, time.Millisecond)
+	c := NewCachingSandboxCatalog(inner, time.Millisecond, nil)
 
 	_, err := c.GetSandbox(ctx, "sbx-1")
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestCachingCatalog_DeleteEvicts(t *testing.T) {
 
 	ctx := context.Background()
 	inner := &fakeCatalog{info: &SandboxInfo{OrchestratorIP: "10.0.0.7"}}
-	c := NewCachingSandboxCatalog(inner, time.Minute)
+	c := NewCachingSandboxCatalog(inner, time.Minute, nil)
 
 	_, err := c.GetSandbox(ctx, "sbx-1")
 	require.NoError(t, err)
@@ -108,4 +108,27 @@ func TestCachingCatalog_DeleteEvicts(t *testing.T) {
 	inner.info, inner.err = nil, errors.New("redis unavailable")
 	_, err = c.GetSandbox(ctx, "sbx-1")
 	require.Error(t, err)
+}
+
+
+func TestCachingCatalog_DoesNotServeCacheWhenCallerCancelled(t *testing.T) {
+	t.Parallel()
+
+	want := &SandboxInfo{OrchestratorIP: "10.0.0.9", ExecutionID: "exec-9"}
+	inner := &fakeCatalog{info: want}
+	c := NewCachingSandboxCatalog(inner, time.Minute, nil)
+
+	// Healthy call under a live context populates the cache.
+	got, err := c.GetSandbox(context.Background(), "sbx-9")
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	// The caller's own context is cancelled: the inner error must surface
+	// unchanged, with no cached route served (the request is already gone).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	inner.info, inner.err = nil, errors.New("redis unavailable")
+	_, err = c.GetSandbox(ctx, "sbx-9")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrSandboxNotFound)
 }
