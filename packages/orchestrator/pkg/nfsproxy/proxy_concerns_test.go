@@ -208,7 +208,7 @@ func TestRenameAcrossRootAndSubdirectoryWithTracing(t *testing.T) { //nolint:par
 			require.NoError(t, err)
 			port, err := strconv.Atoi(portText)
 			require.NoError(t, err)
-			client, err := clientnfs.DialServiceAtPort("127.0.0.1", port)
+			client, err := dialRetry(func() (*rpc.Client, error) { return clientnfs.DialServiceAtPort("127.0.0.1", port) })
 			require.NoError(t, err)
 			t.Cleanup(func() { client.Close() })
 			target, err := (&clientnfs.Mount{Client: client}).Mount(f.mountPath("first"), rpc.NewAuthUnix("", 100, 101).Auth())
