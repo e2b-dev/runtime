@@ -67,8 +67,8 @@ func TestProxyCORSOnDestinationErrors(t *testing.T) {
 		err        error
 		wantStatus int
 	}{
-		{"sandbox not found", NewErrSandboxNotFound("test-sandbox"), http.StatusBadGateway},
-		{"resume permission denied", NewErrSandboxResumePermissionDenied("test-sandbox"), http.StatusForbidden},
+		{"sandbox not found", NewErrSandboxNotFound("test-sandbox", PresenceAbsent), http.StatusBadGateway},
+		{"resume permission denied", NewErrSandboxResumePermissionDenied("test-sandbox", nil), http.StatusForbidden},
 		{"still transitioning", NewErrSandboxStillTransitioning("test-sandbox"), http.StatusConflict},
 		{"internal route", NewErrInternalRoute("test-sandbox", "/init"), http.StatusNotFound},
 		{"resource exhausted", NewErrSandboxResourceExhausted("test-sandbox", "rate limit hit"), http.StatusTooManyRequests},
@@ -323,7 +323,7 @@ func TestRetiredOwnerAnswersPreflight(t *testing.T) {
 	r.Header.Set("Origin", "https://caller.example")
 	r.Header.Set("Access-Control-Request-Method", "POST")
 	w := httptest.NewRecorder()
-	handler(p, func(*http.Request) (*pool.Destination, error) { return d, nil }, nil).ServeHTTP(w, r)
+	handler(p, func(*http.Request) (*pool.Destination, error) { return d, nil }, nil, options{}).ServeHTTP(w, r)
 	assert.GreaterOrEqual(t, w.Code, 200)
 	assert.Less(t, w.Code, 300)
 	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))

@@ -291,7 +291,7 @@ func TestProxyResumePermissionDeniedErrorTemplate(t *testing.T) {
 	t.Parallel()
 
 	getDestination := func(*http.Request) (*pool.Destination, error) {
-		return nil, NewErrSandboxResumePermissionDenied("test-sandbox")
+		return nil, NewErrSandboxResumePermissionDenied("test-sandbox", nil)
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
@@ -415,7 +415,7 @@ func TestProxySandboxCapacityErrorTemplate(t *testing.T) {
 	t.Parallel()
 
 	getDestination := func(r *http.Request) (*pool.Destination, error) {
-		return nil, NewErrSandboxCapacity("test-sandbox", r.URL.Query().Get("reason"))
+		return nil, NewErrSandboxCapacity("test-sandbox", PresenceUnknown, r.URL.Query().Get("reason"))
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
@@ -1652,11 +1652,13 @@ func TestSharedIngressPolicy(t *testing.T) {
 				require.Error(t, err)
 				switch tc.name {
 				case "missing token":
-					var e *MissingTrafficAccessTokenError
+					var e *TrafficAccessTokenError
 					require.ErrorAs(t, err, &e)
+					assert.True(t, e.Missing)
 				case "wrong token":
-					var e *InvalidTrafficAccessTokenError
+					var e *TrafficAccessTokenError
 					require.ErrorAs(t, err, &e)
+					assert.False(t, e.Missing)
 				case "internal before lookup":
 					var e *InternalRouteError
 					require.ErrorAs(t, err, &e)
@@ -1669,7 +1671,7 @@ func TestSharedIngressPolicy(t *testing.T) {
 				r.Header.Set("Access-Control-Request-Method", "POST")
 				recorder := httptest.NewRecorder()
 				p := pool.New(4, 1, time.Second, false)
-				handler(p, resolver, nil).ServeHTTP(recorder, r)
+				handler(p, resolver, nil, options{}).ServeHTTP(recorder, r)
 				assert.GreaterOrEqual(t, recorder.Code, 200)
 				assert.Less(t, recorder.Code, 300)
 				assert.NotEmpty(t, recorder.Header().Get("Access-Control-Allow-Origin"))

@@ -53,7 +53,13 @@ func New(
 	getDestination func(r *http.Request) (*pool.Destination, error),
 	connLimitConfig *ConnectionLimitConfig,
 	disableKeepAlives bool,
+	opts ...Option,
 ) *Proxy {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	p := pool.New(
 		maxClientConns,
 		int(maxConnectionAttempts),
@@ -70,7 +76,7 @@ func New(
 			// otherwise there's a chance for a race condition when the server closes and the client tries to use the connection
 			IdleTimeout:       idleTimeout + idleTimeoutBufferUpstreamDownstream,
 			ReadHeaderTimeout: 0,
-			Handler:           handler(p, getDestination, connLimitConfig),
+			Handler:           handler(p, getDestination, connLimitConfig, o),
 		},
 		pool:              p,
 		serverConnections: smap.New[*tracking.Connection](),

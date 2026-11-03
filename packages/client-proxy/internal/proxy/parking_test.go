@@ -1822,7 +1822,7 @@ func TestResumeFlights_CloseDuringTheFirstAttemptRendersTheUnavailablePage(t *te
 
 			var capacityErr *reverseproxy.SandboxCapacityError
 			require.ErrorAs(t, <-result, &capacityErr)
-			require.Equal(t, "sbx", capacityErr.SandboxId)
+			require.Equal(t, "sbx", capacityErr.SandboxID())
 			require.Zero(t, flightsInRegistry(flights))
 
 			_, _, err := handlePausedSandbox(t.Context(), "sbx", 8000, "token", "", flights)
@@ -1855,7 +1855,7 @@ func TestResumeFlights_CloseDuringTheFirstAttemptCountsEveryWaiterCanceled(t *te
 		case r := <-result:
 			var capacityErr *reverseproxy.SandboxCapacityError
 			require.ErrorAs(t, r.err, &capacityErr)
-			require.Equal(t, "sbx", capacityErr.SandboxId)
+			require.Equal(t, "sbx", capacityErr.SandboxID())
 			require.ErrorIs(t, r.err, errFlightClosed)
 		case <-time.After(5 * time.Second):
 			require.FailNow(t, "the flight outlived Close")

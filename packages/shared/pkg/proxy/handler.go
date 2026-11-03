@@ -33,7 +33,7 @@ func setRetryAfter(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 }
 
-func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Destination, error), connLimitConfig *ConnectionLimitConfig) http.HandlerFunc {
+func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Destination, error), connLimitConfig *ConnectionLimitConfig, o options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		l := logger.L()
@@ -57,6 +57,25 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 			cors.Error(w, "Request ended before it was routed", http.StatusRequestTimeout)
 
 			return
+		}
+
+		// A probe for a routed sandbox is answered here, before any connection
+		// to it; any other outcome gets its usual page, now carrying the answer.
+		if o.probe && isProbeRequest(r) {
+			switch routePresence(err) {
+			case PresenceHeld:
+				w.Header().Set(HeaderProbe, "true")
+			case PresenceAbsent:
+				w.Header().Set(HeaderProbe, "false")
+			case PresenceUnknown:
+				// No header: the asker cannot tell from this proxy.
+			}
+
+			if err == nil {
+				w.WriteHeader(http.StatusNoContent)
+
+				return
+			}
 		}
 
 		// With no destination there is nobody upstream to answer the preflight,
@@ -93,157 +112,20 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 			return
 		}
 
-		if notFoundErr, ok := errors.AsType[*SandboxNotFoundError](err); ok {
-			l.Warn(ctx, "sandbox not found",
-				zap.String("host", r.Host),
-				logger.WithSandboxID(notFoundErr.SandboxId))
-
-			err := template.
-				NewSandboxNotFoundError(notFoundErr.SandboxId, r.Host).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle sandbox not found error", zap.Error(err), logger.WithSandboxID(notFoundErr.SandboxId))
-				cors.Error(w, "Failed to handle sandbox not found error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if resumeDeniedErr, ok := errors.AsType[*SandboxResumePermissionDeniedError](err); ok {
-			l.Warn(ctx, "sandbox resume permission denied",
-				zap.String("host", r.Host),
-				logger.WithSandboxID(resumeDeniedErr.SandboxId))
-
-			err := template.
-				NewSandboxResumePermissionDeniedError(resumeDeniedErr.SandboxId, r.Host).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle sandbox resume permission denied error", zap.Error(err), logger.WithSandboxID(resumeDeniedErr.SandboxId))
-				cors.Error(w, "Failed to handle sandbox resume permission denied error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if stillTransitioningErr, ok := errors.AsType[*SandboxStillTransitioningError](err); ok {
-			l.Warn(ctx, "sandbox still transitioning",
-				zap.String("host", r.Host),
-				logger.WithSandboxID(stillTransitioningErr.SandboxId))
-
-			setRetryAfter(w)
-			page := template.NewSandboxStillTransitioningError(stillTransitioningErr.SandboxId, r.Host)
-			if stillTransitioningErr.Unavailable {
-				page = template.NewSandboxStillTransitioningUnavailableError(stillTransitioningErr.SandboxId, r.Host)
-			}
-			err := page.HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle sandbox still transitioning error", zap.Error(err), logger.WithSandboxID(stillTransitioningErr.SandboxId))
-				cors.Error(w, "Failed to handle sandbox still transitioning error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if capacityErr, ok := errors.AsType[*SandboxCapacityError](err); ok {
-			// The proxy that produced it logged it with the request's
-			// fields; this line only ties the page to the answer.
-			l.Debug(ctx, capacityErr.Error(),
-				zap.String("host", r.Host),
-				zap.String("reason", capacityErr.Message),
-				zap.Bool("permanent", capacityErr.Permanent),
-				logger.WithSandboxID(capacityErr.SandboxId))
-
-			page := template.NewSandboxCapacityError(capacityErr.SandboxId, r.Host)
-			switch {
-			case capacityErr.Permanent:
-				// No retry helps, so no retry hint.
-				page = template.NewSandboxPlacementRefusedError(capacityErr.SandboxId, r.Host, capacityErr.ErrorCode, capacityErr.StatusCode)
-			case capacityErr.Shed:
-				page = template.NewSandboxShedError(capacityErr.SandboxId, r.Host)
+		if sandboxErr, ok := errors.AsType[SandboxError](err); ok {
+			fields := []zap.Field{zap.Error(err), zap.String("host", r.Host), logger.WithSandboxID(sandboxErr.SandboxID())}
+			switch sandboxErr.(type) {
+			case *SandboxCapacityError, *SandboxPlacementRefusedError:
+				// The proxy that produced it logged it with the request's
+				// fields; this line only ties the page to the answer.
+				l.Debug(ctx, sandboxErr.Error(), fields...)
 			default:
-				setRetryAfter(w)
-			}
-			err := page.HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle sandbox capacity error", zap.Error(err), logger.WithSandboxID(capacityErr.SandboxId))
-				cors.Error(w, "Failed to handle sandbox capacity error", http.StatusInternalServerError)
-
-				return
+				l.Warn(ctx, sandboxErr.Error(), fields...)
 			}
 
-			return
-		}
-
-		if internalRouteErr, ok := errors.AsType[*InternalRouteError](err); ok {
-			l.Warn(ctx, "internal route requested through the proxy",
-				zap.String("host", r.Host),
-				zap.String("path", internalRouteErr.Path),
-				logger.WithSandboxID(internalRouteErr.SandboxId))
-
-			err := template.
-				NewInternalRouteError(r.Host, internalRouteErr.Path).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle internal route error", zap.Error(err), logger.WithSandboxID(internalRouteErr.SandboxId))
-				cors.Error(w, "Failed to handle internal route error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if resourceExhaustedErr, ok := errors.AsType[*SandboxResourceExhaustedError](err); ok {
-			l.Warn(ctx, "team sandbox limit reached",
-				zap.String("host", r.Host),
-				logger.WithSandboxID(resourceExhaustedErr.SandboxId))
-
-			err := template.
-				NewTeamSandboxLimitError(resourceExhaustedErr.SandboxId, r.Host, resourceExhaustedErr.Message).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle team sandbox limit error", zap.Error(err), logger.WithSandboxID(resourceExhaustedErr.SandboxId))
-				cors.Error(w, "Failed to handle team sandbox limit error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if trafficMissingTokenErr, ok := errors.AsType[*MissingTrafficAccessTokenError](err); ok {
-			l.Warn(ctx, "traffic access token is missing", zap.String("host", r.Host))
-
-			err = template.
-				NewTrafficAccessTokenMissingHeader(trafficMissingTokenErr.SandboxId, r.Host, trafficMissingTokenErr.Header).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle traffic missing traffic access token header error", zap.Error(err), logger.WithSandboxID(trafficMissingTokenErr.SandboxId))
-				cors.Error(w, "Failed to handle invalid missing access token header error", http.StatusInternalServerError)
-
-				return
-			}
-
-			return
-		}
-
-		if trafficInvalidTokenErr, ok := errors.AsType[*InvalidTrafficAccessTokenError](err); ok {
-			l.Warn(ctx, "traffic access token is invalid", zap.String("host", r.Host))
-
-			err = template.
-				NewTrafficAccessTokenInvalidHeader(trafficInvalidTokenErr.SandboxId, r.Host, trafficInvalidTokenErr.Header).
-				HandleError(w, r)
-			if err != nil {
-				l.Error(ctx, "failed to handle traffic invalid traffic access token header error", zap.Error(err), logger.WithSandboxID(trafficInvalidTokenErr.SandboxId))
-				cors.Error(w, "Failed to handle invalid traffic access token header error", http.StatusInternalServerError)
-
-				return
+			if err := writeSandboxError(w, r, sandboxErr); err != nil {
+				l.Error(ctx, "failed to write the sandbox error page", zap.Error(err), logger.WithSandboxID(sandboxErr.SandboxID()))
+				cors.Error(w, "Failed to write the sandbox error page", http.StatusInternalServerError)
 			}
 
 			return
@@ -380,4 +262,48 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 
 		serveStream(w, r, proxy, fmt.Sprintf("the connection to sandbox %s ended before the stream completed", d.SandboxId))
 	}
+}
+
+// writeSandboxError writes the page sent in place of the sandbox's response.
+// The switch has no default: gochecksumtype fails the build when a
+// SandboxError is missing from it.
+func writeSandboxError(w http.ResponseWriter, r *http.Request, err SandboxError) error {
+	id, host := err.SandboxID(), r.Host
+
+	switch e := err.(type) {
+	case *SandboxNotFoundError:
+		return template.NewSandboxNotFoundError(id, host).HandleError(w, r)
+	case *SandboxResumePermissionDeniedError:
+		return template.NewSandboxResumePermissionDeniedError(id, host).HandleError(w, r)
+	case *SandboxStillTransitioningError:
+		setRetryAfter(w)
+		if e.Unavailable {
+			return template.NewSandboxStillTransitioningUnavailableError(id, host).HandleError(w, r)
+		}
+
+		return template.NewSandboxStillTransitioningError(id, host).HandleError(w, r)
+	case *TrafficAccessTokenError:
+		if e.Missing {
+			return template.NewTrafficAccessTokenMissingHeader(id, host, e.Header).HandleError(w, r)
+		}
+
+		return template.NewTrafficAccessTokenInvalidHeader(id, host, e.Header).HandleError(w, r)
+	case *InternalRouteError:
+		return template.NewInternalRouteError(host, e.Path).HandleError(w, r)
+	case *SandboxCapacityError:
+		if e.Shed {
+			// No Retry-After: a fixed delay brings shed clients back in one wave.
+			return template.NewSandboxShedError(id, host).HandleError(w, r)
+		}
+		setRetryAfter(w)
+
+		return template.NewSandboxCapacityError(id, host).HandleError(w, r)
+	case *SandboxPlacementRefusedError:
+		// No retry helps, so no retry hint.
+		return template.NewSandboxPlacementRefusedError(id, host, e.ErrorCode, e.StatusCode).HandleError(w, r)
+	case *SandboxResourceExhaustedError:
+		return template.NewTeamSandboxLimitError(id, host, e.Message).HandleError(w, r)
+	}
+
+	return fmt.Errorf("no page for %T", err)
 }

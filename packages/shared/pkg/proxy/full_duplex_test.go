@@ -772,7 +772,7 @@ func TestHandlerEnablesFullDuplex(t *testing.T) {
 
 	recorder := &fullDuplexRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx-1-00000000.localhost/", nil)
-	handler(p, destinationFor(backendURL, "full-duplex-pin"), nil).ServeHTTP(recorder, req)
+	handler(p, destinationFor(backendURL, "full-duplex-pin"), nil, options{}).ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 	assert.True(t, recorder.enabled, "the handler should enable full duplex before proxying")
