@@ -182,6 +182,7 @@ func run() int {
 		catalog,
 		pausedSandboxResumer,
 		featureFlagsClient,
+		config.ForwardedHostDomains,
 	)
 	if err != nil {
 		l.Error(ctx, "Failed to create client proxy", zap.Error(err))

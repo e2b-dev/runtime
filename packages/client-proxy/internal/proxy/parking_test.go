@@ -122,7 +122,7 @@ func newParkedProxy(t *testing.T, ff *featureflags.Client, resumer SandboxResume
 
 	metrics := newMetricReader(t)
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
-	p, closer, err := NewClientProxy(metrics.provider, "parking-"+t.Name(), 0, 5007, c, resumer, ff)
+	p, closer, err := NewClientProxy(metrics.provider, "parking-"+t.Name(), 0, 5007, c, resumer, ff, nil)
 	require.NoError(t, err)
 
 	return parkedProxy{metrics: metrics, handler: p.Handler, closer: closer}
@@ -2043,11 +2043,11 @@ func TestNewClientProxy_ReturnsResumeCloserOnlyWithResumer(t *testing.T) {
 
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 
-	_, closer, err := NewClientProxy(newMetricReader(t).provider, "closer-none", 0, 5007, c, nil, newFF(t))
+	_, closer, err := NewClientProxy(newMetricReader(t).provider, "closer-none", 0, 5007, c, nil, newFF(t), nil)
 	require.NoError(t, err)
 	require.Nil(t, closer)
 
-	_, closer, err = NewClientProxy(newMetricReader(t).provider, "closer-some", 0, 5007, c, stubResumer{}, newFF(t))
+	_, closer, err = NewClientProxy(newMetricReader(t).provider, "closer-some", 0, 5007, c, stubResumer{}, newFF(t), nil)
 	require.NoError(t, err)
 	require.NotNil(t, closer)
 	require.NoError(t, closer.Close(t.Context()))

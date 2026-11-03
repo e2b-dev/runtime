@@ -513,7 +513,7 @@ func TestNewClientProxy_Construction(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "test-service", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "test-service", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	require.EqualValues(t, 0, p.CurrentServerConnections())
@@ -688,7 +688,7 @@ func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 				if source == "resume" {
 					c, resumer = errorCatalog{err: catalog.ErrSandboxNotFound}, stubResumer{route: route}
 				}
-				p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "network-mode", 0, uint16(node.Port), c, resumer, newFF(t))
+				p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "network-mode", 0, uint16(node.Port), c, resumer, newFF(t), nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, p.Close()) })
 
@@ -728,7 +728,7 @@ func TestNewClientProxy_ExecutionChangesOnReusedConnection(t *testing.T) {
 	server.Start()
 	t.Cleanup(server.Close)
 	route := fullRouterRoute(server.Listener.Addr().(*net.TCPAddr))
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "execution-routing", 0, 5008, fixedCatalog{route: route}, nil, newFF(t))
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "execution-routing", 0, 5008, fixedCatalog{route: route}, nil, newFF(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, p.Close()) })
 	for _, execution := range []string{"before-resume", "after-resume"} {
@@ -788,7 +788,7 @@ func TestNewClientProxy_FullRouterFollowsANewEndpoint(t *testing.T) {
 	old, oldDials := upgradingRouter(t)
 	moved, movedDials := countingServer(t, "moved", "execution")
 	require.NoError(t, records.StoreSandbox(ctx, "sbx", fullRouterRoute(old), time.Minute))
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "new-endpoint", 0, 1, records, nil, newFF(t))
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "new-endpoint", 0, 1, records, nil, newFF(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, p.Close()) })
 	frontend := httptest.NewServer(p.Handler)
@@ -939,7 +939,7 @@ func TestNewClientProxy_AnswersProbeRequests(t *testing.T) {
 			if tt.resumer != nil {
 				resumer = tt.resumer(node)
 			}
-			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "probe", 0, uint16(node.Port), c, resumer, newFF(t))
+			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "probe", 0, uint16(node.Port), c, resumer, newFF(t), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, p.Close()) })
 
@@ -1192,7 +1192,7 @@ func TestNewClientProxy_HandlerErrors(t *testing.T) {
 
 			c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 			ff := newFF(t)
-			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "handler-errors-"+tt.name, uint16(i), 5007, c, tt.resumer, ff)
+			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "handler-errors-"+tt.name, uint16(i), 5007, c, tt.resumer, ff, nil)
 			require.NoError(t, err)
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.url, nil)
@@ -1227,7 +1227,7 @@ func TestNewClientProxy_DuplicateMetricsRegistrationReturnsErrors(t *testing.T) 
 	// noop meter provider should not error; this is a sanity test that NewClientProxy
 	// works repeatedly for separate service names without leaking metric registrations.
 	for range 3 {
-		_, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service", 0, 5007, c, nil, ff)
+		_, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service", 0, 5007, c, nil, ff, nil)
 		require.NoError(t, err)
 	}
 }
@@ -1239,7 +1239,7 @@ func TestNewClientProxy_HasIdleTimeout(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-idle", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-idle", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, p.IdleTimeout, idleTimeout)
 	require.Less(t, p.IdleTimeout, 2*idleTimeout)
@@ -1252,7 +1252,7 @@ func TestNewClientProxy_PoolAccessors(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-pool", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-pool", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, p.CurrentPoolSize(), 0)
 
@@ -1295,7 +1295,7 @@ func TestClientProxyForRouterIngress(t *testing.T) { //nolint:paralleltest // se
 		NetworkMode: catalog.NetworkModeFullRouter, RouterID: "router", IngressAddress: router.Addr().String(), IngressPort: uint32(router.Port()),
 	}}
 	orchestratorPort := uint16(orchestratorProxy.Addr().(*net.TCPAddr).Port)
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "router-ingress", 0, orchestratorPort, fixedCatalog{route: route}, nil, newFF(t))
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "router-ingress", 0, orchestratorPort, fixedCatalog{route: route}, nil, newFF(t), nil)
 	require.NoError(t, err)
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", serve.String())
 	require.NoError(t, err)

@@ -188,7 +188,9 @@ func handlePausedSandbox(
 
 // NewClientProxy returns the proxy and, when resumes are enabled, the closer
 // that stops the resume flights still running after the proxy has shut down.
-func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, sandboxes catalog.SandboxesCatalog, sandboxResumer SandboxResumer, featureFlagsClient *featureflags.Client) (*reverseproxy.Proxy, ResumeCloser, error) {
+// forwardedHostDomains lists the domains whose sandbox hosts a request's
+// X-Forwarded-Host may restore (restoreForwardedHost); empty turns that off.
+func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, sandboxes catalog.SandboxesCatalog, sandboxResumer SandboxResumer, featureFlagsClient *featureflags.Client, forwardedHostDomains []string) (*reverseproxy.Proxy, ResumeCloser, error) {
 	meter := meterProvider.Meter(serviceName)
 
 	var resumer SandboxResumer
@@ -204,6 +206,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 	}
 
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
+	forwardedHostDomains = normalizeForwardedHostDomains(forwardedHostDomains)
 	proxy := reverseproxy.New(
 		port,
 		// Retries that are needed to handle port forwarding delays in sandbox envd are handled by the orchestrator proxy
@@ -215,6 +218,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 			if err != nil {
 				return nil, err
 			}
+			restoreForwardedHost(r, sandboxId, port, forwardedHostDomains)
 
 			l := logger.L().With(logger.ProxyRequestFields(r, sandboxId, port)...)
 
