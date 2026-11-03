@@ -157,6 +157,14 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   default, zero, gives every request its own read with the same store commands as before.
   Only the two list endpoints use the snapshot; the evictor, reconcile, template delete and
   team teardown keep reading the store directly.
+- **Sandbox store key forms**: a sandbox's record, lock and transition keys are tagged with its
+  team ID, as all records so far, or with its own sandbox ID, so one team's sandboxes no longer
+  share one Redis Cluster slot and thread. The LaunchDarkly `sandbox-store-per-sandbox-keys` flag,
+  read every 30 s, picks the form of new records only; a record keeps its form until it expires,
+  each operation on an existing sandbox first finds its form, and the team index and reservations
+  stay under the team tag. A healer re-indexes a running record that lost its index entry, deletes a stale
+  non-running one, drops recordless entries and the older of a sandbox's two records. An older
+  release would kill sandbox-tagged records' sandboxes as orphans, so none may run while any exist.
 - **Workload identity**: sandbox create accepts an optional `iam.tokens` map of caller-named
   workload-token definitions (each an exact `audience` and `tokenType`). A non-empty, validated
   map enables workload identity, whose identity the orchestrator derives from the sandbox's

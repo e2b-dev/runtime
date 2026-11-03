@@ -224,14 +224,20 @@ func observeRepairs(o metric.Observer, gauge metric.Int64ObservableGauge, report
 	observe(healTwinsDeleted, report.TwinsDeleted)
 }
 
-// Start subscribes to the global PubSub channel and launches the publish
-// worker and the expiration index healer. Blocks until the context is
-// cancelled or Close is called.
+// Start writes the scheme marker, subscribes to the global PubSub channel
+// and launches the publish worker and the healer. Blocks until the context
+// is cancelled or Close is called.
 func (s *Storage) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	s.initCounters(ctx)
+
+	// A replica older than the marker's release kills every sandbox-form
+	// record as an orphan, so a later release warns when it is absent.
+	if err := s.redisClient.Set(ctx, SchemeMarkerKey, SchemeMinRelease, 0).Err(); err != nil {
+		logger.L().Warn(ctx, "Failed to write the sandbox store scheme marker", zap.Error(err))
+	}
 
 	pubDone := make(chan struct{})
 	go func() {

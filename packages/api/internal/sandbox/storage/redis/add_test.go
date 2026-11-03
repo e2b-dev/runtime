@@ -69,8 +69,6 @@ func mustJSON(t *testing.T, sbx sandboxtypes.Sandbox) string {
 	return string(data)
 }
 
-var errInjected = errors.New("injected failure")
-
 // failAt returns a hook that injects err at point p.
 func failAt(p faultPoint, err error) func(faultPoint) error {
 	return func(point faultPoint) error {

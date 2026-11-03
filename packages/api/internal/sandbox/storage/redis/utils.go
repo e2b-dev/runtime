@@ -47,7 +47,15 @@ var (
 
 	globalTeamsSet      = redis_utils.CreateKey(sandboxKeyPrefix, "global:teams")
 	globalExpirationSet = redis_utils.CreateKey(sandboxKeyPrefix, "global:expiration")
+
+	// SchemeMarkerKey holds the oldest release that may run against the
+	// store's keys; Start writes it, and a later release warns when it is
+	// absent.
+	SchemeMarkerKey = redis_utils.CreateKey(sandboxKeyPrefix, "scheme", "min-release")
 )
+
+// SchemeMinRelease is the release Start records under SchemeMarkerKey.
+const SchemeMinRelease = "r1"
 
 // expirationMember identifies one *execution* (incarnation) of a sandbox in
 // the global expiration ZSET. Scoping the member to the execution makes every

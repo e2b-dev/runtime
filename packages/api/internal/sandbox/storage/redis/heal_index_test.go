@@ -534,7 +534,8 @@ func TestHealAbortsWhenProbesNeverRan(t *testing.T) {
 }
 
 // Start records every kind of the write anomaly and index heal counters at
-// zero, so a kind's first event moves a series that already exists.
+// zero, so a kind's first event moves a series that already exists, and
+// writes the scheme marker, with no expiry, before the healer runs.
 func TestStart(t *testing.T) {
 	t.Parallel()
 
@@ -548,8 +549,9 @@ func TestStart(t *testing.T) {
 		if reader.Collect(t.Context(), &collected) != nil {
 			return false
 		}
+		marker, err := client.Get(t.Context(), SchemeMarkerKey).Result()
 
-		return len(counterPoints(t, collected, string(telemetry.ApiRedisStorageIndexHeal))) == len(healKinds)
+		return err == nil && marker == SchemeMinRelease && len(counterPoints(t, collected, string(telemetry.ApiRedisStorageIndexHeal))) == len(healKinds)
 	}, 5*time.Second, 10*time.Millisecond)
 	for _, kind := range healKinds {
 		require.Zero(t, healCount(t, reader, kind))
@@ -560,4 +562,7 @@ func TestStart(t *testing.T) {
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &collected))
 	require.Len(t, counterPoints(t, collected, string(telemetry.ApiRedisStorageWriteAnomalies)), 3)
+	ttl, err := client.TTL(t.Context(), SchemeMarkerKey).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), ttl)
 }
