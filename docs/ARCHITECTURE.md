@@ -1020,7 +1020,7 @@ sequenceDiagram
 
 client-proxy resolves the node IP of a sandbox from one routing record in Redis, written by the
 orchestrator. Its JSON shape (`sandbox_catalog.SandboxInfo` in `packages/shared/pkg/sandbox-catalog`):
-`orchestrator_id`, `orchestrator_ip`, `execution_id`, `sandbox_started_at`,
+`orchestrator_id`, `orchestrator_ip`, `execution_id`, `lifecycle_id`, `sandbox_started_at`,
 `sandbox_max_length_in_hours`.
 
 | Record | Key | Writer | Written | Deleted |
@@ -1030,9 +1030,15 @@ orchestrator. Its JSON shape (`sandbox_catalog.SandboxInfo` in `packages/shared/
 **The orchestrator-owned record is the routing source.** The orchestrator writes
 `sandbox:routing:{id}` on `MarkRunning` and deletes it on `MarkStopping`. A failed write is logged
 and counted (`orchestrator.routing.publish.total{result=error}`); the sandbox keeps running. Build
-sandboxes are skipped. The delete is guarded by `execution_id` in a Lua script, so a stale
-lifecycle never removes the record of a newer execution. On a miss client-proxy goes to the
-auto-resume path (`ResumeSandbox` gRPC to the API).
+sandboxes are skipped. The record names the lifecycle that wrote it, and the delete is guarded
+by `execution_id` and `lifecycle_id` in a Lua script, so a stale lifecycle never removes the
+record of a newer execution, or of the lifecycle its execution moved to. A record without a
+`lifecycle_id`, written before the field was populated, is owned by its execution alone. On a
+miss client-proxy goes to the auto-resume path (`ResumeSandbox` gRPC to the API).
+
+`Publish` is for a lifecycle that must know its record landed, such as a migration target: it
+reads the record back and writes it again when it is missing or another lifecycle's. It is not
+for a lifecycle being replaced, whose record the replacement overwrites.
 
 The TTL of the record is `sandbox_max_length_in_hours` from the write time. The record is
 deleted earlier in every normal stop path.
@@ -1044,8 +1050,8 @@ egress-router, and it is fixed for the Router's ID. A new endpoint is a new Rout
 reassignment of the sandbox can name. A replacement Router has a new ID and may reuse its
 predecessor's endpoint. The record carries location only. The orchestrator owns the Router
 configuration, which never travels through this record. An absent placement means the legacy
-per-worker network. The publisher omits `lifecycle_id` and leaves `network_placement.portable_ip`
-empty, serialized as `""`.
+per-worker network. The publisher leaves `network_placement.portable_ip` empty, serialized as
+`""`.
 
 The API keeps the placement returned by the winning orchestrator create on its own sandbox record
 in Redis (`networkPlacement`), and callers that join the same start get the same placement. A new

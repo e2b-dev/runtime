@@ -218,7 +218,7 @@ func (e errorCatalog) StoreSandbox(_ context.Context, _ string, _ *catalog.Sandb
 	return nil
 }
 
-func (e errorCatalog) DeleteSandbox(_ context.Context, _ string, _ string) error {
+func (e errorCatalog) DeleteSandbox(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
