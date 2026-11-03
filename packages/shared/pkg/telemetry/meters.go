@@ -452,6 +452,10 @@ const (
 const (
 	ApiOrchestratorSbxCreateSuccess ObservableCounterType = "api.orchestrator.sandbox.create.success"
 	ApiOrchestratorSbxCreateFailure ObservableCounterType = "api.orchestrator.sandbox.create.failure"
+
+	OrchestratorHostPressureStall ObservableCounterType = "orchestrator.host.pressure.stall"
+	OrchestratorHostReclaimStalls ObservableCounterType = "orchestrator.host.reclaim.stalls"
+	OrchestratorHostReclaimPages  ObservableCounterType = "orchestrator.host.reclaim.pages"
 )
 
 const (
@@ -1054,11 +1058,17 @@ var counterUnits = map[CounterType]string{
 var observableCounterDesc = map[ObservableCounterType]string{
 	ApiOrchestratorSbxCreateSuccess: "Counter of successful sandbox creation requests.",
 	ApiOrchestratorSbxCreateFailure: "Counter of failed sandbox creation requests.",
+	OrchestratorHostPressureStall:   "Host PSI stall time from /proc/pressure since the first collection, by resource (cpu|memory|io) and scope (some|full); full means every non-idle task was stalled.",
+	OrchestratorHostReclaimStalls:   "Host direct-reclaim entries since the first collection (/proc/vmstat allocstall, summed over zones).",
+	OrchestratorHostReclaimPages:    "Host pages scanned and reclaimed by direct reclaim since the first collection, by kind (scan|steal; /proc/vmstat pgscan_direct, pgsteal_direct).",
 }
 
 var observableCounterUnits = map[ObservableCounterType]string{
 	ApiOrchestratorSbxCreateSuccess: "{sandbox}",
 	ApiOrchestratorSbxCreateFailure: "{sandbox}",
+	OrchestratorHostPressureStall:   "us",
+	OrchestratorHostReclaimStalls:   "{stall}",
+	OrchestratorHostReclaimPages:    "{page}",
 }
 
 var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
@@ -1209,15 +1219,18 @@ func GetCounter(meter metric.Meter, name CounterType) (metric.Int64Counter, erro
 	)
 }
 
-func GetObservableCounter(meter metric.Meter, name ObservableCounterType, callback metric.Int64Callback) (metric.Int64ObservableCounter, error) {
-	desc := observableCounterDesc[name]
-	unit := observableCounterUnits[name]
+// GetObservableCounter creates the counter with the given callbacks; pass none
+// to observe it from a meter.RegisterCallback registration instead.
+func GetObservableCounter(meter metric.Meter, name ObservableCounterType, callbacks ...metric.Int64Callback) (metric.Int64ObservableCounter, error) {
+	opts := []metric.Int64ObservableCounterOption{
+		metric.WithDescription(observableCounterDesc[name]),
+		metric.WithUnit(observableCounterUnits[name]),
+	}
+	for _, callback := range callbacks {
+		opts = append(opts, metric.WithInt64Callback(callback))
+	}
 
-	return meter.Int64ObservableCounter(string(name),
-		metric.WithDescription(desc),
-		metric.WithUnit(unit),
-		metric.WithInt64Callback(callback),
-	)
+	return meter.Int64ObservableCounter(string(name), opts...)
 }
 
 func GetObservableUpDownCounter(meter metric.Meter, name ObservableUpDownCounterType, callback metric.Int64Callback) (metric.Int64ObservableUpDownCounter, error) {

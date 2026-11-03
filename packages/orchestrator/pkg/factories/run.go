@@ -869,6 +869,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 	})
 	closers = append(closers, closer{"host metrics poller", hostMetrics.Close})
 
+	// host kernel counters (PSI, vmstat); observability only, so warn and run on
+	if kernelCounters, err := metrics.NewKernelCounters(tel.MeterProvider); err != nil {
+		logger.L().Warn(ctx, "failed to register host kernel counters", zap.Error(err))
+	} else {
+		closers = append(closers, closer{"host kernel counters", kernelCounters.Close})
+	}
+
 	// sandbox proxy
 	sandboxProxy, err := proxy.NewSandboxProxy(tel.MeterProvider, config.ProxyPort, sandboxes, featureFlags)
 	if err != nil {
