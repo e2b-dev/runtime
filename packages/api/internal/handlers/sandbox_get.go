@@ -286,7 +286,12 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		PauseMode:               sandboxPauseModeToAPI(lastSnapshot.Snapshot.Config),
 	}
 
+	// Always set, even to "", so a paused sandbox answers like a running one.
 	sandbox.Alias = &pausedAlias
+
+	if lastSnapshot.Snapshot.Config != nil {
+		sandbox.VolumeMounts = convertFromDBMountsToAPIMounts(lastSnapshot.Snapshot.Config.VolumeMounts)
+	}
 
 	if lastSnapshot.Snapshot.Metadata != nil {
 		metadata := api.SandboxMetadata(lastSnapshot.Snapshot.Metadata)
