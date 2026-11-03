@@ -92,6 +92,20 @@ func LogRefused(ctx context.Context, sandboxID string, teamID string, reason Rea
 	)
 }
 
+// LogGuestAgentUnresponsive is not a result either: the node took the memory
+// snapshot although the sandbox's guest agent did not answer its health
+// probe, and recorded it so; the success row of the same pause follows. A
+// resume of this snapshot must ask for memory:false.
+func LogGuestAgentUnresponsive(ctx context.Context, sandboxID string, teamID string, reason Reason, fsOnly bool) {
+	logger.L().Warn(ctx, "sandbox_pause_guest_agent_unresponsive",
+		logger.WithSandboxID(sandboxID),
+		logger.WithTeamID(teamID),
+		zap.String("pause_reason", string(reason)),
+		zap.Bool("fs_only", fsOnly),
+		zap.Bool("guest_agent_unresponsive", true),
+	)
+}
+
 func LogSkipped(ctx context.Context, sandboxID string, teamID string, reason Reason, skipReason SkipReason, fsOnly bool) {
 	logger.L().Info(ctx, "sandbox_pause_result",
 		logger.WithSandboxID(sandboxID),

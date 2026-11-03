@@ -542,6 +542,15 @@ func (s *Storage) handleExistingTransition(
 	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
 	if sbx.State == newState {
+		// A pause that requires a healthy guest cannot ride a pause in flight,
+		// whose snapshot may be taken over an unresponsive one: it is answered
+		// as a conflicting transition and retried once the sandbox is paused.
+		// (The sweep never gets here: a transition in flight ends its attempt
+		// above.)
+		if opts.Action == sandboxtypes.StateActionPause && opts.RequireEnvdHealthy {
+			return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		}
+
 		// Same target state - wait for completion and return alreadyDone=true.
 		// The caller inherits the in-flight transition's result without
 		// doing the work itself: this is a joiner.

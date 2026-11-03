@@ -1142,6 +1142,28 @@ sequenceDiagram
     between the check and the pause sends the new execution back through the limiter instead
     of pausing it uncounted. The key expires once the budget is full again, at most one period
     after the last counted pause. Timeout auto-pauses are not limited.
+  - **Guest-agent probe before every snapshot** (gated by the `pause-envd-health-timeout-milliseconds`
+    flag): before anything destructive, the node asks the sandbox's guest agent (envd) for its
+    health. A memory pause whose agent does not answer proceeds by default and the snapshot is
+    recorded as taken over an unresponsive agent, both in the snapshot's own metadata and on
+    the build's row in Postgres; the sandbox then reports `envdUnresponsiveAtPause`. A pause
+    sent with `requireHealthyGuest` is refused instead, with 503 and the sandbox left running,
+    as every pause was before the mark existed; a request that requires a healthy guest never
+    joins a pause already in flight, since that one may be taking the marked snapshot. A
+    filesystem-only pause is always refused while the agent does not answer, because its
+    capture needs the agent to quiesce the root filesystem, and so is every checkpoint (forks
+    and snapshot templates), since a fork of a hung guest is born dead and the resume-fresh
+    route destroys the original. A plain resume of a marked snapshot, whether by request,
+    by connect, or by traffic, is refused with 409 and the error code
+    `sandbox_snapshot_guest_agent_unresponsive`, because restoring that memory brings the
+    unresponsive agent back; resuming without memory (`memory: false`) cold-boots the sandbox
+    from its disk and is open to every team for such a snapshot. The eviction sweep keeps its
+    grace: its auto-pauses require a healthy guest for `auto-pause-envd-grace-milliseconds`
+    from the first refusal, so a hung guest keeps the sandbox running that long, and the first
+    sweep past the grace takes the memory snapshot and records it; a filesystem-only auto-pause
+    is never taken past the grace. On the wire the node is strict unless the API says it can
+    persist the mark, so an API from before the mark keeps today's refusal against a newer
+    node.
 - **Resume**: same path as creation, but placement prefers the **origin node** — if the snapshot
   is still in its local cache, resume avoids any object-storage reads. The origin node gets
   the same hugepage-limit check as any other node, so a full origin is skipped. `Checkpoint` is a

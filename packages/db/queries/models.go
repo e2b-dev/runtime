@@ -74,6 +74,7 @@ type EnvBuild struct {
 	StatusGroup        types.BuildStatusGroup
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
+	EnvdUnresponsive   *bool
 }
 
 type EnvDefault struct {

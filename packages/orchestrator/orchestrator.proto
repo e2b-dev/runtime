@@ -222,9 +222,18 @@ message SandboxPauseRequest {
   // snapshot, so existing callers are unaffected.
   bool filesystem_only = 4;
 
-  // When true, the memory snapshot is taken without the envd health probe.
-  // Set by the API's eviction sweep once the probe has refused for the grace period.
-  bool skip_envd_health_probe = 5;
+  // Field 5 was skip_envd_health_probe: a memory pause now proceeds past an
+  // unanswered probe by default and records it (envd_unresponsive below).
+  reserved 5;
+  reserved "skip_envd_health_probe";
+
+  // When true, a memory pause proceeds past a guest agent that does not
+  // answer its health probe and reports it in envd_unresponsive, which the
+  // caller must persist. Absent or false refuses on a miss, as a caller that
+  // predates the field expects. A filesystem-only pause is always refused on
+  // a miss, whatever this says: its capture needs the agent to quiesce the
+  // rootfs.
+  bool allow_envd_unresponsive = 6;
 }
 
 message SchedulingMetadata {
@@ -250,6 +259,11 @@ message SchedulingMetadata {
 
 message SandboxPauseResponse {
   SchedulingMetadata scheduling_metadata = 1;
+
+  // The memory snapshot was taken while the guest agent did not answer its
+  // health probe. A memory resume of it replays the unresponsive agent; the
+  // API refuses one and asks for a resume without memory.
+  bool envd_unresponsive = 2;
 }
 
 message SandboxCheckpointRequest {

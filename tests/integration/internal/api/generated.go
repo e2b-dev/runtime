@@ -1178,7 +1178,7 @@ type ClusterUpdateRequest struct {
 
 // ConnectSandbox defines model for ConnectSandbox.
 type ConnectSandbox struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -1187,7 +1187,7 @@ type ConnectSandbox struct {
 
 // ConnectSandboxV2 defines model for ConnectSandboxV2.
 type ConnectSandboxV2 struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -1247,6 +1247,9 @@ type DiskSizeMB = int32
 // EnvVars defines model for EnvVars.
 type EnvVars map[string]string
 
+// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+type EnvdUnresponsiveAtPause = bool
+
 // EnvdVersion Version of the envd running in the sandbox
 type EnvdVersion = string
 
@@ -1255,7 +1258,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting.
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -1362,6 +1365,9 @@ type ListedSandbox struct {
 
 	// EndAt Time when the sandbox will expire
 	EndAt time.Time `json:"endAt"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -1825,7 +1831,7 @@ type ResumedSandbox struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AutoPause *bool `json:"autoPause,omitempty"`
 
-	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
@@ -1958,6 +1964,9 @@ type SandboxDetail struct {
 
 	// EnvdAccessToken Access token used for envd communication
 	EnvdAccessToken *string `json:"envdAccessToken,omitempty"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -2239,6 +2248,9 @@ type SandboxPauseMode string
 type SandboxPauseRequest struct {
 	// Memory Whether to capture a full memory snapshot. When false, only the filesystem is persisted and resuming the sandbox cold-boots (reboots) it from disk, losing in-memory state, running processes, and open connections. Resume it with an explicit request (connect or resume); auto-resume, which can be triggered by arbitrary traffic, refuses such a sandbox. Defaults to true.
 	Memory *bool `json:"memory,omitempty"`
+
+	// RequireHealthyGuest The pause checks that the sandbox guest agent answers before it takes the snapshot. By default an unresponsive agent is recorded on the snapshot and the pause proceeds; the sandbox then shows `envdUnresponsiveAtPause` and a later resume must ask for `memory: false`, since restoring that memory would bring the unresponsive agent back. With this true, the pause is instead refused with 503 while the agent does not answer, and the sandbox keeps running. A filesystem-only pause (`memory: false`) is always refused while the agent does not answer, whatever this says.
+	RequireHealthyGuest *bool `json:"requireHealthyGuest,omitempty"`
 }
 
 // SandboxRefreshRequest defines model for SandboxRefreshRequest.
@@ -4496,7 +4508,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBody Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4507,7 +4519,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnect Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4570,7 +4582,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBody Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4579,7 +4591,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPause Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4606,7 +4618,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBody Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4617,7 +4629,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResume Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5431,7 +5443,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5440,7 +5452,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6298,7 +6310,7 @@ func (c *Client) GetSandboxesSandboxID(ctx context.Context, sandboxID SandboxID,
 
 // PostSandboxesSandboxIDConnectWithBody Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6318,7 +6330,7 @@ func (c *Client) PostSandboxesSandboxIDConnectWithBody(ctx context.Context, sand
 
 // PostSandboxesSandboxIDConnect Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6449,7 +6461,7 @@ func (c *Client) PutSandboxesSandboxIDNetwork(ctx context.Context, sandboxID San
 
 // PostSandboxesSandboxIDPauseWithBody Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6468,7 +6480,7 @@ func (c *Client) PostSandboxesSandboxIDPauseWithBody(ctx context.Context, sandbo
 
 // PostSandboxesSandboxIDPause Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6525,7 +6537,7 @@ func (c *Client) PostSandboxesSandboxIDRefreshes(ctx context.Context, sandboxID 
 
 // PostSandboxesSandboxIDResumeWithBody Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type.
 //
@@ -6545,7 +6557,7 @@ func (c *Client) PostSandboxesSandboxIDResumeWithBody(ctx context.Context, sandb
 
 // PostSandboxesSandboxIDResume Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8315,7 +8327,7 @@ func (c *Client) PostV2Sandboxes(ctx context.Context, params *PostV2SandboxesPar
 
 // PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8334,7 +8346,7 @@ func (c *Client) PostV2SandboxesSandboxIDConnectWithBody(ctx context.Context, sa
 
 // PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15343,7 +15355,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15354,7 +15366,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15421,7 +15433,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15430,7 +15442,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15457,7 +15469,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15468,7 +15480,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16372,7 +16384,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16381,7 +16393,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26690,7 +26702,7 @@ func (c *ClientWithResponses) GetSandboxesSandboxIDWithResponse(ctx context.Cont
 
 // PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26707,7 +26719,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDConnectWithBodyWithResponse(
 
 // PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26815,7 +26827,7 @@ func (c *ClientWithResponses) PutSandboxesSandboxIDNetworkWithResponse(ctx conte
 
 // PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26830,7 +26842,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDPauseWithBodyWithResponse(ct
 
 // PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26875,7 +26887,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDRefreshesWithResponse(ctx co
 
 // PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26892,7 +26904,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithBodyWithResponse(c
 
 // PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28370,7 +28382,7 @@ func (c *ClientWithResponses) PostV2SandboxesWithResponse(ctx context.Context, p
 
 // PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28385,7 +28397,7 @@ func (c *ClientWithResponses) PostV2SandboxesSandboxIDConnectWithBodyWithRespons
 
 // PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

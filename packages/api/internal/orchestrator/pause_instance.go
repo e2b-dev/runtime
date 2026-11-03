@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
+	"github.com/e2b-dev/infra/packages/api/internal/pause"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -31,9 +32,13 @@ type (
 	PauseRefusedEnvdUnresponsiveError     = sandbox.PauseRefusedEnvdUnresponsiveError
 )
 
-func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, filesystemOnly, skipEnvdHealthProbe bool) error {
+// pauseSandbox takes the snapshot opts asks for: its kind, and whether the
+// node must refuse it when the guest agent does not answer.
+func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "pause-sandbox")
 	defer span.End()
+
+	filesystemOnly := opts.FilesystemOnly
 
 	// The requested kind is recorded only once the pause has succeeded: a pause
 	// the node refuses leaves the sandbox running on its previous build, whose
@@ -60,7 +65,9 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		zap.String("source_build_id", sbx.BuildID.String()),
 	)
 
-	err = snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly, skipEnvdHealthProbe)
+	// The node is strict unless told it may proceed, so an API that cannot
+	// persist its answer never gets an unmarked snapshot of a hung guest.
+	envdUnresponsive, err := snapshotInstance(ctx, node, sbx, result.TemplateID, result.BuildID.String(), filesystemOnly, !opts.RequireEnvdHealthy && !filesystemOnly)
 	if err != nil {
 		// The build is already committed, and nothing reaps one left non-terminal.
 		o.failSnapshotBuild(ctx, result.BuildID, err)
@@ -76,7 +83,15 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 		return fmt.Errorf("error pausing sandbox: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, result.BuildID, sbx.SandboxID, currentKind, filesystemOnly, types.BuildStatusSuccess); err != nil {
+	if envdUnresponsive {
+		reason := pause.ReasonRequest
+		if opts.Eviction {
+			reason = pause.ReasonTimeout
+		}
+		pause.LogGuestAgentUnresponsive(ctx, sbx.SandboxID, sbx.TeamID.String(), reason, filesystemOnly)
+	}
+
+	if err := o.finishSnapshotBuildWithKind(ctx, result.BuildID, sbx.SandboxID, currentKind, filesystemOnly, envdUnresponsive, types.BuildStatusSuccess); err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
 		return fmt.Errorf("error pausing sandbox: %w", err)
@@ -87,46 +102,49 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 	return nil
 }
 
-func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly, skipEnvdHealthProbe bool) error {
+// snapshotInstance asks the node for the snapshot and reports whether the
+// node took it while the guest agent did not answer its health probe, which
+// allowEnvdUnresponsive lets it do.
+func snapshotInstance(ctx context.Context, node *nodemanager.Node, sbx sandbox.Sandbox, templateID, buildID string, filesystemOnly, allowEnvdUnresponsive bool) (bool, error) {
 	childCtx, childSpan := tracer.Start(ctx, "snapshot-instance")
 	defer childSpan.End()
 
 	client, childCtx := node.GetSandboxClient(childCtx, sbx.TeamID.String())
-	_, err := client.Sandbox.Pause(
+	resp, err := client.Sandbox.Pause(
 		childCtx, &orchestrator.SandboxPauseRequest{
-			SandboxId:           sbx.SandboxID,
-			TemplateId:          templateID,
-			BuildId:             buildID,
-			FilesystemOnly:      filesystemOnly,
-			SkipEnvdHealthProbe: skipEnvdHealthProbe,
+			SandboxId:             sbx.SandboxID,
+			TemplateId:            templateID,
+			BuildId:               buildID,
+			FilesystemOnly:        filesystemOnly,
+			AllowEnvdUnresponsive: allowEnvdUnresponsive,
 		},
 	)
 
 	if err == nil {
 		telemetry.ReportEvent(ctx, "Paused sandbox")
 
-		return nil
+		return resp.GetEnvdUnresponsive(), nil
 	}
 
 	st, ok := status.FromError(err)
 	if !ok {
-		return err
+		return false, err
 	}
 
 	if st.Code() == codes.ResourceExhausted {
 		logger.L().Warn(ctx, "Pause refused by the node", logger.WithSandboxID(sbx.SandboxID), zap.String("node_message", st.Message()))
 
 		if isCheckpointInProgress(err) {
-			return PauseRefusedCheckpointInProgressError{}
+			return false, PauseRefusedCheckpointInProgressError{}
 		}
 		if isEnvdUnresponsive(err) {
-			return PauseRefusedEnvdUnresponsiveError{}
+			return false, PauseRefusedEnvdUnresponsiveError{}
 		}
 
-		return PauseQueueExhaustedError{}
+		return false, PauseQueueExhaustedError{}
 	}
 
-	return fmt.Errorf("failed to pause sandbox '%s': %w", sbx.SandboxID, err)
+	return false, fmt.Errorf("failed to pause sandbox '%s': %w", sbx.SandboxID, err)
 }
 
 func (o *Orchestrator) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {

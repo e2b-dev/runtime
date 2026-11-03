@@ -148,7 +148,7 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, types.BuildStatusSuccess); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, types.BuildStatusSuccess); err != nil {
 		return errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 

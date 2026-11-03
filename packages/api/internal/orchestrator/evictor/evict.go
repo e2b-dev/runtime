@@ -193,6 +193,9 @@ func (e *Evictor) evictSandbox(ctx context.Context, sbx sandbox.Sandbox) {
 		if opts.FilesystemOnly {
 			e.fsOnlyAutoPauseCounter.Add(ctx, 1, metric.WithAttributes(telemetry.WithTeamID(sbx.TeamID.String())))
 		}
+		// Strict, so a hung guest is refused and its episode clock runs; the
+		// grace below decides when a memory pause goes on without it.
+		opts.RequireEnvdHealthy = true
 	}
 
 	err := e.removeSandbox(context.WithoutCancel(ctx), sbx.TeamID, sbx.SandboxID, opts)
@@ -200,8 +203,9 @@ func (e *Evictor) evictSandbox(ctx context.Context, sbx sandbox.Sandbox) {
 	// its own, so the next sweep retries it as is. A guest agent that does
 	// not answer is never degraded to filesystem-only, which needs the agent
 	// to quiesce the rootfs; past the grace the memory pause is retried once
-	// without the probe. A filesystem-only sweep has no such retry: the
-	// sandbox stays running and the withheld bypass is counted.
+	// without requiring a healthy guest, so the node takes it and records
+	// the miss. A filesystem-only sweep has no such retry: the sandbox stays
+	// running and the withheld bypass is counted.
 	bypassCause := ""
 	if action == sandbox.StateActionPause && errors.Is(err, sandbox.PauseQueueExhaustedError{}) &&
 		!errors.Is(err, sandbox.PauseRefusedCheckpointInProgressError{}) {
@@ -240,15 +244,16 @@ func (e *Evictor) evictSandbox(ctx context.Context, sbx sandbox.Sandbox) {
 			zap.Duration("past_expiry", time.Since(sbx.EndTime)),
 		)
 	case degradeCauseEnvdGrace:
-		// The refusal is an intermediate event; the unprobed memory pause
-		// that follows is this sweep's one result.
+		// The refusal is an intermediate event; the memory pause that
+		// follows, taken over the unresponsive agent and recorded as such,
+		// is this sweep's one result.
 		pause.LogRefused(ctx, sbx.SandboxID, sbx.TeamID.String(), pause.ReasonTimeout, opts.FilesystemOnly)
-		opts.SkipEnvdHealthProbe = true
+		opts.RequireEnvdHealthy = false
 		e.degradedCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("cause", bypassCause),
 			telemetry.WithTeamID(sbx.TeamID.String()),
 		))
-		logger.L().Warn(ctx, "Auto-pause retried without the envd health probe: the guest agent refused for the whole grace period",
+		logger.L().Warn(ctx, "Auto-pause retried without requiring a healthy guest agent: it refused for the whole grace period, the snapshot is recorded as taken over an unresponsive agent",
 			logger.WithSandboxID(sbx.SandboxID),
 			logger.WithTeamID(sbx.TeamID.String()),
 			zap.String("cause", bypassCause),

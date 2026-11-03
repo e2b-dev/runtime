@@ -867,6 +867,18 @@ components:
         onTimeout:
           $ref: "#/components/schemas/SandboxOnTimeout"
 
+    EnvdUnresponsiveAtPause:
+      type: boolean
+      description: >-
+        True when the snapshot a paused sandbox would resume from was taken
+        while the sandbox guest agent was not responding. A plain resume of
+        it is refused with 409 and error_code
+        sandbox_snapshot_guest_agent_unresponsive, because restoring that
+        memory would bring the unresponsive agent back; resume it without
+        memory (`memory: false`), which cold-boots the sandbox from its disk.
+        Omitted for a running sandbox and for a snapshot whose agent
+        answered.
+
     SandboxPauseMode:
       type: string
       description: >-
@@ -1075,6 +1087,8 @@ components:
           description: Time when the sandbox will expire
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
+        envdUnresponsiveAtPause:
+          $ref: "#/components/schemas/EnvdUnresponsiveAtPause"
         envdAccessToken:
           type: string
           description: Access token used for envd communication
@@ -1153,6 +1167,8 @@ components:
           $ref: "#/components/schemas/SandboxState"
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
+        envdUnresponsiveAtPause:
+          $ref: "#/components/schemas/EnvdUnresponsiveAtPause"
         volumeMounts:
           type: array
           items:
@@ -1322,7 +1338,9 @@ components:
             state has crash-recovery semantics — writes not flushed before the pause
             may be lost. A no-op for snapshots that contain no memory. Rejected with
             an error in environments where this capability is not enabled, never
-            silently downgraded to a memory restore.
+            silently downgraded to a memory restore. A snapshot taken while the
+            sandbox guest agent was not responding (envdUnresponsiveAtPause) can
+            only be resumed this way, and needs no enablement.
 
     ConnectSandbox:
       type: object
@@ -1342,7 +1360,10 @@ components:
             modified or deleted. Disk state has crash-recovery semantics — writes not
             flushed before the pause may be lost. A no-op for snapshots that contain
             no memory. Rejected with an error in environments where this capability
-            is not enabled, never silently downgraded to a memory restore.
+            is not enabled, never silently downgraded to a memory restore. A
+            snapshot taken while the sandbox guest agent was not responding
+            (envdUnresponsiveAtPause) can only be resumed this way, and needs no
+            enablement.
 
     ConnectSandboxV2:
       type: object
@@ -1361,7 +1382,10 @@ components:
             modified or deleted. Disk state has crash-recovery semantics — writes not
             flushed before the pause may be lost. A no-op for snapshots that contain
             no memory. Rejected with an error in environments where this capability
-            is not enabled, never silently downgraded to a memory restore.
+            is not enabled, never silently downgraded to a memory restore. A
+            snapshot taken while the sandbox guest agent was not responding
+            (envdUnresponsiveAtPause) can only be resumed this way, and needs no
+            enablement.
 
     SandboxTimeoutRequest:
       type: object
@@ -1412,6 +1436,19 @@ components:
             and open connections. Resume it with an explicit request (connect or
             resume); auto-resume, which can be triggered by arbitrary traffic,
             refuses such a sandbox. Defaults to true.
+        requireHealthyGuest:
+          type: boolean
+          default: false
+          description: >-
+            The pause checks that the sandbox guest agent answers before it
+            takes the snapshot. By default an unresponsive agent is recorded
+            on the snapshot and the pause proceeds; the sandbox then shows
+            `envdUnresponsiveAtPause` and a later resume must ask for
+            `memory: false`, since restoring that memory would bring the
+            unresponsive agent back. With this true, the pause is instead
+            refused with 503 while the agent does not answer, and the sandbox
+            keeps running. A filesystem-only pause (`memory: false`) is always
+            refused while the agent does not answer, whatever this says.
 
     SandboxForkRequest:
       type: object
@@ -3583,7 +3620,10 @@ components:
             idempotency_outcome_unknown, cluster_registration_invalid,
             cluster_registration_conflict, cluster_assignment_invalid,
             cluster_assignment_project_not_found, cluster_assignment_cluster_not_found,
-            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting.
+            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting,
+            sandbox_snapshot_guest_agent_unresponsive (a plain resume of a
+            snapshot taken while the sandbox guest agent was not responding;
+            resume it with memory: false).
         message:
           type: string
           description: Error
@@ -5168,7 +5208,11 @@ paths:
   /sandboxes/{sandboxID}/pause:
     post:
       summary: Pause sandbox
-      description: Pause the sandbox
+      description: >-
+        Pause the sandbox. Answers 503 and leaves the sandbox running when it
+        cannot be paused right now: its node is busy, it is being snapshotted,
+        or `requireHealthyGuest` was set and the sandbox guest agent is not
+        responding; retry later.
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -5206,7 +5250,12 @@ paths:
     post:
       summary: Resume sandbox
       deprecated: true
-      description: Resume the sandbox
+      description: >-
+        Resume the sandbox. Answers 409 when the sandbox is already running,
+        or when its snapshot was taken while the sandbox guest agent was not
+        responding and a plain resume would restore that memory (error_code
+        sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox
+        without memory (`memory: false`).
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -5303,7 +5352,13 @@ paths:
   /sandboxes/{sandboxID}/connect:
     post:
       summary: Connect sandbox
-      description: Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+      description: >-
+        Returns sandbox details. If the sandbox is paused, it will be resumed.
+        TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect
+        instead. Answers 409 with error_code
+        sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's
+        snapshot was taken while its guest agent was not responding and the
+        request did not ask for `memory: false`.
       deprecated: true
       tags: [sandboxes]
       security:
@@ -5358,7 +5413,10 @@ paths:
       description: >-
         Returns sandbox details. If the sandbox is paused, it will be resumed.
         TTL is only extended. The request body is optional; an omitted timeout
-        defaults to 300 seconds.
+        defaults to 300 seconds. Answers 409 with error_code
+        sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's
+        snapshot was taken while its guest agent was not responding and the
+        request did not ask for `memory: false`.
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []

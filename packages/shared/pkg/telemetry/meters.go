@@ -104,7 +104,9 @@ const (
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
-	// grace flag.
+	// grace flag. The envd probe has its own outcomes: envd_healthy,
+	// envd_unhealthy (refused) and envd_unhealthy_proceeded (the memory
+	// snapshot was taken anyway and recorded as such).
 	OrchestratorSandboxPauseAdmissionCounterName CounterType = "orchestrator.sandbox.pause_admission"
 	// OrchestratorSandboxCheckpointCounterName counts Checkpoint RPCs by flow —
 	// the denominator that makes the in_place-labeled duration histograms
@@ -847,7 +849,7 @@ var counterDesc = map[CounterType]string{
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
-	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without the envd probe (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
+	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without requiring a healthy guest agent, so the node takes it and records the miss (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
@@ -865,7 +867,7 @@ var counterDesc = map[CounterType]string{
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
-	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error) and rpc (pause/checkpoint)",
+	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent) and rpc (pause/checkpoint)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
 	OrchestratorFPHRunCounterName:                "Free-page-hinting drains and runs, labeled by phase (pre-pause, periodic) and outcome (ok, not-configured, refused, timeout, timeout-guest-silent, failed, cancelled, skipped-<reason> incl. skipped-host-busy)",
@@ -1266,7 +1268,7 @@ var histogramDesc = map[HistogramType]string{
 	CheckpointDurationName:                            "Wall time of one Checkpoint RPC from the route decision to the reply, labeled by in_place, fs_only, route, balloon_mode, deferred and success: the per-route latency the checkpoint counter only counts, with deferred separating the CoW-window and synchronous-copy arms of an in-place reporting checkpoint",
 	SnapshotMemorySealDurationName:                    "Time for the background CoW-window memory capture (off the in-place resume critical path), labeled by success",
 	OrchestratorSandboxMemfileDedupDurationName:       "Background memfile dedup latency, from the provisional header's creation at pause to the durable-header swap",
-	OrchestratorSandboxPauseAdmissionWaitDurationName: "Time snapshot admission waited on the durable parent header whenever it waited, labeled by outcome (ready_after_wait/refused)",
+	OrchestratorSandboxPauseAdmissionWaitDurationName: "Time snapshot admission waited on the durable parent header whenever it waited (outcome ready_after_wait/refused), and the guest-agent probe's own round trip under its outcomes (envd_healthy/envd_unhealthy/envd_unhealthy_proceeded)",
 	OrchestratorSandboxStartGateWaitDurationName:      "Time a start waited for a per-node start slot, one sample per acquire attempt, labeled by kind (create|resume|checkpoint|harvest) and outcome (acquired|cancelled|refused); a create never waits, so its samples are zero",
 	OrchestratorEnvdOfflineUpgradeDurationName:        "Wall-time of the offline cold-boot envd rootfs swap (jailed debugfs)",
 	OrchestratorEnvdBinaryCacheSourceStatDurationName: "Wall-time of the resume path's stat of the host envd binary on its mount, by result (ok|error)",

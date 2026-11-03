@@ -473,17 +473,18 @@ func snapshotsToPaginatedSandboxes(ctx context.Context, snapshots []queries.GetS
 
 		sandbox := utils.PaginatedSandbox{
 			ListedSandbox: api.ListedSandbox{
-				ClientID:    consts.ClientID, // for backwards compatibility we need to return a client id
-				Alias:       alias,
-				TemplateID:  snapshot.BaseEnvID,
-				SandboxID:   snapshot.SandboxID,
-				StartedAt:   snapshot.SandboxStartedAt.Time,
-				CpuCount:    int32(record.BuildVcpu),
-				MemoryMB:    int32(record.BuildRamMb),
-				DiskSizeMB:  diskSize,
-				EndAt:       record.BuildCreatedAt,
-				State:       api.Paused,
-				EnvdVersion: envdVersion,
+				ClientID:                consts.ClientID, // for backwards compatibility we need to return a client id
+				Alias:                   alias,
+				TemplateID:              snapshot.BaseEnvID,
+				SandboxID:               snapshot.SandboxID,
+				StartedAt:               snapshot.SandboxStartedAt.Time,
+				CpuCount:                int32(record.BuildVcpu),
+				MemoryMB:                int32(record.BuildRamMb),
+				DiskSizeMB:              diskSize,
+				EndAt:                   record.BuildCreatedAt,
+				State:                   api.Paused,
+				EnvdVersion:             envdVersion,
+				EnvdUnresponsiveAtPause: envdUnresponsiveAtPause(record.BuildEnvdUnresponsive),
 			},
 			PaginationTimestamp: snapshot.SandboxStartedAt.Time,
 		}

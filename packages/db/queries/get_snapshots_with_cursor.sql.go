@@ -22,6 +22,7 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -33,7 +34,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -69,15 +70,16 @@ type GetSnapshotsByTemplateWithCursorParams struct {
 }
 
 type GetSnapshotsByTemplateWithCursorRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetSnapshotsByTemplateWithCursorParams) ([]GetSnapshotsByTemplateWithCursorRow, error) {
@@ -119,6 +121,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -139,6 +142,7 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -150,7 +154,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -189,15 +193,16 @@ type GetSnapshotsByTemplateWithCursorAscParams struct {
 }
 
 type GetSnapshotsByTemplateWithCursorAscRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg GetSnapshotsByTemplateWithCursorAscParams) ([]GetSnapshotsByTemplateWithCursorAscRow, error) {
@@ -239,6 +244,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -259,6 +265,7 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -270,7 +277,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -308,15 +315,16 @@ type GetSnapshotsWithCursorParams struct {
 }
 
 type GetSnapshotsWithCursorRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWithCursorParams) ([]GetSnapshotsWithCursorRow, error) {
@@ -357,6 +365,7 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -377,6 +386,7 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -388,7 +398,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -425,15 +435,16 @@ type GetSnapshotsWithCursorAscParams struct {
 }
 
 type GetSnapshotsWithCursorAscRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 // Ascending counterpart of GetSnapshotsWithCursor. It is the exact reverse order
@@ -477,6 +488,7 @@ func (q *Queries) GetSnapshotsWithCursorAsc(ctx context.Context, arg GetSnapshot
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err

@@ -156,6 +156,7 @@ type EnvBuild struct {
 	StatusGroup        string
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
+	EnvdUnresponsive   pgtype.Bool
 }
 
 type EnvBuildAssignment struct {

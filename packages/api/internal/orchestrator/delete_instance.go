@@ -198,7 +198,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 	}()
-	err = o.removeSandboxFromNode(ctx, sbx, opts.Action, opts.Reason, opts.FilesystemOnly, opts.SkipEnvdHealthProbe)
+	err = o.removeSandboxFromNode(ctx, sbx, opts)
 	if err != nil {
 		if errors.Is(err, PauseQueueExhaustedError{}) {
 			refusal := refusalOf(err)
@@ -347,16 +347,11 @@ func refusalOf(err error) error {
 	}
 }
 
-func (o *Orchestrator) removeSandboxFromNode(
-	ctx context.Context,
-	sbx sandbox.Sandbox,
-	stateAction sandbox.StateAction,
-	reason sandbox.KillReason,
-	filesystemOnly bool,
-	skipEnvdHealthProbe bool,
-) error {
+func (o *Orchestrator) removeSandboxFromNode(ctx context.Context, sbx sandbox.Sandbox, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "remove-sandbox-from-node")
 	defer span.End()
+
+	stateAction, reason := opts.Action, opts.Reason
 
 	node := o.getOrConnectNode(ctx, sbx.ClusterID, sbx.NodeID)
 	if node == nil {
@@ -379,7 +374,7 @@ func (o *Orchestrator) removeSandboxFromNode(
 
 	switch stateAction {
 	case sandbox.StateActionPause:
-		err := o.pauseSandbox(ctx, node, sbx, filesystemOnly, skipEnvdHealthProbe)
+		err := o.pauseSandbox(ctx, node, sbx, opts)
 		if err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
 				killErr := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonBaseTemplateMissing)

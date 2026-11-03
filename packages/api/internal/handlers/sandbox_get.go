@@ -267,22 +267,23 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	pausedAlias := firstAlias(lastSnapshot.Aliases)
 
 	sandbox := api.SandboxDetail{
-		ClientID:            consts.ClientID, // for backwards compatibility we need to return a client id
-		TemplateID:          lastSnapshot.Snapshot.BaseEnvID,
-		SandboxID:           lastSnapshot.Snapshot.SandboxID,
-		StartedAt:           lastSnapshot.Snapshot.SandboxStartedAt.Time,
-		CpuCount:            cpuCount,
-		MemoryMB:            memoryMB,
-		DiskSizeMB:          diskSize,
-		EndAt:               lastSnapshot.EnvBuild.CreatedAt, // Latest build created_at represents last pause time
-		State:               api.Paused,
-		EnvdVersion:         envdVersion,
-		EnvdAccessToken:     sbxAccessToken,
-		AllowInternetAccess: lastSnapshot.Snapshot.AllowInternetAccess,
-		Domain:              nil,
-		Network:             dbNetworkConfigToAPI(networkConfig),
-		Lifecycle:           sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
-		PauseMode:           sandboxPauseModeToAPI(lastSnapshot.Snapshot.Config),
+		ClientID:                consts.ClientID, // for backwards compatibility we need to return a client id
+		TemplateID:              lastSnapshot.Snapshot.BaseEnvID,
+		SandboxID:               lastSnapshot.Snapshot.SandboxID,
+		StartedAt:               lastSnapshot.Snapshot.SandboxStartedAt.Time,
+		CpuCount:                cpuCount,
+		MemoryMB:                memoryMB,
+		DiskSizeMB:              diskSize,
+		EndAt:                   lastSnapshot.EnvBuild.CreatedAt, // Latest build created_at represents last pause time
+		State:                   api.Paused,
+		EnvdVersion:             envdVersion,
+		EnvdUnresponsiveAtPause: envdUnresponsiveAtPause(lastSnapshot.EnvBuild.EnvdUnresponsive),
+		EnvdAccessToken:         sbxAccessToken,
+		AllowInternetAccess:     lastSnapshot.Snapshot.AllowInternetAccess,
+		Domain:                  nil,
+		Network:                 dbNetworkConfigToAPI(networkConfig),
+		Lifecycle:               sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
+		PauseMode:               sandboxPauseModeToAPI(lastSnapshot.Snapshot.Config),
 	}
 
 	sandbox.Alias = &pausedAlias

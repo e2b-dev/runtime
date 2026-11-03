@@ -658,18 +658,21 @@ var (
 	// 0 probes the parent header's readiness without waiting; a positive value
 	// waits up to that long before refusing retryably.
 	PauseAdmissionGraceMs = NewIntFlag("pause-admission-grace-milliseconds", -1)
-	// PauseEnvdHealthTimeoutMs gates the envd health probe a memory pause runs
+	// PauseEnvdHealthTimeoutMs gates the envd health probe every snapshot runs
 	// before anything destructive, in milliseconds. 0 or less (default -1)
 	// disables the probe: an HTTP request cannot complete inside a zero
 	// deadline, so unlike PauseAdmissionGraceMs zero is not an instant probe.
 	// A positive value probes envd's /health with that timeout, capped at the
-	// sandbox HTTP client's 10s limit, and refuses the pause, checkpoint or
-	// fork retryably with an ENVD_UNRESPONSIVE detail when it does not answer,
-	// filesystem-only captures included: a memory snapshot of a hung agent
-	// replays hung on every resume, and a filesystem-only capture needs the
-	// agent to freeze the rootfs. A rollout brake: once production confirms
-	// the refusal rate matches the dead-guest rate, the timeout becomes a
-	// constant and the flag is retired.
+	// sandbox HTTP client's 10s limit. When envd does not answer, a memory
+	// pause proceeds and the snapshot is recorded as taken over an
+	// unresponsive agent, unless the caller requires a healthy guest, in
+	// which case it is refused retryably with an ENVD_UNRESPONSIVE detail;
+	// filesystem-only captures and checkpoints (forks, snapshot templates)
+	// are always refused that way, since a filesystem-only capture needs the
+	// agent to freeze the rootfs and a fork of a hung agent is born dead. A
+	// rollout brake: once production confirms the refusal rate matches the
+	// dead-guest rate, the timeout becomes a constant and the flag is
+	// retired.
 	PauseEnvdHealthTimeoutMs = NewIntFlag("pause-envd-health-timeout-milliseconds", -1)
 	// PauseAdmissionDiskHeadroomMiB makes a node refuse a pause, retryably and
 	// before anything destructive, when the filesystem holding its build

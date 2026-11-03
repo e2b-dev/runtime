@@ -665,10 +665,7 @@ func (o *Orchestrator) CreateSandbox(
 		killErr := o.removeSandboxFromNode(
 			context.WithoutCancel(ctx),
 			sbx,
-			sandbox.StateActionKill,
-			sandbox.KillReasonUnknown,
-			false, // kill: no snapshot
-			false, // kill: no probe to skip
+			sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 		)
 		if killErr != nil {
 			logger.L().Error(ctx, "Error removing memory-restored sandbox after unhonored filesystem-boot demand",
@@ -696,10 +693,7 @@ func (o *Orchestrator) CreateSandbox(
 			killErr := o.removeSandboxFromNode(
 				context.WithoutCancel(ctx),
 				sbxToRemove,
-				sandbox.StateActionKill,
-				sandbox.KillReasonUnknown,
-				false, // kill: no snapshot
-				false, // kill: no probe to skip
+				sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 			)
 			if killErr != nil {
 				logger.L().Error(ctx, "Error removing sandbox",

@@ -275,6 +275,24 @@ func TestResumeFlights_PermanentPlacementRefusalIsNotRetried(t *testing.T) {
 		require.Zero(t, p.metrics.parkingWaitSamples(t))
 	})
 
+	// A snapshot taken over an unresponsive guest agent is refused its memory
+	// resume for good: the page is the API's 409 with the code, so the caller
+	// learns to resume without memory, and no retry is spent on it.
+	t.Run(proxygrpc.SnapshotGuestAgentUnresponsive+" refused", func(t *testing.T) {
+		t.Parallel()
+
+		refusal := placementStatusWithHTTPStatus(t, codes.AlreadyExists, proxygrpc.SnapshotGuestAgentUnresponsive, http.StatusConflict)
+		resumer := &sequenceResumer{errs: []error{refusal, refusal}, route: testRoute}
+		p := newParkedProxy(t, newFFWithParking(t, true, 15000, 512), resumer)
+
+		rr := p.get(t)
+		require.Equal(t, http.StatusConflict, rr.Code)
+		require.Empty(t, rr.Header().Get("Retry-After"))
+		require.Contains(t, rr.Body.String(), `"error_code":"`+proxygrpc.SnapshotGuestAgentUnresponsive+`"`)
+		require.EqualValues(t, 1, resumer.calls.Load())
+		require.Zero(t, p.metrics.parkingWaitSamples(t))
+	})
+
 	for _, code := range []string{proxygrpc.PlacementCapacityUnavailable, proxygrpc.PlacementNoCompatibleNode} {
 		t.Run(code+" retried", func(t *testing.T) {
 			t.Parallel()

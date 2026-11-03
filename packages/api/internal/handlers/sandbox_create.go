@@ -50,6 +50,8 @@ const (
 	InstanceIDPrefix            = "i"
 	metricTemplateAlias         = metrics.MetricPrefix + "template.alias"
 	metricMemoryOverride        = metrics.MetricPrefix + "memory_override"
+	metricPauseMode             = metrics.MetricPrefix + "pause.mode"
+	metricResumeGate            = metrics.MetricPrefix + "resume.gate"
 	minEnvdVersionForSecureFlag = "0.2.0" // Minimum version of envd that supports secure flag
 
 	// Network validation error messages

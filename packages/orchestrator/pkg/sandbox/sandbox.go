@@ -2459,6 +2459,7 @@ type pauseOptions struct {
 	deferRootfsExport  bool
 	maintainSandbox    bool
 	retainPaused       bool
+	envdUnresponsive   bool
 }
 
 type PauseOption func(*pauseOptions)
@@ -2519,6 +2520,14 @@ func WithRetainedPause() PauseOption {
 // The default (no option) is a full memory snapshot.
 func WithFilesystemSnapshot() PauseOption {
 	return func(o *pauseOptions) { o.filesystemSnapshot = true }
+}
+
+// WithEnvdUnresponsive records in the snapshot's metadata that the guest agent
+// did not answer the pause's health probe, for later use and debugging; the
+// API keeps its own copy on the build row, which is what a resume reads. The
+// pause itself runs as any memory pause.
+func WithEnvdUnresponsive() PauseOption {
+	return func(o *pauseOptions) { o.envdUnresponsive = true }
 }
 
 // WithDeferredRootfsExport seals the rootfs diff off the critical path: the
@@ -2716,6 +2725,9 @@ func (s *Sandbox) Pause(
 	// Persist whether the rootfs was frozen so a later feature can safely decide
 	// this snapshot is one it may cold-boot / rewrite without journal repair.
 	m = m.MarkFsQuiesced(pauseOpts.filesystemSnapshot && frozen)
+	// Set unconditionally like the kind: a pause whose agent answered clears a
+	// mark an earlier pause of the same lineage left.
+	m = m.MarkEnvdUnresponsive(pauseOpts.envdUnresponsive)
 	// The envd version the next life's first /init gates on, before its envd reports one.
 	m = m.WithRunningEnvdVersion(s.snapshotEnvdVersion(pauseOpts.filesystemSnapshot))
 	// Device truth over lineage: a cold-booted sandbox has no balloon whatever
@@ -4349,12 +4361,14 @@ const (
 	// timeout. Distinct from SnapshotAdmissionReady so the probe's refusal
 	// rate can be read without mixing in the durable-header check.
 	SnapshotAdmissionEnvdHealthy SnapshotAdmissionOutcome = "envd_healthy"
-	// SnapshotAdmissionEnvdUnhealthy: envd did not answer /health, so a memory
-	// snapshot taken now would capture an unresponsive agent and never resume.
+	// SnapshotAdmissionEnvdUnhealthy: envd did not answer /health and the
+	// snapshot was refused: a filesystem-only capture needs the agent, and a
+	// caller that asked for a healthy guest gets no snapshot of a hung one.
 	SnapshotAdmissionEnvdUnhealthy SnapshotAdmissionOutcome = "envd_unhealthy"
-	// SnapshotAdmissionEnvdBypassed: the caller asked for the snapshot without
-	// the probe; counted apart from the probed outcomes.
-	SnapshotAdmissionEnvdBypassed SnapshotAdmissionOutcome = "envd_bypassed"
+	// SnapshotAdmissionEnvdUnhealthyProceeded: envd did not answer /health and
+	// the memory snapshot was taken anyway, recorded as taken over an
+	// unresponsive agent; counted apart from the refusals.
+	SnapshotAdmissionEnvdUnhealthyProceeded SnapshotAdmissionOutcome = "envd_unhealthy_proceeded"
 )
 
 // rootfsCacheSizer is the optional capability of a rootfs provider to report

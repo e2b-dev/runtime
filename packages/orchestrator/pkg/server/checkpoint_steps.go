@@ -31,7 +31,7 @@ func (r serverResumeFreshSteps) snapshot(ctx context.Context, sbx *sandbox.Sandb
 	// filesystem-only requests to checkpointInPlace instead). The resume is
 	// immediate, so the diff must be materialized synchronously — never defer
 	// the rootfs export here, and never maintain the paused sandbox.
-	return r.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), in.GetMetadata(), storage.ObjectOriginSnapshotTemplate, false, false, sandboxStops)
+	return r.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), in.GetMetadata(), storage.ObjectOriginSnapshotTemplate, false, false, false, sandboxStops)
 }
 
 func (r serverResumeFreshSteps) template(ctx context.Context, sbx *sandbox.Sandbox, buildID string) (sbxtemplate.Template, func(), error) {

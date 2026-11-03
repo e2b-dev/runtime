@@ -122,6 +122,14 @@ func TestEvictSandbox_ReasonByAction(t *testing.T) {
 		assert.False(t, got.FilesystemOnly)
 	})
 
+	t.Run("the sweep's pause requires a healthy guest, a kill does not", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, run(true, false).RequireEnvdHealthy, "a memory auto-pause is strict until the grace has run")
+		assert.True(t, run(true, true).RequireEnvdHealthy)
+		assert.False(t, run(false, false).RequireEnvdHealthy)
+	})
+
 	t.Run("filesystem-only auto-pause requests a filesystem-only snapshot", func(t *testing.T) {
 		t.Parallel()
 
@@ -289,18 +297,19 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 	refusal := fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseQueueExhaustedError{})
 	hung := fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedEnvdUnresponsiveError{})
 
-	// request is what one removeSandbox call asked the node for.
+	// request is what one removeSandbox call asked the node for: the kind,
+	// and whether a hung guest must refuse it (strict).
 	type request struct {
-		fsOnly    bool
-		skipProbe bool
+		fsOnly bool
+		strict bool
 	}
-	memory := request{}
-	fsOnly := request{fsOnly: true}
-	bypassed := request{skipProbe: true}
+	memory := request{strict: true}
+	fsOnly := request{fsOnly: true, strict: true}
+	bypassed := request{}
 
 	// run sweeps one auto-pause sandbox; memoryErr is the node's answer to the
-	// probed memory pause, fsOnlyErr to a filesystem-only one, bypassErr to a
-	// memory pause with the probe skipped. refusedFor is how long ago the
+	// strict memory pause, fsOnlyErr to a filesystem-only one, bypassErr to a
+	// memory pause not requiring a healthy guest. refusedFor is how long ago the
 	// node's current episode's first refusal was stamped (zero: never),
 	// envdRefusedFor the same for the guest agent's own episode, stale moves
 	// the stamped retry window hours into the past, and noExecution scans a
@@ -349,11 +358,11 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 			fsOnlyAutoPauseCounter: fsOnlyCounter,
 			degradedCounter:        degraded,
 			removeSandbox: func(_ context.Context, _ uuid.UUID, _ string, opts sandbox.RemoveOpts) error {
-				requests = append(requests, request{fsOnly: opts.FilesystemOnly, skipProbe: opts.SkipEnvdHealthProbe})
+				requests = append(requests, request{fsOnly: opts.FilesystemOnly, strict: opts.RequireEnvdHealthy})
 				switch {
 				case opts.FilesystemOnly:
 					return sw.fsOnlyErr
-				case opts.SkipEnvdHealthProbe:
+				case !opts.RequireEnvdHealthy:
 					return sw.bypassErr
 				default:
 					return sw.memoryErr
@@ -505,11 +514,11 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{graceMs: ms(-1), envdRefusedFor: 3 * time.Hour, memoryErr: hung})
 
-		assert.Equal(t, []request{memory}, requests, "the probe is never bypassed")
+		assert.Equal(t, []request{memory}, requests, "every sweep's pause stays strict")
 		assert.Empty(t, degraded)
 	})
 
-	t.Run("zero grace: the first envd refusal is retried without the probe in the same sweep", func(t *testing.T) {
+	t.Run("zero grace: the first envd refusal is retried non-strict in the same sweep", func(t *testing.T) {
 		t.Parallel()
 
 		requests, degraded := run(t, sweep{graceMs: ms(0), memoryErr: hung})
@@ -527,7 +536,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 		assert.Empty(t, degraded)
 	})
 
-	t.Run("positive grace: an envd refusal past it bypasses the probe in the same sweep", func(t *testing.T) {
+	t.Run("positive grace: an envd refusal past it is retried non-strict in the same sweep", func(t *testing.T) {
 		t.Parallel()
 
 		requests, degraded := run(t, sweep{graceMs: ms(1000), envdRefusedFor: 5 * time.Second, memoryErr: hung})
@@ -584,7 +593,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 		assert.Equal(t, map[string]int64{"envd_grace_withheld": 1}, degraded)
 	})
 
-	t.Run("past the grace and the budget, an envd refusal bypasses the probe and is still never filesystem-only", func(t *testing.T) {
+	t.Run("past the grace and the budget, an envd refusal is retried non-strict and still never filesystem-only", func(t *testing.T) {
 		t.Parallel()
 
 		requests, degraded := run(t, sweep{budgetMs: ms(0), graceMs: ms(0), memoryErr: hung})
@@ -608,7 +617,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 		requests, degraded := run(t, sweep{graceMs: ms(0), memoryErr: hung, bypassErr: errors.New("node unreachable")})
 
 		assert.Equal(t, []request{memory, bypassed}, requests)
-		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded, "the bypass was asked for; its failure is a pause failure")
+		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded, "the non-strict pause was asked for; its failure is a pause failure")
 	})
 }
 

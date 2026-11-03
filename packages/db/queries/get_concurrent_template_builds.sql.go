@@ -12,7 +12,7 @@ import (
 )
 
 const getConcurrentTemplateBuilds = `-- name: GetConcurrentTemplateBuilds :many
-SELECT DISTINCT eb.id, eb.created_at, eb.updated_at, eb.finished_at, eb.status, eb.dockerfile, eb.start_cmd, eb.vcpu, eb.ram_mb, eb.free_disk_size_mb, eb.total_disk_size_mb, eb.kernel_version, eb.firecracker_version, eb.env_id, eb.envd_version, eb.ready_cmd, eb.cluster_node_id, eb.reason, eb.version, eb.cpu_architecture, eb.cpu_family, eb.cpu_model, eb.cpu_model_name, eb.cpu_flags, eb.status_group, eb.team_id, eb.filesystem_only FROM env_build_assignments eba
+SELECT DISTINCT eb.id, eb.created_at, eb.updated_at, eb.finished_at, eb.status, eb.dockerfile, eb.start_cmd, eb.vcpu, eb.ram_mb, eb.free_disk_size_mb, eb.total_disk_size_mb, eb.kernel_version, eb.firecracker_version, eb.env_id, eb.envd_version, eb.ready_cmd, eb.cluster_node_id, eb.reason, eb.version, eb.cpu_architecture, eb.cpu_family, eb.cpu_model, eb.cpu_model_name, eb.cpu_flags, eb.status_group, eb.team_id, eb.filesystem_only, eb.envd_unresponsive FROM env_build_assignments eba
 JOIN env_builds eb ON eb.id = eba.build_id
 WHERE
     eba.env_id = $1
@@ -66,6 +66,7 @@ func (q *Queries) GetConcurrentTemplateBuilds(ctx context.Context, arg GetConcur
 			&i.StatusGroup,
 			&i.TeamID,
 			&i.FilesystemOnly,
+			&i.EnvdUnresponsive,
 		); err != nil {
 			return nil, err
 		}

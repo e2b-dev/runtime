@@ -80,9 +80,11 @@ type RemoveOpts struct {
 	// pause. Default false = full memory snapshot.
 	FilesystemOnly bool
 
-	// SkipEnvdHealthProbe asks the node for the memory snapshot without its
-	// envd health probe. Ignored unless Action is a pause.
-	SkipEnvdHealthProbe bool
+	// RequireEnvdHealthy asks the node to refuse the memory snapshot if the
+	// sandbox's guest agent does not answer its health probe, instead of
+	// taking it and recording the miss. Ignored unless Action is a pause; a
+	// filesystem-only pause is refused on a miss whatever this says.
+	RequireEnvdHealthy bool
 
 	// ExpectExecutionID pins the removal to one incarnation of the sandbox.
 	// When set, StartRemoving fails with ErrExecutionMismatch if the stored
