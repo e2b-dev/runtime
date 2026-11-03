@@ -28,6 +28,16 @@ func IsForeignKeyViolation(err error) bool {
 	return false
 }
 
+// IsUndefinedTable reports a statement naming a table the database does not
+// have.
+func IsUndefinedTable(err error) bool {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		return pgErr.Code == "42P01"
+	}
+
+	return false
+}
+
 // IsCheckViolation reports a CHECK constraint rejection, which for a write
 // taken straight from a request body means the caller sent something the
 // column set does not permit — a client error rather than a server one.

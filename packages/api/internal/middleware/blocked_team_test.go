@@ -34,15 +34,16 @@ func TestBlockedTeamAllowlistKeepsSecretsReadsAndDeniesMutations(t *testing.T) {
 	}
 }
 
-func TestBlockedTeamStillReadsItsStatusAndLimits(t *testing.T) {
+func TestBlockedTeamStillReadsItsStatusLimitsAndSandboxRecords(t *testing.T) {
 	t.Parallel()
 
 	reason := "payment required"
 	blocked := &types.Team{Team: &dbtypes.Team{ID: uuid.New(), IsBlocked: true, BlockedReason: &reason}}
 
 	for name, route := range map[string]string{
-		"status": "/unstable/teams/:teamID/status",
-		"limits": "/unstable/teams/:teamID/limits",
+		"status":         "/unstable/teams/:teamID/status",
+		"limits":         "/unstable/teams/:teamID/limits",
+		"sandbox record": "/unstable/sandboxes/:sandboxID/record",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -52,7 +53,8 @@ func TestBlockedTeamStillReadsItsStatusAndLimits(t *testing.T) {
 			r.GET(route, func(c *gin.Context) { c.Status(http.StatusOK) })
 
 			recorder := httptest.NewRecorder()
-			r.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, strings.Replace(route, ":teamID", blocked.TeamID(), 1), nil))
+			path := strings.NewReplacer(":teamID", blocked.TeamID(), ":sandboxID", "sbx1").Replace(route)
+			r.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 		})
