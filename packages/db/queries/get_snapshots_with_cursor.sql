@@ -29,6 +29,9 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    -- Lets the live-only partial indexes serve the walk; active_envs still drops
+    -- a deleted env's snapshot the backfill has not stamped yet.
+    AND s.env_deleted_at IS NULL
     -- The order here is important, we want started_at descending, but sandbox_id ascending
     -- Short-circuit empty filters only for objects; legacy values still use containment.
     AND CASE
@@ -44,7 +47,7 @@ LIMIT $1;
 -- name: GetSnapshotsWithCursorAsc :many
 -- Ascending counterpart of GetSnapshotsWithCursor. It is the exact reverse order
 -- (started_at ASC, sandbox_id DESC) which maps onto a backward scan of the
--- idx_snapshots_team_time_id (team_id, sandbox_started_at DESC, sandbox_id) index.
+-- idx_snapshots_team_time_id_live (team_id, sandbox_started_at DESC, sandbox_id) index.
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
     sqlc.embed(s),
     eb.id AS build_id,
@@ -75,6 +78,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    AND s.env_deleted_at IS NULL
     AND CASE
         WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
             THEN TRUE
@@ -119,6 +123,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = @template_id
     AND CASE
         WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
@@ -161,6 +166,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = @template_id
     AND CASE
         WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'

@@ -45,6 +45,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = $3
     AND CASE
         WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
@@ -161,6 +162,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = $3
     AND CASE
         WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
@@ -280,6 +282,9 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    -- Lets the live-only partial indexes serve the walk; active_envs still drops
+    -- a deleted env's snapshot the backfill has not stamped yet.
+    AND s.env_deleted_at IS NULL
     -- The order here is important, we want started_at descending, but sandbox_id ascending
     -- Short-circuit empty filters only for objects; legacy values still use containment.
     AND CASE
@@ -395,6 +400,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND CASE
         WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
             THEN TRUE
@@ -432,7 +438,7 @@ type GetSnapshotsWithCursorAscRow struct {
 
 // Ascending counterpart of GetSnapshotsWithCursor. It is the exact reverse order
 // (started_at ASC, sandbox_id DESC) which maps onto a backward scan of the
-// idx_snapshots_team_time_id (team_id, sandbox_started_at DESC, sandbox_id) index.
+// idx_snapshots_team_time_id_live (team_id, sandbox_started_at DESC, sandbox_id) index.
 func (q *Queries) GetSnapshotsWithCursorAsc(ctx context.Context, arg GetSnapshotsWithCursorAscParams) ([]GetSnapshotsWithCursorAscRow, error) {
 	rows, err := q.db.Query(ctx, getSnapshotsWithCursorAsc,
 		arg.Limit,
