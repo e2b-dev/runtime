@@ -1622,6 +1622,15 @@ definitions:
           - None
           - 2M
         description: Which huge pages configuration (if any) should be used to back guest memory.
+      acpi_poweroff:
+        type: boolean
+        x-omitempty: true
+        description:
+          "[x86_64 only] Declare the ACPI power-off device to the guest, so a guest power-off
+          ends the Firecracker process with exit code 0 instead of halting the vCPUs. A snapshot
+          does not record it: a PATCH carrying only this field keeps snapshot loading allowed,
+          so it is set before a restore. A Firecracker without the device rejects the field."
+
   MemoryBackend:
     type: object
     required:

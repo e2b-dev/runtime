@@ -5486,6 +5486,8 @@ paths:
       responses:
         "204":
           description: The sandbox was paused successfully and can be resumed
+        "400":
+          $ref: "#/components/responses/400"
         "409":
           $ref: "#/components/responses/409"
         "404":

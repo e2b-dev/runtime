@@ -58,8 +58,9 @@ message SandboxConfig {
   // When true, a timeout auto-pause takes a filesystem-only snapshot (no
   // memory) instead of a full memory snapshot. Only meaningful when auto_pause
   // is set. Passed through so the policy survives an API re-sync from the
-  // orchestrator's sandbox list (mirrors auto_pause); the orchestrator itself
-  // does not act on it — the API evictor does.
+  // orchestrator's sandbox list (mirrors auto_pause); the API evictor acts on
+  // it, and the orchestrator refuses a create whose guest cannot take the
+  // filesystem-only snapshot.
   bool auto_pause_filesystem_only = 25;
 
   // Retention of sandbox events in days
@@ -264,6 +265,10 @@ message SandboxPauseResponse {
   // health probe. A memory resume of it replays the unresponsive agent; the
   // API refuses one and asks for a resume without memory.
   bool envd_unresponsive = 2;
+
+  // The snapshot is disk-only. True when the request asked for it, and also
+  // when the node took a full pause of a powered-off guest as disk-only.
+  bool filesystem_only = 3;
 }
 
 message SandboxCheckpointRequest {
@@ -317,6 +322,35 @@ message RunningSandbox {
   string execution_id = 7;
   int64 vcpu = 8;
   int64 ram_mb = 9;
+
+  // The sandbox ended on the node without being asked to; guest_event says
+  // what the host saw of the guest. Set only by nodes that report such ends;
+  // an API that does not act on it leaves the sandbox running in its store
+  // until its end time.
+  bool ended = 10;
+  GuestEvent guest_event = 11;
+  // The node keeps the ended sandbox, disk included, until the API ends it
+  // with its own timeout action: a kill, or a pause, which the node makes
+  // filesystem-only. Set for a guest that powered itself off.
+  bool disk_kept = 12;
+}
+
+// What the host saw of a guest whose sandbox ended.
+enum GuestEvent {
+  GUEST_EVENT_UNSPECIFIED = 0;
+  // The guest powered itself off.
+  GUEST_EVENT_POWER_OFF = 1;
+  // The guest reset: a reboot or a kernel crash, which the host cannot tell
+  // apart.
+  GUEST_EVENT_REBOOT_OR_CRASH = 2;
+  // The guest ended without a reset.
+  GUEST_EVENT_CRASH_NO_RESTART = 3;
+  // An end the guest did not cause.
+  GUEST_EVENT_FAILURE = 4;
+  // An end the host could not observe.
+  GUEST_EVENT_UNKNOWN = 5;
+  // The guest reported a crash, then reset.
+  GUEST_EVENT_CRASH_WITH_RESTART = 6;
 }
 
 message SandboxListResponse {

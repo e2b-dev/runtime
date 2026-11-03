@@ -121,6 +121,11 @@ type ProcessOptions struct {
 	// BootCpus caps the CPUs the guest kernel brings up (maxcpus=); 0 is all. Create sets it.
 	BootCpus int64
 
+	// ACPIPowerOff declares the ACPI power-off device, so a guest power-off
+	// ends the process instead of halting the vCPUs. A Firecracker without
+	// the device refuses it, and the boot goes on without.
+	ACPIPowerOff bool
+
 	// CPUTemplate is the custom Firecracker CPU template sent before boot. Nil is none. Only
 	// a cold boot needs it; a memory resume restores the vCPU state the template produced.
 	CPUTemplate *cputemplate.Template
@@ -180,6 +185,9 @@ type Process struct {
 	// so anything woken by Exit reads a populated value.
 	exitInfo atomic.Pointer[ExitInfo]
 
+	// reaped closes once the leader is reaped, before Exit resolves.
+	reaped chan struct{}
+
 	// sentSignals has bit N set before Stop sends signal N. The reap matches
 	// the terminating signal against it: a zombie still accepts signals and
 	// the reap races Stop, so no single flag can be ordered against the death.
@@ -190,6 +198,10 @@ type Process struct {
 	// mmdsStoreMissing is set when Resume found the restored microVM without an
 	// MMDS store; a pause records it, since its envd then keeps its token.
 	mmdsStoreMissing atomic.Bool
+
+	// acpiPowerOff is set once Firecracker accepted the ACPI power-off
+	// device, on the cold boot's machine config or the restore's PATCH.
+	acpiPowerOff atomic.Bool
 
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
@@ -204,6 +216,24 @@ type Process struct {
 	// metricsLineMs is the utc_timestamp_ms of the last line it ingested.
 	balloonAccum  atomic.Pointer[BalloonMetricsSnapshot]
 	metricsLineMs atomic.Int64
+
+	// guestResets sums i8042.reset_count, guestPowerOffs
+	// acpi_pm.poweroff_count and guestCrashes the count field of the guest
+	// profile's crash report group over the process's life; guestCrashCode
+	// keeps the last value of that group's code field.
+	// metricsStarted is set once the metrics reader is started, and
+	// metricsDone closes when it has stopped reading.
+	guestResets    atomic.Uint64
+	guestPowerOffs atomic.Uint64
+	guestCrashes   atomic.Uint64
+	guestCrashCode atomic.Uint64
+	metricsStarted atomic.Bool
+	// drainOnExit makes the exit wait for the metrics reader, so the guest
+	// counters above are complete when the exit is classified; drainWanted,
+	// asked at the exit, can ask for the wait too.
+	drainOnExit atomic.Bool
+	drainWanted atomic.Pointer[func() bool]
+	metricsDone chan struct{}
 }
 
 func validateFirecrackerBinary(versions Config, config cfg.BuilderConfig) error {
@@ -270,6 +300,8 @@ func NewProcess(
 	p := &Process{
 		Versions:              versions,
 		Exit:                  utils.NewErrorOnce(),
+		reaped:                make(chan struct{}),
+		metricsDone:           make(chan struct{}),
 		cmd:                   cmd,
 		firecrackerSocketPath: files.SandboxFirecrackerSocketPath(),
 		metricsPath:           files.SandboxMetricsFifoPath(),
@@ -503,7 +535,7 @@ func (p *Process) configureGuestDevices(
 ) error {
 	boot := p.Versions.GuestProfile().Boot()
 	// Built before the first request, so a misconfigured profile never half-configures the VM.
-	machineConfig, err := newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra)
+	machineConfig, err := newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra, options.ACPIPowerOff)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -558,6 +590,17 @@ func (p *Process) configureGuestDevices(
 	telemetry.ReportEvent(ctx, "set fc network config")
 
 	err = p.client.setMachineConfig(ctx, machineConfig)
+	if err != nil && options.ACPIPowerOff {
+		logger.L().Warn(ctx, "firecracker refused the ACPI power-off device, booting without it",
+			zap.String("firecracker_version", p.Versions.FirecrackerVersion), zap.Error(err))
+		var withoutPowerOff any
+		withoutPowerOff, err = newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra, false)
+		if err == nil {
+			err = p.client.setMachineConfig(ctx, withoutPowerOff)
+		}
+	} else if err == nil && options.ACPIPowerOff {
+		p.acpiPowerOff.Store(true)
+	}
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -768,6 +811,14 @@ func (p *Process) ResumeInPlace(
 	return nil
 }
 
+// GuestOptions is what the guest decides about a restore. The zero value is
+// the restore every snapshot of the default guest takes.
+type GuestOptions struct {
+	// ACPIPowerOff declares the ACPI power-off device before the load; the
+	// process counts the device as declared once Firecracker accepts it.
+	ACPIPowerOff bool
+}
+
 // Resume restores the snapshot with RestorePaused, runs its vCPUs and then
 // sets the MMDS metadata. A failure stops the process.
 func (p *Process) Resume(
@@ -780,6 +831,7 @@ func (p *Process) Resume(
 	cgroupHandle *cgroup.CgroupHandle,
 	useMemfd bool,
 	useSyncWP bool,
+	guest GuestOptions,
 	cpuTemplate string,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
@@ -788,7 +840,7 @@ func (p *Process) Resume(
 	ctx, span := tracer.Start(ctx, "resume-fc")
 	defer span.End()
 
-	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
+	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, guest, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
 	if err != nil {
 		return err
 	}
@@ -829,6 +881,7 @@ func (p *Process) RestorePaused(
 	cgroupHandle *cgroup.CgroupHandle,
 	useMemfd bool,
 	useSyncWP bool,
+	guest GuestOptions,
 	cpuTemplate string,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
@@ -912,6 +965,8 @@ func (p *Process) RestorePaused(
 		return errors.Join(fmt.Errorf("error setting fc metrics: %w", err), fcStopErr)
 	}
 	telemetry.ReportEvent(ctx, "set fc metrics")
+
+	p.declareRestorePowerOff(ctx, guest)
 
 	err = p.client.loadSnapshot(
 		ctx,
@@ -1001,6 +1056,58 @@ func (p *Process) setRestoredMmds(ctx context.Context, meta *MmdsMetadata) error
 	return nil
 }
 
+// DrainMetricsOnExit makes the exit wait, up to metricsDrainTimeout, for the
+// metrics reader to reach Firecracker's last line, so a guest reset or
+// power-off is counted before the exit is classified. Without it the exit is
+// classified on the counters read so far.
+func (p *Process) DrainMetricsOnExit() {
+	p.drainOnExit.Store(true)
+}
+
+// SetExitDrain asks want at the exit whether to wait for the metrics reader,
+// so a setting turned on while the process runs still counts its last line.
+// A process that took the ACPI power-off device always waits.
+func (p *Process) SetExitDrain(want func() bool) {
+	p.drainWanted.Store(&want)
+}
+
+// drainsOnExit is whether the exit waits for the metrics reader.
+func (p *Process) drainsOnExit() bool {
+	if p.drainOnExit.Load() || p.ACPIPowerOffDeclared() {
+		return true
+	}
+	want := p.drainWanted.Load()
+
+	return want != nil && (*want)()
+}
+
+// declareRestorePowerOff sends a restore's ACPI power-off declaration when the
+// guest asks for it. A Firecracker that refuses it restores without the device.
+func (p *Process) declareRestorePowerOff(ctx context.Context, guest GuestOptions) {
+	if !guest.ACPIPowerOff {
+		return
+	}
+	if err := p.client.setACPIPowerOff(ctx); err != nil {
+		logger.L().Warn(ctx, "firecracker refused the ACPI power-off device, restoring without it",
+			zap.String("firecracker_version", p.Versions.FirecrackerVersion), zap.Error(err))
+
+		return
+	}
+	p.acpiPowerOff.Store(true)
+}
+
+// ACPIPowerOffDeclared reports whether Firecracker accepted the ACPI
+// power-off device for this process, so a guest power-off ends it.
+func (p *Process) ACPIPowerOffDeclared() bool {
+	return p != nil && p.acpiPowerOff.Load()
+}
+
+// DeclarePowerOffForTest records the device as accepted, as
+// configureGuestDevices does once Firecracker takes it.
+func (p *Process) DeclarePowerOffForTest() {
+	p.acpiPowerOff.Store(true)
+}
+
 // MmdsStoreMissing reports whether this microVM was restored without an MMDS
 // store, so its envd accepts only the token it already holds.
 func (p *Process) MmdsStoreMissing() bool {
@@ -1018,11 +1125,22 @@ func (p *Process) Pid() (int, error) {
 // handleExit records how the reaped process ended and resolves Exit with the
 // error it returns. waitErr is what cmd.Wait returned.
 func (p *Process) handleExit(ctx context.Context, waitErr error) error {
+	close(p.reaped)
+	drain := p.drainsOnExit()
+	metricsRead := drain && p.waitMetricsDrained(ctx)
+
 	// Record the status before resolving Exit: the branches below flatten a
 	// signalled kill and a clean exit into the same nil error.
 	if state := p.cmd.ProcessState; state != nil {
 		if status, ok := state.Sys().(syscall.WaitStatus); ok {
-			p.exitInfo.Store(exitInfoFromStatus(status, p.sentSignals.Load()))
+			info := exitInfoFromStatus(status, p.sentSignals.Load())
+			info.MetricsRead = metricsRead
+			info.MetricsAwaited = drain
+			info.GuestResets = p.guestResets.Load()
+			info.GuestPowerOffs = p.guestPowerOffs.Load()
+			info.GuestCrashes = p.guestCrashes.Load()
+			info.GuestCrashCode = p.guestCrashCode.Load()
+			p.exitInfo.Store(info)
 		}
 	}
 
@@ -1049,6 +1167,27 @@ func (p *Process) handleExit(ctx context.Context, waitErr error) error {
 	p.Exit.SetError(err)
 
 	return err
+}
+
+// waitMetricsDrained waits for the metrics reader to read Firecracker's last
+// line, metricsDrainTimeout at most, and reports whether it did. A process
+// whose reader never started has no counters to wait for.
+func (p *Process) waitMetricsDrained(ctx context.Context) bool {
+	if !p.metricsStarted.Load() {
+		return false
+	}
+
+	select {
+	case <-p.metricsDone:
+		return true
+	case <-time.After(metricsDrainTimeout):
+		logger.L().Warn(ctx, "fc metrics reader did not reach the end of the FIFO after the exit",
+			zap.Duration("timeout", metricsDrainTimeout),
+			logger.WithSandboxID(p.files.SandboxID),
+		)
+
+		return false
+	}
 }
 
 // ExitInfo reports how the Firecracker leader was reaped, and nil before that.

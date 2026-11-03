@@ -263,6 +263,10 @@ const (
 	StopReasonPaused             StopReason = "paused"
 	StopReasonCheckpointing      StopReason = "checkpointing"
 	StopReasonRegistrationFailed StopReason = "registration_failed"
+	// StopReasonRebooted ends a lifecycle whose guest reset and which a
+	// reboot in place continued: the sandbox is still running, on the next
+	// lifecycle.
+	StopReasonRebooted StopReason = "rebooted"
 	// StopReasonCrashed is the absence of a recorded reason: nothing asked the
 	// sandbox to stop and it went down anyway.
 	StopReasonCrashed StopReason = "crashed"
@@ -424,6 +428,11 @@ type Sandbox struct {
 	// stopping is set before the checks are cancelled on the stop path: the
 	// hinter then lets the dying process take its cycle with it.
 	stopping atomic.Bool
+	// poweredOff is set once the guest powered off and the sandbox is held
+	// for its timeout action; a stop asked for by a kill or a pause releases
+	// it, and poweredOffEnded records that one was asked for.
+	poweredOff      atomic.Pointer[poweredOffHold]
+	poweredOffEnded atomic.Bool
 	// hintUnresponsive is latched by the periodic hinter when the guest sits
 	// out consecutive runs; it lives and dies with the loop. hintWarned
 	// dedupes the hinter's failure logs between completed runs.
@@ -564,6 +573,18 @@ type Sandbox struct {
 	exit *utils.ErrorOnce
 
 	stop utils.Lazy[error]
+
+	// slotRelease and rootfsRelease return the network slot and close the
+	// rootfs overlay from the cleanup chain, unless a reboot in place took
+	// them for the next Firecracker process.
+	slotRelease *handover
+	// networkRelease is the release callback the slot's return carries; a
+	// reboot in place calls the same one, so a failed subscriber is retried.
+	networkRelease network.ReleaseNotify
+	rootfsRelease  *handover
+
+	// executionSpan is this lifecycle's "execute sandbox" span, for linking.
+	executionSpan trace.SpanContext
 
 	// inPlaceExportedDirty accumulates every page exported by this FC
 	// lifetime's in-place memory checkpoints. In-place diffs always parent on
@@ -798,6 +819,17 @@ func (m *Metadata) MarkKilledDuringCheckpoint() {
 	}
 }
 
+// ClearCheckpointingStopReason drops a checkpointing stop reason whose
+// checkpoint gave the sandbox back untouched; any other reason stays.
+func (m *Metadata) ClearCheckpointingStopReason() {
+	m.rwmu.Lock()
+	defer m.rwmu.Unlock()
+
+	if m.stopReason == StopReasonCheckpointing {
+		m.stopReason = ""
+	}
+}
+
 // GetStopReason returns the recorded teardown reason. An execution that ended
 // with none was never asked to stop, so it crashed. Only meaningful once the
 // execution has ended.
@@ -850,6 +882,11 @@ type Factory struct {
 	// for the same reason: every one of those outcomes returns the same nil to the
 	// resume, so nothing else can tell them apart.
 	swapEnvdBinary func(ctx context.Context, rootfsPath, srcPath string) (rootfs.SwapResult, error)
+
+	// bootNext is the boot step of a reboot in place. Nil means bootInPlace;
+	// a test substitutes it to drive the hand-over, the reset loop and the
+	// failure handling around the boot without Firecracker.
+	bootNext bootNextFunc
 }
 
 // offlineSwap is the offline swap implementation this Factory should use.
@@ -1106,8 +1143,25 @@ type createOptions struct {
 	networkAssignReason NetworkAssignReason
 	// endAt, when set, is the sandbox's end time instead of the timeout
 	// counted from the create.
-	endAt   time.Time
-	preBoot []PreBootFn
+	endAt      time.Time
+	preBoot    []PreBootFn
+	handedOver *handedOver
+}
+
+// handedOver is the network slot and the started rootfs overlay a reboot in
+// place moves from one Firecracker process to the next, with their releases.
+type handedOver struct {
+	slot          *network.Slot
+	rootfs        rootfs.Provider
+	releaseSlot   func(ctx context.Context) error
+	releaseRootfs func(ctx context.Context) error
+	// envdVersion is the envd an offline upgrade installed on the overlay, "" when
+	// the template's own is on it; the next lifecycle's network admission reads it.
+	envdVersion string
+	// executionStartedAt is when the execution the next lifecycle continues
+	// started; the network admission treats a started execution as one it
+	// already placed.
+	executionStartedAt time.Time
 }
 
 type CreateOption func(*createOptions)
@@ -1122,6 +1176,13 @@ func WithDeferredMarkRunning() CreateOption {
 
 func withNetworkAssignReason(reason NetworkAssignReason) CreateOption {
 	return func(o *createOptions) { o.networkAssignReason = reason }
+}
+
+// withHandedOver starts the sandbox on a slot and a started rootfs overlay
+// taken from the previous process, instead of new ones. The new cleanup
+// chain releases them, the error rollback included.
+func withHandedOver(h *handedOver) CreateOption {
+	return func(o *createOptions) { o.handedOver = h }
 }
 
 // withEndAt ends the sandbox at the caller's absolute end time instead of
@@ -1149,16 +1210,19 @@ type rootfsLifecycle interface {
 	Close(ctx context.Context) error
 }
 
-func startRootfsProvider(ctx, execCtx context.Context, cleanup *Cleanup, provider rootfsLifecycle, lg logger.Logger) {
-	// Add runs late callbacks inline. Start needs its own goroutine first because
-	// the NBD close path waits for Start to publish readiness.
+// startRootfsProviderVia starts the provider and registers its Close through
+// the handover, so a reboot in place can take the overlay over to the next
+// process. Add runs late callbacks inline, so Start needs its own goroutine
+// first: the NBD close path waits for Start to publish readiness.
+func startRootfsProviderVia(ctx, execCtx context.Context, cleanup *Cleanup, provider rootfsLifecycle, release *handover, lg logger.Logger) {
 	go func() {
 		if err := provider.Start(execCtx); err != nil {
 			lg.Error(ctx, "rootfs overlay error", zap.Error(err))
 		}
 	}()
 
-	cleanup.Add(ctx, provider.Close)
+	release.set(provider.Close)
+	cleanup.Add(ctx, release.run)
 }
 
 // CreateSandbox creates the sandbox.
@@ -1205,6 +1269,22 @@ func (f *Factory) CreateSandbox(
 
 	lifecycleID := uuid.NewString()
 
+	// A handed-over slot and overlay belong to this lifecycle from here on:
+	// their releases join the cleanup chain before anything that can fail, so
+	// a boot that fails on its cgroup still returns them.
+	var slotRelease, rootfsRelease *handover
+	var networkRelease network.ReleaseNotify
+	if h := createOpts.handedOver; h != nil {
+		// The slot's release carries this lifecycle's identity: the network
+		// entry and its subscribers are per lifecycle, and the previous one
+		// released its own when it handed the slot over.
+		networkRelease = f.Sandboxes.NetworkRelease(runtime.SandboxID, lifecycleID)
+		slotRelease = newHandover(returnNetworkSlot(f.networkPool, h.slot, networkRelease))
+		cleanup.Add(ctx, slotRelease.run)
+		rootfsRelease = newHandover(h.releaseRootfs)
+		cleanup.Add(ctx, rootfsRelease.run)
+	}
+
 	sandboxFiles := template.Files().NewSandboxFiles(runtime.SandboxID)
 	cleanup.Add(ctx, cleanupFiles(f.config, sandboxFiles))
 
@@ -1217,39 +1297,26 @@ func (f *Factory) CreateSandbox(
 	cgroupRemovalRegistered := false
 	defer cleanupIfNotRegistered(ctx, &e, &cgroupRemovalRegistered, cgroupHandle.Remove)
 
-	ipsPromise := f.getNetworkSlot(ctx, cleanup, config, runtime, lifecycleID)
-
-	rootFS, err := template.Rootfs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rootfs: %w", err)
+	var ipsPromise *utils.Promise[*network.Slot]
+	if h := createOpts.handedOver; h != nil {
+		ipsPromise = utils.NewPromise(func() (*network.Slot, error) { return h.slot, nil })
+	} else {
+		ipsPromise, slotRelease, networkRelease = f.getNetworkSlot(ctx, cleanup, config, runtime, lifecycleID)
 	}
 
 	sbxLogger := runtime.Logger()
 
 	var rootfsProvider rootfs.Provider
-	if rootfsCachePath == "" {
-		rootfsProvider, err = rootfs.NewNBDProvider(
-			ctx,
-			rootFS,
-			sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
-			f.devicePool,
-			f.featureFlags,
-			sbxLogger,
-		)
+	if h := createOpts.handedOver; h != nil {
+		// Already started, under the first lifecycle's execution context; its
+		// release joined the cleanup chain above.
+		rootfsProvider = h.rootfs
 	} else {
-		rootfsProvider, err = rootfs.NewDirectProvider(
-			ctx,
-			rootFS,
-			// Populate direct cache directly from the source file
-			// This is needed for marking all blocks as dirty and being able to read them directly
-			rootfsCachePath,
-			sbxLogger,
-		)
+		rootfsProvider, rootfsRelease, err = f.startRootfs(ctx, execCtx, template, rootfsCachePath, sandboxFiles, cleanup, sbxLogger)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
-	}
-	startRootfsProvider(ctx, execCtx, cleanup, rootfsProvider, sbxLogger)
 
 	memfile, err := template.Memfile(ctx)
 	if err != nil {
@@ -1267,8 +1334,12 @@ func (f *Factory) CreateSandbox(
 		return nil, err
 	}
 
-	// Host-side filesystem changes run before the guest kernel takes charge.
+	// Host-side filesystem changes run before the guest kernel takes charge. A
+	// handed-over overlay arrives with the envd already installed on it.
 	var offlineEnvdVersion string
+	if h := createOpts.handedOver; h != nil {
+		offlineEnvdVersion = h.envdVersion
+	}
 	if len(createOpts.preBoot) > 0 {
 		rootfsPath, pathErr := rootfsProvider.Path()
 		if pathErr != nil {
@@ -1310,6 +1381,7 @@ func (f *Factory) CreateSandbox(
 	if err != nil {
 		return nil, fmt.Errorf("failed to init FC: %w", err)
 	}
+	fcHandle.SetExitDrain(f.exitDrain(ctx, runtime, config))
 
 	throttleConfig := featureflags.GetTCPFirewallEgressThrottleConfig(ctx, f.featureFlags)
 	driveThrottleConfig := featureflags.GetBlockDriveThrottleConfig(ctx, f.featureFlags)
@@ -1366,11 +1438,20 @@ func (f *Factory) CreateSandbox(
 		networkHook: f.networkAssignHook,
 
 		exit: exit,
+
+		slotRelease:    slotRelease,
+		networkRelease: networkRelease,
+		rootfsRelease:  rootfsRelease,
+		executionSpan:  trace.SpanContextFromContext(execCtx),
 	}
 
-	// The network-assign hook reads the envd version the guest will boot.
+	// The network-assign hook reads the envd version the guest will boot and
+	// whether the execution it continues has started.
 	if offlineEnvdVersion != "" {
 		sbx.offlineEnvdVersion.Store(&offlineEnvdVersion)
+	}
+	if h := createOpts.handedOver; h != nil && !h.executionStartedAt.IsZero() {
+		sbx.SetExecutionStartedAt(h.executionStartedAt)
 	}
 
 	sbx.updateAdmission.initialize()
@@ -1401,6 +1482,7 @@ func (f *Factory) CreateSandbox(
 	sbx.StampBalloonMode(balloonModeOf(bootBalloonCaps(config, freePageHinting)))
 	sbx.resolvedVmVcpus = max(config.Vcpu, config.ConfiguredVmVcpus)
 
+	processOptions.ACPIPowerOff = acpiPowerOffFor(ctx, f.featureFlags, runtime, config)
 	err = fcHandle.Create(
 		ctx,
 		sbxlogger.SandboxMetadata{
@@ -1457,6 +1539,50 @@ func (f *Factory) CreateSandbox(
 	return sbx, nil
 }
 
+// startRootfs creates the sandbox's rootfs overlay, registers its Close in
+// cleanup and starts serving it under execCtx.
+func (f *Factory) startRootfs(
+	ctx, execCtx context.Context,
+	template template.Template,
+	rootfsCachePath string,
+	sandboxFiles *storage.SandboxFiles,
+	cleanup *Cleanup,
+	sbxLogger logger.Logger,
+) (rootfs.Provider, *handover, error) {
+	rootFS, err := template.Rootfs()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get rootfs: %w", err)
+	}
+
+	var rootfsProvider rootfs.Provider
+	if rootfsCachePath == "" {
+		rootfsProvider, err = rootfs.NewNBDProvider(
+			ctx,
+			rootFS,
+			sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
+			f.devicePool,
+			f.featureFlags,
+			sbxLogger,
+		)
+	} else {
+		rootfsProvider, err = rootfs.NewDirectProvider(
+			ctx,
+			rootFS,
+			// Populate direct cache directly from the source file
+			// This is needed for marking all blocks as dirty and being able to read them directly
+			rootfsCachePath,
+			sbxLogger,
+		)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
+	}
+	rootfsRelease := newHandover(nil)
+	startRootfsProviderVia(ctx, execCtx, cleanup, rootfsProvider, rootfsRelease, sbxLogger)
+
+	return rootfsProvider, rootfsRelease, nil
+}
+
 // Usage: defer handleSpanError(span, &err)
 func handleSpanError(span trace.Span, err *error) {
 	defer span.End()
@@ -1491,6 +1617,9 @@ type resumeOptions struct {
 	deferMarkRunning bool
 	// vmPaused returns the sandbox with its VM paused. See WithVMPaused.
 	vmPaused bool
+	// rebootOnReset boots the sandbox again on its disk when its guest resets
+	// before envd first answers. Nil fails the resume.
+	rebootOnReset StartRebootReport
 }
 
 // describesCustomerStart reports whether this resume's start-path telemetry describes a
@@ -1559,6 +1688,14 @@ func WithDeferredLiveRegistration() ResumeOption {
 // closes it.
 func WithVMPaused() ResumeOption {
 	return func(o *resumeOptions) { o.vmPaused = true }
+}
+
+// WithRebootOnGuestReset boots the sandbox again on its own disk when its
+// guest resets before envd first answers (it was paused while shutting down
+// or restarting), instead of failing the resume. report receives what the
+// reboot did before ResumeSandbox returns.
+func WithRebootOnGuestReset(report StartRebootReport) ResumeOption {
+	return func(o *resumeOptions) { o.rebootOnReset = report }
 }
 
 // ThrowawayResumeOptions are the resume options for a caller-reaped throwaway
@@ -1804,9 +1941,10 @@ func (f *Factory) ResumeSandbox(
 	}()
 
 	// Slot initialization
-	ipsPromise := f.getNetworkSlot(ctx, cleanup, config, runtime, lifecycleID)
+	ipsPromise, slotRelease, networkRelease := f.getNetworkSlot(ctx, cleanup, config, runtime, lifecycleID)
 
 	// Rootfs initialization
+	rootfsRelease := newHandover(nil)
 	overlayPromise := utils.NewPromise(func() (rootfs.Provider, error) {
 		readonlyRootfs, err := t.Rootfs()
 		if err != nil {
@@ -1829,7 +1967,7 @@ func (f *Factory) ResumeSandbox(
 
 		telemetry.ReportEvent(ctx, "created rootfs overlay")
 
-		startRootfsProvider(ctx, execCtx, cleanup, overlay, sbxLogger)
+		startRootfsProviderVia(ctx, execCtx, cleanup, overlay, rootfsRelease, sbxLogger)
 
 		return overlay, nil
 	})
@@ -1959,6 +2097,7 @@ func (f *Factory) ResumeSandbox(
 	if fcErr != nil {
 		return nil, fmt.Errorf("failed to create FC: %w", fcErr)
 	}
+	fcHandle.SetExitDrain(f.exitDrain(ctx, runtime, config))
 
 	resumeThrottleConfig := featureflags.GetTCPFirewallEgressThrottleConfig(ctx, f.featureFlags)
 	resumeDriveThrottleConfig := featureflags.GetBlockDriveThrottleConfig(ctx, f.featureFlags)
@@ -2020,6 +2159,11 @@ func (f *Factory) ResumeSandbox(
 		networkHook:     f.networkAssignHook,
 
 		exit: exit,
+
+		slotRelease:    slotRelease,
+		networkRelease: networkRelease,
+		rootfsRelease:  rootfsRelease,
+		executionSpan:  trace.SpanContextFromContext(execCtx),
 
 		// A throwaway resume keeps its warm, customer-indistinguishable start out
 		// of the per-resume KPI histograms (see WaitForEnvd).
@@ -2142,14 +2286,15 @@ func (f *Factory) ResumeSandbox(
 		Recorded:        meta.VcpuCount > 0,
 		RefuseSmallerVM: config.ConfiguredVmVcpus > 0,
 	}
+	guestRestore := fc.GuestOptions{ACPIPowerOff: acpiPowerOffOnRestoreFor(ctx, f.featureFlags, runtime, config)}
 	var fcStartErr error
 	if ropts.vmPaused {
 		// ResumeVM sets the MMDS metadata after it runs the vCPUs.
 		fcStartErr = fcHandle.RestorePaused(uffdStartCtx, fcMetadata, fcUffdPath, snapfile, fcUffd.Ready(),
-			cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
+			cgroupHandle, useMemfd, useSyncWP, guestRestore, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
 	} else {
 		fcStartErr = fcHandle.Resume(uffdStartCtx, fcMetadata, fcUffdPath, snapfile, fcUffd.Ready(), config.Envd.AccessToken,
-			cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
+			cgroupHandle, useMemfd, useSyncWP, guestRestore, cpuTemplate, txRateLimit, driveRateLimit, resumeVcpus)
 	}
 
 	if fcStartErr != nil {
@@ -2206,7 +2351,17 @@ func (f *Factory) ResumeSandbox(
 			envdWaitForVolumes(ctx, f.GetEnvdTimeout(ctx), len(config.VolumeMounts)),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to wait for sandbox start: %w", err)
+			err = fmt.Errorf("failed to wait for sandbox start: %w", err)
+			if !resetDuringBoot(ctx, sbx, err) {
+				return nil, err
+			}
+
+			next, rebootErr := f.rebootOnStart(ctx, sbx, ropts.rebootOnReset)
+			if rebootErr != nil {
+				return nil, errors.Join(err, rebootErr)
+			}
+
+			return f.finishStartReboot(ctx, next, cleanup, execSpan, ropts)
 		}
 	}
 
@@ -2262,6 +2417,30 @@ func (f *Factory) ResumeVM(ctx context.Context, sbx *Sandbox) error {
 	}
 
 	return nil
+}
+
+// finishStartReboot ends the resume whose guest reset before envd answered
+// with the lifecycle booted in its place. The failed lifecycle releases what
+// the boot did not take: its cgroup, its sandbox files and its memory
+// handler.
+func (f *Factory) finishStartReboot(ctx context.Context, next *Sandbox, cleanup *Cleanup, execSpan trace.Span, ropts resumeOptions) (*Sandbox, error) {
+	if err := cleanup.Run(ctx); err != nil {
+		next.log().Warn(ctx, "closing the lifecycle whose guest reset during the resume", zap.Error(err))
+	}
+	execSpan.End()
+
+	if ropts.skipLiveRegistration || ropts.deferMarkRunning {
+		return next, nil
+	}
+
+	if err := f.Sandboxes.MarkRunning(ctx, next); err != nil {
+		next.SetStopReason(StopReasonRegistrationFailed)
+
+		return nil, errors.Join(err, stopAndClose(ctx, next))
+	}
+	go next.Checks().Start(context.WithoutCancel(ctx))
+
+	return next, nil
 }
 
 func startExecutionSpan(ctx context.Context, runtime sandboxtypes.RuntimeMetadata) (context.Context, trace.Span) {
@@ -2366,7 +2545,15 @@ func (s *Sandbox) Close(ctx context.Context) error {
 
 // Stop kills the sandbox. It is safe to call multiple times; only the first
 // call will actually perform the stop operation.
+//
+// A call made once a stop reason is recorded, by a kill or a pause, also ends
+// a power-off hold. The Firecracker exit has run the stop operation by then,
+// so the hold cannot hang on it.
 func (s *Sandbox) Stop(ctx context.Context) error {
+	if s.GetStopReason() != StopReasonCrashed {
+		s.endPoweredOff()
+	}
+
 	return s.stop.GetOrInit(func() error {
 		return s.doStop(ctx)
 	})
@@ -2460,6 +2647,7 @@ type pauseOptions struct {
 	maintainSandbox    bool
 	retainPaused       bool
 	envdUnresponsive   bool
+	memoryRequired     bool
 }
 
 type PauseOption func(*pauseOptions)
@@ -2512,6 +2700,13 @@ func WithMaintainSandbox() PauseOption {
 // does not set the MMDS metadata, wait for envd, or start health checks.
 func WithRetainedPause() PauseOption {
 	return func(o *pauseOptions) { o.maintainSandbox, o.retainPaused = true, true }
+}
+
+// WithMemoryRequired refuses the pause rather than capture only the disk: a
+// caller that resumes the snapshot from memory (a resume-fresh checkpoint)
+// cannot use a powered-off guest's disk-only capture.
+func WithMemoryRequired() PauseOption {
+	return func(o *pauseOptions) { o.memoryRequired = true }
 }
 
 // WithFilesystemSnapshot makes the pause produce a filesystem-only snapshot:
@@ -2572,6 +2767,20 @@ func (s *Sandbox) Pause(
 	pauseOpts, err := newPauseOptions(opts...)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.GuestPoweredOff() {
+		// The disk-only capture ends the lifecycle, which a capture that
+		// keeps the sandbox running (an in-place checkpoint) cannot take.
+		if pauseOpts.maintainSandbox {
+			return nil, ErrPoweredOffKeepsNothingRunning
+		}
+		// Nor can a capture whose caller resumes it from memory.
+		if pauseOpts.memoryRequired {
+			return nil, ErrPoweredOffHasNoMemory
+		}
+
+		return s.pausePoweredOff(ctx, m)
 	}
 
 	ctx, span := tracer.Start(ctx, "sandbox-snapshot", trace.WithAttributes(
@@ -4748,10 +4957,16 @@ func (f *Factory) getNetworkSlot(
 	config *Config,
 	runtime sandboxtypes.RuntimeMetadata,
 	lifecycleID string,
-) *utils.Promise[*network.Slot] {
-	return getNetworkSlot(ctx, f.networkPool, cleanup, config.Network, f.Sandboxes.NetworkRelease(runtime.SandboxID, lifecycleID), runtime.SandboxType.EgressClass(), runtime.SandboxID)
+) (*utils.Promise[*network.Slot], *handover, network.ReleaseNotify) {
+	notify := f.Sandboxes.NetworkRelease(runtime.SandboxID, lifecycleID)
+	promise, release := getNetworkSlot(ctx, f.networkPool, cleanup, config.Network, notify, runtime.SandboxType.EgressClass(), runtime.SandboxID)
+
+	return promise, release, notify
 }
 
+// getNetworkSlot takes a slot from the pool. Its return to the pool is
+// registered in cleanup through the returned handover, so a reboot in place
+// can move the slot to the next sandbox.
 func getNetworkSlot(
 	ctx context.Context,
 	networkPool network.PoolInterface,
@@ -4760,7 +4975,9 @@ func getNetworkSlot(
 	networkReleased network.ReleaseNotify,
 	egressClass sandboxtypes.EgressClass,
 	sandboxID string,
-) *utils.Promise[*network.Slot] {
+) (*utils.Promise[*network.Slot], *handover) {
+	release := newHandover(nil)
+
 	return utils.NewPromise(func() (*network.Slot, error) {
 		ctx, span := tracer.Start(ctx, "get network-slot")
 		defer span.End()
@@ -4771,14 +4988,22 @@ func getNetworkSlot(
 		}
 		slot.AssignSandbox(sandboxID)
 
-		cleanup.Add(ctx, func(ctx context.Context) error {
-			// Async so sandbox cleanup doesn't block on the return delay or
-			// network teardown; the pool's Close waits for in-flight returns.
-			return networkPool.ReturnAsync(ctx, slot, networkReleased, network.ReturnDelay)
-		})
+		release.set(returnNetworkSlot(networkPool, slot, networkReleased))
+		cleanup.Add(ctx, release.run)
 
 		return slot, nil
-	})
+	}), release
+}
+
+func returnNetworkSlot(networkPool network.PoolInterface, slot *network.Slot, networkReleased network.ReleaseNotify) func(context.Context) error {
+	return func(ctx context.Context) error {
+		ctx, span := tracer.Start(ctx, "clean network-slot")
+		defer span.End()
+
+		// Async so sandbox cleanup doesn't block on the return delay or
+		// network teardown; the pool's Close waits for in-flight returns.
+		return networkPool.ReturnAsync(ctx, slot, networkReleased, network.ReturnDelay)
+	}
 }
 
 func serveMemory(

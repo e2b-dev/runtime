@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -29,6 +30,12 @@ const (
 
 	// metricsFlushInterval controls how often we trigger a Firecracker metrics flush.
 	metricsFlushInterval = 5 * time.Second
+
+	// metricsDrainTimeout caps how long the exit handler waits for the reader
+	// to reach the end of the FIFO. Firecracker writes its last line on the
+	// way out, so the end arrives right after the reap unless something else
+	// still holds a write end.
+	metricsDrainTimeout = 2 * time.Second
 )
 
 var (
@@ -191,6 +198,40 @@ type firecrackerBalloonMetrics struct {
 	FreePageReportFails uint64 `json:"free_page_report_fails"`
 }
 
+// firecrackerI8042Metrics is the subset of Firecracker's i8042 metrics that
+// records the guest's resets. On x86 the guest resets through the i8042
+// controller, after which Firecracker exits 0. A per-flush delta.
+type firecrackerI8042Metrics struct {
+	ResetCount uint64 `json:"reset_count"`
+}
+
+// firecrackerAcpiPmMetrics is the subset of the ACPI power-management
+// device's metrics that records the guest's power-offs. Older Firecracker
+// builds have no such device and omit the group. A per-flush delta.
+type firecrackerAcpiPmMetrics struct {
+	PowerOffCount uint64 `json:"poweroff_count"`
+}
+
+// crashReportOf reads the crash counter group the guest profile names from
+// one metrics line: the crashes since the last flush and the last crash's
+// code, which a flush does not reset. A line without the group reads as none.
+func crashReportOf(line []byte, report guest.CrashReport) (count, code uint64) {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(line, &groups); err != nil {
+		return 0, 0
+	}
+
+	var group map[string]json.RawMessage
+	if err := json.Unmarshal(groups[report.Group], &group); err != nil {
+		return 0, 0
+	}
+
+	_ = json.Unmarshal(group[report.CountField], &count)
+	_ = json.Unmarshal(group[report.CodeField], &code)
+
+	return count, code
+}
+
 // firecrackerMetrics is the top-level structure of one Firecracker metrics JSON line.
 type firecrackerMetrics struct {
 	// UtcTimestampMs is when FC serialized the line; a flush requested at time
@@ -199,6 +240,8 @@ type firecrackerMetrics struct {
 	Net            firecrackerNetMetrics     `json:"net"`
 	Block          firecrackerBlockMetrics   `json:"block"`
 	Balloon        firecrackerBalloonMetrics `json:"balloon"`
+	I8042          firecrackerI8042Metrics   `json:"i8042"`
+	AcpiPm         firecrackerAcpiPmMetrics  `json:"acpi_pm"`
 }
 
 // BalloonMetricsSnapshot is the cumulative-since-FC-start view of
@@ -336,7 +379,6 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 	// but still inherits trace values for logging.
 	ctx = context.WithoutCancel(ctx)
 	sandboxID := p.files.SandboxID
-	metricsPath := p.metricsPath
 
 	// Flusher: periodically triggers a Firecracker metrics flush so the reader receives
 	// fresh data at metricsFlushInterval instead of the default 60 s.
@@ -352,12 +394,26 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 		})
 	}()
 
+	p.startMetricsFIFOReader(ctx)
+}
+
+// startMetricsFIFOReader starts the goroutine that reads the metrics FIFO
+// until its end. It closes metricsDone when it stops, so the exit handler
+// can tell the counters it folds into ExitInfo are complete.
+func (p *Process) startMetricsFIFOReader(ctx context.Context) {
+	sandboxID := p.files.SandboxID
+	metricsPath := p.metricsPath
+
+	p.metricsStarted.Store(true)
+
 	go func() {
+		defer close(p.metricsDone)
+
 		// O_RDWR opens without blocking (no need to wait for a writer).
 		// We keep this FD solely to unblock the open; the scanner reads from
-		// a separate O_RDONLY FD below. On process exit we close the O_RDWR FD
-		// to drop our write reference — once Firecracker also exits, the
-		// O_RDONLY read receives EOF and the goroutine exits cleanly.
+		// a separate O_RDONLY FD below. Once the leader is reaped we close the
+		// O_RDWR FD to drop our write reference — Firecracker has exited too,
+		// so the O_RDONLY read receives EOF and the goroutine exits cleanly.
 		rwFd, err := os.OpenFile(metricsPath, os.O_RDWR, os.ModeNamedPipe)
 		if err != nil {
 			logger.L().Warn(ctx, "failed to open fc metrics FIFO",
@@ -381,11 +437,15 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 		}
 		defer rFd.Close()
 
-		// Drop our write reference on exit so the scanner can receive EOF.
+		// Drop our write reference on the reap so the scanner can receive
+		// EOF. Not on Exit: the exit handler waits for that EOF before it
+		// resolves Exit.
 		go func() {
-			<-p.Exit.Done()
+			<-p.reaped
 			rwFd.Close()
 		}()
+
+		crash := p.Versions.GuestProfile().Reset().Crash
 
 		scanner := bufio.NewScanner(rFd)
 		scanner.Buffer(make([]byte, metricsReaderBufSize), metricsReaderBufSize)
@@ -479,6 +539,15 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 			// counters of that line.
 			next := accumulateBalloon(p.balloonAccum.Load(), m.Balloon)
 			p.balloonAccum.Store(&next)
+			p.guestResets.Add(m.I8042.ResetCount)
+			p.guestPowerOffs.Add(m.AcpiPm.PowerOffCount)
+			if crash.Group != "" {
+				count, code := crashReportOf(scanner.Bytes(), crash)
+				p.guestCrashes.Add(count)
+				if code != 0 {
+					p.guestCrashCode.Store(code)
+				}
+			}
 			p.metricsLineMs.Store(m.UtcTimestampMs)
 		}
 

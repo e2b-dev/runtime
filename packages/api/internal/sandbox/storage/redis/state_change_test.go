@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,10 +22,15 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-func setupTestStorage(t *testing.T) (*Storage, redis.UniversalClient) {
+// setupTestStorage adds hooks to the client before the storage uses it, since
+// AddHook is not safe on a client in use.
+func setupTestStorage(t *testing.T, hooks ...redis.Hook) (*Storage, redis.UniversalClient) {
 	t.Helper()
 
 	client := redis_utils.SetupInstance(t)
+	for _, hook := range hooks {
+		client.AddHook(hook)
+	}
 	storage := newTestStorage(t, client)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
@@ -848,6 +855,27 @@ func TestStartRemoving_Eviction(t *testing.T) {
 		assert.Equal(t, sandboxtypes.StateRunning, got.State)
 	})
 
+	t.Run("non-expired sandbox is evicted before its end time when asked", func(t *testing.T) {
+		t.Parallel()
+
+		storage, _ := setupTestStorage(t)
+		ctx := t.Context()
+
+		sbx := createTestSandbox("evict-before-end")
+		require.NoError(t, storage.Add(ctx, sbx))
+
+		_, alreadyDone, callback, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true, BeforeEndTime: true})
+		require.NoError(t, err)
+		assert.False(t, alreadyDone)
+		require.NotNil(t, callback)
+
+		got, getErr := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
+		require.NoError(t, getErr)
+		assert.Equal(t, sandboxtypes.StateKilling, got.State)
+
+		callback(ctx, nil)
+	})
+
 	t.Run("expired sandbox with active transition returns eviction in progress", func(t *testing.T) {
 		t.Parallel()
 
@@ -1569,6 +1597,136 @@ func TestRestoreRunning_RetriesOnceWhenTheSameExecutionIsRewritten(t *testing.T)
 			assert.Equal(t, map[string]string{"rewrite": "1"}, stored.Metadata, "the restore kept the rewrite it read again")
 		})
 	}
+}
+
+type transitionReadKey struct{}
+
+type transitionRead struct {
+	key    string
+	signal func()
+}
+
+// readsTransition tags ctx so transitionReadHook closes the returned channel once a call under it has read sbx's in-flight transition:
+// from then on it waits for that transition's result.
+func readsTransition(ctx context.Context, sbx sandboxtypes.Sandbox) (context.Context, <-chan struct{}) {
+	read := make(chan struct{})
+	var once sync.Once
+
+	return context.WithValue(ctx, transitionReadKey{}, transitionRead{
+		key:    getTransitionKey(sbx.TeamID.String(), sbx.SandboxID),
+		signal: func() { once.Do(func() { close(read) }) },
+	}), read
+}
+
+// transitionReadHook signals the read readsTransition tagged a context with.
+var transitionReadHook = cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+	err := next(ctx, cmd)
+	// The test client namespaces every key with a prefix.
+	if read, ok := ctx.Value(transitionReadKey{}).(transitionRead); ok && err == nil && cmd.Name() == "get" && strings.HasSuffix(fmt.Sprint(cmd.Args()[1]), read.key) {
+		read.signal()
+	}
+
+	return err
+}}
+
+func awaitTransitionRead(t *testing.T, read <-chan struct{}, who string) {
+	t.Helper()
+
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s never read the in-flight transition", who)
+	}
+}
+
+// A pause transition restored over the unsupported refusal reaches its
+// waiters as a restored transition, and a joining pause gets the permanent
+// refusal rather than the retryable one.
+func TestRestoredUnsupportedTransition_JoinerGetsThePermanentRefusal(t *testing.T) {
+	t.Parallel()
+
+	storage, _ := setupTestStorage(t, transitionReadHook)
+	ctx := t.Context()
+
+	sbx := createTestSandbox("restored-unsupported")
+	require.NoError(t, storage.Add(ctx, sbx))
+
+	transition, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause, FilesystemOnly: true})
+	require.NoError(t, err)
+
+	waiterCtx, waiterRead := readsTransition(ctx, sbx)
+	waiter := make(chan error, 1)
+	go func() { waiter <- storage.WaitForStateChange(waiterCtx, sbx.TeamID, sbx.SandboxID) }()
+	joinerCtx, joinerRead := readsTransition(ctx, sbx)
+	joiner := make(chan error, 1)
+	go func() {
+		_, _, _, jerr := storage.StartRemoving(joinerCtx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause, FilesystemOnly: true})
+		joiner <- jerr
+	}()
+	awaitTransitionRead(t, waiterRead, "the waiter")
+	awaitTransitionRead(t, joinerRead, "the joiner")
+
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{})
+	require.NoError(t, err)
+	finish(ctx, &sandboxtypes.RestoredTransitionError{Refusal: sandboxtypes.PauseUnsupportedError{}})
+
+	select {
+	case werr := <-waiter:
+		require.ErrorIs(t, werr, sandboxtypes.ErrTransitionRestored)
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter did not wake")
+	}
+	select {
+	case jerr := <-joiner:
+		require.ErrorIs(t, jerr, sandboxtypes.PauseUnsupportedError{}, "a joining pause must see the permanent refusal, never the retryable one")
+		require.NotErrorIs(t, jerr, sandboxtypes.PauseQueueExhaustedError{})
+	case <-time.After(5 * time.Second):
+		t.Fatal("joiner did not wake")
+	}
+
+	restored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
+	require.NoError(t, err)
+	require.Equal(t, sandboxtypes.StateRunning, restored.State)
+}
+
+// A memory pause that joins a filesystem-only pause refused as unsupported is
+// not told it is unsupported: its own kind is one the guest takes, so it gets the
+// retryable refusal and succeeds on its retry against the restored record.
+func TestRestoredUnsupportedTransition_MemoryJoinerMayRetry(t *testing.T) {
+	t.Parallel()
+
+	storage, _ := setupTestStorage(t, transitionReadHook)
+	ctx := t.Context()
+
+	sbx := createTestSandbox("restored-unsupported-memory-joiner")
+	require.NoError(t, storage.Add(ctx, sbx))
+
+	transition, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause, FilesystemOnly: true})
+	require.NoError(t, err)
+
+	joinerCtx, joinerRead := readsTransition(ctx, sbx)
+	joiner := make(chan error, 1)
+	go func() {
+		_, _, _, jerr := storage.StartRemoving(joinerCtx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+		joiner <- jerr
+	}()
+	awaitTransitionRead(t, joinerRead, "the joiner")
+
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{})
+	require.NoError(t, err)
+	finish(ctx, &sandboxtypes.RestoredTransitionError{Refusal: sandboxtypes.PauseUnsupportedError{}})
+
+	select {
+	case jerr := <-joiner:
+		require.ErrorIs(t, jerr, sandboxtypes.PauseQueueExhaustedError{}, "a memory pause may retry")
+		require.NotErrorIs(t, jerr, sandboxtypes.PauseUnsupportedError{})
+	case <-time.After(5 * time.Second):
+		t.Fatal("joiner did not wake")
+	}
+
+	_, _, retryFinish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	require.NoError(t, err, "the retry pauses the restored record")
+	retryFinish(ctx, nil)
 }
 
 // A pause transition finished with ErrTransitionRestored reaches its waiters

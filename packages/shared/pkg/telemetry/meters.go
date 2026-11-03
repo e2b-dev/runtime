@@ -107,9 +107,22 @@ const (
 	// served, hugepage exhaustion included; fault is Firecracker faulting.
 	// uffd_copy_error=enomem picks out the crashes hugepage exhaustion
 	// caused: the handler found no free hugepage to install a faulted page.
-	// clean_exit is usually the guest shutting down, but also covers guest
-	// kernel panics, which the host cannot tell apart.
+	// The guest causes come from Firecracker's own counters: guest_reset is
+	// the guest resetting itself, a reboot or on Linux a kernel panic, which
+	// the host cannot tell apart; guest_crash is a reset after a crash the
+	// guest reported; guest_poweroff is a power-off, counted only with the
+	// ACPI power-off device. clean_exit is the residue: Firecracker exiting 0
+	// with none of those counted, such as on a triple fault, or an exit that
+	// did not wait for its final counters and so missed one. An exit 0 whose
+	// final counters were awaited and not read is unknown instead.
 	OrchestratorSandboxCrashedCounterName CounterType = "orchestrator.sandbox.crashed"
+	// OrchestratorSandboxGuestRebootsCounterName counts guest resets by what
+	// the orchestrator did about them: rebooted in place, refused_loop and
+	// refused_timeout (not admitted), reboot_failed, and flag_off, a reset
+	// that stopped the sandbox because rebooting it in place is not enabled.
+	// path is running for a live sandbox, start for a reset before envd
+	// first answered on a create or resume.
+	OrchestratorSandboxGuestRebootsCounterName CounterType = "orchestrator.sandbox.guest_reboots"
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
@@ -502,6 +515,7 @@ const (
 	EnvdInitClockCorrectionHistogramName  HistogramType = "orchestrator.sandbox.envd.init.clock_correction"
 	GuestSyncDurationHistogramName        HistogramType = "orchestrator.sandbox.guest_sync.duration"
 	PauseDurationHistogramName            HistogramType = "orchestrator.sandbox.pause.duration"
+	GuestRebootDurationHistogramName      HistogramType = "orchestrator.sandbox.guest_reboot.duration"
 	SnapshotProcessMemoryDurationName     HistogramType = "orchestrator.sandbox.snapshot.process_memory.duration"
 	SnapshotProcessRootfsDurationName     HistogramType = "orchestrator.sandbox.snapshot.process_rootfs.duration"
 	SnapshotRootfsSealDurationName        HistogramType = "orchestrator.sandbox.snapshot.rootfs_seal.duration"
@@ -882,7 +896,8 @@ var counterDesc = map[CounterType]string{
 	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
-	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
+	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (guest_reset/guest_crash/guest_poweroff/clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
+	OrchestratorSandboxGuestRebootsCounterName:   "Guest resets the orchestrator handled, labeled by outcome, guest_os and path",
 	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent) and rpc (pause/checkpoint)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
@@ -983,6 +998,7 @@ var counterUnits = map[CounterType]string{
 	EnvdCollapseChunks:                           "{chunk}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
 	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
+	OrchestratorSandboxGuestRebootsCounterName:   "{reset}",
 	OrchestratorSandboxPauseAdmissionCounterName: "{decision}",
 	OrchestratorSandboxCheckpointCounterName:     "{checkpoint}",
 	OrchestratorFPRResumeCounterName:             "{resume}",
@@ -1289,6 +1305,7 @@ var histogramDesc = map[HistogramType]string{
 	EnvdCollapseDurationHistogramName:                 "Time taken for the pre-pause envd heap collapse round-trip",
 	GuestSyncDurationHistogramName:                    "Time taken for the mandatory pre-pause guest sync (filesystem-only pause)",
 	PauseDurationHistogramName:                        "Time taken to pause a sandbox, labeled by fs_only (filesystem-only vs memory) and success",
+	GuestRebootDurationHistogramName:                  "Time from a guest reset to envd answering on the sandbox's next boot, labeled by guest_os and path",
 	SnapshotProcessMemoryDurationName:                 "Time to export+diff the memory file during a pause snapshot (memory pauses only), labeled by in_place, deferred, balloon_mode and success",
 	SnapshotProcessRootfsDurationName:                 "Time to export+diff the rootfs during a pause snapshot, labeled by fs_only and success",
 	SnapshotRootfsSealDurationName:                    "Time for the background deferred rootfs reflink seal (off the pause critical path), labeled by in_place and success",
@@ -1387,6 +1404,7 @@ var histogramUnits = map[HistogramType]string{
 	EnvdCollapseDurationHistogramName:                 "ms",
 	GuestSyncDurationHistogramName:                    "ms",
 	PauseDurationHistogramName:                        "ms",
+	GuestRebootDurationHistogramName:                  "ms",
 	SnapshotProcessMemoryDurationName:                 "ms",
 	SnapshotProcessRootfsDurationName:                 "ms",
 	SnapshotRootfsSealDurationName:                    "ms",

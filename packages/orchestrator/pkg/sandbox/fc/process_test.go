@@ -59,6 +59,7 @@ func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
 	p := &Process{                                       //nolint:exhaustruct_v5 // focused process-lifetime fixture
 		cmd:                   cmd,
 		Exit:                  utils.NewErrorOnce(),
+		reaped:                make(chan struct{}),
 		firecrackerSocketPath: socketPath,
 		metricsPath:           filepath.Join(dir, "metrics.fifo"),
 		files:                 &storage.SandboxFiles{SandboxID: "test"}, //nolint:exhaustruct_v5 // only identity is read
@@ -273,6 +274,8 @@ func newRestoreProcess(t *testing.T, fake *fakeFirecracker) *Process {
 	p := &Process{
 		cmd:                   cmd,
 		Exit:                  utils.NewErrorOnce(),
+		reaped:                make(chan struct{}),
+		metricsDone:           make(chan struct{}),
 		config:                cfg.BuilderConfig{StorageConfig: storage.Config{SandboxCacheDir: dir}},
 		firecrackerSocketPath: socket,
 		metricsPath:           dir + "/metrics.fifo",
@@ -300,11 +303,11 @@ func restore(t *testing.T, p *Process, runVcpus bool) error {
 	vcpus := ResumeVcpus{Target: 1, Snapshot: 1, Recorded: true}
 	if runVcpus {
 		return p.Resume(t.Context(), metadata, uffdSocket, snapfile, uffdReady, nil,
-			nil, false, false, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
+			nil, false, false, GuestOptions{}, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
 	}
 
 	return p.RestorePaused(t.Context(), metadata, uffdSocket, snapfile, uffdReady,
-		nil, false, false, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
+		nil, false, false, GuestOptions{}, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
 }
 
 // A paused restore configures the VM without running a vCPU or setting MMDS.

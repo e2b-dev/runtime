@@ -45,6 +45,14 @@ type Callbacks struct {
 	// KillOrphanSandbox kills an orphaned sandbox on the orchestrator node via gRPC.
 	// Used during sync when the Redis backend detects sandboxes running on a node but not present in the store.
 	KillOrphanSandbox OrphanCallback
+	// EndPoweredOffSandbox runs the timeout action of a sandbox whose node
+	// reports that its guest powered off. Called during sync, asynchronously,
+	// for every such sandbox the node lists.
+	EndPoweredOffSandbox OrphanCallback
+	// EndEndedSandbox ends the record of a sandbox its node lists as ended
+	// with nothing kept, as a kill would. Called during sync for every such
+	// sandbox the node lists, which it does for a while after the end.
+	EndEndedSandbox OrphanCallback
 }
 
 type Store struct {
@@ -163,7 +171,28 @@ func (s *Store) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandbo
 func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID string) {
 	// Redis is the source of truth — divergent sandboxes are orphans running
 	// on the node but not present in the store. Kill them.
-	orphans := s.storage.Reconcile(ctx, sandboxes, nodeID)
+	// An ended sandbox holds nothing on the node, so it is no orphan even
+	// once its record is gone.
+	var running, ended []NodeSandbox
+	for _, sbx := range sandboxes {
+		if sbx.EndedOnNode() {
+			ended = append(ended, sbx)
+		} else {
+			running = append(running, sbx)
+		}
+	}
+	orphans := s.storage.Reconcile(ctx, running, nodeID)
+
+	// A powered-off sandbox gets its timeout action now rather than at its
+	// end time. Not waited for: a pause can outlast the sync interval, and
+	// the evictor drops a repeat while one is in flight.
+	if s.callbacks.EndPoweredOffSandbox != nil {
+		for _, sbx := range sandboxes {
+			if sbx.DiskKept {
+				go s.callbacks.EndPoweredOffSandbox(context.WithoutCancel(ctx), sbx)
+			}
+		}
+	}
 
 	wg := sync.WaitGroup{}
 	for _, sbx := range orphans {
@@ -172,6 +201,15 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 			defer cancel()
 			s.callbacks.KillOrphanSandbox(ctx, sbx)
 		})
+	}
+	if s.callbacks.EndEndedSandbox != nil {
+		for _, sbx := range ended {
+			wg.Go(func() {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sbxRemoveTimeout)
+				defer cancel()
+				s.callbacks.EndEndedSandbox(ctx, sbx)
+			})
+		}
 	}
 
 	wg.Wait()

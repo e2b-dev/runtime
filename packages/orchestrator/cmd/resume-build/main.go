@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -93,6 +94,7 @@ func main() {
 
 	// Command execution (no pause)
 	cmd := flag.String("cmd", "", "execute command in sandbox and exit (no snapshot)")
+	rebootOnReset := flag.Bool("reboot-on-reset", false, "with -cmd: expect the command to reset the guest (e.g. 'reboot'), boot the sandbox again in place, print a REBOOT line and check a command runs on the new boot; a reset during the resume is booted again too")
 
 	// Pause flags
 	pause := flag.Bool("pause", false, "start and immediately pause (snapshot)")
@@ -142,6 +144,11 @@ func main() {
 
 	if *disableMemfd {
 		featureflags.OverrideBoolFlag(featureflags.UseMemFdFlag, false)
+	}
+
+	// The reboot reads the reset counter, which the exit waits for only with the flag on.
+	if *rebootOnReset {
+		featureflags.OverrideBoolFlag(featureflags.GuestRebootInPlaceFlag, true)
 	}
 
 	if *syncWP || *trackerDirty || *inPlace || *deferMemoryExport {
@@ -238,6 +245,10 @@ func main() {
 
 	isPauseMode := pauseCount > 0
 
+	if *rebootOnReset && (!isCmdMode || *iterations > 0) {
+		log.Fatal("-reboot-on-reset requires -cmd and is incompatible with -iterations")
+	}
+
 	// fph-bench reuses -cmd-pause and -iterations.
 	if !*fphBench && *iterations > 0 && (*signalPause != "" || *cmdPause != "" || *cmdSignalPause != "") {
 		log.Fatal("-signal-pause, -cmd-pause, and -cmd-signal-pause are incompatible with -iterations")
@@ -316,6 +327,7 @@ func main() {
 
 	runOpts := runOptions{
 		cmd:                *cmd,
+		rebootOnReset:      *rebootOnReset,
 		iterations:         *iterations,
 		console:            *console,
 		firecrackerVersion: *firecracker,
@@ -385,6 +397,7 @@ type pauseTimings struct {
 
 type runOptions struct {
 	cmd                string      // command to run and exit (no pause)
+	rebootOnReset      bool        // the command resets the guest; boot it again in place
 	iterations         int         // number of iterations (0 = single run)
 	console            bool        // forward the guest kernel console + FC output to stdout/stderr (fresh boot)
 	firecrackerVersion string      // override the build's Firecracker version (empty = use the build's own)
@@ -473,8 +486,10 @@ type runner struct {
 	reboot      bool
 	forceReboot bool
 	console     bool
-	config      cfg.BuilderConfig
-	storage     storage.StorageProvider
+	// rebootOnReset boots a guest that resets during a resume again.
+	rebootOnReset bool
+	config        cfg.BuilderConfig
+	storage       storage.StorageProvider
 	// gdbOrigVersionsDir preserves the original FirecrackerVersionsDir in gdb mode, where
 	// config.FirecrackerVersionsDir is redirected to a writable staging dir; the published
 	// firecracker-debug is resolved from this original (read-only) dir.
@@ -532,7 +547,12 @@ func (r *runner) startSandbox(ctx context.Context, runtime sandboxtypes.RuntimeM
 		return r.factory.RebootSandbox(ctx, r.tmpl, r.sbxConfig, runtime, end, nil, false, r.forceReboot, nil, procOpts...)
 	}
 
-	return r.factory.ResumeSandbox(ctx, r.tmpl, r.sbxConfig, runtime, start, end, nil)
+	var opts []sandbox.ResumeOption
+	if r.rebootOnReset {
+		opts = append(opts, sandbox.WithRebootOnGuestReset(startRebootReport))
+	}
+
+	return r.factory.ResumeSandbox(ctx, r.tmpl, r.sbxConfig, runtime, start, end, nil, opts...)
 }
 
 func (r *runner) resumeOnce(ctx context.Context, iter int) (time.Duration, error) {
@@ -593,6 +613,9 @@ func (r *runner) interactive(ctx context.Context) error {
 }
 
 func (r *runner) cmdMode(ctx context.Context, opts runOptions) error {
+	if opts.rebootOnReset {
+		return r.cmdRebootOnReset(ctx, opts)
+	}
 	if opts.iterations > 0 {
 		return r.cmdBenchmark(ctx, opts)
 	}
@@ -1495,6 +1518,11 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 	}
 	fmt.Printf("   vCPUs: %d of %d (%s)\n", runOpts.vcpu, vmVcpus, vmSizeSource)
 
+	profile, err := meta.GuestProfile()
+	if err != nil {
+		return err
+	}
+
 	token := "local"
 	sbxCfg := sandbox.NewConfig(sandbox.Config{
 		BaseTemplateID:    buildID,
@@ -1506,24 +1534,26 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 		FirecrackerConfig: fc.Config{
 			KernelVersion:      meta.Template.KernelVersion,
 			FirecrackerVersion: fcVersion,
+			Guest:              profile,
 		},
 	})
 
 	r := &runner{
-		factory:     factory,
-		tmpl:        tmpl,
-		tmplPin:     pin,
-		buildID:     buildID,
-		cache:       cache,
-		coldStart:   coldStart,
-		noPrefetch:  noPrefetch,
-		shell:       shell,
-		reboot:      reboot,
-		forceReboot: forceReboot,
-		console:     runOpts.console,
-		config:      config.BuilderConfig,
-		storage:     persistence,
-		sbxConfig:   sbxCfg,
+		factory:       factory,
+		tmpl:          tmpl,
+		tmplPin:       pin,
+		buildID:       buildID,
+		cache:         cache,
+		coldStart:     coldStart,
+		noPrefetch:    noPrefetch,
+		shell:         shell,
+		reboot:        reboot,
+		forceReboot:   forceReboot,
+		console:       runOpts.console,
+		config:        config.BuilderConfig,
+		rebootOnReset: runOpts.rebootOnReset,
+		storage:       persistence,
+		sbxConfig:     sbxCfg,
 
 		gdbOrigVersionsDir: gdbOrigVersionsDir,
 	}
@@ -1596,8 +1626,13 @@ func printTemplateInfo(ctx context.Context, tmpl template.Template, meta metadat
 const runCommandInSandboxTimeout = 10 * time.Minute
 
 // runCommandInSandbox runs a command inside the sandbox via envd as a
-// login shell so /etc/profile is sourced.
+// login shell so /etc/profile is sourced, printing its output.
 func runCommandInSandbox(ctx context.Context, sbx *sandbox.Sandbox, command string) error {
+	return runCommandInSandboxTo(ctx, sbx, command, os.Stdout)
+}
+
+// runCommandInSandboxTo is runCommandInSandbox writing the output to out.
+func runCommandInSandboxTo(ctx context.Context, sbx *sandbox.Sandbox, command string, out io.Writer) error {
 	stream, err := sbx.StartEnvdShell(ctx, "/bin/bash", []string{"-l", "-c", command}, "root", runCommandInSandboxTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
@@ -1617,10 +1652,10 @@ func runCommandInSandbox(ctx context.Context, sbx *sandbox.Sandbox, command stri
 			// Handle data events (stdout/stderr)
 			if data := e.Data; data != nil {
 				if stdout := data.GetStdout(); stdout != nil {
-					fmt.Print(string(stdout))
+					_, _ = out.Write(stdout)
 				}
 				if stderrData := data.GetStderr(); stderrData != nil {
-					fmt.Print(string(stderrData))
+					_, _ = out.Write(stderrData)
 				}
 			}
 		case *process.ProcessEvent_End:

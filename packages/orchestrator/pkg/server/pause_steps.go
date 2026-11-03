@@ -14,7 +14,7 @@ import (
 // on the storage behind it. Tests pass their own to pauseWith to drive the
 // pause to its response without one.
 type pauseSteps interface {
-	snapshot(ctx context.Context, sbx *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, deferRootfsExport, envdUnresponsive bool) (*snapshotResult, error)
+	snapshot(ctx context.Context, sbx *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, filesystemOnly, deferRootfsExport, envdUnresponsive bool) (*snapshotResult, error)
 	upload(ctx context.Context, sbx *sandbox.Sandbox, res *snapshotResult)
 	stopAsync(ctx context.Context, sbx *sandbox.Sandbox)
 }
@@ -23,8 +23,8 @@ type serverPauseSteps struct {
 	s *Server
 }
 
-func (p serverPauseSteps) snapshot(ctx context.Context, sbx *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, deferRootfsExport, envdUnresponsive bool) (*snapshotResult, error) {
-	return p.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), map[string]string{storage.ObjectMetadataTemplateID: in.GetTemplateId()}, storage.ObjectOriginPause, in.GetFilesystemOnly(), deferRootfsExport, envdUnresponsive, sandboxStops)
+func (p serverPauseSteps) snapshot(ctx context.Context, sbx *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, filesystemOnly, deferRootfsExport, envdUnresponsive bool) (*snapshotResult, error) {
+	return p.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), map[string]string{storage.ObjectMetadataTemplateID: in.GetTemplateId()}, storage.ObjectOriginPause, filesystemOnly, deferRootfsExport, envdUnresponsive, sandboxStops)
 }
 
 func (p serverPauseSteps) upload(ctx context.Context, sbx *sandbox.Sandbox, res *snapshotResult) {

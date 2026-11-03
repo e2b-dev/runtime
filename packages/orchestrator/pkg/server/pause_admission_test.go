@@ -755,3 +755,162 @@ func TestCheckpoint_FilesystemOnlySkipsMemoryAdmission(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.FailedPrecondition, fsSt.Code(), "fs-only must pass admission and be refused by its own flag; the memory call's ResourceExhausted above shows the grace was live")
 }
+
+// A Pause that read the sandbox live and then lost the marking to a reboot in
+// place started during its admission wait is refused retryably: the API
+// removes the record on any other answer, and the reboot's successor is then
+// killed as an orphan.
+func TestPause_LostTheMarkingToARebootIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	durable := utils.NewSetOnce[*header.Header]()
+	s := admissionTestServer(t, new(5000))
+	sbx := admissionTestSandbox(t, "sbx-reboot-lost-marking", 41, durable)
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+
+	booted := make(chan func(*sandbox.Sandbox) (string, error), 1)
+	go func() {
+		defer close(booted)
+		<-admissionWaitBegun(sbx)
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(context.WithoutCancel(t.Context()), sbx)
+		if err == nil {
+			booted <- end
+		}
+		hdr, err := header.NewHeader(&header.Metadata{Version: 3, BlockSize: 4096, Size: 4096}, nil)
+		if err == nil {
+			_ = durable.SetValue(hdr)
+		}
+	}()
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-lost-marking"})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "rebooting, please retry")
+
+	end, ok := <-booted
+	require.True(t, ok, "the reboot took the sandbox")
+	_, err = end(nil)
+	require.NoError(t, err)
+}
+
+// A Pause that meets a reboot in place outlasting its wait is refused
+// retryably while the boot still holds the sandbox, instead of running into
+// the API's pause deadline.
+func TestPause_RebootOutlastingTheWaitIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	s.pauseReplyMargin = 980 * time.Millisecond
+	sbx := admissionTestSandbox(t, "sbx-reboot-long", 42, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+	end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), sbx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = end(nil) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	_, err = s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-long"})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "rebooting, please retry")
+	require.NoError(t, ctx.Err(), "answered before the caller's deadline")
+	assert.True(t, s.sandboxFactory.Sandboxes.Rebooting("sbx-reboot-long"), "the boot still holds the sandbox")
+}
+
+// A Pause that lost the marking to a reboot that already finished, its
+// successor live, is refused retryably so the API retries against the
+// successor instead of removing the record.
+func TestPause_LostTheMarkingToAFinishedRebootIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	durable := utils.NewSetOnce[*header.Header]()
+	s := admissionTestServer(t, new(5000))
+	sbx := admissionTestSandbox(t, "sbx-reboot-finished", 44, durable)
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+	next := admissionTestSandbox(t, "sbx-reboot-finished", 45, utils.NewSetOnce[*header.Header]())
+	next.LifecycleID = "lifecycle-2"
+
+	rebooted := make(chan error, 1)
+	go func() {
+		<-admissionWaitBegun(sbx)
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(context.WithoutCancel(t.Context()), sbx)
+		if err == nil {
+			_, err = end(next)
+		}
+		rebooted <- err
+		hdr, err := header.NewHeader(&header.Metadata{Version: 3, BlockSize: 4096, Size: 4096}, nil)
+		if err == nil {
+			_ = durable.SetValue(hdr)
+		}
+	}()
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-finished"})
+	require.NoError(t, <-rebooted)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is live again, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries the detail the API restores the record on")
+	live, ok := s.sandboxFactory.Sandboxes.Get("sbx-reboot-finished")
+	require.True(t, ok)
+	assert.Equal(t, "lifecycle-2", live.LifecycleID, "the successor stays live")
+}
+
+// Every answer of pauseHeldElsewhere carries the checkpoint-in-progress
+// detail: without it the API reads the refusal as a busy node and, with its
+// restore flag off, kills the sandbox the reboot or checkpoint produced.
+func TestPauseHeldElsewhere_CarriesTheRetryableDetail(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	require.NoError(t, s.pauseHeldElsewhere("sbx-held-gone"), "a sandbox that is gone is not held")
+
+	live := admissionTestSandbox(t, "sbx-held-live", 48, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), live))
+	err := s.pauseHeldElsewhere("sbx-held-live")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is live again, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err))
+
+	booting := admissionTestSandbox(t, "sbx-held-booting", 49, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), booting))
+	end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), booting)
+	require.NoError(t, err)
+	err = s.pauseHeldElsewhere("sbx-held-booting")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is rebooting, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err))
+	_, err = end(nil)
+	require.NoError(t, err)
+}
+
+// A Pause whose wait for a reboot ended too close to its deadline for a
+// capture is refused retryably before it touches the successor. Fake time
+// keeps the boot's end and the deadline in a fixed order.
+func TestPause_RebootEndingNearTheCutoffIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s := admissionTestServer(t, nil)
+		s.pauseReplyMargin = 100 * time.Millisecond
+		s.pauseCaptureBudget = 1500 * time.Millisecond
+		sbx := admissionTestSandbox(t, "sbx-reboot-late", 46, utils.NewSetOnce[*header.Header]())
+		require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+		next := admissionTestSandbox(t, "sbx-reboot-late", 47, utils.NewSetOnce[*header.Header]())
+		next.LifecycleID = "lifecycle-2"
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), sbx)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		go func() {
+			time.Sleep(700 * time.Millisecond)
+			_, _ = end(next)
+		}()
+
+		_, err = s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-late"})
+		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+		require.ErrorContains(t, err, "just rebooted, please retry")
+		require.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries the detail the API restores the record on")
+		live, ok := s.sandboxFactory.Sandboxes.Get("sbx-reboot-late")
+		require.True(t, ok, "the successor stays live, unmarked")
+		assert.Equal(t, "lifecycle-2", live.LifecycleID)
+	})
+}

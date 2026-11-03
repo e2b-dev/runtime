@@ -238,6 +238,13 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 			return
 		}
 
+		// The sandbox is back to Running; the same request will never succeed.
+		if errors.Is(err, orchestrator.PauseUnsupportedError{}) {
+			a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be snapshotted filesystem-only: its guest does not support it, snapshot it with memory instead", sandboxID))
+
+			return
+		}
+
 		if errors.Is(err, orchestrator.PauseQueueExhaustedError{}) {
 			a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be snapshotted right now because its node is busy, please retry", sandboxID))
 

@@ -172,138 +172,18 @@ func (f *Factory) RebootSandbox(
 		return nil, fmt.Errorf("refusing to reboot build %s: not a filesystem-only snapshot and the request did not demand a filesystem boot", buildID)
 	}
 
-	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
-	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
-	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
-	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
-
-	// It becomes the running template, so the next pause stores what this boot applied.
-	override := f.featureFlags.JSONFlag(ctx, featureflags.RebootCPUTemplateOverride,
-		featureflags.SandboxContext(runtime.SandboxID),
-		featureflags.TemplateContext(runtime.TemplateID),
-		featureflags.TeamContext(runtime.TeamID))
-	boot := config.GuestProfile().Boot()
-	cpuTemplate, overridden, err := rebootCPUTemplateFor(boot, meta, override)
-	if boot.NoCPUTemplate {
-		logCPUTemplateSkipped(ctx, config.GuestProfile())
-	}
+	boot, err := f.prepareColdBoot(ctx, t, meta, config, runtime)
 	if err != nil {
-		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
-			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
-			logger.WithSandboxID(runtime.SandboxID))
+		return nil, err
 	}
-	if overridden {
-		logger.L().Info(ctx, "reboot CPU template overridden",
-			zap.String("build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
-			zap.String("cpu_template", cputemplate.AppliedDigest(cpuTemplate)))
-	}
-	meta.CPUTemplate = cpuTemplate
-	span.SetAttributes(
-		attribute.String("sandbox.build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
-		attribute.Bool("sandbox.cpu_template_overridden", overridden),
-		attribute.Bool("sandbox.cpu_template_override_invalid", err != nil),
-	)
-
-	if err := checkRebootCPUTemplate(meta.CPUTemplate, config.FirecrackerConfig.FirecrackerVersion); err != nil {
-		return nil, fmt.Errorf("reboot build %s: %w", buildID, err)
-	}
-
-	// A cold boot starts envd with no prior state, so unlike a memory resume it
-	// can't inherit the template's default user/workdir from restored RAM — they
-	// must be re-sent via /init, or envd falls back to root and /root.
-	//
-	// So this path must send something even when the metadata cannot establish what the
-	// build sent, and it reconstructs rather than abstains. That is a GUESS, and it is
-	// right only at or above templates.TemplateV2ReleaseVersion: below it finalize sent a
-	// flat ("user", nil) regardless of what was recorded, so for such a build this sends
-	// the recorded user where /init received "user" (see metadata.Template.EnvdDefaultUser
-	// for why the two cannot be told apart). A memory resume refuses that guess because
-	// the restored process still holds the truth; here there is no such process, and
-	// declining would leave envd on its compiled-in fallback — a worse guess than this
-	// one.
-	if config.Envd.DefaultUser == nil {
-		defaultUser := meta.Context.User
-		if defaultUser == "" {
-			defaultUser = consts.TemplateDefaultUser
-		}
-		config.Envd.DefaultUser = &defaultUser
-	}
-	if config.Envd.DefaultWorkdir == nil {
-		config.Envd.DefaultWorkdir = meta.Context.WorkDir
-	}
-
-	// The masked empty memfile is used only for sizing NoopMemory — guest RAM
-	// is FC's own fresh anonymous memory.
-	pageSize := int64(header.PageSize)
-	if config.HugePages {
-		pageSize = int64(header.HugepageSize)
-	}
-	memfile, err := block.NewEmpty(units.MBToBytes(config.RamMB), pageSize, buildID)
-	if err != nil {
-		return nil, fmt.Errorf("create empty memfile: %w", err)
-	}
-
-	// With the resolved CPU template, so the next pause stores what this boot applied.
-	maskedTemplate := template.NewMaskTemplate(t, template.WithMemfile(memfile), template.WithMetadata(meta))
-
-	kvmClock, err := utils.IsGTEVersion(config.Envd.Version, minEnvdVersionForKVMClock)
-	if err != nil {
-		return nil, fmt.Errorf("compare envd version: %w", err)
-	}
-
-	// Sync IO engine so no async writes are in flight if the sandbox is paused again.
-	ioEngine := models.DriveIoEngineSync
-
-	// Always write MMDS metadata for a reboot so the cold-booted envd can
-	// authenticate /init like a memory resume. An empty token hashes to the
-	// "no token" value, matching ResumeSandbox's behavior for non-secure sandboxes.
-	accessToken := ""
-	if config.Envd.AccessToken != nil {
-		accessToken = *config.Envd.AccessToken
-	}
+	processOptions := boot.processOptions
 
 	timeout := time.Until(endAt)
 	if timeout <= 0 {
 		return nil, fmt.Errorf("sandbox end time %s is in the past", endAt)
 	}
 
-	processOptions := fc.ProcessOptions{
-		InitScriptPath: constants.SystemdInitPath,
-		KvmClock:       kvmClock,
-		IoEngine:       &ioEngine,
-		AccessToken:    &accessToken,
-		// This is a cold boot, so unlike a memory resume it re-reads the command line —
-		// and the snapshot's own metadata is the only record of what it was built with.
-		// Replayed verbatim rather than re-resolved from the feature flag: what a
-		// variant name means can change after the build, so re-resolving would boot a
-		// different guest than the one this lineage was created as.
-		CmdlineArgs: meta.CmdlineArgs,
-		// Same as CmdlineArgs: the stored template, not the build flag (see the override above).
-		CPUTemplate: meta.CPUTemplate,
-	}
-
-	// Recorded so a dropped variant is detectable after the fact: a cold boot carrying
-	// the default under a lineage whose build recorded a variant means the field was
-	// lost somewhere between build and boot. That is otherwise invisible, because the
-	// guest simply comes back without whatever the variant provided.
-	//
-	// Reports what was APPLIED, not what was stored. buildKernelArgs drops an overlay
-	// whose arguments this binary rejects — which is reachable if the reserved set grew
-	// since the build that stamped them — so recording the stored name unconditionally
-	// would claim a variant the guest never got, defeating the attribute's purpose.
-	applied := ""
-	if fc.ValidateCmdlineArgs(meta.CmdlineArgs) == nil {
-		applied = fc.KernelArgs(meta.CmdlineArgs).String()
-	}
-
-	// A stored template is either applied or fails the boot, so it is what the guest got.
-	appliedCPUTemplate := cputemplate.AppliedDigest(meta.CPUTemplate)
-
-	span.SetAttributes(
-		attribute.String("sandbox.cmdline_args", applied),
-		attribute.String("sandbox.cpu_template", appliedCPUTemplate),
-		attribute.Bool("sandbox.filesystem_boot_requested", requestFilesystemBoot),
-	)
+	span.SetAttributes(attribute.Bool("sandbox.filesystem_boot_requested", requestFilesystemBoot))
 	for _, opt := range procOpts {
 		opt(&processOptions)
 	}
@@ -317,7 +197,7 @@ func (f *Factory) RebootSandbox(
 		ctx,
 		config,
 		runtime,
-		maskedTemplate,
+		boot.template,
 		timeout,
 		// Empty rootfs cache path selects the NBD provider, same as a memory
 		// resume, so guest TRIM keeps working and a later pause exports the
@@ -360,6 +240,172 @@ func (f *Factory) RebootSandbox(
 	}
 
 	return sbx, nil
+}
+
+// coldBoot is what a cold boot of a template's rootfs runs with.
+type coldBoot struct {
+	// template is the template with an empty memfile: guest RAM is
+	// Firecracker's own fresh memory, the memfile only sizes NoopMemory.
+	template       template.Template
+	processOptions fc.ProcessOptions
+}
+
+// prepareColdBoot resolves the kernel command line, CPU template, envd
+// defaults and access token a cold boot of t's rootfs uses. It fills in
+// config's envd defaults when they are unset.
+func (f *Factory) prepareColdBoot(
+	ctx context.Context,
+	t template.Template,
+	meta metadata.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+) (coldBoot, error) {
+	span := trace.SpanFromContext(ctx)
+
+	buildID, err := uuid.Parse(t.Files().BuildID)
+	if err != nil {
+		return coldBoot{}, fmt.Errorf("parse build ID: %w", err)
+	}
+
+	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
+	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
+	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
+
+	// It becomes the running template, so the next pause stores what this boot applied.
+	override := f.featureFlags.JSONFlag(ctx, featureflags.RebootCPUTemplateOverride,
+		featureflags.SandboxContext(runtime.SandboxID),
+		featureflags.TemplateContext(runtime.TemplateID),
+		featureflags.TeamContext(runtime.TeamID))
+	boot := config.GuestProfile().Boot()
+	cpuTemplate, overridden, err := rebootCPUTemplateFor(boot, meta, override)
+	if boot.NoCPUTemplate {
+		logCPUTemplateSkipped(ctx, config.GuestProfile())
+	}
+	if err != nil {
+		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
+			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
+			logger.WithSandboxID(runtime.SandboxID))
+	}
+	if overridden {
+		logger.L().Info(ctx, "reboot CPU template overridden",
+			zap.String("build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
+			zap.String("cpu_template", cputemplate.AppliedDigest(cpuTemplate)))
+	}
+	meta.CPUTemplate = cpuTemplate
+	span.SetAttributes(
+		attribute.String("sandbox.build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
+		attribute.Bool("sandbox.cpu_template_overridden", overridden),
+		attribute.Bool("sandbox.cpu_template_override_invalid", err != nil),
+	)
+
+	if err := checkRebootCPUTemplate(meta.CPUTemplate, config.FirecrackerConfig.FirecrackerVersion); err != nil {
+		return coldBoot{}, fmt.Errorf("reboot build %s: %w", buildID, err)
+	}
+
+	// A cold boot starts envd with no prior state, so unlike a memory resume it
+	// can't inherit the template's default user/workdir from restored RAM — they
+	// must be re-sent via /init, or envd falls back to root and /root.
+	//
+	// So this path must send something even when the metadata cannot establish what the
+	// build sent, and it reconstructs rather than abstains. That is a GUESS, and it is
+	// right only at or above templates.TemplateV2ReleaseVersion: below it finalize sent a
+	// flat ("user", nil) regardless of what was recorded, so for such a build this sends
+	// the recorded user where /init received "user" (see metadata.Template.EnvdDefaultUser
+	// for why the two cannot be told apart). A memory resume refuses that guess because
+	// the restored process still holds the truth; here there is no such process, and
+	// declining would leave envd on its compiled-in fallback — a worse guess than this
+	// one.
+	if config.Envd.DefaultUser == nil {
+		defaultUser := meta.Context.User
+		if defaultUser == "" {
+			defaultUser = consts.TemplateDefaultUser
+		}
+		config.Envd.DefaultUser = &defaultUser
+	}
+	if config.Envd.DefaultWorkdir == nil {
+		config.Envd.DefaultWorkdir = meta.Context.WorkDir
+	}
+
+	// The masked empty memfile is used only for sizing NoopMemory — guest RAM
+	// is FC's own fresh anonymous memory.
+	pageSize := int64(header.PageSize)
+	if config.HugePages {
+		pageSize = int64(header.HugepageSize)
+	}
+	memfile, err := block.NewEmpty(units.MBToBytes(config.RamMB), pageSize, buildID)
+	if err != nil {
+		return coldBoot{}, fmt.Errorf("create empty memfile: %w", err)
+	}
+
+	// With the resolved CPU template, so the next pause stores what this boot applied.
+	maskedTemplate := template.NewMaskTemplate(t, template.WithMemfile(memfile), template.WithMetadata(meta))
+
+	kvmClock, err := utils.IsGTEVersion(config.Envd.Version, minEnvdVersionForKVMClock)
+	if err != nil {
+		return coldBoot{}, fmt.Errorf("compare envd version: %w", err)
+	}
+
+	// Sync IO engine so no async writes are in flight if the sandbox is paused again.
+	ioEngine := models.DriveIoEngineSync
+
+	// Always write MMDS metadata for a reboot so the cold-booted envd can
+	// authenticate /init like a memory resume. An empty token hashes to the
+	// "no token" value, matching ResumeSandbox's behavior for non-secure sandboxes.
+	accessToken := ""
+	if config.Envd.AccessToken != nil {
+		accessToken = *config.Envd.AccessToken
+	}
+
+	processOptions := fc.ProcessOptions{
+		InitScriptPath: constants.SystemdInitPath,
+		KvmClock:       kvmClock,
+		IoEngine:       &ioEngine,
+		AccessToken:    &accessToken,
+		// This is a cold boot, so unlike a memory resume it re-reads the command line —
+		// and the snapshot's own metadata is the only record of what it was built with.
+		// Replayed verbatim rather than re-resolved from the feature flag: what a
+		// variant name means can change after the build, so re-resolving would boot a
+		// different guest than the one this lineage was created as.
+		CmdlineArgs: meta.CmdlineArgs,
+		// Same as CmdlineArgs: the stored template, not the build flag (see the override above).
+		CPUTemplate: meta.CPUTemplate,
+	}
+
+	// Recorded so a dropped variant is detectable after the fact: a cold boot carrying
+	// the default under a lineage whose build recorded a variant means the field was
+	// lost somewhere between build and boot. That is otherwise invisible, because the
+	// guest simply comes back without whatever the variant provided.
+	//
+	// Reports what was APPLIED, not what was stored. buildKernelArgs drops an overlay
+	// whose arguments this binary rejects — which is reachable if the reserved set grew
+	// since the build that stamped them — so recording the stored name unconditionally
+	// would claim a variant the guest never got, defeating the attribute's purpose.
+	applied := ""
+	if fc.ValidateCmdlineArgs(meta.CmdlineArgs) == nil {
+		applied = fc.KernelArgs(meta.CmdlineArgs).String()
+	}
+
+	// A stored template is either applied or fails the boot, so it is what the guest got.
+	appliedCPUTemplate := cputemplate.AppliedDigest(meta.CPUTemplate)
+
+	span.SetAttributes(
+		attribute.String("sandbox.cmdline_args", applied),
+		attribute.String("sandbox.cpu_template", appliedCPUTemplate),
+	)
+
+	return coldBoot{template: maskedTemplate, processOptions: processOptions}, nil
+}
+
+// fsRecoveryTrigger names the population a pre-boot recovery runs for, which
+// separates them on every emission: an explicit no-memory rescue, or a legacy
+// sync-fallback fs-only snapshot.
+func fsRecoveryTrigger(requestFilesystemBoot bool) string {
+	if requestFilesystemBoot {
+		return "rescue"
+	}
+
+	return "legacy_fs_only"
 }
 
 // offlineSwapDecision is the pure outcome of the offline-upgrade gate: whether to
@@ -451,7 +497,7 @@ func (f *Factory) rebootPreBoot(
 	boot := config.GuestProfile().Boot()
 
 	if !boot.NoFilesystemRecovery {
-		recovery = f.fsRecoverPreBoot(ctx, runtime, fsQuiesced, requestFilesystemBoot, recordRecovery)
+		recovery = f.fsRecoverPreBoot(ctx, runtime, fsQuiesced, fsRecoveryTrigger(requestFilesystemBoot), recordRecovery)
 	}
 	if !boot.NoEnvdOfflineUpgrade {
 		swap = f.envdOfflineUpgradePreBoot(ctx, config, runtime, fsQuiesced)
@@ -480,7 +526,7 @@ func (f *Factory) fsRecoverPreBoot(
 	ctx context.Context,
 	runtime sandboxtypes.RuntimeMetadata,
 	fsQuiesced bool,
-	requestFilesystemBoot bool,
+	trigger string,
 	record func(rootfs.RecoverOutcome),
 ) PreBootFn {
 	ctx, span := tracer.Start(ctx, "resolve fs recovery", trace.WithAttributes(
@@ -512,13 +558,6 @@ func (f *Factory) fsRecoverPreBoot(
 			logger.L().Warn(ctx, "host e2fsck rejects -E journal_only; pre-boot recovery is inert, boots fall back to the guest kernel's mount-time replay")
 		}
 	})
-
-	// trigger separates the two admitted populations on every emission: an
-	// explicit no-memory rescue vs a legacy sync-fallback fs-only snapshot.
-	trigger := "legacy_fs_only"
-	if requestFilesystemBoot {
-		trigger = "rescue"
-	}
 
 	if fsQuiesced {
 		record(rootfs.RecoverOutcomeSkippedQuiesced)

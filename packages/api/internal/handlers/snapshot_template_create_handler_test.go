@@ -209,3 +209,17 @@ func TestSnapshotTemplate_MemorySnapshotIgnoresBothGates(t *testing.T) {
 	require.Len(t, backend.created, 1)
 	assert.False(t, backend.created[0].FilesystemOnly)
 }
+
+// memory:false that the node refuses as unsupported for the guest is answered 409 with the sandbox left running, never the
+// generic 500. The pause handler answers the same refusal 400, since the SDKs read a 409 from pause as already paused.
+func TestSnapshotTemplate_UnsupportedRefusalIs409(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{createErr: orchestrator.PauseUnsupportedError{}}
+	recorder := postSnapshot(t, backend, true, `{"memory": false}`, nil)
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "does not support it")
+	require.Len(t, backend.created, 1)
+	assert.True(t, backend.created[0].FilesystemOnly)
+}

@@ -13,6 +13,9 @@ type Reason string
 const (
 	ReasonRequest Reason = "request"
 	ReasonTimeout Reason = "timeout"
+	// ReasonGuestPowerOff is the timeout action run early, because the guest
+	// powered itself off.
+	ReasonGuestPowerOff Reason = "guest_poweroff"
 )
 
 type SkipReason string
@@ -33,6 +36,10 @@ const (
 	// the sandbox's guest agent did not answer its health probe; the sandbox
 	// keeps running and a later attempt is retried as is.
 	SkipReasonEnvdUnresponsive SkipReason = "envd_unresponsive"
+	// SkipReasonUnsupported: the node refused a pause the sandbox's guest
+	// cannot take; the sandbox keeps running and the request will not succeed
+	// as asked.
+	SkipReasonUnsupported SkipReason = "unsupported"
 	// SkipReasonDraining: this replica is shutting down and stopped admitting
 	// pauses, so the sandbox is left running for a retry elsewhere.
 	SkipReasonDraining SkipReason = "draining"

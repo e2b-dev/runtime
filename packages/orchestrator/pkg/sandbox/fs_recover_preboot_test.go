@@ -40,24 +40,24 @@ func TestFsRecoverPreBoot_Gating(t *testing.T) {
 
 	rec, got := recorder()
 	assert.Nil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, true, false, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, true, fsRecoveryTrigger(false), rec),
 		"quiesced snapshot has nothing to repair")
 	assert.Equal(t, []rootfs.RecoverOutcome{rootfs.RecoverOutcomeSkippedQuiesced}, *got,
 		"quiesced records skipped_quiesced so the create metric pairs it")
 
 	rec, got = recorder()
 	assert.Nil(t,
-		recoverTestFactory(t, false).fsRecoverPreBoot(t.Context(), runtime, false, false, rec),
+		recoverTestFactory(t, false).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(false), rec),
 		"flag off keeps today's cold-boot behavior")
 	assert.Empty(t, *got, "flag off records nothing; the create metric stays none")
 
 	rec, _ = recorder()
 	assert.NotNil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, true, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(true), rec),
 		"non-quiesced with the flag on runs recovery (rescue trigger)")
 	rec, _ = recorder()
 	assert.NotNil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, false, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(false), rec),
 		"non-quiesced with the flag on runs recovery (legacy trigger)")
 }
 
@@ -71,7 +71,7 @@ func TestFsRecoverPreBoot_ClosurePropagatesFailure(t *testing.T) {
 
 	runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
 	rec, got := recorder()
-	fn := recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, true, rec)
+	fn := recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(true), rec)
 	require.NotNil(t, fn)
 
 	_, err := fn(t.Context(), "/dev/sda")

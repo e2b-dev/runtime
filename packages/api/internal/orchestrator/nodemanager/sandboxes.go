@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/google/uuid"
@@ -87,10 +88,23 @@ func (n *Node) GetOrphanCandidates(ctx context.Context) ([]sandbox.NodeSandbox, 
 			StartTime:   sbx.GetStartTime().AsTime(),
 			NodeID:      n.ID,
 			ClusterID:   n.ClusterID,
+
+			Ended:      sbx.GetEnded(),
+			GuestEvent: guestEventName(sbx.GetGuestEvent()),
+			DiskKept:   sbx.GetDiskKept(),
 		})
 	}
 
 	return sandboxesInfo, nil
+}
+
+// guestEventName is the log form of a guest event, such as reboot_or_crash.
+func guestEventName(event orchestrator.GuestEvent) string {
+	if event == orchestrator.GuestEvent_GUEST_EVENT_UNSPECIFIED {
+		return ""
+	}
+
+	return strings.ToLower(strings.TrimPrefix(event.String(), "GUEST_EVENT_"))
 }
 
 func ConvertOrchestratorMountsToDatabaseMounts(mounts []*orchestrator.SandboxVolumeMount) []*types.SandboxVolumeMountConfig {

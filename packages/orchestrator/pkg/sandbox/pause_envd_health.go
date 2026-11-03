@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -50,6 +51,20 @@ func (s *Sandbox) MarkExitedForTest(err error) {
 		s.exit = utils.NewErrorOnce()
 	}
 	_ = s.exit.SetError(err)
+}
+
+// MarkStoppedForTest records this sandbox's stop as already run, as the
+// Firecracker exit's cleanup leaves a powered-off sandbox: a later Stop only
+// ends its hold.
+func (s *Sandbox) MarkStoppedForTest() {
+	_ = s.stop.GetOrInit(func() error { return nil })
+}
+
+// DeclarePowerOffDeviceForTest gives this sandbox a process that took the
+// ACPI power-off device, so PowerOffDeviceDeclared reports true.
+func (s *Sandbox) DeclarePowerOffDeviceForTest() {
+	s.process = new(fc.Process)
+	s.process.DeclarePowerOffForTest()
 }
 
 // capEnvdProbeTimeout bounds the probe by the HTTP client's own Timeout, which

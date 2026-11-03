@@ -134,6 +134,9 @@ func (o *Orchestrator) CreateSnapshotTemplate(ctx context.Context, teamID uuid.U
 				if isCheckpointInProgress(err) {
 					return SnapshotTemplateResult{}, PauseRefusedCheckpointInProgressError{}
 				}
+				if refusal := pauseRefusal(err); errors.Is(refusal, PauseUnsupportedError{}) {
+					return SnapshotTemplateResult{}, refusal
+				}
 
 				return SnapshotTemplateResult{}, fmt.Errorf("checkpoint rejected: %w", err)
 			case codes.ResourceExhausted:
@@ -174,7 +177,7 @@ func (o *Orchestrator) CreateSnapshotTemplate(ctx context.Context, teamID uuid.U
 		return SnapshotTemplateResult{}, fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, false, types.BuildStatusUploaded); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, false, types.BuildStatusUploaded, false); err != nil {
 		return SnapshotTemplateResult{}, errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 
@@ -229,13 +232,28 @@ func (o *Orchestrator) upsertSnapshotKeepingKind(ctx context.Context, sbx sandbo
 // mark that the memory snapshot was taken while the guest agent did not
 // answer, so a resume can refuse to restore that memory without asking the
 // node. One transaction, so a reader never sees the build ready without them.
-func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind, envdUnresponsive bool, status types.BuildStatus) error {
-	if currentKind == wantKind && !envdUnresponsive {
-		return o.finishSnapshotBuild(ctx, buildID, status)
-	}
-
+func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind, envdUnresponsive bool, status types.BuildStatus, rekindBuild bool) error {
+	// One detached budget for every write below, so finalization reports
+	// before the sandbox's state transition expires.
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
 	defer cancel()
+
+	// rekindBuild: the node captured another kind than the build was created
+	// as. Written first and on its own, through the client's retry of a
+	// transient error; the build is not ready until its status, so nothing
+	// reads the kind in between.
+	if rekindBuild {
+		if err := o.sqlcDB.UpdateEnvBuildFilesystemOnly(writeCtx, queries.UpdateEnvBuildFilesystemOnlyParams{
+			BuildID:        buildID,
+			FilesystemOnly: wantKind,
+		}); err != nil {
+			return fmt.Errorf("record build kind: %w", err)
+		}
+	}
+
+	if currentKind == wantKind && !envdUnresponsive {
+		return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+	}
 
 	txDB, tx, err := o.sqlcDB.WithTx(writeCtx)
 	if err != nil {
@@ -278,7 +296,13 @@ func (o *Orchestrator) finishSnapshotBuild(ctx context.Context, buildID uuid.UUI
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
 	defer cancel()
 
-	return o.sqlcDB.UpdateEnvBuildStatus(writeCtx, queries.UpdateEnvBuildStatusParams{
+	return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+}
+
+// writeSnapshotBuildStatus records a terminal status under ctx as given; the
+// caller owns the detached budget.
+func (o *Orchestrator) writeSnapshotBuildStatus(ctx context.Context, buildID uuid.UUID, status types.BuildStatus) error {
+	return o.sqlcDB.UpdateEnvBuildStatus(ctx, queries.UpdateEnvBuildStatusParams{
 		Status:     status,
 		FinishedAt: new(time.Now()),
 		Reason:     types.BuildReason{},

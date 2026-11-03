@@ -124,7 +124,7 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 		}
 
 		// if sandbox isn't expired (e.g. race condition with SetTimeout)
-		if !sbx.IsExpired(time.Now()) {
+		if !opts.BeforeEndTime && !sbx.IsExpired(time.Now()) {
 			return transition, false, nil, sandboxtypes.ErrEvictionNotNeeded
 		}
 	}
@@ -562,6 +562,13 @@ func (s *Storage) handleExistingTransition(
 
 		err := s.waitForTransition(ctx, teamID, sbx.SandboxID, ref)
 		if restored, ok := errors.AsType[*sandboxtypes.RestoredTransitionError](err); ok {
+			// The pause the joiner rode was refused as one the guest cannot take
+			// and the sandbox is running again: a joiner asking for the same
+			// kind never succeeds; a memory pause that joined it may retry.
+			if errors.Is(restored.Refusal, sandboxtypes.PauseUnsupportedError{}) && !opts.FilesystemOnly {
+				return transition, false, nil, sandboxtypes.PauseQueueExhaustedError{}
+			}
+
 			// The pause the joiner rode was refused and the sandbox is running
 			// again: the joiner gets the refusal the starter got, not a success.
 			return transition, false, nil, restored.Refusal

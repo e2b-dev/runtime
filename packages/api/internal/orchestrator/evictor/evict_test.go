@@ -66,7 +66,7 @@ func TestEvictSandbox_ReasonByAction(t *testing.T) {
 			AutoPauseFilesystemOnly: autoPauseFilesystemOnly,
 			FirecrackerVersion:      fcVersion,
 			EndTime:                 time.Now(),
-		})
+		}, causeTimeout)
 
 		require.True(t, called)
 
@@ -394,7 +394,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 			}
 			sbx.RefusedUntil = now.Add(-3*time.Hour + 10*time.Second)
 		}
-		e.evictSandbox(t.Context(), sbx)
+		e.evictSandbox(t.Context(), sbx, causeTimeout)
 
 		return requests, counterByCause(t, reader, telemetry.ApiEvictorAutoPauseDegraded)
 	}

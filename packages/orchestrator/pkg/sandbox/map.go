@@ -50,6 +50,12 @@ type MapSubscriber interface {
 //     just for sandboxes to stop being routable.
 //   - network: an IP-to-sandbox index managed by AssignNetwork and
 //     NetworkReleased, serving GetByHostPort lookups.
+//   - boots: keyed by sandboxID, the reboots in place in progress. Such a
+//     sandbox has left live and holds a reservation until its next lifecycle
+//     is live or the boot failed; AwaitBoot and CancelBoot find it there.
+//   - ended: keyed by sandboxID, the sandboxes that ended without being asked
+//     to, kept for EndedLifetime after their lifecycle closed so List reports
+//     the end to the API. They hold no resources.
 type Map struct {
 	live       *smap.Map[*Sandbox]
 	lifecycles *smap.Map[*Sandbox]
@@ -57,6 +63,8 @@ type Map struct {
 
 	registryMu   sync.Mutex
 	reservations map[string]*Reservation
+	boots        map[string]*boot
+	ended        map[string]EndedSandbox
 
 	lifecycleMu      sync.Mutex
 	lifecycleChanged chan struct{}
@@ -71,6 +79,8 @@ func NewSandboxesMap() *Map {
 		lifecycles:       smap.New[*Sandbox](),
 		network:          smap.New[*Sandbox](),
 		reservations:     map[string]*Reservation{},
+		boots:            map[string]*boot{},
+		ended:            map[string]EndedSandbox{},
 		lifecycleChanged: make(chan struct{}),
 	}
 }
@@ -349,7 +359,7 @@ func (m *Map) markRunning(ctx context.Context, sbx *Sandbox, reservation *Reserv
 // MarkStopping removes the sandbox from live queries (Get, Items, Count) and notifies OnStopping subscribers.
 // Returns true if the sandbox was successfully removed.
 func (m *Map) MarkStopping(ctx context.Context, sandboxID, lifecycleID string) bool {
-	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false)
+	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false, nil)
 
 	return err == nil
 }
@@ -406,10 +416,207 @@ func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, r
 
 // MarkStoppingReserved exchanges the matching live entry for a checkpoint hold before notifying subscribers.
 func (m *Map) MarkStoppingReserved(ctx context.Context, sandboxID, lifecycleID string) (*Reservation, error) {
-	return m.markStopping(ctx, sandboxID, lifecycleID, true)
+	return m.markStopping(ctx, sandboxID, lifecycleID, true, nil)
 }
 
-func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool) (*Reservation, error) {
+// boot is a reboot in place in progress.
+type boot struct {
+	// from is the lifecycle whose guest reset.
+	from   *Sandbox
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+
+	mu sync.Mutex
+	// ended is set once the boot has ended, under mu with the read of kill,
+	// so a Delete's acknowledgement and the boot's end see each other.
+	ended bool
+	// kill is the reason of a Delete that cancelled the boot and stopped
+	// waiting for its end: the boot publishes that kill as it ends, since
+	// the Delete already answered and its retry finds nothing to kill. The
+	// first one is kept.
+	kill string
+}
+
+// acknowledgeKill records the kill of a Delete that stopped waiting for the
+// boot. It reports false once the boot has ended: the Delete then reads the
+// boot's end as a wait that returned.
+func (b *boot) acknowledgeKill(killReason string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.ended {
+		return false
+	}
+	if b.kill == "" {
+		b.kill = killReason
+	}
+
+	return true
+}
+
+// end marks the boot ended and returns the kill a Delete left it to publish.
+func (b *boot) end() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.ended = true
+
+	return b.kill, b.kill != ""
+}
+
+// claimKill gives the kill of the boot to the caller once it has ended,
+// unless a Delete already holds it: the one that stopped waiting, whose kill
+// the boot publishes, or an earlier one that waited the boot out.
+func (b *boot) claimKill(killReason string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.kill != "" {
+		return false
+	}
+	b.kill = killReason
+
+	return true
+}
+
+// beginBoot exchanges the live entry of the sandbox whose guest reset for a
+// reservation, as MarkStoppingReserved does, and registers the boot in the
+// same step, so a lookup never finds neither. cancel ends the boot.
+func (m *Map) beginBoot(ctx context.Context, from *Sandbox, cancel context.CancelCauseFunc) (*Reservation, *boot, error) {
+	b := &boot{from: from, cancel: cancel, done: make(chan struct{})}
+
+	reservation, err := m.markStopping(ctx, from.Runtime.SandboxID, from.LifecycleID, true, b)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return reservation, b, nil
+}
+
+// endBoot unregisters the boot and wakes its waiters, and returns the kill a
+// Delete left the boot to publish. On success the next lifecycle must already
+// be live, so a waiter's lookup finds it.
+func (m *Map) endBoot(b *boot) (pendingKill string, ok bool) {
+	sandboxID := b.from.Runtime.SandboxID
+
+	m.registryMu.Lock()
+	if m.boots[sandboxID] == b {
+		delete(m.boots, sandboxID)
+	}
+	m.registryMu.Unlock()
+
+	pendingKill, ok = b.end()
+	close(b.done)
+
+	return pendingKill, ok
+}
+
+func (m *Map) getBoot(sandboxID string) *boot {
+	m.registryMu.Lock()
+	defer m.registryMu.Unlock()
+
+	return m.boots[sandboxID]
+}
+
+// BeginBootForTest holds the sandbox out of the live map as a reboot in place
+// does, for tests outside this package that drive a call racing a reboot.
+// end finishes the boot and returns the kill a Delete left it to publish;
+// with next non-nil it first registers next as live.
+func (m *Map) BeginBootForTest(ctx context.Context, from *Sandbox) (end func(next *Sandbox) (pendingKill string, err error), err error) {
+	reservation, b, err := m.beginBoot(ctx, from, func(error) {})
+	if err != nil {
+		return nil, err
+	}
+
+	return func(next *Sandbox) (string, error) {
+		defer reservation.Release()
+		var registerErr error
+		if next != nil {
+			registerErr = reservation.MarkRunning(ctx, next)
+		}
+		pendingKill, _ := m.endBoot(b)
+
+		return pendingKill, registerErr
+	}, nil
+}
+
+// Rebooting reports whether a reboot in place holds the sandbox out of the
+// live map.
+func (m *Map) Rebooting(sandboxID string) bool {
+	return m.getBoot(sandboxID) != nil
+}
+
+// AwaitBoot looks the sandbox up, and if a reboot in place holds it, waits
+// for the boot to end and looks it up again. A boot that failed leaves the
+// sandbox not found, as a sandbox that stopped.
+func (m *Map) AwaitBoot(ctx context.Context, sandboxID string) (*Sandbox, bool, error) {
+	sbx, ok, _, err := m.AwaitBootWaited(ctx, sandboxID)
+
+	return sbx, ok, err
+}
+
+// AwaitBootWaited is AwaitBoot that also reports whether it waited for a boot.
+func (m *Map) AwaitBootWaited(ctx context.Context, sandboxID string) (sbx *Sandbox, ok, waited bool, err error) {
+	if sbx, ok := m.Get(sandboxID); ok {
+		return sbx, true, false, nil
+	}
+
+	b := m.getBoot(sandboxID)
+	if b == nil {
+		// A boot that ended between the two reads made its successor live
+		// first, so a second read finds it.
+		sbx, ok := m.Get(sandboxID)
+
+		return sbx, ok, false, nil
+	}
+
+	select {
+	case <-b.done:
+	case <-ctx.Done():
+		return nil, false, true, ctx.Err()
+	}
+
+	sbx, ok = m.Get(sandboxID)
+
+	return sbx, ok, true, nil
+}
+
+// ErrBootCancelled is the cause a reboot in place ends with when the sandbox
+// is killed during it.
+var ErrBootCancelled = errors.New("sandbox killed during its reboot")
+
+// CancelBoot ends a reboot in place of the sandbox, if one is running, and
+// waits until it has. It returns the lifecycle whose guest reset, or nil when
+// no boot was running. A boot that registered its sandbox as live before the
+// cancel landed keeps it; the caller looks the sandbox up again.
+//
+// publish reports that the caller publishes the kill: the boot's kill is
+// claimed by the first cancel that waits the boot out. When ctx ends before
+// the boot has, killReason is recorded on the boot instead, which carries it
+// in its result for the lifecycle to publish once it ended with nothing
+// live, and every later cancel of the same boot finds it taken. So the kill
+// is published once whichever side gets there.
+func (m *Map) CancelBoot(ctx context.Context, sandboxID, killReason string) (from *Sandbox, publish bool, err error) {
+	b := m.getBoot(sandboxID)
+	if b == nil {
+		return nil, false, nil
+	}
+
+	b.cancel(ErrBootCancelled)
+
+	select {
+	case <-b.done:
+	case <-ctx.Done():
+		if b.acknowledgeKill(killReason) {
+			return nil, false, ctx.Err()
+		}
+		// The boot ended as the context did: a wait that returned.
+	}
+
+	return b.from, b.claimKill(killReason), nil
+}
+
+func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool, b *boot) (*Reservation, error) {
 	var (
 		stopped          *Sandbox
 		reservation      *Reservation
@@ -448,6 +655,9 @@ func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, r
 	if stopped != nil && reserve {
 		reservation = &Reservation{m: m, sandboxID: sandboxID}
 		m.reservations[sandboxID] = reservation
+		if b != nil {
+			m.boots[sandboxID] = b
+		}
 	}
 	m.registryMu.Unlock()
 

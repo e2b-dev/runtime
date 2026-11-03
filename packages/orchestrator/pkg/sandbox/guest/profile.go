@@ -78,8 +78,9 @@ type BootConfig struct {
 type RestoreConfig struct {
 	// ClockRealtime advances the guest clock by the wall-clock time that the snapshot was paused.
 	ClockRealtime bool
-	// NoPowerOffPatch sends no power-off device declaration before the snapshot load.
-	NoPowerOffPatch bool
+	// PowerOffPatch sends the power-off device declaration before the snapshot load.
+	// Set it only for a Firecracker that accepts the PATCH and still loads the snapshot afterwards.
+	PowerOffPatch bool
 	// MmdsStoreOptional tolerates a snapshot whose microVM has no MMDS store.
 	MmdsStoreOptional bool
 	// NoMemfd keeps the guest memory off the memfd backend.

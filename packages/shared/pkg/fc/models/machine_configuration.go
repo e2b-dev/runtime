@@ -18,6 +18,9 @@ import (
 // swagger:model MachineConfiguration
 type MachineConfiguration struct {
 
+	// [x86_64 only] Declare the ACPI power-off device to the guest, so a guest power-off ends the Firecracker process with exit code 0 instead of halting the vCPUs. A snapshot does not record it: a PATCH carrying only this field keeps snapshot loading allowed, so it is set before a restore. A Firecracker without the device rejects the field.
+	AcpiPoweroff bool `json:"acpi_poweroff,omitempty"`
+
 	// cpu template
 	CPUTemplate *CPUTemplate `json:"cpu_template,omitempty"`
 

@@ -147,17 +147,20 @@ type fakePauseSteps struct {
 	snapshots        atomic.Int32
 	uploads          atomic.Int32
 	stops            atomic.Int32
+	filesystemOnly   atomic.Bool
 	envdUnresponsive atomic.Bool
 }
 
-func (f *fakePauseSteps) snapshot(_ context.Context, _ *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, _, envdUnresponsive bool) (*snapshotResult, error) {
+func (f *fakePauseSteps) snapshot(_ context.Context, _ *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, filesystemOnly, _, envdUnresponsive bool) (*snapshotResult, error) {
 	f.snapshots.Add(1)
+	f.filesystemOnly.Store(filesystemOnly)
 	f.envdUnresponsive.Store(envdUnresponsive)
 
 	return &snapshotResult{
 		schedulingMetadata: &orchestrator.SchedulingMetadata{BuildId: in.GetBuildId()},
 		completeUpload:     func(context.Context, error) {},
 		abandonUpload:      func(context.Context, error) {},
+		filesystemOnly:     filesystemOnly,
 	}, nil
 }
 

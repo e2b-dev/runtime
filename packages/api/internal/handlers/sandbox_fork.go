@@ -162,6 +162,11 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because the sandbox guest agent is not responding, please retry", sandboxID))
 
 		return
+	// The sandbox is back to Running; the node refused the checkpoint for this guest.
+	case errors.Is(err, orchestrator.PauseUnsupportedError{}):
+		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be forked: its guest does not support the checkpoint", sandboxID))
+
+		return
 	case errors.Is(err, orchestrator.PauseQueueExhaustedError{}):
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because its node is busy, please retry", sandboxID))
 

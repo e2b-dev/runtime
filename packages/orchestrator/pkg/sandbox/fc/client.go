@@ -444,8 +444,10 @@ func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tap
 // newMachineConfigBody returns the PUT /machine-config body: the orchestrator's
 // model, or, when the guest profile adds machine fields (Boot().MachineConfigExtra),
 // the model's JSON object with those fields merged in; a key the model sets is refused.
-func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra map[string]json.RawMessage) (any, error) {
-	model := machineConfigModel(vCPUCount, memoryMB, hugePages)
+// acpiPowerOff declares the ACPI power-off device; the field is left out when
+// false, so a Firecracker without it accepts the body.
+func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra map[string]json.RawMessage, acpiPowerOff bool) (any, error) {
+	model := machineConfigModel(vCPUCount, memoryMB, hugePages, acpiPowerOff)
 	if len(extra) == 0 {
 		return model, nil
 	}
@@ -470,7 +472,7 @@ func (c *apiClient) setMachineConfig(ctx context.Context, body any) error {
 }
 
 // machineConfigModel is the machine configuration body the orchestrator decides.
-func machineConfigModel(vCPUCount int64, memoryMB int64, hugePages bool) *models.MachineConfiguration {
+func machineConfigModel(vCPUCount int64, memoryMB int64, hugePages bool, acpiPowerOff bool) *models.MachineConfiguration {
 	// SMT (Simultaneous Multi-Threading / Hyper-Threading) must be disabled on
 	// ARM64 because ARM processors use a different core topology (big.LITTLE,
 	// efficiency/performance cores) rather than hardware threads per core.
@@ -485,6 +487,7 @@ func machineConfigModel(vCPUCount int64, memoryMB int64, hugePages bool) *models
 		MemSizeMib:      &memoryMB,
 		Smt:             &smt,
 		TrackDirtyPages: &trackDirtyPages,
+		AcpiPoweroff:    acpiPowerOff,
 	}
 	if hugePages {
 		machineConfig.HugePages = models.MachineConfigurationHugePagesNr2M
@@ -530,6 +533,21 @@ func withJSONBody(body any) operations.ClientOption {
 			return r.SetBodyParam(body)
 		})
 	}
+}
+
+// setACPIPowerOff declares the ACPI power-off device before a snapshot load:
+// the snapshot does not record it, and a PATCH carrying only this field
+// leaves the load allowed.
+func (c *apiClient) setACPIPowerOff(ctx context.Context) error {
+	_, err := c.client.Operations.PatchMachineConfiguration(&operations.PatchMachineConfigurationParams{
+		Context: ctx,
+		Body:    &models.MachineConfiguration{AcpiPoweroff: true},
+	})
+	if err != nil {
+		return fmt.Errorf("error setting fc acpi power-off: %w", err)
+	}
+
+	return nil
 }
 
 // cpuConfigBody renders the PUT /cpu-config body. Unset collections must be omitted:

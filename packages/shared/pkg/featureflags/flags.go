@@ -255,6 +255,40 @@ var (
 	// sandboxes and when this flag is off.
 	InPlaceCheckpointFlag = NewBoolFlag("in-place-checkpoint", false)
 
+	// GuestRebootInPlaceFlag boots a sandbox whose guest reset itself (a
+	// reboot, or a kernel crash that restarts) again on its own disk and
+	// network slot, under the same sandbox and execution IDs, instead of
+	// stopping it. Read at the moment of the reset for a running sandbox, and
+	// at the start of a create or resume for a reset before envd answers. The
+	// fallback reads GUEST_REBOOT_IN_PLACE so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestRebootInPlaceFlag = NewBoolFlag("guest-reboot-in-place", envBoolOr("GUEST_REBOOT_IN_PLACE", false))
+
+	// GuestPowerOffEndFlag keeps a sandbox whose guest powered itself off,
+	// disk included, and lists it as powered off, so the API ends it with the
+	// sandbox's own timeout action: a kill, or a filesystem-only pause.
+	// Read when a cold boot, or a restore whose guest profile asks for it,
+	// decides whether to declare the ACPI power-off device, at an exit to
+	// decide whether to wait for the final guest counters, and again at the
+	// power-off. A process whose Firecracker took the device is held whatever
+	// the flag says then, so turning it off never costs that sandbox its disk.
+	// Off, a power-off of a process that did not take the device itself (a
+	// restore that sent no declaration, even when its snapshot's guest still
+	// has the device) stops the sandbox as a crash does.
+	// The fallback reads GUEST_POWEROFF_END so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestPowerOffEndFlag = NewBoolFlag("guest-poweroff-end", envBoolOr("GUEST_POWEROFF_END", false))
+
+	// SandboxEndedOnNodeFlag lists a sandbox that ended on its node without
+	// being asked to (a crash, a reset that was not booted again) as ended for
+	// two minutes, so the API's sync ends its record with kill reason
+	// ended_on_node instead of keeping it running until its end time. A held
+	// power-off is listed under GuestPowerOffEndFlag whatever this says. Off,
+	// an unrequested end leaves the record as it did before. The fallback
+	// reads SANDBOX_ENDED_ON_NODE so a deployment without LaunchDarkly can
+	// turn it on.
+	SandboxEndedOnNodeFlag = NewBoolFlag("sandbox-ended-on-node", envBoolOr("SANDBOX_ENDED_ON_NODE", false))
+
 	// FilesystemOnlyCheckpointFlag enables the filesystem-only checkpoint:
 	// the rootfs is exported and no memfile, the SAME Firecracker process is
 	// resumed afterwards, and a sandbox created from the build cold-boots.

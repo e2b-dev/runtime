@@ -188,6 +188,19 @@ type NodeSandbox struct {
 	VCpu      int64
 	RamMB     int64
 	HugePages bool
+	// Ended is set by the node when the sandbox ended without being asked
+	// to; GuestEvent says what the host saw of the guest.
+	Ended      bool
+	GuestEvent string
+	// DiskKept is set with Ended when the guest powered itself off and the
+	// node keeps the sandbox for its timeout action.
+	DiskKept bool
+}
+
+// EndedOnNode reports whether the node lists the sandbox as ended with
+// nothing kept, so all that is left is to end it in the store.
+func (s NodeSandbox) EndedOnNode() bool {
+	return s.Ended && !s.DiskKept
 }
 
 // ToNodeSandbox reduces a stored sandbox to the node-reported view, so the kill

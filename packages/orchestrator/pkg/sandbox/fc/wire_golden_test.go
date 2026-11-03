@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -28,11 +29,20 @@ import (
 )
 
 // wireRecorder is a Firecracker API stub that answers every request with 204
-// and keeps the body it received, keyed by method and path.
+// and keeps every request it received, in order.
 type wireRecorder struct {
 	mu      sync.Mutex
-	bodies  map[string]string
+	sent    []wireRequest
 	answers map[string]stubAnswer
+	// refuseField answers 400 to any body carrying it, as a Firecracker
+	// without the field does.
+	refuseField string
+}
+
+// wireRequest is one request the stub received; key is its method and path.
+type wireRequest struct {
+	key  string
+	body string
 }
 
 // stubAnswer is a canned response for one method and path.
@@ -48,6 +58,13 @@ func (r *wireRecorder) refuseMmds(body string) {
 	r.answers["PUT /mmds"] = stubAnswer{status: http.StatusBadRequest, body: body}
 }
 
+// refuse makes the stub answer 400 to every body that carries field.
+func (r *wireRecorder) refuse(field string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refuseField = field
+}
+
 func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
 	t.Helper()
 
@@ -59,12 +76,15 @@ func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
 	require.NoError(t, err)
 
-	rec := &wireRecorder{bodies: map[string]string{}, answers: map[string]stubAnswer{}}
+	rec := &wireRecorder{answers: map[string]stubAnswer{}}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:gosec // no timeouts needed for a stub on a private socket
 		body, _ := io.ReadAll(r.Body)
 		rec.mu.Lock()
-		rec.bodies[r.Method+" "+r.URL.Path] = string(body)
+		rec.sent = append(rec.sent, wireRequest{key: r.Method + " " + r.URL.Path, body: string(body)})
 		canned, ok := rec.answers[r.Method+" "+r.URL.Path]
+		if rec.refuseField != "" && strings.Contains(string(body), rec.refuseField) {
+			canned, ok = stubAnswer{status: http.StatusBadRequest, body: `{"fault_message":"unknown field"}`}, true
+		}
 		rec.mu.Unlock()
 		if ok {
 			w.Header().Set("Content-Type", "application/json")
@@ -81,32 +101,43 @@ func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
 	return newApiClient(socket), rec
 }
 
+// body returns the last body sent to key.
 func (r *wireRecorder) body(t *testing.T, key string) string {
 	t.Helper()
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	body, ok := r.bodies[key]
-	require.True(t, ok, "no request %q; got %v", key, r.keysLocked())
+	sent := r.all(key)
+	require.NotEmpty(t, sent, "no request %q; got %v", key, r.keys())
 
-	return body
+	return sent[len(sent)-1]
 }
 
+// all returns the bodies sent to key, in order.
+func (r *wireRecorder) all(key string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []string
+	for _, req := range r.sent {
+		if req.key == key {
+			out = append(out, req.body)
+		}
+	}
+
+	return out
+}
+
+// keys returns the distinct method and path of every request, sorted.
 func (r *wireRecorder) keys() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return r.keysLocked()
-}
-
-func (r *wireRecorder) keysLocked() []string {
-	keys := make([]string, 0, len(r.bodies))
-	for k := range r.bodies {
-		keys = append(keys, k)
+	keys := make([]string, 0, len(r.sent))
+	for _, req := range r.sent {
+		keys = append(keys, req.key)
 	}
 	slices.Sort(keys)
 
-	return keys
+	return slices.Compact(keys)
 }
 
 // stubRootfs serves one path; nothing else of the provider is reached.

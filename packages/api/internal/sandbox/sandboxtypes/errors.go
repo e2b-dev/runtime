@@ -116,6 +116,7 @@ var refusalClasses = []struct {
 }{
 	{"checkpoint_in_progress", PauseRefusedCheckpointInProgressError{}},
 	{"envd_unresponsive", PauseRefusedEnvdUnresponsiveError{}},
+	{"unsupported", PauseUnsupportedError{}},
 }
 
 // RefusalClass is the token naming a refusal for a restored pause's waiters;
@@ -158,6 +159,16 @@ func (PauseRefusedEnvdUnresponsiveError) Is(target error) bool {
 	_, ok := target.(PauseQueueExhaustedError)
 
 	return ok
+}
+
+// PauseUnsupportedError is a node's refusal of a pause the sandbox's guest
+// cannot take (a filesystem-only pause of a guest without a filesystem quiesce): the sandbox keeps
+// running, and the same request will never succeed, so the record is
+// restored and the caller told to pause differently.
+type PauseUnsupportedError struct{}
+
+func (PauseUnsupportedError) Error() string {
+	return "The node refused the pause as unsupported for this sandbox"
 }
 
 // ErrExecutionMismatch reports that the stored sandbox is a different

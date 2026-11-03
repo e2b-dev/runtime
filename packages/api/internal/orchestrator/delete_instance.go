@@ -145,8 +145,10 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 				return fmt.Errorf("sandbox is in '%s' state: %w", transErr.CurrentState, err)
 			}
 
-			if errors.Is(err, PauseQueueExhaustedError{}) {
-				return refusalOf(err)
+			// A pause that joined one the node refused gets the answer the pause
+			// it rode got: the retryable refusal, or the permanent unsupported one.
+			if refusal := pauseRefusalOf(err); refusal != nil {
+				return refusal
 			}
 
 			if errors.Is(err, sandbox.ErrExecutionMismatch) {
@@ -200,13 +202,14 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 	}()
 	err = o.removeSandboxFromNode(ctx, sbx, opts)
 	if err != nil {
-		if errors.Is(err, PauseQueueExhaustedError{}) {
-			refusal := refusalOf(err)
+		if refusal := pauseRefusalOf(err); refusal != nil {
 			// A checkpoint in flight is the node's word that the sandbox is
 			// alive and the refusal ends with it; an unanswered envd probe
-			// left the VM untouched and running. Both restore the record
-			// whatever the flag says for a busy node.
-			if restoreOnRefusal || errors.Is(err, PauseRefusedCheckpointInProgressError{}) || errors.Is(err, PauseRefusedEnvdUnresponsiveError{}) {
+			// left the VM untouched and running; a refusal the node will never
+			// admit (PauseUnsupportedError) would lose the sandbox for nothing
+			// if killed. All three restore the record whatever the flag says
+			// for a busy node.
+			if restoreOnRefusal || errors.Is(refusal, PauseRefusedCheckpointInProgressError{}) || errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}) || errors.Is(refusal, PauseUnsupportedError{}) {
 				outcome := o.restoreRefusedPause(context.WithoutCancel(ctx), transition, refusal)
 				o.recordRefusalRestore(ctx, sbx.TeamID.String(), outcome, opts.Eviction)
 				switch outcome {
@@ -221,8 +224,9 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 				}
 			}
 
-			logger.L().Info(ctx, "Pause refused retryably by the node",
+			logger.L().Info(ctx, "Pause refused by the node",
 				logger.WithSandboxID(sbx.SandboxID),
+				zap.String("refusal", refusal.Error()),
 				zap.Bool("restored", preserveRecord),
 			)
 
@@ -297,10 +301,11 @@ func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandb
 	sbx := transition.Sandbox
 	_, err := o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{
 		RetryAfter: refusalRetryAfter,
-		// A checkpoint holding the sandbox or a guest agent that does not
-		// answer says nothing about the node, so the sweep is held without
-		// charging the overstay budget a busy node is measured against.
-		HoldOnly: errors.Is(refusal, PauseRefusedCheckpointInProgressError{}) || errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}),
+		// A checkpoint holding the sandbox, a guest agent that does not
+		// answer or a capture the guest cannot take says nothing about the
+		// node, so the sweep is held without charging the overstay budget a
+		// busy node is measured against.
+		HoldOnly: errors.Is(refusal, PauseRefusedCheckpointInProgressError{}) || errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}) || errors.Is(refusal, PauseUnsupportedError{}),
 		// The guest agent's refusals keep their own episode, which the
 		// evictor's bypass grace is measured against.
 		EnvdRefusal: errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}),
@@ -331,20 +336,6 @@ func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandb
 	}
 
 	return restoreOutcomeRestored
-}
-
-// refusalOf narrows a retryable pause refusal to its own type, unwrapped, so
-// the callers above tell a checkpoint in flight or an unresponsive guest
-// agent from a busy node.
-func refusalOf(err error) error {
-	switch {
-	case errors.Is(err, PauseRefusedCheckpointInProgressError{}):
-		return PauseRefusedCheckpointInProgressError{}
-	case errors.Is(err, PauseRefusedEnvdUnresponsiveError{}):
-		return PauseRefusedEnvdUnresponsiveError{}
-	default:
-		return PauseQueueExhaustedError{}
-	}
 }
 
 func (o *Orchestrator) removeSandboxFromNode(ctx context.Context, sbx sandbox.Sandbox, opts sandbox.RemoveOpts) error {
@@ -398,6 +389,44 @@ func (o *Orchestrator) removeSandboxFromNode(ctx context.Context, sbx sandbox.Sa
 	}
 
 	return nil
+}
+
+// endPoweredOffSandbox ends a sandbox whose guest powered off with its
+// timeout action, as the evictor would at its end time.
+func (o *Orchestrator) endPoweredOffSandbox(ctx context.Context, sbx sandbox.NodeSandbox) {
+	if o.sandboxEvictor == nil {
+		return
+	}
+
+	o.sandboxEvictor.EvictPoweredOff(ctx, sbx)
+}
+
+// endEndedSandbox ends the record of a sandbox its node reports ended without
+// being asked to, as a requested kill would, instead of leaving it running
+// until its end time. Only the listed execution is ended, and only while its
+// record is running: a later sync or another API instance finds it gone or
+// killing and does nothing, and a pause or kill in flight has its own end.
+func (o *Orchestrator) endEndedSandbox(ctx context.Context, node sandbox.NodeSandbox) {
+	sbx, err := o.sandboxStore.Get(ctx, node.TeamID, node.SandboxID)
+	// Only the node the record places the sandbox on may end it.
+	if err != nil || sbx.ExecutionID != node.ExecutionID || sbx.NodeID != node.NodeID || sbx.ClusterID != node.ClusterID || sbx.State != sandbox.StateRunning {
+		return
+	}
+
+	logger.L().Info(ctx, "Sandbox ended on its node, ending it in the store",
+		logger.WithSandboxID(node.SandboxID),
+		logger.WithNodeID(node.NodeID),
+		zap.String("guest_event", node.GuestEvent),
+	)
+
+	err = o.RemoveSandbox(ctx, node.TeamID, node.SandboxID, sandbox.RemoveOpts{
+		Action:            sandbox.StateActionKill,
+		Reason:            sandbox.KillReasonEndedOnNode,
+		ExpectExecutionID: node.ExecutionID,
+	})
+	if err != nil && !errors.Is(err, ErrSandboxNotFound) {
+		logger.L().Warn(ctx, "Failed to end a sandbox that ended on its node", zap.Error(err), logger.WithSandboxID(node.SandboxID))
+	}
 }
 
 func (o *Orchestrator) killOrphanSandbox(ctx context.Context, sbx sandbox.NodeSandbox) {

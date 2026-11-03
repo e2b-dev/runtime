@@ -58,6 +58,7 @@ type Orchestrator struct {
 	httpClient                    *http.Client
 	nodeDiscovery                 servicediscovery.Discoverer
 	sandboxStore                  *sandbox.Store
+	sandboxEvictor                *evictor.Evictor
 	nodes                         *smap.Map[*nodemanager.Node]
 	placementAlgorithm            *placement.BestOfK
 	featureFlagsClient            *featureflags.Client
@@ -222,6 +223,8 @@ func New(
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
+			EndPoweredOffSandbox:     o.endPoweredOffSandbox,
+			EndEndedSandbox:          o.endEndedSandbox,
 		},
 	)
 
@@ -233,6 +236,9 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox evictor: %w", err)
 	}
+	// Set before the sync starts, which is the only caller of
+	// endPoweredOffSandbox.
+	o.sandboxEvictor = sandboxEvictor
 	go sandboxEvictor.Start(ctx)
 
 	teamMetricsObserver, err := metrics.NewTeamObserver(ctx, o.sandboxStore)

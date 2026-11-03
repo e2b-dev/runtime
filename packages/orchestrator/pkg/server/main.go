@@ -67,19 +67,23 @@ type Server struct {
 	orchestrator.UnimplementedSandboxServiceServer
 	orchestrator.UnimplementedChunkServiceServer
 
-	config            cfg.Config
-	sandboxFactory    *sandbox.Factory
-	info              *service.ServiceInfo
-	networkPool       network.PoolInterface
-	templateCache     *template.Cache
-	devicePool        *nbd.DevicePool
-	persistence       storage.StorageProvider
-	featureFlags      *featureflags.Client
-	sbxEventsService  *events.EventsService
-	startingSandboxes *utils.AdjustableSemaphore
-	peerRegistry      peerclient.Registry
-	uploadedBuilds    *ttlcache.Cache[string, struct{}]
-	uploads           *sandbox.Uploads
+	config         cfg.Config
+	sandboxFactory *sandbox.Factory
+	// pauseReplyMargin overrides defaultPauseReplyMargin when positive (tests).
+	pauseReplyMargin time.Duration
+	// pauseCaptureBudget overrides defaultPauseCaptureBudget when positive (tests).
+	pauseCaptureBudget time.Duration
+	info               *service.ServiceInfo
+	networkPool        network.PoolInterface
+	templateCache      *template.Cache
+	devicePool         *nbd.DevicePool
+	persistence        storage.StorageProvider
+	featureFlags       *featureflags.Client
+	sbxEventsService   *events.EventsService
+	startingSandboxes  *utils.AdjustableSemaphore
+	peerRegistry       peerclient.Registry
+	uploadedBuilds     *ttlcache.Cache[string, struct{}]
+	uploads            *sandbox.Uploads
 
 	// buildDisk is the filesystem holding the build directory, as the pause
 	// disk admission sees it (pause_disk_admission.go).
@@ -94,6 +98,8 @@ type Server struct {
 	sandboxPauseDuration      metric.Int64Histogram
 	sandboxKilledCounter      metric.Int64Counter
 	sandboxCrashedCounter     metric.Int64Counter
+	guestRebootsCounter       metric.Int64Counter
+	guestRebootDuration       metric.Int64Histogram
 	sandboxCheckpointCounter  metric.Int64Counter
 	sandboxCheckpointDuration metric.Int64Histogram
 	uploadFailedCounter       metric.Int64Counter
@@ -217,6 +223,18 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to register sandbox crashes counter: %w", err)
 	}
 	server.sandboxCrashedCounter = sandboxCrashedCounter
+
+	guestRebootsCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxGuestRebootsCounterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register guest reboots counter: %w", err)
+	}
+	server.guestRebootsCounter = guestRebootsCounter
+
+	guestRebootDuration, err := telemetry.GetHistogram(meter, telemetry.GuestRebootDurationHistogramName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register guest reboot duration histogram: %w", err)
+	}
+	server.guestRebootDuration = guestRebootDuration
 
 	sandboxCheckpointCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCheckpointCounterName)
 	if err != nil {

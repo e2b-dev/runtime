@@ -134,9 +134,11 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be paused while in '%s' state", sandboxID, transErr.CurrentState))
 
 		return
-	// Reached only for a filesystem-only pause or one that asked for a healthy
-	// guest, after the API restored the sandbox; the node left the VM running,
-	// so a retry can succeed once the guest agent answers again.
+	// Reached for a filesystem-only pause, one that asked for a healthy
+	// guest, or a guest that powered off while the probe waited, after the
+	// API restored the sandbox; the node left the VM running, or the disk
+	// held, so a retry can succeed once the guest agent answers again or
+	// as the disk-only capture of the held guest.
 	case errors.Is(err, orchestrator.PauseRefusedEnvdUnresponsiveError{}):
 		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonEnvdUnresponsive, filesystemOnly)
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because the sandbox guest agent is not responding, please retry", sandboxID))
@@ -147,6 +149,13 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 	case errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}):
 		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonCheckpointInProgress, filesystemOnly)
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is being snapshotted, please retry", sandboxID))
+
+		return
+	// The API restored the sandbox; the same request will never succeed, a
+	// memory pause will. Not 409: the SDKs read every 409 here as already paused.
+	case errors.Is(err, orchestrator.PauseUnsupportedError{}):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonUnsupported, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Sandbox '%s' cannot be paused filesystem-only: its guest does not support it, pause it with memory instead", sandboxID))
 
 		return
 	// Reached only after the API restored the sandbox, so the retry can succeed.

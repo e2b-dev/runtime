@@ -1266,6 +1266,46 @@ sequenceDiagram
   service, turns it on). The node
   refuses before `MarkStopping`, so its routing record stays live and nothing needs to restore
   it; with the flag off the refused sandbox is killed on the node together with its record.
+- **Pauses a guest cannot take**: a guest profile can declare that its guest has no filesystem
+  quiesce. The node then refuses a filesystem-only pause or checkpoint before it marks the sandbox
+  stopping, with FailedPrecondition and an ErrorInfo (`PAUSE_REFUSED_UNSUPPORTED`, domain
+  `orchestrator.e2b.dev`, the profile's label as `guest_os`). The API restores the record whatever
+  the restore rollout flag says, since the same request will never succeed: `POST
+  /sandboxes/{id}/pause` answers 400 (not 409, which the SDKs read as already paused), snapshot
+  and fork answer 409, and a filesystem-only pause that joined the refused one gets the same
+  answer. A sandbox created with `autoPauseMemory=false` from such a template is refused by the
+  node at create, a resume included, with the same ErrorInfo and the create-refused detail
+  (`POST /sandboxes` answers 400), so a timeout auto-pause never meets the refusal; were a node
+  to refuse one anyway, the evictor counts `fs_only_unsupported`, leaves the restored sandbox
+  running for one retry window (10 s) and then kills it with the timeout reason, as it does a
+  sandbox whose pause cannot be taken, never a memory capture in place of the one the customer
+  opted into; each API replica asks the node once per execution and hour, so the refusal costs
+  at most one failed snapshot build per replica, not one per sweep. A memory auto-pause the node
+  refused retryably is degraded to filesystem-only once; when that is refused as unsupported, that
+  API replica skips the degrade for up to an hour afterwards.
+- **Guest resets and power-offs**: the node classifies a Firecracker exit nobody asked for from
+  the guest's own counters: a reset (`guest_reset`), a reset after a crash the guest reported
+  through a counter group its profile names (`guest_crash`), or a power-off (`guest_poweroff`,
+  counted only by a Firecracker with the ACPI power-off device). With `guest-reboot-in-place`, a
+  reset boots the sandbox again on its own disk overlay and network slot, under the same sandbox,
+  execution and access token, with fresh memory; a reset during a resume from a memory snapshot,
+  before envd answers, is booted again too. The reboot is refused after more than three resets without envd
+  answering, or with less than a typical boot left before the end time. With
+  `guest-poweroff-end`, a cold boot declares the ACPI power-off device (a Firecracker that
+  refuses it boots without; a restore declares it only when its profile asks, which the default
+  guest does not), and a powered-off guest is held, disk included: the node lists it as ended with its disk kept, and
+  the API runs its timeout action early, a kill with reason `guest_poweroff` or a pause the node
+  captures disk-only (every pause of a held guest is that capture, one that requires a healthy
+  guest included: there is no agent to probe and no memory for the unresponsive mark), recording
+  the captured kind on the build. A process that took the device
+  itself is held even after the flag is turned off, so a rollback never costs its disk; a
+  restored process that sent no declaration does not count, even when its snapshot's guest still
+  has the device, and reads the flag at the power-off. A checkpoint
+  of a powered-off guest is refused. With `sandbox-ended-on-node`, any other unrequested end is listed as ended for
+  two minutes, and the API's sync ends the record with reason `ended_on_node` instead of keeping
+  it running until its end time. All three flags default off and read the
+  `GUEST_REBOOT_IN_PLACE`, `GUEST_POWEROFF_END` and `SANDBOX_ENDED_ON_NODE` environment variables
+  as fallbacks.
 - **Pre-boot filesystem recovery**: every cold boot of a rootfs that was not frozen at pause
   (`fs_quiesced` false/absent) runs a jailed `e2fsck -p -E journal_only` before the VM starts —
   journal replay only, the same recovery the guest kernel would do at mount — so a `memory: false`

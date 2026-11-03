@@ -405,3 +405,86 @@ func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, finishStart, "the successor's removal released its reservation")
 }
+
+// The sync hands every sandbox the node lists as powered off, and only those,
+// to EndPoweredOffSandbox.
+func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
+	t.Parallel()
+
+	ended := make(chan NodeSandbox, 2)
+	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
+		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended <- sbx },
+	})
+
+	running := createTestSandbox()
+	poweredOff := createTestSandbox()
+	require.NoError(t, store.Add(t.Context(), running, nil))
+	require.NoError(t, store.Add(t.Context(), poweredOff, nil))
+
+	listed := poweredOff.ToNodeSandbox()
+	listed.DiskKept = true
+	store.Reconcile(t.Context(), []NodeSandbox{running.ToNodeSandbox(), listed}, "node-1")
+
+	select {
+	case got := <-ended:
+		assert.Equal(t, poweredOff.SandboxID, got.SandboxID)
+	case <-time.After(5 * time.Second):
+		t.Fatal("EndPoweredOffSandbox was not called")
+	}
+
+	select {
+	case got := <-ended:
+		t.Fatalf("EndPoweredOffSandbox called for %s, which is not powered off", got.SandboxID)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// The sync hands every sandbox the node lists as ended with nothing kept to
+// EndEndedSandbox, and never kills one as an orphan, even with its record
+// gone; a sandbox the store does not know that is still running is.
+func TestReconcile_EndsEndedSandboxes(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		ended    []string
+		orphaned []string
+		poweroff []string
+	)
+	record := func(to *[]string) OrphanCallback {
+		return func(_ context.Context, sbx NodeSandbox) {
+			mu.Lock()
+			defer mu.Unlock()
+			*to = append(*to, sbx.SandboxID)
+		}
+	}
+	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
+		KillOrphanSandbox:    record(&orphaned),
+		EndEndedSandbox:      record(&ended),
+		EndPoweredOffSandbox: record(&poweroff),
+	})
+
+	inStore := createTestSandbox()
+	require.NoError(t, store.Add(t.Context(), inStore, nil))
+
+	old := time.Now().Add(-time.Hour)
+	listed := func(sbx Sandbox, ended bool) NodeSandbox {
+		node := sbx.ToNodeSandbox()
+		node.StartTime = old
+		node.Ended = ended
+
+		return node
+	}
+	endedInStore := listed(inStore, true)
+	endedGone := listed(createTestSandbox(), true)
+	orphan := listed(createTestSandbox(), false)
+
+	store.Reconcile(t.Context(), []NodeSandbox{endedInStore, endedGone, orphan}, "node-1")
+
+	// Reconcile waits for both callbacks before it returns.
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, []string{endedInStore.SandboxID, endedGone.SandboxID}, ended)
+	assert.Equal(t, []string{orphan.SandboxID}, orphaned)
+	assert.Empty(t, poweroff)
+}
