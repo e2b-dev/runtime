@@ -892,6 +892,20 @@ var (
 	// MaxConcurrentSandboxListQueries limits concurrent GetSnapshotsWithCursor calls in the sandbox list path.
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSandboxListQueries = NewIntFlag("max-concurrent-sandbox-list-queries", 0)
+
+	// PausedSandboxListBatchLimit caps the number of rows requested per GetSnapshotsWithCursor
+	// query when excluding running sandboxes in GET /v2/sandboxes.
+	// 0 or negative disables batching (fetches queryLimit + len(runningSandboxesIDs) in one query).
+	// Evaluated per team.
+	PausedSandboxListBatchLimit = NewIntFlag("paused-sandbox-list-batch-limit", 0)
+
+	// DBMaxConnLifetimeSeconds overrides pgxpool MaxConnLifetime when positive.
+	// 0 or negative keeps pgxpool's default (1h, or the value in the DSN).
+	DBMaxConnLifetimeSeconds = NewIntFlag("db-max-conn-lifetime-seconds", 0)
+	// DBMaxConnLifetimeJitterSeconds overrides pgxpool MaxConnLifetimeJitter when positive.
+	// 0 or negative keeps pgxpool's default (0, or the value in the DSN).
+	DBMaxConnLifetimeJitterSeconds = NewIntFlag("db-max-conn-lifetime-jitter-seconds", 0)
+
 	// MaxConcurrentSnapshotBuildQueries limits concurrent GetSnapshotBuilds calls (e.g. sandbox delete).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotBuildQueries = NewIntFlag("max-concurrent-snapshot-build-queries", 0)

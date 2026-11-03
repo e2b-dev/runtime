@@ -268,7 +268,14 @@ const (
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config, hops Hops) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
 
-	sqlcDB, err := sqlcdb.NewClient(ctx, config.PostgresConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+	sqlcDB, err := sqlcdb.NewClient(
+		ctx,
+		config.PostgresConnectionString,
+		pool.WithMaxConnections(config.DBMaxOpenConnections),
+		pool.WithMinIdle(config.DBMinIdleConnections),
+		pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+		pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+	)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing SQLC client", zap.Error(err))
 	}
@@ -277,7 +284,14 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	// replica when one is configured, otherwise the primary.
 	sqlcReadDB := sqlcDB
 	if config.PostgresReadReplicaConnectionString != "" {
-		sqlcReadDB, err = sqlcdb.NewReadClient(ctx, config.PostgresReadReplicaConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+		sqlcReadDB, err = sqlcdb.NewReadClient(
+			ctx,
+			config.PostgresReadReplicaConnectionString,
+			pool.WithMaxConnections(config.DBMaxOpenConnections),
+			pool.WithMinIdle(config.DBMinIdleConnections),
+			pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+			pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+		)
 		if err != nil {
 			logger.L().Fatal(ctx, "Initializing read SQLC client", zap.Error(err))
 		}

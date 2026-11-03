@@ -158,44 +158,67 @@ func (a *APIStore) getPausedSandboxes(
 		queryMetadata = *metadataFilter
 	}
 
-	// Over-fetch to account for rows filtered out by the exclude set below.
-	// This replaces the SQL-side NOT (sandbox_id = ANY(array)) which is
-	// O(rows × array_size) and caused 40s+ query times with large arrays.
-	dbLimit := queryLimit + int32(len(runningSandboxesIDs))
+	excluded := make(map[string]bool, len(runningSandboxesIDs))
+	for _, id := range runningSandboxesIDs {
+		excluded[id] = true
+	}
+	unmatchedExcludes := int32(len(excluded))
 
-	snapshots, err := a.throttledGetSnapshots(ctx, order, templateID, queries.GetSnapshotsWithCursorParams{
-		Limit:        dbLimit,
-		TeamID:       teamID,
-		Metadata:     queryMetadata,
-		CursorTime:   pgtype.Timestamptz{Time: cursorTime, Valid: true},
-		CursorID:     cursorID,
-		StartedAfter: startedAfter,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error getting team snapshots: %w", err)
+	var maxBatchLimit int32
+	if a.featureFlags != nil {
+		maxBatchLimit = int32(a.featureFlags.IntFlag(ctx, featureflags.PausedSandboxListBatchLimit, featureflags.TeamContext(teamID.String())))
 	}
 
-	if len(runningSandboxesIDs) > 0 {
-		excludeSet := make(map[string]struct{}, len(runningSandboxesIDs))
-		for _, id := range runningSandboxesIDs {
-			excludeSet[id] = struct{}{}
+	nextCursorTime := cursorTime
+	nextCursorID := cursorID
+	filtered := make([]queries.GetSnapshotsWithCursorRow, 0, queryLimit)
+
+	for int32(len(filtered)) < queryLimit {
+		remaining := queryLimit - int32(len(filtered))
+		batchLimit := remaining + unmatchedExcludes
+		if maxBatchLimit > 0 {
+			batchLimit = min(batchLimit, max(remaining, maxBatchLimit))
 		}
 
-		filtered := snapshots[:0]
-		for _, s := range snapshots {
-			if _, excluded := excludeSet[s.Snapshot.SandboxID]; !excluded {
-				filtered = append(filtered, s)
+		batch, err := a.throttledGetSnapshots(ctx, order, templateID, queries.GetSnapshotsWithCursorParams{
+			Limit:        batchLimit,
+			TeamID:       teamID,
+			Metadata:     queryMetadata,
+			CursorTime:   pgtype.Timestamptz{Time: nextCursorTime, Valid: true},
+			CursorID:     nextCursorID,
+			StartedAfter: startedAfter,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error getting team snapshots: %w", err)
+		}
+
+		for _, s := range batch {
+			if unseen, isExcluded := excluded[s.Snapshot.SandboxID]; isExcluded {
+				if unseen {
+					excluded[s.Snapshot.SandboxID] = false
+					unmatchedExcludes--
+				}
+
+				continue
+			}
+
+			filtered = append(filtered, s)
+			excluded[s.Snapshot.SandboxID] = false
+			if int32(len(filtered)) == queryLimit {
+				break
 			}
 		}
 
-		snapshots = filtered
+		if int32(len(batch)) < batchLimit || int32(len(filtered)) >= queryLimit {
+			break
+		}
+
+		last := batch[len(batch)-1].Snapshot
+		nextCursorTime = last.SandboxStartedAt.Time
+		nextCursorID = last.SandboxID
 	}
 
-	if int32(len(snapshots)) > queryLimit {
-		snapshots = snapshots[:queryLimit]
-	}
-
-	sandboxes := snapshotsToPaginatedSandboxes(ctx, snapshots)
+	sandboxes := snapshotsToPaginatedSandboxes(ctx, filtered)
 
 	return sandboxes, nil
 }
@@ -380,8 +403,9 @@ func (a *APIStore) GetV2Sandboxes(c *gin.Context, params api.GetV2SandboxesParam
 
 	if slices.Contains(states, api.Paused) {
 		// Live sandboxes are excluded from the paused page so none is listed twice.
-		// getPausedSandboxes pays for that by over-fetching one extra row per excluded
-		// ID, so a sandbox the paused query cannot return anyway is worth leaving out.
+		// getPausedSandboxes filters excluded IDs in memory (in bounded cursor batches
+		// when PausedSandboxListBatchLimit is configured), so a sandbox the paused query
+		// cannot return anyway is worth leaving out to minimize scan work.
 		runningSandboxesIDs := make([]string, 0, len(runningSandboxes)+len(pausingSandboxes))
 		for _, info := range runningSandboxes {
 			if sandboxCanAppearInPausedPage(info, startedAfter, templateIDFilter) {
