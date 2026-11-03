@@ -8,31 +8,13 @@ import (
 	"compress/flate"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"net/url"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gin-gonic/gin"
-	"github.com/oapi-codegen/runtime"
 )
-
-// CPUCount CPU cores for the sandbox
-type CPUCount = int64
-
-// DiskSizeMB Disk size for the sandbox in MiB
-type DiskSizeMB = int64
-
-// Error defines model for Error.
-type Error struct {
-	// Code Error code.
-	Code int32 `json:"code"`
-
-	// Message Error message.
-	Message string `json:"message"`
-}
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
@@ -40,68 +22,11 @@ type HealthResponse struct {
 	Message string `json:"message"`
 }
 
-// MemoryMB Memory for the sandbox in MiB
-type MemoryMB = int64
-
-// SandboxRecord defines model for SandboxRecord.
-type SandboxRecord struct {
-	// Alias Alias of the template
-	Alias *string `json:"alias,omitempty"`
-
-	// CpuCount CPU cores for the sandbox
-	CpuCount CPUCount `json:"cpuCount"`
-
-	// DiskSizeMB Disk size for the sandbox in MiB
-	DiskSizeMB DiskSizeMB `json:"diskSizeMB"`
-
-	// Domain Base domain where the sandbox traffic is accessible
-	Domain *string `json:"domain,omitempty"`
-
-	// EventsRetentionExpired Whether the sandbox ended more than the team's events retention window ago, so its events data is no longer available
-	EventsRetentionExpired bool `json:"eventsRetentionExpired"`
-
-	// MemoryMB Memory for the sandbox in MiB
-	MemoryMB MemoryMB `json:"memoryMB"`
-
-	// RetentionExpired Whether the sandbox ended more than the fixed retention window ago, so its monitoring and logs data is no longer available
-	RetentionExpired bool `json:"retentionExpired"`
-
-	// SandboxID Identifier of the sandbox
-	SandboxID string `json:"sandboxID"`
-
-	// StartedAt Time when the sandbox was started
-	StartedAt time.Time `json:"startedAt"`
-
-	// StoppedAt Time when the sandbox was stopped
-	StoppedAt *time.Time `json:"stoppedAt,omitempty"`
-
-	// TemplateID Identifier of the template from which is the sandbox created
-	TemplateID string `json:"templateID"`
-}
-
-// SandboxID defines model for sandboxID.
-type SandboxID = string
-
-// N401 defines model for 401.
-type N401 = Error
-
-// N403 defines model for 403.
-type N403 = Error
-
-// N404 defines model for 404.
-type N404 = Error
-
-// N500 defines model for 500.
-type N500 = Error
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealth Health check
 	// (GET /health)
 	GetHealth(c *gin.Context)
-	// GetSandboxesSandboxIDRecord Sandbox record
-	// (GET /sandboxes/{sandboxID}/record)
-	GetSandboxesSandboxIDRecord(c *gin.Context, sandboxID SandboxID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -124,31 +49,6 @@ func (siw *ServerInterfaceWrapper) GetHealth(c *gin.Context) {
 	}
 
 	siw.Handler.GetHealth(c)
-}
-
-// GetSandboxesSandboxIDRecord operation middleware
-func (siw *ServerInterfaceWrapper) GetSandboxesSandboxIDRecord(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "sandboxID" -------------
-	var sandboxID SandboxID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetSandboxesSandboxIDRecord(c, sandboxID)
 }
 
 // GinServerOptions provides options for the Gin server.
@@ -179,7 +79,6 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	}
 
 	router.GET(options.BaseURL+"/health", wrapper.GetHealth)
-	router.GET(options.BaseURL+"/sandboxes/:sandboxID/record", wrapper.GetSandboxesSandboxIDRecord)
 }
 
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
@@ -187,25 +86,13 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"tFfbbuM2EP0Vgi3QF/mSS4vCb85lG2+RIoizSIHAKMbiyOJGJFWSSuI1/O8LkpIsW7K9u9g8JRaHc87M",
-	"nCGHKxorkSuJ0ho6WtEcNAi0qP0vA5LN1dvkyv1gaGLNc8uVpCM6YSgtTzhqohJiUySlcZ9GlDuLHGxK",
-	"IypBIB01XEVU4/8F18joyOoCI2riFAU4DLvMvbHVXC7oer12xiZX0qAndD48cX9iJS1K6/6FPM94DI7V",
-	"4LNx1FYNf79qTOiI/jLYRDkIq2ZwrbXSAWM7tHFhUxdc8Eow2EX0fHj2/uAflJ5zxlAGxPP3R/xHWZKo",
-	"QjKH+Ptw+P6IU9QvqKvErisB+Apf3n26VEWA3t51efeJxEqjIYnSTcXRiCZKC7B0RLm0f5zTiAouuSgE",
-	"HZ1Elai4tLhAX8krbp6n/AveXrRh3Box/AvuwhAuyS2/OIg27EILeXDNpVWO2vKg5VgxbMN7Y+LW+jtI",
-	"Z6e0y7tAY2Cx11O53KdRq7majfgU6GzczWp7Nf+MsXVQNwiZTe/LhmxHtJfKTSFA9jQCg3mGJPV+SJxi",
-	"/Ew0miKzx/kdInaLQullVzXDyo+U8uT0z650T4OHe4yVZu0UQMbBtGmM3efqoLQo8gwstkOOaJwXtfwP",
-	"9VbdJq65ttR8aFdD926fEsBlm+wFGCRhkbymqHErdVZDkvCYcEMgjtEYPs9cKLLIMlfd6lBvhYYvjss9",
-	"Wne2Knn9lofS7sI/pmhT3K4XSoaMCOW5gCzTCOI3Q4Jboiu/5JVLpl4JLFREjCLc1jYMLDjeUpFMyQVq",
-	"Ai/AA+ua8FypDEGG1trI6lBaa/l5yf6s+BL+huxwXEJJbpVLMAHJSKYW3x/kj9zxXco1FrRFNu44uR+4",
-	"QKckuRXzKxhSbmo2IgOLPcsFdoOoPP9+EL9pH8hR4Vb9+m0pqqxJopUgrymPU1eOJqlYI4SoDx95DeBo",
-	"a4Da5LpxYjT0unUmdGhybzO2D1eXdIwLze1y6uQejrkxE1yOc/43Lt205D75mS9FYKg3U9+/PW/Ze1DP",
-	"KDfxgt/pcuuXPz4+VF7mCBr1h6pOHx8faDkeeNn61Y2f1Nrce/kmJneTnkPtYlHY9E6rF85QX3iMPXzC",
-	"ifefLcM5Tqzh+AFBHKHoTHqTq42fiqIrA5eJcnstt06s9Pr0glyBSecKNCPjuwmN6AtqE4Q57J/0h46C",
-	"ylFCzumInvWH/SGN/GDuqzgIF7H7d4G+pdxV5ke9CaMj+hfacOXTnTH89CdOiTtDRce4eNMcF0zhS5AU",
-	"WdBmIQTo5Y6VXxqUHYNmsKqbZz3Q9c29L+ZptW9a7Spv+2jrefTUHdfGZFCj0vXsHTO4PZJ0zdt1zrKl",
-	"u1AKLZHVpxFDCzwz/fDgONmHVtMfOKPNc+iY7VnjIXPM9rzxBDls64yaZ5Mvx742fprt68Sn2XrWFFGZ",
-	"SqKrgltYuFLTWkt05hNcfl/tPG/R0PVs/XUA",
+	"jJJNbxMxEIb/SjRw3C/KbW+pCjTlUkGkIiGEJt5J7Hb9wXi2UlTlv6Pxtk0VQOW0lmfm9eP18wAm+hQD",
+	"BcnQP0A2ljyW5SXhKPYL5RRDJt1JHBOxOCp1TznjrhQGyoZdEhcD9HA5eQw1Ew64GWlhS87CWDJ3C6Y8",
+	"jdJABbJPBD1kYRd2cDhUwPRrckwD9N+fw388N8bNLRkpjZnMxE72XxV2hlkO3oVlcp9pv5zE6pZTFks4",
+	"EEMFAb2mfKtLZ72OdxSOFFgm4VDNQVc366eUDSETf4zsUaCHq5s1VPNf0rm5esyxIqmk/BfJ9arWU/9G",
+	"MYm95njvBuLzcsY/eNAYyvmnPF7ndbAXwWtC/wqittSriz8R9Rlc2EadFSej1j6cnS8uMNtNRB4Wy+sV",
+	"VHBPnGcruuZd0ylCTBQwOejhfdM1HVSQUGx5xXZ2RZc7Ev2ocKherQbo4RPJbCWoLbOYZfCs6/RjYhAK",
+	"ZRBTGp0po+1tVoInuXX1lmkLPbxpj/a3j+q3J96Xq54I/tLoPJUn2E7j7ObkPfL+pEtTDr8DAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

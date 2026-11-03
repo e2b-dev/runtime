@@ -29,142 +29,7 @@ components:
       in: header
       name: X-Team-ID
 
-  parameters:
-    sandboxID:
-      name: sandboxID
-      in: path
-      required: true
-      description: Identifier of the sandbox.
-      schema:
-        type: string
-    teamID:
-      name: teamID
-      in: path
-      required: true
-      description: Identifier of the team.
-      schema:
-        type: string
-        format: uuid
-    projectID:
-      name: projectID
-      in: path
-      required: true
-      description: Identifier of the project.
-      schema:
-        type: string
-        format: uuid
-  responses:
-    "400":
-      description: Bad request
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    "401":
-      description: Authentication error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    "403":
-      description: Forbidden
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    "404":
-      description: Not found
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    "500":
-      description: Server error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-
   schemas:
-    Error:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: integer
-          format: int32
-          description: Error code.
-        message:
-          type: string
-          description: Error message.
-
-    CPUCount:
-      type: integer
-      format: int64
-      minimum: 1
-      description: CPU cores for the sandbox
-
-    MemoryMB:
-      type: integer
-      format: int64
-      minimum: 128
-      description: Memory for the sandbox in MiB
-
-    DiskSizeMB:
-      type: integer
-      format: int64
-      minimum: 0
-      description: Disk size for the sandbox in MiB
-
-    SandboxRecord:
-      type: object
-      required:
-        - templateID
-        - sandboxID
-        - startedAt
-        - cpuCount
-        - memoryMB
-        - diskSizeMB
-        - retentionExpired
-        - eventsRetentionExpired
-      properties:
-        templateID:
-          type: string
-          description: Identifier of the template from which is the sandbox created
-        alias:
-          type: string
-          description: Alias of the template
-        sandboxID:
-          type: string
-          description: Identifier of the sandbox
-        startedAt:
-          type: string
-          format: date-time
-          description: Time when the sandbox was started
-        stoppedAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: Time when the sandbox was stopped
-        domain:
-          type: string
-          nullable: true
-          description: Base domain where the sandbox traffic is accessible
-        cpuCount:
-          $ref: "#/components/schemas/CPUCount"
-        memoryMB:
-          $ref: "#/components/schemas/MemoryMB"
-        diskSizeMB:
-          $ref: "#/components/schemas/DiskSizeMB"
-        retentionExpired:
-          type: boolean
-          description: Whether the sandbox ended more than the fixed retention window ago, so its monitoring and logs data is no longer available
-        eventsRetentionExpired:
-          type: boolean
-          description: Whether the sandbox ended more than the team's events retention window ago, so its events data is no longer available
-
     HealthResponse:
       type: object
       required:
@@ -173,9 +38,6 @@ components:
         message:
           type: string
           description: Human-readable health check result.
-
-tags:
-  - name: sandboxes
 
 paths:
   /health:
@@ -188,28 +50,3 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-
-  /sandboxes/{sandboxID}/record:
-    get:
-      summary: Sandbox record
-      tags: [sandboxes]
-      security:
-        - AuthProviderBearerAuth: []
-          AuthProviderTeamAuth: []
-      parameters:
-        - $ref: "#/components/parameters/sandboxID"
-      responses:
-        "200":
-          description: Successfully returned sandbox details.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxRecord"
-        "401":
-          $ref: "#/components/responses/401"
-        "403":
-          $ref: "#/components/responses/403"
-        "404":
-          $ref: "#/components/responses/404"
-        "500":
-          $ref: "#/components/responses/500"

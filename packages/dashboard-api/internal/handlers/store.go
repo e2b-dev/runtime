@@ -13,7 +13,6 @@ import (
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/cfg"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 )
 
 var _ api.ServerInterface = (*APIStore)(nil)
@@ -37,10 +36,6 @@ func NewAPIStore(
 		clickhouse:  ch,
 		authService: authService,
 	}
-}
-
-func (s *APIStore) sendAPIStoreError(c *gin.Context, code int, message string) {
-	apierrors.SendAPIStoreError(c, code, message)
 }
 
 func (s *APIStore) GetHealth(c *gin.Context) {

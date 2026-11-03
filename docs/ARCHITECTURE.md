@@ -92,7 +92,7 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
-| Dashboard API | `packages/dashboard-api` | API nodes | Backend for the web dashboard and workspace control plane (sandbox records) |
+| Dashboard API | `packages/dashboard-api` | API nodes | Backend for the web dashboard; serves only its health route |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -105,7 +105,7 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
 
 - **Resources**: sandboxes (create/list/kill/pause/resume/connect/timeout/metrics/logs),
   templates and builds (including the web dashboard's build listings under `/unstable/builds`),
-  teams, volumes, API keys, secrets, sandbox events and webhooks, admin operations.
+  the web dashboard's killed-sandbox record (`/unstable/sandboxes/{sandboxID}/record`), teams, volumes, API keys, secrets, sandbox events and webhooks, admin operations.
 - **Default templates**: `env_defaults` names the platform's default templates. Admin routes
   under `/unstable/admin/templates` add, describe and remove default templates and aliases
   without a namespace, and clear the alias cache after each alias change so name resolution
@@ -708,15 +708,12 @@ answers 408.
 
 ### Dashboard API (`packages/dashboard-api`)
 
-A separate REST service (port 3010, spec `spec/openapi-dashboard.yml`) consumed by the web
-dashboard and the workspace control plane, not the SDK: the killed-sandbox record and an admin
-route that resolves user profiles. Template reads are served by the API, not here. The sandbox
-record route accepts dashboard user auth only. The admin route accepts either a shared admin
-token (`AdminApiKeyAuth`) or a short-lived service JWT (`AdminJWTAuth`) verified against the
-configured admin JWKS, with accepted signing methods derived from each JWK's required `alg`
-metadata. Issuers and audiences are configured through the JSON `ADMIN_AUTH_PROVIDER_CONFIG`
-value — the same config shape as `AUTH_PROVIDER_CONFIG`; without it the admin route accepts only
-the admin token. Talks to Postgres and ClickHouse; never talks to orchestrators. The web dashboard itself is a separate repository (github.com/e2b-dev/dashboard)
+A separate REST service (port 3010, spec `spec/openapi-dashboard.yml`) for the web dashboard,
+not the SDK. It serves only its health route: the killed-sandbox record, template reads and the
+admin routes are served by the API. It still loads the admin JWKS: issuers and audiences are
+configured through the JSON `ADMIN_AUTH_PROVIDER_CONFIG` value — the same config shape as
+`AUTH_PROVIDER_CONFIG` — with accepted signing methods derived from each JWK's required `alg`
+metadata. Never talks to orchestrators. The web dashboard itself is a separate repository (github.com/e2b-dev/dashboard)
 published as an image; E2B Embed runs it on port 3001 beside dashboard-api.
 
 An issuer normally configures at least one accepted audience, binding a JWT to its intended target.
