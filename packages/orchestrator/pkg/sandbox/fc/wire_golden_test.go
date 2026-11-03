@@ -3,11 +3,13 @@
 package fc
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
@@ -27,8 +30,22 @@ import (
 // wireRecorder is a Firecracker API stub that answers every request with 204
 // and keeps the body it received, keyed by method and path.
 type wireRecorder struct {
-	mu     sync.Mutex
-	bodies map[string]string
+	mu      sync.Mutex
+	bodies  map[string]string
+	answers map[string]stubAnswer
+}
+
+// stubAnswer is a canned response for one method and path.
+type stubAnswer struct {
+	status int
+	body   string
+}
+
+// refuseMmds makes the stub answer the metadata put with a 400 carrying body instead of 204.
+func (r *wireRecorder) refuseMmds(body string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.answers["PUT /mmds"] = stubAnswer{status: http.StatusBadRequest, body: body}
 }
 
 func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
@@ -42,12 +59,20 @@ func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
 	require.NoError(t, err)
 
-	rec := &wireRecorder{bodies: map[string]string{}}
+	rec := &wireRecorder{bodies: map[string]string{}, answers: map[string]stubAnswer{}}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:gosec // no timeouts needed for a stub on a private socket
 		body, _ := io.ReadAll(r.Body)
 		rec.mu.Lock()
 		rec.bodies[r.Method+" "+r.URL.Path] = string(body)
+		canned, ok := rec.answers[r.Method+" "+r.URL.Path]
 		rec.mu.Unlock()
+		if ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(canned.status)
+			_, _ = w.Write([]byte(canned.body))
+
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})}
 	go func() { _ = server.Serve(listener) }()
@@ -123,7 +148,7 @@ func goldenProcess(t *testing.T, versions Config, slotIdx int) (*Process, *wireR
 var noRateLimit = RateLimiterConfig{Ops: TokenBucketConfig{BucketSize: -1}, Bandwidth: TokenBucketConfig{BucketSize: -1}}
 
 func machineBody(vcpus, memMB int64, extra string) string {
-	// Firecracker refuses SMT on arm64, so setMachineConfig sends it only elsewhere.
+	// Firecracker refuses SMT on arm64, so machineConfigModel sets it false there.
 	return fmt.Sprintf(`{"vcpu_count":%d,"mem_size_mib":%d,"smt":%t,"track_dirty_pages":false%s}`, vcpus, memMB, runtime.GOARCH != archARM64, extra)
 }
 
@@ -159,6 +184,62 @@ func TestLinuxCreateWireBodies(t *testing.T) {
 	assert.JSONEq(t, `{"rate_limiter":{"bandwidth":{"one_time_burst":0,"refill_time":100,"size":1024}}}`, rec.body(t, "PUT /entropy"))
 }
 
+// What a firmware-booted profile's Create sends instead: its extra field on
+// the machine, an empty command line for the firmware, a 512-byte-sector disk
+// that is not the root device, and no entropy device, balloon or CPU
+// template, whatever the options asked for.
+func TestFirmwareProfileCreateWireBodies(t *testing.T) {
+	t.Parallel()
+
+	p, rec, slot := goldenProcess(t, Config{KernelVersion: "firmware-fd", FirecrackerVersion: "v1.18.0-dev_4bb5b4de0", Guest: firmwareProfile{}}, 32)
+	options := ProcessOptions{InitScriptPath: "/sbin/init", CPUTemplate: &cputemplate.Template{KvmCapabilities: []string{"!121"}}}
+
+	require.NoError(t, p.configureGuestDevices(t.Context(), 2, 4096, true, true, true, options, noRateLimit, noRateLimit))
+
+	assert.Equal(t, []string{
+		"PUT /boot-source", "PUT /drives/rootfs", "PUT /machine-config", "PUT /mmds/config", "PUT /network-interfaces/" + slot.VpeerName(),
+	}, rec.keys())
+	assert.JSONEq(t, `{"boot_args":"","kernel_image_path":"/fc-kernels/firmware-fd/vmlinux.bin"}`, rec.body(t, "PUT /boot-source"))
+	assert.JSONEq(t, `{"drive_id":"rootfs","path_on_host":"/fc-vm/sbx-golden/rootfs.ext4","is_root_device":false,"blk_size":512}`, rec.body(t, "PUT /drives/rootfs"))
+	assert.JSONEq(t, machineBody(2, 4096, `,"huge_pages":"2M","x_extension":true`), rec.body(t, "PUT /machine-config"))
+}
+
+// extraProfile is a guest profile whose boot adds the given machine fields.
+type extraProfile struct {
+	guest.Profile
+
+	extra map[string]json.RawMessage
+}
+
+func (p extraProfile) Boot() guest.BootConfig { return guest.BootConfig{MachineConfigExtra: p.extra} }
+
+// A profile's extra machine-configuration field may not override a field the
+// orchestrator sets, nor be invalid JSON: the boot fails before the first
+// Firecracker request, so the VM is never half-configured.
+func TestMachineConfigExtraIsRefusedBeforeTheFirstRequest(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		extra map[string]json.RawMessage
+		want  string
+		slot  int
+	}{
+		"colliding key":   {map[string]json.RawMessage{"vcpu_count": json.RawMessage(`8`)}, `"vcpu_count" is already set`, 35},
+		"colliding pages": {map[string]json.RawMessage{"huge_pages": json.RawMessage(`"None"`)}, `"huge_pages" is already set`, 36},
+		"invalid JSON":    {map[string]json.RawMessage{"x_extension": json.RawMessage(`{`)}, "not valid JSON", 37},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			p, rec, _ := goldenProcess(t, Config{KernelVersion: "firmware-fd", FirecrackerVersion: "v1.18.0-dev_4bb5b4de0", Guest: extraProfile{Profile: guest.Default(), extra: tc.extra}}, tc.slot)
+			p.cmd = &exec.Cmd{}
+			err := p.configureGuestDevices(t.Context(), 2, 512, true, false, false, ProcessOptions{InitScriptPath: "/sbin/init"}, noRateLimit, noRateLimit)
+			require.ErrorContains(t, err, tc.want)
+			assert.Empty(t, rec.keys(), "nothing reached Firecracker")
+		})
+	}
+}
+
 // The restore: a snapshot this runtime wrote loads with no field beyond the
 // memory backend.
 func TestLinuxResumeWireBody(t *testing.T) {
@@ -167,7 +248,28 @@ func TestLinuxResumeWireBody(t *testing.T) {
 	ready := make(chan struct{})
 	close(ready)
 
-	linux, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.14.1_431f1fc"}, 33)
-	require.NoError(t, linux.client.loadSnapshot(t.Context(), "/tmp/uffd.sock", ready, stubSnapfile("/cache/snapfile"), false, false, "", "team-1"))
+	linux, rec, slot := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.14.1_431f1fc"}, 33)
+	ifaceID, override := linux.resumeNetworkOverride()
+	assert.Equal(t, slot.VpeerName(), ifaceID)
+	assert.Nil(t, override)
+	require.NoError(t, linux.client.loadSnapshot(t.Context(), "/tmp/uffd.sock", ready, stubSnapfile("/cache/snapfile"), false, false, linux.Versions.GuestProfile().Restore().ClockRealtime, override, "", "team-1"))
 	assert.JSONEq(t, `{"snapshot_path":"/cache/snapfile","mem_backend":{"backend_path":"/tmp/uffd.sock","backend_type":"Uffd"}}`, rec.body(t, "PUT /snapshot/load"))
+}
+
+// A firmware-booted profile's restore advances the clock, and a snapshot baked
+// with a foreign interface name is reopened on the slot's tap.
+func TestFirmwareProfileResumeWireBody(t *testing.T) {
+	t.Parallel()
+
+	ready := make(chan struct{})
+	close(ready)
+
+	firmware, rec, slot := goldenProcess(t, Config{KernelVersion: "firmware-fd", FirecrackerVersion: "v1.18.0-dev_4bb5b4de0", Guest: firmwareProfile{}, NetIfaceID: "net0"}, 34)
+	ifaceID, override := firmware.resumeNetworkOverride()
+	assert.Equal(t, "net0", ifaceID)
+	require.NoError(t, firmware.client.loadSnapshot(t.Context(), "/tmp/uffd.sock", ready, stubSnapfile("/cache/snapfile"), false, false, firmware.Versions.GuestProfile().Restore().ClockRealtime, override, "", "team-1"))
+	assert.JSONEq(t, fmt.Sprintf(`{"snapshot_path":"/cache/snapfile","mem_backend":{"backend_path":"/tmp/uffd.sock","backend_type":"Uffd"},"clock_realtime":true,"network_overrides":[{"iface_id":"net0","host_dev_name":%q}]}`, slot.TapName()), rec.body(t, "PUT /snapshot/load"))
+
+	_, override = (&Process{Versions: Config{}, slot: slot}).resumeNetworkOverride()
+	assert.Nil(t, override, "a snapshot this code base wrote needs no override")
 }

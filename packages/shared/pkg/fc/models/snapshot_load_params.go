@@ -18,6 +18,9 @@ import (
 // swagger:model SnapshotLoadParams
 type SnapshotLoadParams struct {
 
+	// [x86_64 only] When set to true, passes KVM_CLOCK_REALTIME to KVM_SET_CLOCK on restore, advancing kvmclock by the wall-clock time elapsed since the snapshot was taken. When false (default), kvmclock resumes from where it was at snapshot time.
+	ClockRealtime bool `json:"clock_realtime,omitempty"`
+
 	// (Deprecated) Enable dirty page tracking to improve space efficiency of diff snapshots
 	EnableDiffSnapshots bool `json:"enable_diff_snapshots,omitempty"`
 

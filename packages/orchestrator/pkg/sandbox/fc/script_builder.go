@@ -28,6 +28,15 @@ type startScriptArgs struct {
 	NamespaceID       string
 	FirecrackerPath   string
 	FirecrackerSocket string
+
+	// EnablePCI puts the virtio devices on a PCI bus. A snapshot taken on a
+	// PCI bus restores onto one whatever the flag, so the guest profile alone
+	// decides it.
+	EnablePCI bool
+
+	// LogLevel, when set, is passed as Firecracker's --level with the level
+	// and origin shown on every line (cfg.BuilderConfig.FirecrackerLogLevel).
+	LogLevel string
 }
 
 // StartScriptResult contains the generated script and computed paths
@@ -50,7 +59,7 @@ ln -s {{ .HostRootfsPath }} {{ .DeprecatedSandboxRootfsDir }}/{{ .SandboxRootfsF
 mount -t tmpfs tmpfs {{ .SandboxDir }}/{{ .SandboxKernelDir }} -o X-mount.mkdir &&
 ln -s {{ .HostKernelPath }} {{ .SandboxDir }}/{{ .SandboxKernelDir }}/{{ .SandboxKernelFile }} &&
 
-ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}`
+ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
 
 const startScriptV2 = `mount --make-rprivate / &&
 mount -t tmpfs tmpfs {{ .SandboxDir }} -o X-mount.mkdir &&
@@ -60,7 +69,7 @@ ln -s {{ .HostRootfsPath }} {{ .SandboxDir }}/{{ .SandboxRootfsFile }} &&
 mkdir -p {{ .SandboxDir }}/{{ .SandboxKernelDir }} &&
 ln -s {{ .HostKernelPath }} {{ .SandboxDir }}/{{ .SandboxKernelDir }}/{{ .SandboxKernelFile }} &&
 
-ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}`
+ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
 
 // StartScriptBuilder handles the creation and execution of firecracker start scripts
 type StartScriptBuilder struct {
@@ -100,12 +109,14 @@ func (sb *StartScriptBuilder) buildArgs(
 		// Rootfs
 		HostRootfsPath:             files.SandboxCacheRootfsLinkPath(sb.builderConfig.StorageConfig),
 		DeprecatedSandboxRootfsDir: rootfsPaths.DeprecatedSandboxRootfsDir(),
-		SandboxRootfsFile:          artifact.RootfsFileName,
+		SandboxRootfsFile:          versions.RootfsFileName(),
 
 		// FC
 		NamespaceID:       namespaceID,
 		FirecrackerPath:   versions.FirecrackerPath(sb.builderConfig),
 		FirecrackerSocket: files.SandboxFirecrackerSocketPath(),
+		EnablePCI:         versions.GuestProfile().Boot().PCI,
+		LogLevel:          sb.builderConfig.FirecrackerLogLevel,
 	}
 }
 

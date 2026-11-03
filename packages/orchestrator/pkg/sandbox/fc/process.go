@@ -32,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/socket"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
@@ -185,6 +186,10 @@ type Process struct {
 	sentSignals atomic.Uint64
 
 	client *apiClient
+
+	// mmdsStoreMissing is set when Resume found the restored microVM without an
+	// MMDS store; a pause records it, since its envd then keeps its token.
+	mmdsStoreMissing atomic.Bool
 
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
@@ -483,8 +488,8 @@ func (p *Process) Create(
 
 // configureGuestDevices sends Firecracker the boot source, the disk, the
 // network interface with its MMDS binding, the machine, the CPU template, the
-// entropy device and the balloon. Every error already carries the Stop of the
-// process.
+// entropy device and the balloon: the part of Create the guest profile decides.
+// Every error already carries the Stop of the process.
 func (p *Process) configureGuestDevices(
 	ctx context.Context,
 	firecrackerVcpuCount int64,
@@ -496,10 +501,22 @@ func (p *Process) configureGuestDevices(
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
 ) error {
+	boot := p.Versions.GuestProfile().Boot()
+	// Built before the first request, so a misconfigured profile never half-configures the VM.
+	machineConfig, err := newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("invalid guest profile machine config: %w", err), fcStopErr)
+	}
+
 	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
 	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
 	kernelArgs := buildKernelArgs(ipv4, options).String()
-	err := p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
+	if boot.NoKernelArgs {
+		kernelArgs = ""
+	}
+	err = p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -524,7 +541,7 @@ func (p *Process) configureGuestDevices(
 	}
 	telemetry.ReportEvent(ctx, "symlinked rootfs")
 
-	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit))
+	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit), !boot.NoRootDevice, boot.BlockSectorSize)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -540,16 +557,16 @@ func (p *Process) configureGuestDevices(
 	}
 	telemetry.ReportEvent(ctx, "set fc network config")
 
-	err = p.client.setMachineConfig(ctx, firecrackerVcpuCount, memoryMB, hugePages)
+	err = p.client.setMachineConfig(ctx, machineConfig)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting fc machine config: %w", err), fcStopErr)
 	}
-	telemetry.ReportEvent(ctx, "set fc machine config")
+	telemetry.ReportEvent(ctx, "set fc machine config", attribute.Int("machine.config_extra_fields", len(boot.MachineConfigExtra)))
 
 	// A template this host rejects is corrupt metadata or a placement bug.
-	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() {
+	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() && !boot.NoCPUTemplate {
 		err = p.client.setCPUConfig(ctx, *options.CPUTemplate)
 		if err != nil {
 			fcStopErr := p.Stop(ctx)
@@ -561,15 +578,17 @@ func (p *Process) configureGuestDevices(
 		)
 	}
 
-	err = p.client.setEntropyDevice(ctx)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
+	if !boot.NoEntropy {
+		err = p.client.setEntropyDevice(ctx)
+		if err != nil {
+			fcStopErr := p.Stop(ctx)
 
-		return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
+			return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "set fc entropy config")
 	}
-	telemetry.ReportEvent(ctx, "set fc entropy config")
 
-	if freePageReporting || freePageHinting {
+	if (freePageReporting || freePageHinting) && !boot.NoBalloon {
 		if err := p.client.installBalloon(ctx, freePageReporting, freePageHinting); err != nil {
 			fcStopErr := p.Stop(ctx)
 
@@ -815,6 +834,8 @@ func (p *Process) RestorePaused(
 	driveRateLimit RateLimiterConfig,
 	vcpus ResumeVcpus,
 ) error {
+	ifaceID, netOverride := p.resumeNetworkOverride()
+
 	// Symlink /dev/null to the rootfs link path, so we can start the FC process without the rootfs and then symlink the real rootfs.
 	err := utils.SymlinkForce("/dev/null", p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
 	if err != nil {
@@ -899,6 +920,8 @@ func (p *Process) RestorePaused(
 		snapfile,
 		useMemfd,
 		useSyncWP,
+		p.Versions.GuestProfile().Restore().ClockRealtime,
+		netOverride,
 		cpuTemplate,
 		p.teamID,
 	)
@@ -910,14 +933,14 @@ func (p *Process) RestorePaused(
 
 	// Always apply/reset rate limits before resuming so any limits
 	// persisted in the snapshot are overwritten by the current config.
-	if setErr := p.client.setTxRateLimit(ctx, p.slot.VpeerName(), txRateLimit); setErr != nil {
+	if setErr := p.client.setTxRateLimit(ctx, ifaceID, txRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting TX rate limit: %w", setErr), fcStopErr)
 	}
 	telemetry.ReportEvent(ctx, "configured tx rate limit")
 
-	if setErr := p.client.setDriveRateLimit(ctx, rootfsDriveID, driveRateLimit); setErr != nil {
+	if setErr := p.client.setDriveRateLimit(ctx, p.Versions.RootfsDriveIDOrDefault(), driveRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting drive rate limit: %w", setErr), fcStopErr)
@@ -951,11 +974,37 @@ func (p *Process) SetMmds(ctx context.Context, sbxMetadata sbxlogger.SandboxMeta
 		meta.AccessTokenHash = keys.HashAccessToken("")
 	}
 
-	if err := p.client.setMmds(ctx, meta); err != nil {
+	if err := p.setRestoredMmds(ctx, meta); err != nil {
 		return fmt.Errorf("error setting mmds: %w", err)
 	}
 
 	return nil
+}
+
+// setRestoredMmds writes the metadata a restored guest reads. An image made
+// outside this runtime can carry no MMDS store, nor does any snapshot paused
+// from it, and Firecracker cannot add one after a restore: for a profile whose
+// restore declares the store optional, that refusal is tolerated and
+// remembered; any other refusal, and any under another profile, fails.
+func (p *Process) setRestoredMmds(ctx context.Context, meta *MmdsMetadata) error {
+	err := p.client.setMmds(ctx, meta)
+	if err == nil || !p.Versions.GuestProfile().Restore().MmdsStoreOptional || !mmdsStoreMissing(err) {
+		return err
+	}
+
+	p.mmdsStoreMissing.Store(true)
+	logger.L().Warn(ctx, "the snapshot carries no MMDS store, skipping the metadata put",
+		logger.WithSandboxID(meta.SandboxID),
+		zap.Error(err))
+	telemetry.ReportEvent(ctx, "mmds store missing in the snapshot")
+
+	return nil
+}
+
+// MmdsStoreMissing reports whether this microVM was restored without an MMDS
+// store, so its envd accepts only the token it already holds.
+func (p *Process) MmdsStoreMissing() bool {
+	return p != nil && p.mmdsStoreMissing.Load()
 }
 
 func (p *Process) Pid() (int, error) {
@@ -1421,4 +1470,18 @@ func (p *Process) CreateSnapshot(ctx context.Context, snapfilePath string) error
 	defer childSpan.End()
 
 	return p.client.createSnapshot(ctx, snapfilePath)
+}
+
+// resumeNetworkOverride names the interface a restore addresses (the device
+// name the snapshot bakes; see Config) and, for a snapshot baked with a
+// foreign name, the override that reopens it on the slot's tap.
+func (p *Process) resumeNetworkOverride() (ifaceID string, override *models.NetworkOverride) {
+	ifaceID = p.Versions.NetIfaceIDOrDefault(p.slot.VpeerName())
+	if p.Versions.NetIfaceID == "" {
+		return ifaceID, nil
+	}
+
+	tapName := p.slot.TapName()
+
+	return ifaceID, &models.NetworkOverride{IfaceID: &ifaceID, HostDevName: &tapName}
 }

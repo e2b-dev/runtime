@@ -176,6 +176,18 @@ func NewConfig(c Config) *Config {
 	return &c
 }
 
+// bootBalloonCaps is the balloon a cold boot installs: the configured one,
+// or none for a profile whose boot omits the device (Process.Create installs
+// none then). The stamp follows the device, so such a lineage never records a
+// balloon it never had.
+func bootBalloonCaps(config *Config, freePageHinting bool) fc.BalloonCaps {
+	if config.GuestProfile().Boot().NoBalloon {
+		return fc.BalloonCaps{}
+	}
+
+	return fc.BalloonCaps{Reporting: config.FreePageReporting, Hinting: freePageHinting}
+}
+
 // GetNetworkEgress returns the egress config in a thread-safe manner.
 func (c *Config) GetNetworkEgress() *orchestrator.SandboxNetworkEgressConfig {
 	c.mu.RLock()
@@ -1166,6 +1178,12 @@ func (f *Factory) CreateSandbox(
 	defer span.End()
 	defer handleSpanError(span, &e)
 
+	// A cold boot creates its own devices; a memory image's recorded ids do not apply.
+	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
+	if err := refuseColdBootVcpus(config); err != nil {
+		return nil, err
+	}
+
 	createOpts := createOptions{networkAssignReason: NetworkAssignReasonCreate}
 	for _, opt := range opts {
 		opt(&createOpts)
@@ -1314,7 +1332,7 @@ func (f *Factory) CreateSandbox(
 	}
 	metadata := &Metadata{
 		internalConfig: internalConfig{
-			EnvdInitRequestTimeout: f.GetEnvdInitRequestTimeout(ctx),
+			EnvdInitRequestTimeout: f.envdInitRequestTimeoutFor(ctx, config),
 		},
 
 		Config:  config,
@@ -1380,7 +1398,7 @@ func (f *Factory) CreateSandbox(
 	freePageHinting := fc.FCSupportsFreePageHinting(config.FirecrackerConfig.FirecrackerVersion) && config.FreePageHinting
 	// A boot's balloon is whatever it is configured with here; a cold-booted
 	// resume configures none.
-	sbx.StampBalloonMode(balloonModeOf(fc.BalloonCaps{Reporting: config.FreePageReporting, Hinting: freePageHinting}))
+	sbx.StampBalloonMode(balloonModeOf(bootBalloonCaps(config, freePageHinting)))
 	sbx.resolvedVmVcpus = max(config.Vcpu, config.ConfiguredVmVcpus)
 
 	err = fcHandle.Create(
@@ -1640,6 +1658,9 @@ func (f *Factory) ResumeSandbox(
 	// for new snapshots; legacy callers carry the original capacity in max_vcpus.
 	resolvedVmVcpus, err := resumeVmVcpus(config.Vcpu, config.ConfiguredVmVcpus, meta.VcpuCount)
 	if err != nil {
+		return nil, err
+	}
+	if err := refuseEnvdTokenReplacement(meta, config.Envd.AccessToken, !config.SkipEnvdWait); err != nil {
 		return nil, err
 	}
 
@@ -1965,7 +1986,7 @@ func (f *Factory) ResumeSandbox(
 
 	metadata := &Metadata{
 		internalConfig: internalConfig{
-			EnvdInitRequestTimeout: f.GetEnvdInitRequestTimeout(ctx),
+			EnvdInitRequestTimeout: f.envdInitRequestTimeoutFor(ctx, config),
 		},
 
 		Config:  config,
@@ -2015,7 +2036,11 @@ func (f *Factory) ResumeSandbox(
 		sbx.StampBalloonMode(balloonModeOf(fc.BalloonCaps{Reporting: meta.Balloon.Reporting, Hinting: meta.Balloon.Hinting}))
 	}
 
-	useMemfd := fc.FCSupportsMemfd(config.FirecrackerConfig.FirecrackerVersion) &&
+	// A profile can restore through the userfaultfd backend alone: the version
+	// gate would switch memfd and synchronous write-protect on for any current
+	// Firecracker.
+	restore := config.GuestProfile().Restore()
+	useMemfd := !restore.NoMemfd && fc.FCSupportsMemfd(config.FirecrackerConfig.FirecrackerVersion) &&
 		f.featureFlags.BoolFlag(ctx, featureflags.UseMemFdFlag, sandboxLDContext(runtime, config))
 
 	// Synchronous WP fault delivery (vs the kernel's in-place WP_ASYNC clears).
@@ -2023,7 +2048,7 @@ func (f *Factory) ResumeSandbox(
 	// The operator must only enable the flag where the deployed FC accepts
 	// use_sync_wp: FC's MemBackendConfig is deny_unknown_fields, so a mismatch
 	// fails the snapshot load loudly instead of silently downgrading.
-	useSyncWP := f.featureFlags.BoolFlag(ctx, featureflags.UseSyncWPFlag, sandboxLDContext(runtime, config))
+	useSyncWP := !restore.NoSyncWriteProtect && f.featureFlags.BoolFlag(ctx, featureflags.UseSyncWPFlag, sandboxLDContext(runtime, config))
 	// Throwaway resumes (e.g. the pause-resume prefetch harvest) promise "no
 	// per-sandbox metrics" and never pause, so counting them would inflate the
 	// wp_mode denominator with resumes that can never contribute wp_resolve or
@@ -2703,6 +2728,11 @@ func (s *Sandbox) Pause(
 	if s.resolvedVmVcpus > 0 {
 		m = m.WithVcpuCount(s.resolvedVmVcpus)
 	}
+	// The device names the memory image bakes are the ones this VM was loaded with;
+	// a snapshot this runtime made has none and stays as it was.
+	m = m.WithDeviceNames(s.Config.FirecrackerConfig.RootfsDriveID, s.Config.FirecrackerConfig.NetIfaceID, s.Config.FirecrackerConfig.RootfsFile)
+	// Without an MMDS store the envd keeps its token, so the snapshot records which one.
+	m = m.WithEnvdToken(envdTokenAtPause(!pauseOpts.filesystemSnapshot && s.process.MmdsStoreMissing(), !s.Config.SkipEnvdWait, s.Config.Envd.AccessToken, m.EnvdAccessTokenHash))
 
 	// Drain free-page-hinting before pause so the snapshot doesn't capture
 	// pages the guest already considers free. Budget per use case; 0 disables.
@@ -4905,6 +4935,17 @@ func (f *Factory) GetEnvdInitRequestTimeout(ctx context.Context) time.Duration {
 	envdInitRequestTimeoutMs := f.featureFlags.IntFlag(ctx, featureflags.EnvdInitTimeoutMilliseconds)
 
 	return time.Duration(envdInitRequestTimeoutMs) * time.Millisecond
+}
+
+// envdInitRequestTimeoutFor is the per-attempt /init budget for a sandbox: the
+// flag's value, raised to the guest profile's floor.
+func (f *Factory) envdInitRequestTimeoutFor(ctx context.Context, config *Config) time.Duration {
+	budget := f.GetEnvdInitRequestTimeout(ctx)
+	if floor := config.GuestProfile().EnvdInit().RequestTimeoutFloor; budget < floor {
+		return floor
+	}
+
+	return budget
 }
 
 const (

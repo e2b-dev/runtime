@@ -32,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
@@ -342,7 +343,32 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	// Clone the network config to avoid modifying the original request
 	network := proto.CloneOf(req.GetSandbox().GetNetwork())
 
-	resolvedFCVersion := featureflags.ResolveFirecrackerVersion(ctx, s.featureFlags, req.GetSandbox().GetFirecrackerVersion())
+	// The template's own record of what it runs. The request carries the
+	// build's versions and machine size, which the database knows; the guest
+	// OS is lineage state only the template metadata carries, and its profile
+	// decides how the VMM is driven before the first request reaches
+	// Firecracker, starting with which Firecracker binary that is.
+	meta, err := template.Metadata()
+	if err != nil {
+		if refusal := unclaimedGuestRefusal(err); refusal != nil {
+			return nil, refusal
+		}
+
+		return nil, fmt.Errorf("failed to read template metadata: %w", err)
+	}
+	profile, err := meta.GuestProfile()
+	if err != nil {
+		if refusal := unclaimedGuestRefusal(err); refusal != nil {
+			return nil, refusal
+		}
+
+		return nil, fmt.Errorf("failed to resolve the guest profile: %w", err)
+	}
+	if err := tlsInterceptionRefusal(ctx, profile, req.GetSandbox().GetNetwork().GetEgress(), isResume); err != nil {
+		return nil, err
+	}
+
+	resolvedFCVersion := resolveSandboxFirecrackerVersion(ctx, s.featureFlags, meta, profile, req.GetSandbox().GetFirecrackerVersion())
 	volumeMounts, err := createVolumeMountModelsFromAPI(req.GetSandbox().GetVolumeMounts())
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert volume mounts: %w", err)
@@ -365,16 +391,14 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 			Vars:        req.GetSandbox().GetEnvVars(),
 		},
 
-		FirecrackerConfig: fc.Config{
-			KernelVersion:      req.GetSandbox().GetKernelVersion(),
-			FirecrackerVersion: resolvedFCVersion,
-		},
+		FirecrackerConfig: firecrackerConfigFor(meta, profile, req.GetSandbox().GetKernelVersion(), resolvedFCVersion),
 
 		VolumeMounts:          volumeMounts,
 		MaxSandboxLengthHours: req.GetSandbox().GetMaxSandboxLength(),
 	})
 	childSpan.SetAttributes(
 		telemetry.WithFirecrackerVersion(config.FirecrackerConfig.FirecrackerVersion),
+		attribute.String("guest_os", profile.Label()),
 	)
 
 	runtime := sandboxtypes.RuntimeMetadata{
@@ -384,11 +408,6 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		TeamID:      req.GetSandbox().GetTeamId(),
 		BuildID:     req.GetSandbox().GetBuildId(),
 		SandboxType: sandboxtypes.SandboxTypeSandbox,
-	}
-
-	meta, err := template.Metadata()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read template metadata: %w", err)
 	}
 
 	fsOnly = meta.IsFilesystemOnly()
@@ -449,6 +468,14 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 				logger.WithTemplateID(runtime.TemplateID))
 
 			return nil, createRefused(ctx, codes.InvalidArgument, "%s", err.Error())
+		}
+		if errors.Is(err, sandbox.ErrEnvdTokenNotReplaceable) || errors.Is(err, sandbox.ErrColdBootVcpus) {
+			logger.L().Warn(ctx, "start refused: the guest cannot run this request", zap.Error(err),
+				logger.WithSandboxID(runtime.SandboxID),
+				logger.WithBuildID(runtime.BuildID),
+				logger.WithTemplateID(runtime.TemplateID))
+
+			return nil, createRefused(ctx, codes.FailedPrecondition, "%s", err.Error())
 		}
 		if refusal := volumeRefusal(ctx, err); refusal != nil {
 			// The user's volume is unusable; the orchestrator itself is fine.
@@ -637,6 +664,10 @@ func (s *Server) Update(ctx context.Context, req *orchestrator.SandboxUpdateRequ
 			return nil, status.Error(codes.Unimplemented,
 				"egress proxy is not supported by this orchestrator build")
 		}
+	}
+	// Refused before anything is applied; the API stores nothing on this answer.
+	if err := sandbox.RefuseTLSInterception(sbx.Config.GuestProfile(), req.GetEgress()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	var updates []utils.UpdateFunc
@@ -3293,4 +3324,25 @@ func filesystemOnlyDisabledStatus(sandboxID string) *status.Status {
 	}
 
 	return withDetails
+}
+
+// firecrackerConfigFor is the Firecracker configuration a served sandbox gets from
+// its build's metadata: the guest profile and the device names the memory image
+// bakes, the default profile and no names for every snapshot this runtime made.
+// A pinning profile's build also names its kernel slot payload, which stands
+// over the request's: the build row of a template built from such a parent
+// carries the versions the API resolved for the default guest.
+func firecrackerConfigFor(meta metadata.Template, profile guest.Profile, kernelVersion, firecrackerVersion string) fc.Config {
+	if profile.Firecracker().PinToBuild && meta.Template.KernelVersion != "" {
+		kernelVersion = meta.Template.KernelVersion
+	}
+
+	return fc.Config{
+		KernelVersion:      kernelVersion,
+		FirecrackerVersion: firecrackerVersion,
+		Guest:              profile,
+		RootfsDriveID:      meta.RootfsDriveID,
+		NetIfaceID:         meta.NetIfaceID,
+		RootfsFile:         meta.RootfsFile,
+	}
 }

@@ -290,6 +290,16 @@ type Template struct {
 	RootfsDriveID string `json:"rootfs_drive_id,omitempty"`
 	NetIfaceID    string `json:"net_iface_id,omitempty"`
 	RootfsFile    string `json:"rootfs_file,omitempty"`
+	// NoMmdsStore marks a memory image whose microVM has no MMDS store, which
+	// only an image made outside this runtime and its paused lineage have:
+	// Firecracker cannot add a store after a restore, so the envd in it
+	// accepts no new access token. EnvdAccessTokenHash is then the
+	// keys.HashAccessToken of the token that envd holds (of "" for none), and
+	// empty when no pause could know it. Both are device truth stamped at every
+	// pause, carried with the memory like the device names, and dropped by
+	// BasedOn, whose build cold-boots with a store.
+	NoMmdsStore         bool   `json:"no_mmds_store,omitempty"`
+	EnvdAccessTokenHash string `json:"envd_access_token_hash,omitempty"`
 }
 
 // guestOSKey is the metadata key of GuestOS. retiredGuestOSKey is the spelling
@@ -337,6 +347,18 @@ var rootfsFileRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // nor "..".
 func ValidRootfsFile(name string) bool {
 	return name != "." && name != ".." && rootfsFileRE.MatchString(name)
+}
+
+// WithEnvdToken returns a copy of the template stamped with whether its memory
+// image lacks an MMDS store and, if so, the hash of the token its envd holds.
+func (t Template) WithEnvdToken(noMmdsStore bool, envdAccessTokenHash string) Template {
+	t.NoMmdsStore = noMmdsStore
+	t.EnvdAccessTokenHash = ""
+	if noMmdsStore {
+		t.EnvdAccessTokenHash = envdAccessTokenHash
+	}
+
+	return t
 }
 
 // WithDeviceNames returns a copy of the template stamped with the device names
@@ -430,6 +452,9 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
 		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -450,6 +475,9 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
 		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -490,6 +518,9 @@ func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 		RootfsDriveID:      t.RootfsDriveID,
 		NetIfaceID:         t.NetIfaceID,
 		RootfsFile:         t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 

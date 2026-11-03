@@ -174,13 +174,19 @@ func (f *Factory) RebootSandbox(
 
 	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
 	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
+	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
 
 	// It becomes the running template, so the next pause stores what this boot applied.
 	override := f.featureFlags.JSONFlag(ctx, featureflags.RebootCPUTemplateOverride,
 		featureflags.SandboxContext(runtime.SandboxID),
 		featureflags.TemplateContext(runtime.TemplateID),
 		featureflags.TeamContext(runtime.TeamID))
-	cpuTemplate, overridden, err := rebootCPUTemplate(meta, override)
+	boot := config.GuestProfile().Boot()
+	cpuTemplate, overridden, err := rebootCPUTemplateFor(boot, meta, override)
+	if boot.NoCPUTemplate {
+		logCPUTemplateSkipped(ctx, config.GuestProfile())
+	}
 	if err != nil {
 		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
 			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
@@ -303,9 +309,9 @@ func (f *Factory) RebootSandbox(
 	}
 
 	// CreateSandbox runs the filesystem recovery, then the offline envd swap, whose version
-	// the sandbox carries from before its network is assigned.
-	fsRecover := f.fsRecoverPreBoot(ctx, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery)
-	swap := f.envdOfflineUpgradePreBoot(ctx, config, runtime, meta.IsFsQuiesced())
+	// the sandbox carries from before its network is assigned; the guest profile can skip
+	// either step.
+	fsRecover, swap := f.rebootPreBoot(ctx, config, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery)
 
 	sbx, err := f.CreateSandbox(
 		ctx,
@@ -328,7 +334,12 @@ func (f *Factory) RebootSandbox(
 		return nil, fmt.Errorf("create sandbox from rootfs: %w", err)
 	}
 
-	if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeout); err != nil {
+	if config.SkipEnvdWait {
+		// The guest runs no envd the caller wants to wait for (resume-build
+		// inspecting a bare boot); the caller drives the VM itself, as on the
+		// resume path.
+		telemetry.ReportEvent(ctx, "skipping envd wait")
+	} else if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeoutFor(config)); err != nil {
 		closeErr := sbx.Close(context.WithoutCancel(ctx))
 
 		return nil, errors.Join(fmt.Errorf("wait for envd after reboot: %w", err), closeErr)
@@ -422,6 +433,31 @@ func decideOfflineSwap(resolverPath, reason string, fsQuiesced bool) offlineSwap
 	}
 
 	return offlineSwapDecision{swap: true}
+}
+
+// rebootPreBoot is what a cold boot does to the rootfs before Firecracker
+// opens it: a journal replay of the ext4 filesystem and a swap of the envd
+// binary, in that order. A guest profile can skip either step, for a disk
+// that replays its own log at mount or keeps the envd its template carries;
+// a skipped step is nil.
+func (f *Factory) rebootPreBoot(
+	ctx context.Context,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	fsQuiesced bool,
+	requestFilesystemBoot bool,
+	recordRecovery func(rootfs.RecoverOutcome),
+) (recovery, swap PreBootFn) {
+	boot := config.GuestProfile().Boot()
+
+	if !boot.NoFilesystemRecovery {
+		recovery = f.fsRecoverPreBoot(ctx, runtime, fsQuiesced, requestFilesystemBoot, recordRecovery)
+	}
+	if !boot.NoEnvdOfflineUpgrade {
+		swap = f.envdOfflineUpgradePreBoot(ctx, config, runtime, fsQuiesced)
+	}
+
+	return recovery, swap
 }
 
 // fsRecoverPreBoot returns a PreBootFn that repairs the rootfs filesystem
