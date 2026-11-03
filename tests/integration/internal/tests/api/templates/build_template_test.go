@@ -76,7 +76,7 @@ func runTemplateBuild(
 	c := setup.GetAPIClient()
 
 	// Request build
-	resp, err := c.PostV3TemplatesWithResponse(ctx, api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(ctx, nil, api.TemplateBuildRequestV3{
 		Name:     new(templateName),
 		CpuCount: new(api.CPUCount(2)),
 		MemoryMB: new(api.MemoryMB(1024)),

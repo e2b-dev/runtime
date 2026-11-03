@@ -319,18 +319,33 @@ components:
       schema:
         type: string
         format: uuid
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+        digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+        and request content identify the request. When idempotency is enabled, a matching retry of
+        a completed request replays its status and body, including the IDs of any resources it
+        created, without repeating the operation. A failure explicitly classified as safe to retry
+        (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+        attempt can run at a time. A different request returns 409 with error_code
+        idempotency_request_mismatch. A matching request whose original has no recorded response
+        yet and is within its expected response window returns 409 with error_code
+        idempotency_in_progress. A matching request whose original has no recorded response and
+        whose expected response deadline has passed or is unknown returns 422 with error_code
+        idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+        request again. If the key's record is unavailable or idempotency is misconfigured, the
+        request returns 503; Should-Retry tells whether to retry with the same key. After the
+        retention period expires, the key can start a new operation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: '^[a-z0-9-]+$'
   headers:
     ShouldRetry:
-      description: |
-        Whether the condition behind this error may clear, so that retrying the request could
-        succeed. true marks a transient failure such as missing capacity, a rate limit, or a
-        creation still in progress: retry after Retry-After when present, otherwise with
-        exponential backoff. false marks a failure a retry cannot fix, such as a malformed request
-        or a configuration fault, or an outcome that is unknown, where a retry could create a
-        second sandbox. Successful responses and errors without an explicit classification omit
-        the header. With idempotency enabled, retry sandbox creation with the same Idempotency-Key
-        and request parameters. A retryable creation failure permits a fresh attempt; an
-        idempotency_in_progress response only reports an existing attempt and never releases it.
       required: false
       schema:
         type: boolean
@@ -5908,8 +5923,10 @@ paths:
   /v3/templates:
     post:
       summary: Create template (v3)
-      description: Create a new template
+      description: Create a new template.
       tags: [templates]
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       security:
         - ApiKeyAuth: []
         - AuthProviderBearerAuth: []
@@ -5933,17 +5950,100 @@ paths:
               schema:
                 $ref: "#/components/schemas/TemplateRequestResponseV3"
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/responses/401"
+          description: Authentication error
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/responses/403"
+          description: Forbidden
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
-          $ref: "#/components/responses/409"
+          description: Conflict
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Unprocessable request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
-          $ref: "#/components/responses/429"
+          description: Too many requests
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+            Retry-After:
+              description: When present, the number of seconds to wait before retrying the request.
+              required: false
+              schema:
+                type: integer
+                minimum: 0
+              example: 30
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v2/templates:
     get:

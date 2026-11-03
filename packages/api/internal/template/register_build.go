@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -129,6 +130,7 @@ func registerBuild(
 	if apiError != nil {
 		telemetry.ReportErrorByCode(ctx, apiError.Code, "free disk space request refused", apiError.Err,
 			telemetry.WithTeamID(data.Team.ID.String()))
+		apiError.Retryable = apierrors.NoRetry
 
 		return nil, apiError
 	}
@@ -153,6 +155,7 @@ func registerBuild(
 			Err:       err,
 			ClientMsg: fmt.Sprintf("Error when checking concurrent builds: %s", err),
 			Code:      http.StatusInternalServerError,
+			Retryable: apierrors.CanRetry,
 		}
 	}
 
@@ -165,7 +168,8 @@ func registerBuild(
 			ClientMsg: fmt.Sprintf(
 				"you have reached the maximum number of concurrent template builds (%d). Please wait for existing builds to complete or contact support if you need more concurrent builds.",
 				totalConcurrentTemplateBuilds),
-			Err: fmt.Errorf("team '%s' has reached the maximum number of concurrent template builds (%d)", data.Team.ID, totalConcurrentTemplateBuilds),
+			Err:       fmt.Errorf("team '%s' has reached the maximum number of concurrent template builds (%d)", data.Team.ID, totalConcurrentTemplateBuilds),
+			Retryable: apierrors.CanRetry,
 		}
 	}
 
@@ -217,6 +221,8 @@ func registerBuild(
 
 	cpuCount, ramMB, apiError := team.LimitResources(data.Team.Limits, data.CpuCount, data.MemoryMB)
 	if apiError != nil {
+		apiError.Retryable = apierrors.NoRetry
+
 		return nil, apiError
 	}
 
@@ -254,7 +260,7 @@ func registerBuild(
 		return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when checking the team's cluster", Err: err}
 	}
 	if clusters.WithClusterFallback(currentCluster) != data.ClusterID {
-		return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The team's cluster changed; retry the template build request", Err: errors.New("team cluster changed during template registration")}
+		return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The team's cluster changed; retry the template build request", Err: errors.New("team cluster changed during template registration"), Retryable: apierrors.CanRetry}
 	}
 	if data.ReplacesTemplateID != "" {
 		previous, err := client.GetTemplateForAliasRebuild(ctx, queries.GetTemplateForAliasRebuildParams{
@@ -262,7 +268,7 @@ func registerBuild(
 		})
 		if err != nil {
 			if dberrors.IsNotFoundError(err) {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template changed; retry the template build request", Err: err}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template changed; retry the template build request", Err: err, Retryable: apierrors.CanRetry}
 			}
 
 			return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when checking the previous template", Err: err}
@@ -290,6 +296,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Template '%s' has been deleted and cannot be rebuilt", data.TemplateID),
 				Code:      http.StatusNotFound,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -381,6 +388,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Alias '%s' is already used", alias),
 				Code:      http.StatusConflict,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -400,7 +408,7 @@ func registerBuild(
 				}
 			}
 			if data.ReplacesTemplateID != "" {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: err}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: err, Retryable: apierrors.CanRetry}
 			}
 
 			aliasKeys, err := client.DeleteOtherTemplateAliases(ctx, data.TemplateID)
@@ -447,7 +455,7 @@ func registerBuild(
 				return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when updating the template alias", Err: err}
 			}
 			if changed != 1 {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: errors.New("template alias changed during registration")}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: errors.New("template alias changed during registration"), Retryable: apierrors.CanRetry}
 			}
 		case aliasDB.EnvID != data.TemplateID:
 			err := fmt.Errorf("alias '%s' already used", alias)
@@ -456,6 +464,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Alias '%s' already used", alias),
 				Code:      http.StatusForbidden,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -506,6 +515,8 @@ func registerBuild(
 			Err:       err,
 			ClientMsg: fmt.Sprintf("Error when committing transaction: %s", err),
 			Code:      http.StatusInternalServerError,
+			// The commit may have reached the database.
+			Retryable: apierrors.UndefinedRetry,
 		}
 	}
 	telemetry.ReportEvent(ctx, "committed transaction")

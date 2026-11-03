@@ -62,7 +62,7 @@ func TestRequestTemplateBuild(t *testing.T) {
 			}
 			encoded, err := json.Marshal(body)
 			require.NoError(t, err)
-			resp, err := c.PostV3TemplatesWithBodyWithResponse(t.Context(), "application/json", bytes.NewReader(encoded), setup.WithAPIKey())
+			resp, err := c.PostV3TemplatesWithBodyWithResponse(t.Context(), nil, "application/json", bytes.NewReader(encoded), setup.WithAPIKey())
 			require.NoError(t, err)
 			if test.wantError != "" {
 				require.Equal(t, http.StatusBadRequest, resp.StatusCode())
@@ -102,7 +102,7 @@ func TestRequestTemplateTooLowCPU(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-too-low-cpu"),
 		CpuCount: new(api.CPUCount(0)),
 		MemoryMB: new(api.MemoryMB(1024)),
@@ -117,7 +117,7 @@ func TestRequestTemplateTooLowRAM(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-too-low-ram"),
 		CpuCount: new(api.CPUCount(2)),
 		MemoryMB: new(api.MemoryMB(32)),
@@ -132,7 +132,7 @@ func TestRequestTemplateTooHighCPU(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-too-high-cpu"),
 		CpuCount: new(api.CPUCount(1024)),
 		MemoryMB: new(api.MemoryMB(1024)),
@@ -147,7 +147,7 @@ func TestRequestTemplateOddCPU(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-odd-cpu"),
 		CpuCount: new(api.CPUCount(3)),
 		MemoryMB: new(api.MemoryMB(1024)),
@@ -162,7 +162,7 @@ func TestRequestTemplateTooHighMemory(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-too-high-memory"),
 		CpuCount: new(api.CPUCount(2)),
 		MemoryMB: new(api.MemoryMB(1024 * 1024)),
@@ -177,7 +177,7 @@ func TestRequestTemplateMemoryNonDivisibleBy2(t *testing.T) {
 	t.Parallel()
 	c := setup.GetAPIClient()
 
-	resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+	resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 		Name:     new("test-request-build-memory-odd"),
 		CpuCount: new(api.CPUCount(2)),
 		MemoryMB: new(api.MemoryMB(1001)),
@@ -203,7 +203,7 @@ func TestRequestTemplateBuildMaxCPU(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 				Name:        new("test-request-build-max-cpu-" + test.name + "-" + uuid.NewString()),
 				CpuCount:    new(api.CPUCount(2)),
 				MaxCpuCount: test.max,
@@ -264,7 +264,7 @@ func TestRequestTemplateBuildMaxCPUInvalid(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
 				Name:        new("test-request-build-max-cpu-" + test.name + "-" + uuid.NewString()),
 				CpuCount:    new(api.CPUCount(2)),
 				MaxCpuCount: new(test.max),

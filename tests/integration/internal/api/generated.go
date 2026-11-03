@@ -3209,6 +3209,9 @@ type BuildsLimit = int32
 // ClusterID defines model for clusterID.
 type ClusterID = openapi_types.UUID
 
+// IdempotencyKey defines model for idempotencyKey.
+type IdempotencyKey = string
+
 // NodeID defines model for nodeID.
 type NodeID = string
 
@@ -3730,6 +3733,26 @@ type GetV2TemplatesParams struct {
 
 	// Limit Maximum number of items to return per page
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// PostV3TemplatesParams defines parameters for PostV3Templates.
+type PostV3TemplatesParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // PostAdminTeamsTeamIDApiKeysJSONRequestBody defines body for PostAdminTeamsTeamIDApiKeys for application/json ContentType.
@@ -5695,7 +5718,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3Templates Create template (v3)
 	//
@@ -5704,7 +5727,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVolumes List team volumes
 	//
@@ -8698,8 +8721,8 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, tem
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8717,8 +8740,8 @@ func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequest(c.Server, body)
+func (c *Client) PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15049,18 +15072,18 @@ func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, tem
 }
 
 // NewPostV3TemplatesRequest calls the generic PostV3Templates builder with application/json body
-func NewPostV3TemplatesRequest(server string, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
+func NewPostV3TemplatesRequest(server string, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV3TemplatesRequestWithBody(server, "application/json", bodyReader)
+	return NewPostV3TemplatesRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostV3TemplatesRequestWithBody constructs an http.Request for the PostV3Templates method, with any body, and a specified content type
-func NewPostV3TemplatesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV3TemplatesRequestWithBody(server string, params *PostV3TemplatesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -15084,6 +15107,21 @@ func NewPostV3TemplatesRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -16770,7 +16808,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// PostV3TemplatesWithResponse Create template (v3)
 	//
@@ -16779,7 +16817,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// GetVolumesWithResponse List team volumes
 	//
@@ -26180,9 +26218,45 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV3TemplatesResponse400Headers the declared response headers of an HTTP 400 response for PostV3Templates
+type PostV3TemplatesResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse401Headers the declared response headers of an HTTP 401 response for PostV3Templates
+type PostV3TemplatesResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse403Headers the declared response headers of an HTTP 403 response for PostV3Templates
+type PostV3TemplatesResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse409Headers the declared response headers of an HTTP 409 response for PostV3Templates
+type PostV3TemplatesResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse422Headers the declared response headers of an HTTP 422 response for PostV3Templates
+type PostV3TemplatesResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV3TemplatesResponse429Headers the declared response headers of an HTTP 429 response for PostV3Templates
 type PostV3TemplatesResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter  *int
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse500Headers the declared response headers of an HTTP 500 response for PostV3Templates
+type PostV3TemplatesResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse503Headers the declared response headers of an HTTP 503 response for PostV3Templates
+type PostV3TemplatesResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV3TemplatesResponse struct {
@@ -26191,19 +26265,37 @@ type PostV3TemplatesResponse struct {
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *TemplateRequestResponseV3
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
 	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *N403
+	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
+	JSON429 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV3TemplatesResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV3TemplatesResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV3TemplatesResponse403Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV3TemplatesResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV3TemplatesResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV3TemplatesResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV3TemplatesResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV3TemplatesResponse503Headers
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -26212,33 +26304,43 @@ func (r PostV3TemplatesResponse) GetJSON202() *TemplateRequestResponseV3 {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON400() *N400 {
+func (r PostV3TemplatesResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON401() *N401 {
+func (r PostV3TemplatesResponse) GetJSON401() *Error {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON403() *N403 {
+func (r PostV3TemplatesResponse) GetJSON403() *Error {
 	return r.JSON403
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON409() *N409 {
+func (r PostV3TemplatesResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON429() *N429 {
+func (r PostV3TemplatesResponse) GetJSON429() *Error {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON500() *N500 {
+func (r PostV3TemplatesResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -29031,8 +29133,8 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3TemplatesWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3TemplatesWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29046,8 +29148,8 @@ func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3Templates(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3Templates(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -37355,50 +37457,114 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 		response.JSON202 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest N403
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV3TemplatesResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV3TemplatesResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV3TemplatesResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV3TemplatesResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV3TemplatesResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV3TemplatesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -37408,7 +37574,34 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 			}
 			headers.RetryAfter = &value
 		}
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV3TemplatesResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV3TemplatesResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

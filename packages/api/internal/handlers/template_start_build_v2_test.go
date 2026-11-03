@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
@@ -136,7 +137,7 @@ func TestPostV3TemplatesMinimumFreeDiskPersistence(t *testing.T) {
 				},
 			})
 
-			store.PostV3Templates(c)
+			store.PostV3Templates(c, api.PostV3TemplatesParams{})
 			require.Equal(t, tt.status, recorder.Code, recorder.Body.String())
 
 			var count, persisted int64

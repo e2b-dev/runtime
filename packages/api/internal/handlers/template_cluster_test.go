@@ -91,7 +91,7 @@ func requestClusterTemplate(t *testing.T, store *APIStore, team *types.Team) *ap
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v3/templates", strings.NewReader(`{"name":"base"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, c, team)
-	store.PostV3Templates(c)
+	store.PostV3Templates(c, api.PostV3TemplatesParams{})
 	response, err := api.ParsePostV3TemplatesResponse(w.Result())
 	require.NoError(t, err)
 

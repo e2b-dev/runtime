@@ -178,7 +178,7 @@ func requestTemplateBuild(
 		MemoryMB: memoryMB,
 	}
 
-	resp, err := c.PostV3TemplatesWithResponse(ctx, req, reqEditors...)
+	resp, err := c.PostV3TemplatesWithResponse(ctx, nil, req, reqEditors...)
 	require.NoError(tb, err)
 	require.Equal(tb, http.StatusAccepted, resp.StatusCode())
 	require.NotNil(tb, resp.JSON202)
