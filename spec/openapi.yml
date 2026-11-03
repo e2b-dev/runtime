@@ -1814,6 +1814,135 @@ components:
         - AdminSandboxStatePaused
         - AdminSandboxStateKilled
 
+    AdminSandboxBuildStatusGroup:
+      type: string
+      description: |
+        Coarse build state derived from the build status: pending (pending,
+        waiting), in_progress (in_progress, building, snapshotting), ready
+        (ready, uploaded, success) or failed (any other status)
+      enum:
+        - pending
+        - in_progress
+        - ready
+        - failed
+      x-enum-varnames:
+        - AdminSandboxBuildStatusGroupPending
+        - AdminSandboxBuildStatusGroupInProgress
+        - AdminSandboxBuildStatusGroupReady
+        - AdminSandboxBuildStatusGroupFailed
+
+    AdminSandboxBuild:
+      type: object
+      description: A build assigned to a sandbox's snapshot template under a tag
+      required:
+        - buildID
+        - templateID
+        - tag
+        - status
+        - statusGroup
+        - clusterNodeID
+        - assignedAt
+        - isCurrent
+        - restorable
+      properties:
+        buildID:
+          type: string
+          format: uuid
+          description: Identifier of the build
+        templateID:
+          type: string
+          description: Identifier of the snapshot template the build is assigned to
+        tag:
+          type: string
+          description: Tag the build is assigned under
+        status:
+          type: string
+          description: Build status as stored, for example ready, snapshotting or waiting
+        statusGroup:
+          $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
+        clusterNodeID:
+          type: string
+          nullable: true
+          description: Node that produced the build, null when it was not recorded
+        assignedAt:
+          type: string
+          format: date-time
+          description: When the build was assigned to the template under this tag
+        isCurrent:
+          type: boolean
+          description: |
+            Whether this build is the template's newest ready assignment under
+            the tag, the build a resume uses, regardless of the status filter
+        restorable:
+          type: boolean
+          description: |
+            Whether the restore route would accept this build: it is ready,
+            assigned under the default tag, not the current build, and its
+            snapshot template is not deleted
+
+    AdminSandboxBuildList:
+      type: object
+      required:
+        - items
+        - total
+        - snapshotTemplateID
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSandboxBuild"
+        total:
+          type: integer
+          format: int64
+          description: Number of assignments matching the tag and status filter, ignoring limit and offset
+        snapshotTemplateID:
+          type: string
+          nullable: true
+          description: |
+            Identifier of the template that holds the sandbox's snapshot, null
+            when the sandbox has no snapshot
+
+    AdminSandboxBuildRestoreRequest:
+      type: object
+      required:
+        - buildID
+      properties:
+        buildID:
+          type: string
+          format: uuid
+          description: |
+            Build to make current. It must be ready and already assigned to the
+            sandbox's snapshot template under the default tag.
+
+    AdminSandboxBuildRestoreResult:
+      type: object
+      required:
+        - sandboxID
+        - templateID
+        - buildID
+        - assignedAt
+        - previousBuildID
+      properties:
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        templateID:
+          type: string
+          description: Identifier of the snapshot template that received the assignment
+        buildID:
+          type: string
+          format: uuid
+          description: Build that is now the template's current default build
+        assignedAt:
+          type: string
+          format: date-time
+          description: When the new assignment was written
+        previousBuildID:
+          type: string
+          format: uuid
+          nullable: true
+          description: Build that was current before the restore, null when there was none
+
     AdminTeamRunningSandboxCounts:
       type: object
       description: |
@@ -6564,6 +6693,124 @@ paths:
           $ref: "#/components/responses/401"
         "404":
           $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/sandboxes/{sandboxID}/builds:
+    get:
+      summary: List the builds of a sandbox's snapshot template
+      description: |
+        Lists the build assignments of the template that holds the sandbox's
+        snapshot under one tag. Assignments without a creation time are left
+        out. A sandbox without a snapshot returns no items and a null
+        `snapshotTemplateID`; this route does not report whether the sandbox
+        exists.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+        - name: statusGroup
+          in: query
+          required: false
+          description: Only list builds in these status groups, comma-separated. Omit to list every group.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
+        - name: tag
+          in: query
+          required: false
+          description: Tag whose assignments are listed
+          schema:
+            type: string
+            minLength: 1
+            default: default
+        - name: order
+          in: query
+          required: false
+          description: Direction of the assignment time order
+          schema:
+            $ref: "#/components/schemas/OrderDirection"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of builds to return
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: Number of matching builds to skip
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of the snapshot template's build assignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandboxBuildList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/sandboxes/{sandboxID}/builds/restore:
+    post:
+      summary: Make a build the current build of a sandbox's snapshot
+      description: |
+        Assigns a ready build of the sandbox's snapshot template to the template
+        again under the default tag, so the sandbox resumes from that build.
+        The snapshot takes the restored build's kind, filesystem-only or
+        memory.
+        Answers 404 when the sandbox has no snapshot, its snapshot template is
+        deleted, or the build is not assigned to that template under the
+        default tag, and 409 when the build is not ready or is already the
+        current build.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSandboxBuildRestoreRequest"
+      responses:
+        "200":
+          description: The build is now the snapshot template's current default build
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandboxBuildRestoreResult"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
         "429":
           $ref: "#/components/responses/429"
         "500":

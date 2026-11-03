@@ -34,6 +34,30 @@ func (e AWSRegistryType) Valid() bool {
 	}
 }
 
+// Defines values for AdminSandboxBuildStatusGroup.
+const (
+	AdminSandboxBuildStatusGroupFailed     AdminSandboxBuildStatusGroup = "failed"
+	AdminSandboxBuildStatusGroupInProgress AdminSandboxBuildStatusGroup = "in_progress"
+	AdminSandboxBuildStatusGroupPending    AdminSandboxBuildStatusGroup = "pending"
+	AdminSandboxBuildStatusGroupReady      AdminSandboxBuildStatusGroup = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AdminSandboxBuildStatusGroup enum.
+func (e AdminSandboxBuildStatusGroup) Valid() bool {
+	switch e {
+	case AdminSandboxBuildStatusGroupFailed:
+		return true
+	case AdminSandboxBuildStatusGroupInProgress:
+		return true
+	case AdminSandboxBuildStatusGroupPending:
+		return true
+	case AdminSandboxBuildStatusGroupReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AdminSandboxState.
 const (
 	AdminSandboxStateKilled  AdminSandboxState = "killed"
@@ -652,6 +676,83 @@ type AdminSandbox struct {
 	// TeamID Identifier of the team that owns the sandbox
 	TeamID openapi_types.UUID `json:"teamID"`
 }
+
+// AdminSandboxBuild A build assigned to a sandbox's snapshot template under a tag
+type AdminSandboxBuild struct {
+	// AssignedAt When the build was assigned to the template under this tag
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Identifier of the build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// ClusterNodeID Node that produced the build, null when it was not recorded
+	ClusterNodeID *string `json:"clusterNodeID"`
+
+	// IsCurrent Whether this build is the template's newest ready assignment under
+	// the tag, the build a resume uses, regardless of the status filter
+	IsCurrent bool `json:"isCurrent"`
+
+	// Restorable Whether the restore route would accept this build: it is ready,
+	// assigned under the default tag, not the current build, and its
+	// snapshot template is not deleted
+	Restorable bool `json:"restorable"`
+
+	// Status Build status as stored, for example ready, snapshotting or waiting
+	Status string `json:"status"`
+
+	// StatusGroup Coarse build state derived from the build status: pending (pending,
+	// waiting), in_progress (in_progress, building, snapshotting), ready
+	// (ready, uploaded, success) or failed (any other status)
+	StatusGroup AdminSandboxBuildStatusGroup `json:"statusGroup"`
+
+	// Tag Tag the build is assigned under
+	Tag string `json:"tag"`
+
+	// TemplateID Identifier of the snapshot template the build is assigned to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildList defines model for AdminSandboxBuildList.
+type AdminSandboxBuildList struct {
+	Items []AdminSandboxBuild `json:"items"`
+
+	// SnapshotTemplateID Identifier of the template that holds the sandbox's snapshot, null
+	// when the sandbox has no snapshot
+	SnapshotTemplateID *string `json:"snapshotTemplateID"`
+
+	// Total Number of assignments matching the tag and status filter, ignoring limit and offset
+	Total int64 `json:"total"`
+}
+
+// AdminSandboxBuildRestoreRequest defines model for AdminSandboxBuildRestoreRequest.
+type AdminSandboxBuildRestoreRequest struct {
+	// BuildID Build to make current. It must be ready and already assigned to the
+	// sandbox's snapshot template under the default tag.
+	BuildID openapi_types.UUID `json:"buildID"`
+}
+
+// AdminSandboxBuildRestoreResult defines model for AdminSandboxBuildRestoreResult.
+type AdminSandboxBuildRestoreResult struct {
+	// AssignedAt When the new assignment was written
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Build that is now the template's current default build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// PreviousBuildID Build that was current before the restore, null when there was none
+	PreviousBuildID *openapi_types.UUID `json:"previousBuildID"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// TemplateID Identifier of the snapshot template that received the assignment
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildStatusGroup Coarse build state derived from the build status: pending (pending,
+// waiting), in_progress (in_progress, building, snapshotting), ready
+// (ready, uploaded, success) or failed (any other status)
+type AdminSandboxBuildStatusGroup string
 
 // AdminSandboxKillResult defines model for AdminSandboxKillResult.
 type AdminSandboxKillResult struct {
@@ -3312,6 +3413,24 @@ type AdminListClusterTeamsParamsSortBy string
 // AdminListClusterTeamsParamsSortOrder defines parameters for AdminListClusterTeams.
 type AdminListClusterTeamsParamsSortOrder string
 
+// GetUnstableAdminSandboxesSandboxIDBuildsParams defines parameters for GetUnstableAdminSandboxesSandboxIDBuilds.
+type GetUnstableAdminSandboxesSandboxIDBuildsParams struct {
+	// StatusGroup Only list builds in these status groups, comma-separated. Omit to list every group.
+	StatusGroup *[]AdminSandboxBuildStatusGroup `form:"statusGroup,omitempty" json:"statusGroup,omitempty"`
+
+	// Tag Tag whose assignments are listed
+	Tag *string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Order Direction of the assignment time order
+	Order *OrderDirection `form:"order,omitempty" json:"order,omitempty"`
+
+	// Limit Maximum number of builds to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Number of matching builds to skip
+	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetUnstableAdminTemplatesAliasesParams defines parameters for GetUnstableAdminTemplatesAliases.
 type GetUnstableAdminTemplatesAliasesParams struct {
 	// Search Exact template ID or alias
@@ -3520,6 +3639,9 @@ type AdminUpdateClusterJSONRequestBody = ClusterUpdateRequest
 
 // AdminRotateClusterTokenJSONRequestBody defines body for AdminRotateClusterToken for application/json ContentType.
 type AdminRotateClusterTokenJSONRequestBody = ClusterTokenRotateRequest
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody defines body for PostUnstableAdminSandboxesSandboxIDBuildsRestore for application/json ContentType.
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody = AdminSandboxBuildRestoreRequest
 
 // AdminBanTeamsJSONRequestBody defines body for AdminBanTeams for application/json ContentType.
 type AdminBanTeamsJSONRequestBody = AdminTeamsBanRequest
@@ -4846,6 +4968,49 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 	AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminBanTeamsWithBody Ban teams
 	//
@@ -7158,6 +7323,79 @@ func (c *Client) AdminRotateClusterTokenWithBody(ctx context.Context, clusterID 
 // Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 func (c *Client) AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminRotateClusterTokenRequest(c.Server, clusterID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *Client) GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(c.Server, sandboxID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(c.Server, sandboxID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(c.Server, sandboxID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12356,6 +12594,162 @@ func NewAdminRotateClusterTokenRequestWithBody(server string, clusterID ClusterI
 	return req, nil
 }
 
+// NewGetUnstableAdminSandboxesSandboxIDBuildsRequest constructs an http.Request for the GetUnstableAdminSandboxesSandboxIDBuilds method
+func NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(server string, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.StatusGroup != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "statusGroup", *params.StatusGroup, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Tag != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tag", *params.Tag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Order != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "order", *params.Order, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest calls the generic PostUnstableAdminSandboxesSandboxIDBuildsRestore builder with application/json body
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(server string, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server, sandboxID, "application/json", bodyReader)
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody constructs an http.Request for the PostUnstableAdminSandboxesSandboxIDBuildsRestore method, with any body, and a specified content type
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewAdminBanTeamsRequest calls the generic AdminBanTeams builder with application/json body
 func NewAdminBanTeamsRequest(server string, body AdminBanTeamsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -15471,6 +15865,51 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 	AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
 
 	// AdminBanTeamsWithBodyWithResponse Ban teams
 	//
@@ -22018,6 +22457,172 @@ func (r AdminRotateClusterTokenResponse) ContentType() string {
 	return ""
 }
 
+// GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableAdminSandboxesSandboxIDBuilds
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON200() *AdminSandboxBuildList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers the declared response headers of an HTTP 429 response for PostUnstableAdminSandboxesSandboxIDBuildsRestore
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildRestoreResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON200() *AdminSandboxBuildRestoreResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // AdminBanTeamsResponse429Headers the declared response headers of an HTTP 429 response for AdminBanTeams
 type AdminBanTeamsResponse429Headers struct {
 	RetryAfter *int
@@ -26945,6 +27550,69 @@ func (c *ClientWithResponses) AdminRotateClusterTokenWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseAdminRotateClusterTokenResponse(rsp)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *ClientWithResponses) GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	rsp, err := c.GetUnstableAdminSandboxesSandboxIDBuilds(ctx, sandboxID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx, sandboxID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
 }
 
 // AdminBanTeamsWithBodyWithResponse Ban teams
@@ -33151,6 +33819,154 @@ func ParseAdminRotateClusterTokenResponse(rsp *http.Response) (*AdminRotateClust
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse parses an HTTP response from a GetUnstableAdminSandboxesSandboxIDBuildsWithResponse call
+func ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp *http.Response) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminSandboxesSandboxIDBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse parses an HTTP response from a PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse call
+func ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp *http.Response) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildRestoreResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil
