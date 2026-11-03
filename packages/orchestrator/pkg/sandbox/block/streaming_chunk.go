@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -288,6 +289,7 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 	openStart := time.Now()
 	reader, source, err := upstream.OpenRangeReader(ctx, s.chunkOff, s.chunkLen, ft)
 	res.source = source
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String(storage.AttrSource, source.String()))
 	res.openDuration = time.Since(openStart)
 	s.setSource(source)
 	if err != nil {

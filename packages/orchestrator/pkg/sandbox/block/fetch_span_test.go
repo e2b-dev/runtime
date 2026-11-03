@@ -3,6 +3,7 @@
 package block
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -17,23 +18,31 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-// TestChunker_FetchSpanNamesBuildAndFileType verifies that the chunk.fetch span
-// names the build and file type the chunker reads, so that together with the
-// offset it identifies the fetched bytes.
-func TestChunker_FetchSpanNamesBuildAndFileType(t *testing.T) {
+// TestChunker_FetchSpanNamesBuildFileTypeAndSource verifies that the chunk.fetch
+// span names the build and file type the chunker reads, so that together with
+// the offset it identifies the fetched bytes, and the tier that served them.
+func TestChunker_FetchSpanNamesBuildFileTypeAndSource(t *testing.T) {
 	t.Parallel()
 
-	for _, objType := range []storage.SeekableObjectType{storage.MemfileObjectType, storage.RootFSObjectType} {
-		t.Run(objType.String(), func(t *testing.T) {
+	tests := []struct {
+		objType storage.SeekableObjectType
+		source  storage.Source
+	}{
+		{storage.MemfileObjectType, storage.SourceGCS},
+		{storage.RootFSObjectType, storage.SourceNFS},
+	}
+	for _, tt := range tests {
+		t.Run(tt.objType.String(), func(t *testing.T) {
 			t.Parallel()
 
 			buildID := uuid.NewString()
 			data := makeTestData(testFileSize)
-			chunker, err := NewChunker(&featureflags.Client{}, int64(len(data)), testBlockSize, t.TempDir()+"/cache", newTestMetrics(t), objType, buildID)
+			chunker, err := NewChunker(&featureflags.Client{}, int64(len(data)), testBlockSize, t.TempDir()+"/cache", newTestMetrics(t), tt.objType, buildID)
 			require.NoError(t, err)
 			defer chunker.Close()
 
-			_, err = chunker.Slice(t.Context(), 0, testBlockSize, &fakeSeekable{data: data}, nil)
+			upstream := sourceOpener{RangeOpener: &fakeSeekable{data: data}, source: tt.source}
+			_, err = chunker.Slice(t.Context(), 0, testBlockSize, upstream, nil)
 			require.NoError(t, err)
 
 			// Finding the span by build ID is the build.id check. The span ends on
@@ -46,11 +55,53 @@ func TestChunker_FetchSpanNamesBuildAndFileType(t *testing.T) {
 			for _, kv := range span.Attributes() {
 				attrs[kv.Key] = kv.Value
 			}
-			assert.Equal(t, objType.String(), attrs[storage.AttrFileType].AsString())
+			assert.Equal(t, tt.objType.String(), attrs[storage.AttrFileType].AsString())
+			assert.Equal(t, tt.source.String(), attrs[storage.AttrSource].AsString())
 			assert.Equal(t, int64(0), attrs["off"].AsInt64())
 			assert.Positive(t, attrs["len"].AsInt64())
 		})
 	}
+}
+
+// TestChunker_FetchSpanNamesSourceWhenReadPanics verifies that a fetch whose
+// reader panics after the open still names the tier on its span.
+func TestChunker_FetchSpanNamesSourceWhenReadPanics(t *testing.T) {
+	t.Parallel()
+
+	buildID := uuid.NewString()
+	data := makeTestData(testFileSize)
+	chunker, err := NewChunker(&featureflags.Client{}, int64(len(data)), testBlockSize, t.TempDir()+"/cache", newTestMetrics(t), storage.MemfileObjectType, buildID)
+	require.NoError(t, err)
+	defer chunker.Close()
+
+	upstream := sourceOpener{RangeOpener: &panicSeekable{data: data}, source: storage.SourceGCS}
+	_, err = chunker.Slice(t.Context(), 0, testBlockSize, upstream, nil)
+	require.Error(t, err)
+
+	require.Eventually(t, func() bool { return findFetchSpan(buildID) != nil }, 5*time.Second, 10*time.Millisecond)
+	span := findFetchSpan(buildID)
+	require.NotNil(t, span)
+
+	var source string
+	for _, kv := range span.Attributes() {
+		if kv.Key == storage.AttrSource {
+			source = kv.Value.AsString()
+		}
+	}
+	assert.Equal(t, storage.SourceGCS.String(), source)
+}
+
+// sourceOpener reports a chosen source for reads served by the wrapped opener.
+type sourceOpener struct {
+	storage.RangeOpener
+
+	source storage.Source
+}
+
+func (o sourceOpener) OpenRangeReader(ctx context.Context, off, length int64, ft *storage.FrameTable) (storage.RangeReader, storage.Source, error) {
+	r, _, err := o.RangeOpener.OpenRangeReader(ctx, off, length, ft)
+
+	return r, o.source, err
 }
 
 func findFetchSpan(buildID string) sdktrace.ReadOnlySpan {
