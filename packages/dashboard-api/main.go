@@ -29,7 +29,6 @@ import (
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/handlers"
-	"github.com/e2b-dev/infra/packages/dashboard-api/internal/identity"
 	dashboardmiddleware "github.com/e2b-dev/infra/packages/dashboard-api/internal/middleware"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
@@ -220,14 +219,7 @@ func run() int {
 	}
 	defer authService.Close(ctx)
 
-	identityService, err := newIdentityService(ctx, l, config, authClient, identity.NewQueriesLinkage(authDB.Queries))
-	if err != nil {
-		l.Error(ctx, "Initializing identity service", zap.Error(err))
-
-		return 1
-	}
-
-	apiStore := handlers.NewAPIStore(config, db, clickhouseClient, authService, identityService)
+	apiStore := handlers.NewAPIStore(config, db, clickhouseClient, authService)
 
 	swagger, err := api.GetSwagger()
 	if err != nil {
@@ -300,40 +292,6 @@ func run() int {
 
 func main() {
 	os.Exit(run())
-}
-
-// newIdentityService builds the Ory-backed identity service when Ory is
-// configured. With both Ory variables empty the service runs without an
-// identity provider: API-key requests are unaffected and the identity-backed
-// endpoints answer 503.
-func newIdentityService(
-	ctx context.Context,
-	l logger.Logger,
-	config cfg.Config,
-	httpClient *http.Client,
-	linkage identity.Linkage,
-) (identity.Service, error) {
-	if !config.IdentityProviderConfigured() {
-		l.Warn(ctx, "ORY_SDK_URL and ORY_PROJECT_API_TOKEN are not configured; no identity provider is configured and identity-backed endpoints will respond with 503")
-
-		return identity.NewUnavailableService(), nil
-	}
-
-	oryIssuer, err := identity.ResolveOryIssuer(config.OrySDKURL, config.AuthProvider.JWT)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ory issuer: %w", err)
-	}
-
-	oryDirectory, err := identity.NewOryDirectory(identity.OryConfig{
-		HTTPClient: httpClient,
-		SDKURL:     config.OrySDKURL,
-		Token:      config.OryProjectAPIToken,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize ory identity directory: %w", err)
-	}
-
-	return identity.NewService(map[string]identity.Directory{oryIssuer: oryDirectory}, linkage)
 }
 
 func newHTTPServer(

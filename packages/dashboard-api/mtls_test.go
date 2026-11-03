@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/shared/pkg/httpserver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -19,12 +23,12 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-// postStatus POSTs path on a new connection and returns the status.
-func postStatus(t *testing.T, addr, path string) int {
+// getStatus GETs path on a new connection and returns the status.
+func getStatus(t *testing.T, addr, path string) int {
 	t.Helper()
 
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+addr+path, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+path, nil)
 	require.NoError(t, err)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -47,7 +51,14 @@ func TestHTTPServerServesThroughTheMTLSListener(t *testing.T) {
 	swagger, err := api.GetSpec()
 	require.NoError(t, err)
 	swagger.Servers = nil
-	authenticate := sharedauth.CreateAuthenticationFunc([]sharedauth.Authenticator{sharedauth.NewAdminJWTAuthenticator(nil), sharedauth.NewAdminApiKeyAuthenticator("admin-key")}, nil)
+	authenticate := sharedauth.CreateAuthenticationFunc([]sharedauth.Authenticator{
+		sharedauth.NewAuthProviderBearerAuthenticator(func(context.Context, *gin.Context, string) (uuid.UUID, *sharedauth.APIError) {
+			return uuid.Nil, nil
+		}),
+		sharedauth.NewAuthProviderTeamAuthenticator(func(context.Context, *gin.Context, string) (*types.Team, *sharedauth.APIError) {
+			return nil, nil
+		}),
+	}, nil)
 	s := newHTTPServer(0, logger.NewNopLogger(), telemetry.NewNoopClient(), swagger, authenticate, api.ServerInterface(nil))
 	inner, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -58,14 +69,14 @@ func TestHTTPServerServesThroughTheMTLSListener(t *testing.T) {
 		_ = s.Close()
 		<-errs
 	})
-	path := "/admin/user-profiles/resolve"
+	path := "/sandboxes/test/record"
 
 	assert.Equal(t, int64(1), servicetest.ListenerMode(t, metrics, "http", "off", mtls.SourceFallback), "reported from startup")
-	assert.Equal(t, http.StatusUnauthorized, postStatus(t, inner.Addr().String(), path), "the application answers, not the guard")
+	assert.Equal(t, http.StatusUnauthorized, getStatus(t, inner.Addr().String(), path), "the application answers, not the guard")
 	assert.Equal(t, int64(1), servicetest.Point(t, metrics, mtls.MetricHandshakes, attribute.String(mtls.AttrListener, "http"), attribute.String(mtls.AttrOutcome, mtls.OutcomePlaintext)))
 
 	servicetest.SetFlag(source, httpModeFlag, "permissive")
-	assert.Equal(t, http.StatusUnauthorized, postStatus(t, inner.Addr().String(), path))
+	assert.Equal(t, http.StatusUnauthorized, getStatus(t, inner.Addr().String(), path))
 	assert.Equal(t, int64(1), servicetest.ListenerMode(t, metrics, "http", "permissive", mtls.SourceFlag))
 }
 

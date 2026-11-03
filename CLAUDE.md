@@ -110,7 +110,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 
 **Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
 - Entry point: `main.go`
-- Spec: `spec/openapi-dashboard.yml`; the killed-sandbox record and admin user-profile resolution
+- Spec: `spec/openapi-dashboard.yml`; the killed-sandbox record
 - Talks to Postgres and ClickHouse; never to orchestrators (see `docs/ARCHITECTURE.md`)
 - Port: 3010
 
