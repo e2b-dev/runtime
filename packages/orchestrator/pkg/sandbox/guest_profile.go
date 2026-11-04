@@ -119,6 +119,12 @@ func rebootEnvdTimeoutFor(config *Config) time.Duration {
 	return rebootEnvdTimeout
 }
 
+// restoreEnvdTimeoutFor is the envd wait a restore of this guest gets: the
+// flag's, raised to the profile's floor.
+func restoreEnvdTimeoutFor(config *Config, flagTimeout time.Duration) time.Duration {
+	return max(flagTimeout, config.GuestProfile().EnvdInit().RestoreEnvdTimeoutFloor)
+}
+
 // rebootCPUTemplateFor is rebootCPUTemplate for the guest: a profile that
 // applies no CPU template gets neither the build's nor the override.
 func rebootCPUTemplateFor(boot guest.BootConfig, meta metadata.Template, override ldvalue.Value) (*cputemplate.Template, bool, error) {

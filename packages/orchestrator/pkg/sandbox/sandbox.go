@@ -2349,7 +2349,7 @@ func (f *Factory) ResumeSandbox(
 		err = sbx.WaitForEnvd(
 			ctx,
 			StartTypeResume,
-			envdWaitForVolumes(ctx, f.GetEnvdTimeout(ctx), len(config.VolumeMounts)),
+			envdWaitForVolumes(ctx, restoreEnvdTimeoutFor(config, f.GetEnvdTimeout(ctx)), len(config.VolumeMounts)),
 		)
 		if err != nil {
 			err = fmt.Errorf("failed to wait for sandbox start: %w", err)

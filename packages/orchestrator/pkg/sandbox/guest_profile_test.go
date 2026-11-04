@@ -45,7 +45,7 @@ func (firmwareProfile) Restore() guest.RestoreConfig {
 }
 
 func (firmwareProfile) EnvdInit() guest.EnvdInit {
-	return guest.EnvdInit{RequestTimeoutFloor: 2 * time.Second, ColdBootEnvdTimeout: 3 * time.Minute, NoCABundle: true}
+	return guest.EnvdInit{RequestTimeoutFloor: 2 * time.Second, ColdBootEnvdTimeout: 3 * time.Minute, RestoreEnvdTimeoutFloor: 30 * time.Second, NoCABundle: true}
 }
 
 // newTestGuestSandbox builds a minimal Sandbox for a guest profile, with an
@@ -68,6 +68,19 @@ func TestRebootEnvdTimeoutForGuest(t *testing.T) {
 
 	assert.Equal(t, rebootEnvdTimeout, rebootEnvdTimeoutFor(newTestGuestSandbox(nil).Config))
 	assert.Equal(t, 3*time.Minute, rebootEnvdTimeoutFor(newTestGuestSandbox(firmwareProfile{}).Config))
+}
+
+// A restore waits for envd as long as the flag says, raised to the profile's
+// floor; the default profile and a flag above the floor keep the flag.
+func TestRestoreEnvdTimeoutForGuest(t *testing.T) {
+	t.Parallel()
+
+	linux := newTestGuestSandbox(nil).Config
+	floored := newTestGuestSandbox(firmwareProfile{}).Config
+
+	assert.Equal(t, 10*time.Second, restoreEnvdTimeoutFor(linux, 10*time.Second))
+	assert.Equal(t, 30*time.Second, restoreEnvdTimeoutFor(floored, 10*time.Second))
+	assert.Equal(t, 45*time.Second, restoreEnvdTimeoutFor(floored, 45*time.Second))
 }
 
 // A profile that skips both pre-boot steps gets no pre-boot step. The factory

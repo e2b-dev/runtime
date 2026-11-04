@@ -102,6 +102,9 @@ type EnvdInit struct {
 	// ColdBootEnvdTimeout is the envd wait of a cold boot that has no caller budget.
 	// Zero keeps the default wait.
 	ColdBootEnvdTimeout time.Duration
+	// RestoreEnvdTimeoutFloor is the minimum envd wait of a restore from a snapshot.
+	// Zero keeps the wait of the flag.
+	RestoreEnvdTimeoutFloor time.Duration
 	// NoCABundle sends no CA bundle with the envd init request.
 	NoCABundle bool
 }
