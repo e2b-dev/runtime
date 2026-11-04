@@ -2,43 +2,16 @@ package orchestrator
 
 import (
 	"context"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
-
-type supersededWaiterContextKey struct{}
-
-type supersededWaiterHook struct {
-	ready chan struct{}
-	once  sync.Once
-}
-
-func (h *supersededWaiterHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-
-func (h *supersededWaiterHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
-
-func (h *supersededWaiterHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return func(ctx context.Context, cmd redis.Cmder) error {
-		err := next(ctx, cmd)
-		if err == nil && ctx.Value(supersededWaiterContextKey{}) == true && cmd.Name() == "get" && strings.Contains(cmd.Args()[1].(string), ":transition:") {
-			h.once.Do(func() { close(h.ready) })
-		}
-
-		return err
-	}
-}
 
 func TestRemoveSandbox_SupersededRestoreInformsWaiters(t *testing.T) {
 	t.Parallel()
@@ -55,10 +28,10 @@ func TestRemoveSandbox_SupersededRestoreInformsWaiters(t *testing.T) {
 			t.Parallel()
 
 			ready := make(chan struct{})
-			f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), &supersededWaiterHook{ready: ready})
+			f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), &transitionReadHook{ready: ready})
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			waitCtx := context.WithValue(ctx, supersededWaiterContextKey{}, true)
+			waitCtx := context.WithValue(ctx, transitionReadContextKey{}, true)
 			resumed := f.sbx
 			resumed.ExecutionID = uuid.NewString()
 			type result struct {

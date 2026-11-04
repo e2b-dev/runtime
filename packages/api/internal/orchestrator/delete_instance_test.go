@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -155,6 +157,40 @@ func refusedPauseErr() error {
 	return status.Error(codes.ResourceExhausted, "node is busy persisting sandbox, please retry")
 }
 
+type transitionReadContextKey struct{}
+
+// transitionReadHook closes ready once a command whose context carries
+// transitionReadContextKey reads a transition marker that exists. From then
+// on the reader holds the transition's ID, and the wait it starts sees the
+// transition's result however soon the transition finishes.
+type transitionReadHook struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (h *transitionReadHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *transitionReadHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *transitionReadHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if err == nil && ctx.Value(transitionReadContextKey{}) == true && cmd.Name() == "get" && isTransitionMarker(fmt.Sprint(cmd.Args()[1])) {
+			h.once.Do(func() { close(h.ready) })
+		}
+
+		return err
+	}
+}
+
+// isTransitionMarker matches the marker key of either record form:
+// "...:transition:<sandboxID>" (team) and "...:transition" (sandbox).
+func isTransitionMarker(key string) bool {
+	return strings.Contains(key, ":transition:") || strings.HasSuffix(key, ":transition")
+}
+
 func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error, hooks ...redis.Hook) refusalFixture {
 	t.Helper()
 
@@ -302,26 +338,28 @@ func TestRemoveSandbox_RefusalRestoreCountsTheEvictionCaller(t *testing.T) {
 func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	t.Parallel()
 
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
+	ready := make(chan struct{})
+	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), &transitionReadHook{ready: ready})
+	ctx := t.Context()
+	waitCtx := context.WithValue(ctx, transitionReadContextKey{}, true)
 
-	started := make(chan struct{})
 	waiter := make(chan error, 1)
 	go func() {
 		for {
-			sbx, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+			sbx, err := f.o.sandboxStore.Get(ctx, f.sbx.TeamID, f.sbx.SandboxID)
 			if err == nil && sbx.State == sandbox.StatePausing {
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		close(started)
-		waiter <- f.o.sandboxStore.WaitForStateChange(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		waiter <- f.o.sandboxStore.WaitForStateChange(waitCtx, f.sbx.TeamID, f.sbx.SandboxID)
 	}()
 
-	// Hold the node's answer until the waiter is in place.
+	// Hold the node's answer until the waiter has read the transition marker:
+	// a wait that starts after the pause finished finds no transition to join.
 	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
 	require.True(t, ok)
-	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: started})
+	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: ready})
 
 	err := f.removePause(t)
 	require.ErrorIs(t, err, PauseQueueExhaustedError{})

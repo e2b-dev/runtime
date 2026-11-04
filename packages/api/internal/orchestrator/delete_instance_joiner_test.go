@@ -29,7 +29,7 @@ func TestRemoveSandbox_JoinerOfAnUnsupportedRefusal(t *testing.T) {
 			t.Parallel()
 
 			read := make(chan struct{})
-			f := newRefusalFixture(t, true, consts.LocalClusterID, unsupportedPauseErr(), &supersededWaiterHook{ready: read})
+			f := newRefusalFixture(t, true, consts.LocalClusterID, unsupportedPauseErr(), &transitionReadHook{ready: read})
 			ctx := t.Context()
 
 			transition, _, finish, err := f.o.sandboxStore.StartRemoving(ctx, f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause, FilesystemOnly: true})
@@ -37,7 +37,7 @@ func TestRemoveSandbox_JoinerOfAnUnsupportedRefusal(t *testing.T) {
 
 			joiner := make(chan error, 1)
 			go func() {
-				joinerCtx := context.WithValue(ctx, supersededWaiterContextKey{}, true)
+				joinerCtx := context.WithValue(ctx, transitionReadContextKey{}, true)
 				joiner <- f.o.RemoveSandbox(joinerCtx, f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause, FilesystemOnly: tc.filesystemOnly})
 			}()
 			// Restore only once the joiner has read the in-flight transition, so it joins it.
