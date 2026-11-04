@@ -78,9 +78,7 @@ func (p *Process) ExportMemory(
 	memfd *block.Memfd,
 	bgCopy bool,
 	originalMemfile block.ReadonlyDevice,
-	dedupBestEffort bool,
-	dedupDirectIO bool,
-	dedupBudget block.DedupBudget,
+	dedup block.DedupOptions,
 	inputEmpty *roaring.Bitmap,
 	metaOut *utils.SetOnce[*header.DiffMetadata],
 	dedupInflightServe bool,
@@ -116,7 +114,7 @@ func (p *Process) ExportMemory(
 	if memfd != nil {
 		if originalMemfile != nil {
 			return block.NewCacheFromMemfdDeduped(ctx, originalMemfile, blockSize, cachePath, memfd, include,
-				dedupBestEffort, dedupDirectIO, dedupBudget, inputEmpty, metaOut, dedupInflightServe, dedupFreeIndex)
+				dedup.BestEffort, dedup.DirectIO, dedup.Budget, inputEmpty, metaOut, dedupInflightServe, dedupFreeIndex)
 		}
 		var (
 			src block.DiffSource
@@ -149,7 +147,7 @@ func (p *Process) ExportMemory(
 		return cache, nil
 	}
 	// .dedup suffix avoids clobbering the source mmap during truncate.
-	dedupCache, meta, err := cache.Dedup(ctx, originalMemfile, include, blockSize, cachePath+".dedup", dedupBestEffort, dedupDirectIO, dedupBudget)
+	dedupCache, meta, err := cache.Dedup(ctx, originalMemfile, include, blockSize, cachePath+".dedup", dedup.BestEffort, dedup.DirectIO, dedup.Budget)
 	if err != nil {
 		return nil, fmt.Errorf("dedup memfile diff: %w", errors.Join(err, cache.Close()))
 	}

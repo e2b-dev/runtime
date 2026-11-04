@@ -15,6 +15,7 @@ import (
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -3474,20 +3475,11 @@ func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, 
 	}
 
 	var dedupBase block.ReadonlyDevice
-	var dedupBestEffort, dedupDirectIO bool
-	var dedupBudget block.DedupBudget
+	var dedup block.DedupOptions
 	dedupCfg := s.featureFlags.JSONFlag(ctx, featureflags.MemfileDiffDedupFlag, sandboxLDContext(s.Runtime, s.Config)).AsValueMap()
 	if dedupCfg.Get("enabled").BoolValue() {
 		dedupBase = originalMemfile
-		dedupBestEffort = dedupCfg.Get("bestEffort").BoolValue()
-		dedupDirectIO = dedupCfg.Get("directIO").BoolValue()
-		dedupBudget = block.DedupBudget{
-			MaxFetchWindowsPerBlock:        dedupCfg.Get("maxFetchWindowsPerBlock").IntValue(),
-			MaxPromotedParentPagesPerBlock: dedupCfg.Get("maxPromotedParentPagesPerBlock").IntValue(),
-			MaxPagesPerPromotedFrame:       dedupCfg.Get("maxPagesPerPromotedFrame").IntValue(),
-			BlockFaultPct:                  dedupCfg.Get("blockFaultPct").IntValue(),
-			FetchRunWindowPages:            dedupCfg.Get("fetchRunWindowPages").IntValue(),
-		}
+		dedup = memfileDedupOptions(dedupCfg)
 	}
 
 	// In-place snapshot borrows the memfd via PeekMemfd (the running VM keeps
@@ -3518,9 +3510,7 @@ func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, 
 		memfd,
 		s.featureFlags.BoolFlag(ctx, featureflags.MemfdBackgroundCopyFlag, sandboxLDContext(s.Runtime, s.Config)),
 		dedupBase,
-		dedupBestEffort,
-		dedupDirectIO,
-		dedupBudget,
+		dedup,
 		dedupInflightServe,
 		dedupFreeIndex,
 		keepMemfdOpen,
@@ -3971,6 +3961,21 @@ func (s *Sandbox) MemoryPrefetchData(ctx context.Context) (block.PrefetchData, e
 	return prefetchData, nil
 }
 
+// memfileDedupOptions reads the memfile-diff-dedup keys other than "enabled".
+func memfileDedupOptions(cfg ldvalue.ValueMap) block.DedupOptions {
+	return block.DedupOptions{
+		BestEffort: cfg.Get("bestEffort").BoolValue(),
+		DirectIO:   cfg.Get("directIO").BoolValue(),
+		Budget: block.DedupBudget{
+			MaxFetchWindowsPerBlock:        cfg.Get("maxFetchWindowsPerBlock").IntValue(),
+			MaxPromotedParentPagesPerBlock: cfg.Get("maxPromotedParentPagesPerBlock").IntValue(),
+			MaxPagesPerPromotedFrame:       cfg.Get("maxPagesPerPromotedFrame").IntValue(),
+			BlockFaultPct:                  cfg.Get("blockFaultPct").IntValue(),
+			FetchRunWindowPages:            cfg.Get("fetchRunWindowPages").IntValue(),
+		},
+	}
+}
+
 func pauseProcessMemory(
 	ctx context.Context,
 	buildID uuid.UUID,
@@ -3981,9 +3986,7 @@ func pauseProcessMemory(
 	memfd *block.Memfd,
 	bgCopy bool,
 	originalMemfile block.ReadonlyDevice,
-	dedupBestEffort bool,
-	dedupDirectIO bool,
-	dedupBudget block.DedupBudget,
+	dedup block.DedupOptions,
 	dedupInflightServe bool,
 	dedupFreeIndex bool,
 	keepMemfdOpen bool,
@@ -4020,7 +4023,7 @@ func pauseProcessMemory(
 	// running VM keeps ownership.
 	cache, err := fc.ExportMemory(
 		ctx, diffMetadata.Dirty, memfileDiffPath, diffMetadata.BlockSize, memfd, bgCopy,
-		originalMemfile, dedupBestEffort, dedupDirectIO, dedupBudget, diffMetadata.Empty, metaOut,
+		originalMemfile, dedup, diffMetadata.Empty, metaOut,
 		dedupInflightServe, dedupFreeIndex, keepMemfdOpen,
 	)
 	if err != nil {
@@ -4069,7 +4072,7 @@ func pauseProcessMemory(
 		if originalMemfile == nil {
 			post = nil
 		}
-		recordSnapshotDedup(ctx, teamID, "memfile", diffMetadata, post, dedupBestEffort)
+		recordSnapshotDedup(ctx, teamID, "memfile", diffMetadata, post, dedup.BestEffort)
 		setHeader(meta.ToDiffHeader(ctx, originalHeader, buildID))
 	}()
 

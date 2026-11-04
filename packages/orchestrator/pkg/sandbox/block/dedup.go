@@ -56,6 +56,13 @@ type DedupBudget struct {
 	FetchRunWindowPages            int
 }
 
+// DedupOptions is how a memfile diff is deduplicated against its parent.
+type DedupOptions struct {
+	BestEffort bool
+	DirectIO   bool
+	Budget     DedupBudget
+}
+
 type dedupPageKind byte
 
 const (
