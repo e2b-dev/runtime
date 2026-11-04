@@ -128,7 +128,7 @@ func (w *streamWriter) settleBody() {
 	if !w.body.finished() {
 		closeUnreadBody(w.ResponseWriter)
 	}
-	_ = w.body.Close()
+	_ = w.body.ReadCloser.Close()
 }
 
 // closeUnreadBody keeps an unread HTTP/1 request body from holding the
@@ -171,6 +171,12 @@ func (b *requestBody) Read(p []byte) (int, error) {
 
 	return n, err
 }
+
+// Close does nothing: ReverseProxy closes its outbound body as it returns, and
+// closing an HTTP/1 server body waits for a read in flight (golang/go#78939),
+// which the transport may still be doing on the client's upload. settleBody
+// closes the body once it has cut that read.
+func (*requestBody) Close() error { return nil }
 
 // finished reports whether the transport has taken the whole body, so nothing
 // of it is left for the server to read after the handler.
