@@ -1,4 +1,4 @@
-package main
+package resumebuild
 
 import (
 	"bytes"
