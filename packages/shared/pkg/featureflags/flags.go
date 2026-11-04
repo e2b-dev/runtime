@@ -289,6 +289,19 @@ var (
 	// turn it on.
 	SandboxEndedOnNodeFlag = NewBoolFlag("sandbox-ended-on-node", envBoolOr("SANDBOX_ENDED_ON_NODE", false))
 
+	// GuestProfilesFlag lets a registered non-default guest profile serve
+	// the orchestrator's builds and sandboxes on this node. Read at the
+	// start of every build FROM a parent of another guest OS and of every
+	// create or resume of a template whose guest OS is not the default; the
+	// default profile never reads it, and the standalone tools that resolve
+	// a profile outside the orchestrator are not gated. Off (the default)
+	// refuses them with a FailedPrecondition that carries no create-refused
+	// detail, so placement still tries a node that has the flag on, and a
+	// registered profile serves nothing until the flag is turned on. The
+	// fallback reads GUEST_PROFILES_ENABLED so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestProfilesFlag = NewBoolFlag("guest-profiles-enabled", envBoolOr("GUEST_PROFILES_ENABLED", false))
+
 	// FilesystemOnlyCheckpointFlag enables the filesystem-only checkpoint:
 	// the rootfs is exported and no memfile, the SAME Firecracker process is
 	// resumed afterwards, and a sandbox created from the build cold-boots.

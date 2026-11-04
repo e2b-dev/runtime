@@ -70,12 +70,14 @@ func cacheMemorySize(templateCache *sbxtemplate.Cache) parentMemorySize {
 // configuration cannot know: the kernel slot, the Firecracker binary, the
 // memory size and huge pages of the snapshot, its vCPU count and the device
 // names it bakes. A build from an image, or from a parent of a profile that
-// boots its layers, keeps its configuration.
+// boots its layers, keeps its configuration. A non-default profile is served
+// only while the guest-profiles flag is on.
 func adoptParentMachine(
 	ctx context.Context,
 	bc buildcontext.BuildContext,
 	index cache.Index,
 	memorySize parentMemorySize,
+	flags guest.Flags,
 	log logger.Logger,
 ) (buildcontext.BuildContext, error) {
 	if bc.Config.FromTemplate == nil {
@@ -98,7 +100,7 @@ func adoptParentMachine(
 		return bc, fmt.Errorf("read the parent template: %w", err)
 	}
 
-	profile, err := parent.GuestProfile()
+	profile, err := parent.ServingGuestProfile(ctx, flags)
 	if err != nil {
 		return bc, phases.NewPhaseBuildError(basePhase, err)
 	}

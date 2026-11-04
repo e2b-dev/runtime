@@ -350,15 +350,15 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	// Firecracker, starting with which Firecracker binary that is.
 	meta, err := template.Metadata()
 	if err != nil {
-		if refusal := unclaimedGuestRefusal(err); refusal != nil {
+		if refusal := guestProfileRefusal(err); refusal != nil {
 			return nil, refusal
 		}
 
 		return nil, fmt.Errorf("failed to read template metadata: %w", err)
 	}
-	profile, err := meta.GuestProfile()
+	profile, err := meta.ServingGuestProfile(ctx, s.featureFlags)
 	if err != nil {
-		if refusal := unclaimedGuestRefusal(err); refusal != nil {
+		if refusal := guestProfileRefusal(err); refusal != nil {
 			return nil, refusal
 		}
 

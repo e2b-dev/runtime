@@ -348,6 +348,18 @@ func (t Template) GuestProfile() (guest.Profile, error) {
 	return guest.Lookup(t.GuestOS)
 }
 
+// ServingGuestProfile returns the guest profile for a build FROM the template
+// or a sandbox of it: GuestProfile, gated by guest.Serve for a non-default
+// guest OS.
+func (t Template) ServingGuestProfile(ctx context.Context, flags guest.Flags) (guest.Profile, error) {
+	p, err := t.GuestProfile()
+	if err != nil {
+		return nil, err
+	}
+
+	return guest.Serve(ctx, flags, p)
+}
+
 // rootfsFileRE is the shape of a bare file name the sandbox start script can
 // take unquoted.
 var rootfsFileRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

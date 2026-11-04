@@ -3,10 +3,12 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
@@ -126,15 +128,66 @@ func TestUnclaimedGuestIsARefusal(t *testing.T) {
 	_, err := metadata.Template{GuestOS: "unclaimed"}.GuestProfile()
 	require.ErrorIs(t, err, guest.ErrUnclaimed)
 
-	refusal := unclaimedGuestRefusal(fmt.Errorf("failed to read template metadata: %w", err))
+	refusal := guestProfileRefusal(fmt.Errorf("failed to read template metadata: %w", err))
 	require.Error(t, refusal)
 	st := status.Convert(refusal)
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 	assert.Contains(t, st.Message(), "unclaimed")
 	assert.Empty(t, st.Details(), "no create-refused detail, so placement retries elsewhere")
 
-	assert.NoError(t, unclaimedGuestRefusal(errors.New("disk read failed")), "any other error is not a refusal")
+	assert.NoError(t, guestProfileRefusal(errors.New("disk read failed")), "any other error is not a refusal")
 }
+
+// flagsOn answers every flag read with its value.
+type flagsOn bool
+
+func (f flagsOn) BoolFlag(context.Context, featureflags.BoolFlag, ...ldcontext.Context) bool {
+	return bool(f)
+}
+
+// failingFlags fails the test on any flag read.
+type failingFlags struct{ t *testing.T }
+
+func (f failingFlags) BoolFlag(_ context.Context, flag featureflags.BoolFlag, _ ...ldcontext.Context) bool {
+	f.t.Fatalf("the flag %s was read", flag.Key())
+
+	return false
+}
+
+// A template of a registered non-default guest is refused while the flag is
+// off, with the same FailedPrecondition and no create-refused detail as an
+// unclaimed guest, so placement still tries a node with the flag on. The
+// default guest never reads the flag.
+func TestGuestProfileNotEnabledIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	line := lineProfile{Profile: guest.Default()}
+	profile, err := guest.Serve(t.Context(), flagsOn(false), line)
+	require.Nil(t, profile)
+	var notEnabled *guest.NotEnabledError
+	require.ErrorAs(t, err, &notEnabled)
+
+	refusal := guestProfileRefusal(fmt.Errorf("failed to resolve the guest profile: %w", err))
+	require.Error(t, refusal)
+	st := status.Convert(refusal)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, "the line guest profile is not enabled on this node: the guest-profiles-enabled flag is off", st.Message(), "the typed error's own text, without the resolve wrapper")
+	assert.Empty(t, st.Details(), "no create-refused detail, so placement retries elsewhere")
+
+	profile, err = guest.Serve(t.Context(), flagsOn(true), line)
+	require.NoError(t, err)
+	assert.Equal(t, "line", profile.Name())
+
+	profile, err = metadata.Template{}.ServingGuestProfile(t.Context(), failingFlags{t})
+	require.NoError(t, err)
+	assert.Equal(t, guest.DefaultName, profile.Name())
+}
+
+// lineProfile is a non-default guest profile.
+type lineProfile struct{ guest.Profile }
+
+func (lineProfile) Name() string  { return "line" }
+func (lineProfile) Label() string { return "line" }
 
 // caBundlelessProfile is a guest profile that sends envd no CA bundle.
 type caBundlelessProfile struct {

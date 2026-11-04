@@ -332,7 +332,7 @@ func runBuild(
 
 	// The parent's guest profile and, for a profile that resumes it, the parent's
 	// machine are taken before any phase reads the configuration (every builder copies it by value).
-	bc, err := adoptParentMachine(ctx, bc, index, cacheMemorySize(builder.templateCache), builder.logger)
+	bc, err := adoptParentMachine(ctx, bc, index, cacheMemorySize(builder.templateCache), builder.featureFlags, builder.logger)
 	if err != nil {
 		return nil, err
 	}

@@ -2,13 +2,16 @@ package metadata
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"testing"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 type claimingProfile struct {
@@ -159,6 +162,26 @@ func TestGuestProfileResolvesTheDefault(t *testing.T) {
 	p, err := Template{}.GuestProfile()
 	require.NoError(t, err)
 	assert.Equal(t, guest.DefaultLabel, p.Label())
+}
+
+// failingFlags fails the test on any flag read.
+type failingFlags struct{ t *testing.T }
+
+func (f failingFlags) BoolFlag(_ context.Context, flag featureflags.BoolFlag, _ ...ldcontext.Context) bool {
+	f.t.Fatalf("the flag %s was read", flag.Key())
+
+	return false
+}
+
+func TestServingGuestProfileResolvesTheDefaultWithoutAFlagRead(t *testing.T) {
+	t.Parallel()
+
+	p, err := Template{}.ServingGuestProfile(t.Context(), failingFlags{t})
+	require.NoError(t, err)
+	assert.Equal(t, guest.DefaultLabel, p.Label())
+
+	_, err = Template{GuestOS: "unclaimed"}.ServingGuestProfile(t.Context(), failingFlags{t})
+	require.ErrorIs(t, err, guest.ErrUnclaimed, "an unclaimed guest OS is refused before the flag")
 }
 
 //nolint:paralleltest // installs the process registry

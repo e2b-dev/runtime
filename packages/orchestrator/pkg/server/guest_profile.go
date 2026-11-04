@@ -34,12 +34,15 @@ func resolveSandboxFirecrackerVersion(ctx context.Context, ff *featureflags.Clie
 	return featureflags.ResolveFirecrackerVersion(ctx, ff, buildVersion)
 }
 
-// unclaimedGuestRefusal answers a template whose guest OS no registered
-// profile claims with FailedPrecondition, so the API tells a node that cannot
-// serve the guest apart from a failed start. It carries no create-refused
-// detail, so placement still tries a node that registers the profile. It is
-// nil for any other error.
-func unclaimedGuestRefusal(err error) error {
+// guestProfileRefusal answers a template whose guest OS no registered profile
+// claims, or whose profile this node has not enabled, with FailedPrecondition,
+// so the API tells a node that cannot serve the guest apart from a failed
+// start. It carries no create-refused detail, so placement still tries a node
+// that registers the profile with its flag on. It is nil for any other error.
+func guestProfileRefusal(err error) error {
+	if notEnabled, ok := errors.AsType[*guest.NotEnabledError](err); ok {
+		return status.Error(codes.FailedPrecondition, notEnabled.Error())
+	}
 	if !errors.Is(err, guest.ErrUnclaimed) {
 		return nil
 	}
