@@ -573,9 +573,9 @@ Key mechanisms (all under `pkg/sandbox/`):
   that work to finish. Restarting envd resets the owner while allowing the live lifecycle to
   admit a replacement. Retired streams have one second to write their terminal response before
   a stalled frontend is interrupted.
-  Shared proxy shutdown waits for H2C and upgraded connections to close and includes them in
-  forced connection cleanup. Failed H2C handshakes release their hijacked connections when the
-  handshake handler returns.
+  Shared proxy shutdown waits for upgraded connections to close and includes them in forced
+  connection cleanup; net/http drains HTTP/2 connections, h2c included, itself. H2C is
+  prior-knowledge HTTP/2 only: a request to upgrade to h2c is served as HTTP/1.1.
 - Writes sandbox lifecycle **events** and cgroup **host stats** to ClickHouse; exports metrics via
   OTel. Sandbox and template-build log writes go through a flag-resolved HTTP route: the legacy
   collector remains the fallback primary destination, and configured shadow destinations can mirror

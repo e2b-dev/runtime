@@ -127,7 +127,7 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	// net/http does not wait for hijacked H2C and upgraded connections.
+	// net/http does not wait for upgraded connections, which it hands off by hijacking.
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for p.CurrentServerConnections() != 0 {
