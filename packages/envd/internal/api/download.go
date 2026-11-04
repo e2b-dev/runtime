@@ -9,7 +9,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
 
@@ -132,9 +131,9 @@ func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesPa
 		l.Msg("File read")
 	}()
 
-	u, err := user.Lookup(username)
+	u, err := permissions.GetUser(username)
 	if err != nil {
-		errMsg = fmt.Errorf("error looking up user '%s': %w", username, err)
+		errMsg = err
 		errorCode = http.StatusUnauthorized
 		jsonError(w, errorCode, errMsg)
 

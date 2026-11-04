@@ -1,3 +1,5 @@
+//go:build unix
+
 package permissions
 
 import (
@@ -32,13 +34,4 @@ func GetUserIdInts(u *user.User) (uid, gid int, err error) {
 	}
 
 	return int(newUID), int(newGID), nil
-}
-
-func GetUser(username string) (u *user.User, err error) {
-	u, err = user.Lookup(username)
-	if err != nil {
-		return nil, fmt.Errorf("error looking up user '%s': %w", username, err)
-	}
-
-	return u, nil
 }

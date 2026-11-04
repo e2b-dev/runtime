@@ -1,3 +1,5 @@
+//go:build unix
+
 package process
 
 import (
@@ -255,4 +257,20 @@ func TestLookupByTag_AfterTaggedRestart_ServesSuccessorExit(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, int32(2), got.end.GetExitCode(),
 		"a tag-Connect after a restart must get the successor's exit, never the predecessor's stale one")
+}
+
+// trackTermination finalizes a handler's exit from a fork of its EndEvent, so a test can deliver the exit late.
+func (s *Service) trackTermination(pid uint32, proc *handler.Handler) {
+	endCh, cancel := proc.EndEvent.Fork()
+
+	go func() {
+		defer cancel()
+
+		ev, ok := <-endCh
+		var end *rpc.ProcessEvent_EndEvent
+		if ok {
+			end = ev.End
+		}
+		s.finalizeTermination(pid, proc, end)
+	}()
 }

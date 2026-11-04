@@ -16,8 +16,6 @@ import (
 )
 
 const (
-	E2BRunDir = "/run/e2b" // store sandbox metadata files here
-
 	mmdsDefaultAddress  = "169.254.169.254"
 	mmdsTokenExpiration = 60 * time.Second
 
