@@ -691,7 +691,7 @@ func (o *Orchestrator) CreateSandbox(
 		// Clean up the sandbox from the node
 		// Copy to a new variable to avoid race conditions
 		sbxToRemove := sbx
-		go func() {
+		o.GoTrackedTail(func() {
 			killErr := o.removeSandboxFromNode(
 				context.WithoutCancel(ctx),
 				sbxToRemove,
@@ -707,7 +707,7 @@ func (o *Orchestrator) CreateSandbox(
 					zap.String("kill_reason", sandbox.KillReasonUnknown.String()),
 				)
 			}
-		}()
+		})
 
 		return sandbox.Sandbox{}, &api.APIError{
 			Code:      http.StatusInternalServerError,
