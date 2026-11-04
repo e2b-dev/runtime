@@ -17,7 +17,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/commands"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
@@ -180,15 +179,18 @@ func (sb *StepBuilder) Build(
 			Version: sb.EnvdVersion,
 		},
 
-		FirecrackerConfig: fc.Config{
-			KernelVersion:      sb.Config.KernelVersion,
-			FirecrackerVersion: sb.Config.FirecrackerVersion,
-		},
+		FirecrackerConfig: sb.Config.FirecrackerConfig(),
 	})
 
+	guestTemplate := sb.Config.GuestTemplate()
+
 	// First not cached layer is create (to change CPU, Memory, etc), subsequent are layers are resumes.
+	// A guest profile that always resumes takes the parent's machine (adoptParentMachine).
 	var sandboxCreator layer.SandboxCreator
-	if sourceLayer.Cached {
+	switch {
+	case guestTemplate.AlwaysResume:
+		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
+	case sourceLayer.Cached:
 		sandboxCreator = layer.NewCreateSandbox(
 			sbxConfig,
 			sb.sandboxFactory,
@@ -198,7 +200,7 @@ func (sb *StepBuilder) Build(
 				layer.BootDiagnosticsOptions(ctx, sb.featureFlags)...,
 			)...,
 		)
-	} else {
+	default:
 		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
 	}
 
@@ -216,10 +218,11 @@ func (sb *StepBuilder) Build(
 			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), err)
 		}
 
-		err = sandboxtools.SyncChangesToDisk(
+		err = sandboxtools.SyncChangesToDiskWith(
 			ctx,
 			sb.proxy,
 			sbx.Runtime.SandboxID,
+			guestTemplate.SyncCommand,
 		)
 		if err != nil {
 			return metadata.Template{}, fmt.Errorf("error running sync command: %w", err)
@@ -239,7 +242,7 @@ func (sb *StepBuilder) Build(
 			SourceTemplate: templateProvider,
 			CurrentLayer:   currentLayer.Metadata,
 			Hash:           currentLayer.Hash,
-			UpdateEnvd:     sourceLayer.Cached,
+			UpdateEnvd:     sourceLayer.Cached && !guestTemplate.KeepGuestEnvd,
 			SandboxCreator: sandboxCreator,
 			ActionExecutor: actionExecutor,
 			BuildOrigin:    storage.ObjectOriginTemplateBuildCache,

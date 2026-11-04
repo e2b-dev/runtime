@@ -235,6 +235,29 @@ func logStream(ctx context.Context, logger logger.Logger, lvl zapcore.Level, id 
 	}
 }
 
+// SyncChangesToDiskWith flushes the guest's disk writes with command, the
+// guest profile's own flush; an empty command is SyncChangesToDisk.
+func SyncChangesToDiskWith(
+	ctx context.Context,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	command string,
+) error {
+	if command == "" {
+		return SyncChangesToDisk(ctx, proxy, sandboxID)
+	}
+
+	return RunCommand(
+		ctx,
+		proxy,
+		sandboxID,
+		command,
+		metadata.Context{
+			User: "root",
+		},
+	)
+}
+
 // syncChangesToDisk synchronizes filesystem changes to the filesystem
 // This is useful to ensure that all changes made in the sandbox are written to disk
 // to be able to re-create the sandbox without resume.

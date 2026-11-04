@@ -1405,6 +1405,19 @@ steps. Resize disk grows the quiescent rootfs on the host; the other non-cached 
 Firecracker VM and their pause-diffs become layers. The optimize phase records which memory pages a
 fresh resume touches, producing prefetch hints that speed up future sandbox starts.
 
+A build FROM a template follows the guest profile that claims the parent's guest OS attribute
+(`pkg/sandbox/guest`; the default profile is the Linux guest and changes nothing). A profile's
+`TemplateBuild` can render the recipe steps into its own guest commands, skip phases (user,
+resize disk, the finalize configuration script and trust-store bundle, optimize), keep the image's
+envd, and set the sync command and the default user and directory. A profile that always resumes
+makes the build adopt the parent's machine (kernel slot, Firecracker binary, memory, huge pages,
+vCPUs, device names), refuses a disk-only parent, another machine size or a resizable request,
+resumes the previous layer for every step and for finalize, never grows the disk, and keeps an
+inherited start command running. With
+`DedupLayerMemfiles`, each build layer's pause deduplicates its memfile diff at 4 KiB whatever
+`memfile-diff-dedup` says, gated by `build-layer-memfile-dedup`, and keeps the raw diff if the
+dedup fails.
+
 Template creation holds node work through foreground setup and asynchronous build completion,
 including layer uploads, synchronous cleanup, and final status publication. Cancellation can mark
 a build failed before execution finishes; the work hold remains until execution unwinds. Template
