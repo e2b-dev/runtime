@@ -1,9 +1,18 @@
 -- +goose Up
 -- +goose StatementBegin
--- No default: no project has been pushed limits yet, and a zero backfill would
--- disable the limit. Zero disables it from every source.
+-- No default: a zero backfill would disable the limit. Zero disables it from
+-- every source. A row written before this column keeps the rate team_limits
+-- resolves for it, read before the view below starts preferring the column.
 ALTER TABLE public.project_limits
-    ADD COLUMN api_team_rps_list bigint NOT NULL;
+    ADD COLUMN api_team_rps_list bigint;
+
+UPDATE public.project_limits pl
+SET api_team_rps_list = tl.api_team_rps_list
+FROM public.team_limits tl
+WHERE tl.id = pl.team_id;
+
+ALTER TABLE public.project_limits
+    ALTER COLUMN api_team_rps_list SET NOT NULL;
 
 CREATE OR REPLACE VIEW public.team_limits
 WITH (security_invoker=on) AS
