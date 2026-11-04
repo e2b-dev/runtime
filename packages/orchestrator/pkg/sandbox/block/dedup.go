@@ -61,6 +61,8 @@ type DedupOptions struct {
 	BestEffort bool
 	DirectIO   bool
 	Budget     DedupBudget
+	// KeepRawOnError keeps the raw diff when the dedup fails (Cache.DedupOrRaw).
+	KeepRawOnError bool
 }
 
 type dedupPageKind byte

@@ -11,8 +11,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 // Profile is the set of decisions that depend on the guest operating system.
@@ -213,8 +211,9 @@ type TemplateBuild struct {
 	DefaultWorkDir string
 	// HugePages backs the memory image of every template of the guest with huge pages.
 	HugePages bool
-	// LayerPause holds the pause options of a build layer.
-	LayerPause LayerPause
+	// DedupLayerMemfiles deduplicates every build layer's memfile diff against its parent at 4 KiB,
+	// whatever memfile-diff-dedup says, and keeps the raw diff when the dedup fails.
+	DedupLayerMemfiles bool
 }
 
 // Skips reports whether the guest skips the build phase p.
@@ -263,14 +262,6 @@ type RenderedStep struct {
 type StepRenderer interface {
 	// Render returns the guest command of one step and the build state after it.
 	Render(step Step, state StepState) (RenderedStep, error)
-}
-
-// LayerPause is the set of pause options of a template build layer.
-type LayerPause struct {
-	// Dedup writes the memory diff of the layer deduplicated against the parent.
-	Dedup bool
-	// DedupFlag gates Dedup when it is set.
-	DedupFlag *featureflags.BoolFlag
 }
 
 // FirstBoot is the restart tolerance of the first boot of a base image.

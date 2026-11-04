@@ -111,7 +111,9 @@ func (p *Process) ExportMemory(
 
 		return src, nil
 	}
-	if memfd != nil {
+	// A dedup that keeps the raw diff on failure needs the raw diff first, so it
+	// takes the copy-then-dedup path below.
+	if memfd != nil && (originalMemfile == nil || !dedup.KeepRawOnError) {
 		if originalMemfile != nil {
 			return block.NewCacheFromMemfdDeduped(ctx, originalMemfile, blockSize, cachePath, memfd, include,
 				dedup.BestEffort, dedup.DirectIO, dedup.Budget, inputEmpty, metaOut, dedupInflightServe, dedupFreeIndex)
@@ -135,7 +137,15 @@ func (p *Process) ExportMemory(
 		return src, nil
 	}
 
-	cache, err := p.exportMemoryFromFc(ctx, include, cachePath, blockSize)
+	var (
+		cache *block.Cache
+		err   error
+	)
+	if memfd != nil {
+		cache, err = block.NewCacheFromMemfd(ctx, blockSize, cachePath, memfd, include)
+	} else {
+		cache, err = p.exportMemoryFromFc(ctx, include, cachePath, blockSize)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +156,22 @@ func (p *Process) ExportMemory(
 
 		return cache, nil
 	}
+	dedupFn := cache.Dedup
+	if dedup.KeepRawOnError {
+		dedupFn = cache.DedupOrRaw
+	}
 	// .dedup suffix avoids clobbering the source mmap during truncate.
-	dedupCache, meta, err := cache.Dedup(ctx, originalMemfile, include, blockSize, cachePath+".dedup", dedup.BestEffort, dedup.DirectIO, dedup.Budget)
+	dedupCache, meta, err := dedupFn(ctx, originalMemfile, include, blockSize, cachePath+".dedup", dedup.BestEffort, dedup.DirectIO, dedup.Budget)
 	if err != nil {
 		return nil, fmt.Errorf("dedup memfile diff: %w", errors.Join(err, cache.Close()))
+	}
+	keptRaw := dedupCache == cache
+	if keptRaw {
+		if setErr := metaOut.SetValue(inputMeta); setErr != nil {
+			logger.L().Warn(ctx, "set metaOut", zap.Error(setErr))
+		}
+
+		return cache, nil
 	}
 	if err := cache.Close(); err != nil {
 		return nil, fmt.Errorf("close pre-dedup cache: %w", errors.Join(err, dedupCache.Close()))

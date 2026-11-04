@@ -606,6 +606,10 @@ var (
 
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
 	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
+
+	// BuildLayerMemfileDedupFlag gates the 4 KiB memfile dedup of a build layer whose
+	// guest profile asks for it, whatever memfile-diff-dedup's "enabled" says.
+	BuildLayerMemfileDedupFlag = NewBoolFlag("build-layer-memfile-dedup", true)
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")

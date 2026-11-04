@@ -3112,7 +3112,7 @@ func (s *Sandbox) Pause(
 	// invoked after the guest has resumed in place (next to startSeal).
 	var startMemSeal func(context.Context)
 	if !pauseOpts.filesystemSnapshot {
-		mem, startMemSeal, err = s.processMemorySnapshot(ctx, buildID, pauseOpts.maintainSandbox, pauseOpts.mayDeferMemoryExport(), cleanup)
+		mem, startMemSeal, err = s.processMemorySnapshot(ctx, buildID, useCase, pauseOpts.maintainSandbox, pauseOpts.mayDeferMemoryExport(), cleanup)
 		if err != nil {
 			return nil, err
 		}
@@ -3317,7 +3317,7 @@ type MemorySnapshot struct {
 // On the in-place path with mayDefer and defer-memory-export enabled, the copy
 // is deferred through a CoW window instead: the returned startMemSeal (nil
 // otherwise) is invoked after ResumeInPlace and drives the background capture.
-func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, keepMemfdOpen, mayDefer bool, cleanup *Cleanup) (MemorySnapshot, func(context.Context), error) {
+func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, useCase SnapshotUseCase, keepMemfdOpen, mayDefer bool, cleanup *Cleanup) (MemorySnapshot, func(context.Context), error) {
 	originalMemfile, err := s.Template.Memfile(ctx)
 	if err != nil {
 		return MemorySnapshot{}, nil, fmt.Errorf("failed to get original memfile: %w", err)
@@ -3475,11 +3475,9 @@ func (s *Sandbox) processMemorySnapshot(ctx context.Context, buildID uuid.UUID, 
 	}
 
 	var dedupBase block.ReadonlyDevice
-	var dedup block.DedupOptions
-	dedupCfg := s.featureFlags.JSONFlag(ctx, featureflags.MemfileDiffDedupFlag, sandboxLDContext(s.Runtime, s.Config)).AsValueMap()
-	if dedupCfg.Get("enabled").BoolValue() {
+	dedup, dedupOn := s.memfileDedup(ctx, useCase)
+	if dedupOn {
 		dedupBase = originalMemfile
-		dedup = memfileDedupOptions(dedupCfg)
 	}
 
 	// In-place snapshot borrows the memfd via PeekMemfd (the running VM keeps
@@ -3959,6 +3957,27 @@ func (s *Sandbox) MemoryPrefetchData(ctx context.Context) (block.PrefetchData, e
 	}
 
 	return prefetchData, nil
+}
+
+// memfileDedup is how this pause deduplicates its memfile diff against the
+// parent, and false when it does not. memfile-diff-dedup decides, except for a
+// build layer whose guest profile sets DedupLayerMemfiles: that one is
+// deduplicated whatever the flag's "enabled" says, behind
+// build-layer-memfile-dedup, and keeps its raw diff when the dedup fails.
+func (s *Sandbox) memfileDedup(ctx context.Context, useCase SnapshotUseCase) (block.DedupOptions, bool) {
+	ld := sandboxLDContext(s.Runtime, s.Config)
+	cfg := s.featureFlags.JSONFlag(ctx, featureflags.MemfileDiffDedupFlag, ld).AsValueMap()
+	layer := useCase == SnapshotUseCaseBuild &&
+		s.Config.GuestProfile().Template().DedupLayerMemfiles &&
+		s.featureFlags.BoolFlag(ctx, featureflags.BuildLayerMemfileDedupFlag, ld)
+	if !layer && !cfg.Get("enabled").BoolValue() {
+		return block.DedupOptions{}, false
+	}
+
+	dedup := memfileDedupOptions(cfg)
+	dedup.KeepRawOnError = layer
+
+	return dedup, true
 }
 
 // memfileDedupOptions reads the memfile-diff-dedup keys other than "enabled".

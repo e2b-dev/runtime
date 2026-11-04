@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/edsrzf/mmap-go"
@@ -422,6 +423,51 @@ func (c *Cache) Dedup(
 		Empty:     plan.pageEmpty,
 		BlockSize: header.PageSize,
 	}, nil
+}
+
+// DedupOrRaw is Dedup that keeps c and returns nil metadata on a dedup error:
+// c already holds every dirty block. A memory fault inside c's mapping still
+// fails, since c may be unreadable, and so does a pause whose ctx is done.
+func (c *Cache) DedupOrRaw(
+	ctx context.Context,
+	base ReadonlyDevice,
+	dirty *roaring.Bitmap,
+	blockSize int64,
+	outPath string,
+	bestEffort bool,
+	directIO bool,
+	budget DedupBudget,
+) (*Cache, *header.DiffMetadata, error) {
+	deduped, meta, err := c.Dedup(ctx, base, dirty, blockSize, outPath, bestEffort, directIO, budget)
+	if err == nil || !c.keepRawOnDedupError(ctx, err) {
+		return deduped, meta, err
+	}
+	logger.L().Warn(ctx, "memfile dedup failed, keeping the raw diff", zap.Error(err), zap.String("cache_path", c.filePath))
+
+	return c, nil, nil
+}
+
+// keepRawOnDedupError reports whether c can stand as the diff after the dedup
+// failed with err. A parent fetch can time out on its own detached deadline, so
+// the pause's ctx decides, not the error. A fault reading the parent leaves c
+// whole; one in c's mapping, or at an unknown address, may not.
+func (c *Cache) keepRawOnDedupError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	fault, ok := errors.AsType[*MemoryFaultError](err)
+
+	return !ok || (fault.Addr != 0 && !c.maps(fault.Addr))
+}
+
+// maps reports whether addr is inside c's memory mapping.
+func (c *Cache) maps(addr uintptr) bool {
+	if c.mmap == nil || len(*c.mmap) == 0 {
+		return false
+	}
+	start := uintptr(unsafe.Pointer(unsafe.SliceData(*c.mmap)))
+
+	return addr >= start && addr < start+uintptr(len(*c.mmap))
 }
 
 func (c *Cache) ReadAt(b []byte, off int64) (int, error) {
