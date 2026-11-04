@@ -138,7 +138,6 @@ func TestDefaultFirecrackerV1_17_0Version_PassesEveryGate(t *testing.T) {
 	assert.Equal(t, "v1.17-0", key)
 
 	assert.True(t, info.HasMemfd(), "memfd")
-	assert.True(t, info.HasHugePages(), "huge pages")
 	assert.True(t, info.HasFreePageReporting(), "free-page reporting")
 	assert.True(t, info.HasFreePageHinting(), "free-page hinting")
 	assert.True(t, info.HasInPlaceCheckpoint(), "in-place checkpoint")

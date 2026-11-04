@@ -13,7 +13,9 @@ message SandboxConfig {
   string kernel_version = 3;
   string firecracker_version = 4;
 
-  bool huge_pages = 5;
+  // Deprecated: every sandbox uses huge pages and the orchestrator ignores this
+  // field. Still sent as true for orchestrators that predate ignoring it.
+  bool huge_pages = 5 [deprecated = true];
 
   string sandbox_id = 6;
   map<string, string> env_vars = 7;

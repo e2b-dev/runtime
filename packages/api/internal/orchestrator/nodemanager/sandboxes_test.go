@@ -157,34 +157,6 @@ func TestGetOrphanCandidates_ToleratesMissingConfig(t *testing.T) {
 	assert.Equal(t, "sbx-no-config", sandboxes[0].SandboxID)
 }
 
-// TestGetOrphanCandidates_ReadsHugePagesFromConfig covers the one field with no
-// scalar counterpart. Killing an orphan releases its RAM from the node's
-// hugepage count only when the flag is set.
-func TestGetOrphanCandidates_ReadsHugePagesFromConfig(t *testing.T) {
-	t.Parallel()
-
-	teamID := uuid.New()
-	node := newTestNodeWithList(t,
-		&orchestrator.RunningSandbox{
-			StartTime: timestamppb.New(time.Now()),
-			SandboxId: "sbx-hugepages",
-			TeamId:    teamID.String(),
-			Config:    &orchestrator.SandboxConfig{HugePages: true},
-		},
-		&orchestrator.RunningSandbox{
-			StartTime: timestamppb.New(time.Now()),
-			SandboxId: "sbx-no-config",
-			TeamId:    teamID.String(),
-		},
-	)
-
-	sandboxes, err := node.GetOrphanCandidates(t.Context())
-	require.NoError(t, err)
-	require.Len(t, sandboxes, 2)
-	assert.True(t, sandboxes[0].HugePages)
-	assert.False(t, sandboxes[1].HugePages)
-}
-
 // TestGetOrphanCandidates_SkipsUnparseableTeamID verifies that one malformed
 // entry does not abort the sync for the whole node. A sandbox with no usable
 // team ID has no store key, so it can be neither confirmed nor killed.

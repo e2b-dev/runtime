@@ -95,13 +95,17 @@ func (GuestEvent) EnumDescriptor() ([]byte, []int) {
 type SandboxConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Data required for creating a new sandbox.
-	TemplateId         string            `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
-	BuildId            string            `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	KernelVersion      string            `protobuf:"bytes,3,opt,name=kernel_version,json=kernelVersion,proto3" json:"kernel_version,omitempty"`
-	FirecrackerVersion string            `protobuf:"bytes,4,opt,name=firecracker_version,json=firecrackerVersion,proto3" json:"firecracker_version,omitempty"`
-	HugePages          bool              `protobuf:"varint,5,opt,name=huge_pages,json=hugePages,proto3" json:"huge_pages,omitempty"`
-	SandboxId          string            `protobuf:"bytes,6,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	EnvVars            map[string]string `protobuf:"bytes,7,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	TemplateId         string `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	BuildId            string `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	KernelVersion      string `protobuf:"bytes,3,opt,name=kernel_version,json=kernelVersion,proto3" json:"kernel_version,omitempty"`
+	FirecrackerVersion string `protobuf:"bytes,4,opt,name=firecracker_version,json=firecrackerVersion,proto3" json:"firecracker_version,omitempty"`
+	// Deprecated: every sandbox uses huge pages and the orchestrator ignores this
+	// field. Still sent as true for orchestrators that predate ignoring it.
+	//
+	// Deprecated: Marked as deprecated in orchestrator.proto.
+	HugePages bool              `protobuf:"varint,5,opt,name=huge_pages,json=hugePages,proto3" json:"huge_pages,omitempty"`
+	SandboxId string            `protobuf:"bytes,6,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	EnvVars   map[string]string `protobuf:"bytes,7,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Metadata about the sandbox.
 	Metadata    map[string]string `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Alias       *string           `protobuf:"bytes,9,opt,name=alias,proto3,oneof" json:"alias,omitempty"`
@@ -202,6 +206,7 @@ func (x *SandboxConfig) GetFirecrackerVersion() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in orchestrator.proto.
 func (x *SandboxConfig) GetHugePages() bool {
 	if x != nil {
 		return x.HugePages
@@ -2005,16 +2010,16 @@ var File_orchestrator_proto protoreflect.FileDescriptor
 
 const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xce\n" +
+	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd2\n" +
 	"\n" +
 	"\rSandboxConfig\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12%\n" +
 	"\x0ekernel_version\x18\x03 \x01(\tR\rkernelVersion\x12/\n" +
-	"\x13firecracker_version\x18\x04 \x01(\tR\x12firecrackerVersion\x12\x1d\n" +
+	"\x13firecracker_version\x18\x04 \x01(\tR\x12firecrackerVersion\x12!\n" +
 	"\n" +
-	"huge_pages\x18\x05 \x01(\bR\thugePages\x12\x1d\n" +
+	"huge_pages\x18\x05 \x01(\bB\x02\x18\x01R\thugePages\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x06 \x01(\tR\tsandboxId\x126\n" +
 	"\benv_vars\x18\a \x03(\v2\x1b.SandboxConfig.EnvVarsEntryR\aenvVars\x128\n" +

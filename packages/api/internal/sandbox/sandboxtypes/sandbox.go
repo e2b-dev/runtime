@@ -7,7 +7,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 )
@@ -215,14 +214,8 @@ func (s Sandbox) ToNodeSandbox() NodeSandbox {
 		StartTime:   s.StartTime,
 		VCpu:        s.VCpu,
 		RamMB:       s.RamMB,
-		HugePages:   s.hugePages(),
+		HugePages:   true,
 	}
-}
-
-func (s Sandbox) hugePages() bool {
-	info, err := fcversion.New(s.FirecrackerVersion)
-
-	return err == nil && info.HasHugePages()
 }
 
 // RefusalEpisodeGap is how long after a retry window ended a further refusal

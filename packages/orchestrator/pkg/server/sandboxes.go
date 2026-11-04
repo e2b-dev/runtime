@@ -384,7 +384,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		ConfiguredVmVcpus: req.GetSandbox().GetMaxVcpus(),
 		RamMB:             req.GetSandbox().GetRamMb(),
 		TotalDiskSizeMB:   req.GetSandbox().GetTotalDiskSizeMb(),
-		HugePages:         req.GetSandbox().GetHugePages(),
+		HugePages:         true,
 
 		Network: network,
 

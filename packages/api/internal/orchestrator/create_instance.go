@@ -436,8 +436,7 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, cpuErr
 	}
 
-	fcSemver, err := fcversion.New(sbxData.Build.FirecrackerVersion)
-	if err != nil {
+	if _, err := fcversion.New(sbxData.Build.FirecrackerVersion); err != nil {
 		errMsg := fmt.Errorf("failed to get fcSemver for firecracker fcSemver '%s': %w", sbxData.Build.FirecrackerVersion, err)
 
 		return sandbox.Sandbox{}, &api.APIError{
@@ -448,7 +447,6 @@ func (o *Orchestrator) CreateSandbox(
 		}
 	}
 
-	hasHugePages := fcSemver.HasHugePages()
 	telemetry.ReportEvent(ctx, "Got FC info")
 
 	var sbxDomain *string
@@ -509,7 +507,7 @@ func (o *Orchestrator) CreateSandbox(
 			EnvdAccessToken:         sbxData.EnvdAccessToken,
 			MaxSandboxLength:        team.Limits.MaxLengthHours,
 			EventsTtlDays:           team.Limits.EventsTTLDays,
-			HugePages:               hasHugePages,
+			HugePages:               true, // orchestrators that predate ignoring the field still read it
 			RamMb:                   sbxData.Build.RamMb,
 			Vcpu:                    vcpu,
 			MaxVcpus:                ut.FromPtr(sbxData.Build.MaxVcpu),

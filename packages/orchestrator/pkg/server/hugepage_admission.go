@@ -114,6 +114,7 @@ func usesHugePages(sbx *sandbox.Sandbox) bool { return sbx.Config.HugePages }
 
 // admitHugePages refuses a hugepage start the node cannot back before it
 // takes anything, or returns the release of the pages it holds for the start.
+// Every sandbox Create starts uses hugepages, whatever the request says.
 // The refusal carries no create-refused detail, so placement tries another
 // node. While a sandbox on this node is tearing down its pages are on their
 // way back, so the refusal is ResourceExhausted, which placement retries
@@ -121,7 +122,7 @@ func usesHugePages(sbx *sandbox.Sandbox) bool { return sbx.Config.HugePages }
 // was running at the pool read, as one that ended since may have returned
 // pages the read did not see.
 func (s *Server) admitHugePages(ctx context.Context, cfg *orchestrator.SandboxConfig) (func(), error) {
-	if s.hugePages == nil || !cfg.GetHugePages() || !s.featureFlags.BoolFlag(ctx, featureflags.CreateHugePageAdmissionFlag) {
+	if s.hugePages == nil || !s.featureFlags.BoolFlag(ctx, featureflags.CreateHugePageAdmissionFlag) {
 		return func() {}, nil
 	}
 

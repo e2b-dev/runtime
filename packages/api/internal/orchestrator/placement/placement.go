@@ -116,7 +116,7 @@ func placeSandbox(
 	resources := nodemanager.SandboxResources{
 		CPUs:      sbxRequest.GetSandbox().GetVcpu(),
 		MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
-		HugePages: sbxRequest.GetSandbox().GetHugePages(),
+		HugePages: true,
 	}
 
 	var node *nodemanager.Node
