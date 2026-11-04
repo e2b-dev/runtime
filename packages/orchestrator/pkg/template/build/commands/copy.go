@@ -83,40 +83,12 @@ func (c *Copy) Execute(
 		return metadata.Context{}, fmt.Errorf("%s requires files hash to be set", cmdType)
 	}
 
-	// 1) Download the layer tar file from the storage to the local filesystem
-	obj, err := c.FilesStorage.OpenBlob(ctx, paths.GetLayerFilesCachePath(c.CacheScope, step.GetFilesHash()))
-	if err != nil {
-		return metadata.Context{}, fmt.Errorf("failed to open files object from storage: %w", err)
-	}
-
-	pr, pw := io.Pipe()
-	// Start writing tar data to the pipe writer in a goroutine
-	go func() {
-		defer pw.Close()
-		if _, err := obj.WriteTo(ctx, pw); err != nil {
-			pw.CloseWithError(err)
-		}
-	}()
-
-	tmpFile, err := os.CreateTemp("", "layer-file-*.tar")
-	if err != nil {
-		return metadata.Context{}, fmt.Errorf("failed to create temporary file for layer tar: %w", err)
-	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	_, err = io.Copy(tmpFile, pr)
-	if err != nil {
-		return metadata.Context{}, fmt.Errorf("failed to copy layer tar data to temporary file: %w", err)
-	}
-
 	// The file is automatically cleaned up by the sandbox restart in the last step.
 	// This is happening because the /tmp is mounted as a tmpfs and deleted on restart.
 	sbxTargetPath := filepath.Join("/tmp", fmt.Sprintf("%s.tar", step.GetFilesHash()))
-	// 2) Copy the tar file to the sandbox
-	err = sandboxtools.CopyFile(ctx, proxy, sandboxID, "root", tmpFile.Name(), sbxTargetPath)
+	err = uploadLayerFiles(ctx, c.FilesStorage, c.CacheScope, proxy, sandboxID, "root", step.GetFilesHash(), sbxTargetPath)
 	if err != nil {
-		return metadata.Context{}, fmt.Errorf("failed to copy layer tar data to sandbox: %w", err)
+		return metadata.Context{}, err
 	}
 
 	// Create nested unpack directory to allow multiple files in the root be correctly detected
@@ -166,6 +138,80 @@ func (c *Copy) Execute(
 	}
 
 	return cmdMetadata, nil
+}
+
+// uploadLayerFiles copies a step's files archive from the build storage to
+// target in the guest, through a local temporary file.
+func uploadLayerFiles(
+	ctx context.Context,
+	filesStorage storage.StorageProvider,
+	cacheScope string,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	user string,
+	filesHash string,
+	target string,
+) error {
+	obj, err := filesStorage.OpenBlob(ctx, paths.GetLayerFilesCachePath(cacheScope, filesHash))
+	if err != nil {
+		return fmt.Errorf("failed to open files object from storage: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "layer-file-*.tar")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file for layer tar: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if err := downloadBlob(ctx, obj, tmpFile); err != nil {
+		return fmt.Errorf("failed to copy layer tar data to temporary file: %w", err)
+	}
+
+	if err := sandboxtools.CopyFile(ctx, proxy, sandboxID, user, tmpFile.Name(), target); err != nil {
+		return fmt.Errorf("failed to copy layer tar data to sandbox: %w", err)
+	}
+
+	return nil
+}
+
+// downloadBlob writes obj into dst through a writer that, after its first failed
+// write, fails every later write and cancels the download, so a backend that
+// retries into it cannot append to a partial file or hold the step; it also
+// hides dst's ReadFrom, so a backend's own copy buffer is used.
+func downloadBlob(ctx context.Context, obj storage.Blob, dst io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	w := &latchedWriter{w: dst, cancel: cancel}
+	_, err := obj.WriteTo(ctx, w)
+	if w.err != nil {
+		return w.err
+	}
+	if err == io.EOF { //nolint:errorlint // only a bare io.EOF ends a stream, as io.Copy reads it
+		return nil
+	}
+
+	return err
+}
+
+type latchedWriter struct {
+	w      io.Writer
+	cancel context.CancelFunc
+	err    error
+}
+
+func (l *latchedWriter) Write(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
+	n, err := l.w.Write(p)
+	if err != nil {
+		l.err = err
+		l.cancel()
+	}
+
+	return n, err
 }
 
 func ensureTrailingSlash(s string) string {
