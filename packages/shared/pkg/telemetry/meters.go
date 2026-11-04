@@ -22,6 +22,8 @@ const (
 	ApiRateLimitRequests                 CounterType = "api.rate_limit.requests"
 	ApiSandboxPauseRateLimit             CounterType = "api.sandbox_pause.rate_limit"
 	ApiOrchestratorCreatedSandboxes      CounterType = "api.orchestrator.created_sandboxes"
+	ApiTemplateArtifactsDeleted          CounterType = "api.template.artifacts.deleted"
+	ApiTemplateArtifactsDeleteFailed     CounterType = "api.template.artifacts.delete_failed"
 	ApiOrchestratorResumeOriginNodeRemap CounterType = "api.orchestrator.resume_origin_node_remapped"
 	// ApiOrchestratorPauseRefusalRestore counts what became of a pause the
 	// node refused retryably: outcome restored | restore_failed |
@@ -824,6 +826,8 @@ var counterDesc = map[CounterType]string{
 	ApiSandboxPauseRateLimit:                     "Pause requests checked against the per-sandbox pause rate limit, by team and decision (allowed|deduplicated|limited|error)",
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
+	ApiTemplateArtifactsDeleted:                  "Number of template build artifacts (rootfs/kernel/snapshot) successfully deleted on template deletion",
+	ApiTemplateArtifactsDeleteFailed:             "Number of template build artifacts whose deletion failed on template deletion (potential orphaned storage)",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
 	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without the envd probe (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
@@ -917,6 +921,8 @@ var counterUnits = map[CounterType]string{
 	ApiSandboxPauseRateLimit:                     "{request}",
 	SandboxCreateMeterName:                       "{sandbox}",
 	ApiOrchestratorCreatedSandboxes:              "{sandbox}",
+	ApiTemplateArtifactsDeleted:                  "{build}",
+	ApiTemplateArtifactsDeleteFailed:             "{build}",
 	ApiEvictorFsOnlyAutoPause:                    "{pause}",
 	ApiEvictorAutoPauseDegraded:                  "{pause}",
 	ApiOrchestratorResumeOriginNodeRemap:         "{snapshot}",

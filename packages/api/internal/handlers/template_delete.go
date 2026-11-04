@@ -129,6 +129,11 @@ func (a *APIStore) DeleteTemplatesTemplateID(c *gin.Context, aliasOrTemplateID a
 	a.templateCache.InvalidateAllTags(context.WithoutCancel(ctx), templateID)
 	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), templateID, aliasKeys)
 
+	// Delete the storage artifacts (rootfs/kernel/snapshot) of builds now
+	// exclusively owned by this template. Runs in the background after the DB
+	// commit so storage errors never affect the delete response.
+	a.startTemplateArtifactCleanup(ctx, templateID)
+
 	telemetry.ReportEvent(ctx, "deleted template from db")
 
 	properties := a.posthog.GetPackageToPosthogProperties(&c.Request.Header)
