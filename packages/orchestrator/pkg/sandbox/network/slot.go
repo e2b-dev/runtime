@@ -111,6 +111,9 @@ type Slot struct {
 	// synchronization point: the owning sandbox sets it and the pool's
 	// return path, which runs after, reads and clears it.
 	sandboxID string
+	// teamID labels the tenant's team on the slot's log lines; set and
+	// cleared alongside sandboxID.
+	teamID string
 
 	// handedOut is set by the pool from the take to the return, so a mode
 	// re-application leaves a slot on its way back to its release. Written
@@ -315,8 +318,9 @@ func (s *Slot) UseNonDNSUDPMode(provider NonDNSUDPModeProvider) {
 }
 
 // AssignSandbox names the tenant the slot was handed to.
-func (s *Slot) AssignSandbox(sandboxID string) {
+func (s *Slot) AssignSandbox(sandboxID, teamID string) {
 	s.sandboxID = sandboxID
+	s.teamID = teamID
 }
 
 // exportNonDNSUDP reports every non-empty tally the firewall harvested for
@@ -331,6 +335,7 @@ func (s *Slot) exportNonDNSUDP(ctx context.Context, fw *Firewall) {
 		recordNonDNSUDP(ctx, tally.Packets, chain, s.config.NetworkVersion)
 		logger.L().Info(ctx, "slot firewall saw non-DNS UDP from the guest",
 			logger.WithSandboxID(s.sandboxID),
+			logger.WithTeamID(s.teamID),
 			zap.Int("slot_index", s.Idx),
 			zap.String("mode", string(chain.Mode)),
 			zap.String("posture", chain.Posture),
@@ -707,6 +712,7 @@ func (s *Slot) release(ctx context.Context, fw *Firewall) {
 	s.exportNonDNSUDP(ctx, fw)
 	s.firewallCustomRules.Store(false)
 	s.sandboxID = ""
+	s.teamID = ""
 	s.tenantMode = nil
 	s.tenantEgress = nil
 }

@@ -114,7 +114,8 @@ func (c *Checks) seedOOMWatermark(ctx context.Context) {
 			logger.WithSandboxID(c.sandbox.Runtime.SandboxID))
 	case err != nil:
 		logger.L().Warn(ctx, "Failed to seed the OOM kill watermark, kills until the first metrics poll will not be logged",
-			zap.Error(err), logger.WithSandboxID(c.sandbox.Runtime.SandboxID))
+			zap.Error(err), logger.WithSandboxID(c.sandbox.Runtime.SandboxID),
+			logger.WithTeamID(c.sandbox.Runtime.TeamID))
 	}
 }
 
