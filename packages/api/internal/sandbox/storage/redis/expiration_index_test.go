@@ -170,17 +170,60 @@ func TestExpiredItems_RemovesOrphanMember(t *testing.T) {
 
 	storage, client := setupTestStorage(t)
 
-	member := expirationMember(uuid.NewString(), "sbx-orphan", uuid.NewString())
+	teamID := uuid.New()
+	const sandboxID = "sbx-orphan"
+	member := expirationMember(teamID.String(), sandboxID, uuid.NewString())
 	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{
 		Score:  float64(time.Now().Add(-time.Minute).UnixMilli()),
 		Member: member,
 	}).Err())
+	// A leftover team-index entry with no sandbox key — the stale state this
+	// sweep must also prune (the sandbox key is absent, so MGET returns nil).
+	teamIndexKey := GetSandboxStorageTeamIndexKey(teamID.String())
+	require.NoError(t, client.SAdd(t.Context(), teamIndexKey, sandboxID).Err())
 
 	items, err := storage.ExpiredItems(t.Context())
 	require.NoError(t, err)
 	require.Empty(t, items)
 
 	requireMemberAbsent(t, client, member)
+
+	isMember, err := client.SIsMember(t.Context(), teamIndexKey, sandboxID).Result()
+	require.NoError(t, err)
+	require.False(t, isMember, "orphan sandbox ID must be pruned from the team index")
+}
+
+// A sandbox whose key is present must never be unindexed by the orphan sweep,
+// even if a stale expired ZSET member names a different (dead) execution of it:
+// the EXISTS-guarded prune only fires when the key is truly gone, so a resume
+// that re-created the key under the same (reused) sandbox ID keeps its index.
+func TestExpiredItems_OrphanPruneSparesLiveKey(t *testing.T) {
+	t.Parallel()
+
+	storage, client := setupTestStorage(t)
+
+	teamID := uuid.New()
+	const sandboxID = "sbx-live-again"
+
+	// Live sandbox: real key + team-index entry (as Add writes them).
+	live := makeIndexedSandbox(teamID, sandboxID, uuid.NewString(), time.Now(), time.Now().Add(time.Hour))
+	require.NoError(t, storage.Add(t.Context(), live))
+
+	// A dead execution of the SAME sandbox ID left an expired orphan-looking member.
+	deadMember := expirationMember(teamID.String(), sandboxID, uuid.NewString())
+	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{
+		Score:  float64(time.Now().Add(-time.Minute).UnixMilli()),
+		Member: deadMember,
+	}).Err())
+
+	_, err := storage.ExpiredItems(t.Context())
+	require.NoError(t, err)
+
+	// The dead member is swept, but the live sandbox keeps its team-index entry.
+	requireMemberAbsent(t, client, deadMember)
+	isMember, err := client.SIsMember(t.Context(), GetSandboxStorageTeamIndexKey(teamID.String()), sandboxID).Result()
+	require.NoError(t, err)
+	require.True(t, isMember, "a live sandbox key must not be unindexed by the orphan sweep")
 }
 
 // TestExpiredItems_SweepsInvalidMember: unparseable members must be removed, not skipped,
