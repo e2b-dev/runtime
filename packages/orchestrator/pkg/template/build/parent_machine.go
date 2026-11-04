@@ -71,7 +71,9 @@ func cacheMemorySize(templateCache *sbxtemplate.Cache) parentMemorySize {
 // memory size and huge pages of the snapshot, its vCPU count and the device
 // names it bakes. A build from an image, or from a parent of a profile that
 // boots its layers, keeps its configuration. A non-default profile is served
-// only while the guest-profiles flag is on.
+// only while the guest-profiles flag is on, and the build is refused when the
+// profile cannot run the Firecracker version it will launch: the parent's pin
+// on the resume path, the request's otherwise.
 func adoptParentMachine(
 	ctx context.Context,
 	bc buildcontext.BuildContext,
@@ -108,7 +110,7 @@ func adoptParentMachine(
 
 	tb := profile.Template()
 	if !tb.AlwaysResume {
-		return bc, nil
+		return bc, refuseFirecracker(bc, profile)
 	}
 
 	if parent.IsFilesystemOnly() {
@@ -173,11 +175,24 @@ func adoptParentMachine(
 	cfg.FreePageHinting = false
 
 	bc.Config = cfg
+	if err := refuseFirecracker(bc, profile); err != nil {
+		return bc, err
+	}
 
 	log.Info(ctx, "build from a template that resumes its parent takes the parent's machine",
 		append(changed, logger.WithTemplateID(cfg.TemplateID), logger.WithBuildID(bc.Template.BuildID))...)
 
 	return bc, nil
+}
+
+// refuseFirecracker refuses a build whose Firecracker version the guest
+// profile cannot run, by its name. The default profile accepts every version.
+func refuseFirecracker(bc buildcontext.BuildContext, profile guest.Profile) error {
+	if err := profile.Firecracker().Accept(bc.Config.FirecrackerVersion); err != nil {
+		return phases.NewPhaseBuildError(basePhase, err)
+	}
+
+	return nil
 }
 
 var basePhase = phases.PhaseMeta{Phase: metrics.PhaseBase, StepType: "base"}

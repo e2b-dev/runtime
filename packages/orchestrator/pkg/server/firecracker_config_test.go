@@ -183,11 +183,38 @@ func TestGuestProfileNotEnabledIsARefusal(t *testing.T) {
 	assert.Equal(t, guest.DefaultName, profile.Name())
 }
 
-// lineProfile is a non-default guest profile.
+// A version the profile refuses by name is the template's own record, so the
+// refusal carries the create-refused detail and no node is retried.
+func TestFirecrackerVersionRefusal(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, firecrackerVersionRefusal(t.Context(), guest.Default(), "v1.14.1_431f1fc"))
+
+	refusal := firecrackerVersionRefusal(t.Context(), lineProfile{Profile: guest.Default()}, "v1.14.1_431f1fc")
+	require.Error(t, refusal)
+	st := status.Convert(refusal)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Contains(t, st.Message(), "not the line")
+	require.Len(t, st.Details(), 1, "the create-refused detail")
+	assert.NoError(t, firecrackerVersionRefusal(t.Context(), lineProfile{Profile: guest.Default()}, "v9.9.9-line"))
+}
+
+// lineProfile runs only on the v9.9.9-line Firecracker.
 type lineProfile struct{ guest.Profile }
 
 func (lineProfile) Name() string  { return "line" }
 func (lineProfile) Label() string { return "line" }
+func (lineProfile) Firecracker() guest.FirecrackerSelection {
+	return guest.FirecrackerSelection{
+		AcceptVersion: func(version string) error {
+			if version != "v9.9.9-line" {
+				return fmt.Errorf("%q is not the line", version)
+			}
+
+			return nil
+		},
+	}
+}
 
 // caBundlelessProfile is a guest profile that sends envd no CA bundle.
 type caBundlelessProfile struct {

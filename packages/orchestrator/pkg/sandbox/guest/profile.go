@@ -92,6 +92,18 @@ type FirecrackerSelection struct {
 	// PinToBuild keeps the Firecracker binary and the kernel slot payload that the template metadata records.
 	// PinToBuild also skips the fleet's version map.
 	PinToBuild bool
+	// AcceptVersion refuses a Firecracker version that the guest cannot run, by its name (the version directory).
+	// Nil accepts every version.
+	AcceptVersion func(version string) error
+}
+
+// Accept refuses a Firecracker version that the guest cannot run, by its name.
+func (s FirecrackerSelection) Accept(version string) error {
+	if s.AcceptVersion == nil {
+		return nil
+	}
+
+	return s.AcceptVersion(version)
 }
 
 // EnvdInit is the set of time budgets and the payload of the envd start.

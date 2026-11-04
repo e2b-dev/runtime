@@ -39,8 +39,36 @@ type bootingProfile struct{ guest.Profile }
 func (bootingProfile) Name() string  { return "booting" }
 func (bootingProfile) Label() string { return "booting" }
 
+// pickyProfile boots its layers on a Firecracker of its own line.
+type pickyProfile struct{ guest.Profile }
+
+func (pickyProfile) Name() string  { return "picky" }
+func (pickyProfile) Label() string { return "picky" }
+func (pickyProfile) Firecracker() guest.FirecrackerSelection {
+	return guest.FirecrackerSelection{
+		AcceptVersion: func(version string) error {
+			if version != "v9.9.9-picky" {
+				return errWrongLine
+			}
+
+			return nil
+		},
+	}
+}
+
+var errWrongLine = errors.New("not the picky line")
+
+// pickyResumingProfile resumes its parent and refuses Firecracker versions as pickyProfile does.
+type pickyResumingProfile struct{ pickyProfile }
+
+func (pickyResumingProfile) Name() string  { return "picky-resuming" }
+func (pickyResumingProfile) Label() string { return "picky-resuming" }
+func (pickyResumingProfile) Template() guest.TemplateBuild {
+	return guest.TemplateBuild{AlwaysResume: true, HugePages: true}
+}
+
 func init() {
-	r, err := guest.NewRegistry(resumingProfile{guest.Default()}, bootingProfile{guest.Default()})
+	r, err := guest.NewRegistry(resumingProfile{guest.Default()}, bootingProfile{guest.Default()}, pickyProfile{guest.Default()}, pickyResumingProfile{pickyProfile{guest.Default()}})
 	if err != nil {
 		panic(err)
 	}
@@ -363,4 +391,49 @@ func TestAdoptParentMachineNeverReadsTheFlagForTheDefaultGuest(t *testing.T) {
 	in.Config.FromImage = "ubuntu:22.04"
 	_, err = adoptParentMachine(t.Context(), in, index, sized, failingFlags{t}, logger.NewNopLogger())
 	require.NoError(t, err)
+}
+
+// A profile's Firecracker version rule runs on the version the build will
+// use: the request's for a booting profile.
+func TestAdoptParentMachineRefusesTheWrongFirecracker(t *testing.T) {
+	t.Parallel()
+
+	index := parentIndex{parents: map[string]metadata.Template{
+		"p": {Version: metadata.CurrentVersion, GuestOS: "picky"},
+	}}
+	sized := func(context.Context, string) (int64, error) { return 512, nil }
+
+	in := requestedContext("p")
+	_, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.ErrorIs(t, err, errWrongLine, "the request's version is not the profile's line")
+
+	in.Config.FirecrackerVersion = "v9.9.9-picky"
+	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.NoError(t, err)
+	assert.Equal(t, "picky", bc.Config.GuestProfile().Name())
+}
+
+// On the resume path the version checked is the parent's pin, which the build
+// takes, not the one the request names.
+func TestAdoptParentMachineChecksTheParentsFirecrackerOnTheResumePath(t *testing.T) {
+	t.Parallel()
+
+	index := parentIndex{parents: map[string]metadata.Template{
+		"other-line": {Version: metadata.CurrentVersion, GuestOS: "picky-resuming", VcpuCount: 2, Template: metadata.TemplateMetadata{BuildID: "other-line", FirecrackerVersion: "v1.17-0.2.0"}},
+		"picky-line": {Version: metadata.CurrentVersion, GuestOS: "picky-resuming", VcpuCount: 2, Template: metadata.TemplateMetadata{BuildID: "picky-line", FirecrackerVersion: "v9.9.9-picky"}},
+	}}
+	sized := func(context.Context, string) (int64, error) { return 4096, nil }
+
+	in := requestedContext("other-line")
+	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount = 4096, 2, 0
+	in.Config.FirecrackerVersion = "v9.9.9-picky"
+	_, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.ErrorIs(t, err, errWrongLine, "the parent's pin is checked, whatever the request names")
+	require.NotNil(t, phases.UnwrapPhaseBuildError(err))
+
+	in = requestedContext("picky-line")
+	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount = 4096, 2, 0
+	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.NoError(t, err)
+	assert.Equal(t, "v9.9.9-picky", bc.Config.FirecrackerVersion, "the parent's pin is the build's")
 }

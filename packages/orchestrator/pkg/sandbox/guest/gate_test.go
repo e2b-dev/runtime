@@ -94,3 +94,19 @@ func TestGuestProfilesFlagDefaultsOff(t *testing.T) {
 		assert.False(t, featureflags.GuestProfilesFlag.Fallback())
 	}
 }
+
+func TestFirecrackerSelectionAccept(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, FirecrackerSelection{}.Accept("anything"))
+	require.NoError(t, Default().Firecracker().Accept("anything"))
+	refusing := FirecrackerSelection{AcceptVersion: func(version string) error {
+		if version != "ok" {
+			return assert.AnError
+		}
+
+		return nil
+	}}
+	require.NoError(t, refusing.Accept("ok"))
+	require.ErrorIs(t, refusing.Accept("other"), assert.AnError)
+}

@@ -50,6 +50,18 @@ func guestProfileRefusal(err error) error {
 	return status.Error(codes.FailedPrecondition, err.Error())
 }
 
+// firecrackerVersionRefusal refuses a sandbox whose Firecracker version its
+// guest profile cannot run, by the version's name. The version is the
+// template's own record, so no node and no retry changes it, and the refusal
+// carries the create-refused detail.
+func firecrackerVersionRefusal(ctx context.Context, profile guest.Profile, version string) error {
+	if err := profile.Firecracker().Accept(version); err != nil {
+		return createRefused(ctx, codes.FailedPrecondition, "%s", err.Error())
+	}
+
+	return nil
+}
+
 // tlsInterceptionRefusal refuses a new sandbox whose egress rules the proxy
 // intercepts when its guest takes no CA bundle. A resume is let through with
 // a warning: its rules come from a snapshot, and refusing it would strand the
