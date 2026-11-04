@@ -74,7 +74,7 @@ func (c *Copy) Execute(
 	cmdMetadata metadata.Context,
 ) (metadata.Context, error) {
 	cmdType := strings.ToUpper(step.GetType())
-	args, err := parseCopyArgs(step.GetArgs(), cmdMetadata.User)
+	args, err := ParseCopyArgs(step.GetArgs(), cmdMetadata.User)
 	if err != nil {
 		return metadata.Context{}, err
 	}
@@ -222,14 +222,14 @@ func ensureTrailingSlash(s string) string {
 	return s + "/"
 }
 
-type copyArgs struct {
+type CopyArgs struct {
 	SourcePath  string
 	TargetPath  string
 	Owner       string
 	Permissions string
 }
 
-func parseCopyArgs(args []string, defaultUser string) (*copyArgs, error) {
+func ParseCopyArgs(args []string, defaultUser string) (*CopyArgs, error) {
 	// Validate minimum arguments
 	// args: [localPath containerPath optional_owner optional_permissions]
 	if len(args) < 2 {
@@ -259,7 +259,7 @@ func parseCopyArgs(args []string, defaultUser string) (*copyArgs, error) {
 		permissions = args[3]
 	}
 
-	return &copyArgs{
+	return &CopyArgs{
 		SourcePath:  sourcePath,
 		TargetPath:  targetPath,
 		Owner:       owner,

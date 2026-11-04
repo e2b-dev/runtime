@@ -254,6 +254,9 @@ type RenderedStep struct {
 	Warnings []string
 	// ArchivePath is the guest path that receives the archive of a COPY or ADD step.
 	ArchivePath string
+	// User is the guest user that uploads the archive and runs Command, such as the user argument of a RUN step.
+	// Empty is the build's current user.
+	User string
 	// State is the build state after the step.
 	State StepState
 }
