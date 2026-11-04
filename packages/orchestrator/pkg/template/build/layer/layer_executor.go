@@ -166,7 +166,8 @@ func (lb *LayerExecutor) BuildLayer(
 		KernelVersion:      sbx.Config.FirecrackerConfig.KernelVersion,
 		FirecrackerVersion: sbx.Config.FirecrackerConfig.FirecrackerVersion,
 	})
-	err = lb.PauseAndUpload(
+	// Only the paused metadata is returned, so dropping it does not compile.
+	paused, err := lb.PauseAndUpload(
 		ctx,
 		userLogger,
 		sbx,
@@ -178,7 +179,7 @@ func (lb *LayerExecutor) BuildLayer(
 		return metadata.Template{}, fmt.Errorf("pause and upload: %w", err)
 	}
 
-	return meta, nil
+	return paused, nil
 }
 
 // updateEnvdInSandbox updates the envd binary in the sandbox to the latest version.
@@ -286,7 +287,7 @@ func (lb *LayerExecutor) PauseAndUpload(
 	hash string,
 	meta metadata.Template,
 	buildOrigin storage.ObjectOrigin,
-) (e error) {
+) (_ metadata.Template, e error) {
 	ctx, childSpan := tracer.Start(ctx, "pause-and-upload")
 	defer childSpan.End()
 
@@ -297,10 +298,21 @@ func (lb *LayerExecutor) PauseAndUpload(
 		sandbox.SnapshotUseCaseBuild,
 	)
 	if err != nil {
-		return fmt.Errorf("error processing vm: %w", err)
+		return metadata.Template{}, fmt.Errorf("error processing vm: %w", err)
 	}
 
-	return lb.UploadSnapshot(ctx, userLogger, snapshot, hash, meta, buildOrigin)
+	if err := lb.UploadSnapshot(ctx, userLogger, snapshot, hash, meta, buildOrigin); err != nil {
+		return metadata.Template{}, err
+	}
+
+	return pausedLayerMetadata(meta, snapshot), nil
+}
+
+// pausedLayerMetadata is the metadata a paused layer hands the next phase: meta
+// with the envd version the pause recorded (RunningEnvdVersion), which
+// NewVersionTemplate drops and the build's result reads.
+func pausedLayerMetadata(meta metadata.Template, snapshot *sandbox.Snapshot) metadata.Template {
+	return meta.WithRunningEnvdVersion(snapshot.Metadata.RunningEnvdVersion)
 }
 
 // UploadSnapshot caches and uploads a snapshot produced without a running VM.
