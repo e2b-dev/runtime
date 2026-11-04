@@ -22,7 +22,7 @@ func TestTemplateBuildWhiteoutImage(t *testing.T) {
 	const image = "swerebench/sweb.eval.x86_64.astanin_1776_python-tabulate-76@sha256:ae96cbc67f928c4b504a0620cfe6f71e6474343de52059b59b813237b1135006"
 	c := setup.GetAPIClient()
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), time.Minute)
 		defer cancel()
 		resp, err := c.DeleteTemplatesTemplateIDWithResponse(ctx, name, setup.WithAPIKey())
 		if assert.NoError(t, err) {
