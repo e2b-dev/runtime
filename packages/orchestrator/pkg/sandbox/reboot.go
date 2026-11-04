@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	buildenvd "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/envd"
@@ -146,6 +147,74 @@ func (f *Factory) RebootSandbox(
 	recordRecovery func(rootfs.RecoverOutcome),
 	procOpts ...func(*fc.ProcessOptions),
 ) (*Sandbox, error) {
+	return f.rebootSandbox(ctx, t, config, runtime, endAt, apiConfigToStore, deferMarkRunning, requestFilesystemBoot, recordRecovery, "", 0, procOpts...)
+}
+
+// ErrGuestResetBeforeEnvd marks a cold boot that ended because the guest
+// restarted itself before envd ever answered, as its guest profile classifies
+// the Firecracker exit.
+var ErrGuestResetBeforeEnvd = errors.New("guest reset before envd answered")
+
+// RebootSandboxFirstBoot cold-boots a base image on its own disk file and boots
+// it again, up to the guest profile's first-boot reset budget, each time the
+// guest resets before envd answers: a prepared disk may restart itself during
+// its first boot, and booting on the disk file keeps what each restart wrote.
+// It is the preparation of a base, not a served path: a served cold boot writes
+// to a throwaway overlay (RebootSandbox) and cannot keep a restart's progress.
+func (f *Factory) RebootSandboxFirstBoot(
+	ctx context.Context,
+	t template.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	endAt time.Time,
+	rootfsPath string,
+	procOpts ...func(*fc.ProcessOptions),
+) (*Sandbox, error) {
+	profile := config.GuestProfile()
+	first := profile.FirstBoot()
+	if first.MaxResets <= 0 {
+		return nil, fmt.Errorf("the guest profile %q declares no first boot", profile.Label())
+	}
+	if rootfsPath == "" {
+		return nil, errors.New("first boot needs the build's disk file")
+	}
+
+	for attempt := 0; ; attempt++ {
+		sbx, err := f.rebootSandbox(ctx, t, config, runtime, endAt, nil, false, true, nil, rootfsPath, first.EnvdWait, procOpts...)
+		if !firstBootRetry(err, attempt, first.MaxResets) {
+			return sbx, err
+		}
+
+		logger.L().Info(ctx, "guest reset before envd answered on its first boot; booting the same disk again",
+			zap.Int("reset", attempt+1), zap.Int("max_resets", first.MaxResets),
+			logger.WithSandboxID(runtime.SandboxID), logger.WithTemplateID(runtime.TemplateID))
+	}
+}
+
+// firstBootRetry decides whether a failed first boot gets another one: only a
+// guest reset before envd answered, and only within the reset budget.
+func firstBootRetry(err error, attempt, maxResets int) bool {
+	return err != nil && errors.Is(err, ErrGuestResetBeforeEnvd) && attempt < maxResets
+}
+
+// rebootSandbox is RebootSandbox with the rootfs provider chosen by
+// rootfsCachePath: empty selects the NBD overlay (a served cold boot), a path
+// maps that file as the disk (a base's first boot). envdWait, when non-zero,
+// replaces the cold boot's envd wait.
+func (f *Factory) rebootSandbox(
+	ctx context.Context,
+	t template.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	endAt time.Time,
+	apiConfigToStore *orchestrator.SandboxConfig,
+	deferMarkRunning bool,
+	requestFilesystemBoot bool,
+	recordRecovery func(rootfs.RecoverOutcome),
+	rootfsCachePath string,
+	envdWait time.Duration,
+	procOpts ...func(*fc.ProcessOptions),
+) (*Sandbox, error) {
 	ctx, span := tracer.Start(ctx, "reboot sandbox")
 	defer span.End()
 
@@ -199,10 +268,11 @@ func (f *Factory) RebootSandbox(
 		runtime,
 		boot.template,
 		timeout,
-		// Empty rootfs cache path selects the NBD provider, same as a memory
+		// An empty rootfs cache path selects the NBD provider, same as a memory
 		// resume, so guest TRIM keeps working and a later pause exports the
-		// overlay diff exactly like a normal resume.
-		"",
+		// overlay diff exactly like a normal resume; a first boot passes the
+		// base's own disk file instead.
+		rootfsCachePath,
 		processOptions,
 		apiConfigToStore,
 		WithPreBoot(fsRecover, swap),
@@ -219,10 +289,11 @@ func (f *Factory) RebootSandbox(
 		// inspecting a bare boot); the caller drives the VM itself, as on the
 		// resume path.
 		telemetry.ReportEvent(ctx, "skipping envd wait")
-	} else if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeoutFor(config)); err != nil {
+	} else if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdWait(config, envdWait)); err != nil {
+		reset := isGuestResetBeforeEnvd(config.GuestProfile(), err, sbx.FirecrackerExit())
 		closeErr := sbx.Close(context.WithoutCancel(ctx))
 
-		return nil, errors.Join(fmt.Errorf("wait for envd after reboot: %w", err), closeErr)
+		return nil, envdWaitError(err, reset, closeErr)
 	}
 
 	// deferMarkRunning: the caller promotes the sandbox to live itself after a
@@ -885,4 +956,50 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 
 		return swappedTo, nil
 	}
+}
+
+// isGuestResetBeforeEnvd reports whether a cold boot's envd wait ended because
+// the guest restarted itself: the Firecracker process is gone with a counted
+// reset, or with a clean exit that the guest profile classifies as a reset.
+func isGuestResetBeforeEnvd(profile guest.Profile, err error, exit *fc.ExitInfo) bool {
+	if !errors.Is(err, ErrFcProcessExited) {
+		return false
+	}
+
+	cause := fc.ClassifyExit(exit)
+	switch {
+	case cause.GuestEvent().Restarts():
+		return true
+	case !profile.Reset().CleanExitBeforeEnvdIsReset:
+		return false
+	case cause == fc.CrashCauseCleanExit:
+		return true
+	case cause == fc.CrashCauseUnknown:
+		// A binary without the reset counters reports an unread exit.
+		return exit != nil && exit.Exited && exit.ExitCode == 0
+	default:
+		return false
+	}
+}
+
+// envdWaitError is a cold boot's error once its envd wait failed and its
+// sandbox was closed. It marks a guest reset (ErrGuestResetBeforeEnvd) only when
+// the close succeeded: a first boot reopens the same disk, which a failed close
+// may have left unflushed.
+func envdWaitError(waitErr error, reset bool, closeErr error) error {
+	if reset && closeErr == nil {
+		waitErr = errors.Join(ErrGuestResetBeforeEnvd, waitErr)
+	}
+
+	return errors.Join(fmt.Errorf("wait for envd after reboot: %w", waitErr), closeErr)
+}
+
+// rebootEnvdWait is the envd wait of one cold boot: the caller's budget when
+// it gave one, else the guest's cold-boot budget.
+func rebootEnvdWait(config *Config, override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+
+	return rebootEnvdTimeoutFor(config)
 }
