@@ -38,6 +38,7 @@ import (
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
@@ -94,6 +95,12 @@ func Main() {
 	firecracker := flag.String("firecracker", "", "override the build's Firecracker version (e.g. when the baked version isn't on this node); safe for a cold boot/-reboot, risky for a memory resume")
 	vcpu := flag.Int64("vcpu", 0, "CPUs the sandbox uses (default: recorded snapshot size; required for an unrecorded memory snapshot)")
 	maxVcpus := flag.Int64("max-vcpus", 0, "VM capacity for a cold boot or legacy memory resume (default: recorded snapshot size, else -vcpu)")
+	envdAccessToken := flag.String("envd-access-token", defaultEnvdAccessToken, "the access token /init sets in the guest's envd; empty sends none, which leaves a fresh envd without a token (a build meant to be served takes its token from its first sandbox)")
+	envdInitRequestTimeoutMs := flag.Int("envd-init-request-timeout-ms", 0, "budget of one /init attempt in milliseconds (overrides the envd-init-request-timeout-milliseconds flag; 0 = the flag's default)")
+	skipEnvdWait := flag.Bool("skip-envd-wait", false, "do not wait for envd after the resume or cold boot (a guest whose envd is not running); -cmd, -shell and the pause flags need envd and stay unavailable")
+	snapshotDriveID := flag.String("snapshot-drive-id", "", "the block device ID the snapshot bakes (default: the build metadata's, else rootfs); for a snapshot made outside this tool")
+	snapshotIfaceID := flag.String("snapshot-iface-id", "", "the network interface ID the snapshot bakes (default: the build metadata's, else eth0); when set, the slot's tap is sent as a network override on load")
+	rootfsFile := flag.String("rootfs-file", "", "the file name the snapshot bakes for the rootfs under -sandbox-dir (default: the build metadata's, else rootfs.ext4)")
 	envdVersionFlag := flag.String("envd-version", "", fmt.Sprintf("the guest's envd version, which the snapshot does not record (default: %s, a placeholder above every version gate)", placeholderEnvdVersion))
 
 	// Command execution (no pause)
@@ -109,6 +116,8 @@ func Main() {
 	fsOnly := flag.Bool("fs-only", false, "pause without a memory snapshot (filesystem-only; resume reboots the guest)")
 	reboot := flag.Bool("reboot", false, "cold-boot from the build's rootfs instead of resuming from memory")
 	forceReboot := flag.Bool("force-reboot", false, "cold-boot like -reboot, but bypass the filesystem-only safety gate for memory-snapshot builds (the disk is only crash-consistent)")
+	rebootMemory := flag.Int64("memory", 512, "memory MB of a cold boot (-reboot/-force-reboot); a memory resume takes the snapshot's")
+	rebootHugePages := flag.Bool("hugepages", false, "back a cold boot's memory with 2 MiB huge pages (-reboot/-force-reboot); a memory resume takes the snapshot's")
 	cpuTemplate := flag.String("cpu-template", "", "with -reboot/-force-reboot, boot this CPU template (a JSON file, or \"none\") instead of the build's (overrides the reboot-cpu-template-override flag)")
 	shell := flag.Bool("shell", false, "attach an interactive PTY shell via envd (no sshd required in the sandbox)")
 
@@ -129,6 +138,10 @@ func Main() {
 	gdbScript := flag.String("gdb-script", "", "scripted mode: run this gdb command file in batch")
 
 	flag.Parse()
+
+	if *envdInitRequestTimeoutMs > 0 {
+		featureflags.NewIntFlag(featureflags.EnvdInitTimeoutMilliseconds.Key(), *envdInitRequestTimeoutMs)
+	}
 
 	if *fphTimeoutMs > 0 {
 		featureflags.NewJSONFlag("free-page-hinting-config", ldvalue.FromJSONMarshal(map[string]any{
@@ -280,6 +293,13 @@ func Main() {
 		log.Fatal("-shell can only be used in interactive mode (no -cmd, no pause flags, no -iterations)")
 	}
 
+	if *rootfsFile != "" && !metadata.ValidRootfsFile(*rootfsFile) {
+		log.Fatalf("-rootfs-file %q is not a bare file name of letters, digits, '.', '_' and '-'", *rootfsFile)
+	}
+	if err := skipEnvdWaitConflicts(*skipEnvdWait, isCmdMode, isPauseMode, *shell); err != nil {
+		log.Fatal(err)
+	}
+
 	if *fphBench && (*cmdPause == "" || *fphTimeoutMs > 0) {
 		log.Fatal("-fph-bench requires -cmd-pause and is incompatible with -fph-timeout-ms")
 	}
@@ -338,6 +358,13 @@ func Main() {
 		vcpu:               *vcpu,
 		maxVcpus:           *maxVcpus,
 		envdVersion:        envdVer,
+		rebootMemoryMB:     *rebootMemory,
+		rebootHugePages:    *rebootHugePages,
+		envdAccessToken:    *envdAccessToken,
+		skipEnvdWait:       *skipEnvdWait,
+		snapshotDriveID:    *snapshotDriveID,
+		snapshotIfaceID:    *snapshotIfaceID,
+		rootfsFile:         *rootfsFile,
 	}
 
 	benchIters := *iterations
@@ -408,6 +435,13 @@ type runOptions struct {
 	envdVersion        envdVersion // the guest envd version to report and gate on
 	vcpu               int64       // CPUs the sandbox uses
 	maxVcpus           int64       // requested VM capacity; 0 inherits the recorded size when available
+	rebootMemoryMB     int64       // memory of a cold boot; a memory resume takes the snapshot's
+	rebootHugePages    bool        // huge pages of a cold boot; a memory resume takes the snapshot's
+	envdAccessToken    string      // the token /init sets in envd; empty sends none
+	skipEnvdWait       bool        // start without waiting for envd
+	snapshotDriveID    string      // device-name overrides; empty takes the build metadata's
+	snapshotIfaceID    string
+	rootfsFile         string
 }
 
 func (r runOptions) enabled() bool {
@@ -892,8 +926,7 @@ func (r *runner) pauseOnce(ctx context.Context, opts pauseOptions, verbose bool)
 		return pauseTimings{resume: resumeDur, err: err}, fmt.Errorf("failed to get metadata: %w", err)
 	}
 
-	newMeta := origMeta
-	newMeta.Template.BuildID = opts.newBuildID
+	newMeta := pausedBuildMetadata(origMeta, opts.newBuildID, sbx.Config.FirecrackerConfig)
 
 	// Strip stale prefetch data — it corresponds to the parent build, not this snapshot.
 	// Fresh prefetch will be collected in the optimize step if -optimize is set.
@@ -1251,6 +1284,11 @@ func (r *runner) benchmark(ctx context.Context, n int) error {
 	return lastErr
 }
 
+// defaultEnvdAccessToken is the token every run sets in the guest's envd
+// unless -envd-access-token says otherwise: a cold boot's /init sets it and a
+// later restore's /init matches it, so the envd wait stays on across runs.
+const defaultEnvdAccessToken = "local"
+
 // placeholderEnvdVersion is not the guest's real version — see the envd version caveat in the README.
 const placeholderEnvdVersion = "1.0.0"
 
@@ -1496,6 +1534,9 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 	}
 
 	fmt.Printf("   envd: %s\n", runOpts.envdVersion.describe())
+	if runOpts.skipEnvdWait {
+		fmt.Println("   envd wait: skipped")
+	}
 
 	// -vcpu 0 is the snapshot's recorded size, or 1 for an unrecorded cold boot.
 	if runOpts.vcpu == 0 {
@@ -1526,20 +1567,37 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 	if err != nil {
 		return err
 	}
+	if err := refuseVcpusAboveTarget(profile.Boot(), reboot || forceReboot, runOpts.vcpu, vmVcpus); err != nil {
+		return err
+	}
 
-	token := "local"
+	if reboot || forceReboot {
+		fmt.Printf("   Cold boot machine: %d MB, huge pages %t\n", runOpts.rebootMemoryMB, runOpts.rebootHugePages)
+	}
+
+	// nil sends no token at all: envd then leaves its own unset (a fresh
+	// envd) or refuses the reset (one that has a token).
+	var token *string
+	if runOpts.envdAccessToken != "" {
+		token = &runOpts.envdAccessToken
+	}
 	sbxCfg := sandbox.NewConfig(sandbox.Config{
 		BaseTemplateID:    buildID,
 		Vcpu:              runOpts.vcpu,
 		ConfiguredVmVcpus: runOpts.maxVcpus,
-		RamMB:             512,
+		RamMB:             runOpts.rebootMemoryMB,
+		HugePages:         runOpts.rebootHugePages,
 		FreePageReporting: fphBenchOpts.enabled,
-		Envd:              sandbox.EnvdMetadata{Vars: map[string]string{}, AccessToken: &token, Version: runOpts.envdVersion.String()},
-		FirecrackerConfig: fc.Config{
+		Envd:              sandbox.EnvdMetadata{Vars: map[string]string{}, AccessToken: token, Version: runOpts.envdVersion.String()},
+		FirecrackerConfig: snapshotDevices(fc.Config{
 			KernelVersion:      meta.Template.KernelVersion,
 			FirecrackerVersion: fcVersion,
+			RootfsDriveID:      runOpts.snapshotDriveID,
+			NetIfaceID:         runOpts.snapshotIfaceID,
+			RootfsFile:         runOpts.rootfsFile,
 			Guest:              profile,
-		},
+		}, meta),
+		SkipEnvdWait: runOpts.skipEnvdWait,
 	})
 
 	r := &runner{
@@ -1643,27 +1701,38 @@ func runCommandInSandboxTo(ctx context.Context, sbx *sandbox.Sandbox, command st
 	}
 	defer stream.Close()
 
-	// Read stream until completion
+	return copyCommandOutput(stream, out)
+}
+
+// commandStream is the part of envd's process stream that copyCommandOutput reads.
+type commandStream interface {
+	Receive() bool
+	Msg() *process.StartResponse
+	Err() error
+}
+
+// copyCommandOutput copies the command's stdout and stderr to out until its end
+// event. A write error stops the copy: the caller closes the stream.
+func copyCommandOutput(stream commandStream, out io.Writer) error {
 	for stream.Receive() {
-		msg := stream.Msg()
-		event := msg.GetEvent()
+		event := stream.Msg().GetEvent()
 		if event == nil {
 			continue
 		}
 
 		switch e := event.GetEvent().(type) {
 		case *process.ProcessEvent_Data:
-			// Handle data events (stdout/stderr)
 			if data := e.Data; data != nil {
-				if stdout := data.GetStdout(); stdout != nil {
-					_, _ = out.Write(stdout)
-				}
-				if stderrData := data.GetStderr(); stderrData != nil {
-					_, _ = out.Write(stderrData)
+				for _, chunk := range [][]byte{data.GetStdout(), data.GetStderr()} {
+					if chunk == nil {
+						continue
+					}
+					if _, err := out.Write(chunk); err != nil {
+						return fmt.Errorf("write the command's output: %w", err)
+					}
 				}
 			}
 		case *process.ProcessEvent_End:
-			// Handle exit event
 			if end := e.End; end != nil {
 				if !end.GetExited() || end.GetExitCode() != 0 {
 					return fmt.Errorf("command exited with code %d", end.GetExitCode())
@@ -1730,17 +1799,29 @@ func waitForPauseSignal(ctx context.Context, sbx *sandbox.Sandbox, signalName st
 
 // syncAndDropCaches syncs filesystem and drops caches before snapshot
 func syncAndDropCaches(ctx context.Context, sbx *sandbox.Sandbox) error {
-	// Run sync command
-	if err := runCommandInSandbox(ctx, sbx, rootfs.SandboxBusyBoxPath+" sync"); err != nil {
-		return fmt.Errorf("sync failed: %w", err)
-	}
-
-	// Drop caches
-	if err := runCommandInSandbox(ctx, sbx, "echo 3 > /proc/sys/vm/drop_caches"); err != nil {
-		return fmt.Errorf("drop_caches failed: %w", err)
+	for _, step := range pauseFlush(sbx.Config.GuestProfile()) {
+		if err := runCommandInSandbox(ctx, sbx, step.command); err != nil {
+			return fmt.Errorf("%s failed: %w", step.name, err)
+		}
 	}
 
 	return nil
+}
+
+type flushStep struct{ name, command string }
+
+// pauseFlush is what a pause runs in the guest first: the guest profile's own
+// flush when it names one, which has no page cache to drop, else sync and
+// drop_caches.
+func pauseFlush(profile guest.Profile) []flushStep {
+	if command := profile.Template().SyncCommand; command != "" {
+		return []flushStep{{name: "sync", command: command}}
+	}
+
+	return []flushStep{
+		{name: "sync", command: rootfs.SandboxBusyBoxPath + " sync"},
+		{name: "drop_caches", command: "echo 3 > /proc/sys/vm/drop_caches"},
+	}
 }
 
 // parseSignal converts a signal name to os.Signal
@@ -1951,4 +2032,18 @@ func (noEgressProxy) OnSlotCreate(s *network.Slot, _ *iptables.IPTables) error {
 
 		return nil
 	})
+}
+
+// pausedBuildMetadata is the metadata of the build a pause writes: the parent's,
+// under the new build ID, recording the kernel slot and the Firecracker binary
+// the running VM used. A -firecracker override or a cold boot on another binary
+// produces a snapshot only that binary can restore, so the parent's versions
+// must not be copied.
+func pausedBuildMetadata(parent metadata.Template, buildID string, running fc.Config) metadata.Template {
+	m := parent
+	m.Template.BuildID = buildID
+	m.Template.KernelVersion = running.KernelVersion
+	m.Template.FirecrackerVersion = running.FirecrackerVersion
+
+	return m
 }

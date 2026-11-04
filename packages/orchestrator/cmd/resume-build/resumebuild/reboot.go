@@ -105,10 +105,42 @@ func (r *runner) cmdRebootOnReset(ctx context.Context, opts runOptions) error {
 
 // bootID reads the guest's boot identity through envd with the profile's command.
 func bootID(ctx context.Context, sbx *sandbox.Sandbox, reset guest.Reset) (string, error) {
-	var out strings.Builder
-	if err := runCommandInSandboxTo(ctx, sbx, reset.IdentityCommand(), &out); err != nil {
+	out := &cappedBuffer{limit: maxBootIDOutput}
+	if err := runCommandInSandboxTo(ctx, sbx, reset.IdentityCommand(), out); err != nil {
 		return "", fmt.Errorf("read the boot ID: %w", err)
 	}
 
-	return strings.TrimSpace(out.String()), nil
+	return parseBootID(out.String())
+}
+
+// maxBootIDOutput bounds what the boot identity command may print: one identifier.
+const maxBootIDOutput = 4096
+
+// errBootIDTooLong stops a boot identity command that prints more than an identifier.
+var errBootIDTooLong = fmt.Errorf("the boot identity is longer than %d bytes", maxBootIDOutput)
+
+// cappedBuffer collects output up to limit bytes and refuses the write that would pass it.
+type cappedBuffer struct {
+	buf   strings.Builder
+	limit int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.buf.Len()+len(p) > c.limit {
+		return 0, errBootIDTooLong
+	}
+
+	return c.buf.WriteString(string(p))
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
+
+// parseBootID refuses an empty identity: two empty readings would compare equal.
+func parseBootID(out string) (string, error) {
+	id := strings.TrimSpace(out)
+	if id == "" {
+		return "", errors.New("read the boot ID: the command printed nothing")
+	}
+
+	return id, nil
 }
