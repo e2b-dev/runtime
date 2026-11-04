@@ -53,12 +53,14 @@ func New(
 	getDestination func(r *http.Request) (*pool.Destination, error),
 	connLimitConfig *ConnectionLimitConfig,
 	disableKeepAlives bool,
+	onOutcome pool.OutcomeRecorder,
 ) *Proxy {
 	p := pool.New(
 		maxClientConns,
 		int(maxConnectionAttempts),
 		idleTimeout,
 		disableKeepAlives,
+		onOutcome,
 	)
 
 	proxy := &Proxy{

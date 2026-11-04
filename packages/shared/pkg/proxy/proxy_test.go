@@ -171,6 +171,7 @@ func newTestProxyWithConnLimit(t *testing.T, getDestination func(r *http.Request
 		getDestination,
 		connLimitConfig,
 		false,
+		nil,
 	)
 
 	// Start the proxy server
@@ -628,7 +629,7 @@ func TestProxyAnswersRequestTimeoutWhenTheRequestEndedBeforeRouting(t *testing.T
 
 	proxy := New(0, SandboxProxyRetries, time.Second, func(r *http.Request) (*pool.Destination, error) {
 		return nil, fmt.Errorf("resolving: %w", r.Context().Err())
-	}, nil, false)
+	}, nil, false, nil)
 	t.Cleanup(func() { _ = proxy.Close() })
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -1389,7 +1390,7 @@ func TestChangeResponseHeader(t *testing.T) {
 			IncludeSandboxIdInProxyErrorLogger: true,
 			MaskRequestHost:                    new(maskedHost),
 		}, nil
-	}, nil, false)
+	}, nil, false, nil)
 
 	go func() {
 		err := proxy.Serve(proxyListener)
@@ -1668,7 +1669,7 @@ func TestSharedIngressPolicy(t *testing.T) {
 				r.Header.Set("Origin", "https://caller.example")
 				r.Header.Set("Access-Control-Request-Method", "POST")
 				recorder := httptest.NewRecorder()
-				p := pool.New(4, 1, time.Second, false)
+				p := pool.New(4, 1, time.Second, false, nil)
 				handler(p, resolver, nil).ServeHTTP(recorder, r)
 				assert.GreaterOrEqual(t, recorder.Code, 200)
 				assert.Less(t, recorder.Code, 300)

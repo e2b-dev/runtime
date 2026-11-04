@@ -62,7 +62,7 @@ func TestSandboxProxyCloseInterruptsStalledUpload(t *testing.T) {
 					Limiter:              connlimit.NewConnectionLimiter(),
 					GetMaxLimit:          func(context.Context) int { return 10 },
 					OnConnectionReleased: func(context.Context, int64) { close(handlerDone) },
-				}, true)}
+				}, true, nil)}
 			var listenConfig net.ListenConfig
 			listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(t, err)
