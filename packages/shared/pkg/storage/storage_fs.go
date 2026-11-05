@@ -427,7 +427,17 @@ func (o *fsObject) OpenRangeReader(ctx context.Context, offsetU int64, length in
 // an object. Implements the ObjectLister optional capability (used by tests and
 // local dry runs).
 func (s *fsStorage) ListObjects(_ context.Context, prefix string) ([]ObjectInfo, error) {
-	root := s.getPath(prefix)
+	// An empty prefix means "the whole bucket" (a valid listing), which the
+	// object-path validator rejects — so resolve the root directly for the empty
+	// case and only validate a non-empty prefix.
+	root := s.basePath
+	if prefix != "" {
+		p, err := s.getPath(prefix)
+		if err != nil {
+			return nil, err
+		}
+		root = p
+	}
 
 	var out []ObjectInfo
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
