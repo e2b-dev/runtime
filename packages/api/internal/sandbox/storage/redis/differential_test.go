@@ -20,9 +20,12 @@ import (
 )
 
 // The flip store runs as two instances on one server whose flips are a few
-// operations apart and which take the operations in turn, as replicas whose
-// flag reads lag do. Every operation is checked against the in-memory model
-// as it runs, so a divergence names the seed, the operation and the store.
+// operations apart and which take the operations in turn, as replicas
+// upgraded a few operations apart do: before its flip an instance creates
+// records in the team form directly, as the release that wrote it did, and
+// from it in the sandbox form through Add. Every operation is checked
+// against the in-memory model as it runs, so a divergence names the seed,
+// the operation and the store.
 
 const (
 	differentialOperations = 500
@@ -651,8 +654,9 @@ func generateDifferential(seed uint64) differentialCase {
 type differentialRun struct {
 	name      string
 	instances []*Storage
-	// flipAt is the operation before which each instance flips to the
-	// sandbox form; -1 never.
+	// flipAt is the operation from which each instance creates records in
+	// the sandbox form through Add, instead of the team form directly; 0
+	// from the start, -1 never.
 	flipAt []int
 }
 
@@ -671,10 +675,7 @@ func newDifferentialRun(t *testing.T, name string, garbage recordRef) differenti
 	case "team":
 		return differentialRun{name: name, instances: []*Storage{instance()}, flipAt: []int{-1}}
 	case "sandbox":
-		s := instance()
-		s.SetPerSandboxWrites(true)
-
-		return differentialRun{name: name, instances: []*Storage{s}, flipAt: []int{-1}}
+		return differentialRun{name: name, instances: []*Storage{instance()}, flipAt: []int{0}}
 	default:
 		return differentialRun{name: name, instances: []*Storage{instance(), instance()}, flipAt: []int{differentialFlipAt, differentialFlipAt + differentialFlipLag}}
 	}
@@ -699,15 +700,18 @@ func (r differentialRun) actors(index int) (actor, other *Storage) {
 	return r.instances[index%len(r.instances)], r.instances[(index+1)%len(r.instances)]
 }
 
-func (r differentialRun) flip(index int) {
-	for i, at := range r.flipAt {
-		if at == index {
-			r.instances[i].SetPerSandboxWrites(true)
-		}
+// createForm returns the form the instance that runs the operation at index
+// creates records in.
+func (r differentialRun) createForm(index int) keyForm {
+	if at := r.flipAt[index%len(r.instances)]; at < 0 || index < at {
+		return formTeam
 	}
+
+	return formSandbox
 }
 
-// Three stores that differ only in their write forms, and a model, show the
+// Three stores that differ only in the form their records are created in,
+// and a model, show the
 // same sandboxes to every reader through a generated sequence of creates,
 // keepalives, timeout changes, pauses with every ending, kills, snapshots,
 // removes naming a removed execution, evictions, listings, keepalives
@@ -743,9 +747,8 @@ func runDifferential(t *testing.T, c differentialCase, run differentialRun) stri
 	t.Helper()
 
 	for _, op := range c.ops {
-		run.flip(op.index)
 		actor, other := run.actors(op.index)
-		got := applyDifferentialOp(t, actor, other, c.teams, op)
+		got := applyDifferentialOp(t, actor, other, c.teams, op, run.createForm(op.index))
 		require.Equalf(t, op.expect, got, "seed %d, operation %d (%s) on the %s store", c.seed, op.index, op, run.name)
 	}
 
@@ -762,13 +765,21 @@ func runDifferential(t *testing.T, c differentialCase, run differentialRun) stri
 	return projection
 }
 
-func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID, op differentialOp) string {
+// applyDifferentialOp runs op on actor, creating a record in createForm: the
+// team form directly, as the release that wrote it did, or the sandbox form
+// through Add.
+func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID, op differentialOp, createForm keyForm) string {
 	t.Helper()
 
 	ctx := t.Context()
 	switch op.kind {
 	case kindAdd:
 		sbx := makeIndexedSandbox(uuid.MustParse(op.ref.TeamID), op.ref.SandboxID, op.exec, time.Now().Add(-2*healGracePeriod), op.end)
+		if createForm == formTeam {
+			writeTeamRecord(ctx, t, actor.redisClient, sbx)
+
+			return "added"
+		}
 		if err := actor.Add(ctx, sbx); err != nil {
 			return "add error: " + err.Error()
 		}

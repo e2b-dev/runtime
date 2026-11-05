@@ -121,7 +121,7 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 	resumed := sbx
 	resumed.ExecutionID = uuid.NewString()
 	resumed.State = sandboxtypes.StateRunning
-	writeTeamSandbox(t, storage, resumed)
+	writeRecord(t, storage.redisClient, recordKey(formSandbox, resumed.TeamID.String(), resumed.SandboxID), "", resumed)
 
 	finishPause(ctx, nil)
 
@@ -160,9 +160,9 @@ func transitionKeysFor(sbx sandboxtypes.Sandbox, transitionID string) []string {
 	team := sbx.TeamID.String()
 
 	return []string{
-		getSandboxKey(team, sbx.SandboxID),
-		getTransitionKey(team, sbx.SandboxID),
-		transitionResultKeyFor(formTeam, team, sbx.SandboxID, transitionID),
+		recordKey(formSandbox, team, sbx.SandboxID),
+		transitionKeyFor(formSandbox, team, sbx.SandboxID),
+		transitionResultKeyFor(formSandbox, team, sbx.SandboxID, transitionID),
 	}
 }
 

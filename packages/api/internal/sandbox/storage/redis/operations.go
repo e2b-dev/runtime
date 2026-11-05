@@ -37,7 +37,7 @@ func releaseLock(ctx context.Context, release func(context.Context) error, err *
 	}
 }
 
-// Add stores a sandbox record in the write form and indexes it, under the
+// Add stores a sandbox record in the sandbox form and indexes it, under the
 // sandbox's lock in both forms, the team form first, so a predecessor's
 // operation under either lock finishes before it writes. The record write is
 // the commit point: a write that fails after the client's retries may have
@@ -68,8 +68,7 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	}
 
 	teamID := sbx.TeamID.String()
-	form := s.writeForm()
-	key := recordKey(form, teamID, sbx.SandboxID)
+	key := recordKey(formSandbox, teamID, sbx.SandboxID)
 	teamKey := GetSandboxStorageTeamIndexKey(teamID)
 
 	release, err := s.locker.ObtainBoth(ctx,
@@ -97,22 +96,18 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 		return fmt.Errorf("failed to add sandbox to global expiration index: %w", err)
 	}
 
-	// A crashed predecessor's record in the other form goes before the
+	// A crashed predecessor's record in the team form goes before the
 	// write, so an interrupted Add leaves no record rather than a twin.
 	err = s.run(faultAddBeforeOtherDel, func() error {
-		return s.redisClient.Del(ctx, recordKey(form.other(), teamID, sbx.SandboxID)).Err()
+		return s.redisClient.Del(ctx, recordKey(formTeam, teamID, sbx.SandboxID)).Err()
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete the other form's record: %w", err)
+		return fmt.Errorf("failed to delete the team-form record: %w", err)
 	}
 
-	// The commit point: one script for both forms, the gone set beside the
-	// record in its slot. The team form's script writes the index entry with
-	// the record; the sandbox form's entry lives in another slot and follows.
+	// The commit point, the gone set beside the record in its slot; the
+	// index entry lives in another slot and follows.
 	keys := []string{key, goneKeyFor(key)}
-	if form == formTeam {
-		keys = append(keys, teamKey)
-	}
 	replaceFlag := "0"
 	if replace {
 		replaceFlag = "1"
@@ -132,7 +127,7 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	if err != nil {
 		// The caller may be gone by now; the cleanup runs regardless, as
 		// the lock release does.
-		if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), form, sbx); cleanupErr != nil {
+		if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), sbx); cleanupErr != nil {
 			logger.L().Error(ctx, "Failed to clean up an unconfirmed sandbox record write", zap.Error(cleanupErr), logger.WithSandboxID(sbx.SandboxID))
 			s.countWriteAnomaly(ctx, writeAnomalyAddWriteUnconfirmed)
 		}
@@ -153,7 +148,7 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	// even when the caller is gone, as the cleanup and the lock release do.
 	ctx = context.WithoutCancel(ctx)
 
-	if form == formSandbox && written == 1 {
+	if written == 1 {
 		err = s.indexSandbox(ctx, teamKey, sbx.SandboxID)
 		if crashed(err) {
 			return err
@@ -219,26 +214,20 @@ func (s *Storage) indexSandbox(ctx context.Context, teamKey, sandboxID string) (
 }
 
 // cleanupAdd undoes a record write that failed after the client's retries
-// and may have landed, through the form's remove path: this execution's
-// record and index entry go, the entry first, and a record of another
-// execution, a stranded predecessor's, is left whole. A sandbox-form delete
-// that exhausts its retries is logged as stranded and counted under
-// remove_stranded beside add_write_unconfirmed. Then the entry goes when
-// neither form holds a record: the healer may have re-indexed a crashed
-// predecessor whose record the delete of the other form removed. The guard
-// relies on Add's execution ID being set, as every caller sets it: with an
-// empty one the sandbox-form path would adopt whatever execution it finds.
-func (s *Storage) cleanupAdd(ctx context.Context, form keyForm, sbx sandboxtypes.Sandbox) error {
+// and may have landed, through the remove path: this execution's record and
+// index entry go, the entry first, and a record of another execution, a
+// stranded predecessor's, is left whole. A delete that exhausts its retries
+// is logged as stranded and counted under remove_stranded beside
+// add_write_unconfirmed. Then the entry goes when neither form holds a
+// record: the healer may have re-indexed a crashed predecessor whose
+// team-form record the delete before the write removed. The guard relies on
+// Add's execution ID being set, as every caller sets it: with an empty one
+// the delete would adopt whatever execution it finds.
+func (s *Storage) cleanupAdd(ctx context.Context, sbx sandboxtypes.Sandbox) error {
 	teamID := sbx.TeamID.String()
-	key := recordKey(form, teamID, sbx.SandboxID)
 	teamKey := GetSandboxStorageTeamIndexKey(teamID)
 
-	var err error
-	if form == formTeam {
-		_, err = s.removeTeamRecord(ctx, key, teamKey, sbx.SandboxID, sbx.ExecutionID)
-	} else {
-		_, err = s.removeSandboxRecord(ctx, key, teamKey, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID)
-	}
+	_, err := s.removeSandboxRecord(ctx, recordKey(formSandbox, teamID, sbx.SandboxID), teamKey, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID)
 	if err != nil && !errors.Is(err, sandboxtypes.ErrExecutionMismatch) {
 		return err
 	}

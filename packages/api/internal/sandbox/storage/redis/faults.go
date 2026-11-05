@@ -8,11 +8,9 @@ import "errors"
 // faultAddRecordWrite, consulted after the record write ran so that its
 // error replaces the reply of a write that landed. errSimulatedCrash ends
 // the operation, or the healer's repair, where it stands, locks left held as
-// a crashed replica's would be. In the team form the add script writes the index entry with the
-// record, so faultAddAfterIndex follows the write there and
-// faultAddAfterRecordWrite is never consulted. faultHealerUnderLock is
-// consulted once the healer holds a nominee's lock, or both of a twin's,
-// before it reads anything under them.
+// a crashed replica's would be. faultHealerUnderLock is consulted once the
+// healer holds a nominee's lock, or both of a twin's, before it reads
+// anything under them.
 type faultPoint string
 
 const (

@@ -54,9 +54,6 @@ type Storage struct {
 
 	reconcileSlots *semaphore.Weighted
 
-	// form is the keyForm new records are written with; see writeForm.
-	form atomic.Int32
-
 	metrics expirationIndexMetrics
 	// writeAnomalies counts writes that gave up after their retries, by kind.
 	writeAnomalies metric.Int64Counter
@@ -178,7 +175,6 @@ func NewStorage(
 		listGets:       utils.Must(telemetry.GetHistogram(meter, telemetry.ApiRedisStorageListGets)),
 		indexHeal:      utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageIndexHeal)),
 	}
-	s.setWriteForm(formTeam)
 
 	// The census and the repairs of the last sweep, and the repairs of the
 	// one before it; nothing before the first sweep.
@@ -232,12 +228,7 @@ func (s *Storage) Start(ctx context.Context) {
 	defer cancel()
 
 	s.initCounters(ctx)
-
-	// A replica older than the marker's release kills every sandbox-form
-	// record as an orphan, so a later release warns when it is absent.
-	if err := s.redisClient.Set(ctx, SchemeMarkerKey, SchemeMinRelease, 0).Err(); err != nil {
-		logger.L().Warn(ctx, "Failed to write the sandbox store scheme marker", zap.Error(err))
-	}
+	s.markScheme(ctx)
 
 	pubDone := make(chan struct{})
 	go func() {
@@ -249,6 +240,20 @@ func (s *Storage) Start(ctx context.Context) {
 
 	s.subManager.start(ctx)
 	<-pubDone
+}
+
+// markScheme writes the scheme marker unless it is there. Its absence means
+// no release that reads sandbox-form records has run on this store, and a
+// replica of an older one kills every such record's sandbox as an orphan; a
+// fresh store has nothing to lose, so this warns and goes on.
+func (s *Storage) markScheme(ctx context.Context) {
+	absent, err := s.redisClient.SetNX(ctx, SchemeMarkerKey, SchemeMinRelease, 0).Result()
+	switch {
+	case err != nil:
+		logger.L().Warn(ctx, "Failed to write the sandbox store scheme marker", zap.Error(err))
+	case absent:
+		logger.L().Warn(ctx, "Sandbox store scheme marker was absent: no release that reads sandbox-form records had started on this store, and a replica of an older one kills their sandboxes as orphans")
+	}
 }
 
 // initCounters records every kind of the errors, write anomaly and index

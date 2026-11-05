@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,7 +62,7 @@ func isStartTransitionScript(cmd redis.Cmder) bool {
 	first, _ := args[3].(string)
 	second, _ := args[4].(string)
 
-	return numKeys == 3 && !strings.Contains(first, ":transition:") && strings.Contains(second, ":transition:")
+	return numKeys == 3 && !isTransitionMarker(first) && isTransitionMarker(second)
 }
 
 type pauseContextClient struct {

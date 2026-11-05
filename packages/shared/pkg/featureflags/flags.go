@@ -505,19 +505,6 @@ var (
 	// read, with the same store commands as before.
 	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
 
-	// SandboxStorePerSandboxKeysFlag selects the key form new sandbox records
-	// are written with: on, keys tagged with the sandbox ID, so one sandbox's
-	// keys share a cluster slot; off, today's team-tagged keys. A record keeps
-	// the form it was written with. Target it per environment through the
-	// deployment_environment context. Read through BoolFlagOverride: a
-	// replica starts on the team-tagged keys and keeps the form it last
-	// selected while the flag is not served, by a client not ready, a value
-	// of another type, a key the environment does not define, or a flag
-	// turned off with no off variation. The flag must carry an off variation
-	// of false, the UI's default, for a flip off to put every replica back
-	// on the team-tagged keys.
-	SandboxStorePerSandboxKeysFlag = NewBoolFlag("sandbox-store-per-sandbox-keys", false)
-
 	// UnpaginatedTemplateListCapFlag caps GET /templates at 5000 templates; a
 	// team above it gets a 400 pointing at GET /v2/templates. Evaluated per team.
 	UnpaginatedTemplateListCapFlag = NewBoolFlag("unpaginated-template-list-cap", true)

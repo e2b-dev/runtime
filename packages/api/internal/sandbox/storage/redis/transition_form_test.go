@@ -40,9 +40,8 @@ func requireTransitionFailure(t *testing.T, waiter <-chan error, cause string) {
 
 // StartRemoving marks the transition and its result under the form the
 // record is in and nothing under the other form, and the callback publishes
-// the routing string of that result key: a waiter subscribed to it, whatever
-// the write form is by then, is woken well before its fallback poll and
-// returns the transition's result.
+// the routing string of that result key: a waiter subscribed to it is woken
+// well before its fallback poll and returns the transition's result.
 func TestStartRemovingUsesRecordForm(t *testing.T) {
 	t.Parallel()
 
@@ -68,9 +67,6 @@ func TestStartRemovingUsesRecordForm(t *testing.T) {
 		requireNoRecord(t, client, recordKey(form.other(), team, sbx.SandboxID))
 		require.False(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(key)))
 
-		// The write form flips after the transition started; the waiter
-		// finds it in the record's form.
-		storage.setWriteForm(form.other())
 		waiter := make(chan error, 1)
 		go func() { waiter <- storage.WaitForStateChange(t.Context(), teamID, sbx.SandboxID) }()
 		waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(resultKey), 1)
@@ -85,10 +81,10 @@ func TestStartRemovingUsesRecordForm(t *testing.T) {
 }
 
 // A wait carries the form and ID of the transition it found. The first
-// transition, in the team form, fails after a waiter joined it; the write
-// form flips and a successor's transition for the same sandbox ID appears in
-// the sandbox form before the waiter looks again. The waiter returns the
-// first transition's failure, not the successor's empty result.
+// transition, in the team form, fails after a waiter joined it, and a
+// successor's transition for the same sandbox ID appears in the sandbox form
+// before the waiter looks again. The waiter returns the first transition's
+// failure, not the successor's empty result.
 func TestWaitCarriesForm(t *testing.T) {
 	t.Parallel()
 

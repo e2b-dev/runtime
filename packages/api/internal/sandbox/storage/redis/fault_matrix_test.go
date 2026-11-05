@@ -15,10 +15,11 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// A flip row has one instance writing the sandbox form while another still
-// writes the team form, as replicas mid-rollout do, and every row's repair
-// checks run only after the crashed locks have expired and one healer sweep,
-// the point at which the design promises the store is whole again.
+// A team row's existing records are in the team form, as the release that
+// wrote it left them; a mixed row's are in both forms, as a store
+// mid-upgrade holds them; and every row's repair checks run only after the
+// crashed locks have expired and one healer sweep, the point at which the
+// design promises the store is whole again.
 
 var errInjected = errors.New("injected failure")
 
@@ -28,7 +29,7 @@ type matrixForm string
 const (
 	matrixTeam    matrixForm = "team"
 	matrixSandbox matrixForm = "sandbox"
-	matrixFlip    matrixForm = "flip"
+	matrixMixed   matrixForm = "flip"
 )
 
 // matrixKind is the failure a row injects.
@@ -89,16 +90,10 @@ func familyOf(p faultPoint) matrixFamily {
 }
 
 // skipReason says why a point cannot fire in a column. The team form's
-// scripts write the record with its index entry and remove the two
-// together, so nothing sits between them to fault.
+// remove script removes the record with its index entry, so nothing sits
+// between them to fault.
 func skipReason(p faultPoint, form matrixForm) string {
-	if form != matrixTeam {
-		return ""
-	}
-	switch p {
-	case faultAddAfterRecordWrite:
-		return "the team form's add script writes the index entry with the record, so the point is never consulted"
-	case faultRemoveAfterSREM:
+	if form == matrixTeam && p == faultRemoveAfterSREM {
 		return "the team form's remove script removes the index entry with the record, so the point is never consulted"
 	}
 
@@ -112,19 +107,19 @@ func repairsOf(report healReport) healReport {
 
 // matrixEnv is one row's world: a team with live sandboxes that are never
 // faulted, an undecodable record the readers must skip, the sandbox the
-// fault hits, and the instance that wrote the existing records beside the
-// one that runs the faulted operation. In the flip column the writer holds
-// the sandbox form and the actor the team form, except for an Add, whose
-// predecessor the team-form instance wrote and which the sandbox-form
-// instance resumes.
+// fault hits, and the instance that runs the faulted operation. existing is
+// the form the row's existing records are written in: the team form
+// directly, as the release that wrote it left them, or the sandbox form
+// through Add. In the mixed column the live records alternate, the victim
+// is in the sandbox form, and an Add's predecessor in the team form.
 type matrixEnv struct {
-	row    matrixRow
-	client redis.UniversalClient
-	writer *Storage
-	actor  *Storage
-	team   uuid.UUID
-	future time.Time
-	past   time.Time
+	row      matrixRow
+	client   redis.UniversalClient
+	actor    *Storage
+	existing keyForm
+	team     uuid.UUID
+	future   time.Time
+	past     time.Time
 
 	// refs are the sandboxes the row touched, for the invariants.
 	refs []recordRef
@@ -156,38 +151,23 @@ type matrixEnv struct {
 func newMatrixEnv(t *testing.T, row matrixRow) *matrixEnv {
 	t.Helper()
 
-	env := &matrixEnv{row: row, client: redis_utils.SetupInstance(t), team: uuid.New(), future: time.Now().Add(time.Hour), past: time.Now().Add(-time.Hour)}
-	instance := func(sandboxForm bool) *Storage {
-		s := newTestStorage(t, env.client)
-		s.SetPerSandboxWrites(sandboxForm)
-
-		return s
-	}
-	switch row.form {
-	case matrixTeam:
-		env.writer = instance(false)
-		env.actor = env.writer
-	case matrixSandbox:
-		env.writer = instance(true)
-		env.actor = env.writer
-	case matrixFlip:
-		env.writer, env.actor = instance(true), instance(false)
-		if familyOf(row.point) == familyAdd {
-			env.writer, env.actor = env.actor, env.writer
-		}
+	env := &matrixEnv{row: row, client: redis_utils.SetupInstance(t), existing: formSandbox, team: uuid.New(), future: time.Now().Add(time.Hour), past: time.Now().Add(-time.Hour)}
+	env.actor = newTestStorage(t, env.client)
+	if row.form == matrixTeam || (row.form == matrixMixed && familyOf(row.point) == familyAdd) {
+		env.existing = formTeam
 	}
 
 	env.garbageMember = writeGarbageRecord(t, env.client, env.garbage())
 	env.lockIDs = []string{garbageSandboxID}
 
-	// Alternating instances put live records in both forms in the flip column.
+	// Alternating forms put live records in both in the mixed column.
 	for i := range 3 {
 		sbx := env.record(fmt.Sprintf("sbx-live-%d", i), env.future)
-		s := env.writer
-		if i%2 == 1 {
-			s = env.actor
+		form := env.existing
+		if row.form == matrixMixed && i%2 == 1 {
+			form = form.other()
 		}
-		require.NoError(t, s.Add(t.Context(), sbx))
+		addRecord(t, env.actor, form, sbx)
 		env.lives = append(env.lives, sbx)
 		env.alive = append(env.alive, sbx.SandboxID)
 	}
@@ -247,14 +227,14 @@ func (env *matrixEnv) report(ids ...string) []sandboxtypes.NodeSandbox {
 }
 
 // resolvedLock returns the lock key an operation on the sandbox takes: the
-// form its record is in, or the actor's write form when it has none.
+// form its record is in, or the sandbox form when it has none.
 func (env *matrixEnv) resolvedLock(t *testing.T, id string) string {
 	t.Helper()
 
 	form, ok, err := env.actor.formOfExisting(t.Context(), env.team.String(), id)
 	require.NoError(t, err)
 	if !ok {
-		form = env.actor.writeForm()
+		form = formSandbox
 	}
 
 	return redis_utils.GetLockKey(recordKey(form, env.team.String(), id))
@@ -292,18 +272,18 @@ func (env *matrixEnv) inject(t *testing.T) {
 	}
 }
 
-// injectAdd resumes, under the fault, a sandbox the writer created and
-// paused out, which removed its record, entry and member: a resume is the
-// Add this project changes, and it writes the ID afresh in the actor's
-// form. An error at the index entry or at the team's global entry is a
-// success the healer completes; every other error fails the Add; a crash
-// ends it where it stands, both locks held.
+// injectAdd resumes, under the fault, a sandbox created in the existing
+// form and paused out, which removed its record, entry and member: a resume
+// is the Add this project changes, and it writes the ID afresh in the
+// sandbox form. An error at the index entry or at the team's global entry
+// is a success the healer completes; every other error fails the Add; a
+// crash ends it where it stands, both locks held.
 func (env *matrixEnv) injectAdd(t *testing.T) {
 	t.Helper()
 
 	predecessor := env.record("sbx-victim", env.future)
-	require.NoError(t, env.writer.Add(t.Context(), predecessor))
-	env.pauseOut(t, env.writer, predecessor)
+	addRecord(t, env.actor, env.existing, predecessor)
+	env.pauseOut(t, env.actor, predecessor)
 	env.victim = predecessor
 	env.victim.ExecutionID = uuid.NewString()
 	env.original = env.victim
@@ -329,17 +309,16 @@ func (env *matrixEnv) injectAdd(t *testing.T) {
 // addOutcome is the state the design admits after the row's fault: whether
 // the resumed record exists, whether it is indexed, and whether its
 // expiration member was written. Before the record write nothing but the
-// member exists, and an error there undoes the write; the team form's
-// script indexes with the write, the sandbox form's entry follows it.
+// member exists, and an error there undoes the write; the index entry
+// follows the write.
 func (env *matrixEnv) addOutcome() (record, indexed, member bool) {
-	crash := env.row.crash()
 	switch env.row.point {
 	case faultAddAfterLocks:
 		return false, false, false
 	case faultAddBeforeOtherDel, faultAddAfterOtherDel:
 		return false, false, true
 	case faultAddRecordWrite:
-		return crash, crash && env.actor.writeForm() == formTeam, true
+		return env.row.crash(), false, true
 	case faultAddAfterRecordWrite:
 		return true, false, true
 	default:
@@ -352,8 +331,7 @@ func (env *matrixEnv) assertAddState(t *testing.T) {
 
 	ctx := t.Context()
 	record, indexed, member := env.addOutcome()
-	form := env.actor.writeForm()
-	key := recordKey(form, env.team.String(), env.victim.SandboxID)
+	key := recordKey(formSandbox, env.team.String(), env.victim.SandboxID)
 	if record {
 		requireRecord(t, env.client, key, mustJSON(t, env.victim))
 		sbx, err := env.actor.Get(ctx, env.team, env.victim.SandboxID)
@@ -361,7 +339,7 @@ func (env *matrixEnv) assertAddState(t *testing.T) {
 		require.Equal(t, env.victim.ExecutionID, sbx.ExecutionID)
 	} else {
 		requireNoRecord(t, env.client, key)
-		requireNoRecord(t, env.client, recordKey(form.other(), env.team.String(), env.victim.SandboxID))
+		requireNoRecord(t, env.client, recordKey(formTeam, env.team.String(), env.victim.SandboxID))
 		_, err := env.actor.Get(ctx, env.team, env.victim.SandboxID)
 		require.ErrorIs(t, err, sandboxtypes.ErrNotFound)
 	}
@@ -386,10 +364,9 @@ func (env *matrixEnv) injectRemove(t *testing.T) {
 	t.Helper()
 
 	env.victim = env.record("sbx-victim", env.past)
-	require.NoError(t, env.writer.Add(t.Context(), env.victim))
+	key := addRecord(t, env.actor, env.existing, env.victim)
 	env.original = env.victim
 	env.lockIDs = append(env.lockIDs, env.victim.SandboxID)
-	key := recordKey(env.writer.writeForm(), env.team.String(), env.victim.SandboxID)
 	if env.row.crash() {
 		env.heldOnCrash = []string{redis_utils.GetLockKey(key)}
 	}
@@ -421,20 +398,20 @@ func (env *matrixEnv) injectRemove(t *testing.T) {
 	}
 }
 
-// injectUpdate fails a keepalive of a sandbox the writer holds before its
-// lock: nothing is written, no lock is taken and the error returned.
+// injectUpdate fails a keepalive of a stored sandbox before its lock:
+// nothing is written, no lock is taken and the error returned.
 func (env *matrixEnv) injectUpdate(t *testing.T) {
 	t.Helper()
 
 	env.victim = env.record("sbx-victim", env.future)
-	require.NoError(t, env.writer.Add(t.Context(), env.victim))
+	key := addRecord(t, env.actor, env.existing, env.victim)
 	env.original = env.victim
 	env.lockIDs = append(env.lockIDs, env.victim.SandboxID)
 
 	env.arm()
 	_, err := env.keepalive(t, env.actor)
 	require.ErrorIs(t, err, env.row.injected())
-	requireRecord(t, env.client, recordKey(env.writer.writeForm(), env.team.String(), env.victim.SandboxID), mustJSON(t, env.victim))
+	requireRecord(t, env.client, key, mustJSON(t, env.victim))
 }
 
 func (env *matrixEnv) keepalive(t *testing.T, s *Storage) (sandboxtypes.Sandbox, error) {
@@ -457,7 +434,7 @@ func (env *matrixEnv) injectReaders(t *testing.T) {
 
 	ctx := t.Context()
 	expired := env.lives[0]
-	_, err := env.writer.Update(ctx, env.team, expired.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err := env.actor.Update(ctx, env.team, expired.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		sbx.EndTime = env.past
 
 		return sbx, nil
@@ -481,8 +458,8 @@ func (env *matrixEnv) injectReaders(t *testing.T) {
 // injectHealer runs a sweep whose repairs the fault interrupts, over a
 // nominee of every kind the walks find: a Running record older than the
 // grace period without its index entry, in the column's form and in the
-// flip column in both; an index entry that has dangled past the grace
-// period; in the flip column a twin, one record per form; and the
+// mixed column in both; an index entry that has dangled past the grace
+// period; in the mixed column a twin, one record per form; and the
 // undecodable record. The interrupted sweep must repair nothing by halves;
 // an error releases every lock, and a crash under the locks leaves them
 // held.
@@ -492,16 +469,16 @@ func (env *matrixEnv) injectHealer(t *testing.T) {
 	ctx := t.Context()
 	env.victim = env.record("sbx-unindexed", env.future)
 	env.original = env.victim
-	require.NoError(t, env.writer.Add(ctx, env.victim))
+	addRecord(t, env.actor, env.existing, env.victim)
 	require.NoError(t, env.client.SRem(ctx, env.index(), env.victim.SandboxID).Err())
 	env.track("sbx-dangling")
 	require.NoError(t, env.client.SAdd(ctx, env.index(), "sbx-dangling").Err())
 	env.lockIDs = append(env.lockIDs, env.victim.SandboxID, "sbx-dangling")
 	env.expectRepairs = healReport{Readded: 1, Removed: 1}
 	nominees := []string{env.victim.SandboxID}
-	if env.row.form == matrixFlip {
+	if env.row.form == matrixMixed {
 		other := env.record("sbx-unindexed-other", env.future)
-		require.NoError(t, env.actor.Add(ctx, other))
+		addRecord(t, env.actor, env.existing.other(), other)
 		require.NoError(t, env.client.SRem(ctx, env.index(), other.SandboxID).Err())
 		env.alive = append(env.alive, other.SandboxID)
 		nominees = append(nominees, other.SandboxID)
@@ -530,7 +507,7 @@ func (env *matrixEnv) injectHealer(t *testing.T) {
 		require.NoError(t, err)
 		require.Truef(t, exists, "the interrupted sweep deleted %s", id)
 	}
-	if env.row.form == matrixFlip {
+	if env.row.form == matrixMixed {
 		requireRecord(t, env.client, recordKey(formTeam, env.team.String(), "sbx-twin"), mustJSON(t, env.twinOlder))
 		requireRecord(t, env.client, recordKey(formSandbox, env.team.String(), "sbx-twin"), mustJSON(t, env.twinNewer))
 	}
@@ -542,7 +519,7 @@ func (env *matrixEnv) injectHealer(t *testing.T) {
 		for _, id := range []string{env.victim.SandboxID, "sbx-dangling", garbageSandboxID} {
 			env.heldOnCrash = append(env.heldOnCrash, env.resolvedLock(t, id))
 		}
-		if env.row.form == matrixFlip {
+		if env.row.form == matrixMixed {
 			teamLock, sandboxLock := lockKeys(env.team, "sbx-twin")
 			env.heldOnCrash = append(env.heldOnCrash, env.resolvedLock(t, "sbx-unindexed-other"), teamLock, sandboxLock)
 		}
@@ -629,17 +606,15 @@ func (env *matrixEnv) assertHealed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sandboxtypes.StateRunning, sbx.State)
 	require.Equal(t, env.victim.ExecutionID, sbx.ExecutionID)
-	for _, s := range []*Storage{env.writer, env.actor} {
-		running, err := s.TeamItems(ctx, env.team, []sandboxtypes.State{sandboxtypes.StateRunning})
-		require.NoError(t, err)
-		for _, item := range running {
-			require.Equalf(t, sandboxtypes.StateRunning, item.State, "%s listed as Running", item.SandboxID)
-		}
-		require.ElementsMatch(t, env.alive, sandboxIDsOf(running), "the Running listing")
-		all, err := s.TeamItems(ctx, env.team, nil)
-		require.NoError(t, err)
-		require.ElementsMatch(t, env.alive, sandboxIDsOf(all), "the unfiltered listing")
+	running, err := env.actor.TeamItems(ctx, env.team, []sandboxtypes.State{sandboxtypes.StateRunning})
+	require.NoError(t, err)
+	for _, item := range running {
+		require.Equalf(t, sandboxtypes.StateRunning, item.State, "%s listed as Running", item.SandboxID)
 	}
+	require.ElementsMatch(t, env.alive, sandboxIDsOf(running), "the Running listing")
+	all, err := env.actor.TeamItems(ctx, env.team, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, env.alive, sandboxIDsOf(all), "the unfiltered listing")
 	counts, err := env.actor.TeamsWithSandboxCount(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(env.alive)), counts[env.team])
@@ -695,7 +670,7 @@ func (env *matrixEnv) assertFamilyHealed(t *testing.T) {
 	case familyHealer:
 		requireIndexed(t, env.client, env.index(), env.victim.SandboxID, true)
 		requireIndexed(t, env.client, env.index(), "sbx-dangling", false)
-		if env.row.form == matrixFlip {
+		if env.row.form == matrixMixed {
 			requireIndexed(t, env.client, env.index(), "sbx-unindexed-other", true)
 			requireNoRecord(t, env.client, recordKey(formTeam, env.team.String(), "sbx-twin"))
 			requireRecord(t, env.client, recordKey(formSandbox, env.team.String(), "sbx-twin"), mustJSON(t, env.twinNewer))
@@ -713,8 +688,8 @@ func sandboxIDsOfNodes(nodes []sandboxtypes.NodeSandbox) []string {
 	return ids
 }
 
-// Every fault point, as a returned error and as a crash, in the team form,
-// the sandbox form and the middle of a flip: the fault leaves the state and
+// Every fault point, as a returned error and as a crash, with the existing
+// records in the team form, the sandbox form and both: the fault leaves the state and
 // the locks the design admits; after the crashed locks expire, one healer
 // sweep repairs exactly what the design says, no sandbox a node reports is
 // an orphan, a resume of an ID whose record is gone is admitted, a stale
@@ -734,7 +709,7 @@ func TestFaultMatrix(t *testing.T) {
 	}
 	for _, point := range points {
 		for _, kind := range []matrixKind{matrixError, matrixCrash} {
-			for _, form := range []matrixForm{matrixTeam, matrixSandbox, matrixFlip} {
+			for _, form := range []matrixForm{matrixTeam, matrixSandbox, matrixMixed} {
 				row := matrixRow{point: point, kind: kind, form: form}
 				t.Run(row.String(), func(t *testing.T) {
 					t.Parallel()

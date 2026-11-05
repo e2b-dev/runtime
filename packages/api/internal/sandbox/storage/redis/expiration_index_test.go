@@ -101,7 +101,7 @@ func TestAddRemove_ExecutionScopedMember(t *testing.T) {
 	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID, sbx.ExecutionID))
 	requireMemberAbsent(t, client, member)
 
-	err := client.Get(t.Context(), getSandboxKey(teamID.String(), sbx.SandboxID)).Err()
+	err := client.Get(t.Context(), recordKey(formSandbox, teamID.String(), sbx.SandboxID)).Err()
 	require.ErrorIs(t, err, redis.Nil)
 }
 

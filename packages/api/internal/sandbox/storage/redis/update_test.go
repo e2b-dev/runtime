@@ -43,21 +43,20 @@ func TestGetReadsBothForms(t *testing.T) {
 	require.Equal(t, int64(1), fallbacks(), "a miss in both forms is not a fallback")
 }
 
-// Update reads only the form it resolved and locked. A sandbox-form record
-// that appears after the resolution, the write form being the team form, is
-// a resume's, written under both form locks before Update took the team
-// form's: Update finds its form empty, releases that lock, resolves once
-// more and updates the record under the sandbox form's lock, never inside
-// the lock it first held.
+// Update reads only the form it resolved and locked. A team-form record
+// that appears after the resolution, as a replica of the release that still
+// writes that form resumes the sandbox under both form locks before Update
+// took the sandbox form's: Update finds its form empty, releases that lock,
+// resolves once more and updates the record under the team form's lock,
+// never inside the lock it first held.
 func TestUpdateFollowsALateRecordUnderItsOwnLock(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
 	storage := newTestStorage(t, client)
-	storage.setWriteForm(formTeam)
 	teamID := uuid.New()
 	sbx := newRecord(teamID, "sbx-late")
-	key := recordKey(formSandbox, teamID.String(), sbx.SandboxID)
+	key := recordKey(formTeam, teamID.String(), sbx.SandboxID)
 	teamLock, sandboxLock := lockKeys(teamID, sbx.SandboxID)
 	storage.SetFaultHook(func(p faultPoint) error {
 		if p == faultUpdateAfterResolve {
@@ -70,8 +69,8 @@ func TestUpdateFollowsALateRecordUnderItsOwnLock(t *testing.T) {
 	runs := 0
 	updated, err := storage.Update(t.Context(), teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		runs++
-		require.True(t, lockHeld(t, storage.locker, sandboxLock), "the closure ran without the record's lock")
-		require.False(t, lockHeld(t, storage.locker, teamLock), "the closure ran inside the lock of the empty form")
+		require.True(t, lockHeld(t, storage.locker, teamLock), "the closure ran without the record's lock")
+		require.False(t, lockHeld(t, storage.locker, sandboxLock), "the closure ran inside the lock of the empty form")
 		cur.TemplateID = "late"
 
 		return cur, nil
@@ -84,27 +83,23 @@ func TestUpdateFollowsALateRecordUnderItsOwnLock(t *testing.T) {
 	requireLocksFree(t, storage, teamID, sbx.SandboxID)
 }
 
-// Two replicas whose write forms differ agree on an existing record: one
-// written in either form is updated by a replica whose write form is the
-// other, under the lock of the form the record is in, that form's only, in
-// place and with its member rescored.
-func TestUpdateFlagSkew(t *testing.T) {
+// A record in either form is updated under the lock of the form it is in,
+// that form's only, in place and with its member rescored.
+func TestUpdateLocksRecordForm(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
-	writer := newTestStorage(t, client)
-	updater := newTestStorage(t, client)
+	storage := newTestStorage(t, client)
 	teamID := uuid.New()
 
 	for _, form := range []keyForm{formTeam, formSandbox} {
 		sbx := newRecord(teamID, fmt.Sprintf("sbx-%d", form))
-		key := addRecord(t, writer, form, sbx)
+		key := addRecord(t, storage, form, sbx)
 		otherKey := recordKey(form.other(), teamID.String(), sbx.SandboxID)
-		updater.setWriteForm(form.other())
 
-		updated, err := updater.Update(t.Context(), teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
-			require.True(t, lockHeld(t, updater.locker, redis_utils.GetLockKey(key)), "the record form's lock is not held")
-			require.False(t, lockHeld(t, updater.locker, redis_utils.GetLockKey(otherKey)), "the write form's lock is held")
+		updated, err := storage.Update(t.Context(), teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+			require.True(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(key)), "the record form's lock is not held")
+			require.False(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(otherKey)), "the other form's lock is held")
 			cur.EndTime = cur.EndTime.Add(time.Hour)
 
 			return cur, nil
@@ -114,6 +109,6 @@ func TestUpdateFlagSkew(t *testing.T) {
 		requireRecord(t, client, key, mustJSON(t, updated))
 		requireNoRecord(t, client, otherKey)
 		requireMemberScore(t, client, sandboxExpirationMember(updated), float64(updated.EndTime.UnixMilli()))
-		require.False(t, lockHeld(t, updater.locker, redis_utils.GetLockKey(key)))
+		require.False(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(key)))
 	}
 }

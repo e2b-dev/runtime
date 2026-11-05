@@ -49,8 +49,8 @@ var (
 	globalExpirationSet = redis_utils.CreateKey(sandboxKeyPrefix, "global:expiration")
 
 	// SchemeMarkerKey holds the oldest release that may run against the
-	// store's keys; Start writes it, and a later release warns when it is
-	// absent.
+	// store's keys; Start writes it when absent, and warns, since a release
+	// older than the scheme kills sandbox-form records' sandboxes as orphans.
 	SchemeMarkerKey = redis_utils.CreateKey(sandboxKeyPrefix, "scheme", "min-release")
 )
 

@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -8,20 +9,45 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// addRecord stores sbx through Add in the given form and returns its key.
+// addRecord stores sbx in the given form and returns its key: through Add in
+// the sandbox form, and directly in the team form, which Add no longer
+// writes.
 func addRecord(t *testing.T, storage *Storage, form keyForm, sbx sandboxtypes.Sandbox) string {
 	t.Helper()
 
-	storage.setWriteForm(form)
+	if form == formTeam {
+		return writeTeamRecord(t.Context(), t, storage.redisClient, sbx)
+	}
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	return recordKey(form, sbx.TeamID.String(), sbx.SandboxID)
+	return recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+}
+
+// writeTeamRecord writes sbx as the release that wrote the team form left a
+// sandbox: its record, index entry, expiration member and team entry, and
+// no sandbox-form record. It returns the record key.
+func writeTeamRecord(ctx context.Context, t *testing.T, client redis.UniversalClient, sbx sandboxtypes.Sandbox) string {
+	t.Helper()
+
+	team := sbx.TeamID.String()
+	key := recordKey(formTeam, team, sbx.SandboxID)
+	pipe := client.Pipeline()
+	pipe.Del(ctx, recordKey(formSandbox, team, sbx.SandboxID))
+	pipe.Set(ctx, key, mustJSON(t, sbx), 0)
+	pipe.SAdd(ctx, GetSandboxStorageTeamIndexKey(team), sbx.SandboxID)
+	pipe.ZAdd(ctx, globalExpirationSet, redis.Z{Score: float64(sbx.EndTime.UnixMilli()), Member: sandboxExpirationMember(sbx)})
+	pipe.ZAdd(ctx, globalTeamsSet, redis.Z{Score: float64(time.Now().Unix()), Member: team})
+	_, err := pipe.Exec(ctx)
+	require.NoError(t, err)
+
+	return key
 }
 
 // Remove deletes the record, its index entry and its expiration member in
@@ -109,9 +135,9 @@ func TestRemoveStrandedCounter(t *testing.T) {
 	require.False(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(key)))
 }
 
-// An Add of the same sandbox ID under the other write form waits for the
-// lock a Remove holds: its record appears, and the index entry the Remove
-// took out is back, only after the Remove ends.
+// An Add of the same sandbox ID waits for the team-form lock a Remove of a
+// team-form record holds: its record appears, and the index entry the
+// Remove took out is back, only after the Remove ends.
 func TestRemoveSuccessorAddWaitsForLock(t *testing.T) {
 	t.Parallel()
 
@@ -121,18 +147,18 @@ func TestRemoveSuccessorAddWaitsForLock(t *testing.T) {
 	teamID := uuid.New()
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	old := newRecord(teamID, "sbx-reused")
-	oldKey := addRecord(t, storage, formSandbox, old)
+	oldKey := addRecord(t, storage, formTeam, old)
 	successor := newRecord(teamID, old.SandboxID)
-	successorKey := recordKey(formTeam, teamID.String(), old.SandboxID)
+	successorKey := recordKey(formSandbox, teamID.String(), old.SandboxID)
 	teamLock, sandboxLock := lockKeys(teamID, old.SandboxID)
 
-	// Remove stops between the SREM and the record delete, lock held, until
-	// released.
+	// Remove stops between the record delete and the member removal, lock
+	// held, until released.
 	reached := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
 	storage.SetFaultHook(func(p faultPoint) error {
-		if p == faultRemoveAfterSREM {
+		if p == faultRemoveAfterDelete {
 			once.Do(func() { close(reached) })
 			<-release
 		}
@@ -149,14 +175,14 @@ func TestRemoveSuccessorAddWaitsForLock(t *testing.T) {
 		require.FailNow(t, "Remove did not reach the fault point")
 	}
 
-	storage.setWriteForm(formTeam)
 	addDone := make(chan error, 1)
 	go func() { addDone <- storage.Add(t.Context(), successor) }()
 
-	waitForLockWaiter(t, storage.subManager, getLockRoutingKey(sandboxLock), addDone)
-	require.True(t, lockHeld(t, storage.locker, teamLock))
+	waitForLockWaiter(t, storage.subManager, getLockRoutingKey(teamLock), addDone)
+	require.False(t, lockHeld(t, storage.locker, sandboxLock))
 	requireIndexed(t, client, index, old.SandboxID, false)
-	requireRecord(t, client, oldKey, mustJSON(t, old))
+	requireNoRecord(t, client, oldKey)
+	requireMemberScore(t, client, sandboxExpirationMember(old), float64(old.EndTime.UnixMilli()))
 	requireNoRecord(t, client, successorKey)
 
 	close(release)

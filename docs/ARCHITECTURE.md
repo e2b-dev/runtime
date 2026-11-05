@@ -158,13 +158,17 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   Only the two list endpoints use the snapshot; the evictor, reconcile, template delete and
   team teardown keep reading the store directly.
 - **Sandbox store key forms**: a sandbox's record, lock and transition keys are tagged with its
-  team ID, as all records so far, or with its own sandbox ID, so one team's sandboxes no longer
-  share one Redis Cluster slot and thread. The LaunchDarkly `sandbox-store-per-sandbox-keys` flag,
-  read every 30 s, picks the form of new records only; a record keeps its form until it expires,
-  each operation on an existing sandbox first finds its form, and the team index and reservations
-  stay under the team tag. A healer re-indexes a running record that lost its index entry, deletes a stale
-  non-running one, drops recordless entries and the older of a sandbox's two records. An older
-  release would kill sandbox-tagged records' sandboxes as orphans, so none may run while any exist.
+  own sandbox ID, so one team's sandboxes no longer share one Redis Cluster slot and thread; the
+  team index and reservations stay under the team tag. Records earlier releases wrote are tagged
+  with the team ID and keep that form until they expire: each operation on an existing sandbox
+  first finds its form, and a create takes the sandbox's lock in both forms. A healer re-indexes a
+  running record that lost its index entry, deletes a stale non-running one, drops recordless
+  entries and the older of a sandbox's two records. Upgrading: an API older than 0.30.0 does not
+  read sandbox-tagged records and kills their sandboxes as orphans, so no such replica may run
+  once a replica of this release has started: stop every older replica before starting this
+  release rather than rolling them over, and never roll back to one while sandbox-tagged records
+  exist. A release that reads both forms writes a marker key on start; this release warns on start
+  when the marker was absent, which a single-replica install may ignore.
 - **Workload identity**: sandbox create accepts an optional `iam.tokens` map of caller-named
   workload-token definitions (each an exact `audience` and `tokenType`). A non-empty, validated
   map enables workload identity, whose identity the orchestrator derives from the sandbox's

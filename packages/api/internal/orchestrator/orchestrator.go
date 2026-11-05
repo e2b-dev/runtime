@@ -214,9 +214,6 @@ func New(
 		localClusterOwnsOrchestrators: skipNomadSync,
 	}
 
-	// Before the node sync can write a record.
-	o.updateStoreWriteForm(ctx)
-
 	o.sandboxStore = sandbox.NewStore(
 		redisStorage,
 		redisreservations.NewReservationStorage(redisClient, redisStorage.Notifier()),
@@ -356,8 +353,8 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// refreshFlagConfig re-reads the flag-driven settings every 30 s: the
-// BestOfK placement configuration and the sandbox store's write key form.
+// refreshFlagConfig re-reads the BestOfK placement configuration from its
+// flags every 30 s.
 func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -368,7 +365,6 @@ func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
 			return
 		case <-ticker.C:
 			o.placementAlgorithm.UpdateConfig(getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages))
-			o.updateStoreWriteForm(ctx)
 		}
 	}
 }

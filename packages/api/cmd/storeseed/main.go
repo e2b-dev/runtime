@@ -1,6 +1,6 @@
 // Command storeseed writes synthetic sandbox records for one team into the
-// sandbox store, in the key form chosen, so a list can be measured against a
-// known population, and -delete removes the ones this tool wrote.
+// sandbox store, so a list can be measured against a known population, and
+// -delete removes the ones this tool wrote.
 package main
 
 import (
@@ -13,7 +13,6 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/metric/noop"
 	"golang.org/x/sync/errgroup"
 
@@ -39,8 +38,8 @@ const (
 
 const usage = `Usage: storeseed [flags]
 
-Writes synthetic sandbox records for one team into the sandbox store in the
-key form chosen; -delete removes the ones this tool wrote.
+Writes synthetic sandbox records for one team into the sandbox store; -delete
+removes the ones this tool wrote.
 
 The connection comes from the API's environment (REDIS_URL or
 REDIS_CLUSTER_URL, REDIS_TLS_CA_BASE64, REDIS_TLS_ENABLED, REDIS_PASSWORD), so
@@ -55,10 +54,6 @@ sandbox's usage events for each. Seed a dedicated, non-billed test team and
 run -delete before the end time. The healer's census, the
 api.redis_storage.records.form gauge, shows the records of each form after
 its next sweep.
-
-Sandbox-form records are refused unless the store carries the scheme marker
-an API that knows the per-sandbox key scheme writes on start: an older API
-would kill every such record's sandbox as an orphan.
 
 Flags:
 `
@@ -79,7 +74,6 @@ func main() {
 	}
 	team := flag.String("team", "", "ID of the team the records belong to")
 	count := flag.Int("count", 100, "records to write")
-	form := flag.String("form", "team", "key form of the records written: team or sandbox")
 	lifetime := flag.Duration("lifetime", 4*time.Hour, "how long the records written run before the evictor removes them")
 	del := flag.Bool("delete", false, "remove the team's seeded records instead of writing")
 	flag.Parse()
@@ -96,22 +90,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("-team: %s", err)
 	}
-	if *form != "team" && *form != "sandbox" {
-		log.Fatal("-form must be team or sandbox")
-	}
 
-	err = run(context.Background(), config, func(ctx context.Context, client redis.UniversalClient, store *redisbackend.Storage) error {
-		store.SetPerSandboxWrites(*form == "sandbox")
+	err = run(context.Background(), config, func(ctx context.Context, store *redisbackend.Storage) error {
 		if *del {
 			return deleteSeeded(ctx, store, teamID)
 		}
-		if *form == "sandbox" {
-			if err := requireSchemeMarker(ctx, client); err != nil {
-				return err
-			}
-		}
 
-		return seed(ctx, store, teamID, *count, *form, *lifetime)
+		return seed(ctx, store, teamID, *count, *lifetime)
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -120,7 +105,7 @@ func main() {
 
 // run opens the store as the API does and calls op with it, closing
 // everything on return.
-func run(ctx context.Context, config factories.RedisConfig, op func(context.Context, redis.UniversalClient, *redisbackend.Storage) error) error {
+func run(ctx context.Context, config factories.RedisConfig, op func(context.Context, *redisbackend.Storage) error) error {
 	// The store logs what it leaves for the healer; without a global logger
 	// those lines would be dropped.
 	l, err := logger.NewLogger(logger.LoggerConfig{ServiceName: "storeseed", IsInternal: true, EnableConsole: true})
@@ -143,27 +128,12 @@ func run(ctx context.Context, config factories.RedisConfig, op func(context.Cont
 		return fmt.Errorf("storage: %w", err)
 	}
 
-	return op(ctx, client, store)
+	return op(ctx, store)
 }
 
-// requireSchemeMarker fails when the store carries no scheme marker: no API
-// that knows the per-sandbox key scheme has started on it, and an older one
-// would kill every sandbox-form record's sandbox as an orphan.
-func requireSchemeMarker(ctx context.Context, client redis.UniversalClient) error {
-	err := client.Get(ctx, redisbackend.SchemeMarkerKey).Err()
-	if errors.Is(err, redis.Nil) {
-		return fmt.Errorf("the store carries no scheme marker, so no API that knows the per-sandbox key scheme has started on it; seed the team form, or, if no older API will ever run against this store, write the marker by hand: SET %s %s", redisbackend.SchemeMarkerKey, redisbackend.SchemeMinRelease)
-	}
-	if err != nil {
-		return fmt.Errorf("scheme marker: %w", err)
-	}
-
-	return nil
-}
-
-// seed writes count records in the store's write form, each under its own
-// lock, as the API writes a new sandbox.
-func seed(ctx context.Context, store *redisbackend.Storage, teamID uuid.UUID, count int, form string, lifetime time.Duration) error {
+// seed writes count records, each under its own lock, as the API writes a
+// new sandbox.
+func seed(ctx context.Context, store *redisbackend.Storage, teamID uuid.UUID, count int, lifetime time.Duration) error {
 	if count <= 0 {
 		return errors.New("-count must be positive")
 	}
@@ -180,7 +150,7 @@ func seed(ctx context.Context, store *redisbackend.Storage, teamID uuid.UUID, co
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
-	fmt.Printf("wrote %d %s-form records for team %s\n", count, form, teamID)
+	fmt.Printf("wrote %d records for team %s\n", count, teamID)
 
 	return nil
 }

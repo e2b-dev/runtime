@@ -83,8 +83,8 @@ func TestBuildersRejectBadIDs(t *testing.T) {
 }
 
 // The form of a sandbox is the form of the record that exists, the sandbox
-// form when both do; only a sandbox with no record takes the write form,
-// which defaults to the team form.
+// form when both do; only a sandbox with no record takes the sandbox form,
+// which new records are written in.
 func TestResolveForm(t *testing.T) {
 	t.Parallel()
 
@@ -93,8 +93,6 @@ func TestResolveForm(t *testing.T) {
 	ctx := t.Context()
 	teamID := uuid.New()
 	team := teamID.String()
-	require.Equal(t, formTeam, storage.writeForm())
-	require.False(t, storage.WritesPerSandbox())
 
 	// existing is the form formOfExisting reports, 0 for no record.
 	records := []struct {
@@ -117,19 +115,13 @@ func TestResolveForm(t *testing.T) {
 		assert.Equal(t, tc.existing != 0, exists, tc.name)
 		assert.Equal(t, tc.existing, existing, tc.name)
 
-		for _, writeForm := range []keyForm{formTeam, formSandbox} {
-			storage.SetPerSandboxWrites(writeForm == formSandbox)
-			require.Equal(t, writeForm, storage.writeForm())
-			require.Equal(t, writeForm == formSandbox, storage.WritesPerSandbox())
-
-			want := tc.existing
-			if want == 0 {
-				want = writeForm
-			}
-			resolved, err := storage.resolveForm(ctx, team, sandboxID)
-			require.NoError(t, err)
-			assert.Equal(t, want, resolved, "%s record, write form %d", tc.name, writeForm)
+		want := tc.existing
+		if want == 0 {
+			want = formSandbox
 		}
+		resolved, err := storage.resolveForm(ctx, team, sandboxID)
+		require.NoError(t, err)
+		assert.Equal(t, want, resolved, tc.name)
 	}
 }
 

@@ -38,8 +38,11 @@ func landSuccessorOnProbe(t *testing.T, client goredis.UniversalClient, storage 
 		err := next(ctx, cmd)
 		if args := cmd.Args(); cmd.Name() == probe && len(args) > 1 {
 			if key, ok := args[1].(string); ok && strings.HasSuffix(key, oldKey) && fired.CompareAndSwap(false, true) {
-				storage.setWriteForm(to)
-				require.NoError(t, storage.Add(ctx, successor))
+				if to == formTeam {
+					writeTeamRecord(ctx, t, client, successor)
+				} else {
+					require.NoError(t, storage.Add(ctx, successor))
+				}
 			}
 		}
 
