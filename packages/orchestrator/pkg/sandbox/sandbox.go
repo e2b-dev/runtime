@@ -1822,6 +1822,17 @@ func (f *Factory) ResumeSandbox(
 	defer span.End()
 	defer handleSpanError(span, &e)
 
+	// The neighbours this resume competes with, sampled before it adds its own
+	// work; the host's CPU share over the resume is read when it ends.
+	otherResumes := resumesInFlight.Add(1) - 1
+	defer resumesInFlight.Add(-1)
+	span.SetAttributes(resumeNodeAttrs(otherResumes, prefetch.SampleActivity())...)
+	span.SetAttributes(attribute.Bool("sandbox.hugepages", config.HugePages))
+	hostCPU, hostCPUOK := sampleHostCPU()
+	defer func() {
+		span.SetAttributes(resumeHostAttrs(hostCPU, hostCPUOK)...)
+	}()
+
 	var ropts resumeOptions
 	for _, opt := range opts {
 		opt(&ropts)
@@ -1960,12 +1971,24 @@ func (f *Factory) ResumeSandbox(
 		// resolved to, so a resume can be cohorted by prefetch source and by who
 		// produced its mapping (guards against flag misconfiguration) and the
 		// last-cycle set size is visible per resume.
-		execSpan.SetAttributes(
+		_, prefetchSpan := tracer.Start(ctx, "resume-prefetch-context")
+		prefetchAttrs := []attribute.KeyValue{
 			attribute.String("resume.prefetch.source", source),
 			attribute.String("resume.prefetch.init_origin", initOrigin),
 			attribute.Int("resume.prefetch.init_blocks", initMapping.Count()),
 			attribute.Int("resume.prefetch.last_cycle_blocks", lastCycleMapping.Count()),
-		)
+		}
+		if prefetchSpan.IsRecording() || execSpan.IsRecording() {
+			prefetchAttrs = append(prefetchAttrs,
+				attribute.Float64("resume.prefetch.init_cached_pct", cachedPercent(ctx, memfile, initMapping)),
+				attribute.Float64("resume.prefetch.last_cycle_cached_pct", cachedPercent(ctx, memfile, lastCycleMapping)),
+			)
+		}
+		execSpan.SetAttributes(prefetchAttrs...)
+		// The execution span ends when the sandbox exits; this short span makes
+		// the prefetch context available as soon as the resume is complete.
+		prefetchSpan.SetAttributes(prefetchAttrs...)
+		prefetchSpan.End()
 
 		if initMapping == nil && lastCycleMapping == nil {
 			return
@@ -2237,8 +2260,10 @@ func (f *Factory) ResumeSandbox(
 	// resume working set is labelled; older templates are labelled by
 	// labelBalloonMode once the process is up.
 	if meta.Balloon != nil {
-		sbx.StampBalloonMode(balloonModeOf(fc.BalloonCaps{Reporting: meta.Balloon.Reporting, Hinting: meta.Balloon.Hinting}))
+		mode := balloonModeOf(fc.BalloonCaps{Reporting: meta.Balloon.Reporting, Hinting: meta.Balloon.Hinting})
+		sbx.StampBalloonMode(mode)
 	}
+	span.SetAttributes(attribute.String("sandbox.balloon_mode", sbx.BalloonMode()))
 
 	// A profile can restore through the userfaultfd backend alone: the version
 	// gate would switch memfd and synchronous write-protect on for any current
@@ -5149,6 +5174,12 @@ func (s *Sandbox) WaitForEnvd(
 
 	// Count the first attempt, but establish StartedAt on the first success.
 	firstStart := s.startupRecorded.CompareAndSwap(false, true)
+	var startup postStartBase
+	captureStartup := func() {
+		if firstStart && !s.skipStartupMetrics && startup.at.IsZero() {
+			startup = postStartBase{at: time.Now(), stats: s.memory.ServeStats(), startType: startType}
+		}
+	}
 
 	defer func() {
 		if e == nil {
@@ -5170,11 +5201,11 @@ func (s *Sandbox) WaitForEnvd(
 			waitForEnvdDurationHistogram.Record(ctx, duration,
 				metric.WithAttributes(s.waitForEnvdDurationAttrs(startType, e)...))
 
-			// The demand-fault working set the guest needed to reach this point.
-			// ServeStats() is cumulative since resume, so at this instant it equals
-			// the startup counts. Recorded for both outcomes (success label) so
-			// slow/failed starts can be correlated with page volume.
-			stats := s.memory.ServeStats()
+			// The demand-fault working set captured when /init answered, or when
+			// initEnvd ended if no response arrived.
+			// Recorded for both outcomes so failed starts can be correlated with
+			// page volume without including time spent recording these metrics.
+			stats := startup.stats
 			startupAttrs := metric.WithAttributes(
 				attribute.String("start_type", string(startType)),
 				attribute.Bool("success", e == nil),
@@ -5183,13 +5214,18 @@ func (s *Sandbox) WaitForEnvd(
 			uffdStartupPagesHistogram.Record(ctx, stats.Pages, startupAttrs)
 			uffdStartupSourcePagesHistogram.Record(ctx, stats.SourcePages, startupAttrs)
 			uffdStartupBytesHistogram.Record(ctx, stats.Bytes, startupAttrs)
+			// The same working set on the trace, with what the histograms cannot
+			// carry: the time the faults cost, the worst one, and the backends
+			// they were read from. This is what tells a cold start from a slow
+			// guest on one span.
+			span.SetAttributes(startupSpanAttrs(stats)...)
 
 			// The post-start windows start here: the guest is usable from now on,
 			// and what it faults in after this is what its own processes wait on.
-			// Started now rather than with the checks, which on a resume wait for
-			// any envd upgrade and would shift every window by its duration.
+			// Started at the snapshot rather than with the checks, which on a resume
+			// wait for any envd upgrade and would shift every window by its duration.
 			if e == nil && s.recordsPostStartFaultIn(startType) {
-				go s.recordPostStartFaultIn(context.WithoutCancel(ctx), &postStartBase{at: time.Now(), stats: stats, startType: startType})
+				go s.recordPostStartFaultIn(span.SpanContext(), &startup) //nolint:contextcheck // outlives the request; keeps only its trace identity
 			}
 		}
 	}()
@@ -5214,8 +5250,10 @@ func (s *Sandbox) WaitForEnvd(
 		}
 	}()
 
-	if err := s.initEnvd(ctx, startType, firstStart, envdInitOptions{budget: timeout}); err != nil {
-		return fmt.Errorf("failed to init new envd: %w", err)
+	initErr := s.initEnvd(ctx, startType, firstStart, envdInitOptions{budget: timeout, onResponse: captureStartup})
+	captureStartup()
+	if initErr != nil {
+		return fmt.Errorf("failed to init new envd: %w", initErr)
 	}
 
 	telemetry.ReportEvent(ctx, fmt.Sprintf("[sandbox %s]: initialized new envd", s.Metadata.Runtime.SandboxID))

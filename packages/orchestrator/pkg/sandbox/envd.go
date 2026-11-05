@@ -193,6 +193,62 @@ type envdInitAttempts struct {
 	last envdInitPhase
 	// servedAge is how old the served attempt's timestamp was when its response arrived.
 	servedAge time.Duration
+	// servedDial is how long the served attempt's TCP connect took; slowDials counts
+	// the attempts, served or not, whose connect took over envdInitSlowDial.
+	servedDial time.Duration
+	slowDials  int64
+	maxDial    time.Duration
+}
+
+// dialed notes one attempt's connect time.
+func (a *envdInitAttempts) dialed(d time.Duration) {
+	a.maxDial = max(a.maxDial, d)
+	if d > envdInitSlowDial {
+		a.slowDials++
+	}
+}
+
+// spanAttrs describes the start's attempts on its envd-init span: how many were
+// sent, how many died in each phase, and what the served one cost to connect.
+func (a *envdInitAttempts) spanAttrs() []attribute.KeyValue {
+	var failed int64
+	for _, n := range a.failed {
+		failed += n
+	}
+	attrs := []attribute.KeyValue{
+		attribute.Int64("envd.init.attempts", a.count),
+		attribute.Int64("envd.init.failed", failed),
+		attribute.Int64("envd.init.slow_dials", a.slowDials),
+	}
+	if a.maxDial > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.max_dial_ms", float64(a.maxDial)/float64(time.Millisecond)))
+	}
+	if a.servedDial > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.dial_ms", float64(a.servedDial)/float64(time.Millisecond)))
+	}
+	if a.servedAge > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.served_age_ms", float64(a.servedAge)/float64(time.Millisecond)))
+	}
+	for _, phase := range []envdInitPhase{envdInitPhaseConnect, envdInitPhaseWrite, envdInitPhaseResponse} {
+		if n := a.failed[phase]; n > 0 {
+			attrs = append(attrs, attribute.Int64("envd.init.failed."+string(phase), n))
+		}
+	}
+
+	return attrs
+}
+
+// spanAttrs describes what the served /init reported, for the envd-init span.
+func (r envdInitReport) spanAttrs() []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+	if r.clockCorrection != nil {
+		attrs = append(attrs, attribute.Float64("envd.init.clock_correction_ms", float64(*r.clockCorrection)/float64(time.Millisecond)))
+	}
+	if r.unobserved != nil {
+		attrs = append(attrs, attribute.Int64("envd.init.unobserved_handlers", *r.unobserved))
+	}
+
+	return attrs
 }
 
 func (a *envdInitAttempts) fail(phase envdInitPhase) {
@@ -208,10 +264,27 @@ type attemptPhase struct {
 	connected atomic.Bool
 	wrote     atomic.Bool
 	got100    atomic.Bool
+	// dialStart and dialNanos time the TCP connect, when the transport dialed one.
+	dialStart atomic.Pointer[time.Time]
+	dialNanos atomic.Int64
+}
+
+// dial is how long the attempt's TCP connect took, zero when none completed.
+func (p *attemptPhase) dial() time.Duration {
+	return time.Duration(p.dialNanos.Load())
 }
 
 func (p *attemptPhase) trace(ctx context.Context) context.Context {
 	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		ConnectStart: func(string, string) {
+			start := time.Now()
+			p.dialStart.Store(&start)
+		},
+		ConnectDone: func(_, _ string, _ error) {
+			if start := p.dialStart.Load(); start != nil {
+				p.dialNanos.Store(int64(time.Since(*start)))
+			}
+		},
 		GotConn:        func(httptrace.GotConnInfo) { p.connected.Store(true) },
 		Got100Continue: func() { p.got100.Store(true) },
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
@@ -349,9 +422,11 @@ func (s *Sandbox) doRequestWithInfiniteRetries(
 		}
 
 		response, err := sandboxHttpClient.Do(request)
+		attempts.dialed(phase.dial())
 		if err == nil {
 			response.Body = &cancelOnClose{ReadCloser: response.Body, cancel: cancel}
 			attempts.servedAge = time.Since(timestamp)
+			attempts.servedDial = phase.dial()
 
 			return response, attempts, nil
 		}
@@ -819,6 +894,9 @@ type envdInitOptions struct {
 	budget time.Duration
 	// reinit is the post-checkpoint re-init's handle, through which a Pause stops it.
 	reinit *envdReinit
+	// onResponse lets WaitForEnvd capture faults before response processing and
+	// the network-ready hook can add post-response work.
+	onResponse func()
 }
 
 func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetrics bool, opts envdInitOptions) (e error) {
@@ -863,6 +941,11 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		report   envdInitReport
 	)
 	defer func() {
+		// The span carries what the counters cannot: this start's own attempts and
+		// what its served /init reported, so a slow envd-init can be read on its trace.
+		span.SetAttributes(attempts.spanAttrs()...)
+		span.SetAttributes(attribute.Bool("envd.init.served", served))
+		span.SetAttributes(report.spanAttrs()...)
 		if countStart {
 			s.recordEnvdInitStart(ctx, attributes, attempts, served, report, e)
 		}
@@ -890,6 +973,9 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	} else {
 		response, attempts, err = s.doRequestWithInfiniteRetries(ctx, initRequest)
 	}
+	if err == nil && opts.onResponse != nil {
+		opts.onResponse()
+	}
 	if err != nil && (errors.Is(err, errEnvdReinitCut) || errors.Is(context.Cause(ctx), errEnvdReinitCut)) {
 		return fmt.Errorf("failed to init envd: %w", errEnvdReinitCut)
 	}
@@ -906,6 +992,7 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	}
 
 	served = true
+	span.SetAttributes(attribute.Int("envd.init.http_status", response.StatusCode))
 	defer response.Body.Close()
 	// The response headers are read before the init counters are recorded, so that
 	// anything the guest reports on /init can label the counters for this start.

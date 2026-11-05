@@ -259,19 +259,21 @@ func (c *apiClient) flushMetrics(ctx context.Context) error {
 }
 
 func (c *apiClient) setMetrics(ctx context.Context, metricsPath string) error {
-	params := operations.PutMetricsParams{
-		Context: ctx,
-		Body: &models.Metrics{
-			MetricsPath: &metricsPath,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-metrics-fc", func(ctx context.Context) error {
+		params := operations.PutMetricsParams{
+			Context: ctx,
+			Body: &models.Metrics{
+				MetricsPath: &metricsPath,
+			},
+		}
 
-	_, err := c.client.Operations.PutMetrics(&params)
-	if err != nil {
-		return fmt.Errorf("error setting fc metrics: %w", err)
-	}
+		_, err := c.client.Operations.PutMetrics(&params)
+		if err != nil {
+			return fmt.Errorf("error setting fc metrics: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernelPath string) error {
@@ -358,26 +360,28 @@ func buildRateLimiter(config RateLimiterConfig) *models.RateLimiter {
 // RateLimiter is sent to reset any limit persisted in a snapshot.
 // This always sends a PATCH so snapshot-persisted limits are overwritten.
 func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config RateLimiterConfig) error {
-	limiter := buildRateLimiter(config)
-	if limiter == nil {
-		limiter = &models.RateLimiter{} // empty = reset
-	}
+	return telemetry.Observe0(ctx, tracer, "set-tx-rate-limit-fc", func(ctx context.Context) error {
+		limiter := buildRateLimiter(config)
+		if limiter == nil {
+			limiter = &models.RateLimiter{} // empty = reset
+		}
 
-	params := operations.PatchGuestNetworkInterfaceByIDParams{
-		Context: ctx,
-		IfaceID: ifaceID,
-		Body: &models.PartialNetworkInterface{
-			IfaceID:       &ifaceID,
-			TxRateLimiter: limiter,
-		},
-	}
+		params := operations.PatchGuestNetworkInterfaceByIDParams{
+			Context: ctx,
+			IfaceID: ifaceID,
+			Body: &models.PartialNetworkInterface{
+				IfaceID:       &ifaceID,
+				TxRateLimiter: limiter,
+			},
+		}
 
-	_, err := c.client.Operations.PatchGuestNetworkInterfaceByID(&params)
-	if err != nil {
-		return fmt.Errorf("error setting TX rate limit: %w", err)
-	}
+		_, err := c.client.Operations.PatchGuestNetworkInterfaceByID(&params)
+		if err != nil {
+			return fmt.Errorf("error setting TX rate limit: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // setDriveRateLimit applies or clears a Firecracker VMM-level block device rate limit.
@@ -385,26 +389,28 @@ func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config R
 // RateLimiter is sent to reset any limit persisted in a snapshot.
 // This always sends a PATCH so snapshot-persisted limits are overwritten.
 func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, config RateLimiterConfig) error {
-	limiter := buildRateLimiter(config)
-	if limiter == nil {
-		limiter = &models.RateLimiter{} // empty = reset
-	}
+	return telemetry.Observe0(ctx, tracer, "set-drive-rate-limit-fc", func(ctx context.Context) error {
+		limiter := buildRateLimiter(config)
+		if limiter == nil {
+			limiter = &models.RateLimiter{} // empty = reset
+		}
 
-	params := operations.PatchGuestDriveByIDParams{
-		Context: ctx,
-		DriveID: driveID,
-		Body: &models.PartialDrive{
-			DriveID:     &driveID,
-			RateLimiter: limiter,
-		},
-	}
+		params := operations.PatchGuestDriveByIDParams{
+			Context: ctx,
+			DriveID: driveID,
+			Body: &models.PartialDrive{
+				DriveID:     &driveID,
+				RateLimiter: limiter,
+			},
+		}
 
-	_, err := c.client.Operations.PatchGuestDriveByID(&params)
-	if err != nil {
-		return fmt.Errorf("error setting drive rate limit: %w", err)
-	}
+		_, err := c.client.Operations.PatchGuestDriveByID(&params)
+		if err != nil {
+			return fmt.Errorf("error setting drive rate limit: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tapName string, tapMac string, txRateLimiter *models.RateLimiter) error {

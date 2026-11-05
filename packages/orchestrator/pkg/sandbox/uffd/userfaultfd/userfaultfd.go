@@ -25,6 +25,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/fdexit"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/memory"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -157,16 +158,20 @@ type Userfaultfd struct {
 	// Cumulative demand-fault serve counters, read via ServeStats(). They
 	// mirror the orchestrator.sandbox.uffd.serve metric but as a per-handler
 	// snapshot, so a caller can sample "how many pages did this guest need so
-	// far" at a point in time (e.g. the moment envd init returns). Prefaults
+	// far" at a point in time (e.g. when envd answers /init). Prefaults
 	// bypass the serve loop and are not counted here. See recordServeStats.
-	servedPages       atomic.Int64 // faults resolved (installed or already-present)
-	servedSourcePages atomic.Int64 // subset installed from the source (page_class=new)
-	servedBytes       atomic.Int64 // bytes installed into the guest (new + zero)
-	servedDeferred    atomic.Int64 // serve attempts deferred on EAGAIN
-	servedDeduped     atomic.Int64 // MISSING faults dropped: a worker was already installing the page
-	servedNanos       atomic.Int64 // time spent serving resolved faults
-	servedSourceNanos atomic.Int64 // subset spent on faults installed from the source
-	wpDeferred        atomic.Int64 // write-protect resolves deferred on EAGAIN
+	servedPages    atomic.Int64 // faults resolved (installed or already-present)
+	servedBytes    atomic.Int64 // bytes installed into the guest (new + zero)
+	servedDeferred atomic.Int64 // serve attempts deferred on EAGAIN
+	servedDeduped  atomic.Int64 // MISSING faults dropped: a worker was already installing the page
+	servedNanos    atomic.Int64 // time spent serving resolved faults
+	servedMaxNanos atomic.Int64 // longest single resolved serve
+	wpDeferred     atomic.Int64 // write-protect resolves deferred on EAGAIN
+	// Installed new-page faults and their serve time by backend, reported by
+	// the read path through each serve's context. ServeStats sums these for
+	// SourcePages and SourceServeTime.
+	servedBySource      [storage.NumSources]atomic.Int64
+	servedNanosBySource [storage.NumSources]atomic.Int64
 
 	// installDedup gates the serve loop's one-installer-per-page claim
 	// (UffdInstallDedupFlag). Off dispatches a worker per fault message, as
@@ -649,12 +654,20 @@ func (u *Userfaultfd) Serve(
 				pclass := pageClassUnknown
 				result := faultResultInstalled
 				var servedBytes int64
+				// serveCtx tells a new page's read where to report its
+				// backend; the loop's ctx is shared by every worker.
+				serveCtx := ctx
+				var sourceSink *storage.SourceSink
 				defer func() {
 					// Taken before RecordRaw, which can wait on the metric's
 					// aggregation lock after the guest was already woken.
 					took := time.Since(begun)
-					sw.RecordRaw(ctx, servedBytes, serveAttrs[u.balloonMode()][u.genBucket][pclass][result])
-					u.recordServeStats(pclass, result, servedBytes, took)
+					src := storage.UnknownSource
+					if sourceSink != nil {
+						src = sourceSink.Source()
+					}
+					sw.RecordRaw(ctx, servedBytes, u.serveOption(pclass, result, src))
+					u.recordServeStats(pclass, result, servedBytes, took, src)
 				}()
 
 				if h := u.testFaultHook.Load(); h != nil {
@@ -695,6 +708,8 @@ func (u *Userfaultfd) Serve(
 				case block.NotPresent, block.Installing:
 					pclass = pageClassNew
 					source = u.src
+					sourceSink = &storage.SourceSink{}
+					serveCtx = storage.ReadSourceInto(ctx, sourceSink)
 				default:
 					result = faultResultError
 
@@ -718,7 +733,7 @@ func (u *Userfaultfd) Serve(
 				}
 
 				outcome, err := u.faultPage(
-					ctx,
+					serveCtx,
 					addr,
 					offset,
 					accessType,

@@ -215,19 +215,25 @@ func TestChunker_CacheHit(t *testing.T) {
 	chunker := newTestChunker(t, int64(len(data)))
 	defer chunker.Close()
 
-	// First read triggers a fetch.
-	slice1, err := chunker.Slice(t.Context(), 0, testBlockSize, file, nil)
+	// First read triggers a fetch. It reports the upstream, or mmap when the
+	// background fetch already streamed past the block before the read checked.
+	var fetchSink storage.SourceSink
+	slice1, err := chunker.Slice(storage.ReadSourceInto(t.Context(), &fetchSink), 0, testBlockSize, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, data[:testBlockSize], slice1)
+	require.Contains(t, []storage.Source{storage.SourceFS, storage.SourceMmap}, fetchSink.Source())
 
 	firstFetches := file.fetchCount.Load()
 	require.Positive(t, firstFetches)
 
 	// Second read of the same block — should hit cache.
-	slice2, err := chunker.Slice(t.Context(), 0, testBlockSize, file, nil)
+	var sourceSink storage.SourceSink
+	readCtx := storage.ReadSourceInto(t.Context(), &sourceSink)
+	slice2, err := chunker.Slice(readCtx, 0, testBlockSize, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, data[:testBlockSize], slice2)
 	require.Equal(t, firstFetches, file.fetchCount.Load(), "expected no additional upstream fetch")
+	require.Equal(t, storage.SourceMmap, sourceSink.Source())
 }
 
 // TestChunker_FullChunkCachedAfterPartialRequest verifies that requesting the

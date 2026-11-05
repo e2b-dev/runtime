@@ -84,6 +84,7 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 	b, err := c.cache.Slice(off, length)
 	if err == nil {
 		c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, storage.SourceMmap, ct))
+		storage.ReportSource(ctx, storage.SourceMmap)
 
 		return b, nil
 	}
@@ -125,6 +126,7 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 	}
 
 	c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, src, ct))
+	storage.ReportSource(ctx, src)
 
 	return b, nil
 }
