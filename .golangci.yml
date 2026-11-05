@@ -162,6 +162,11 @@ linters:
     gocritic:
       disabled-checks:
         - appendAssign
+    modernize:
+      disable:
+        # Literals keep naming the embedded struct (ObjectMeta: metav1.ObjectMeta{...}):
+        # the promoted-field keys Go 1.27 allows hide which struct a field belongs to.
+        - embedlit
     revive:
       enable-all-rules: true
       rules:

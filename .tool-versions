@@ -1,8 +1,8 @@
 buf 1.69.0
 bun 1.4.4
 gcloud 534.0.0
-go 1.26.10
-go:golang.org/x/tools/gopls 0.21.1
+go 1.27.3
+go:golang.org/x/tools/gopls 0.24.0
 go:github.com/vektra/mockery/v3 v3.7.0
 golangci-lint 2.15.0
 gotestsum 1.13.0

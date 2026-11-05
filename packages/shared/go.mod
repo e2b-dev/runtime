@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/shared
 
-go 1.26.10
+go 1.27.3
 
 tool github.com/go-swagger/go-swagger/cmd/swagger
 

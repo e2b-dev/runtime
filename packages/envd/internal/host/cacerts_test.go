@@ -427,7 +427,8 @@ func TestInstallCACerts_ConcurrentInstallAndReaders(t *testing.T) {
 
 					return
 				}
-				if end := bytes.LastIndex(data, []byte("-----END CERTIFICATE-----\n")); !assert.Empty(t, bytes.TrimSpace(data[end+26:]), "partial bundle observed") {
+				_, after, found := bytes.CutLast(data, []byte("-----END CERTIFICATE-----\n"))
+				if !assert.True(t, found, "bundle without a certificate") || !assert.Empty(t, bytes.TrimSpace(after), "partial bundle observed") {
 					return
 				}
 			}

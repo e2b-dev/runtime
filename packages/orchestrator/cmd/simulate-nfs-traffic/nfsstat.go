@@ -76,13 +76,13 @@ func nfsstatParse(s string) ([]nfsstat, error) {
 		keyPart := strings.TrimSpace(parts[0])
 		valuePart := strings.TrimSpace(parts[1])
 
-		lastSpaceIdx := strings.LastIndex(keyPart, " ")
-		if lastSpaceIdx == -1 {
+		before, after, ok := strings.CutLast(keyPart, " ")
+		if !ok {
 			continue
 		}
 
-		category := strings.TrimSpace(keyPart[:lastSpaceIdx])
-		function := strings.TrimSpace(keyPart[lastSpaceIdx+1:])
+		category := strings.TrimSpace(before)
+		function := strings.TrimSpace(after)
 
 		var count int
 		if _, err := fmt.Sscanf(valuePart, "%d", &count); err != nil {

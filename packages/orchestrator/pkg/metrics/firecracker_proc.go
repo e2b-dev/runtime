@@ -121,11 +121,11 @@ func (r firecrackerProcReader) process(pid int, uptime float64) (firecrackerProc
 
 func processStart(data []byte) (uint64, string, error) {
 	// comm can contain spaces and parentheses; starttime is field 22 after its final ')'.
-	end := bytes.LastIndexByte(data, ')')
-	if end < 0 {
+	_, after, ok := bytes.CutLast(data, []byte{')'})
+	if !ok {
 		return 0, "", errors.New("process stat has no comm field")
 	}
-	fields := strings.Fields(string(data[end+1:]))
+	fields := strings.Fields(string(after))
 	if len(fields) < 20 {
 		return 0, "", errors.New("process stat has no starttime")
 	}

@@ -31,7 +31,7 @@ func TestRoutePresence(t *testing.T) {
 	}{
 		{name: "routed", err: nil, wantPresence: PresenceHeld},
 		{name: "not found", err: NewErrSandboxNotFound("sbx", PresenceAbsent), wantPresence: PresenceAbsent},
-		{name: "wrapped not found", err: fmt.Errorf("lookup: %w", NewErrSandboxNotFound("sbx", PresenceAbsent)), wantPresence: PresenceAbsent},
+		{name: "wrapped not found", err: fmt.Errorf("lookup: %w", error(NewErrSandboxNotFound("sbx", PresenceAbsent))), wantPresence: PresenceAbsent},
 		{name: "held but not routable", err: NewErrSandboxNotFound("sbx", PresenceHeld), wantPresence: PresenceHeld},
 		{name: "lookup failed", err: NewErrSandboxNotFound("sbx", PresenceUnknown), wantPresence: PresenceUnknown},
 		{name: "not found without a presence", err: &SandboxNotFoundError{}, wantPresence: PresenceUnknown},

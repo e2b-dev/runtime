@@ -10,7 +10,7 @@
 **The open-source runtime behind [E2B](https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime), the AI agent cloud. Firecracker microVMs that resume from a snapshot, run untrusted agent code, and pause when the agent stops.**
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![Go](https://img.shields.io/badge/go-1.26-00ADD8.svg?logo=go&logoColor=white)](./go.work)
+[![Go](https://img.shields.io/badge/go-1.27-00ADD8.svg?logo=go&logoColor=white)](./go.work)
 [![GitHub stars](https://img.shields.io/github/stars/e2b-dev/runtime?style=flat&logo=github)](https://github.com/e2b-dev/runtime/stargazers)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/e2b)
 [![X](https://img.shields.io/badge/follow-%40e2b-000000.svg?logo=x&logoColor=white)](https://x.com/e2b)

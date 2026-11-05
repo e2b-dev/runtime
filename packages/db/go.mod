@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/db
 
-go 1.26.10
+go 1.27.3
 
 replace github.com/e2b-dev/infra/packages/shared => ../shared
 

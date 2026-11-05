@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.26.10
+ARG GOLANG_VERSION=1.27.3
 
 # The orchestrator binary is built with CGO and dynamically links against
 # glibc, so the build image's glibc must be <= the host's glibc (forward
