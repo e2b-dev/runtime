@@ -13,8 +13,8 @@ import (
 // compressor compresses individual frames. Implementations are pooled and
 // reused across frames within a single CompressStream call.
 //
-// The returned slice is owned by the caller and, unless
-// CompressConfig.FrameSizedOutput is set, sized to the compressed output. Frames wait in memory until their part is uploaded and the cache
+// The returned slice is owned by the caller and sized to the compressed
+// output. Frames wait in memory until their part is uploaded and the cache
 // writer may still hold them after that, so returning the encoder's
 // frame-sized working buffer would keep a full frame allocated for every
 // frame, however small its output.
@@ -25,19 +25,14 @@ type compressor interface {
 // lz4Compressor wraps a pooled lz4.Writer. The writer is reused via Reset
 // between frames to avoid re-allocating internal hash tables (~64KB).
 type lz4Compressor struct {
-	w                *lz4.Writer
-	scratch          bytes.Buffer
-	frameSizedOutput bool
+	w       *lz4.Writer
+	scratch bytes.Buffer
 }
 
 func (c *lz4Compressor) compress(src []byte) ([]byte, error) {
-	dst := &c.scratch
-	if c.frameSizedOutput {
-		dst = new(bytes.Buffer)
-	}
-	dst.Reset()
-	dst.Grow(lz4.CompressBlockBound(len(src)))
-	c.w.Reset(dst)
+	c.scratch.Reset()
+	c.scratch.Grow(lz4.CompressBlockBound(len(src)))
+	c.w.Reset(&c.scratch)
 
 	if _, err := c.w.Write(src); err != nil {
 		return nil, fmt.Errorf("lz4 compress: %w", err)
@@ -47,25 +42,16 @@ func (c *lz4Compressor) compress(src []byte) ([]byte, error) {
 		return nil, fmt.Errorf("lz4 compress close: %w", err)
 	}
 
-	if c.frameSizedOutput {
-		return dst.Bytes(), nil
-	}
-
-	return exactCopy(dst.Bytes()), nil
+	return exactCopy(c.scratch.Bytes()), nil
 }
 
 // zstdCompressor wraps a pooled zstd.Encoder using EncodeAll.
 type zstdCompressor struct {
-	enc              *zstd.Encoder
-	scratch          []byte
-	frameSizedOutput bool
+	enc     *zstd.Encoder
+	scratch []byte
 }
 
 func (z *zstdCompressor) compress(src []byte) ([]byte, error) { //nolint:unparam // satisfies compressor interface
-	if z.frameSizedOutput {
-		return z.enc.EncodeAll(src, make([]byte, 0, len(src))), nil
-	}
-
 	z.scratch = z.enc.EncodeAll(src, z.scratch[:0])
 
 	return exactCopy(z.scratch), nil
@@ -88,7 +74,6 @@ type compressorPoolKey struct {
 	level              int
 	frameSize          int
 	encoderConcurrency int
-	frameSizedOutput   bool
 }
 
 func newCompressorPoolKey(cfg CompressConfig) compressorPoolKey {
@@ -97,7 +82,6 @@ func newCompressorPoolKey(cfg CompressConfig) compressorPoolKey {
 		level:              cfg.Level,
 		frameSize:          cfg.FrameSize(),
 		encoderConcurrency: cfg.EncoderConcurrency,
-		frameSizedOutput:   cfg.FrameSizedOutput,
 	}
 }
 
@@ -152,13 +136,13 @@ func newCompressorPool(cfg CompressConfig) (*sync.Pool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("zstd encoder: %w", err)
 		}
-		pool.Put(&zstdCompressor{enc: first, frameSizedOutput: cfg.FrameSizedOutput})
+		pool.Put(&zstdCompressor{enc: first})
 
 		pool.New = func() any {
 			// Options are already validated; NewWriter won't fail.
 			enc, _ := zstd.NewWriter(nil, zstdOpts...)
 
-			return &zstdCompressor{enc: enc, frameSizedOutput: cfg.FrameSizedOutput}
+			return &zstdCompressor{enc: enc}
 		}
 	case CompressionLZ4:
 		lz4Opts := []lz4.Option{
@@ -174,13 +158,13 @@ func newCompressorPool(cfg CompressConfig) (*sync.Pool, error) {
 		if err := first.Apply(lz4Opts...); err != nil {
 			return nil, fmt.Errorf("lz4 encoder: %w", err)
 		}
-		pool.Put(&lz4Compressor{w: first, frameSizedOutput: cfg.FrameSizedOutput})
+		pool.Put(&lz4Compressor{w: first})
 
 		pool.New = func() any {
 			w := lz4.NewWriter(nil)
 			_ = w.Apply(lz4Opts...) //nolint:errcheck // options validated above
 
-			return &lz4Compressor{w: w, frameSizedOutput: cfg.FrameSizedOutput}
+			return &lz4Compressor{w: w}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported compression type: %s", cfg.CompressionType())

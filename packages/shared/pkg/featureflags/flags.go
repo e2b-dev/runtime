@@ -565,20 +565,6 @@ var (
 	// supersedes V4HeaderForUncompressedFlag for uncompressed uploads.
 	HeaderV5WriteFlag = NewBoolFlag("header-v5-write", false)
 
-	// CompressRightSizedFramesFlag is a kill switch for the exact-length
-	// compressed frame outputs. Off restores outputs that keep the encoder's
-	// frame-sized buffer until the frame is uploaded and cached. The
-	// compressed bytes are the same either way. Evaluated per upload with the
-	// compress-config file type and use case.
-	CompressRightSizedFramesFlag = NewBoolFlag("compress-right-sized-frames", true)
-
-	// CompressSharedCompressorsFlag is a kill switch for sharing compressor
-	// pools across uploads. Off makes every upload build its own encoders and
-	// drop them when it finishes. The compressed bytes are the same either
-	// way. Evaluated per upload with the compress-config file type and use
-	// case.
-	CompressSharedCompressorsFlag = NewBoolFlag("compress-shared-compressors", true)
-
 	// SnapshotCacheAncestorStorageFallbackFlag lets a snapshot upload resolve an
 	// ancestor whose upload future fired successfully but whose template-cache
 	// entry is gone, instead of failing the upload. An entry the child already

@@ -227,11 +227,7 @@ func compressStream(ctx context.Context, in io.Reader, cfg CompressConfig, uploa
 		}
 	}()
 
-	compressorPool := sharedCompressorPool
-	if cfg.PerUploadCompressors {
-		compressorPool = newCompressorPool
-	}
-	compressors, err := compressorPool(cfg)
+	compressors, err := sharedCompressorPool(cfg)
 	if err != nil {
 		return nil, [32]byte{}, err
 	}
