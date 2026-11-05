@@ -583,8 +583,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 		return false
 	}
 
+	// Never closed: a service can outlive the bounded wait and still report.
 	serviceError := newServiceErrorChannel()
-	defer close(serviceError)
 	// A service failure is recorded whenever it happens: the channel reports
 	// only the first service to end, and only before the shutdown signal.
 	var servicesFailed atomic.Bool
@@ -592,7 +592,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 	var g errgroup.Group
 	// defer waiting on the group so that this runs even when
 	// there's a panic.
+	waited := false
 	defer func(g *errgroup.Group) {
+		// The bounded wait at the end of run already joined the services;
+		// joining again would block on the ones the deadline cut.
+		if waited {
+			return
+		}
 		if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
 			log.Printf("error while shutting down: %v", err)
 			success = false
@@ -1169,6 +1175,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	// GOAWAY has not been measured.
 	grpcServer := e2bgrpc.NewGRPCServer(tel, append([]e2bgrpc.ServerOption{
 		e2bgrpc.WithSandboxMetricAttributes(), e2bgrpc.WithMaxConnectionAge(0, 0),
+		// A forced stop returns only once the handlers have, so the closers
+		// after it do not tear down what a handler still uses.
+		e2bgrpc.WithWaitForHandlers(),
 	}, sharedPortTLS.grpcOptions()...)...)
 	orchestrator.RegisterSandboxServiceServer(grpcServer, orchestratorService)
 	orchestrator.RegisterVolumeServiceServer(grpcServer, volumeService)
@@ -1279,11 +1288,20 @@ func run(config cfg.Config, opts Options) (success bool) {
 	startService("grpc server", func() error {
 		return grpcServer.Serve(grpcListener)
 	})
-	closers = append(closers, closer{"grpc server", func(context.Context) error {
+	closers = append(closers, closer{"grpc server", func(ctx context.Context) error {
 		logger.L().Info(ctx, "Shutting down grpc server")
 		// Detached checkpoints hold handlers open for minutes; end them first.
 		orchestratorService.BeginShutdown()
-		grpcServer.GracefulStop()
+		// A third of the shared budget, so a slow drain leaves the later
+		// closers their turn.
+		remaining := closersDeadline / 3
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining = min(remaining, time.Until(deadline))
+		}
+		if !e2bgrpc.GracefulStopWithTimeout(grpcServer, remaining) {
+			// Reported as a failing closer, so a forced stop makes the run not clean.
+			return errors.New("grpc server stop forced")
+		}
 
 		return nil
 	}})
@@ -1331,18 +1349,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 		}
 	}
 
-	slices.Reverse(closers)
-	for _, closer := range closers {
-		clog := globalLogger.With(zap.String("service", closer.name), zap.Bool("forced", config.ForceStop))
-		clog.Info(ctx, "closing")
-		if err := closer.close(closeCtx); err != nil {
-			clog.Error(ctx, "error during shutdown", zap.Error(err))
-			success = false
-		}
-	}
+	success = runClosers(closeCtx, closers, config.ForceStop, closersDeadline) && success
 
 	logger.L().Info(ctx, "Waiting for services to finish")
-	if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
+	completed, err := waitBounded(g.Wait, closersDeadline)
+	waited = true
+	if !completed {
+		logger.L().Error(ctx, "services did not finish within the shutdown deadline", zap.Bool("forced", true))
+		success = false
+	} else if shutdownFailed(err) || servicesFailed.Load() {
 		logger.L().Error(ctx, "service group error", zap.Error(err), zap.Bool("service_failed", servicesFailed.Load()))
 		success = false
 	}
