@@ -105,7 +105,7 @@ func TestPostV2TemplatesTemplateIDBuildsBuildIDResizable(t *testing.T) {
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/v2/templates/%s/builds/%s", templateID, buildID), strings.NewReader(`{"fromImage":"alpine","steps":[]}`))
 			c.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, c, team)
-			store.PostV2TemplatesTemplateIDBuildsBuildID(c, templateID, buildID)
+			store.PostV2TemplatesTemplateIDBuildsBuildID(c, templateID, buildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 			require.Equal(t, tt.status, c.Writer.Status(), w.Body.String())
 
 			if tt.status != http.StatusAccepted {

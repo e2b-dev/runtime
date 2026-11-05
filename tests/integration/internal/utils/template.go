@@ -203,6 +203,7 @@ func startTemplateBuild(
 		ctx,
 		templateID,
 		buildID,
+		nil,
 		buildData,
 		reqEditors...,
 	)

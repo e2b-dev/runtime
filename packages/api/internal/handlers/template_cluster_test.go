@@ -314,7 +314,7 @@ func TestTemplateClusterUsesCurrentAssignment(t *testing.T) {
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/templates/builds", strings.NewReader(`{"fromImage":"alpine"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, c, team)
-	store.PostV2TemplatesTemplateIDBuildsBuildID(c, rebuilt.JSON202.TemplateID, rebuilt.JSON202.BuildID)
+	store.PostV2TemplatesTemplateIDBuildsBuildID(c, rebuilt.JSON202.TemplateID, rebuilt.JSON202.BuildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "is not available in the requested cluster")
 	alias := "base"
@@ -363,7 +363,7 @@ func TestTemplateStartCluster(t *testing.T) {
 				fmt.Sprintf("/v2/templates/%s/builds/%s", build.TemplateID, build.BuildID), strings.NewReader(`{"fromImage":"alpine"}`))
 			c.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, c, team)
-			store.PostV2TemplatesTemplateIDBuildsBuildID(c, build.TemplateID, build.BuildID)
+			store.PostV2TemplatesTemplateIDBuildsBuildID(c, build.TemplateID, build.BuildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 			require.Equal(t, tt.status, w.Code, w.Body.String())
 			if tt.status == http.StatusBadRequest {
 				require.Contains(t, w.Body.String(), "is not available in the requested cluster")

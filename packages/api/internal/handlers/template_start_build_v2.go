@@ -19,9 +19,12 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	apiclusters "github.com/e2b-dev/infra/packages/api/internal/clusters"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
+	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
@@ -42,8 +45,9 @@ type dockerfileStore struct {
 	Steps        *[]api.TemplateStep `json:"steps"`
 }
 
-// CheckAndCancelConcurrentBuilds checks for concurrent builds and cancels them if found
-func (a *APIStore) CheckAndCancelConcurrentBuilds(ctx context.Context, templateID api.TemplateID, buildID uuid.UUID, teamClusterID uuid.UUID) error {
+// CheckAndCancelConcurrentBuilds checks for concurrent builds and cancels them if found.
+// It reports whether it requested a cancellation, which may have taken effect even when it returns an error.
+func (a *APIStore) CheckAndCancelConcurrentBuilds(ctx context.Context, templateID api.TemplateID, buildID uuid.UUID, teamClusterID uuid.UUID) (bool, error) {
 	concurrentBuilds, err := a.sqlcDB.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
 		TemplateID:     templateID,
 		CurrentBuildID: buildID,
@@ -51,9 +55,10 @@ func (a *APIStore) CheckAndCancelConcurrentBuilds(ctx context.Context, templateI
 	if err != nil {
 		telemetry.ReportErrorByCode(ctx, http.StatusInternalServerError, "Error when getting running builds", err, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID.String()))
 
-		return fmt.Errorf("error when getting running builds: %w", err)
+		return false, fmt.Errorf("error when getting running builds: %w", err)
 	}
 
+	cancelRequested := false
 	// make sure there is no other build in progress for the same template
 	if len(concurrentBuilds) > 0 {
 		concurrentRunningBuilds := utils.Filter(concurrentBuilds, func(b queries.EnvBuild) bool {
@@ -77,21 +82,22 @@ func (a *APIStore) CheckAndCancelConcurrentBuilds(ctx context.Context, templateI
 			return fmt.Sprintf("%s/%s", b.TemplateID, b.BuildID)
 		})))
 
+		cancelRequested = len(buildIDs) > 0
 		deleteJobErr := a.templateManager.DeleteBuilds(ctx, buildIDs)
 		if deleteJobErr != nil {
 			telemetry.ReportErrorByCode(ctx, http.StatusInternalServerError, "Error when canceling running build", deleteJobErr, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID.String()))
 
-			return fmt.Errorf("error when canceling running build: %w", deleteJobErr)
+			return cancelRequested, fmt.Errorf("error when canceling running build: %w", deleteJobErr)
 		}
 
 		telemetry.ReportEvent(ctx, "canceled running builds")
 	}
 
-	return nil
+	return cancelRequested, nil
 }
 
 // PostV2TemplatesTemplateIDBuildsBuildID triggers a new build
-func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID api.TemplateID, buildID api.BuildID) {
+func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID api.TemplateID, buildID api.BuildID, _ api.PostV2TemplatesTemplateIDBuildsBuildIDParams) {
 	ctx := c.Request.Context()
 
 	body, err := ginutils.ParseBody[api.TemplateBuildStartV2](ctx, c)
@@ -102,13 +108,19 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		return
 	}
 
+	idempotency.Execute(c, body, func() *api.APIError {
+		return a.startTemplateBuildV2(c, templateID, buildID, body)
+	})
+}
+
+func (a *APIStore) startTemplateBuildV2(c *gin.Context, templateID api.TemplateID, buildID api.BuildID, body api.TemplateBuildStartV2) *api.APIError {
+	ctx := c.Request.Context()
+
 	buildUUID, err := uuid.Parse(buildID)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid build ID: %s", buildID))
-
 		telemetry.ReportCriticalError(ctx, "invalid build ID", err)
 
-		return
+		return &api.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid build ID: %s", buildID), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	hasImage := body.FromImage != nil && *body.FromImage != ""
@@ -119,10 +131,9 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 			message = "cannot specify both fromImage and fromTemplate"
 		}
 
-		a.sendAPIStoreError(c, http.StatusBadRequest, message)
 		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "template build source rejected", errors.New(message), telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusBadRequest, ClientMsg: message, Err: errors.New(message), Retryable: apierrors.NoRetry}
 	}
 
 	telemetry.ReportEvent(ctx, "started environment build")
@@ -133,43 +144,46 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		BuildID:    buildUUID,
 	})
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusNotFound, fmt.Sprintf("Error when getting template: %s", err))
 		telemetry.ReportCriticalError(ctx, "error when getting env", err, telemetry.WithTemplateID(templateID))
+		apiErr := &api.APIError{Code: http.StatusNotFound, ClientMsg: fmt.Sprintf("Error when getting template: %s", err), Err: err, Retryable: apierrors.NoRetry}
+		if !dberrors.IsNotFoundError(err) {
+			apiErr.Retryable = apierrors.CanRetry
+		}
 
-		return
+		return apiErr
 	}
 
 	dbTeamID := templateBuildDB.ActiveEnv.TeamID.String()
 	team, apiErr := a.GetTeam(ctx, c, &dbTeamID)
 	if apiErr != nil {
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 		telemetry.ReportCriticalError(ctx, "error when getting team and tier", apiErr.Err)
+		apiErr.Retryable = apierrors.NoRetry
+		if apiErr.Code == http.StatusInternalServerError {
+			apiErr.Retryable = apierrors.CanRetry
+		}
 
-		return
+		return apiErr
 	}
 
 	if team.ID != templateBuildDB.ActiveEnv.TeamID {
-		a.sendAPIStoreError(c, http.StatusForbidden, "User does not have access to the template")
-
 		telemetry.ReportCriticalError(ctx, "user does not have access to the template", err, telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusForbidden, ClientMsg: "User does not have access to the template", Err: errors.New("team does not own the template"), Retryable: apierrors.NoRetry}
 	}
 
 	currentCluster, err := a.sqlcDB.GetTeamClusterForTemplateBuild(ctx, team.ID)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when checking the team's cluster")
 		telemetry.ReportCriticalError(ctx, "error when getting team cluster", err)
 
-		return
+		return &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when checking the team's cluster", Err: err, Retryable: apierrors.CanRetry}
 	}
 	clusterID := clusters.WithClusterFallback(templateBuildDB.ActiveEnv.ClusterID)
 	if clusterID != clusters.WithClusterFallback(currentCluster) {
 		apiErr := templatecache.ErrorToAPIError(templatecache.ErrClusterMismatch, templateID)
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 		telemetry.ReportErrorByCode(ctx, apiErr.Code, "template build start cluster mismatch", apiErr.Err, telemetry.WithTemplateID(templateID))
+		apiErr.Retryable = apierrors.NoRetry
 
-		return
+		return apiErr
 	}
 
 	telemetry.SetAttributes(ctx,
@@ -181,10 +195,14 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 	ctx = featureflags.AddToContext(ctx, featureflags.TemplateContext(templateID))
 
 	// Check and cancel concurrent builds
-	if err := a.CheckAndCancelConcurrentBuilds(ctx, templateID, buildUUID, clusterID); err != nil {
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error during template build request")
-
-		return
+	cancelRequested, err := a.CheckAndCancelConcurrentBuilds(ctx, templateID, buildUUID, clusterID)
+	// Failures before dispatch are safe to retry only while no cancellation was requested.
+	retryableBeforeDispatch := apierrors.CanRetry
+	if cancelRequested {
+		retryableBeforeDispatch = apierrors.NoRetry
+	}
+	if err != nil {
+		return &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error during template build request", Err: err, Retryable: retryableBeforeDispatch}
 	}
 
 	startTime := time.Now()
@@ -192,10 +210,10 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 
 	// only waiting builds can be triggered
 	if build.StatusGroup != types.BuildStatusGroupPending {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "build is not in waiting state")
-		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "build is not in waiting state", fmt.Errorf("build is not in waiting state - current state: %s", build.StatusGroup), telemetry.WithTemplateID(templateID))
+		err := fmt.Errorf("build is not in waiting state - current state: %s", build.StatusGroup)
+		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "build is not in waiting state", err, telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusBadRequest, ClientMsg: "build is not in waiting state", Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	stepsMarshalled, err := json.Marshal(dockerfileStore{
@@ -204,18 +222,16 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 		Steps:        body.Steps,
 	})
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error when processing steps: %s", err))
 		telemetry.ReportCriticalError(ctx, "error when processing steps", err, telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusInternalServerError, ClientMsg: fmt.Sprintf("Error when processing steps: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	version, err := userAgentToTemplateVersion(ctx, logger.L().With(logger.WithTemplateID(templateID), logger.WithBuildID(buildID)), c.Request.UserAgent())
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing user agent: %s", err))
 		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "error when parsing user agent", err, telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Error when parsing user agent: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	minVersion := builderMinVersion(build)
@@ -234,16 +250,14 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 				zap.String("cluster_id", clusterID.String()),
 				zap.Error(err),
 			)
-			a.sendAPIStoreError(c, http.StatusServiceUnavailable, "No template builder supports resizable templates yet")
 			telemetry.ReportErrorByCode(ctx, http.StatusServiceUnavailable, "no template builder at the required version", err, telemetry.WithTemplateID(templateID), telemetry.WithBuildID(buildID))
 
-			return
+			return &api.APIError{Code: http.StatusServiceUnavailable, ClientMsg: "No template builder supports resizable templates yet", Err: err, Retryable: retryableBeforeDispatch}
 		}
 
-		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Error when getting available build client")
 		telemetry.ReportCriticalError(ctx, "error when getting available build client", err, telemetry.WithTemplateID(templateID))
 
-		return
+		return &api.APIError{Code: http.StatusServiceUnavailable, ClientMsg: "Error when getting available build client", Err: err, Retryable: retryableBeforeDispatch}
 	}
 
 	machineInfo := builderNode.GetMachineInfo()
@@ -261,9 +275,8 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 	})
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error when updating build", err)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error when updating build: %s", err))
 
-		return
+		return &api.APIError{Code: http.StatusInternalServerError, ClientMsg: fmt.Sprintf("Error when updating build: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	// Call the Template Manager to build the environment
@@ -301,12 +314,13 @@ func (a *APIStore) PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templa
 
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "build failed", err, telemetry.WithTemplateID(templateID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error when starting template build: %s", err))
 
-		return
+		return &api.APIError{Code: http.StatusInternalServerError, ClientMsg: fmt.Sprintf("Error when starting template build: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	c.Status(http.StatusAccepted)
+
+	return nil
 }
 
 // builderMinVersion is the oldest builder allowed to run the build. A builder

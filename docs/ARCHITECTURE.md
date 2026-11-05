@@ -830,9 +830,11 @@ that guest on its worker's network or break its own trust store.
 
 #### Opt-in request idempotency
 
-`POST /v2/sandboxes` supports an optional, team-scoped `Idempotency-Key` to prevent retries from
-repeating sandbox creation while a Redis reservation exists. A generic executor owns reservation
-and response replay across API replicas. Participating handlers parse and authorize the request,
+Participating API routes accept an optional, team-scoped `Idempotency-Key` to prevent retries from
+repeating the operation while a Redis reservation exists. Which routes honour the key is
+controlled by the `api-idempotency-routes` feature flag rather than listed here; a route can be
+enabled once its handler calls the executor and its OpenAPI schema declares the header. A generic
+executor owns reservation and response replay across API replicas. Participating handlers parse and authorize the request,
 then call `idempotency.Execute(c, requestContent, operation)` with all mutations inside the callback.
 The callback writes its success response and returns `nil`, or returns an `*apierrors.APIError`
 for the executor to send. Returning `CanRetry` promises that a fresh execution is safe: the
@@ -844,7 +846,7 @@ The executor buffers finite HTTP responses, so streaming and connection upgrades
 ##### Admission and request identity
 
 The `api-idempotency-routes` JSON flag enables participating handlers by HTTP method and Gin route
-pattern. For sandbox creation:
+pattern, for example:
 
 ```json
 {"POST /v2/sandboxes": true}

@@ -40,27 +40,34 @@ func NewTestSharedGRPCClient(conn *grpc.ClientConn) *GRPCClient {
 	return newSharedGRPCClient(conn, "test", func() {})
 }
 
-// TestBuilder describes a healthy template builder for NewTestBuilderCluster.
+// TestBuilder describes a template builder for NewTestBuilderCluster. An empty
+// NodeID defaults to the builder's index; the zero Status is healthy.
 type TestBuilder struct {
 	Version string
 	Machine machineinfo.MachineInfo
 	Client  *GRPCClient
+	NodeID  string
+	Status  infogrpc.ServiceInfoStatus
 }
 
-// NewTestBuilderCluster builds a Cluster whose pool holds the given healthy
-// builders, for tests of builder selection.
+// NewTestBuilderCluster builds a Cluster whose pool holds the given builders,
+// for tests of builder selection.
 func NewTestBuilderCluster(id uuid.UUID, builders ...TestBuilder) *Cluster {
 	pool := smap.New[*Instance]()
 	for i, b := range builders {
-		key := strconv.Itoa(i)
+		key := b.NodeID
+		if key == "" {
+			key = strconv.Itoa(i)
+		}
 		pool.Insert(key, &Instance{
 			workloadID:     key,
+			ClusterID:      id,
 			NodeID:         key,
 			serviceVersion: b.Version,
 			machine:        b.Machine,
 			client:         b.Client,
 			isBuilder:      true,
-			status:         infogrpc.ServiceInfoStatus_Healthy,
+			status:         b.Status,
 		})
 	}
 

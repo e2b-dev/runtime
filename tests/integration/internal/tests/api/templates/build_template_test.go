@@ -95,6 +95,7 @@ func runTemplateBuild(
 		ctx,
 		resp.JSON202.TemplateID,
 		resp.JSON202.BuildID,
+		nil,
 		data,
 		setup.WithAPIKey(),
 		setup.WithTestsUserAgent(),

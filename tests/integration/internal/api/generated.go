@@ -3753,6 +3753,26 @@ type GetV2TemplatesParams struct {
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// PostV2TemplatesTemplateIDBuildsBuildIDParams defines parameters for PostV2TemplatesTemplateIDBuildsBuildID.
+type PostV2TemplatesTemplateIDBuildsBuildIDParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // PostV3TemplatesParams defines parameters for PostV3Templates.
 type PostV3TemplatesParams struct {
 	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
@@ -5713,21 +5733,21 @@ type ClientInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3TemplatesWithBody Create template (v3)
 	//
@@ -8696,13 +8716,13 @@ func (c *Client) PatchV2TemplatesTemplateID(ctx context.Context, templateID Temp
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, contentType, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8715,13 +8735,13 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Cont
 
 // PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15036,18 +15056,18 @@ func NewPatchV2TemplatesTemplateIDRequestWithBody(server string, templateID Temp
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequest calls the generic PostV2TemplatesTemplateIDBuildsBuildID builder with application/json body
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, "application/json", bodyReader)
+	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, params, "application/json", bodyReader)
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody constructs an http.Request for the PostV2TemplatesTemplateIDBuildsBuildID method, with any body, and a specified content type
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15085,6 +15105,21 @@ func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, tem
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -16803,21 +16838,21 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV3TemplatesWithBodyWithResponse Create template (v3)
 	//
@@ -26174,34 +26209,120 @@ func (r PatchV2TemplatesTemplateIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers the declared response headers of an HTTP 400 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers the declared response headers of an HTTP 401 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers the declared response headers of an HTTP 403 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers the declared response headers of an HTTP 404 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers the declared response headers of an HTTP 409 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers the declared response headers of an HTTP 422 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers the declared response headers of an HTTP 429 response for PostV2TemplatesTemplateIDBuildsBuildID
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers the declared response headers of an HTTP 500 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers the declared response headers of an HTTP 503 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *N400 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *N401 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *Error {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -26210,8 +26331,13 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *N500 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -29123,13 +29249,13 @@ func (c *ClientWithResponses) PatchV2TemplatesTemplateIDWithResponse(ctx context
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29138,13 +29264,13 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWith
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -37419,18 +37545,46 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -37440,15 +37594,82 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -37459,6 +37680,26 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

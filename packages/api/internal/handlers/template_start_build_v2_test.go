@@ -180,7 +180,7 @@ func TestPostV2TemplatesTemplateIDBuildsBuildIDRequiresSource(t *testing.T) {
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/templates/tpl/builds/00000000-0000-0000-0000-000000000000", strings.NewReader(tt.body))
 			c.Request.Header.Set("Content-Type", "application/json")
 
-			(&APIStore{}).PostV2TemplatesTemplateIDBuildsBuildID(c, "tpl", "00000000-0000-0000-0000-000000000000")
+			(&APIStore{}).PostV2TemplatesTemplateIDBuildsBuildID(c, "tpl", "00000000-0000-0000-0000-000000000000", api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 
 			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 			require.Contains(t, recorder.Body.String(), tt.message)

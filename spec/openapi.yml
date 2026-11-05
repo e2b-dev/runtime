@@ -6487,7 +6487,7 @@ paths:
   /v2/templates/{templateID}/builds/{buildID}:
     post:
       summary: Start template build (v2)
-      description: Start the build
+      description: Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
       tags: [templates]
       security:
         - ApiKeyAuth: []
@@ -6500,6 +6500,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/templateID"
         - $ref: "#/components/parameters/buildID"
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -6510,13 +6511,79 @@ paths:
         "202":
           description: The build has started
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/responses/401"
+          description: Authentication error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The Idempotency-Key conflicts with a different request (error_code idempotency_request_mismatch), or the matching original request has no recorded response yet and is within its expected response window (error_code idempotency_in_progress); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The matching original request has no recorded response and its expected response deadline has passed or is unknown (error_code idempotency_outcome_unknown); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/429"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v2/templates/{templateID}:
     patch:
