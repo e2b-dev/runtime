@@ -73,7 +73,17 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		}
 
 		if errors.Is(err, ErrInvalidHost) {
-			l.Warn(ctx, "invalid host", zap.String("host", r.Host))
+			// A bare-IP or localhost Host cannot encode sandbox routing, so one that
+			// also carries no routing headers is unroutable by construction. These
+			// arrive continuously from external scanners, health probes and stale
+			// clients on a public endpoint; log at Debug to avoid WARN spam. A
+			// malformed domain host is rare and genuinely suspect, so it stays Warn.
+			// The 400 is unchanged in both cases.
+			if expectedUnroutableHost(r.Host, r.Header) {
+				l.Debug(ctx, "invalid host (unroutable bare-ip, no routing headers)", zap.String("host", r.Host))
+			} else {
+				l.Warn(ctx, "invalid host", zap.String("host", r.Host))
+			}
 			cors.Error(w, "Invalid host", http.StatusBadRequest)
 
 			return
