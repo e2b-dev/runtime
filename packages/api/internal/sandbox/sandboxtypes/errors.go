@@ -69,6 +69,7 @@ func (PauseQueueExhaustedError) Error() string {
 // sandbox keeps running and the request succeeds once that checkpoint ends.
 // It matches PauseQueueExhaustedError for every caller that does not tell
 // the two apart, so a refusal flows through the same restore and retry paths.
+// A node refuses a kill of a sandbox it is migrating with the same answer.
 type PauseRefusedCheckpointInProgressError struct{}
 
 func (PauseRefusedCheckpointInProgressError) Error() string {

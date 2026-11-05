@@ -178,6 +178,13 @@ func WithOrchestratorVersion(version string) TestOptions {
 	}
 }
 
+// WithServiceInstanceID sets the orchestrator process the test node reports.
+func WithServiceInstanceID(id string) TestOptions {
+	return func(node *TestNode) {
+		node.meta.ServiceInstanceID = id
+	}
+}
+
 func WithLabels(labels []string) TestOptions {
 	return func(node *TestNode) {
 		labelsSet := make(map[string]struct{}, len(labels))

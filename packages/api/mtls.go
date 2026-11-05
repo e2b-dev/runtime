@@ -16,10 +16,11 @@ const (
 	internalGRPCModeFlag = "mtls-api-internal-grpc-mode"
 	publicGRPCModeFlag   = "mtls-api-public-grpc-mode"
 
-	secretsStoreHopFlag = "mtls-api-secrets-store-client-mode"
-	webhooksHopFlag     = "mtls-api-webhooks-client-mode"
-	analyticsHopFlag    = "mtls-api-analytics-client-mode"
-	orchestratorHopFlag = "mtls-api-orchestrator-client-mode"
+	secretsStoreHopFlag     = "mtls-api-secrets-store-client-mode"
+	webhooksHopFlag         = "mtls-api-webhooks-client-mode"
+	analyticsHopFlag        = "mtls-api-analytics-client-mode"
+	orchestratorHopFlag     = "mtls-api-orchestrator-client-mode"
+	sandboxMigrationHopFlag = "mtls-api-sandbox-migration-client-mode"
 )
 
 // serviceTLS is the api's mutual TLS configuration: its three listeners,
@@ -68,6 +69,9 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool) (serv
 		}
 	}
 	if s.hops.Orchestrator, err = hop("orchestrator", orchestratorHopFlag, c.Orchestrator); err != nil {
+		return serviceTLS{}, err
+	}
+	if s.hops.SandboxMigration, err = hop("sandbox_migration", sandboxMigrationHopFlag, c.SandboxMigration); err != nil {
 		return serviceTLS{}, err
 	}
 

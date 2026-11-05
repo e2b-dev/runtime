@@ -40,6 +40,12 @@ const SnapshotDeleteTimeout = redisreservations.KillClaimTTL - 5*time.Second
 // ErrSandboxStillResuming means resumes kept winning against a kill.
 var ErrSandboxStillResuming = errors.New("sandbox is still resuming")
 
+// errKillRefused answers a kill the node refused while it migrates the
+// sandbox: the record is running again, and the kill is answered as one of a
+// held sandbox. It is sandbox.ErrLifecycleHeld too, which the evictor leaves
+// for a later sweep.
+var errKillRefused = fmt.Errorf("the node refused the kill: %w: %w", ErrSandboxLifecycleHeld, sandbox.ErrLifecycleHeld)
+
 // KillAndClaim kills the running sandbox, if any, and claims its ID so that no
 // resume can start while the caller deletes the snapshot. A resume already in
 // flight is waited for, and the sandbox it started is killed too.
@@ -117,6 +123,12 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 				)
 
 				return ErrSandboxNotFound
+			}
+
+			// A kill that joined one the node refused finds the record
+			// running again.
+			if pauseRefusalOf(err) != nil {
+				return errKillRefused
 			}
 
 			switch sbx.State {
@@ -216,10 +228,13 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 			// left the VM untouched and running; a refusal the node will never
 			// admit (PauseUnsupportedError) would lose the sandbox for nothing
 			// if killed. All three restore the record whatever the flag says
-			// for a busy node.
+			// for a busy node. A kill is only ever refused for a checkpoint
+			// in flight, a migration's.
 			if restoreOnRefusal || errors.Is(refusal, PauseRefusedCheckpointInProgressError{}) || errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}) || errors.Is(refusal, PauseUnsupportedError{}) {
 				outcome := o.restoreRefusedPause(context.WithoutCancel(ctx), transition, refusal)
-				o.recordRefusalRestore(ctx, sbx.TeamID.String(), outcome, opts.Eviction)
+				if opts.Action == sandbox.StateActionPause {
+					o.recordRefusalRestore(ctx, sbx.TeamID.String(), outcome, opts.Eviction)
+				}
 				switch outcome {
 				case restoreOutcomeRestored:
 					preserveRecord = true
@@ -230,6 +245,22 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 
 					return fmt.Errorf("%w: %w", ErrSandboxNotFound, sandbox.ErrExecutionMismatch)
 				}
+			}
+
+			if opts.Action == sandbox.StateActionKill {
+				logger.L().Info(ctx, "Kill refused by the node while it migrates the sandbox",
+					logger.WithSandboxID(sbx.SandboxID),
+					zap.String("kill_reason", opts.Reason.String()),
+					zap.Bool("restored", preserveRecord),
+				)
+				// A failed restore removes the record. The node would refuse
+				// a kill of the sandbox again, so it is left to the orphan
+				// reconciler.
+				if !preserveRecord {
+					return ErrSandboxOperationFailed
+				}
+
+				return errKillRefused
 			}
 
 			logger.L().Info(ctx, "Pause refused by the node",
@@ -475,7 +506,8 @@ func (o *Orchestrator) killSandboxOnNode(
 	client, ctx := node.GetSandboxClient(ctx, sbx.TeamID.String())
 	_, err := client.Sandbox.Delete(ctx, req)
 	st, ok := status.FromError(err)
-	if ok && st.Code() == codes.NotFound {
+	switch {
+	case ok && st.Code() == codes.NotFound:
 		logger.L().Info(ctx, "Sandbox not found during kill",
 			logger.WithSandboxID(sbx.SandboxID),
 			logger.WithNodeID(node.ID),
@@ -483,7 +515,11 @@ func (o *Orchestrator) killSandboxOnNode(
 		)
 
 		return nil
-	} else if err != nil {
+	case ok && st.Code() == codes.ResourceExhausted && isCheckpointInProgress(err):
+		// The node refuses to kill a sandbox it is migrating with the answer
+		// a pause gets: a checkpoint is in flight and the sandbox runs on.
+		return PauseRefusedCheckpointInProgressError{}
+	case err != nil:
 		return fmt.Errorf("failed to delete sandbox: %w", err)
 	}
 

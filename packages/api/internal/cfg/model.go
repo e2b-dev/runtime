@@ -153,6 +153,15 @@ type Config struct {
 	// when the backend is absent, so the surface does not depend on the wiring.
 	WebhooksBackendGrpcAddress string `env:"WEBHOOKS_BACKEND_GRPC_ADDRESS"`
 
+	// SandboxMigrationManagerGrpcAddress is the gRPC target of the service
+	// that migrates running sandboxes between orchestrators, in the same forms
+	// as SecretsStoreBackendGrpcAddress. Empty turns sandbox migrations off: no
+	// client is built and no migration is polled.
+	SandboxMigrationManagerGrpcAddress string `env:"SANDBOX_MIGRATION_MANAGER_GRPC_ADDRESS"`
+	// SandboxMigrationPollInterval is how often each replica reads the
+	// migrations' outcomes from the migration service.
+	SandboxMigrationPollInterval time.Duration `env:"SANDBOX_MIGRATION_POLL_INTERVAL" envDefault:"5s"`
+
 	VolumesToken VolumesTokenConfig
 
 	AuthProvider      sharedauth.ProviderConfig `env:"AUTH_PROVIDER_CONFIG"`
@@ -191,7 +200,8 @@ type Config struct {
 type FailureCondition string
 
 const (
-	FailureConditionInvalidServiceDiscoveryProvider FailureCondition = "invalid_service_discovery_provider"
+	FailureConditionInvalidServiceDiscoveryProvider     FailureCondition = "invalid_service_discovery_provider"
+	FailureConditionInvalidSandboxMigrationPollInterval FailureCondition = "invalid_sandbox_migration_poll_interval"
 )
 
 type FailureError struct {
@@ -337,6 +347,14 @@ func Parse() (Config, error) {
 
 	if err := config.VolumesToken.validate(); err != nil {
 		return config, err
+	}
+
+	// The poller builds a ticker from it, which panics on zero or less.
+	if config.SandboxMigrationPollInterval <= 0 {
+		return config, newFailureError(
+			FailureConditionInvalidSandboxMigrationPollInterval,
+			fmt.Sprintf("SANDBOX_MIGRATION_POLL_INTERVAL must be positive, got %s", config.SandboxMigrationPollInterval),
+		)
 	}
 
 	return config, nil

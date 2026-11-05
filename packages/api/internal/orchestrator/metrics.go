@@ -94,6 +94,10 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 		return fmt.Errorf("failed to create placements without hugepage ceiling counter: %w", err)
 	}
 
+	if o.migrationOutcomesCounter, err = telemetry.GetCounter(meter, telemetry.ApiOrchestratorMigrationOutcomes); err != nil {
+		return fmt.Errorf("failed to create sandbox migration outcomes counter: %w", err)
+	}
+
 	if o.listReadsCounter, err = telemetry.GetCounter(meter, telemetry.ApiSandboxListReads); err != nil {
 		return fmt.Errorf("failed to create sandbox list reads counter: %w", err)
 	}

@@ -1,7 +1,12 @@
 package placement
 
 import (
+	"context"
+
+	"github.com/google/uuid"
+
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 )
 
@@ -17,6 +22,15 @@ type MemoryRequirement struct {
 	// sandboxes (allocated, in flight, requested) may reach; 0 turns the
 	// check off.
 	MaxOvercommit float64
+}
+
+// MemoryRequirementFor is the memory admission the placement flags set for
+// the team's sandbox.
+func MemoryRequirementFor(ctx context.Context, flags *featureflags.Client, teamID uuid.UUID, sandboxID string) MemoryRequirement {
+	return MemoryRequirement{
+		Limit:         float64(flags.IntFlag(ctx, featureflags.PlacementHugepageLimitPercent, featureflags.TeamContext(teamID.String()), featureflags.SandboxContext(sandboxID))) / 100,
+		MaxOvercommit: float64(flags.IntFlag(ctx, featureflags.PlacementMemoryMaxOvercommit, featureflags.TeamContext(teamID.String()), featureflags.SandboxContext(sandboxID))) / 100,
+	}
 }
 
 // NodeSatisfiesMemory reports whether node can take resources with its

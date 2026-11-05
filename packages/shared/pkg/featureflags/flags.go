@@ -696,6 +696,12 @@ var (
 	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
 	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
 	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	// SandboxMigrationOperationBudgetSeconds bounds how long a sandbox migration may run, fixed per migration at acceptance.
+	SandboxMigrationOperationBudgetSeconds = NewIntFlag("sandbox-migration-operation-budget-seconds", 900)
+	// SandboxMigrationTerminationBudgetSeconds is how long the API's hold on a migrating sandbox outlives the operation deadline, fixed per migration at acceptance.
+	// The migration manager runs a termination for 30 minutes from its first call, which can start up to a grace after the operation deadline,
+	// so the hold keeps ten minutes of slack past it. A termination read after the hold lapsed is consumed by the poller without the hold.
+	SandboxMigrationTerminationBudgetSeconds = NewIntFlag("sandbox-migration-termination-budget-seconds", 2400)
 	// EnvdInitConnectTimeoutMilliseconds bounds each connect of the held envd init
 	// request. Read with EnvdInitHeldRequestFlag; a value below 1000 is raised to it, and
 	// a value at or below zero reads as the fallback.

@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandboxmigration"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/servicetest"
 )
 
@@ -25,6 +26,18 @@ func TestWebhooksClientDialsWithTheHopCredentials(t *testing.T) {
 
 	creds := servicetest.NewCredentials()
 	conn, err := newWebhooksClient(servicetest.GRPCServer(t), creds)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	conn.Connect()
+	servicetest.AwaitHandshake(t, creds)
+}
+
+func TestSandboxMigrationManagerClientDialsWithTheHopCredentials(t *testing.T) {
+	t.Parallel()
+
+	creds := servicetest.NewCredentials()
+	conn, err := newReadinessBalancedClient(servicetest.GRPCServer(t), creds, sandboxmigration.SandboxMigrationManagerService_ServiceDesc.ServiceName, "sandbox migration service")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 

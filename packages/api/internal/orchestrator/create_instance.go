@@ -578,11 +578,8 @@ func (o *Orchestrator) CreateSandbox(
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
 	requirements := placement.Requirements{
-		CPU: cpuRequirement,
-		Memory: placement.MemoryRequirement{
-			Limit:         float64(o.featureFlagsClient.IntFlag(ctx, featureflags.PlacementHugepageLimitPercent, featureflags.TeamContext(team.ID.String()), featureflags.SandboxContext(sandboxID))) / 100,
-			MaxOvercommit: float64(o.featureFlagsClient.IntFlag(ctx, featureflags.PlacementMemoryMaxOvercommit, featureflags.TeamContext(team.ID.String()), featureflags.SandboxContext(sandboxID))) / 100,
-		},
+		CPU:    cpuRequirement,
+		Memory: placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
 	}
 
 	placed, err := placement.PlaceSandboxCompletingStartedCreate(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, requirements, labelFilteringEnabled, allLabels, completeStartedCreateUntil)

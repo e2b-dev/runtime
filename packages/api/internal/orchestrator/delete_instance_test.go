@@ -531,6 +531,32 @@ func TestRemoveSandbox_CheckpointInProgressRestoresWithFlagOff(t *testing.T) {
 	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
 }
 
+// A node migrating the sandbox refuses its kill with the answer a pause gets.
+// The record goes back to Running instead of being removed under a running
+// VM, the node is not asked again, and the caller is told the sandbox is held.
+func TestRemoveSandbox_KillRefusedForAMigrationKeepsTheRecord(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{deleteErr: checkpointInProgressPauseErr(t)}
+	node.SetSandboxClient(stub)
+
+	err := f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonRequest})
+	require.ErrorIs(t, err, ErrSandboxLifecycleHeld)
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err, "the record of the running VM stays")
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.WithinDuration(t, f.sbx.EndTime, stored.EndTime, time.Second, "the restore reinstates the expiry the kill clamped")
+	assert.Equal(t, 1, stub.deleteCount(), "the refused sandbox is not killed again")
+	assert.Empty(t, f.restoreOutcomes(t), "a kill's restore is not counted as a pause's")
+
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "no stop is reported for a sandbox still running")
+}
+
 // envdUnresponsivePauseErr is the node refusing a memory pause because the
 // guest agent did not answer its probe: the busy-node code with the
 // ENVD_UNRESPONSIVE detail.

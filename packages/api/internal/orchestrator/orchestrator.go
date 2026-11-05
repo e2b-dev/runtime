@@ -27,6 +27,7 @@ import (
 	redisbackend "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandboxmigration"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -83,6 +84,12 @@ type Orchestrator struct {
 	listAgeHistogram              metric.Int64Histogram
 	teamLists                     teamListSnapshots
 	snapshotCache                 SnapshotCacheInvalidator
+
+	// migrations is nil when sandbox migration is not configured.
+	migrations               sandboxmigration.SandboxMigrationManagerServiceClient
+	migrationPollInterval    time.Duration
+	migrationOutcomesCounter metric.Int64Counter
+	appliedMigrations        appliedListings
 
 	snapshotUpsertSem *utils.AdjustableSemaphore
 	redisStorage      *redisbackend.Storage
@@ -143,6 +150,7 @@ func New(
 	snapshotCache SnapshotCacheInvalidator,
 	snapshotUpsertSem *utils.AdjustableSemaphore,
 	analyticsCreds, nodeCreds credentials.TransportCredentials,
+	migrations sandboxmigration.SandboxMigrationManagerServiceClient,
 ) (*Orchestrator, error) {
 	analyticsInstance, err := analyticscollector.NewAnalytics(
 		config.AnalyticsCollectorHost,
@@ -204,6 +212,9 @@ func New(
 		nodeCreds:            nodeCreds,
 		clusters:             clusters,
 		redisStorage:         redisStorage,
+
+		migrations:            migrations,
+		migrationPollInterval: config.SandboxMigrationPollInterval,
 
 		createdCounter: createdCounter,
 
