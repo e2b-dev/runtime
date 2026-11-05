@@ -253,6 +253,10 @@ type EnvdMetadata struct {
 // the flip, not that we abandoned one still running on FC's serial API loop.
 const inPlaceStateFlipTimeout = 40 * time.Second
 
+// ErrResumeNotStarted reports a ResumeVM whose caller had ended before it
+// sent the flip: nothing reached the VM.
+var ErrResumeNotStarted = errors.New("the VM was not resumed: the caller had ended")
+
 // StopReason says why a sandbox execution ended. It is a metric label, so the
 // set of values has to stay small and closed.
 type StopReason string
@@ -367,7 +371,10 @@ func (a *updateAdmission) closedSignal() <-chan struct{} {
 	return closed
 }
 
-func (a *updateAdmission) admit() (chan struct{}, error) {
+// admit refuses a callback while migrating is set, read under stateMu:
+// Map.BeginMigration sets it before it reads the active callback, so a
+// callback is either refused or waited for.
+func (a *updateAdmission) admit(migrating *atomic.Bool) (chan struct{}, error) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
 
@@ -375,6 +382,9 @@ func (a *updateAdmission) admit() (chan struct{}, error) {
 	case <-a.closedSignalLocked():
 		return nil, ErrSandboxUpdateClosed
 	default:
+	}
+	if migrating.Load() {
+		return nil, ErrSandboxMigrating
 	}
 
 	activeDone := make(chan struct{})
@@ -404,6 +414,14 @@ func (a *updateAdmission) closeAndSnapshotActive() <-chan struct{} {
 	a.stateMu.Unlock()
 
 	return activeDone
+}
+
+// active returns the callback running now, nil for none.
+func (a *updateAdmission) active() <-chan struct{} {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+
+	return a.activeDone
 }
 
 type Sandbox struct {
@@ -469,6 +487,13 @@ type Sandbox struct {
 	// the same FC process. See Server.checkpointInPlace and
 	// Server.registerDetachedCheckpoint.
 	checkpointInFlight atomic.Bool
+	// migrationInFlight marks a migration between Map.BeginMigration and
+	// EndMigration. BeginMigration sets it under the Map's registry lock,
+	// where MarkStopping reads it.
+	migrationInFlight atomic.Bool
+	// wentLive is set once the lifecycle was registered live (Map.MarkRunning
+	// and its reserved forms): from then on the API has it running.
+	wentLive atomic.Bool
 	// lastCheckpointEndedAt (unix nanos) marks the end of the last in-place
 	// checkpoint: the periodic hinter stays quiet for QuietAfterStart after it.
 	lastCheckpointEndedAt atomic.Int64
@@ -655,11 +680,32 @@ func (s *Sandbox) EndCheckpoint() {
 	s.checkpointInFlight.Store(false)
 }
 
+// WentLive reports whether the lifecycle was ever registered live. One that
+// never was, a restore not promoted or a start that failed before its
+// registration, is not the API's to end.
+func (s *Sandbox) WentLive() bool {
+	return s.wentLive.Load()
+}
+
+// MigrationInFlight reports a migration between Map.BeginMigration and
+// EndMigration.
+func (s *Sandbox) MigrationInFlight() bool {
+	return s.migrationInFlight.Load()
+}
+
+// EndMigration ends the migration Map.BeginMigration began, and the
+// checkpoint marker it took. Repeated calls do nothing.
+func (s *Sandbox) EndMigration() {
+	if s.migrationInFlight.CompareAndSwap(true, false) {
+		s.EndCheckpoint()
+	}
+}
+
 func (s *Sandbox) RunUpdate(update func() error) error {
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
 
-	activeDone, err := s.updateAdmission.admit()
+	activeDone, err := s.updateAdmission.admit(&s.migrationInFlight)
 	if err != nil {
 		return err
 	}
@@ -1621,6 +1667,9 @@ type resumeOptions struct {
 	// rebootOnReset boots the sandbox again on its disk when its guest resets
 	// before envd first answers. Nil fails the resume.
 	rebootOnReset StartRebootReport
+	// lifecycleID, when set, is the lifecycle the resume starts. See
+	// WithLifecycleID.
+	lifecycleID string
 }
 
 // describesCustomerStart reports whether this resume's start-path telemetry describes a
@@ -1697,6 +1746,13 @@ func WithVMPaused() ResumeOption {
 // reboot did before ResumeSandbox returns.
 func WithRebootOnGuestReset(report StartRebootReport) ResumeOption {
 	return func(o *resumeOptions) { o.rebootOnReset = report }
+}
+
+// WithLifecycleID resumes the sandbox under lifecycleID instead of a fresh
+// one, for a caller that named the lifecycle before the VM existed. The ID
+// must be unique to this Firecracker process, as a fresh one is.
+func WithLifecycleID(lifecycleID string) ResumeOption {
+	return func(o *resumeOptions) { o.lifecycleID = lifecycleID }
 }
 
 // ThrowawayResumeOptions are the resume options for a caller-reaped throwaway
@@ -1802,7 +1858,10 @@ func (f *Factory) ResumeSandbox(
 		return nil, err
 	}
 
-	lifecycleID := uuid.NewString()
+	lifecycleID := ropts.lifecycleID
+	if lifecycleID == "" {
+		lifecycleID = uuid.NewString()
+	}
 
 	sandboxFiles := t.Files().NewSandboxFiles(runtime.SandboxID)
 	cleanup.Add(ctx, cleanupFiles(f.config, sandboxFiles))
@@ -2395,10 +2454,22 @@ func (f *Factory) ResumeSandbox(
 // On any error the sandbox is left as it is, possibly running, and nothing
 // tears it down: the caller retries on the same VM, which a running VM answers
 // as resumed without loading the snapshot again, or closes it.
+//
+// The flip is sent only while ctx has not ended, and runs detached from its
+// cancellation but not past its deadline: a caller whose authority ends at
+// that deadline never has the flip sent, or waited for, after it. A call that
+// ended before sending it fails with ErrResumeNotStarted.
 func (f *Factory) ResumeVM(ctx context.Context, sbx *Sandbox) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", ErrResumeNotStarted, err)
+	}
 	// WithoutCancel: a caller disconnect must not abandon an ambiguous state
 	// flip, nor leave a running guest without its metadata.
-	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inPlaceStateFlipTimeout)
+	until := time.Now().Add(inPlaceStateFlipTimeout)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
+		until = deadline
+	}
+	resumeCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
 	defer cancel()
 	err := sbx.process.ResumeInPlace(resumeCtx)
 	if err != nil {

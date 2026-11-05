@@ -182,6 +182,28 @@ func firecrackerSupports(ctx context.Context, sbx *sandbox.Sandbox, feature stri
 	return true
 }
 
+// admitEgressProxy is the BYOP egress proxy kill-switch for a start that
+// names one; it mirrors the API gate for direct gRPC callers and snapshot
+// resumes, and a migration's restore runs it too, since the target may lack
+// the dialer or the team's flag the source had.
+func (s *Server) admitEgressProxy(ctx context.Context, config *orchestrator.SandboxConfig) error {
+	if config.GetNetwork().GetEgress().GetEgressProxyAddress() == "" {
+		return nil
+	}
+	if !s.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
+		telemetry.ReportEvent(ctx, "egressProxy rejected by BYOPProxyEnabledFlag")
+
+		return status.Error(codes.PermissionDenied, "egress proxy is not enabled for this team")
+	}
+	if !s.sandboxFactory.EgressProxy().SupportsBYOP() {
+		telemetry.ReportEvent(ctx, "egressProxy rejected: orchestrator build has no BYOP dialer")
+
+		return status.Error(codes.Unimplemented, "egress proxy is not supported by this orchestrator build")
+	}
+
+	return nil
+}
+
 func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequest) (_ *orchestrator.SandboxCreateResponse, createErr error) {
 	releaseWork := s.info.TrackWork()
 	defer releaseWork()
@@ -246,35 +268,10 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	)
 
 	// setup launch darkly
-	ctx = featureflags.AddToContext(
-		ctx,
-		ldcontext.NewBuilder(req.GetSandbox().GetSandboxId()).
-			Kind(featureflags.SandboxKind).
-			SetString(featureflags.SandboxTemplateAttribute, req.GetSandbox().GetTemplateId()).
-			SetString(featureflags.SandboxKernelVersionAttribute, req.GetSandbox().GetKernelVersion()).
-			SetString(featureflags.SandboxFirecrackerVersionAttribute, req.GetSandbox().GetFirecrackerVersion()).
-			SetString(featureflags.SandboxEnvdVersionAttribute, req.GetSandbox().GetEnvdVersion()).
-			Build(),
-		ldcontext.NewBuilder(req.GetSandbox().GetTeamId()).
-			Kind(featureflags.TeamKind).
-			Build(),
-	)
+	ctx = featureflags.AddToContext(ctx, startFlagContexts(req.GetSandbox())...)
 
-	// BYOP egress proxy kill-switch; mirrors the API gate for direct gRPC
-	// callers and snapshot resumes.
-	if req.GetSandbox().GetNetwork().GetEgress().GetEgressProxyAddress() != "" {
-		if !s.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
-			telemetry.ReportEvent(ctx, "egressProxy rejected by BYOPProxyEnabledFlag")
-
-			return nil, status.Error(codes.PermissionDenied,
-				"egress proxy is not enabled for this team")
-		}
-		if !s.sandboxFactory.EgressProxy().SupportsBYOP() {
-			telemetry.ReportEvent(ctx, "egressProxy rejected: orchestrator build has no BYOP dialer")
-
-			return nil, status.Error(codes.Unimplemented,
-				"egress proxy is not supported by this orchestrator build")
-		}
+	if err := s.admitEgressProxy(ctx, req.GetSandbox()); err != nil {
+		return nil, err
 	}
 
 	// Check the limit while taking the ID so in-flight starts count too.
@@ -322,15 +319,13 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	// (if we never reach the lifecycle goroutine) or by that goroutine once the
 	// sandbox has closed; releaseTemplate is idempotent, so registering it on
 	// both paths still releases exactly one pin.
-	template, releaseTemplate, err := s.templateCache.GetTemplatePinned(
-		ctx,
-		req.GetSandbox().GetBuildId(),
-		req.GetSandbox().GetSnapshot(),
-		false,
-		sbxtemplate.GetTemplateOpts{MaxSandboxLengthHours: req.GetSandbox().GetMaxSandboxLength()},
-	)
+	template, meta, profile, releaseTemplate, err := s.pinTemplateWithProfile(ctx, req.GetSandbox().GetBuildId(), req.GetSandbox().GetSnapshot(), req.GetSandbox().GetMaxSandboxLength())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get template snapshot data: %w", err)
+		if refusal := guestProfileRefusal(err); refusal != nil {
+			return nil, refusal
+		}
+
+		return nil, err
 	}
 
 	rollback = sandbox.NewCleanup()
@@ -340,30 +335,6 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		return nil
 	})
 
-	// Clone the network config to avoid modifying the original request
-	network := proto.CloneOf(req.GetSandbox().GetNetwork())
-
-	// The template's own record of what it runs. The request carries the
-	// build's versions and machine size, which the database knows; the guest
-	// OS is lineage state only the template metadata carries, and its profile
-	// decides how the VMM is driven before the first request reaches
-	// Firecracker, starting with which Firecracker binary that is.
-	meta, err := template.Metadata()
-	if err != nil {
-		if refusal := guestProfileRefusal(err); refusal != nil {
-			return nil, refusal
-		}
-
-		return nil, fmt.Errorf("failed to read template metadata: %w", err)
-	}
-	profile, err := meta.ServingGuestProfile(ctx, s.featureFlags)
-	if err != nil {
-		if refusal := guestProfileRefusal(err); refusal != nil {
-			return nil, refusal
-		}
-
-		return nil, fmt.Errorf("failed to resolve the guest profile: %w", err)
-	}
 	if err := tlsInterceptionRefusal(ctx, profile, req.GetSandbox().GetNetwork().GetEgress(), isResume); err != nil {
 		return nil, err
 	}
@@ -375,33 +346,10 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	if err := firecrackerVersionRefusal(ctx, profile, resolvedFCVersion); err != nil {
 		return nil, err
 	}
-	volumeMounts, err := createVolumeMountModelsFromAPI(req.GetSandbox().GetVolumeMounts())
+	config, err := sandboxConfigOf(req.GetSandbox(), firecrackerConfigFor(meta, profile, req.GetSandbox().GetKernelVersion(), resolvedFCVersion))
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert volume mounts: %w", err)
+		return nil, err
 	}
-
-	config := sandbox.NewConfig(sandbox.Config{
-		BaseTemplateID: req.GetSandbox().GetBaseTemplateId(),
-
-		Vcpu:              req.GetSandbox().GetVcpu(),
-		ConfiguredVmVcpus: req.GetSandbox().GetMaxVcpus(),
-		RamMB:             req.GetSandbox().GetRamMb(),
-		TotalDiskSizeMB:   req.GetSandbox().GetTotalDiskSizeMb(),
-		HugePages:         true,
-
-		Network: network,
-
-		Envd: sandbox.EnvdMetadata{
-			Version:     req.GetSandbox().GetEnvdVersion(),
-			AccessToken: req.GetSandbox().EnvdAccessToken,
-			Vars:        req.GetSandbox().GetEnvVars(),
-		},
-
-		FirecrackerConfig: firecrackerConfigFor(meta, profile, req.GetSandbox().GetKernelVersion(), resolvedFCVersion),
-
-		VolumeMounts:          volumeMounts,
-		MaxSandboxLengthHours: req.GetSandbox().GetMaxSandboxLength(),
-	})
 	if err := firecrackerFeaturesRefusal(ctx, config.FirecrackerConfig, s.config.BuilderConfig); err != nil {
 		return nil, err
 	}
@@ -615,6 +563,69 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	}, nil
 }
 
+// pinTemplateWithProfile pins buildID's template in the cache and returns it
+// with its metadata, its guest profile and the call that releases the pin.
+// On an error it holds no pin.
+func (s *Server) pinTemplateWithProfile(ctx context.Context, buildID string, isSnapshot bool, maxSandboxLengthHours int64) (sbxtemplate.Template, metadata.Template, guest.Profile, func(), error) {
+	template, release, err := s.templateCache.GetTemplatePinned(ctx, buildID, isSnapshot, false,
+		sbxtemplate.GetTemplateOpts{MaxSandboxLengthHours: maxSandboxLengthHours})
+	if err != nil {
+		return nil, metadata.Template{}, nil, nil, fmt.Errorf("failed to get template snapshot data: %w", err)
+	}
+
+	// The template's own record of what it runs. The request carries the
+	// build's versions and machine size, which the database knows; the guest
+	// OS is lineage state only the template metadata carries, and its profile
+	// decides how the VMM is driven before the first request reaches
+	// Firecracker, starting with which Firecracker binary that is.
+	meta, err := template.Metadata()
+	if err != nil {
+		release()
+
+		return nil, metadata.Template{}, nil, nil, fmt.Errorf("failed to read template metadata: %w", err)
+	}
+	profile, err := meta.ServingGuestProfile(ctx, s.featureFlags)
+	if err != nil {
+		release()
+
+		return nil, metadata.Template{}, nil, nil, fmt.Errorf("failed to resolve the guest profile: %w", err)
+	}
+
+	return template, meta, profile, release, nil
+}
+
+// sandboxConfigOf is the configuration a start of the sandbox api describes
+// runs with on firecracker. The start may change it, never api.
+func sandboxConfigOf(api *orchestrator.SandboxConfig, firecracker fc.Config) (*sandbox.Config, error) {
+	volumeMounts, err := createVolumeMountModelsFromAPI(api.GetVolumeMounts())
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert volume mounts: %w", err)
+	}
+
+	return sandbox.NewConfig(sandbox.Config{
+		BaseTemplateID: api.GetBaseTemplateId(),
+
+		Vcpu:              api.GetVcpu(),
+		ConfiguredVmVcpus: api.GetMaxVcpus(),
+		RamMB:             api.GetRamMb(),
+		TotalDiskSizeMB:   api.GetTotalDiskSizeMb(),
+		HugePages:         true,
+
+		Network: proto.CloneOf(api.GetNetwork()),
+
+		Envd: sandbox.EnvdMetadata{
+			Version:     api.GetEnvdVersion(),
+			AccessToken: api.EnvdAccessToken,
+			Vars:        api.GetEnvVars(),
+		},
+
+		FirecrackerConfig: firecracker,
+
+		VolumeMounts:          volumeMounts,
+		MaxSandboxLengthHours: api.GetMaxSandboxLength(),
+	}), nil
+}
+
 func createVolumeMountModelsFromAPI(volumeMounts []*orchestrator.SandboxVolumeMount) ([]sandbox.VolumeMountConfig, error) {
 	var errs []error
 
@@ -784,8 +795,26 @@ func mapSandboxUpdateError(err error) error {
 	if errors.Is(err, sandbox.ErrEgressProxyUnsupported) {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
+	if errors.Is(err, sandbox.ErrSandboxMigrating) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
 
 	return err
+}
+
+// migratingStatus answers a checkpoint of a sandbox being migrated, with
+// the checkpoint-in-progress detail a checkpoint refused for a migration
+// begun after its read carries, so the API reads one state one way.
+func migratingStatus(sandboxID string) error {
+	return checkpointInProgressStatus(codes.FailedPrecondition, "sandbox '%s' is being migrated", sandboxID).Err()
+}
+
+// migratingRetryStatus answers a kill or a pause of a sandbox being migrated,
+// as a running checkpoint does. The API keeps the sandbox record only on this
+// answer and removes it on any other. A migrating VM must keep its record:
+// once retained, its network belongs to the target.
+func migratingRetryStatus(sandboxID string) error {
+	return checkpointInProgressStatus(codes.ResourceExhausted, "sandbox '%s' is being migrated, please retry", sandboxID).Err()
 }
 
 // transitionEgress moves the in-memory egress config (read per-connection by
@@ -966,10 +995,14 @@ func (s *Server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 // Delete's behalf and waited for, so its rollback is this delete and no VM
 // the API stopped tracking goes live later; one that went live first is
 // handed back to be killed like any other. nil with no error means the
-// checkpoint ended with the kill and there is nothing left to do.
+// checkpoint ended with the kill and there is nothing left to do. A sandbox
+// being migrated is refused retryably (migratingRetryStatus).
 func (s *Server) takeForDelete(ctx context.Context, in *orchestrator.SandboxDeleteRequest, killReason string, read *sandbox.Sandbox) (*sandbox.Sandbox, error) {
 	if read != nil && s.sandboxFactory.Sandboxes.MarkStopping(ctx, read.Runtime.SandboxID, read.LifecycleID) {
 		return read, nil
+	}
+	if read != nil && read.MigrationInFlight() {
+		return nil, migratingRetryStatus(read.Runtime.SandboxID)
 	}
 
 	live, ended := s.endCheckpointForDelete(ctx, in.GetSandboxId(), killReason)
@@ -1699,6 +1732,9 @@ func (s *Server) pauseWith(ctx context.Context, in *orchestrator.SandboxPauseReq
 		return nil, checkpointInProgressStatus(codes.ResourceExhausted, "sandbox '%s' just rebooted, please retry", in.GetSandboxId()).Err()
 	}
 	sandboxTeamID = sbx.Runtime.TeamID
+	if sbx.MigrationInFlight() {
+		return nil, migratingRetryStatus(sbx.Runtime.SandboxID)
+	}
 
 	ctx = featureflags.AddToContext(ctx, sandboxFlagContexts(sbx)...)
 
@@ -1792,6 +1828,9 @@ func (s *Server) pauseWith(ctx context.Context, in *orchestrator.SandboxPauseReq
 	}()
 
 	marked := s.sandboxFactory.Sandboxes.MarkStopping(ctx, sbx.Runtime.SandboxID, sbx.LifecycleID)
+	if !marked && sbx.MigrationInFlight() {
+		return nil, migratingRetryStatus(sbx.Runtime.SandboxID)
+	}
 	if !marked {
 		// A checkpoint or a reboot in place that took the sandbox between
 		// the read above and the marking gets the same retryable answer as a
@@ -1935,6 +1974,24 @@ func sandboxFlagContexts(sbx *sandbox.Sandbox) []ldcontext.Context {
 	}
 }
 
+// startFlagContexts returns the LaunchDarkly contexts for flag evaluations
+// made on behalf of a start of the sandbox api describes: the sandbox and its
+// team.
+func startFlagContexts(api *orchestrator.SandboxConfig) []ldcontext.Context {
+	return []ldcontext.Context{
+		ldcontext.NewBuilder(api.GetSandboxId()).
+			Kind(featureflags.SandboxKind).
+			SetString(featureflags.SandboxTemplateAttribute, api.GetTemplateId()).
+			SetString(featureflags.SandboxKernelVersionAttribute, api.GetKernelVersion()).
+			SetString(featureflags.SandboxFirecrackerVersionAttribute, api.GetFirecrackerVersion()).
+			SetString(featureflags.SandboxEnvdVersionAttribute, api.GetEnvdVersion()).
+			Build(),
+		ldcontext.NewBuilder(api.GetTeamId()).
+			Kind(featureflags.TeamKind).
+			Build(),
+	}
+}
+
 // The route a checkpoint took: in place, or the first gate condition that
 // sent it resume-fresh, in gate order. The counter and the span carry it so
 // a resume-fresh fraction is attributable per template.
@@ -2035,6 +2092,11 @@ func (s *Server) Checkpoint(ctx context.Context, in *orchestrator.SandboxCheckpo
 		telemetry.ReportCriticalError(ctx, "sandbox not found", nil, telemetry.WithSandboxID(in.GetSandboxId()))
 
 		return nil, status.Errorf(codes.NotFound, "sandbox '%s' not found", in.GetSandboxId())
+	}
+	// A migration also holds the checkpoint marker, so the routes below
+	// refuse a migration begun after this read too.
+	if sbx.MigrationInFlight() {
+		return nil, migratingStatus(sbx.Runtime.SandboxID)
 	}
 
 	ctx = featureflags.AddToContext(ctx, sandboxFlagContexts(sbx)...)
@@ -2785,6 +2847,9 @@ type snapshotResult struct {
 	// waitMemorySealed (Snapshot.WaitMemorySealed) settles.
 	memoryExportDeferred bool
 	waitMemorySealed     func(ctx context.Context) error
+	// advertised records that peers were offered the snapshot from this
+	// node's cache while its upload runs.
+	advertised bool
 }
 
 // afterSnapshot is what happens to a sandbox once its snapshot is taken.
@@ -2854,6 +2919,16 @@ func (s *Server) snapshotAndCacheSandbox(
 	// what Pause stamped (vCPU count, balloon mode), not the pre-pause copy.
 	meta = snapshot.Metadata
 
+	// The caller owns a retained guest from here, failed or not, and must
+	// know it is paused.
+	pausedFor := func(err error) error {
+		if after == sandboxStaysPaused {
+			return errors.Join(errRetainedPaused, err)
+		}
+
+		return err
+	}
+
 	finishUpload, err := s.templateCache.AddSnapshot(
 		ctx,
 		meta.Template.BuildID,
@@ -2870,7 +2945,7 @@ func (s *Server) snapshotAndCacheSandbox(
 		snapshot.MemorySnapshot.ProvisionalSwapDone,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error adding snapshot to template cache: %w", err)
+		return nil, pausedFor(fmt.Errorf("error adding snapshot to template cache: %w", err))
 	}
 
 	// Caller-supplied provenance (e.g. template_id) is forwarded as-is; team and
@@ -2884,12 +2959,12 @@ func (s *Server) snapshotAndCacheSandbox(
 	// failed AddSnapshot doesn't leave an orphan future blocking re-registration.
 	upload, err := sandbox.NewUpload(ctx, s.uploads, snapshot, s.persistence, s.config.StorageConfig.CompressConfig, s.featureFlags, storage.UseCasePause, objectMetadata, finishUpload)
 	if err != nil {
-		return nil, fmt.Errorf("register upload: %w", err)
+		return nil, pausedFor(fmt.Errorf("register upload: %w", err))
 	}
 
 	telemetry.ReportEvent(ctx, "added snapshot to template cache")
 
-	completeUpload, abandonUpload := s.advertiseSnapshot(ctx, upload, meta.Template.BuildID, after == sandboxStaysPaused)
+	completeUpload, abandonUpload, advertised := s.advertiseSnapshot(ctx, upload, meta.Template.BuildID, after == sandboxStaysPaused)
 
 	return &snapshotResult{
 		meta:                 meta,
@@ -2903,16 +2978,17 @@ func (s *Server) snapshotAndCacheSandbox(
 		memoryDiff:           snapshot.MemorySnapshot.Diff,
 		memoryExportDeferred: snapshot.MemoryExportDeferred,
 		waitMemorySealed:     snapshot.WaitMemorySealed,
+		advertised:           advertised,
 	}, nil
 }
 
 // advertiseSnapshot offers buildID's cached snapshot to peers while its upload
 // runs, when peer transfer is on, and returns the calls that end the upload:
-// complete with its outcome, or abandon when nothing will read the snapshot.
-// Either withdraws the offer, except after a retained capture's failed upload:
-// this node may hold the only copy, so peers can read it while the key and
-// the local cache entry last.
-func (s *Server) advertiseSnapshot(ctx context.Context, upload *sandbox.Upload, buildID string, retained bool) (complete, abandon func(context.Context, error)) {
+// complete with its outcome, or abandon when nothing will read the snapshot,
+// and whether the offer was registered. Either withdraws the offer, except
+// after a retained capture's failed upload: this node may hold the only copy,
+// so peers can read it while the key and the local cache entry last.
+func (s *Server) advertiseSnapshot(ctx context.Context, upload *sandbox.Upload, buildID string, retained bool) (complete, abandon func(context.Context, error), advertised bool) {
 	// Capture once so Register and the symmetric Unregister inside
 	// completeUpload don't drift if the flag flips mid-upload.
 	peerEnabled := s.featureFlags.BoolFlag(ctx, featureflags.PeerToPeerChunkTransferFlag)
@@ -2950,10 +3026,12 @@ func (s *Server) advertiseSnapshot(ctx context.Context, upload *sandbox.Upload, 
 	if peerEnabled {
 		if err := s.peerRegistry.Register(ctx, buildID, redisPeerKeyTTL); err != nil {
 			logger.L().Warn(ctx, "failed to register peer address for routing", logger.WithBuildID(buildID), zap.Error(err))
+		} else {
+			advertised = true
 		}
 	}
 
-	return complete, abandon
+	return complete, abandon, advertised
 }
 
 // snapshotLineage describes the snapshot of a sandbox running on predecessor.
@@ -3143,7 +3221,13 @@ func (s *Server) setupSandboxLifecycle(ctx context.Context, sbx *sandbox.Sandbox
 			cause = s.recordCrash(ctx, sbx, waitErr)
 			crashCode := guestCrashCode(sbx.FirecrackerExit())
 			stoppedLine = stoppedSandboxLine(sbx.FirecrackerExit(), cause, crashCode)
-
+		}
+		// A lifecycle that never went live is not the API's: it is neither
+		// kept for the API's timeout action, nor booted again, nor listed as
+		// ended. A restore the migration never promoted shares its execution
+		// with the source, which an ended entry would have the API kill.
+		if sbx.GetStopReason() == sandbox.StopReasonCrashed && sbx.WentLive() {
+			crashCode := guestCrashCode(sbx.FirecrackerExit())
 			if keepsOnPowerOff(cause, waitErr) {
 				stoppedLine = s.holdPoweredOff(ctx, sbx)
 			}
@@ -3170,12 +3254,9 @@ func (s *Server) setupSandboxLifecycle(ctx context.Context, sbx *sandbox.Sandbox
 			sbxlogger.I(sbx).Error(ctx, "failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
 		}
 
-		// Nothing asked for this end and nothing continued the sandbox, so
-		// the API still has it running. List reports it as ended, now that
-		// Close has released everything it held.
-		// A held power-off is listed under its own flag; every other unrequested
-		// end is listed only when the API is meant to end it.
-		if endsUnrequested(sbx) && (sbx.GuestPoweredOff() || s.featureFlags.BoolFlag(ctx, featureflags.SandboxEndedOnNodeFlag)) {
+		// List reports the end now that Close has released everything the
+		// sandbox held.
+		if s.listsAsEnded(ctx, sbx) {
 			s.sandboxFactory.Sandboxes.AddEnded(sbx, cause.GuestEvent(), time.Now())
 		}
 
@@ -3198,6 +3279,20 @@ func guestCrashCode(exit *fc.ExitInfo) uint64 {
 // ended by the API. Build sandboxes are not the API's, so never.
 func endsUnrequested(sbx *sandbox.Sandbox) bool {
 	return sbx.GetStopReason() == sandbox.StopReasonCrashed && sbx.APIStoredConfig != nil
+}
+
+// listsAsEnded reports whether the closed lifecycle sbx is listed as ended
+// for the API: it ended unrequested while the API had it running, so a
+// lifecycle that never went live is not. A held power-off is listed under
+// its own flag, and every other unrequested end only when the API is meant
+// to end it. A restore a migration never promoted shares its execution with the
+// source, which an ended entry would have the API kill.
+func (s *Server) listsAsEnded(ctx context.Context, sbx *sandbox.Sandbox) bool {
+	if !endsUnrequested(sbx) || !sbx.WentLive() {
+		return false
+	}
+
+	return sbx.GuestPoweredOff() || s.featureFlags.BoolFlag(ctx, featureflags.SandboxEndedOnNodeFlag)
 }
 
 // stopSandboxAsync stops the sandbox in a background goroutine.

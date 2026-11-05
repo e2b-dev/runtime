@@ -265,11 +265,13 @@ func TestAdvertiseSnapshot(t *testing.T) {
 				uploadFailedCounter: noop.Int64Counter{},
 			}
 			res, f := checkpointUpload(t, tc.putErr)
-			res.completeUpload, res.abandonUpload = s.advertiseSnapshot(t.Context(), res.upload, buildID, tc.retained)
+			var advertised bool
+			res.completeUpload, res.abandonUpload, advertised = s.advertiseSnapshot(t.Context(), res.upload, buildID, tc.retained)
 
 			_, offered, err := peers.Lookup(t.Context(), buildID)
 			require.NoError(t, err)
 			require.True(t, offered, "a target can read the snapshot before its upload ends")
+			require.True(t, advertised, "the caller learns the offer was registered")
 
 			if tc.abandon {
 				res.abandonUpload(t.Context(), errors.New("capture discarded"))
@@ -286,4 +288,88 @@ func TestAdvertiseSnapshot(t *testing.T) {
 			assert.Equal(t, tc.wantAdvertised, offered)
 		})
 	}
+}
+
+// A retained checkpoint whose upload landed is readable once Uploaded
+// returned, with no peer offer to fall back on, and has released its cache
+// pin. One whose upload failed keeps the pin until the owner releases it, and
+// a release before the upload ended takes effect when it ends.
+func TestRetainedCheckpointPin(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		putErr error
+	}{
+		{name: "upload lands"},
+		{name: "upload fails", putErr: storage.ErrObjectNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &Server{info: &service.ServiceInfo{}, uploadFailedCounter: noop.Int64Counter{}}
+			res, _ := checkpointUpload(t, tc.putErr)
+			var unpinned atomic.Int64
+			checkpoint := newRetainedCheckpoint("build-1", res, nil, func() { unpinned.Add(1) })
+
+			s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+			err := checkpoint.Uploaded(t.Context())
+			if tc.putErr == nil {
+				require.NoError(t, err)
+				assert.True(t, checkpoint.Readable(t.Context()), "a landed upload is readable once Uploaded returned")
+				assert.Equal(t, int64(1), unpinned.Load(), "a landed upload releases the pin")
+			} else {
+				require.Error(t, err)
+				assert.False(t, checkpoint.Readable(t.Context()))
+				s.uploadsWG.Wait()
+				assert.Zero(t, unpinned.Load(), "a failed upload keeps the pin")
+			}
+			s.uploadsWG.Wait()
+
+			checkpoint.Release()
+			checkpoint.Release()
+			assert.Equal(t, int64(1), unpinned.Load(), "the pin is released once")
+		})
+	}
+
+	t.Run("released before the upload ended", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Server{info: &service.ServiceInfo{}, uploadFailedCounter: noop.Int64Counter{}}
+		res, _ := checkpointUpload(t, storage.ErrObjectNotExist)
+		var unpinned atomic.Int64
+		checkpoint := newRetainedCheckpoint("build-1", res, nil, func() { unpinned.Add(1) })
+
+		checkpoint.Release()
+		assert.Zero(t, unpinned.Load(), "the upload still reads the snapshot")
+		s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+		require.Error(t, checkpoint.Uploaded(t.Context()))
+		s.uploadsWG.Wait()
+		assert.Equal(t, int64(1), unpinned.Load(), "the pin drops once the upload ended")
+	})
+}
+
+// fakePeerRegistry answers Lookup from a set of advertised builds.
+type fakePeerRegistry struct{ offered map[string]bool }
+
+func (r fakePeerRegistry) Register(context.Context, string, time.Duration) error { return nil }
+func (r fakePeerRegistry) Lookup(_ context.Context, buildID string) (string, bool, error) {
+	return "", r.offered[buildID], nil
+}
+func (r fakePeerRegistry) Unregister(context.Context, string) error { return nil }
+
+// A checkpoint not yet landed is readable while the peer offer this node
+// registered is still registered, and not once the offer is gone.
+func TestRetainedCheckpointReadableThroughThePeerOffer(t *testing.T) {
+	t.Parallel()
+
+	res, _ := checkpointUpload(t, nil)
+	res.advertised = true
+	registry := fakePeerRegistry{offered: map[string]bool{"build-1": true}}
+	checkpoint := newRetainedCheckpoint("build-1", res, registry, func() {})
+
+	assert.True(t, checkpoint.Readable(t.Context()), "offered by a peer before the upload landed")
+	delete(registry.offered, "build-1")
+	assert.False(t, checkpoint.Readable(t.Context()), "offer withdrawn, upload not landed")
+	assert.False(t, newRetainedCheckpoint("build-2", res, registry, func() {}).Readable(t.Context()), "never offered")
 }

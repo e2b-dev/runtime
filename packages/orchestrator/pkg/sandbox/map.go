@@ -201,6 +201,14 @@ func (m *Map) AssignNetwork(ctx context.Context, sbx *Sandbox) {
 	)
 }
 
+// LifecycleTracked reports whether lifecycleID of sandboxID is tracked
+// (TrackLifecycle) and not yet stopped.
+func (m *Map) LifecycleTracked(sandboxID, lifecycleID string) bool {
+	_, ok := m.lifecycles.Get(sandboxLifecycleKey(sandboxID, lifecycleID))
+
+	return ok
+}
+
 func (m *Map) TrackLifecycle(ctx context.Context, sbx *Sandbox) {
 	m.lifecycleMu.Lock()
 	if !m.lifecycles.InsertIfAbsent(sandboxLifecycleKey(sbx.Runtime.SandboxID, sbx.LifecycleID), sbx) {
@@ -339,6 +347,7 @@ func (m *Map) markRunning(ctx context.Context, sbx *Sandbox, reservation *Reserv
 	}
 	m.TrackLifecycle(ctx, sbx)
 	m.live.Insert(sbx.Runtime.SandboxID, sbx)
+	sbx.wentLive.Store(true)
 	m.registryMu.Unlock()
 
 	m.trigger(ctx, func(ctx context.Context, s MapSubscriber) {
@@ -357,11 +366,68 @@ func (m *Map) markRunning(ctx context.Context, sbx *Sandbox, reservation *Reserv
 }
 
 // MarkStopping removes the sandbox from live queries (Get, Items, Count) and notifies OnStopping subscribers.
-// Returns true if the sandbox was successfully removed.
+// Returns true if the sandbox was successfully removed. A sandbox being
+// migrated is not removed (BeginMigration).
 func (m *Map) MarkStopping(ctx context.Context, sandboxID, lifecycleID string) bool {
-	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false, nil)
+	return m.markStoppingAs(ctx, sandboxID, lifecycleID, false, false)
+}
+
+// EndMigrationStopping ends the lifecycle's migration (Sandbox.EndMigration)
+// and marks it stopping in one critical section, for the migration's own
+// end of the source: between the two as separate steps the sandbox would
+// be live and unmarked, and a kill, pause or checkpoint admitted then would
+// act on a guest whose checkpoint runs elsewhere. It reports false, with
+// the migration still marked, when the lifecycle is not live.
+func (m *Map) EndMigrationStopping(ctx context.Context, sandboxID, lifecycleID string) bool {
+	return m.markStoppingAs(ctx, sandboxID, lifecycleID, false, true)
+}
+
+// markStoppingAs is MarkStopping, on behalf of the lifecycle's own teardown
+// when ownTeardown, which a migration in flight does not refuse, or ending
+// the migration with the mark when endMigration.
+func (m *Map) markStoppingAs(ctx context.Context, sandboxID, lifecycleID string, ownTeardown, endMigration bool) bool {
+	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false, nil, ownTeardown, endMigration)
 
 	return err == nil
+}
+
+// ErrSandboxMigrating reports a lifecycle change refused because the sandbox
+// is being migrated (Map.BeginMigration).
+var ErrSandboxMigrating = errors.New("sandbox is being migrated")
+
+// BeginMigration marks a migration of the live lifecycleID of sandboxID in
+// flight once no update of it is running, so every update committed before
+// it returned is in the state the caller reads after it, and none commits
+// after. Until Sandbox.EndMigration, MarkStopping, MarkStoppingReserved,
+// checkpoints and updates of the sandbox are refused. It stays live and
+// addressable, and its own teardown, once its process ended, still removes
+// it. A sandbox that is not live under lifecycleID, already being migrated,
+// or being checkpointed is refused.
+func (m *Map) BeginMigration(sandboxID, lifecycleID string) (*Sandbox, error) {
+	m.registryMu.Lock()
+	sbx, ok := m.live.Get(sandboxID)
+	switch {
+	case !ok || sbx.LifecycleID != lifecycleID:
+		m.registryMu.Unlock()
+
+		return nil, fmt.Errorf("sandbox '%s' lifecycle '%s' is not live", sandboxID, lifecycleID)
+	case sbx.MigrationInFlight():
+		m.registryMu.Unlock()
+
+		return nil, ErrSandboxMigrating
+	case !sbx.BeginCheckpoint():
+		m.registryMu.Unlock()
+
+		return nil, ErrSandboxOperationInProgress
+	}
+	sbx.migrationInFlight.Store(true)
+	active := sbx.updateAdmission.active()
+	m.registryMu.Unlock()
+	if active != nil {
+		<-active
+	}
+
+	return sbx, nil
 }
 
 // reclaimLiveEntryOnCleanup registers the teardown callback that drops this
@@ -383,8 +449,9 @@ func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, r
 	cleanup.Add(ctx, func(ctx context.Context) error {
 		// false is the normal outcome: delete, pause and a checkpoint that resumes
 		// fresh all reclaim the entry before the chain runs, and a lifecycle that
-		// never became live has no entry to reclaim.
-		if !m.MarkStopping(ctx, runtime.SandboxID, lifecycleID) {
+		// never became live has no entry to reclaim. A migration in flight does
+		// not keep a lifecycle whose teardown runs live.
+		if !m.markStoppingAs(ctx, runtime.SandboxID, lifecycleID, true, false) {
 			return nil
 		}
 
@@ -416,7 +483,7 @@ func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, r
 
 // MarkStoppingReserved exchanges the matching live entry for a checkpoint hold before notifying subscribers.
 func (m *Map) MarkStoppingReserved(ctx context.Context, sandboxID, lifecycleID string) (*Reservation, error) {
-	return m.markStopping(ctx, sandboxID, lifecycleID, true, nil)
+	return m.markStopping(ctx, sandboxID, lifecycleID, true, nil, false, false)
 }
 
 // boot is a reboot in place in progress.
@@ -485,7 +552,7 @@ func (b *boot) claimKill(killReason string) bool {
 func (m *Map) beginBoot(ctx context.Context, from *Sandbox, cancel context.CancelCauseFunc) (*Reservation, *boot, error) {
 	b := &boot{from: from, cancel: cancel, done: make(chan struct{})}
 
-	reservation, err := m.markStopping(ctx, from.Runtime.SandboxID, from.LifecycleID, true, b)
+	reservation, err := m.markStopping(ctx, from.Runtime.SandboxID, from.LifecycleID, true, b, false, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -616,7 +683,9 @@ func (m *Map) CancelBoot(ctx context.Context, sandboxID, killReason string) (fro
 	return b.from, b.claimKill(killReason), nil
 }
 
-func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool, b *boot) (*Reservation, error) {
+// markStopping refuses a lifecycle being migrated unless ownTeardown, decided
+// under the registry lock with the removal.
+func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool, b *boot, ownTeardown, endMigration bool) (*Reservation, error) {
 	var (
 		stopped          *Sandbox
 		reservation      *Reservation
@@ -631,6 +700,14 @@ func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, r
 		}
 
 		if sbx.LifecycleID != lifecycleID {
+			return false
+		}
+		if endMigration {
+			sbx.EndMigration()
+		}
+		if !ownTeardown && sbx.MigrationInFlight() {
+			stopErr = ErrSandboxMigrating
+
 			return false
 		}
 		if reserve && m.reservations[sandboxID] != nil {

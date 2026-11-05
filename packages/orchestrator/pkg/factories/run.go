@@ -295,6 +295,20 @@ type Options struct {
 	// GuestProfiles are the guest profiles beside the default one; a build
 	// whose guest OS none of them claims is refused.
 	GuestProfiles []guest.Profile
+	// Runtime receives the sandbox runtime once it exists and before the
+	// orchestrator serves (optional), and returns what shutdown closes
+	// after the orchestrator's gRPC listeners stopped taking requests and
+	// before Server.Close and the pools, nil for nothing. An error fails
+	// the start.
+	Runtime func(ctx context.Context, rt Runtime) (func(context.Context) error, error)
+}
+
+// Runtime is the sandbox runtime an edition's own services act on.
+type Runtime struct {
+	Server  *server.Server
+	Factory *sandbox.Factory
+	// Routes publishes the sandbox routing records, nil without Redis.
+	Routes *routing.Publisher
 }
 
 type closer struct {
@@ -834,8 +848,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 
 	// Orchestrator-owned sandbox routing record (sandbox:routing:{id}).
+	var routingPublisher *routing.Publisher
 	if redisClient != nil {
-		routingPublisher, err := routing.New(
+		routingPublisher, err = routing.New(
 			tel.MeterProvider,
 			sandboxcatalog.NewRedisSandboxCatalog(redisClient),
 			serviceInstanceID,
@@ -1192,6 +1207,16 @@ func run(config cfg.Config, opts Options) (success bool) {
 		templatemanager.RegisterTemplateServiceServer(grpcServer, tmpl)
 
 		closers = append(closers, closer{"template server", tmpl.Close})
+	}
+
+	if opts.Runtime != nil {
+		closeEdition, err := opts.Runtime(ctx, Runtime{Server: orchestratorService, Factory: sandboxFactory, Routes: routingPublisher})
+		if err != nil {
+			logger.L().Fatal(ctx, "failed to hand the runtime to the edition", zap.Error(err))
+		}
+		if closeEdition != nil {
+			closers = append(closers, closer{"edition services", closeEdition})
+		}
 	}
 
 	infoService := service.NewInfoService(serviceInfo, sandboxes, hostMetrics)
