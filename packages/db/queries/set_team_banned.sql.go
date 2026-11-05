@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: set_team_banned.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

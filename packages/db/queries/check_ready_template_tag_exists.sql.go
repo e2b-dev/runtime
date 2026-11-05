@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: check_ready_template_tag_exists.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: get_default_templates.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

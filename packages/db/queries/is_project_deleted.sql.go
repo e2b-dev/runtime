@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: is_project_deleted.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

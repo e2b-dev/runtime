@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: list_template_tag_groups_by_latest_asc.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

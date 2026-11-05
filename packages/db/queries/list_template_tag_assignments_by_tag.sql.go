@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: list_template_tag_assignments_by_tag.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

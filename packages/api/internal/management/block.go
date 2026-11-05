@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
@@ -79,7 +78,7 @@ func (s *Service) applyProjectBlock(ctx context.Context, projection ProjectBlock
 		return false, nil
 	}
 
-	if _, err := txDB.Dashboard.SetTeamBlocked(ctx, dashboardqueries.SetTeamBlockedParams{
+	if _, err := txDB.SetTeamBlocked(ctx, queries.SetTeamBlockedParams{
 		TeamID:        projection.ProjectID,
 		IsBlocked:     projection.Blocked,
 		BlockedReason: blockedReason(projection),

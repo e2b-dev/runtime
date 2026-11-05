@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: register_team_cluster.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

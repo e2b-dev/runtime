@@ -10,9 +10,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -59,7 +59,7 @@ func (a *APIStore) deleteProject(ctx context.Context, projectID uuid.UUID) ([]st
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	if _, err := txDB.Dashboard.LockProjectForDeletion(ctx, projectID); err != nil {
+	if _, err := txDB.LockProjectForDeletion(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("lock project: %w", err)
 	}
 
@@ -85,31 +85,31 @@ func (a *APIStore) deleteProject(ctx context.Context, projectID uuid.UUID) ([]st
 // first deletion: a membership, key or snapshot created since, or a block
 // reason or cluster assignment written by a delivery.
 func softDeleteProject(ctx context.Context, txDB *sqlcdb.Client, projectID uuid.UUID) ([]string, error) {
-	if err := txDB.Dashboard.MarkProjectDeleted(ctx, dashboardqueries.MarkProjectDeletedParams{
+	if err := txDB.MarkProjectDeleted(ctx, queries.MarkProjectDeletedParams{
 		ProjectID:     projectID,
 		BlockedReason: projectDeletionReason,
 	}); err != nil {
 		return nil, fmt.Errorf("mark project deleted: %w", err)
 	}
 
-	envIDs, err := txDB.Dashboard.SoftDeleteProjectEnvironments(ctx, projectID)
+	envIDs, err := txDB.SoftDeleteProjectEnvironments(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("soft delete environments: %w", err)
 	}
 	if len(envIDs) > 0 {
-		if err := txDB.Dashboard.ReleaseEnvironmentsAliases(ctx, envIDs); err != nil {
+		if err := txDB.ReleaseEnvironmentsAliases(ctx, envIDs); err != nil {
 			return nil, fmt.Errorf("release environment aliases: %w", err)
 		}
-		if err := txDB.Dashboard.DeleteEnvironmentsActiveBuilds(ctx, envIDs); err != nil {
+		if err := txDB.DeleteEnvironmentsActiveBuilds(ctx, envIDs); err != nil {
 			return nil, fmt.Errorf("delete environment active builds: %w", err)
 		}
 	}
 
-	if err := txDB.Dashboard.DeleteProjectMembers(ctx, projectID); err != nil {
+	if err := txDB.DeleteProjectMembers(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("delete members: %w", err)
 	}
 
-	keyHashes, err := txDB.Dashboard.DeleteProjectAPIKeys(ctx, projectID)
+	keyHashes, err := txDB.DeleteProjectAPIKeys(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("delete API keys: %w", err)
 	}
@@ -120,5 +120,5 @@ func softDeleteProject(ctx context.Context, txDB *sqlcdb.Client, projectID uuid.
 // IsProjectDeleted reports whether a project has been deleted. Its team row
 // remains, so the management writes check this before they apply.
 func (a *APIStore) IsProjectDeleted(ctx context.Context, projectID uuid.UUID) (bool, error) {
-	return a.sqlcDB.Dashboard.IsProjectDeleted(ctx, projectID)
+	return a.sqlcDB.IsProjectDeleted(ctx, projectID)
 }

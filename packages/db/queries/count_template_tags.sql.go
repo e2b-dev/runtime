@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: count_template_tags.sql
 
-package dashboardqueries
+package queries
 
 import (
 	"context"

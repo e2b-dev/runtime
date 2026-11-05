@@ -149,7 +149,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 **Database (`packages/db/`)** - PostgreSQL layer
 - Migrations: `migrations/*.sql` (goose)
 - Queries: `queries/*.sql` (sqlc)
-- Generated code: `queries/` (plus `pkg/auth/queries/`, `pkg/dashboard/queries/`)
+- Generated code: `queries/` (plus `pkg/auth/queries/`)
 
 ### Key Technologies
 

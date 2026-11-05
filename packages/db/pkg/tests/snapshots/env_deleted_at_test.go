@@ -68,7 +68,7 @@ func TestSoftDeleteProjectEnvironments_StampsTheProjectsSnapshots(t *testing.T) 
 	other := testutils.CreateTestTeam(t, db)
 	otherSandbox, _ := pausedSandbox(t, db, other, testutils.CreateTestTemplate(t, db, other))
 
-	deletedIDs, err := db.SqlcClient.Dashboard.SoftDeleteProjectEnvironments(ctx, project)
+	deletedIDs, err := db.SqlcClient.SoftDeleteProjectEnvironments(ctx, project)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{projectBase, firstEnv, secondEnv}, deletedIDs)
 
@@ -109,7 +109,7 @@ func TestSoftDeleteClusterEnvironments_StampsTheClustersSnapshots(t *testing.T) 
 	placeOn(onKeptEnv, keptCluster)
 	local, _ := pausedSandbox(t, db, teamID, baseTemplateID)
 
-	deletedIDs, err := db.SqlcClient.Dashboard.SoftDeleteClusterEnvironments(ctx, deletedCluster)
+	deletedIDs, err := db.SqlcClient.SoftDeleteClusterEnvironments(ctx, deletedCluster)
 	require.NoError(t, err)
 	assert.Equal(t, []string{onDeletedEnv}, deletedIDs)
 
