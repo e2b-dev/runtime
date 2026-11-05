@@ -27,6 +27,12 @@ func WithBuildID(buildID string) zap.Field {
 	return zap.String("build.id", buildID)
 }
 
+// WithError is the internal field helper for attaching an error to a log line,
+// so callers use the logger package's API instead of importing zap directly.
+func WithError(err error) zap.Field {
+	return zap.Error(err)
+}
+
 func WithExecutionID(executionID string) zap.Field {
 	return zap.String("execution.id", executionID)
 }
