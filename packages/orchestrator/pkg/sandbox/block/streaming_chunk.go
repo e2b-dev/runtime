@@ -289,7 +289,13 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 	openStart := time.Now()
 	reader, source, err := upstream.OpenRangeReader(ctx, s.chunkOff, s.chunkLen, ft)
 	res.source = source
-	trace.SpanFromContext(ctx).SetAttributes(attribute.String(storage.AttrSource, source.String()))
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.String(storage.AttrSource, source.String()))
+	// A peer serves the uncompressed format, so without a compressed table the
+	// stored size of the chunk is unknown and left out.
+	if ft.IsCompressed() || source != storage.SourcePeer {
+		span.SetAttributes(attribute.Int64("stored_len", storedLen(ft, s.chunkOff, s.chunkLen)))
+	}
 	res.openDuration = time.Since(openStart)
 	s.setSource(source)
 	if err != nil {
@@ -376,6 +382,20 @@ func (c *Chunker) releaseSession(s *fetchSession) {
 // For compressed data the frame table defines chunk boundaries; for
 // uncompressed data chunks are MemoryChunkSize-aligned (for backwards
 // compatibility) and clamped to file size.
+// storedLen returns how many bytes the chunk at off occupies in storage: its
+// compressed frame, or length itself when the data is uncompressed.
+func storedLen(ft *storage.FrameTable, off, length int64) int64 {
+	if !ft.IsCompressed() {
+		return length
+	}
+	r, err := ft.LocateCompressed(off)
+	if err != nil {
+		return 0
+	}
+
+	return int64(r.Length)
+}
+
 func (c *Chunker) locateChunk(off int64, ft *storage.FrameTable) (chunkOff, chunkLen int64, err error) {
 	if ft.IsCompressed() {
 		r, err := ft.LocateUncompressed(off)
