@@ -5,6 +5,7 @@ package block
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-func swapPunchInstruments(t *testing.T) *sdkmetric.ManualReader {
+// swapCacheInstruments points the package-level punch and close instruments
+// at a fresh reader for one test.
+func swapCacheInstruments(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 
 	reader := sdkmetric.NewManualReader()
@@ -27,10 +30,11 @@ func swapPunchInstruments(t *testing.T) *sdkmetric.ManualReader {
 	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
 	meter := provider.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block")
 
-	prevDuration, prevBytes := punchDuration, punchBytes
+	prevDuration, prevBytes, prevClose := punchDuration, punchBytes, closeDuration
 	punchDuration = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.OrchestratorBlockCachePunchDuration))
 	punchBytes = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorBlockCachePunchBytes))
-	t.Cleanup(func() { punchDuration, punchBytes = prevDuration, prevBytes })
+	closeDuration = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.OrchestratorBlockCacheCloseDuration))
+	t.Cleanup(func() { punchDuration, punchBytes, closeDuration = prevDuration, prevBytes, prevClose })
 	// The production callback, so the test reads the gauge the way the exporter does.
 	_ = utils.Must(telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorBlockCachePunchInflight, observePunchesInFlight))
 
@@ -54,8 +58,11 @@ func punchesBySource(t *testing.T, reader *sdkmetric.ManualReader) map[string]pu
 		for _, m := range sm.Metrics {
 			switch data := m.Data.(type) {
 			case metricdata.Histogram[float64]:
+				if m.Name != string(telemetry.OrchestratorBlockCachePunchDuration) {
+					continue
+				}
 				for _, dp := range data.DataPoints {
-					key := punchKey(t, dp.Attributes)
+					key := attrKey(t, dp.Attributes, "source", "result")
 					totals := out[key]
 					totals.count += dp.Count
 					out[key] = totals
@@ -65,7 +72,7 @@ func punchesBySource(t *testing.T, reader *sdkmetric.ManualReader) map[string]pu
 					continue
 				}
 				for _, dp := range data.DataPoints {
-					key := punchKey(t, dp.Attributes)
+					key := attrKey(t, dp.Attributes, "source", "result")
 					totals := out[key]
 					totals.bytes += dp.Value
 					out[key] = totals
@@ -89,6 +96,9 @@ func punchMetrics(t *testing.T, reader *sdkmetric.ManualReader) (durationMs floa
 		for _, m := range sm.Metrics {
 			switch data := m.Data.(type) {
 			case metricdata.Histogram[float64]:
+				if m.Name != string(telemetry.OrchestratorBlockCachePunchDuration) {
+					continue
+				}
 				for _, dp := range data.DataPoints {
 					durationMs += dp.Sum
 				}
@@ -106,18 +116,45 @@ func punchMetrics(t *testing.T, reader *sdkmetric.ManualReader) (durationMs floa
 	return durationMs, inFlight
 }
 
-func punchKey(t *testing.T, attrs attribute.Set) string {
+// histogramCounts collects one histogram's datapoint counts keyed by attrKey.
+func histogramCounts(t *testing.T, reader *sdkmetric.ManualReader, name telemetry.HistogramType, attrs ...string) map[string]uint64 {
 	t.Helper()
 
-	source, ok := attrs.Value("source")
-	require.True(t, ok)
-	result, ok := attrs.Value("result")
-	require.True(t, ok)
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
 
-	return source.AsString() + "/" + result.AsString()
+	out := make(map[string]uint64)
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != string(name) {
+				continue
+			}
+			data, ok := m.Data.(metricdata.Histogram[float64])
+			require.Truef(t, ok, "metric %s is not a float64 histogram", m.Name)
+			for _, dp := range data.DataPoints {
+				out[attrKey(t, dp.Attributes, attrs...)] += dp.Count
+			}
+		}
+	}
+
+	return out
 }
 
-//nolint:paralleltest // swaps the package-level punch instruments
+// attrKey joins the named attribute values with "/".
+func attrKey(t *testing.T, attrs attribute.Set, names ...string) string {
+	t.Helper()
+
+	values := make([]string, 0, len(names))
+	for _, name := range names {
+		value, ok := attrs.Value(attribute.Key(name))
+		require.Truef(t, ok, "attribute %s missing", name)
+		values = append(values, value.AsString())
+	}
+
+	return strings.Join(values, "/")
+}
+
+//nolint:paralleltest // swaps the package-level cache instruments
 func TestCacheRecordsPunches(t *testing.T) {
 	page := int64(os.Getpagesize())
 
@@ -192,7 +229,7 @@ func TestCacheRecordsPunches(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			reader := swapPunchInstruments(t)
+			reader := swapCacheInstruments(t)
 
 			cache, err := NewCache(16*tc.blockSize, tc.blockSize, t.TempDir()+"/cache", false)
 			require.NoError(t, err)
@@ -229,7 +266,7 @@ func TestFaultedPunchLeavesNothingInFlight(t *testing.T) {
 // in the zeroing fallback. So the duration is exact, covers the whole punch and
 // nothing else, and the gauge read inside each step shows the punch in flight.
 //
-//nolint:paralleltest // swaps the package-level punch instruments and operations
+//nolint:paralleltest // swaps the package-level cache instruments and operations
 func TestPunchTimingAndInFlight(t *testing.T) {
 	page := int64(os.Getpagesize())
 
@@ -242,7 +279,7 @@ func TestPunchTimingAndInFlight(t *testing.T) {
 		"zeroed":  {refuse: true, wantMs: 350, wantInFlight: []int64{1, 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			reader := swapPunchInstruments(t)
+			reader := swapCacheInstruments(t)
 
 			prev := punchOps
 			t.Cleanup(func() { punchOps = prev })

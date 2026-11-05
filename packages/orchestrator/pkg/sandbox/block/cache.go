@@ -507,28 +507,35 @@ func (c *Cache) WriteAt(b []byte, off int64) (int, error) {
 	return c.writeAt(b, off, punchZeroRun)
 }
 
+// Close records each step it takes: unmap only when there is a mapping, and
+// the file removal on every path, size-zero caches included.
 func (c *Cache) Close() (e error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.mmap == nil {
-		return os.RemoveAll(c.filePath)
+	if c.mmap != nil {
+		succ := c.closed.CompareAndSwap(false, true)
+		if !succ {
+			return NewErrCacheClosed(c.filePath)
+		}
+
+		start := time.Now()
+		err := c.mmap.Unmap()
+		recordClose(start, closeUnmap, err)
+		if err != nil {
+			e = fmt.Errorf("error unmapping mmap: %w", err)
+		}
 	}
 
-	succ := c.closed.CompareAndSwap(false, true)
-	if !succ {
-		return NewErrCacheClosed(c.filePath)
+	// TODO: Move to the scope of the caller
+	start := time.Now()
+	err := os.RemoveAll(c.filePath)
+	recordClose(start, closeRemove, err)
+	if e == nil {
+		return err
 	}
 
-	err := c.mmap.Unmap()
-	if err != nil {
-		e = errors.Join(e, fmt.Errorf("error unmapping mmap: %w", err))
-	}
-
-	// TODO: Move to to the scope of the caller
-	e = errors.Join(e, os.RemoveAll(c.filePath))
-
-	return e
+	return errors.Join(e, err)
 }
 
 func (c *Cache) Size() (int64, error) {
@@ -604,6 +611,10 @@ var (
 	punchExport        = newPunchSource("export")
 	punchGrow          = newPunchSource("grow")
 
+	closeDuration = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.OrchestratorBlockCacheCloseDuration))
+	closeUnmap    = newCloseOp("unmap")
+	closeRemove   = newCloseOp("remove")
+
 	punchesInFlight atomic.Int64
 	_               = utils.Must(telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorBlockCachePunchInflight, observePunchesInFlight))
 
@@ -662,6 +673,28 @@ func (c *Cache) punchHole(off, length int64, source punchSource) {
 		opts = source.zeroed
 	}
 	recordPunch(punchOps.now().Sub(start), length, opts)
+}
+
+//nolint:contextcheck // metric recording only; Close has no caller context to pass
+func recordClose(start time.Time, op closeOp, err error) {
+	opts := op.ok
+	if err != nil {
+		opts = op.failed
+	}
+	closeDuration.Record(context.Background(), float64(time.Since(start))/float64(time.Millisecond), opts...)
+}
+
+// closeOp holds one close step's attribute sets, built once, for both results.
+type closeOp struct {
+	ok, failed []metric.RecordOption
+}
+
+func newCloseOp(name string) closeOp {
+	opts := func(result string) []metric.RecordOption {
+		return []metric.RecordOption{metric.WithAttributeSet(attribute.NewSet(attribute.String("op", name), attribute.String("result", result)))}
+	}
+
+	return closeOp{ok: opts("ok"), failed: opts("error")}
 }
 
 //nolint:contextcheck // metric recording only; the punch path has no caller context to pass

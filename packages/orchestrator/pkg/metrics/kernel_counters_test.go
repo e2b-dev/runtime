@@ -5,6 +5,7 @@ package metrics
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"sync"
 	"testing"
@@ -22,10 +23,11 @@ import (
 )
 
 const (
-	memoryPressure = "some avg10=1.53 avg60=0.87 avg300=0.24 total=118263004\nfull avg10=0.71 avg60=0.40 avg300=0.11 total=53194377\n"
-	cpuPressure    = "some avg10=0.00 avg60=0.12 avg300=0.30 total=7700123\n"
-	ioPressure     = "some avg10=0 avg60=0 avg300=0 total=10\nfull avg10=0 avg60=0 avg300=0 total=4\n"
-	vmStatSample   = "nr_free_pages 123\nallocstall_dma 0\nallocstall_dma32 2\nallocstall_normal 40\nallocstall_movable 1\npgscan_kswapd 999\npgscan_direct 5000\npgsteal_direct 4100\npswpin 70\npswpout 300\n"
+	memoryPressure   = "some avg10=1.53 avg60=0.87 avg300=0.24 total=118263004\nfull avg10=0.71 avg60=0.40 avg300=0.11 total=53194377\n"
+	cpuPressure      = "some avg10=0.00 avg60=0.12 avg300=0.30 total=7700123\n"
+	ioPressure       = "some avg10=0 avg60=0 avg300=0 total=10\nfull avg10=0 avg60=0 avg300=0 total=4\n"
+	interruptsSample = "           CPU0       CPU1       CPU2\n  0:         21          0          0   IO-APIC   2-edge      timer\nNMI:          0          1          0   Non-maskable interrupts\nCAL:        150        250        100   Function call interrupts\nTLB:         40         60          0   TLB shootdowns\nERR:          0\n"
+	vmStatSample     = "nr_free_pages 123\nallocstall_dma 0\nallocstall_dma32 2\nallocstall_normal 40\nallocstall_movable 1\npgscan_kswapd 999\npgscan_direct 5000\npgsteal_direct 4100\npswpin 70\npswpout 300\n"
 )
 
 // fakeProc is a /proc whose files can change between collections.
@@ -85,6 +87,7 @@ func allProc() *fakeProc {
 		"/proc/pressure/cpu":    cpuPressure,
 		"/proc/pressure/io":     ioPressure,
 		"/proc/vmstat":          vmStatSample,
+		"/proc/interrupts":      interruptsSample,
 	})
 }
 
@@ -149,6 +152,121 @@ func TestPressureParserRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+// The first reading is the baseline: totals start at zero and each later
+// reading adds every CPU's difference.
+func TestInterruptsParserSumsEveryCPU(t *testing.T) {
+	t.Parallel()
+
+	parse := interruptsParser("amd64")
+	samples, err := parse([]byte(interruptsSample))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"function_call": 0, "tlb_shootdown": 0}, interruptsByKind(t, samples))
+
+	samples, err = parse([]byte("           CPU0       CPU1       CPU2\nCAL:        160        255        100   Function call interrupts\nTLB:         41         60          2   TLB shootdowns\n"))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"function_call": 15, "tlb_shootdown": 3}, interruptsByKind(t, samples))
+}
+
+func TestInterruptsParserCountsAcrossAWrap(t *testing.T) {
+	t.Parallel()
+
+	parse := interruptsParser("amd64")
+	_, err := parse([]byte("  CPU0  CPU1\nTLB:  4294967290  10  TLB shootdowns\n"))
+	require.NoError(t, err)
+	samples, err := parse([]byte("  CPU0  CPU1\nTLB:  5  12  TLB shootdowns\n"))
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]int64{"tlb_shootdown": 11 + 2}, interruptsByKind(t, samples))
+}
+
+// A CPU that comes online adds nothing in its first interval, so a column
+// shift is not read as a wrap.
+func TestInterruptsParserMatchesCPUsByName(t *testing.T) {
+	t.Parallel()
+
+	parse := interruptsParser("amd64")
+	_, err := parse([]byte("  CPU0  CPU1\nTLB:  100  4000000000  TLB shootdowns\n"))
+	require.NoError(t, err)
+	samples, err := parse([]byte("  CPU0  CPU2\nTLB:  103  7  TLB shootdowns\n"))
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]int64{"tlb_shootdown": 3}, interruptsByKind(t, samples))
+}
+
+// Hosts with many IRQ numbers pad the labels (" TLB:"). A read that fails
+// after one good row changes nothing: the third read's TLB 140 is below the
+// failed read's 150, so it only passes if that row was not kept.
+func TestInterruptsParserKeepsTotalsAcrossABadRead(t *testing.T) {
+	t.Parallel()
+
+	parse := interruptsParser("amd64")
+	_, err := parse([]byte("       CPU0       CPU1\n 120:     0     0   PCI-MSI   nvme0q1\n TLB:   100   200   TLB shootdowns\n CAL:  1000  2000   Function call interrupts\n"))
+	require.NoError(t, err)
+	_, err = parse([]byte("       CPU0       CPU1\n TLB:   150   250   TLB shootdowns\n CAL:  lots  2050   Function call interrupts\n"))
+	require.Error(t, err)
+	samples, err := parse([]byte("       CPU0       CPU1\n TLB:   140   260   TLB shootdowns\n CAL:  1100  2100   Function call interrupts\n"))
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]int64{"function_call": 200, "tlb_shootdown": 100}, interruptsByKind(t, samples))
+}
+
+// A count that goes back is not a 32-bit wrap, so it is rejected rather than
+// booked as about 2^32 interrupts.
+func TestInterruptsParserRejectsACountThatGoesBack(t *testing.T) {
+	t.Parallel()
+
+	parse := interruptsParser("amd64")
+	_, err := parse([]byte("  CPU0  CPU1\nTLB:  100  100  TLB shootdowns\n"))
+	require.NoError(t, err)
+	_, err = parse([]byte("  CPU0  CPU1\nTLB:  90  100  TLB shootdowns\n"))
+	require.Error(t, err)
+	samples, err := parse([]byte("  CPU0  CPU1\nTLB:  110  105  TLB shootdowns\n"))
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]int64{"tlb_shootdown": 15}, interruptsByKind(t, samples))
+}
+
+func TestInterruptsParserRejectsMalformedInput(t *testing.T) {
+	t.Parallel()
+
+	for name, input := range map[string]string{
+		"too few counts":           "  CPU0  CPU1\nTLB:  5\n",
+		"too few with description": "  CPU0  CPU1\nTLB:  5  TLB shootdowns\n",
+		"more counts than CPUs":    "  CPU0  CPU1\nTLB:  5  6  7  TLB shootdowns\n",
+		"bad count":                "  CPU0  CPU1\nCAL:  5  lots  Function call interrupts\n",
+	} {
+		_, err := interruptsParser("amd64")([]byte(input))
+		assert.Errorf(t, err, "input %q", name)
+	}
+}
+
+// arm64 names its IPIs differently and has no TLB or CAL row, so the source
+// is dropped there; on amd64 the rows always exist, so it is a bad read.
+func TestInterruptsParserTreatsMissingRowsAsAMissingFileOffAMD64(t *testing.T) {
+	t.Parallel()
+
+	input := []byte("  CPU0\nIPI0:  3  Rescheduling interrupts\n")
+	_, err := interruptsParser("arm64")(input)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+
+	_, err = interruptsParser("amd64")(input)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, fs.ErrNotExist)
+}
+
+func interruptsByKind(t *testing.T, samples []kernelSample) map[string]int64 {
+	t.Helper()
+
+	got := make(map[string]int64)
+	for _, s := range samples {
+		kind, ok := s.attrs.Value("kind")
+		require.True(t, ok)
+		got[kind.AsString()] = s.value
+	}
+
+	return got
+}
+
 func TestVMStatParserRejectsMalformedInput(t *testing.T) {
 	t.Parallel()
 
@@ -168,7 +286,7 @@ func TestKernelCountersReportGrowthSinceTheFirstCollection(t *testing.T) {
 	reader, _ := startKernelCounters(t, proc)
 
 	first := collectSums(t, reader)
-	assert.Len(t, first, 8)
+	assert.Len(t, first, 10)
 	for series, value := range first {
 		assert.Zerof(t, value, "series %s", series)
 	}
@@ -177,7 +295,7 @@ func TestKernelCountersReportGrowthSinceTheFirstCollection(t *testing.T) {
 	proc.set("/proc/vmstat", "allocstall_normal 47\nallocstall_dma32 2\nallocstall_movable 1\npgscan_direct 6000\npgsteal_direct 4100\n")
 
 	second := collectSums(t, reader)
-	require.Len(t, second, 8)
+	require.Len(t, second, 10)
 	assert.Equal(t, int64(500), second[stall+"|resource=memory,scope=some"])
 	assert.Equal(t, int64(200), second[stall+"|resource=memory,scope=full"])
 	assert.Equal(t, int64(0), second[stall+"|resource=io,scope=full"])
@@ -223,14 +341,14 @@ func TestKernelCountersSkipAFailingSourceForOneCollection(t *testing.T) {
 	reader, _ := startKernelCounters(t, proc)
 
 	failing := collectSums(t, reader)
-	assert.Len(t, failing, 3)
+	assert.Len(t, failing, 5)
 	assert.NotContains(t, failing, stalls+"|")
 	assert.NotContains(t, failing, stall+"|resource=io,scope=some")
 
 	proc.failVMStat(nil)
 	proc.set("/proc/pressure/io", ioPressure)
 
-	assert.Len(t, collectSums(t, reader), 8)
+	assert.Len(t, collectSums(t, reader), 10)
 }
 
 func TestKernelCountersLogWhenASourceStartsFailingAndWhenItRecovers(t *testing.T) {
@@ -276,7 +394,7 @@ func TestKernelCountersStopReadingAfterClose(t *testing.T) {
 
 	proc := allProc()
 	reader, _, k := newTestKernelCounters(t, proc)
-	require.Len(t, collectSums(t, reader), 8)
+	require.Len(t, collectSums(t, reader), 10)
 
 	require.NoError(t, k.Close(t.Context()))
 	require.NoError(t, k.Close(t.Context()))

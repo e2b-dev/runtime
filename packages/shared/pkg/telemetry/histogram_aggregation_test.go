@@ -25,14 +25,16 @@ func TestExplicitHistogramViewsExport(t *testing.T) {
 		require.NoError(t, err)
 		histogram.Record(t.Context(), 60_001)
 	}
-	punch, err := GetFloatHistogram(meter, OrchestratorBlockCachePunchDuration)
-	require.NoError(t, err)
-	punch.Record(t.Context(), 60_001)
+	for _, name := range []HistogramType{OrchestratorBlockCachePunchDuration, OrchestratorBlockCacheCloseDuration} {
+		histogram, err := GetFloatHistogram(meter, name)
+		require.NoError(t, err)
+		histogram.Record(t.Context(), 60_001)
+	}
 
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &collected))
 	require.Len(t, collected.ScopeMetrics, 1)
-	require.Len(t, collected.ScopeMetrics[0].Metrics, 3)
+	require.Len(t, collected.ScopeMetrics[0].Metrics, 4)
 	for _, m := range collected.ScopeMetrics[0].Metrics {
 		var sum float64
 		var bounds []float64

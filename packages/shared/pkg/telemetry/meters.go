@@ -480,6 +480,7 @@ const (
 	OrchestratorHostPressureStall ObservableCounterType = "orchestrator.host.pressure.stall"
 	OrchestratorHostReclaimStalls ObservableCounterType = "orchestrator.host.reclaim.stalls"
 	OrchestratorHostReclaimPages  ObservableCounterType = "orchestrator.host.reclaim.pages"
+	OrchestratorHostInterrupts    ObservableCounterType = "orchestrator.host.interrupts"
 )
 
 const (
@@ -522,6 +523,7 @@ const (
 	NetworkEgressRetirementDurationName HistogramType = "orchestrator.network.egress.retirement.duration"
 
 	OrchestratorBlockCachePunchDuration HistogramType = "orchestrator.block.cache.punch.duration"
+	OrchestratorBlockCacheCloseDuration HistogramType = "orchestrator.block.cache.close.duration"
 
 	// Sandbox timing histograms
 	OrchestratorSandboxCreateDurationName HistogramType = "orchestrator.sandbox.create.duration"
@@ -1097,6 +1099,7 @@ var observableCounterDesc = map[ObservableCounterType]string{
 	OrchestratorHostPressureStall:   "Host PSI stall time from /proc/pressure since the first collection, by resource (cpu|memory|io) and scope (some|full); full means every non-idle task was stalled.",
 	OrchestratorHostReclaimStalls:   "Host direct-reclaim entries since the first collection (/proc/vmstat allocstall, summed over zones).",
 	OrchestratorHostReclaimPages:    "Host pages scanned and reclaimed by direct reclaim since the first collection, by kind (scan|steal; /proc/vmstat pgscan_direct, pgsteal_direct).",
+	OrchestratorHostInterrupts:      "Host cross-CPU interrupts since the first collection, summed over CPUs, by kind (tlb_shootdown|function_call; /proc/interrupts TLB, CAL). The kinds overlap: function_call includes the interrupts that deliver TLB shootdowns, so do not sum them.",
 }
 
 var observableCounterUnits = map[ObservableCounterType]string{
@@ -1105,6 +1108,7 @@ var observableCounterUnits = map[ObservableCounterType]string{
 	OrchestratorHostPressureStall:   "us",
 	OrchestratorHostReclaimStalls:   "{stall}",
 	OrchestratorHostReclaimPages:    "{page}",
+	OrchestratorHostInterrupts:      "{interrupt}",
 }
 
 var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
@@ -1313,6 +1317,7 @@ var histogramDesc = map[HistogramType]string{
 	FPHRunFaultsName:                                  "Demand faults the serve loop resolved for one sandbox across a periodic hinting attempt (window=run) and over the interval that followed a tick (window=interval), labeled by kind (served pages, deferred installs, wp faults, deferred wp resolves) and outcome: the attempt's run outcome, or for a tick that attempted nothing the skip reason or observe-only, which is the baseline an attempt is read against",
 	NetworkSlotReturnDurationName:                     "Network slot return attempt duration, by network_version, phase (total including reuse delay or cleanup after it), and result (success, shutdown, retained, error)",
 	OrchestratorBlockCachePunchDuration:               "Time inside one block cache hole punch, by source (zero_run|zeroes_request|fold|export|grow) and result (removed: MADV_REMOVE; zeroed: refused, the time includes zero-filling the range)",
+	OrchestratorBlockCacheCloseDuration:               "Time of each step of closing a block cache, by op (unmap: munmap of the cache mapping; remove: deleting its file) and result (ok|error)",
 	NetworkEgressRetirementDurationName:               "Time waiting for execution-owned egress flows to close before other network release subscribers, by result (success, timeout, error)",
 	BuildDurationHistogramName:                        "Time taken to build a template",
 	BuildPhaseDurationHistogramName:                   "Time taken to build each phase of a template",
@@ -1410,6 +1415,7 @@ var histogramUnits = map[HistogramType]string{
 	FPHRunFaultsName:                                  "{fault}",
 	NetworkSlotReturnDurationName:                     "ms",
 	OrchestratorBlockCachePunchDuration:               "ms",
+	OrchestratorBlockCacheCloseDuration:               "ms",
 	NetworkEgressRetirementDurationName:               "ms",
 	BuildDurationHistogramName:                        "ms",
 	BuildPhaseDurationHistogramName:                   "ms",
