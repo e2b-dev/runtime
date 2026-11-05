@@ -225,6 +225,10 @@ type APIStore struct {
 	teamSandboxCounter        teamRunningSandboxCounter
 	sandboxLifecycles         sandboxLifecycleReader
 	templateManager           *template_manager.TemplateManager
+	// buildAncestors resolves a build's header-mapping ancestor closure for
+	// the template-deletion reachability guard. Nil when template storage is
+	// not configured for the API, in which case artifact cleanup fails closed.
+	buildAncestors            buildAncestorReader
 	sqlcDB                    *sqlcdb.Client
 	sqlcReadDB                *sqlcdb.Client
 	authDB                    *authdb.Client
@@ -461,6 +465,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		teamSandboxCounter:    sandboxcountscache.NewCountsCache(orch, redisClient),
 		sandboxLifecycles:     clickhouseStore,
 		templateManager:       templateManager,
+		buildAncestors:        newTemplateBuildAncestorReader(ctx),
 		sqlcDB:                sqlcDB,
 		sqlcReadDB:            sqlcReadDB,
 		authDB:                authDB,
