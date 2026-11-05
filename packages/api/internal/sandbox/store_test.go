@@ -125,8 +125,9 @@ func (n *NoOpReservationStorage) WaitForStart(_ context.Context, _ uuid.UUID, _ 
 type MockStorage struct {
 	Storage
 
-	addError error
-	mu       sync.Mutex
+	addError    error
+	removeError error
+	mu          sync.Mutex
 }
 
 func NewMockStorage(storage Storage) *MockStorage {
@@ -153,6 +154,26 @@ func (m *MockStorage) Add(ctx context.Context, sbx Sandbox) error {
 	}
 
 	return m.Storage.Add(ctx, sbx)
+}
+
+// SetRemoveError configures Remove() to return an error
+func (m *MockStorage) SetRemoveError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeError = err
+}
+
+// Remove wraps Storage.Remove() with error injection
+func (m *MockStorage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) error {
+	m.mu.Lock()
+	err := m.removeError
+	m.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+
+	return m.Storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
 }
 
 // createTestSandbox creates a test sandbox with default values
@@ -487,4 +508,66 @@ func TestReconcile_EndsEndedSandboxes(t *testing.T) {
 	assert.ElementsMatch(t, []string{endedInStore.SandboxID, endedGone.SandboxID}, ended)
 	assert.Equal(t, []string{orphan.SandboxID}, orphaned)
 	assert.Empty(t, poweroff)
+}
+
+// A removal refused by a hold, or by a lock lost before the script ran,
+// leaves the record in place, and its reservation with it: a start still
+// pending keeps waiting.
+func TestRemove_HeldRecordKeepsReservation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// refuse makes the storage refuse the removal of sbx.
+		refuse func(t *testing.T, store *Store, storage *MockStorage, sbx Sandbox)
+	}{
+		{
+			name: "held",
+			refuse: func(t *testing.T, store *Store, _ *MockStorage, sbx Sandbox) {
+				t.Helper()
+				hold := Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, ID: "op"}
+				require.NoError(t, store.HoldExecution(t.Context(), hold, time.Now().Add(time.Minute)))
+			},
+		},
+		{
+			name: "lock lost",
+			refuse: func(t *testing.T, _ *Store, storage *MockStorage, _ Sandbox) {
+				t.Helper()
+				storage.SetRemoveError(fmt.Errorf("remove: %w", ErrLockLost))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+
+			client := redis_utils.SetupInstance(t)
+			backend, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
+			require.NoError(t, err)
+			storage := NewMockStorage(backend)
+			reservations := reservationsredis.NewReservationStorage(client, backend.Notifier())
+			store := NewStore(storage, reservations, Callbacks{})
+
+			sbx := createTestSandbox()
+			sbx.ExecutionID = uuid.NewString()
+			finishStart, _, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			require.NoError(t, err)
+			require.NotNil(t, finishStart)
+			_, waitForStart, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			require.NoError(t, err)
+			require.NoError(t, storage.Add(ctx, sbx))
+			tt.refuse(t, store, storage, sbx)
+
+			store.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID)
+
+			_, err = storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
+			require.NoError(t, err, "the record stays")
+			pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+			defer cancel()
+			_, err = waitForStart(pending)
+			require.ErrorIs(t, err, context.DeadlineExceeded, "the start is still pending")
+		})
+	}
 }

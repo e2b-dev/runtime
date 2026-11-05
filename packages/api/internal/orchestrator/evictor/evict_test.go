@@ -257,6 +257,8 @@ func TestPauseSkipReason(t *testing.T) {
 		"envd unresponsive":  {err: fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedEnvdUnresponsiveError{}), want: pause.SkipReasonEnvdUnresponsive, skip: true},
 		"replica draining":   {err: fmt.Errorf("remove: %w", sandbox.ErrDraining), want: pause.SkipReasonDraining, skip: true},
 		"eviction in flight": {err: sandbox.ErrEvictionInProgress, want: pause.SkipReasonNotEvictable, skip: true},
+		"sandbox held":       {err: fmt.Errorf("sandbox %q: %w", "s", sandbox.ErrLifecycleHeld), want: pause.SkipReasonLifecycleHeld, skip: true},
+		"lock lost":          {err: fmt.Errorf("sandbox %q: %w", "s", sandbox.ErrLockLost), want: pause.SkipReasonStateChanged, skip: true},
 		"sandbox gone":       {err: sandbox.ErrNotFound, want: pause.SkipReasonNotFound, skip: true},
 		"state moved":        {err: &sandbox.InvalidStateTransitionError{CurrentState: sandbox.StateKilling, TargetState: sandbox.StatePausing}, want: pause.SkipReasonStateChanged, skip: true},
 		"real failure":       {err: errors.New("node exploded")},

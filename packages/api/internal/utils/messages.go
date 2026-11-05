@@ -10,6 +10,10 @@ func SandboxNotFoundMsg(sandboxID string) string {
 	return fmt.Sprintf("Sandbox %q doesn't exist or you don't have access to it", sandboxID)
 }
 
+func SandboxLifecycleHeldMsg(sandboxID string) string {
+	return fmt.Sprintf("Sandbox %q is busy with another operation, please retry later", sandboxID)
+}
+
 func SandboxChangingStateMsg(sandboxID string, state sandbox.State) string {
 	switch state {
 	case sandbox.StateKilling:

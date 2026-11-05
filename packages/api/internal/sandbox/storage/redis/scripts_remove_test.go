@@ -84,29 +84,47 @@ func newRecord(teamID uuid.UUID, sandboxID string) sandboxtypes.Sandbox {
 	return makeIndexedSandbox(teamID, sandboxID, uuid.NewString(), time.Now(), time.Now().Add(time.Hour))
 }
 
+// testLockValue is the lock value lockRecord writes, which a remove script
+// run through removeScripts presents.
+const testLockValue = "test-lock"
+
+// lockRecord holds key's lock with testLockValue, as a caller of the remove
+// scripts holds it.
+func lockRecord(t *testing.T, client redis.UniversalClient, key string) {
+	t.Helper()
+
+	require.NoError(t, client.Set(t.Context(), redis_utils.GetLockKey(key), testLockValue, 0).Err())
+}
+
 // removeScript is one of the remove scripts, run on a sandbox of the team
-// in the form whose record it guards.
+// in the form whose record it guards, under the lock lockRecord holds, as
+// the hold holdID when one is named.
 type removeScript struct {
 	name string
 	form keyForm
 	run  func(ctx context.Context, sandboxID, expected string) *redis.Cmd
+	as   func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd
 }
 
 // removeScripts returns the remove script's two calls: the team form's,
 // which removes the record with its index entry, and the sandbox form's,
 // which removes the record alone, its index entry living in another slot.
 func removeScripts(client redis.UniversalClient, teamID uuid.UUID, index string) []removeScript {
+	as := func(form keyForm, name string, keys func(key string) []string) func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
+		return func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
+			return RunScript(ctx, client, name, removeSandboxScript, keys(recordKey(form, teamID.String(), sandboxID)), sandboxID, expected, 60, holdID, lockValue)
+		}
+	}
+	team := as(formTeam, "remove_sandbox", func(key string) []string { return []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), index} })
+	sandbox := as(formSandbox, "remove_record", func(key string) []string { return []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)} })
+
 	return []removeScript{
 		{"remove_sandbox", formTeam, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
-			key := recordKey(formTeam, teamID.String(), sandboxID)
-
-			return RunScript(ctx, client, "remove_sandbox", removeSandboxScript, []string{key, goneKeyFor(key), index}, sandboxID, expected, 60)
-		}},
+			return team(ctx, sandboxID, expected, "", testLockValue)
+		}, team},
 		{"remove_record", formSandbox, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
-			key := recordKey(formSandbox, teamID.String(), sandboxID)
-
-			return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key)}, sandboxID, expected, 60)
-		}},
+			return sandbox(ctx, sandboxID, expected, "", testLockValue)
+		}, sandbox},
 	}
 }
 
@@ -140,6 +158,7 @@ func TestRemoveScriptGuards(t *testing.T) {
 
 				sbx = newRecord(teamID, fmt.Sprintf("sbx-%s-%s", script.name, name))
 				key = recordKey(script.form, teamID.String(), sbx.SandboxID)
+				lockRecord(t, client, key)
 
 				return sbx, key, writeRecord(t, client, key, index, sbx)
 			}
@@ -186,6 +205,7 @@ func TestRemoveScriptReexecutionIsNoop(t *testing.T) {
 			sandboxID := "sbx-" + script.name
 			key := recordKey(script.form, teamID.String(), sandboxID)
 
+			lockRecord(t, client, key)
 			sbx := newRecord(teamID, sandboxID)
 			data := writeRecord(t, client, key, index, sbx)
 			requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), removed(data))
@@ -216,14 +236,75 @@ func TestRemoveScriptReexecutionIsNoop(t *testing.T) {
 	}
 }
 
-// parseRemoveReply distinguishes the three replies and names any other
-// shape in its error.
+// A remove script writes nothing once the record's lock no longer holds the
+// caller's value, and, run as a hold, removes only a record under that live
+// hold: one whose hold lapsed, or that nobody holds, is left whole with its
+// index entry, as is one under another operation's hold.
+func TestRemoveScriptRequiresTheLockAndTheLiveHold(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	teamID := uuid.New()
+	index := GetSandboxStorageTeamIndexKey(teamID.String())
+
+	for _, script := range removeScripts(client, teamID, index) {
+		t.Run(script.name, func(t *testing.T) {
+			t.Parallel()
+
+			requireKept := func(sbx sandboxtypes.Sandbox, key, data string) {
+				t.Helper()
+				requireRecord(t, client, key, data)
+				if script.form == formTeam {
+					requireIndexed(t, client, index, sbx.SandboxID, true)
+				}
+			}
+			write := func(name, holdID string, until time.Time) (sbx sandboxtypes.Sandbox, key, data string) {
+				t.Helper()
+
+				sbx = newRecord(teamID, fmt.Sprintf("sbx-%s-%s", script.name, name))
+				sbx.LifecycleHold, sbx.LifecycleHoldUntil = holdID, until.UnixMilli()
+				key = recordKey(script.form, teamID.String(), sbx.SandboxID)
+				lockRecord(t, client, key)
+
+				return sbx, key, writeRecord(t, client, key, index, sbx)
+			}
+
+			sbx, key, data := write("lock-lost", "", time.Time{})
+			_, err := readRemoveReply(script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", "another-lock"))
+			require.ErrorIs(t, err, sandboxtypes.ErrLockLost)
+			requireKept(sbx, key, data)
+
+			sbx, key, data = write("expired-hold", "op", time.Now().Add(-time.Second))
+			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+			requireKept(sbx, key, data)
+
+			sbx, key, data = write("unheld", "", time.Time{})
+			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+			requireKept(sbx, key, data)
+
+			sbx, key, data = write("other-hold", "other", time.Now().Add(time.Minute))
+			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", testLockValue), refused(data))
+			requireKept(sbx, key, data)
+
+			sbx, key, data = write("held", "op", time.Now().Add(time.Minute))
+			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), removed(data))
+			requireNoRecord(t, client, key)
+		})
+	}
+}
+
+// parseRemoveReply distinguishes the replies and names any other shape in
+// its error.
 func TestParseRemoveReply(t *testing.T) {
 	t.Parallel()
 
 	requireRemoveReply(t, redis.NewCmdResult(nil, redis.Nil), absentReply)
 	requireRemoveReply(t, redis.NewCmdResult([]any{int64(1), "{}"}, nil), removed("{}"))
 	requireRemoveReply(t, redis.NewCmdResult([]any{int64(0), "{}"}, nil), refused("{}"))
+	lost, err := readRemoveReply(redis.NewCmdResult([]any{int64(2), "{}"}, nil))
+	require.ErrorIs(t, err, sandboxtypes.ErrLockLost)
+	assert.Equal(t, refused("{}"), lost)
 
 	failed := errors.New("connection reset")
 	got, err := readRemoveReply(redis.NewCmdResult(nil, failed))

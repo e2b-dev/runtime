@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
+	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
 // A create's store write can land twice: the client retries a command that
@@ -160,4 +161,30 @@ func TestReplace_ReinstallsAGoneExecution(t *testing.T) {
 	_, err = storage.Get(t.Context(), teamID, sbx.SandboxID)
 	require.NoError(t, err, "the reinstalled record stays")
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
+}
+
+// A late duplicate of a create that finds the execution's record in the
+// team form, left by a release that wrote that form, keeps it as it would in
+// its own form: the record keeps the update made since and no twin appears.
+func TestAdd_ADuplicateKeepsTheTeamFormRecord(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	storage := newTestStorage(t, client)
+	teamID := uuid.New()
+	index := GetSandboxStorageTeamIndexKey(teamID.String())
+	start := time.Now()
+	sbx := makeIndexedSandbox(teamID, "sbx-team-duplicate", uuid.NewString(), start, start.Add(5*time.Minute))
+	extended := sbx
+	extended.EndTime = start.Add(10 * time.Minute)
+	key := recordKey(formTeam, teamID.String(), sbx.SandboxID)
+	stored := writeRecord(t, client, key, index, extended)
+
+	require.NoError(t, storage.Add(t.Context(), sbx))
+
+	requireRecord(t, client, key, stored)
+	requireNoRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID))
+	got, err := storage.Get(t.Context(), teamID, sbx.SandboxID)
+	require.NoError(t, err)
+	assert.True(t, got.EndTime.Equal(extended.EndTime), "the extended end time must survive the duplicate")
 }

@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
+	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
 // A sandbox ID is reused across incarnations: kill or pause a sandbox, resume
@@ -156,15 +158,25 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 // driven with a record that has already moved on, standing in for the resume
 // that would have landed in that window.
 
-func transitionKeysFor(sbx sandboxtypes.Sandbox, transitionID string) []string {
+// transitionKeysFor returns the script's keys and holds the record's lock
+// with transitionLockValue, as the caller's lock would.
+func transitionKeysFor(t *testing.T, client redis.UniversalClient, sbx sandboxtypes.Sandbox, transitionID string) []string {
+	t.Helper()
+
 	team := sbx.TeamID.String()
+	key := recordKey(formSandbox, team, sbx.SandboxID)
+	lockKey := redis_utils.GetLockKey(key)
+	require.NoError(t, client.Set(t.Context(), lockKey, transitionLockValue, 0).Err())
 
 	return []string{
-		recordKey(formSandbox, team, sbx.SandboxID),
+		key,
 		transitionKeyFor(formSandbox, team, sbx.SandboxID),
 		transitionResultKeyFor(formSandbox, team, sbx.SandboxID, transitionID),
+		lockKey,
 	}
 }
+
+const transitionLockValue = "token"
 
 func TestStartTransitionScript_RefusesAStaleIncarnation(t *testing.T) {
 	t.Parallel()
@@ -176,11 +188,12 @@ func TestStartTransitionScript_RefusesAStaleIncarnation(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sbx))
 
 	transitionID := uuid.NewString()
-	keys := transitionKeysFor(sbx, transitionID)
+	keys := transitionKeysFor(t, client, sbx, transitionID)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
 		`{"executionID":"clobbered"}`, transitionID, 60, 60,
 		uuid.NewString(), // the incarnation the caller pinned, no longer stored
+		transitionLockValue,
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written, "the script must refuse a stale pin")
@@ -203,7 +216,7 @@ func TestStartTransitionScript_ProceedsOnTheMatchingIncarnation(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sbx))
 
 	transitionID := uuid.NewString()
-	keys := transitionKeysFor(sbx, transitionID)
+	keys := transitionKeysFor(t, client, sbx, transitionID)
 
 	updated := sbx
 	updated.State = sandboxtypes.StateKilling
@@ -211,7 +224,7 @@ func TestStartTransitionScript_ProceedsOnTheMatchingIncarnation(t *testing.T) {
 	require.NoError(t, err)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		data, transitionID, 60, 60, sbx.ExecutionID,
+		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
@@ -235,10 +248,10 @@ func TestStartTransitionScript_RefusesADeletedRecord(t *testing.T) {
 	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
 
 	transitionID := uuid.NewString()
-	keys := transitionKeysFor(sbx, transitionID)
+	keys := transitionKeysFor(t, client, sbx, transitionID)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		`{"executionID":"resurrected"}`, transitionID, 60, 60, sbx.ExecutionID,
+		`{"executionID":"resurrected"}`, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written)
@@ -258,7 +271,7 @@ func TestStartTransitionScript_UnpinnedWritesUnconditionally(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sbx))
 
 	transitionID := uuid.NewString()
-	keys := transitionKeysFor(sbx, transitionID)
+	keys := transitionKeysFor(t, client, sbx, transitionID)
 
 	updated := sbx
 	updated.State = sandboxtypes.StateKilling
@@ -266,10 +279,43 @@ func TestStartTransitionScript_UnpinnedWritesUnconditionally(t *testing.T) {
 	require.NoError(t, err)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		data, transitionID, 60, 60, "",
+		data, transitionID, 60, 60, "", transitionLockValue,
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
+}
+
+// A removal whose lock expired under it may find the record moved by the
+// next lock holder, still the same execution and no longer held. The script
+// refuses once the lock holds another caller's value.
+func TestStartTransitionScript_RefusesALostLock(t *testing.T) {
+	t.Parallel()
+
+	storage, client := setupTestStorage(t)
+	ctx := t.Context()
+
+	sbx := createTestSandbox("sbx-cas-lock-lost")
+	require.NoError(t, storage.Add(ctx, sbx))
+
+	transitionID := uuid.NewString()
+	keys := transitionKeysFor(t, client, sbx, transitionID)
+	require.NoError(t, client.Set(ctx, keys[3], "another-token", 0).Err())
+	before, err := client.Get(ctx, keys[0]).Result()
+	require.NoError(t, err)
+
+	stale := sbx
+	stale.NodeID, stale.State = "stale-node", sandboxtypes.StateKilling
+	data, err := json.Marshal(stale)
+	require.NoError(t, err)
+
+	written, err := startTransitionScript.Run(ctx, client, keys,
+		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
+	).Int64()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), written)
+	assert.Equal(t, before, client.Get(ctx, keys[0]).Val(), "the record is untouched")
+	assert.Zero(t, client.Exists(ctx, keys[1]).Val(), "no transition started")
+	assert.Zero(t, client.Exists(ctx, keys[2]).Val(), "no transition result")
 }
 
 // TestStartRemoving_NoExecutionPinRemovesWhateverIsStored keeps the guard

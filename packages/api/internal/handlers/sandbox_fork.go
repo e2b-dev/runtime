@@ -150,6 +150,10 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be forked while in '%s' state", sandboxID, transErr.CurrentState))
 
 		return
+	case errors.Is(err, sandbox.ErrLifecycleHeld), errors.Is(err, sandbox.ErrLockLost):
+		a.sendAPIStoreError(c, http.StatusConflict, utils.SandboxLifecycleHeldMsg(sandboxID))
+
+		return
 	// The sandbox is back in Running; the checkpoint that refused this one
 	// ends on its own, so a plain retry succeeds.
 	case errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}):

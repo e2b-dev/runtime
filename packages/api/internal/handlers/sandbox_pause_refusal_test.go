@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +170,22 @@ func TestPause_EnvdUnresponsiveMapsTo503(t *testing.T) {
 	var apiErr api.Error
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &apiErr))
 	assert.Contains(t, apiErr.Message, "guest agent is not responding, please retry")
+}
+
+// A pause of a held sandbox, or one whose record lock expired before it
+// wrote, is a 503 that asks for a retry: released SDKs read a pause 409 as
+// already paused.
+func TestPause_BusyMapsTo503(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range []error{orchestrator.ErrSandboxLifecycleHeld, fmt.Errorf("sandbox %q: %w", testPauseSandboxID, sandbox.ErrLockLost)} {
+		recorder := postPause(t, err)
+
+		require.Equal(t, http.StatusServiceUnavailable, recorder.Code, err)
+		var apiErr api.Error
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &apiErr))
+		assert.Contains(t, apiErr.Message, "busy with another operation, please retry")
+	}
 }
 
 // A wrapped refusal (the orchestrator chain wraps before returning) still maps.

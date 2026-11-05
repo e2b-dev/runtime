@@ -118,12 +118,22 @@ func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sa
 // or any execution's when none is expected, and releases its reservation. A
 // record another execution took over is left in place with its reservation:
 // the successor's own lifecycle releases it, and a release here would drop
-// a start still pending and the result its waiters read.
+// a start still pending and the result its waiters read. A held record keeps
+// its reservation too, since it stays in place, as does a record whose lock
+// expired under this call, which may be a successor's by now.
 func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) {
 	err := s.storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
 	switch {
 	case errors.Is(err, ErrExecutionMismatch):
 		logger.L().Info(ctx, "Sandbox record superseded, left in place", logger.WithSandboxID(sandboxID))
+
+		return
+	case errors.Is(err, ErrLifecycleHeld):
+		logger.L().Warn(ctx, "Sandbox record held, left in place", logger.WithSandboxID(sandboxID))
+
+		return
+	case errors.Is(err, ErrLockLost):
+		logger.L().Warn(ctx, "Sandbox lock lost before removal, record left in place", logger.WithSandboxID(sandboxID))
 
 		return
 	case err != nil:
@@ -150,6 +160,37 @@ func (s *Store) TeamsWithSandboxes(ctx context.Context) (map[uuid.UUID]int64, er
 
 func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error) {
 	return s.storage.Update(ctx, teamID, sandboxID, updateFunc)
+}
+
+// HoldExecution marks the running execution as held until `until`; see
+// sandboxtypes.LifecycleHolds.
+func (s *Store) HoldExecution(ctx context.Context, hold Hold, until time.Time) error {
+	return s.storage.HoldExecution(ctx, hold, until)
+}
+
+// MoveHeldExecution changes the held execution's node to nodeID and releases
+// the hold, and reports whether it wrote.
+func (s *Store) MoveHeldExecution(ctx context.Context, hold Hold, nodeID string) (bool, error) {
+	return s.storage.MoveHeldExecution(ctx, hold, nodeID)
+}
+
+// ReleaseHeldExecution clears the hold without moving the record.
+func (s *Store) ReleaseHeldExecution(ctx context.Context, hold Hold) error {
+	return s.storage.ReleaseHeldExecution(ctx, hold)
+}
+
+// RemoveHeldExecution removes the held record, returned as it was, and, as
+// Remove does, releases the sandbox's reservation.
+func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, error) {
+	removed, err := s.storage.RemoveHeldExecution(ctx, hold)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	if err := s.reservations.Release(ctx, hold.TeamID, hold.SandboxID); err != nil {
+		logger.L().Error(ctx, "Failed to release reservation", zap.Error(err), logger.WithSandboxID(hold.SandboxID))
+	}
+
+	return removed, nil
 }
 
 func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {

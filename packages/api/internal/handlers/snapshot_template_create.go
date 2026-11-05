@@ -216,6 +216,12 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 			return
 		}
 
+		if errors.Is(err, sandbox.ErrLifecycleHeld) || errors.Is(err, sandbox.ErrLockLost) {
+			a.sendAPIStoreError(c, http.StatusConflict, utils.SandboxLifecycleHeldMsg(sandboxID))
+
+			return
+		}
+
 		if errors.Is(err, orchestrator.FilesystemOnlyDisabledError{}) {
 			apierrors.SendAPIError(c, filesystemOnlySnapshotDisabledError(sandboxID))
 

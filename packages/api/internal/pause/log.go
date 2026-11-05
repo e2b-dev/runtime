@@ -46,6 +46,9 @@ const (
 	// SkipReasonRateLimited: the sandbox used up its pause budget for the
 	// period, so the sandbox is left running.
 	SkipReasonRateLimited SkipReason = "rate_limited"
+	// SkipReasonLifecycleHeld: an operation outside the API's ordinary
+	// lifecycle holds the sandbox, which keeps running untouched.
+	SkipReasonLifecycleHeld SkipReason = "lifecycle_held"
 )
 
 // fsOnly rides on every pause event so the snapshot kind can be joined to the

@@ -99,6 +99,14 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		if opts.Eviction {
 			return err
 		}
+		if errors.Is(err, sandbox.ErrLifecycleHeld) {
+			return ErrSandboxLifecycleHeld
+		}
+		// The record's lock expired under this call before it wrote
+		// anything, so a retry can succeed.
+		if errors.Is(err, sandbox.ErrLockLost) {
+			return err
+		}
 
 		switch opts.Action {
 		case sandbox.StateActionKill:

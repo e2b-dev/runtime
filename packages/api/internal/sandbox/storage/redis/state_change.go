@@ -110,6 +110,13 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 		)
 	}
 
+	// A held record is refused before any wait: the hold lasts as long as its
+	// operation, not a transition. Hold refuses a record in transition, so
+	// one never starts under the other.
+	if sbx.Held(time.Now()) {
+		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
+	}
+
 	// Check if there's an existing transition
 	transactionID, err := s.redisClient.Get(ctx, transitionKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -177,11 +184,17 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 	resultTtlSeconds := int(transitionResultKeyTTL.Seconds())
 
 	written, err := RunScript(ctx, s.redisClient, "start_transition", startTransitionScript,
-		[]string{key, transitionKey, resultKey},
-		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID,
+		[]string{key, transitionKey, resultKey, lock.Key()},
+		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID, lockValueOf(lock),
 	).Int64()
 	if err != nil {
 		return transition, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
+	}
+	if written == 3 {
+		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLockLost)
+	}
+	if written == 2 {
+		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
 	}
 	if written == 0 {
 		// The pin no longer holds: the incarnation was replaced since the check

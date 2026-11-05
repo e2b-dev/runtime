@@ -102,7 +102,7 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 
 	var result []sandboxtypes.Sandbox
 	var rescores []redis.Z  // live members whose score drifted from EndTime
-	var deferrals []redis.Z // expired members whose sandbox is still in a transition
+	var deferrals []redis.Z // expired members whose sandbox is still in a transition or held
 	var orphans, deadExecutions []memberRef
 
 	for _, ref := range members {
@@ -144,6 +144,17 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 			// XX: never resurrect a member a concurrent Remove deleted.
 			rescores = append(rescores, redis.Z{
 				Score:  float64(sbx.EndTime.UnixMilli()),
+				Member: ref.member,
+			})
+
+			continue
+		}
+
+		// Eviction refuses a held sandbox for as long as its operation runs,
+		// so it leaves the window instead of being tried on every tick.
+		if sbx.Held(now) {
+			deferrals = append(deferrals, redis.Z{
+				Score:  float64(now.Add(transitionRecheckDelay).UnixMilli()),
 				Member: ref.member,
 			})
 
@@ -207,7 +218,7 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 	if len(deferrals) > 0 {
 		// XX: never resurrect a member a concurrent Remove deleted.
 		if err := s.redisClient.ZAddXX(ctx, globalExpirationSet, deferrals...).Err(); err != nil {
-			logger.L().Warn(ctx, "Failed to defer expiration index entries of sandboxes in transition", zap.Error(err), zap.Int("count", len(deferrals)))
+			logger.L().Warn(ctx, "Failed to defer expiration index entries of sandboxes in transition or held", zap.Error(err), zap.Int("count", len(deferrals)))
 		} else {
 			s.metrics.indexDeferred.Add(ctx, int64(len(deferrals)))
 		}

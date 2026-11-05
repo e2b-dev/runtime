@@ -111,6 +111,17 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 		a.sendAPIStoreError(c, http.StatusTooManyRequests, fmt.Sprintf("Sandbox '%s' reached its pause rate limit, please retry in %d seconds", sandboxID, retryAfterSecs))
 
 		return
+	case errors.Is(err, orchestrator.ErrSandboxLifecycleHeld):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonLifecycleHeld, filesystemOnly)
+		// Released SDKs read a pause 409 as already paused.
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is busy with another operation, please retry", sandboxID))
+
+		return
+	case errors.Is(err, sandbox.ErrLockLost):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonStateChanged, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is busy with another operation, please retry", sandboxID))
+
+		return
 	case errors.Is(err, orchestrator.ErrExecutionChanged):
 		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonStateChanged, filesystemOnly)
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' was resumed while it was being paused, please retry", sandboxID))

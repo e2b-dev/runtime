@@ -178,6 +178,22 @@ func (PauseUnsupportedError) Error() string {
 // RestoreRunning.
 var ErrExecutionMismatch = errors.New("sandbox execution no longer matches")
 
+// ErrLifecycleHeld refuses an ordinary transition, update or replacement of a
+// held record; see Sandbox.LifecycleHold.
+var ErrLifecycleHeld = errors.New("the sandbox's lifecycle is held by another operation")
+
+// ErrHoldConflict refuses a hold of a record that is another execution, not
+// running, in a transition or held by another operation.
+var ErrHoldConflict = errors.New("the sandbox record cannot be held by this operation")
+
+// ErrLockLost refuses a write under the record's lock because the lock no
+// longer holds this caller's token: it expired, and another caller may have
+// written. Nothing was written, so a retry can succeed.
+var ErrLockLost = errors.New("the record's lock was lost before the update was written")
+
+// ErrNotHeld means the record is not held by the operation.
+var ErrNotHeld = errors.New("the sandbox record is not held by this operation")
+
 // ErrSandboxKilled reports that a delete claimed the sandbox ID first.
 var ErrSandboxKilled = errors.New("sandbox was concurrently killed")
 

@@ -14,6 +14,8 @@ const (
 )
 
 // Storage is the persistence interface implemented by the redis backend.
+//
+//nolint:interfacebloat // one backend implements the whole record store; the groups are embedded interfaces
 type Storage interface {
 	// Add stores a sandbox. A record of the same execution already stored is
 	// kept: the write is then a late duplicate of the one that landed.
@@ -32,6 +34,7 @@ type Storage interface {
 
 	Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error)
 	StateTransitions
+	LifecycleHolds
 	Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID string) []NodeSandbox
 }
 
@@ -68,6 +71,41 @@ type StateTransitions interface {
 	// It takes no tenant guard, since the record may already be gone: the
 	// caller reads the record as the team's before it waits.
 	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+}
+
+// Hold names the hold one operation has on a running execution's record.
+type Hold struct {
+	TeamID      uuid.UUID
+	SandboxID   string
+	ExecutionID string
+	// ID is the holding operation's own ID, stored as lifecycleHold.
+	ID string
+}
+
+// LifecycleHolds let one operation hold a running execution's record. While
+// the hold lasts, every ordinary transition, update, replacement and
+// removal of the record is refused with ErrLifecycleHeld.
+type LifecycleHolds interface {
+	// HoldExecution marks the running execution as held until `until`, which
+	// must be in the future. The same hold again is a no-op and keeps its
+	// deadline. It refuses with ErrHoldConflict a record of another
+	// execution, not running, in a transition, or under a live hold of
+	// another operation.
+	HoldExecution(ctx context.Context, hold Hold, until time.Time) error
+	// MoveHeldExecution changes the execution's node to nodeID and releases
+	// the hold in one write, and reports whether it wrote: a repeat that
+	// finds the execution already on nodeID and not under this hold succeeds
+	// without writing. ErrNotHeld for a record of this execution not under
+	// this hold, ErrExecutionMismatch for another execution, ErrNotFound for
+	// a record gone.
+	MoveHeldExecution(ctx context.Context, hold Hold, nodeID string) (bool, error)
+	// ReleaseHeldExecution clears the hold and leaves the record where it is.
+	ReleaseHeldExecution(ctx context.Context, hold Hold) error
+	// RemoveHeldExecution removes the held record as Remove does, without
+	// clearing the hold first, and returns it as it was: no guest of this
+	// execution may run anywhere, and the holder reports its end from the
+	// record. A failed removal keeps the hold, so the holder can retry it.
+	RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, error)
 }
 
 type StateTransition struct {

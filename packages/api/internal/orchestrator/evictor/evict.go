@@ -493,6 +493,8 @@ func pauseSkipReason(err error, state sandbox.State) (pause.SkipReason, bool) {
 		return pause.SkipReasonUnsupported, true
 	case errors.Is(err, sandbox.ErrDraining):
 		return pause.SkipReasonDraining, true
+	case errors.Is(err, sandbox.ErrLifecycleHeld):
+		return pause.SkipReasonLifecycleHeld, true
 	case isNotEvictableError(err):
 		return pause.SkipReasonNotEvictable, true
 	case isGone(err):
@@ -557,7 +559,9 @@ func refusalHeld(sbx sandbox.Sandbox, now time.Time) bool {
 }
 
 func isNotEvictableError(err error) bool {
-	return errors.Is(err, sandbox.ErrEvictionInProgress) || errors.Is(err, sandbox.ErrEvictionNotNeeded)
+	// A held sandbox expires once its hold is released.
+	return errors.Is(err, sandbox.ErrEvictionInProgress) || errors.Is(err, sandbox.ErrEvictionNotNeeded) ||
+		errors.Is(err, sandbox.ErrLifecycleHeld)
 }
 
 // isGone reports the scanned sandbox is no longer there: removed, or replaced
@@ -567,12 +571,13 @@ func isGone(err error) bool {
 }
 
 // isStaleDecision reports a refusal explained by the sandbox moving between
-// the expired-set read and StartRemoving. A refusal from the very state the
-// action was chosen for is a real failure and stays one.
+// the expired-set read and StartRemoving, or by a lock that expired under
+// this sweep, which wrote nothing. A refusal from the very state the action
+// was chosen for is a real failure and stays one.
 func isStaleDecision(err error, observed sandbox.State) bool {
 	var transErr *sandbox.InvalidStateTransitionError
 
-	return errors.As(err, &transErr) && transErr.CurrentState != observed
+	return errors.Is(err, sandbox.ErrLockLost) || errors.As(err, &transErr) && transErr.CurrentState != observed
 }
 
 func isKnownEvictionError(err error, observed sandbox.State) bool {

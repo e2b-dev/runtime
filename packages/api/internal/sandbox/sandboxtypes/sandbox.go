@@ -142,6 +142,21 @@ type Sandbox struct {
 	NetworkPlacement *orchestrator.SandboxNetworkPlacement `json:"networkPlacement,omitempty"`
 
 	State State `json:"state"`
+
+	// LifecycleHold names the operation outside the API's ordinary lifecycle
+	// that holds this running execution, until LifecycleHoldUntil in Unix
+	// milliseconds. Both are written only by the store's hold operations; an
+	// expired hold is treated as released everywhere. While the hold lasts,
+	// ordinary transitions, updates and replacements are refused with
+	// ErrLifecycleHeld.
+	LifecycleHold      string `json:"lifecycleHold,omitempty"`
+	LifecycleHoldUntil int64  `json:"lifecycleHoldUntil,omitempty"`
+}
+
+// Held reports whether the record is held at now: a hold past its deadline
+// is released.
+func (s Sandbox) Held(now time.Time) bool {
+	return s.LifecycleHold != "" && now.UnixMilli() < s.LifecycleHoldUntil
 }
 
 func (s Sandbox) ToAPISandbox() *api.Sandbox {

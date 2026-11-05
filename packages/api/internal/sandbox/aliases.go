@@ -17,6 +17,7 @@ type (
 	StateAction = sandboxtypes.StateAction
 	KillReason  = sandboxtypes.KillReason
 	RemoveOpts  = sandboxtypes.RemoveOpts
+	Hold        = sandboxtypes.Hold
 
 	TransitionEffect = sandboxtypes.TransitionEffect
 	StateTransition  = sandboxtypes.StateTransition
@@ -65,6 +66,10 @@ var (
 	ErrEvictionInProgress = sandboxtypes.ErrEvictionInProgress
 	ErrEvictionNotNeeded  = sandboxtypes.ErrEvictionNotNeeded
 	ErrExecutionMismatch  = sandboxtypes.ErrExecutionMismatch
+	ErrLifecycleHeld      = sandboxtypes.ErrLifecycleHeld
+	ErrLockLost           = sandboxtypes.ErrLockLost
+	ErrHoldConflict       = sandboxtypes.ErrHoldConflict
+	ErrNotHeld            = sandboxtypes.ErrNotHeld
 	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
 	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
 	ErrSkipRestore        = sandboxtypes.ErrSkipRestore

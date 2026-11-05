@@ -124,7 +124,7 @@ func TestUpdateRefusesTheWriteWhenTheLockChangedHands(t *testing.T) {
 
 		return s, nil
 	})
-	require.ErrorIs(t, err, ErrLockLost)
+	require.ErrorIs(t, err, sandboxtypes.ErrLockLost)
 
 	stored, err := storage.Get(t.Context(), sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)

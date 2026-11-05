@@ -473,7 +473,7 @@ func (s *Storage) healNominee(ctx context.Context, n nominee, now time.Time) (ki
 	}
 
 	if n.state != danglingEntry {
-		return s.healUnindexed(ctx, form, n.ref, now)
+		return s.healUnindexed(ctx, form, lock, n.ref, now)
 	}
 	// The entry goes while the sandbox still has no record in either form.
 	_, exists, err := s.formOfExisting(ctx, n.ref.TeamID, n.ref.SandboxID)
@@ -491,7 +491,7 @@ func (s *Storage) healNominee(ctx context.Context, n nominee, now time.Time) (ki
 // grace period, and deletes a non-Running one, with its expiration member,
 // once it is stale: its VM is gone, and indexed again it would be listed,
 // counted, and returned by a resume as live.
-func (s *Storage) healUnindexed(ctx context.Context, form keyForm, ref recordRef, now time.Time) (healKind, error) {
+func (s *Storage) healUnindexed(ctx context.Context, form keyForm, lock *storageLock, ref recordRef, now time.Time) (healKind, error) {
 	key := recordKey(form, ref.TeamID, ref.SandboxID)
 	sbx, ok, err := s.readRecordOf(ctx, key, ref)
 	if err != nil || !ok {
@@ -525,7 +525,7 @@ func (s *Storage) healUnindexed(ctx context.Context, form keyForm, ref recordRef
 	if now.Sub(sbx.EndTime) <= sandboxtypes.StaleCutoff {
 		return "", nil
 	}
-	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key)}, ref.SandboxID, sbx.ExecutionID, int(goneExecutionsTTL.Seconds())))
+	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), lock.Key()}, ref.SandboxID, sbx.ExecutionID, int(goneExecutionsTTL.Seconds()), "", lockValueOf(lock)))
 	if err != nil {
 		return "", fmt.Errorf("remove_record: %w", err)
 	}
@@ -582,7 +582,9 @@ func (s *Storage) healTwin(ctx context.Context, ref recordRef) (kind healKind, e
 	if inSandbox.StartTime.Before(inTeam.StartTime) {
 		older, victim = sandboxFormKey, inSandbox
 	}
-	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{older, goneKeyFor(older)}, ref.SandboxID, victim.ExecutionID, int(goneExecutionsTTL.Seconds())))
+	// The twin's lock is the other form's, which this repair does not hold:
+	// the execution guard alone scopes the delete.
+	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{older, goneKeyFor(older), redis_utils.GetLockKey(older)}, ref.SandboxID, victim.ExecutionID, int(goneExecutionsTTL.Seconds()), "", ""))
 	if err != nil {
 		return "", fmt.Errorf("remove_record: %w", err)
 	}

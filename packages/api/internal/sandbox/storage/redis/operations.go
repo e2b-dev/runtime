@@ -98,8 +98,13 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 
 	// A crashed predecessor's record in the team form goes before the
 	// write, so an interrupted Add leaves no record rather than a twin.
+	var otherResult int64
 	err = s.run(faultAddBeforeOtherDel, func() error {
-		return s.redisClient.Del(ctx, recordKey(formTeam, teamID, sbx.SandboxID)).Err()
+		other := recordKey(formTeam, teamID, sbx.SandboxID)
+		var err error
+		otherResult, err = RunScript(ctx, s.redisClient, "clear_other_form", clearOtherFormScript, []string{other, goneKeyFor(other)}, sbx.ExecutionID, replace).Int64()
+
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete the team-form record: %w", err)
@@ -112,29 +117,34 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	if replace {
 		replaceFlag = "1"
 	}
-	var written int64
-	err = s.run(faultAddAfterOtherDel, func() (runErr error) {
-		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
+	written := otherResult
+	if written == 1 {
+		err = s.run(faultAddAfterOtherDel, func() (runErr error) {
+			written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
 
-		return runErr
-	})
-	if err == nil {
-		err = s.fault(faultAddRecordWrite)
-	}
-	if crashed(err) {
-		return err
-	}
-	if err != nil {
-		// The caller may be gone by now; the cleanup runs regardless, as
-		// the lock release does.
-		if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), sbx); cleanupErr != nil {
-			logger.L().Error(ctx, "Failed to clean up an unconfirmed sandbox record write", zap.Error(cleanupErr), logger.WithSandboxID(sbx.SandboxID))
-			s.countWriteAnomaly(ctx, writeAnomalyAddWriteUnconfirmed)
+			return runErr
+		})
+		if err == nil {
+			err = s.fault(faultAddRecordWrite)
 		}
+		if crashed(err) {
+			return err
+		}
+		if err != nil {
+			// The caller may be gone by now; the cleanup runs regardless, as
+			// the lock release does.
+			if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), sbx); cleanupErr != nil {
+				logger.L().Error(ctx, "Failed to clean up an unconfirmed sandbox record write", zap.Error(cleanupErr), logger.WithSandboxID(sbx.SandboxID))
+				s.countWriteAnomaly(ctx, writeAnomalyAddWriteUnconfirmed)
+			}
 
-		return fmt.Errorf("failed to store sandbox in Redis: %w", err)
+			return fmt.Errorf("failed to store sandbox in Redis: %w", err)
+		}
 	}
 	switch written {
+	case 3:
+		// A held record is its holder's to change.
+		return fmt.Errorf("sandbox %q: %w", sbx.SandboxID, sandboxtypes.ErrLifecycleHeld)
 	case 0:
 		logger.L().Warn(ctx, "Sandbox already stored for this execution, duplicate write kept out", logger.WithSandboxID(sbx.SandboxID), zap.String("execution_id", sbx.ExecutionID))
 	case 2:
@@ -227,7 +237,7 @@ func (s *Storage) cleanupAdd(ctx context.Context, sbx sandboxtypes.Sandbox) erro
 	teamID := sbx.TeamID.String()
 	teamKey := GetSandboxStorageTeamIndexKey(teamID)
 
-	_, err := s.removeSandboxRecord(ctx, recordKey(formSandbox, teamID, sbx.SandboxID), teamKey, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID)
+	_, err := s.removeSandboxRecord(ctx, recordKey(formSandbox, teamID, sbx.SandboxID), teamKey, nil, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID, "")
 	if err != nil && !errors.Is(err, sandboxtypes.ErrExecutionMismatch) {
 		return err
 	}
@@ -325,21 +335,30 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expec
 // ZREM is scoped to the execution deleted, so a member another execution
 // wrote is never unindexed here.
 func (s *Storage) removeInForm(ctx context.Context, form keyForm, teamID uuid.UUID, sandboxID, expectedExecutionID string) (err error) {
-	team := teamID.String()
-	key := recordKey(form, team, sandboxID)
-	teamKey := GetSandboxStorageTeamIndexKey(team)
-
-	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
+	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(recordKey(form, teamID.String(), sandboxID)), lockTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to obtain lock: %w", err)
 	}
 	defer releaseLock(ctx, lock.Release, &err)
 
+	return s.removeUnderLock(ctx, form, lock, teamID, sandboxID, expectedExecutionID, "")
+}
+
+// removeUnderLock is removeInForm's removal, run while the caller holds lock,
+// the lock of form, which the record's delete requires to still hold the
+// caller's value. With holdID, only a record under that live hold is
+// removed, sandboxtypes.ErrNotHeld otherwise; without, a held record is
+// refused with sandboxtypes.ErrLifecycleHeld.
+func (s *Storage) removeUnderLock(ctx context.Context, form keyForm, lock *storageLock, teamID uuid.UUID, sandboxID, expectedExecutionID, holdID string) (err error) {
+	team := teamID.String()
+	key := recordKey(form, team, sandboxID)
+	teamKey := GetSandboxStorageTeamIndexKey(team)
+
 	var deleted string
 	if form == formTeam {
-		deleted, err = s.removeTeamRecord(ctx, key, teamKey, sandboxID, expectedExecutionID)
+		deleted, err = s.removeTeamRecord(ctx, key, teamKey, lock, sandboxID, expectedExecutionID, holdID)
 	} else {
-		deleted, err = s.removeSandboxRecord(ctx, key, teamKey, teamID, sandboxID, expectedExecutionID)
+		deleted, err = s.removeSandboxRecord(ctx, key, teamKey, lock, teamID, sandboxID, expectedExecutionID, holdID)
 	}
 	if err != nil {
 		return err
@@ -385,21 +404,51 @@ func (s *Storage) removeInForm(ctx context.Context, form keyForm, teamID uuid.UU
 	return nil
 }
 
+// lockValueOf is the value a script writing under the record's lock requires
+// the lock to hold, none for a caller without a lock.
+func lockValueOf(lock *storageLock) string {
+	if lock == nil {
+		return ""
+	}
+
+	return lock.Token() + lock.Metadata()
+}
+
 // removeTeamRecord removes a team-form record with its index entry in one
 // command, the deleted execution going into the gone set, and returns the
-// JSON deleted, empty when the record was absent.
-func (s *Storage) removeTeamRecord(ctx context.Context, key, teamKey, sandboxID, expectedExecutionID string) (string, error) {
-	deleted, raw, absent, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_sandbox", removeSandboxScript, []string{key, goneKeyFor(key), teamKey}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds())))
+// JSON deleted, empty when the record was absent. It runs under lock, nil
+// for Add's cleanup, which holds none.
+func (s *Storage) removeTeamRecord(ctx context.Context, key, teamKey string, lock *storageLock, sandboxID, expectedExecutionID, holdID string) (string, error) {
+	deleted, raw, absent, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_sandbox", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), teamKey}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds()), holdID, lockValueOf(lock)))
 	switch {
+	case errors.Is(err, sandboxtypes.ErrLockLost):
+		return "", err
 	case err != nil:
 		return "", fmt.Errorf("failed to remove sandbox from Redis: %w", err)
 	case absent:
 		return "", nil
 	case !deleted:
-		return "", fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
+		return "", refusedRemoval(raw, sandboxID, expectedExecutionID, holdID)
 	}
 
 	return raw, nil
+}
+
+// refusedRemoval is the error of a removal the script refused with the
+// record raw left in place: the record is another execution's, held by
+// another operation, or, for a holder, not under its hold any more.
+func refusedRemoval(raw, sandboxID, expectedExecutionID, holdID string) error {
+	var stored sandboxtypes.Sandbox
+	decoded := json.Unmarshal([]byte(raw), &stored) == nil
+	sameExecution := decoded && (expectedExecutionID == "" || expectedExecutionID == stored.ExecutionID)
+	switch {
+	case holdID != "" && sameExecution:
+		return sandboxtypes.ErrNotHeld
+	case sameExecution && stored.Held(time.Now()):
+		return sandboxtypes.ErrLifecycleHeld
+	}
+
+	return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
 }
 
 // removeSandboxRecord removes a sandbox-form record, the index entry first,
@@ -412,7 +461,7 @@ func (s *Storage) removeTeamRecord(ctx context.Context, key, teamKey, sandboxID,
 // once it is older than the grace period. The delete is retried
 // removeRecordRetries times; when it keeps failing the record is left
 // stranded for the healer, the anomaly counted and the error returned.
-func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, teamID uuid.UUID, sandboxID, expectedExecutionID string) (string, error) {
+func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, lock *storageLock, teamID uuid.UUID, sandboxID, expectedExecutionID, holdID string) (string, error) {
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return "", nil
@@ -431,6 +480,17 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 		return "", fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
 	}
 
+	// The index entry goes before the record, in another slot: the same
+	// refusals as the script's, read first so no entry goes for a record the
+	// script then leaves in place.
+	held := stored.Held(time.Now())
+	switch {
+	case holdID != "" && (!held || stored.LifecycleHold != holdID):
+		return "", sandboxtypes.ErrNotHeld
+	case holdID == "" && held:
+		return "", sandboxtypes.ErrLifecycleHeld
+	}
+
 	if err := s.redisClient.SRem(ctx, teamKey, sandboxID).Err(); err != nil {
 		return "", fmt.Errorf("SREM: %w", err)
 	}
@@ -439,7 +499,7 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 	var raw string
 	for range removeRecordRetries + 1 {
 		err = s.run(faultRemoveAfterSREM, func() (runErr error) {
-			deleted, raw, absent, runErr = parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key)}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds())))
+			deleted, raw, absent, runErr = parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds()), holdID, lockValueOf(lock)))
 
 			return runErr
 		})
@@ -448,7 +508,7 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 		}
 	}
 	switch {
-	case crashed(err):
+	case crashed(err), errors.Is(err, sandboxtypes.ErrLockLost):
 		return "", err
 	case err != nil:
 		// Warn: the caller logs the failed removal.
@@ -461,7 +521,7 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 	case !deleted:
 		logger.L().Warn(ctx, "Sandbox record changed under the lock, left in place without its index entry", logger.WithSandboxID(sandboxID))
 
-		return "", fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
+		return "", refusedRemoval(raw, sandboxID, expectedExecutionID, holdID)
 	}
 
 	return raw, nil
@@ -565,6 +625,10 @@ func (s *Storage) updateIn(ctx context.Context, form keyForm, teamID uuid.UUID, 
 		return sandboxtypes.Sandbox{}, err
 	}
 
+	if sbx.Held(time.Now()) {
+		return sandboxtypes.Sandbox{}, sandboxtypes.ErrLifecycleHeld
+	}
+
 	// Apply update
 	updatedSbx, err := updateFunc(sbx)
 	if err != nil {
@@ -666,10 +730,6 @@ const updateWriteAttempts = 3
 
 const updateWriteBackoff = 50 * time.Millisecond
 
-// ErrLockLost refuses an update's write because the record's lock no longer
-// holds this caller's token: it expired, and another caller may have written.
-var ErrLockLost = errors.New("the record's lock was lost before the update was written")
-
 // setUnderLock writes an updated record only while lock still holds this
 // caller's token, checked and written in one script, so a write that lands
 // late cannot overwrite what a later lock holder stored. A failed write is
@@ -685,13 +745,13 @@ func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key strin
 			}
 		}
 		var written int64
-		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key}, lock.Token()+lock.Metadata(), data).Int64()
+		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key}, lockValueOf(lock), data).Int64()
 		if err == nil {
 			if written == 1 {
 				return nil
 			}
 
-			return ErrLockLost
+			return sandboxtypes.ErrLockLost
 		}
 	}
 
