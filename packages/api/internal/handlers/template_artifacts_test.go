@@ -14,6 +14,9 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
 
+// noKeep is an empty reachability keep set: nothing is protected.
+func noKeep() map[uuid.UUID]struct{} { return map[uuid.UUID]struct{}{} }
+
 // rowWithNode builds a materialized build row (has a cluster node).
 func rowWithNode(node string, cluster *uuid.UUID) queries.GetExclusiveBuildsForTemplateDeletionRow {
 	return queries.GetExclusiveBuildsForTemplateDeletionRow{
@@ -46,9 +49,35 @@ func TestProcessExclusiveBuilds_SkipsNilNode(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withNode, nilNode}, deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withNode, nilNode}, noKeep(), deleteFn, artifactCleanupCounters{})
 
 	assert.Equal(t, []uuid.UUID{withNode.BuildID}, called, "only the materialized build is deleted; nil-node build skipped")
+}
+
+// A build protected by the reachability keep set must never be passed to the
+// deleter, even when it is materialized on a node. This is the regression guard
+// against deleting a header-mapping ancestor still reconstructed by a live build.
+func TestProcessExclusiveBuilds_GuardKeptNotDeleted(t *testing.T) {
+	t.Parallel()
+
+	protected := rowWithNode("node-a", nil)
+	deletable := rowWithNode("node-b", nil)
+
+	keep := map[uuid.UUID]struct{}{protected.BuildID: {}}
+
+	var mu sync.Mutex
+	var called []uuid.UUID
+	deleteFn := func(_ context.Context, buildID uuid.UUID, _ string, _ uuid.UUID, _ string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		called = append(called, buildID)
+
+		return nil
+	}
+
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{protected, deletable}, keep, deleteFn, artifactCleanupCounters{})
+
+	assert.Equal(t, []uuid.UUID{deletable.BuildID}, called, "protected build must not be deleted; only the unreferenced build is")
 }
 
 // A failure on one build must not stop the others (best-effort cleanup).
@@ -72,7 +101,7 @@ func TestProcessExclusiveBuilds_ErrorIsNonFatal(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{b1, b2, b3}, deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{b1, b2, b3}, noKeep(), deleteFn, artifactCleanupCounters{})
 
 	assert.True(t, attempted[b1.BuildID] && attempted[b2.BuildID] && attempted[b3.BuildID],
 		"all builds attempted even though one failed")
@@ -96,7 +125,7 @@ func TestProcessExclusiveBuilds_NilClusterFallback(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withCluster, nilCluster}, deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withCluster, nilCluster}, noKeep(), deleteFn, artifactCleanupCounters{})
 
 	assert.Equal(t, explicit, got[withCluster.BuildID], "explicit cluster id is passed through")
 	assert.Equal(t, consts.LocalClusterID, got[nilCluster.BuildID], "nil cluster id falls back to local cluster")
@@ -113,6 +142,6 @@ func TestProcessExclusiveBuilds_Empty(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", nil, deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", nil, noKeep(), deleteFn, artifactCleanupCounters{})
 	require.Zero(t, calls)
 }
