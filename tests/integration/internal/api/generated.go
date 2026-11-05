@@ -30900,9 +30900,6 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	}
 
 	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

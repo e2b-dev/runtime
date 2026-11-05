@@ -4719,12 +4719,22 @@ paths:
       summary: Health check
       description: Health check
       responses:
-        "204":
+        "200":
           description: The service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/401"
         "429":
           $ref: "#/components/responses/429"
+        "503":
+          description: The service is starting up or draining
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /teams:
     get:
