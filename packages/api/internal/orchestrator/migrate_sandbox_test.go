@@ -293,9 +293,10 @@ func newMigrationHarness(t *testing.T) *migrationHarness {
 	return h
 }
 
-// node registers a test node in the harness's cluster.
+// node registers a test node in the harness's cluster, on the CPU every
+// node of the harness shares unless opts say otherwise.
 func (h *migrationHarness) node(id string, status api.NodeStatus, opts ...nodemanager.TestOptions) *nodemanager.Node {
-	node := nodemanager.NewTestNode(id, status, 0, 8, opts...)
+	node := nodemanager.NewTestNode(id, status, 0, 8, append([]nodemanager.TestOptions{nodemanager.WithCPUInfo("x86_64", "6", "106")}, opts...)...)
 	node.ClusterID = h.clusterID
 	h.o.registerNode(node)
 
@@ -418,8 +419,10 @@ func TestStartHoldsTheRecordThenCallsMigrate(t *testing.T) {
 	assert.Equal(t, sbx.NetworkPlacement.GetRouterId(), req.GetRouterId())
 	assert.Equal(t, h.source.ID, req.GetSource().GetNodeId())
 	assert.Equal(t, h.source.Metadata().ServiceInstanceID, req.GetSource().GetServiceInstanceId())
+	assert.Equal(t, h.source.IPAddress, req.GetSource().GetIpAddress())
 	assert.Equal(t, h.target.ID, req.GetTarget().GetNodeId())
 	assert.Equal(t, h.target.Metadata().ServiceInstanceID, req.GetTarget().GetServiceInstanceId())
+	assert.Equal(t, h.target.IPAddress, req.GetTarget().GetIpAddress())
 
 	deadline := req.GetOperationDeadline().AsTime()
 	assert.WithinDuration(t, before.Add(testOperationBudget), deadline, time.Second)
@@ -554,6 +557,7 @@ func TestStartRefusesAnUnusableTarget(t *testing.T) {
 
 	draining := h.node("node-c", api.NodeStatusDraining, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	sameProcess := h.node("node-d", api.NodeStatusReady, nodemanager.WithServiceInstanceID(h.source.Metadata().ServiceInstanceID))
+	otherCPU := h.node("node-f", api.NodeStatusReady, nodemanager.WithServiceInstanceID(uuid.NewString()), nodemanager.WithCPUInfo("x86_64", "6", "143"))
 	// The target is known only in another cluster than the sandbox's.
 	elsewhere := nodemanager.NewTestNode("node-e", api.NodeStatusReady, 0, 8, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	h.o.registerNode(elsewhere)
@@ -564,6 +568,8 @@ func TestStartRefusesAnUnusableTarget(t *testing.T) {
 	require.ErrorIs(t, err, errNotMigratable)
 	_, err = h.o.StartMigration(t.Context(), sbx.TeamID, sbx.SandboxID, "node-e")
 	require.ErrorIs(t, err, errNodeUnavailable)
+	_, err = h.o.StartMigration(t.Context(), sbx.TeamID, sbx.SandboxID, otherCPU.ID)
+	require.ErrorIs(t, err, errNodeUnavailable, "a checkpoint restores only on the CPU it was taken on")
 	assert.Empty(t, h.migrations.migrateRequests())
 	assert.Empty(t, h.get(t, sbx).LifecycleHold)
 }

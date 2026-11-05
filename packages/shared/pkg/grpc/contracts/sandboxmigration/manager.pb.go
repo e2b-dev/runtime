@@ -91,6 +91,7 @@ type Participant struct {
 	state                        protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_NodeId            string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId"`
 	xxx_hidden_ServiceInstanceId string                 `protobuf:"bytes,2,opt,name=service_instance_id,json=serviceInstanceId"`
+	xxx_hidden_IpAddress         string                 `protobuf:"bytes,3,opt,name=ip_address,json=ipAddress"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -134,12 +135,23 @@ func (x *Participant) GetServiceInstanceId() string {
 	return ""
 }
 
+func (x *Participant) GetIpAddress() string {
+	if x != nil {
+		return x.xxx_hidden_IpAddress
+	}
+	return ""
+}
+
 func (x *Participant) SetNodeId(v string) {
 	x.xxx_hidden_NodeId = v
 }
 
 func (x *Participant) SetServiceInstanceId(v string) {
 	x.xxx_hidden_ServiceInstanceId = v
+}
+
+func (x *Participant) SetIpAddress(v string) {
+	x.xxx_hidden_IpAddress = v
 }
 
 type Participant_builder struct {
@@ -150,6 +162,11 @@ type Participant_builder struct {
 	// Service instance ID of the orchestrator process, as its ServiceInfo
 	// reports it.
 	ServiceInstanceId string
+	// The host the orchestrator's listeners bind, as the caller's node
+	// directory knows it. The manager reaches the process's migration
+	// service there, on the port it is configured with. Set on a request; a
+	// Migration the manager reports leaves it empty.
+	IpAddress string
 }
 
 func (b0 Participant_builder) Build() *Participant {
@@ -158,6 +175,7 @@ func (b0 Participant_builder) Build() *Participant {
 	_, _ = b, x
 	x.xxx_hidden_NodeId = b.NodeId
 	x.xxx_hidden_ServiceInstanceId = b.ServiceInstanceId
+	x.xxx_hidden_IpAddress = b.IpAddress
 	return m0
 }
 
@@ -1052,10 +1070,12 @@ var File_e2b_sandbox_migration_manager_v1_manager_proto protoreflect.FileDescrip
 
 const file_e2b_sandbox_migration_manager_v1_manager_proto_rawDesc = "" +
 	"\n" +
-	".e2b/sandbox/migration/manager/v1/manager.proto\x12 e2b.sandbox.migration.manager.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"i\n" +
+	".e2b/sandbox/migration/manager/v1/manager.proto\x12 e2b.sandbox.migration.manager.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x91\x01\n" +
 	"\vParticipant\x12 \n" +
 	"\anode_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06nodeId\x128\n" +
-	"\x13service_instance_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x11serviceInstanceId\"\xcd\x03\n" +
+	"\x13service_instance_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x11serviceInstanceId\x12&\n" +
+	"\n" +
+	"ip_address\x18\x03 \x01(\tB\a\xbaH\x04r\x02p\x01R\tipAddress\"\xcd\x03\n" +
 	"\x0eMigrateRequest\x12+\n" +
 	"\fmigration_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vmigrationId\x12&\n" +
 	"\n" +

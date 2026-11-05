@@ -94,7 +94,7 @@ func (o *Orchestrator) StartMigration(ctx context.Context, teamID uuid.UUID, san
 		return nil, fmt.Errorf("%w: its execution is not served by a Router", errNotMigratable)
 	}
 
-	source, _, err := o.migrationParticipant(sbx.ClusterID, sbx.NodeID, func(n *nodemanager.Node) bool {
+	source, sourceNode, err := o.migrationParticipant(sbx.ClusterID, sbx.NodeID, func(n *nodemanager.Node) bool {
 		status := n.Status()
 
 		return status == api.NodeStatusReady || status == api.NodeStatusDraining
@@ -108,6 +108,10 @@ func (o *Orchestrator) StartMigration(ctx context.Context, teamID uuid.UUID, san
 	}
 	if source.GetNodeId() == target.GetNodeId() || source.GetServiceInstanceId() == target.GetServiceInstanceId() {
 		return nil, fmt.Errorf("%w: the target is the node it runs on", errNotMigratable)
+	}
+	// A checkpoint restores only on the CPU it was taken on.
+	if !sourceNode.MachineInfo().IsExactMatch(targetNode.MachineInfo()) {
+		return nil, fmt.Errorf("%w: the target's CPU differs from the source's", errNodeUnavailable)
 	}
 	// The same admission a create runs: the execution needs room in the
 	// target's hugepage pool.
@@ -205,9 +209,10 @@ func migrationRefused(err error) bool {
 	}
 }
 
-// migrationParticipant resolves nodeID to the orchestrator process this
-// client knows for it, when usable says the node may take part, and returns
-// the node it resolved: a node the sync replaces meanwhile is not read again.
+// migrationParticipant resolves nodeID to the orchestrator process and
+// address this client knows for it, when usable says the node may take
+// part, and returns the node it resolved: a node the sync replaces meanwhile
+// is not read again.
 func (o *Orchestrator) migrationParticipant(clusterID uuid.UUID, nodeID string, usable func(*nodemanager.Node) bool) (*sandboxmigration.Participant, *nodemanager.Node, error) {
 	node := o.GetNode(clusterID, nodeID)
 	if node == nil {
@@ -221,7 +226,7 @@ func (o *Orchestrator) migrationParticipant(clusterID uuid.UUID, nodeID string, 
 		return nil, nil, fmt.Errorf("%w: node %q reports no service instance", errNodeUnavailable, nodeID)
 	}
 
-	return sandboxmigration.Participant_builder{NodeId: nodeID, ServiceInstanceId: instanceID}.Build(), node, nil
+	return sandboxmigration.Participant_builder{NodeId: nodeID, ServiceInstanceId: instanceID, IpAddress: node.IPAddress}.Build(), node, nil
 }
 
 func (o *Orchestrator) GetMigration(ctx context.Context, migrationID string) (*sandboxmigration.Migration, error) {
