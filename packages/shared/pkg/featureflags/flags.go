@@ -294,12 +294,16 @@ var (
 	// start of every build FROM a parent of another guest OS and of every
 	// create or resume of a template whose guest OS is not the default; the
 	// default profile never reads it, and the standalone tools that resolve
-	// a profile outside the orchestrator are not gated. Off (the default)
-	// refuses them with a FailedPrecondition that carries no create-refused
-	// detail, so placement still tries a node that has the flag on, and a
-	// registered profile serves nothing until the flag is turned on. The
-	// fallback reads GUEST_PROFILES_ENABLED so a deployment without
-	// LaunchDarkly can turn it on.
+	// a profile outside the orchestrator are not gated. Off (the default), a
+	// create or resume is refused with a FailedPrecondition that carries no
+	// create-refused detail, so placement still tries a node that has the
+	// flag on, but a build fails its base phase: the API sends a build to one
+	// builder and never retries it on another. Turn it on for every template
+	// builder of a cluster together: target the deployment environment or the
+	// instance groups that run builders, which every evaluation carries,
+	// rather than single orchestrator nodes. An orchestrator sends no cluster
+	// context, so a cluster rule never matches. The fallback reads
+	// GUEST_PROFILES_ENABLED so a deployment without LaunchDarkly can turn it on.
 	GuestProfilesFlag = NewBoolFlag("guest-profiles-enabled", envBoolOr("GUEST_PROFILES_ENABLED", false))
 
 	// FilesystemOnlyCheckpointFlag enables the filesystem-only checkpoint:

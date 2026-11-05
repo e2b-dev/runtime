@@ -1417,7 +1417,11 @@ envd, and set the sync command and the default user and directory. A profile tha
 makes the build adopt the parent's machine (kernel slot, Firecracker binary, memory, huge pages,
 vCPUs, device names), refuses a disk-only parent, another machine size or a resizable request,
 resumes the previous layer for every step and for finalize, never grows the disk, and keeps an
-inherited start command running. With
+inherited start command running. A non-default profile serves builds and sandboxes only while
+`guest-profiles-enabled` is on. A create refused on a node where it is off is placed on another
+node, but a build is sent to one builder and never retried on another, so the flag goes on for
+every builder of a cluster at once, targeted by deployment environment or instance group (an
+orchestrator's evaluations carry no cluster context). With
 `DedupLayerMemfiles`, each build layer's pause deduplicates its memfile diff at 4 KiB whatever
 `memfile-diff-dedup` says, gated by `build-layer-memfile-dedup`, and keeps the raw diff if the
 dedup fails.
