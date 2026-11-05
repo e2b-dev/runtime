@@ -186,6 +186,8 @@ const (
 	// one template_provisional_header counts.
 	OrchestratorDeadStructureBytesCounterName CounterType = "orchestrator.sandbox.snapshot.dead_structure_bytes"
 
+	OrchestratorBlockCachePunchBytes CounterType = "orchestrator.block.cache.punch.bytes"
+
 	// SandboxPauseFsQuiescedCounterName counts filesystem-only pauses by whether
 	// the captured rootfs was frozen (quiesced=true, crash-consistent) vs a plain
 	// sync fallback (quiesced=false). quiesced/total is the fraction of newly
@@ -480,6 +482,8 @@ const (
 	OrchestratorSandboxCountMeterName            ObservableUpDownCounterType = "orchestrator.env.sandbox.running"
 	OrchestratorSandboxNetworkModeCountMeterName ObservableUpDownCounterType = "orchestrator.sandbox.running.by_network_mode"
 
+	OrchestratorBlockCachePunchInflight ObservableUpDownCounterType = "orchestrator.block.cache.punch.inflight"
+
 	ClientProxyServerConnectionsMeterCounterName ObservableUpDownCounterType = "client_proxy.proxy.server.connections.open"
 	ClientProxyPoolConnectionsMeterCounterName   ObservableUpDownCounterType = "client_proxy.proxy.pool.connections.open"
 	ClientProxyPoolSizeMeterCounterName          ObservableUpDownCounterType = "client_proxy.proxy.pool.size"
@@ -512,6 +516,8 @@ const (
 
 	NetworkSlotReturnDurationName       HistogramType = "orchestrator.network.slot.return.duration"
 	NetworkEgressRetirementDurationName HistogramType = "orchestrator.network.egress.retirement.duration"
+
+	OrchestratorBlockCachePunchDuration HistogramType = "orchestrator.block.cache.punch.duration"
 
 	// Sandbox timing histograms
 	OrchestratorSandboxCreateDurationName HistogramType = "orchestrator.sandbox.create.duration"
@@ -914,6 +920,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorSnapshotUploadFailedCounterName:  "Number of pause-snapshot uploads that never landed durably",
 	OrchestratorDeadStructureOutcomeCounterName:  "Passes through a per-pause structure's drop site, by structure and outcome",
 	OrchestratorDeadStructureBytesCounterName:    "Bytes of per-pause structures dropped or kept at their drop site, by structure and outcome",
+	OrchestratorBlockCachePunchBytes:             "Bytes requested by block cache hole punches, by source (zero_run|zeroes_request|fold|export|grow) and result (removed: MADV_REMOVE; zeroed: refused, so the range was zero-filled instead); not space freed, since a punched range may be a hole already (always for fold, export and grow, and for a discard of never-written blocks)",
 	SandboxPauseFsQuiescedCounterName:            "Filesystem-only pauses by whether the rootfs was frozen (quiesced) vs sync fallback",
 	SandboxLifecycleUnstoppedCounterName:         "Sandbox lifecycles whose live-map entry the teardown chain reclaimed because no operation marked them stopping, by sandbox type",
 	SandboxResumeWPModeCounterName:               "Sandbox resumes by write-protect tracking mode (sync|async)",
@@ -1015,6 +1022,7 @@ var counterUnits = map[CounterType]string{
 	OrchestratorSnapshotUploadFailedCounterName:  "{snapshot}",
 	OrchestratorDeadStructureOutcomeCounterName:  "{pass}",
 	OrchestratorDeadStructureBytesCounterName:    "By",
+	OrchestratorBlockCachePunchBytes:             "By",
 	SandboxPauseFsQuiescedCounterName:            "{snapshot}",
 	SandboxLifecycleUnstoppedCounterName:         "{sandbox}",
 	SandboxResumeWPModeCounterName:               "{resume}",
@@ -1096,6 +1104,7 @@ var observableCounterUnits = map[ObservableCounterType]string{
 var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "Counter of running sandboxes on the orchestrator.",
 	OrchestratorSandboxNetworkModeCountMeterName:       "Running sandboxes by project and assigned network mode.",
+	OrchestratorBlockCachePunchInflight:                "Block cache hole punches in progress, a refused punch's zero-filling included; one that stays above zero is a punch that has not returned.",
 	ClientProxyServerConnectionsMeterCounterName:       "Open connections to the client proxy from load balancer.",
 	ClientProxyPoolConnectionsMeterCounterName:         "Open connections from the client proxy to the orchestrator proxy.",
 	ClientProxyPoolSizeMeterCounterName:                "Size of the client proxy pool.",
@@ -1114,6 +1123,7 @@ var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
 var observableUpDownCounterUnits = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "{sandbox}",
 	OrchestratorSandboxNetworkModeCountMeterName:       "{sandbox}",
+	OrchestratorBlockCachePunchInflight:                "{punch}",
 	ClientProxyServerConnectionsMeterCounterName:       "{connection}",
 	ClientProxyPoolConnectionsMeterCounterName:         "{connection}",
 	ClientProxyPoolSizeMeterCounterName:                "{transport}",
@@ -1296,6 +1306,7 @@ var histogramDesc = map[HistogramType]string{
 	FPHStopDurationName:                               "Duration of the stop of an abandoned hinting cycle, acknowledgement wait included",
 	FPHRunFaultsName:                                  "Demand faults the serve loop resolved for one sandbox across a periodic hinting attempt (window=run) and over the interval that followed a tick (window=interval), labeled by kind (served pages, deferred installs, wp faults, deferred wp resolves) and outcome: the attempt's run outcome, or for a tick that attempted nothing the skip reason or observe-only, which is the baseline an attempt is read against",
 	NetworkSlotReturnDurationName:                     "Network slot return attempt duration, by network_version, phase (total including reuse delay or cleanup after it), and result (success, shutdown, retained, error)",
+	OrchestratorBlockCachePunchDuration:               "Time inside one block cache hole punch, by source (zero_run|zeroes_request|fold|export|grow) and result (removed: MADV_REMOVE; zeroed: refused, the time includes zero-filling the range)",
 	NetworkEgressRetirementDurationName:               "Time waiting for execution-owned egress flows to close before other network release subscribers, by result (success, timeout, error)",
 	BuildDurationHistogramName:                        "Time taken to build a template",
 	BuildPhaseDurationHistogramName:                   "Time taken to build each phase of a template",
@@ -1392,6 +1403,7 @@ var histogramUnits = map[HistogramType]string{
 	FPHStopDurationName:                               "ms",
 	FPHRunFaultsName:                                  "{fault}",
 	NetworkSlotReturnDurationName:                     "ms",
+	OrchestratorBlockCachePunchDuration:               "ms",
 	NetworkEgressRetirementDurationName:               "ms",
 	BuildDurationHistogramName:                        "ms",
 	BuildPhaseDurationHistogramName:                   "ms",
