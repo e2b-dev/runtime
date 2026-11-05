@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
@@ -39,7 +43,7 @@ type bootingProfile struct{ guest.Profile }
 func (bootingProfile) Name() string  { return "booting" }
 func (bootingProfile) Label() string { return "booting" }
 
-// pickyProfile boots its layers on a Firecracker of its own line.
+// pickyProfile boots its layers on a Firecracker of its own line that reports a feature.
 type pickyProfile struct{ guest.Profile }
 
 func (pickyProfile) Name() string  { return "picky" }
@@ -53,6 +57,7 @@ func (pickyProfile) Firecracker() guest.FirecrackerSelection {
 
 			return nil
 		},
+		RequiredFeatures: []string{"picky"},
 	}
 }
 
@@ -393,17 +398,30 @@ func TestAdoptParentMachineNeverReadsTheFlagForTheDefaultGuest(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// A profile's Firecracker version rule runs on the version the build will
-// use: the request's for a booting profile.
-func TestAdoptParentMachineRefusesTheWrongFirecracker(t *testing.T) {
-	t.Parallel()
+// fakeFirecracker places a version script as the binary of version under a
+// versions directory and returns the builder configuration that finds it.
+func fakeFirecracker(t *testing.T, version, script string) cfg.BuilderConfig {
+	t.Helper()
+	dir := t.TempDir()
+	versionDir := filepath.Join(dir, version)
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "firecracker"), []byte("#!/bin/sh\n"+script), 0o755))
 
+	return cfg.BuilderConfig{FirecrackerVersionsDir: dir}
+}
+
+// A profile's Firecracker checks run on the version the build will use: the
+// request's for a booting profile.
+//
+//nolint:paralleltest // writes a script and runs it: a parallel fork can hold its fd until exec (golang/go#22315)
+func TestAdoptParentMachineRefusesTheWrongFirecracker(t *testing.T) {
 	index := parentIndex{parents: map[string]metadata.Template{
 		"p": {Version: metadata.CurrentVersion, GuestOS: "picky"},
 	}}
 	sized := func(context.Context, string) (int64, error) { return 512, nil }
 
 	in := requestedContext("p")
+	in.BuilderConfig = fakeFirecracker(t, "v9.9.9-picky", "printf 'Firecracker v9.9.9\\nFeatures: picky\\n'")
 	_, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
 	require.ErrorIs(t, err, errWrongLine, "the request's version is not the profile's line")
 
@@ -411,6 +429,20 @@ func TestAdoptParentMachineRefusesTheWrongFirecracker(t *testing.T) {
 	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
 	require.NoError(t, err)
 	assert.Equal(t, "picky", bc.Config.GuestProfile().Name())
+
+	in.BuilderConfig = fakeFirecracker(t, "v9.9.9-picky", "printf 'Firecracker v9.9.9\\n'")
+	_, err = adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	var missing *fc.MissingFeaturesError
+	require.ErrorAs(t, err, &missing, "the binary reports no feature")
+	assert.Equal(t, []string{"picky"}, missing.Missing)
+	userErr := phases.UnwrapPhaseBuildError(err)
+	require.NotNil(t, userErr, "the build's refusal")
+	assert.NotContains(t, userErr.Error(), in.BuilderConfig.FirecrackerVersionsDir, "the user sees no path of the builder")
+
+	in.BuilderConfig = cfg.BuilderConfig{FirecrackerVersionsDir: t.TempDir()}
+	_, err = adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.ErrorIs(t, err, fc.ErrFeatureProbe)
+	assert.Nil(t, phases.UnwrapPhaseBuildError(err), "a binary this builder cannot run is the builder's fault, not the build's")
 }
 
 // On the resume path the version checked is the parent's pin, which the build
@@ -423,16 +455,19 @@ func TestAdoptParentMachineChecksTheParentsFirecrackerOnTheResumePath(t *testing
 		"picky-line": {Version: metadata.CurrentVersion, GuestOS: "picky-resuming", VcpuCount: 2, Template: metadata.TemplateMetadata{BuildID: "picky-line", FirecrackerVersion: "v9.9.9-picky"}},
 	}}
 	sized := func(context.Context, string) (int64, error) { return 4096, nil }
+	builder := fakeFirecracker(t, "v9.9.9-picky", "printf 'Firecracker v9.9.9\\nFeatures: picky\\n'")
 
 	in := requestedContext("other-line")
 	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount = 4096, 2, 0
 	in.Config.FirecrackerVersion = "v9.9.9-picky"
+	in.BuilderConfig = builder
 	_, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
 	require.ErrorIs(t, err, errWrongLine, "the parent's pin is checked, whatever the request names")
 	require.NotNil(t, phases.UnwrapPhaseBuildError(err))
 
 	in = requestedContext("picky-line")
 	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount = 4096, 2, 0
+	in.BuilderConfig = builder
 	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
 	require.NoError(t, err)
 	assert.Equal(t, "v9.9.9-picky", bc.Config.FirecrackerVersion, "the parent's pin is the build's")

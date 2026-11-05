@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
@@ -199,7 +202,37 @@ func TestFirecrackerVersionRefusal(t *testing.T) {
 	assert.NoError(t, firecrackerVersionRefusal(t.Context(), lineProfile{Profile: guest.Default()}, "v9.9.9-line"))
 }
 
-// lineProfile runs only on the v9.9.9-line Firecracker.
+// A binary that does not report a required feature is the same on every
+// node, so the refusal carries the create-refused detail; a binary that could
+// not be run is this node's internal error, so placement tries another node.
+// Neither answer names a path of the host.
+//
+//nolint:paralleltest // writes a script and runs it: a parallel fork can hold its fd until exec (golang/go#22315)
+func TestFirecrackerFeaturesRefusal(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "v9.9.9-line"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "v9.9.9-line", "firecracker"), []byte("#!/bin/sh\nprintf 'Firecracker v9.9.9\\nFeatures: other\\n'\n"), 0o755))
+	builder := cfg.BuilderConfig{FirecrackerVersionsDir: dir}
+
+	require.NoError(t, firecrackerFeaturesRefusal(t.Context(), fc.Config{FirecrackerVersion: "missing"}, builder), "the default profile asks the binary nothing")
+
+	refusal := firecrackerFeaturesRefusal(t.Context(), fc.Config{FirecrackerVersion: "v9.9.9-line", Guest: lineProfile{Profile: guest.Default()}}, builder)
+	require.Error(t, refusal)
+	st := status.Convert(refusal)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Contains(t, st.Message(), "does not report the features line")
+	assert.NotContains(t, st.Message(), dir)
+	assert.Len(t, st.Details(), 1, "the create-refused detail")
+
+	refusal = firecrackerFeaturesRefusal(t.Context(), fc.Config{FirecrackerVersion: "v9.9.8-line", Guest: lineProfile{Profile: guest.Default()}}, builder)
+	require.Error(t, refusal, "no binary at that version on this node")
+	st = status.Convert(refusal)
+	assert.Equal(t, codes.Internal, st.Code(), "the API shows the client its own message for this code")
+	assert.NotContains(t, st.Message(), dir)
+	assert.Empty(t, st.Details(), "another node may have it")
+}
+
+// lineProfile runs only on the v9.9.9-line Firecracker, which reports the feature "line".
 type lineProfile struct{ guest.Profile }
 
 func (lineProfile) Name() string  { return "line" }
@@ -213,6 +246,7 @@ func (lineProfile) Firecracker() guest.FirecrackerSelection {
 
 			return nil
 		},
+		RequiredFeatures: []string{"line"},
 	}
 }
 

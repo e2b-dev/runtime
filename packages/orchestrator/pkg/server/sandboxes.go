@@ -402,6 +402,9 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		VolumeMounts:          volumeMounts,
 		MaxSandboxLengthHours: req.GetSandbox().GetMaxSandboxLength(),
 	})
+	if err := firecrackerFeaturesRefusal(ctx, config.FirecrackerConfig, s.config.BuilderConfig); err != nil {
+		return nil, err
+	}
 	childSpan.SetAttributes(
 		telemetry.WithFirecrackerVersion(config.FirecrackerConfig.FirecrackerVersion),
 		attribute.String("guest_os", profile.Label()),

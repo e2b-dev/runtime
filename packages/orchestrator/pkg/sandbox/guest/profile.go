@@ -95,6 +95,9 @@ type FirecrackerSelection struct {
 	// AcceptVersion refuses a Firecracker version that the guest cannot run, by its name (the version directory).
 	// Nil accepts every version.
 	AcceptVersion func(version string) error
+	// RequiredFeatures lists the features that the Firecracker binary must report on the Features line of its version output.
+	// Empty requires none, and the binary is not asked.
+	RequiredFeatures []string
 }
 
 // Accept refuses a Firecracker version that the guest cannot run, by its name.

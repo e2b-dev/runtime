@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
@@ -110,7 +111,7 @@ func adoptParentMachine(
 
 	tb := profile.Template()
 	if !tb.AlwaysResume {
-		return bc, refuseFirecracker(bc, profile)
+		return bc, refuseFirecracker(ctx, bc, profile)
 	}
 
 	if parent.IsFilesystemOnly() {
@@ -175,7 +176,7 @@ func adoptParentMachine(
 	cfg.FreePageHinting = false
 
 	bc.Config = cfg
-	if err := refuseFirecracker(bc, profile); err != nil {
+	if err := refuseFirecracker(ctx, bc, profile); err != nil {
 		return bc, err
 	}
 
@@ -186,10 +187,23 @@ func adoptParentMachine(
 }
 
 // refuseFirecracker refuses a build whose Firecracker version the guest
-// profile cannot run, by its name. The default profile accepts every version.
-func refuseFirecracker(bc buildcontext.BuildContext, profile guest.Profile) error {
+// profile cannot run, by its name, or whose binary does not report a feature
+// the profile requires. The default profile accepts every version and asks
+// the binary nothing.
+func refuseFirecracker(ctx context.Context, bc buildcontext.BuildContext, profile guest.Profile) error {
 	if err := profile.Firecracker().Accept(bc.Config.FirecrackerVersion); err != nil {
 		return phases.NewPhaseBuildError(basePhase, err)
+	}
+	if err := bc.Config.FirecrackerConfig().RequireFeatures(ctx, bc.BuilderConfig); err != nil {
+		missing, ok := errors.AsType[*fc.MissingFeaturesError](err)
+		if !ok {
+			// The binary could not be run on this builder: the builder's fault, which the user sees as an internal error.
+			return fmt.Errorf("check the firecracker binary's features: %w", err)
+		}
+		logger.L().Warn(ctx, "refused a build whose firecracker binary lacks a feature its guest requires", zap.Error(err))
+
+		// The user sees this error's text, so it is the refusal, which names no path of the builder.
+		return phases.NewPhaseBuildError(basePhase, missing.Refusal())
 	}
 
 	return nil

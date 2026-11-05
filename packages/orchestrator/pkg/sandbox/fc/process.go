@@ -253,9 +253,7 @@ func validateFirecrackerBinary(versions Config, config cfg.BuilderConfig) error 
 }
 
 // requireAcceptedVersion refuses a launch whose Firecracker version the guest
-// profile refuses by name. Every launch passes here, a served sandbox's, a
-// build layer's or a standalone tool's, so the server's and the builder's own
-// refusals are only earlier and better mapped, never the only ones.
+// profile refuses by name.
 func requireAcceptedVersion(versions Config) error {
 	return versions.GuestProfile().Firecracker().Accept(versions.FirecrackerVersion)
 }
@@ -290,7 +288,7 @@ func NewProcess(
 	if err = validateFirecrackerBinary(versions, config); err != nil {
 		return nil, err
 	}
-	if err = requireAcceptedVersion(versions); err != nil {
+	if err = requireAcceptedBinary(ctx, versions, config); err != nil {
 		return nil, err
 	}
 

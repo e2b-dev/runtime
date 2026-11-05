@@ -8,7 +8,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -60,6 +62,29 @@ func firecrackerVersionRefusal(ctx context.Context, profile guest.Profile, versi
 	}
 
 	return nil
+}
+
+// firecrackerFeaturesRefusal refuses a sandbox whose Firecracker binary does
+// not report a feature its guest profile requires. The binary of a version
+// directory is the same on every node, so a missing feature carries the
+// create-refused detail. A binary that could not be run (absent on this
+// node, say) is this node's internal error, so placement still tries another.
+// The API shows the client a refusal's text, so it names no path of this
+// host; the full error is logged. The default profile requires nothing, and
+// its binary is not asked.
+func firecrackerFeaturesRefusal(ctx context.Context, versions fc.Config, config cfg.BuilderConfig) error {
+	err := versions.RequireFeatures(ctx, config)
+	if err == nil {
+		return nil
+	}
+	if missing, ok := errors.AsType[*fc.MissingFeaturesError](err); ok {
+		logger.L().Warn(ctx, "refused a sandbox whose firecracker binary lacks a feature its guest requires", zap.Error(err))
+
+		return createRefused(ctx, codes.FailedPrecondition, "%s", missing.Refusal().Error())
+	}
+	logger.L().Error(ctx, "the firecracker binary did not report its features", zap.Error(err))
+
+	return status.Error(codes.Internal, "this node could not check the guest's firecracker binary")
 }
 
 // tlsInterceptionRefusal refuses a new sandbox whose egress rules the proxy
