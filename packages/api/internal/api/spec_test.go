@@ -390,9 +390,10 @@ func TestTemplateSearchRouteStaysOutOfTheSDKs(t *testing.T) {
 }
 
 // The admin template routes change what every team resolves (aliases without a
-// namespace, default templates) or read any team's templates, so they accept
-// only the admin token or an admin JWT, with no team header.
-func TestAdminTemplateRoutesAreAdminOnly(t *testing.T) {
+// namespace, default templates) or read any team's templates, and the node
+// routes park and release any node, so they accept only the admin token or an
+// admin JWT, with no team header.
+func TestAdminTemplateAndNodeRoutesAreAdminOnly(t *testing.T) {
 	t.Parallel()
 
 	swagger, err := GetSpec()
@@ -409,6 +410,9 @@ func TestAdminTemplateRoutesAreAdminOnly(t *testing.T) {
 		{http.MethodPatch, "/unstable/admin/templates/defaults/{templateID}"},
 		{http.MethodDelete, "/unstable/admin/templates/defaults/{templateID}"},
 		{http.MethodGet, "/unstable/admin/templates/lookup"},
+		{http.MethodGet, "/nodes"},
+		{http.MethodGet, "/nodes/{nodeID}"},
+		{http.MethodPost, "/nodes/{nodeID}"},
 	} {
 		pathItem := swagger.Paths.Value(route.path)
 		require.NotNil(t, pathItem, route.path)
@@ -576,6 +580,42 @@ func TestAdminTeamSchedulingLabelsRejectsMalformedLabels(t *testing.T) {
 			t.Parallel()
 
 			err := schema.VisitJSON(map[string]any{"labels": tc.labels})
+			if tc.valid {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestNodeStatusChangeOwnerSchema(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		body  map[string]any
+		valid bool
+	}{
+		"a lowercase uuid owner is accepted":            {body: map[string]any{"status": "standby", "owner": "7f3a2c1e-0b4d-4a9e-9c1f-2d3e4f5a6b7c"}, valid: true},
+		"an owner longer than 63 characters is refused": {body: map[string]any{"status": "standby", "owner": strings.Repeat("a", 64)}},
+		"an uppercase owner is refused":                 {body: map[string]any{"status": "standby", "owner": "Owner"}},
+		"an owner starting with a hyphen is refused":    {body: map[string]any{"status": "standby", "owner": "-abc"}},
+		"an owner with a space is refused":              {body: map[string]any{"status": "standby", "owner": "a b"}},
+		"force without an owner is accepted":            {body: map[string]any{"status": "ready", "force": true}, valid: true},
+		"a status alone is accepted":                    {body: map[string]any{"status": "ready"}, valid: true},
+	}
+
+	spec, err := GetSpec()
+	require.NoError(t, err)
+	schema := spec.Components.Schemas["NodeStatusChange"].Value
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := schema.VisitJSON(tc.body)
 			if tc.valid {
 				require.NoError(t, err)
 

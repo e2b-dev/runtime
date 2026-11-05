@@ -1783,6 +1783,9 @@ type NewVolume struct {
 
 // Node defines model for Node.
 type Node struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1818,12 +1821,15 @@ type Node struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
 	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1831,6 +1837,9 @@ type Node struct {
 
 // NodeDetail defines model for NodeDetail.
 type NodeDetail struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1863,12 +1872,15 @@ type NodeDetail struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
 	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1911,7 +1923,7 @@ type NodeMetrics struct {
 }
 
 // NodeStatus Status of the node.
-// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
 // - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 type NodeStatus string
 
@@ -1920,8 +1932,14 @@ type NodeStatusChange struct {
 	// ClusterID Identifier of the cluster
 	ClusterID *openapi_types.UUID `json:"clusterID,omitempty"`
 
+	// Force Apply the status and owner regardless of the recorded owner
+	Force *bool `json:"force,omitempty"`
+
+	// Owner Owner of a standby override; required to release a standby that carries one
+	Owner *string `json:"owner,omitempty"`
+
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
 	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 }
@@ -18979,6 +18997,8 @@ type PostNodesNodeIDResponse429Headers struct {
 type PostNodesNodeIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -18991,6 +19011,11 @@ type PostNodesNodeIDResponse struct {
 	JSON500 *N500
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostNodesNodeIDResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostNodesNodeIDResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -31053,6 +31078,13 @@ func ParsePostNodesNodeIDResponse(rsp *http.Response) (*PostNodesNodeIDResponse,
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401

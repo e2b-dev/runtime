@@ -3321,7 +3321,7 @@ components:
       type: string
       description: |
         Status of the node.
-        - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+        - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
         - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
       enum:
         - ready
@@ -3350,6 +3350,15 @@ components:
           description: Identifier of the cluster
         status:
           $ref: "#/components/schemas/NodeStatus"
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+          description: Owner of a standby override; required to release a standby that carries one
+        force:
+          type: boolean
+          description: Apply the status and owner regardless of the recorded owner
 
     DiskMetrics:
       required:
@@ -3498,6 +3507,14 @@ components:
           type: string
           format: date-time
           description: Time when the node status was last changed
+        statusOwner:
+          type: string
+          description: Owner recorded by the current standby override
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities of the orchestrator build, for example park-owner
         sandboxCount:
           type: integer
           format: uint32
@@ -3566,6 +3583,14 @@ components:
           type: string
           format: date-time
           description: Time when the node status was last changed
+        statusOwner:
+          type: string
+          description: Owner recorded by the current standby override
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities of the orchestrator build, for example park-owner
         sandboxCount:
           type: integer
           format: uint32
@@ -7013,6 +7038,8 @@ paths:
       responses:
         "204":
           description: The node status was changed successfully
+        "400":
+          $ref: "#/components/responses/400"
         "409":
           $ref: "#/components/responses/409"
         "401":
