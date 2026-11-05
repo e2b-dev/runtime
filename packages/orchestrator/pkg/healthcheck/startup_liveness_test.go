@@ -35,7 +35,7 @@ func TestHealthAndLivenessRoutesPreserveServiceState(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			info := service.NewInfoContainer("node", "version", "startup-test", "service-generation", machineinfo.MachineInfo{}, cfg.Config{})
+			info := service.NewInfoContainer(t.Context(), "node", "version", "startup-test", "service-generation", machineinfo.MachineInfo{}, cfg.Config{BuilderConfig: cfg.BuilderConfig{OrchestratorBaseDir: t.TempDir()}})
 			check, err := NewHealthcheck(info)
 			require.NoError(t, err)
 			info.SetStatus(t.Context(), test.state)

@@ -42,6 +42,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/retry"
@@ -272,6 +273,15 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 	if err := s.admitEgressProxy(ctx, req.GetSandbox()); err != nil {
 		return nil, err
+	}
+
+	// A node that is not Healthy admits nothing new. The bare ResourceExhausted
+	// makes the caller retry elsewhere without excluding this node; a UserError
+	// detail would make it give up.
+	if snap := s.info.Snapshot(); snap.Status != orchestratorinfo.ServiceInfoStatus_Healthy {
+		telemetry.ReportEvent(ctx, "create refused by node status")
+
+		return nil, status.Errorf(codes.ResourceExhausted, "node is not accepting new sandboxes (status %s), please retry", snap.Status)
 	}
 
 	// Check the limit while taking the ID so in-flight starts count too.

@@ -104,6 +104,10 @@ const (
 	// intensity in real-time; 0 when no stalls are occurring.
 	OrchestratorHostBalanceDirtyPagesThreads CounterType = "orchestrator.host.balance_dirty_pages.threads"
 
+	// OrchestratorStatusOverrideRefusedCounterName counts the service status
+	// overrides a node refused, by reason.
+	OrchestratorStatusOverrideRefusedCounterName CounterType = "orchestrator.status.override.refused"
+
 	OrchestratorSandboxKilledCounterName CounterType = "orchestrator.sandbox.killed"
 	// OrchestratorSandboxCrashedCounterName counts sandbox executions that
 	// ended with no recorded stop reason, labeled by cause. external_signal,
@@ -907,6 +911,7 @@ var counterDesc = map[CounterType]string{
 	EnvdInitUnobservedHandlers:                   "Envd /init handlers that thawed the workload inline and completed after their client had gone, as envd counts them on the served /init of a first customer start that succeeded (X-Envd-Init-Unobserved)",
 	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
+	OrchestratorStatusOverrideRefusedCounterName: "Refused service status overrides, labelled by reason.",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (guest_reset/guest_crash/guest_poweroff/clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
 	OrchestratorSandboxGuestRebootsCounterName:   "Guest resets the orchestrator handled, labeled by outcome, guest_os and path",
@@ -1009,6 +1014,7 @@ var counterUnits = map[CounterType]string{
 	EnvdRedirectsRefused:                         "{redirect}",
 	EnvdCpuReport:                                "{response}",
 	EnvdCollapseChunks:                           "{chunk}",
+	OrchestratorStatusOverrideRefusedCounterName: "{override}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
 	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
 	OrchestratorSandboxGuestRebootsCounterName:   "{reset}",

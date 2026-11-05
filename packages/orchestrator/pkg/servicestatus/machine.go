@@ -54,15 +54,13 @@ type Request struct {
 type Reason string
 
 const (
-	ReasonShuttingDown       Reason = "shutting_down"        // ShuttingDown requested by an override
-	ReasonNotReady           Reason = "not_ready"            // NotReady requested by an override
-	ReasonTerminal           Reason = "terminal"             // current status is ShuttingDown
-	ReasonInvalidStatus      Reason = "invalid_status"       // a status no override may ask for
-	ReasonInvalidOwner       Reason = "invalid_owner"        // owner outside the label character set or too long
-	ReasonDrainingToStandby  Reason = "draining_to_standby"  // Draining cannot park
-	ReasonOwnerRequired      Reason = "owner_required"       // Ready or Standby without an owner while one is recorded
-	ReasonOwnerMismatch      Reason = "owner_mismatch"       // Ready or Standby under another owner
-	ReasonDrainingUnderOwner Reason = "draining_under_owner" // Draining while an owner is recorded
+	ReasonShuttingDown      Reason = "shutting_down"       // ShuttingDown requested by an override
+	ReasonNotReady          Reason = "not_ready"           // NotReady requested by an override
+	ReasonTerminal          Reason = "terminal"            // current status is ShuttingDown
+	ReasonInvalidStatus     Reason = "invalid_status"      // a status no override may ask for
+	ReasonInvalidOwner      Reason = "invalid_owner"       // owner outside the label character set or too long
+	ReasonDrainingToStandby Reason = "draining_to_standby" // Draining cannot park
+	ReasonOwnerMismatch     Reason = "owner_mismatch"      // Standby under another owner
 )
 
 type RefusedError struct {
@@ -107,14 +105,9 @@ func Rules(current Snapshot, req Request, now time.Time) (Snapshot, error) {
 		reason = ReasonInvalidOwner
 	case current.Status == draining && req.Status == standby:
 		reason = ReasonDrainingToStandby
-	case req.Force, current.Owner == "": // the ownership rules below do not apply
-	case req.Status == draining:
-		reason = ReasonDrainingUnderOwner
-	case req.Status == unhealthy:
-		// A human voiding the park; the owner learns it from the report.
-	case req.Owner == "":
-		reason = ReasonOwnerRequired
-	case req.Owner != current.Owner:
+	case !req.Force && req.Status == standby && current.Owner != "" && req.Owner != "" && req.Owner != current.Owner:
+		// The one ownership rule: a park is not taken over. Anything else from
+		// anyone applies and clears the owner, which only says whose park it is.
 		reason = ReasonOwnerMismatch
 	}
 	if reason != "" {

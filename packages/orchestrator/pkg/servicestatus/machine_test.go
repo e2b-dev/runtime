@@ -81,12 +81,12 @@ func TestRules_Table(t *testing.T) {
 		{name: "no owner: Draining", current: at(t0, healthy, ""), req: Request{Status: draining, Owner: "x"}, next: at(now, draining, "")},
 		{name: "no owner: Unhealthy", current: at(t0, standby, ""), req: Request{Status: unhealthy}, next: at(now, unhealthy, "")},
 		{name: "owner: Standby under the owner is a rewrite", current: at(t0, standby, "x"), req: Request{Status: standby, Owner: "x"}, next: at(t0, standby, "x")},
-		{name: "owner: Standby without an owner", current: at(t0, standby, "x"), req: Request{Status: standby}, reason: ReasonOwnerRequired},
+		{name: "owner: Standby without an owner releases the owner", current: at(t0, standby, "x"), req: Request{Status: standby}, next: at(now, standby, "")},
 		{name: "owner: Standby under another owner", current: at(t0, standby, "x"), req: Request{Status: standby, Owner: "y"}, reason: ReasonOwnerMismatch},
 		{name: "owner: Healthy under the owner", current: at(t0, standby, "x"), req: Request{Status: healthy, Owner: "x"}, next: at(now, healthy, "")},
-		{name: "owner: Healthy without an owner", current: at(t0, standby, "x"), req: Request{Status: healthy}, reason: ReasonOwnerRequired},
-		{name: "owner: Healthy under another owner", current: at(t0, standby, "x"), req: Request{Status: healthy, Owner: "y"}, reason: ReasonOwnerMismatch},
-		{name: "owner: Draining", current: at(t0, standby, "x"), req: Request{Status: draining, Owner: "x"}, reason: ReasonDrainingUnderOwner},
+		{name: "owner: Healthy without an owner", current: at(t0, standby, "x"), req: Request{Status: healthy}, next: at(now, healthy, "")},
+		{name: "owner: Healthy under another owner", current: at(t0, standby, "x"), req: Request{Status: healthy, Owner: "y"}, next: at(now, healthy, "")},
+		{name: "owner: Draining", current: at(t0, standby, "x"), req: Request{Status: draining}, next: at(now, draining, "")},
 		{name: "owner: Unhealthy", current: at(t0, standby, "x"), req: Request{Status: unhealthy}, next: at(now, unhealthy, "")},
 		{name: "same status keeps the change time", current: at(t0, healthy, ""), req: Request{Status: healthy}, next: at(t0, healthy, "")},
 	} {
@@ -122,8 +122,8 @@ func TestMachine_OverridePersistsStandbyAndClearsOnReady(t *testing.T) {
 	require.Zero(t, store.cleared)
 
 	var refused *RefusedError
-	require.ErrorAs(t, m.Override(t.Context(), Request{Status: healthy}), &refused)
-	require.Equal(t, ReasonOwnerRequired, refused.Reason)
+	require.ErrorAs(t, m.Override(t.Context(), Request{Status: standby, Owner: "y"}), &refused)
+	require.Equal(t, ReasonOwnerMismatch, refused.Reason)
 	require.Equal(t, at(now, standby, "x"), m.Snapshot())
 	require.Len(t, store.saved, 1, "a refusal touches no store")
 	require.Zero(t, store.cleared)

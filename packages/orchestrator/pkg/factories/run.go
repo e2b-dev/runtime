@@ -583,8 +583,6 @@ func run(config cfg.Config, opts Options) (success bool) {
 		return false
 	}
 
-	serviceInfo := service.NewInfoContainer(nodeID, version, commitSHA, serviceInstanceID, machineInfo, config)
-
 	serviceError := newServiceErrorChannel()
 	defer close(serviceError)
 	// A service failure is recorded whenever it happens: the channel reports
@@ -669,6 +667,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 		zap.String("host_kernel", telemetry.HostKernelVersion()),
 		logger.WithServiceInstanceID(serviceInstanceID),
 	)
+
+	serviceInfo := service.NewInfoContainer(ctx, nodeID, version, commitSHA, serviceInstanceID, machineInfo, config)
 
 	startService := func(name string, f func() error) {
 		g.Go(func() error {
@@ -1219,8 +1219,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 		}
 	}
 
-	infoService := service.NewInfoService(serviceInfo, sandboxes, hostMetrics)
-	orchestratorinfo.RegisterInfoServiceServer(grpcServer, infoService)
+	infoMeter := tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/factories")
+	refused := utils.Must(telemetry.GetCounter(infoMeter, telemetry.OrchestratorStatusOverrideRefusedCounterName))
+	orchestratorinfo.RegisterInfoServiceServer(grpcServer, service.NewInfoService(serviceInfo, sandboxes, hostMetrics, refused))
 
 	grpcHealth := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, grpcHealth)

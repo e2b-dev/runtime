@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,18 +13,13 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service/machineinfo"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // readinessPollInterval is how often a NotReady node asks whether it is ready.
 const readinessPollInterval = time.Second
-
-// ServiceStatus bundles the service status with the time of its last change.
-type ServiceStatus struct {
-	Status    orchestratorinfo.ServiceInfoStatus
-	ChangedAt time.Time
-}
 
 type ServiceInfo struct {
 	ClientId  string
@@ -38,9 +34,16 @@ type ServiceInfo struct {
 	MachineInfo  machineinfo.MachineInfo
 	MaxSandboxes atomic.Int64
 
-	status          ServiceStatus
-	statusMu        sync.RWMutex
-	outstandingWork int64
+	// machine is nil in a zero ServiceInfo, which reports Healthy and panics
+	// on a status change; tests that change status build a container.
+	machine *servicestatus.Machine
+
+	// held is true while the startup hold still waits for ready; holdMu
+	// orders the hold's check-then-set against overrides.
+	holdMu sync.Mutex
+	held   bool
+
+	outstandingWork atomic.Int64
 }
 
 var serviceRolesMapper = map[cfg.ServiceType]orchestratorinfo.ServiceInfoRole{
@@ -48,65 +51,60 @@ var serviceRolesMapper = map[cfg.ServiceType]orchestratorinfo.ServiceInfoRole{
 	cfg.TemplateManager: orchestratorinfo.ServiceInfoRole_TemplateBuilder,
 }
 
-func (s *ServiceInfo) GetStatus() ServiceStatus {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
+func (s *ServiceInfo) Snapshot() servicestatus.Snapshot {
+	if s.machine == nil {
+		return servicestatus.Snapshot{}
+	}
 
-	return s.status
+	return s.machine.Snapshot()
 }
 
 // Child work must be registered before its parent releases ownership.
 func (s *ServiceInfo) TrackWork() func() {
-	s.statusMu.Lock()
-	s.outstandingWork++
-	s.statusMu.Unlock()
+	s.outstandingWork.Add(1)
 
 	return s.finishWork
 }
 
 func (s *ServiceInfo) finishWork() {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
-
-	s.outstandingWork--
+	s.outstandingWork.Add(-1)
 }
 
 func (s *ServiceInfo) OutstandingWork() int64 {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-
-	return s.outstandingWork
+	return s.outstandingWork.Load()
 }
 
+// SetStatus is the process's own transition; a status an operator or a sizer
+// set stays.
 func (s *ServiceInfo) SetStatus(ctx context.Context, status orchestratorinfo.ServiceInfoStatus) {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
-
-	s.setStatus(ctx, status)
+	s.machine.Set(ctx, status)
 }
 
-func (s *ServiceInfo) OverrideStatus(ctx context.Context, status orchestratorinfo.ServiceInfoStatus) bool {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
+// OverrideStatus returns nil or a *servicestatus.RefusedError. A Healthy that
+// lands while the startup hold still waits becomes NotReady until the node is
+// ready.
+func (s *ServiceInfo) OverrideStatus(ctx context.Context, req servicestatus.Request) error {
+	s.holdMu.Lock()
+	defer s.holdMu.Unlock()
 
-	// Only process shutdown may enter ShuttingDown, and only the node's
-	// startup NotReady.
-	if status == orchestratorinfo.ServiceInfoStatus_ShuttingDown || status == orchestratorinfo.ServiceInfoStatus_NotReady {
-		return false
+	err := s.machine.Override(ctx, req)
+	if err == nil && s.held && req.Status == orchestratorinfo.ServiceInfoStatus_Healthy {
+		s.SetStatus(ctx, orchestratorinfo.ServiceInfoStatus_NotReady)
 	}
 
-	if s.status.Status == orchestratorinfo.ServiceInfoStatus_Draining && status == orchestratorinfo.ServiceInfoStatus_Standby {
-		return false
-	}
-
-	return s.setStatus(ctx, status)
+	return err
 }
 
 // HoldUntilReady reports NotReady until ready answers true, then Healthy, and
-// never NotReady again. A status set in between, by an operator or the
-// shutdown, ends the wait and stays. It returns at once, and ready is polled
-// in the background until the wait ends.
+// never NotReady again. A status an operator or the shutdown sets in between
+// ends the wait and stays, except a Standby: a restored or newly recorded
+// park keeps the wait alive, so a release before the node is ready lands on
+// NotReady and becomes Healthy once it is. It returns at once, and ready is
+// polled in the background until the wait ends.
 func (s *ServiceInfo) HoldUntilReady(ctx context.Context, ready func() bool) {
+	s.holdMu.Lock()
+	s.held = true
+	s.holdMu.Unlock()
 	s.SetStatus(ctx, orchestratorinfo.ServiceInfoStatus_NotReady)
 	go func() {
 		ticker := time.NewTicker(readinessPollInterval)
@@ -118,35 +116,30 @@ func (s *ServiceInfo) HoldUntilReady(ctx context.Context, ready func() bool) {
 }
 
 // becomeReady makes a NotReady node Healthy when ready, and reports whether
-// the wait is over: the node is ready or another status replaced NotReady.
+// the wait is over: the node is ready, or a status other than NotReady or
+// Standby replaced the hold. holdMu orders it against OverrideStatus, so a
+// release cannot slip between the read and the set.
 func (s *ServiceInfo) becomeReady(ctx context.Context, ready bool) bool {
-	s.statusMu.Lock()
-	defer s.statusMu.Unlock()
+	s.holdMu.Lock()
+	defer s.holdMu.Unlock()
 
-	if s.status.Status != orchestratorinfo.ServiceInfoStatus_NotReady {
-		return true
-	}
-	if ready {
-		s.setStatus(ctx, orchestratorinfo.ServiceInfoStatus_Healthy)
-	}
-
-	return ready
-}
-
-func (s *ServiceInfo) setStatus(ctx context.Context, status orchestratorinfo.ServiceInfoStatus) bool {
-	if s.status.Status == orchestratorinfo.ServiceInfoStatus_ShuttingDown && status != s.status.Status {
+	status := s.Snapshot().Status
+	waiting := status == orchestratorinfo.ServiceInfoStatus_NotReady || status == orchestratorinfo.ServiceInfoStatus_Standby
+	if waiting && !ready {
 		return false
 	}
-
-	if s.status.Status != status {
-		logger.L().Info(ctx, "Service status changed", zap.String("status", status.String()))
-		s.status = ServiceStatus{Status: status, ChangedAt: time.Now()}
+	s.held = false
+	if ready && status == orchestratorinfo.ServiceInfoStatus_NotReady {
+		s.SetStatus(ctx, orchestratorinfo.ServiceInfoStatus_Healthy)
 	}
 
 	return true
 }
 
-func NewInfoContainer(clientId string, version string, commit string, instanceID string, machineInfo machineinfo.MachineInfo, config cfg.Config) *ServiceInfo {
+// NewInfoContainer restores a Standby an earlier process recorded under the
+// orchestrator's base directory; a record it cannot read is logged and the
+// node starts Healthy.
+func NewInfoContainer(ctx context.Context, clientId string, version string, commit string, instanceID string, machineInfo machineinfo.MachineInfo, config cfg.Config) *ServiceInfo {
 	services := cfg.GetServices(config)
 	serviceRoles := make([]orchestratorinfo.ServiceInfoRole, 0)
 
@@ -156,12 +149,18 @@ func NewInfoContainer(clientId string, version string, commit string, instanceID
 		}
 	}
 
-	startup := time.Now()
-	serviceInfo := &ServiceInfo{
+	machine := servicestatus.New(servicestatus.NewFileStore(filepath.Join(config.OrchestratorBaseDir, servicestatus.FileName)), time.Now)
+	// The one instant of construction, before a restore replaces the snapshot.
+	startup := machine.Snapshot().ChangedAt
+	if err := machine.Restore(ctx); err != nil {
+		logger.L().Error(ctx, "Failed to restore the service status, starting Healthy", zap.Error(err))
+	}
+
+	return &ServiceInfo{
 		ClientId:  clientId,
 		ServiceId: instanceID,
 
-		status: ServiceStatus{Status: orchestratorinfo.ServiceInfoStatus_Healthy, ChangedAt: startup},
+		machine: machine,
 
 		Startup:     startup,
 		Roles:       serviceRoles,
@@ -171,6 +170,4 @@ func NewInfoContainer(clientId string, version string, commit string, instanceID
 		SourceVersion: version,
 		SourceCommit:  commit,
 	}
-
-	return serviceInfo
 }

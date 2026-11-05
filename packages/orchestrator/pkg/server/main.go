@@ -352,7 +352,7 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	_, err = meter.RegisterCallback(
 		func(_ context.Context, obs metric.Observer) error {
 			obs.ObserveInt64(statusGauge, 1, metric.WithAttributes(
-				attribute.String("status", server.info.GetStatus().Status.String()),
+				attribute.String("status", server.info.Snapshot().Status.String()),
 				attribute.String("version", server.info.SourceVersion),
 				attribute.String("commit", server.info.SourceCommit),
 			))
@@ -488,8 +488,8 @@ func (s *Server) drainUploads(ctx context.Context, uploadsDone <-chan struct{}) 
 
 // DrainSandboxes waits for the live sandboxes on this node to exit on their own
 // during a graceful shutdown, then waits for their lifecycle cleanup to finish.
-// It does not reject new sandbox starts; that admission gating is layered in
-// separately. It returns ctx.Err() if ctx is cancelled before the node empties.
+// Creates are refused by the status gate in Create while the status is not
+// Healthy. It returns ctx.Err() if ctx is cancelled before the node empties.
 //
 // The live count alone is not enough: a resume-fresh checkpoint takes its
 // sandbox out of the live map before the resumed one goes in, and a create is
