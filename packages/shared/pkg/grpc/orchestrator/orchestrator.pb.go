@@ -1816,8 +1816,8 @@ type RunningSandbox struct {
 	// Deprecated: the API no longer rebuilds sandbox state from this list. Redis
 	// is the source of truth; List is only used to detect sandboxes running on a
 	// node that the store does not know about, so they can be killed. The fields
-	// below carry everything that decision needs. Still populated so API
-	// instances predating those fields keep working during a rollout.
+	// below carry everything that decision needs. No longer populated; the API
+	// still reads it from orchestrators that predate those fields.
 	//
 	// Deprecated: Marked as deprecated in orchestrator.proto.
 	Config    *SandboxConfig         `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`

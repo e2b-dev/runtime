@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
 
 // EndedLifetime is how long an ended sandbox stays listed. The node cannot
@@ -17,15 +16,14 @@ const EndedLifetime = 2 * time.Minute
 // EndedSandbox is what the node still reports about a sandbox that ended
 // without being asked to, after its resources were released.
 type EndedSandbox struct {
-	SandboxID       string
-	TeamID          string
-	ExecutionID     string
-	APIStoredConfig *orchestrator.SandboxConfig
-	Vcpu            int64
-	RamMB           int64
-	StartedAt       time.Time
-	EndAt           time.Time
-	GuestEvent      fc.GuestEvent
+	SandboxID   string
+	TeamID      string
+	ExecutionID string
+	Vcpu        int64
+	RamMB       int64
+	StartedAt   time.Time
+	EndAt       time.Time
+	GuestEvent  fc.GuestEvent
 
 	expiresAt time.Time
 }
@@ -37,16 +35,15 @@ func (m *Map) AddEnded(sbx *Sandbox, event fc.GuestEvent, now time.Time) {
 	defer m.registryMu.Unlock()
 
 	m.ended[sbx.Runtime.SandboxID] = EndedSandbox{
-		SandboxID:       sbx.Runtime.SandboxID,
-		TeamID:          sbx.Runtime.TeamID,
-		ExecutionID:     sbx.Runtime.ExecutionID,
-		APIStoredConfig: sbx.APIStoredConfig,
-		Vcpu:            sbx.Config.Vcpu,
-		RamMB:           sbx.Config.RamMB,
-		StartedAt:       sbx.GetStartedAt(),
-		EndAt:           sbx.GetEndAt(),
-		GuestEvent:      event,
-		expiresAt:       now.Add(EndedLifetime),
+		SandboxID:   sbx.Runtime.SandboxID,
+		TeamID:      sbx.Runtime.TeamID,
+		ExecutionID: sbx.Runtime.ExecutionID,
+		Vcpu:        sbx.Config.Vcpu,
+		RamMB:       sbx.Config.RamMB,
+		StartedAt:   sbx.GetStartedAt(),
+		EndAt:       sbx.GetEndAt(),
+		GuestEvent:  event,
+		expiresAt:   now.Add(EndedLifetime),
 	}
 }
 

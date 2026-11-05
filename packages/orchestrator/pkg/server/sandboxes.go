@@ -884,7 +884,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 
 		startedAt := sbx.GetStartedAt()
 		entry := &orchestrator.RunningSandbox{
-			Config:      sbx.APIStoredConfig,
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(startedAt),
 			EndTime:     timestamppb.New(sbx.GetEndAt()),
@@ -904,7 +903,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 
 	for _, e := range s.sandboxFactory.Sandboxes.EndedItems(time.Now()) {
 		sandboxes = append(sandboxes, &orchestrator.RunningSandbox{
-			Config:      e.APIStoredConfig,
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(e.StartedAt),
 			EndTime:     timestamppb.New(e.EndAt),

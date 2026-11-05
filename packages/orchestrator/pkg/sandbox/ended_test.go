@@ -10,13 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func endedTestSandbox(executionID string) *Sandbox {
 	sbx := &Sandbox{
-		APIStoredConfig: &orchestrator.SandboxConfig{TemplateId: "template-id"},
 		Metadata: &Metadata{
 			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID:   "sbx-1",
@@ -49,7 +47,6 @@ func TestEndedSandboxes(t *testing.T) {
 		assert.Equal(t, "sbx-1", got.SandboxID)
 		assert.Equal(t, "team-id", got.TeamID)
 		assert.Equal(t, "exec-1", got.ExecutionID)
-		assert.Equal(t, "template-id", got.APIStoredConfig.GetTemplateId())
 		assert.Equal(t, int64(2), got.Vcpu)
 		assert.Equal(t, int64(512), got.RamMB)
 		assert.Equal(t, time.Unix(1000, 0), got.StartedAt)

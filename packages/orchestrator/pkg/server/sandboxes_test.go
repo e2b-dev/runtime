@@ -90,7 +90,6 @@ func Test_server_List(t *testing.T) {
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
-						Config: &orchestrator.SandboxConfig{TemplateId: "template-id"},
 						// ClientId:  "client-id",
 						StartTime:   timestamppb.New(startTime),
 						EndTime:     timestamppb.New(endTime),
@@ -134,7 +133,6 @@ func Test_server_List(t *testing.T) {
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
-						Config: &orchestrator.SandboxConfig{TemplateId: "template-id"},
 						// ClientId:  "client-id",
 						StartTime:   timestamppb.New(startTime),
 						EndTime:     timestamppb.New(endTime),

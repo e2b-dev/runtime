@@ -63,10 +63,7 @@ func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreat
 		startTime = timestamppb.Now()
 	}
 
-	cfg, _ := proto.Clone(req.GetSandbox()).(*orchestrator.SandboxConfig)
-
 	running := &orchestrator.RunningSandbox{
-		Config:      cfg, //nolint:staticcheck // mirrors the real orchestrator until config is dropped
 		ClientId:    s.clientID,
 		StartTime:   startTime,
 		EndTime:     req.GetEndTime(),

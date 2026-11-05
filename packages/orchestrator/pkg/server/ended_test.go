@@ -56,7 +56,6 @@ func TestListAndDeleteEndedSandbox(t *testing.T) {
 	sandboxes.AddEnded(endedServerSandbox(&orchestrator.SandboxConfig{TemplateId: "template-id"}), fc.GuestEventCrashNoRestart, time.Now())
 
 	want := &orchestrator.RunningSandbox{
-		Config:      &orchestrator.SandboxConfig{TemplateId: "template-id"},
 		StartTime:   timestamppb.New(startTime),
 		EndTime:     timestamppb.New(endTime),
 		SandboxId:   listSandboxID,
