@@ -528,7 +528,11 @@ Key mechanisms (all under `pkg/sandbox/`):
   touched pages are read. An optional prefetcher warms known-hot pages.
 - **Copy-on-write rootfs** (`rootfs/`, `nbd/`, `block/`): the template rootfs stays read-only;
   writes go to a per-sandbox COW cache exposed to Firecracker as an NBD block device served by
-  an in-process userspace NBD server. On pause, the dirty blocks are exported as a diff.
+  an in-process userspace NBD server. On pause, the dirty blocks are exported as a diff. The
+  device is attached through the NBD driver's netlink interface, which the kernel serializes
+  node-wide for the whole attach, or, behind `nbd-attach-via-ioctl`, through its ioctl
+  interface, which locks per device at the cost of one parked thread per attached device
+  (and so of every session on the node if the process is traced, stopped or frozen).
 - **Template cache** (`template/`): templates are fetched lazily from object storage and cached
   on local disk (and optionally on a shared NFS chunk cache, or fetched peer-to-peer from other
   nodes before upload completes). Every reader of a cached template holds a pin on it — a

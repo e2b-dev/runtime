@@ -786,6 +786,20 @@ var (
 	// NBDConnectionsPerDevice the number of NBD socket connections per device
 	NBDConnectionsPerDevice = NewIntFlag("nbd-connections-per-device", 1)
 
+	// NBDAttachViaIoctlFlag attaches sandbox rootfs devices through the NBD
+	// driver's ioctl interface instead of netlink. The netlink interface runs
+	// every attach and detach on a node under one kernel-wide lock, so starts
+	// queue behind each other; the ioctl interface locks per device, at the
+	// cost of one parked OS thread per attached device. That thread waits in
+	// the driver interruptibly, so anything that stops or traps the process
+	// (a ptrace attach such as strace, gdb or dlv, SIGSTOP, a cgroup freeze)
+	// ends every ioctl session on the node and fails the guests' rootfs I/O;
+	// netlink devices have no parked thread and only pause. Never trace,
+	// stop or freeze an orchestrator that runs with this flag on. Read once
+	// per attach; a device detaches through the interface that attached it.
+	// Disabled by default.
+	NBDAttachViaIoctlFlag = NewBoolFlag("nbd-attach-via-ioctl", false)
+
 	// NBDAsyncWriteZeroesFlag, when enabled, handles NBD WRITE_ZEROES/TRIM
 	// commands in a goroutine instead of inline on the dispatch read loop.
 	// Inline handling can stall the read loop via head-of-line blocking on the

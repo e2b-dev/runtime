@@ -35,10 +35,12 @@ func withAfterConnect(f func(deviceIndex uint32)) MountOption {
 // It stops on its own after maxAttempts so a machine with nothing free fails the test in
 // seconds instead of hanging until the go test timeout: closing done makes GetDevice return
 // ErrClosed, which surfaces as an Open error the assertions below report.
-func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) {
+func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) <-chan struct{} {
 	const maxAttempts = 16
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for range maxAttempts {
 			slot, err := pool.getFreeDeviceSlot()
 			if err != nil {
@@ -54,6 +56,8 @@ func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) {
 
 		pool.doneOnce.Do(func() { close(pool.done) })
 	}()
+
+	return done
 }
 
 // A cancellation observed after nbdnl.Connect has succeeded must not strand the device. The
@@ -64,12 +68,25 @@ func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) {
 func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	t.Parallel()
 
+	featureFlags, err := featureflags.NewClient("", "", "")
+	require.NoError(t, err)
+	testOpenCancelledAfterConnect(t, featureFlags)
+}
+
+// The ioctl attach has no wait loop of its own, so its post-connect
+// cancellation goes through the same unwind.
+func TestPathDirect_OpenCancelledAfterConnectViaIoctl(t *testing.T) {
+	t.Parallel()
+
+	testOpenCancelledAfterConnect(t, ioctlTestFlags(t, 1))
+}
+
+func testOpenCancelledAfterConnect(t *testing.T, featureFlags *featureflags.Client) {
+	t.Helper()
+
 	if os.Geteuid() != 0 {
 		t.Skip("the nbd requires root privileges to run")
 	}
-
-	featureFlags, err := featureflags.NewClient("", "", "")
-	require.NoError(t, err)
 
 	const size = 10 * 1024 * 1024
 	const blockSize = header.RootfsBlockSize
@@ -97,8 +114,15 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 
 	stop := make(chan struct{})
 	stopFeeder := sync.OnceFunc(func() { close(stop) })
-	t.Cleanup(stopFeeder)
-	feedSlotsUntil(pool, stop)
+	feeder := feedSlotsUntil(pool, stop)
+	// Stopped and joined before the unwind under test releases the slot: a
+	// feeder that is between its checks would otherwise take the slot back
+	// and the assertion below would read its claim as a leak.
+	stopAndJoinFeeder := sync.OnceFunc(func() {
+		stopFeeder()
+		<-feeder
+	})
+	t.Cleanup(stopAndJoinFeeder)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -111,7 +135,7 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L(),
 		withAfterConnect(func(deviceIndex uint32) {
 			connected = deviceIndex
-			stopFeeder()
+			stopAndJoinFeeder()
 			cancel()
 		}),
 	)
