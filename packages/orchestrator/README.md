@@ -51,6 +51,19 @@ Flags:
 
 ---
 
+## Service status
+
+`ServiceInfo` reports one of six statuses. `Healthy` and `NotReady` (the startup hold until the edition's egress answers ready) are the process's own; `ShuttingDown` is entered only by the shutdown and is terminal. `Draining`, `Unhealthy` and `Standby` are set by an operator or a sizer through `ServiceStatusOverride`, which the API exposes as its admin `POST /nodes/{nodeID}` route.
+
+- **Owner.** A `Standby` override may carry an owner: at most 63 characters of `[a-z0-9-]`, starting and ending alphanumeric. While an owner is recorded, a `Standby` under another owner is refused with `FailedPrecondition`; a `Healthy`, `Draining` or `Unhealthy` from anyone applies and clears the owner, so a person's actions work as before and the owner says whose park it is and nothing more; `force` applies the carried status and owner regardless. The response reports the owner as `status_owner`, and the build advertises `capabilities: ["park-owner"]` beside its labels, never among them.
+- **Persistence.** A `Standby` is written to `$ORCHESTRATOR_BASE_PATH/service-status.json` (status, owner, change time) and restored at start, so a parked node stays parked across a restart until a `Healthy` carrying its owner arrives. The file is removed when the status leaves `Standby`; a shutdown keeps it, and an unreadable file is logged and ignored. A park also outlives the startup hold: a release before the node's egress is ready lands on `NotReady` and becomes `Healthy` once it is.
+- **Create refusal.** `Create` answers `ResourceExhausted` while the status is not `Healthy`, with a `NODE_NOT_ACCEPTING_SANDBOXES` detail that tells it from a full node; the API places the sandbox on another node and leaves this one out of its next sample, while a capacity refusal is retried on the same node as before.
+- **Shutdown bound.** Once the sandboxes are drained, every closer runs under one 30 s deadline and the final wait for the service goroutines is bounded by another 30 s. A closer or wait cut at its deadline is logged with `forced=true` and makes the process exit 1, as a failing closer does.
+
+The dummy orchestrator (`cmd/dummy-orchestrator`) runs the same status machine; `STATE_DIR` gives it the record file (the directory is created when missing) and `MAX_SANDBOXES` its sandbox limit.
+
+---
+
 ## Architecture (ARM64) Support
 
 The orchestrator supports both `amd64` (x86_64) and `arm64` (aarch64) architectures. Architecture is detected automatically via `runtime.GOARCH` at compile time.
