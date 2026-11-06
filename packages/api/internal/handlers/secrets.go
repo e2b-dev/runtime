@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	scpb "buf.build/gen/go/grpc/grpc/protocolbuffers/go/grpc/service_config"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -20,9 +19,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	_ "google.golang.org/grpc/health" // Registers the client side of healthCheckConfig.
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
@@ -83,13 +80,17 @@ func newReadinessBalancedClient(address string, creds credentials.TransportCrede
 	// backend whose readiness health service reports SERVING. A backend without
 	// the health service is still picked: gRPC treats its UNIMPLEMENTED answer
 	// as healthy. grpc-go takes a default service config only as JSON.
-	serviceConfig, err := protojson.Marshal(&scpb.ServiceConfig{
-		LoadBalancingConfig: []*scpb.LoadBalancingConfig{{Policy: &scpb.LoadBalancingConfig_RoundRobin{RoundRobin: &scpb.RoundRobinConfig{}}}},
-		HealthCheckConfig:   &scpb.ServiceConfig_HealthCheckConfig{ServiceName: wrapperspb.String(readinessService)},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encoding the %s service config: %w", backend, err)
-	}
+	// Built as a string literal rather than via the buf.build service_config
+	// proto: that proto transitively imports grpc/lookup/v1/rls.proto, whose
+	// descriptor collides at init with grpc-go's own internal grpc_lookup_v1
+	// copy and panics the process ("rls.proto is already registered"). The JSON
+	// is byte-for-byte what protojson emitted for round_robin + the health-check
+	// service name (now parameterized by readinessService), so client behavior
+	// is unchanged.
+	serviceConfig := fmt.Sprintf(
+		`{"loadBalancingConfig":[{"round_robin":{}}], "healthCheckConfig":{"serviceName":%q}}`,
+		readinessService,
+	)
 
 	conn, err := grpc.NewClient(
 		address,
@@ -100,7 +101,7 @@ func newReadinessBalancedClient(address string, creds credentials.TransportCrede
 		// Keeps this caller's balancing and readiness policy: a resolver
 		// cannot supply a service config that replaces it.
 		grpc.WithDisableServiceConfig(),
-		grpc.WithDefaultServiceConfig(string(serviceConfig)),
+		grpc.WithDefaultServiceConfig(serviceConfig),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating the %s client: %w", backend, err)
