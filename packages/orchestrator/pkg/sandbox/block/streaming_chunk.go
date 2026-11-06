@@ -338,7 +338,16 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 		// Read in batches of max(blockSize, minReadBatchSize) to align notification
 		// granularity with the read size and minimize lock/notify overhead.
 		readEnd := min(totalRead+readBatch, s.chunkLen)
-		n, readErr := io.ReadFull(reader, mmapSlice[totalRead:readEnd])
+		// A Go copy into a cache page the filesystem cannot back raises SIGBUS.
+		var n int
+		var readErr error
+		if faultErr := RunFaultSafe(ctx, func() error {
+			n, readErr = io.ReadFull(reader, mmapSlice[totalRead:readEnd])
+
+			return nil
+		}); faultErr != nil {
+			readErr = faultErr
+		}
 		totalRead += int64(n)
 
 		if n > 0 && !ft.IsCompressed() {
@@ -357,7 +366,7 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 				break // all bytes received; trailing EOF is expected
 			}
 
-			return res, fmt.Errorf("failed reading at offset %d after %d bytes: %w", s.chunkOff, totalRead, readErr)
+			return res, fmt.Errorf("failed reading at offset %d after %d bytes: %w", s.chunkOff, totalRead, classifyBackingError(c.cache.filePath, readErr))
 		}
 	}
 
