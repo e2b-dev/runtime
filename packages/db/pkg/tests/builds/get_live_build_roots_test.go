@@ -120,3 +120,69 @@ func TestGetLiveBuildRoots_OtherTeamExcluded(t *testing.T) {
 
 	assert.NotContains(t, roots, otherTeamBuild, "another team's build must never be a live root")
 }
+
+// A snapshot (paused sandbox / checkpoint) build is a live root for the team
+// even when the template being deleted is its BASE template (source 3 of the
+// UNION). A snapshot is a COW diff on top of the base, so its header mapping
+// references the base template's builds; it must protect them so deleting the
+// base cannot orphan a still-referenced ancestor. This is the checkpoint
+// corruption guard.
+func TestGetLiveBuildRoots_SnapshotBuildIsRoot(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	base := testutils.CreateTestTemplate(t, db, teamID)
+
+	// A snapshot whose base_env_id = base, with its own env + build. The
+	// snapshot build is the COW layer that references base's builds.
+	snap := testutils.UpsertTestSnapshot(t, ctx, db, "", "sbx-snap-1", teamID, base)
+
+	// Deleting the base template: the snapshot build must appear as a live root
+	// so base's ancestor builds are kept.
+	roots := liveRootIDs(t, db, teamID, base)
+	assert.Contains(t, roots, snap.BuildID, "a snapshot build on this base must be a live root when the base is deleted")
+}
+
+// Source 3 is deliberately NOT gated on active_envs: a snapshot build still
+// protects the base's ancestors even after the snapshot's OWN env is
+// soft-deleted but its diff layer still lives in storage. This is exactly the
+// window ExistsTemplateSnapshots (which joins active_envs) can let a base
+// deletion through — without source 3 the base ancestor would fall out of the
+// keep set and be deleted, corrupting the orphaned-but-present snapshot.
+func TestGetLiveBuildRoots_SnapshotBuildIsRootEvenAfterSnapshotEnvSoftDeleted(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	base := testutils.CreateTestTemplate(t, db, teamID)
+	snap := testutils.UpsertTestSnapshot(t, ctx, db, "", "sbx-snap-2", teamID, base)
+
+	// Soft-delete the snapshot's OWN env (its diff layer is assumed still in
+	// storage). An active_envs-gated source would now miss it.
+	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
+		`UPDATE public.envs SET deleted_at = NOW() WHERE id = $1`, snap.TemplateID))
+
+	roots := liveRootIDs(t, db, teamID, base)
+	assert.Contains(t, roots, snap.BuildID,
+		"a snapshot build must remain a live root for its base even after the snapshot's own env is soft-deleted")
+}
+
+// A snapshot of ANOTHER team never protects this team's base (team-scoped).
+func TestGetLiveBuildRoots_SnapshotOtherTeamExcluded(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	base := testutils.CreateTestTemplate(t, db, teamID)
+
+	otherTeam := testutils.CreateTestTeam(t, db)
+	otherBase := testutils.CreateTestTemplate(t, db, otherTeam)
+	otherSnap := testutils.UpsertTestSnapshot(t, ctx, db, "", "sbx-snap-other", otherTeam, otherBase)
+
+	roots := liveRootIDs(t, db, teamID, base)
+	assert.NotContains(t, roots, otherSnap.BuildID, "another team's snapshot build must never be a live root here")
+}

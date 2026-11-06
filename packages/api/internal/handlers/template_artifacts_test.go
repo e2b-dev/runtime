@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -23,6 +24,18 @@ func rowWithNode(node string, cluster *uuid.UUID) queries.GetExclusiveBuildsForT
 		BuildID:       uuid.New(),
 		ClusterNodeID: &node,
 		ClusterID:     cluster,
+		// Old enough that the grace window never applies unless a test sets it.
+		CreatedAt: time.Now().Add(-365 * 24 * time.Hour),
+	}
+}
+
+// rowWithNodeAge builds a materialized build row with an explicit creation time,
+// for exercising the online grace window.
+func rowWithNodeAge(node string, created time.Time) queries.GetExclusiveBuildsForTemplateDeletionRow {
+	return queries.GetExclusiveBuildsForTemplateDeletionRow{
+		BuildID:       uuid.New(),
+		ClusterNodeID: &node,
+		CreatedAt:     created,
 	}
 }
 
@@ -49,7 +62,7 @@ func TestProcessExclusiveBuilds_SkipsNilNode(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withNode, nilNode}, noKeep(), deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withNode, nilNode}, noKeep(), deleteFn, artifactCleanupCounters{}, time.Now(), 0)
 
 	assert.Equal(t, []uuid.UUID{withNode.BuildID}, called, "only the materialized build is deleted; nil-node build skipped")
 }
@@ -75,7 +88,7 @@ func TestProcessExclusiveBuilds_GuardKeptNotDeleted(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{protected, deletable}, keep, deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{protected, deletable}, keep, deleteFn, artifactCleanupCounters{}, time.Now(), 0)
 
 	assert.Equal(t, []uuid.UUID{deletable.BuildID}, called, "protected build must not be deleted; only the unreferenced build is")
 }
@@ -101,7 +114,7 @@ func TestProcessExclusiveBuilds_ErrorIsNonFatal(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{b1, b2, b3}, noKeep(), deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{b1, b2, b3}, noKeep(), deleteFn, artifactCleanupCounters{}, time.Now(), 0)
 
 	assert.True(t, attempted[b1.BuildID] && attempted[b2.BuildID] && attempted[b3.BuildID],
 		"all builds attempted even though one failed")
@@ -125,7 +138,7 @@ func TestProcessExclusiveBuilds_NilClusterFallback(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withCluster, nilCluster}, noKeep(), deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{withCluster, nilCluster}, noKeep(), deleteFn, artifactCleanupCounters{}, time.Now(), 0)
 
 	assert.Equal(t, explicit, got[withCluster.BuildID], "explicit cluster id is passed through")
 	assert.Equal(t, consts.LocalClusterID, got[nilCluster.BuildID], "nil cluster id falls back to local cluster")
@@ -142,6 +155,54 @@ func TestProcessExclusiveBuilds_Empty(t *testing.T) {
 		return nil
 	}
 
-	processExclusiveBuilds(t.Context(), "tpl", nil, noKeep(), deleteFn, artifactCleanupCounters{})
+	processExclusiveBuilds(t.Context(), "tpl", nil, noKeep(), deleteFn, artifactCleanupCounters{}, time.Now(), 0)
 	require.Zero(t, calls)
+}
+
+// A materialized build younger than the grace window is NOT deleted on the
+// online path; an old one is. This is the TOCTOU-narrowing deferral to the
+// offline sweeper.
+func TestProcessExclusiveBuilds_SkipsTooNewWithinGrace(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	fresh := rowWithNodeAge("node-a", now.Add(-1*time.Hour)) // younger than 24h
+	old := rowWithNodeAge("node-b", now.Add(-48*time.Hour))  // older than 24h
+
+	var mu sync.Mutex
+	var called []uuid.UUID
+	deleteFn := func(_ context.Context, buildID uuid.UUID, _ string, _ uuid.UUID, _ string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		called = append(called, buildID)
+
+		return nil
+	}
+
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{fresh, old}, noKeep(), deleteFn, artifactCleanupCounters{}, now, 24*time.Hour)
+
+	assert.Equal(t, []uuid.UUID{old.BuildID}, called, "only the build older than the grace window is deleted; the fresh one is deferred")
+}
+
+// With the grace window disabled (minAge=0), even a just-created build is
+// deleted — the online path keeps its prior behavior when the window is off.
+func TestProcessExclusiveBuilds_GraceDisabledDeletesFresh(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	fresh := rowWithNodeAge("node-a", now)
+
+	var mu sync.Mutex
+	var called []uuid.UUID
+	deleteFn := func(_ context.Context, buildID uuid.UUID, _ string, _ uuid.UUID, _ string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		called = append(called, buildID)
+
+		return nil
+	}
+
+	processExclusiveBuilds(t.Context(), "tpl", []queries.GetExclusiveBuildsForTemplateDeletionRow{fresh}, noKeep(), deleteFn, artifactCleanupCounters{}, now, 0)
+
+	assert.Equal(t, []uuid.UUID{fresh.BuildID}, called, "grace window off: a fresh build is still deleted")
 }

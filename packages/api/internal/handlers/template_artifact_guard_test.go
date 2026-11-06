@@ -130,3 +130,49 @@ func TestFailClosedReason_Classification(t *testing.T) {
 	assert.Equal(t, "header_unreadable", failClosedReason(fmt.Errorf("%w: boom", errHeaderUnreadable)))
 	assert.Equal(t, "unknown", failClosedReason(errors.New("something else")))
 }
+
+// stubLiveRootSource is a test liveRootSource: returns configured roots, or err.
+type stubLiveRootSource struct {
+	label string
+	roots []uuid.UUID
+	err   error
+}
+
+func (s stubLiveRootSource) name() string { return s.label }
+
+func (s stubLiveRootSource) liveRoots(_ context.Context, _ uuid.UUID, _ string) ([]uuid.UUID, error) {
+	return s.roots, s.err
+}
+
+// collectLiveRoots unions roots across all sources and dedups.
+func TestCollectLiveRoots_UnionsAndDedups(t *testing.T) {
+	t.Parallel()
+
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	sources := []liveRootSource{
+		stubLiveRootSource{label: "db", roots: []uuid.UUID{a, b}},
+		stubLiveRootSource{label: "snapshots", roots: []uuid.UUID{b, c}}, // b overlaps
+	}
+
+	roots, err := collectLiveRoots(context.Background(), sources, uuid.New(), "tpl")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uuid.UUID{a, b, c}, roots, "roots are the deduped union of all sources")
+}
+
+// A single source error fails the whole collection closed (classified as
+// live_roots_query), so the guard deletes nothing rather than expand an
+// incomplete root set and risk deleting a still-referenced build.
+func TestCollectLiveRoots_FailsClosedOnAnySourceError(t *testing.T) {
+	t.Parallel()
+
+	good := uuid.New()
+	sources := []liveRootSource{
+		stubLiveRootSource{label: "db", roots: []uuid.UUID{good}},
+		stubLiveRootSource{label: "snapshots", err: errors.New("query boom")},
+	}
+
+	_, err := collectLiveRoots(context.Background(), sources, uuid.New(), "tpl")
+	require.Error(t, err, "an error from any source must fail closed")
+	assert.ErrorIs(t, err, errLiveRootsQuery)
+	assert.Equal(t, "live_roots_query", failClosedReason(err))
+}
