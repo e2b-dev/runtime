@@ -11,6 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -87,10 +88,23 @@ func (a *APIStore) PostNodesNodeID(c *gin.Context, nodeId api.NodeID) {
 		return
 	}
 
-	err = node.SendStatusChange(ctx, body.Status)
+	change := nodemanager.StatusChange{Status: body.Status}
+	if body.Owner != nil {
+		change.Owner = *body.Owner
+	}
+	if body.Force != nil {
+		change.Force = *body.Force
+	}
+
+	err = node.SendStatusChange(ctx, change)
 	if err != nil {
 		if status.Code(err) == codes.FailedPrecondition {
 			a.sendAPIStoreError(c, http.StatusConflict, status.Convert(err).Message())
+
+			return
+		}
+		if status.Code(err) == codes.InvalidArgument {
+			a.sendAPIStoreError(c, http.StatusBadRequest, status.Convert(err).Message())
 
 			return
 		}

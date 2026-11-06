@@ -42,7 +42,9 @@ func (o *Orchestrator) AdminNodes(clusterID uuid.UUID) ([]*api.Node, error) {
 				CpuModelName:    machineInfo.CPUModelName,
 			},
 			Status:               statusInfo.Status,
+			StatusOwner:          optionalOwner(statusInfo.Owner),
 			StatusChangedAt:      statusInfo.ChangedAt,
+			Capabilities:         optionalCapabilities(n.Capabilities()),
 			CreateSuccesses:      n.PlacementMetrics.SuccessCount(),
 			CreateFails:          n.PlacementMetrics.FailsCount(),
 			SandboxStartingCount: int(n.PlacementMetrics.InProgressCount()),
@@ -85,7 +87,9 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 			CpuModelName:    machineInfo.CPUModelName,
 		},
 		Status:          statusInfo.Status,
+		StatusOwner:     optionalOwner(statusInfo.Owner),
 		StatusChangedAt: statusInfo.ChangedAt,
+		Capabilities:    optionalCapabilities(n.Capabilities()),
 		CreateSuccesses: n.PlacementMetrics.SuccessCount(),
 		CreateFails:     n.PlacementMetrics.FailsCount(),
 		SandboxCount:    nodeMetrics.SandboxCount,
@@ -97,6 +101,23 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 	}
 
 	return node, nil
+}
+
+// An empty owner or capability list is left out of the JSON.
+func optionalOwner(owner string) *string {
+	if owner == "" {
+		return nil
+	}
+
+	return &owner
+}
+
+func optionalCapabilities(capabilities []string) *[]string {
+	if len(capabilities) == 0 {
+		return nil
+	}
+
+	return &capabilities
 }
 
 // AdminNodeSandboxes lists the sandboxes the node runs that the store
