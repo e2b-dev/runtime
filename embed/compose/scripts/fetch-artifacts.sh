@@ -29,6 +29,7 @@ declare -gA SHA256=(
   ["orchestrator/v0.15.0/orchestrator"]="b46e64241f830ceaedf91fccdf4598fcf818179ea156130def16946ce342ecc4"
   ["envd/v0.9.0/envd"]="c42a31d738718b5cf7654e258e5b111308646a905331b266294cdcbeb0a02355"
   ["envd/v0.9.202609130627-59497eb9134/envd"]="9b788bb48aef37afc317a09ff7a5b247ec365049333cf3144e2d3e4b29890612"
+  ["envd/v0.10.0/envd"]="b24c1b4b715a6bb3a5c77fa02fc5955c154c580f0e2e312aca8be8c026e804b2"
   # arm64. The three Firecracker artifacts are published for both
   # architectures already. The orchestrator and envd publish arm64 objects
   # (orchestrator/<version>/arm64/orchestrator, envd/<version>/arm64/envd)

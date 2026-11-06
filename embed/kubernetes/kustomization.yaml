@@ -42,7 +42,7 @@ configMapGenerator:
   - name: e2b-versions
     literals:
       - E2B_ORCHESTRATOR_VERSION=v0.30.0 # x-release-please-version
-      - E2B_ENVD_VERSION=v0.9.202609130627-59497eb9134
+      - E2B_ENVD_VERSION=v0.10.0
       - E2B_KERNEL_VERSION=vmlinux-6.1.177_5008931
       - E2B_FIRECRACKER_VERSION=v1.14-0.2.0
       - E2B_BUSYBOX_VERSION=1.36.1
