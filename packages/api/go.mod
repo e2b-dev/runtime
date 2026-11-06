@@ -31,7 +31,6 @@ require (
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/flowchartsman/retry v1.2.0
 	github.com/getkin/kin-openapi v0.152.0
-	github.com/gin-contrib/size v1.0.2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-redis/redis_rate/v10 v10.0.1

@@ -19,7 +19,6 @@ import (
 	"buf.build/go/protovalidate"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
-	limits "github.com/gin-contrib/size"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	protovalidatemw "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
@@ -210,7 +209,7 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// Use our validation middleware to check all requests against the
 	// OpenAPI schema.
 	r.Use(
-		limits.RequestSizeLimiter(maxUploadLimit),
+		customMiddleware.ReadRequestBody(maxUploadLimit),
 		middleware.OapiRequestValidatorWithOptions(swagger,
 			&middleware.Options{
 				// Nothing reads the decoded body; don't hold it for the whole request.
