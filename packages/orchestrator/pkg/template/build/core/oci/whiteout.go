@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // markWhiteoutParents prepares extracted layers for use as read-only overlay
@@ -21,6 +24,7 @@ import (
 // Linux treats an empty origin as "copied up but origin unknown" and sets
 // OVL_WHITEOUTS even when the directory exists in only one lower layer:
 // https://github.com/torvalds/linux/blob/v6.8/fs/overlayfs/inode.c#L1289-L1294
+// A layer filesystem without xattr support is skipped, not failed.
 func markWhiteoutParents(ctx context.Context, layerPath string) error {
 	marked := make(map[string]struct{})
 
@@ -51,7 +55,15 @@ func markWhiteoutParents(ctx context.Context, layerPath string) error {
 		}
 		// Preserve any existing origin, including a real file handle. This
 		// hint is only for temporary, privately extracted read-only lowerdirs.
-		if err := unix.Lsetxattr(parent, "trusted.overlay.origin", nil, unix.XATTR_CREATE); err != nil && !errors.Is(err, unix.EEXIST) {
+		err = unix.Lsetxattr(parent, "trusted.overlay.origin", nil, unix.XATTR_CREATE)
+		if errors.Is(err, unix.ENOTSUP) {
+			// The marker is only a hint. Without it the rootfs copy behaves as it
+			// did before and still fails loudly on unfiltered whiteouts.
+			logger.L().Warn(ctx, "layer filesystem does not support overlay xattrs, skipping whiteout markers", zap.String("layer_path", layerPath), zap.Error(err))
+
+			return filepath.SkipAll
+		}
+		if err != nil && !errors.Is(err, unix.EEXIST) {
 			return fmt.Errorf("mark whiteout parent %s: %w", parent, err)
 		}
 		marked[parent] = struct{}{}

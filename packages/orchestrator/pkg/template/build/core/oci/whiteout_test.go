@@ -99,6 +99,22 @@ func TestMarkWhiteoutParentsReadOnly(t *testing.T) {
 	require.ErrorIs(t, markWhiteoutParents(t.Context(), mount), unix.EROFS)
 }
 
+func TestMarkWhiteoutParentsSkipsUnsupportedFilesystem(t *testing.T) {
+	t.Parallel()
+	requireWhiteoutPrivileges(t)
+	root := t.TempDir()
+	require.NoError(t, unix.Mount("ramfs", root, "ramfs", 0, ""))
+	t.Cleanup(func() { require.NoError(t, unix.Unmount(root, 0)) })
+	if _, err := unix.Lgetxattr(root, "trusted.overlay.origin", nil); !errors.Is(err, unix.ENOTSUP) {
+		t.Skipf("ramfs supports xattrs on this kernel: %v", err)
+	}
+	for _, dir := range []string{"first", "second"} {
+		require.NoError(t, os.Mkdir(filepath.Join(root, dir), 0o755))
+		require.NoError(t, unix.Mknod(filepath.Join(root, dir, "gone"), unix.S_IFCHR|0o600, 0))
+	}
+	require.NoError(t, markWhiteoutParents(t.Context(), root))
+}
+
 // whiteoutImage builds layers entirely in memory. Regular files contain their
 // own path, making unexpected deletion or replacement observable after copying.
 func whiteoutImage(t *testing.T, layers ...[]tar.Header) containerregistry.Image {
