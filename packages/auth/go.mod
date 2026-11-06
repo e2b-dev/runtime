@@ -11,14 +11,14 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/e2b-dev/infra/packages/db v0.0.0
 	github.com/e2b-dev/infra/packages/shared v0.0.0
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.152.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/oapi-codegen/gin-middleware v1.1.0
-	github.com/redis/go-redis/v9 v9.22.0
+	github.com/oapi-codegen/gin-middleware v1.2.1
+	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0
 	go.uber.org/zap v1.28.0
@@ -133,7 +133,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
 	go.segfaultmedaddy.com/pgxephemeraltest/v2 v2.3.0 // indirect
 	go.segfaultmedaddy.com/redistest v0.2.0 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/atomic v1.12.0 // indirect
 	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect

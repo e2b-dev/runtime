@@ -196,6 +196,57 @@ func TestProcessHopFollowsTheFlagOverTheFallback(t *testing.T) {
 	assert.Equal(t, SourceFlag, source)
 }
 
+// A refused flag value reports its own source, whichever mode it keeps, so
+// a hop that read the flag is never counted as one on its env fallback. Once
+// the flag stops serving it, the source is the last accepted one again; ""
+// reads as an unset flag.
+func TestProcessHopReportsWhereItsModeCameFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		withReader bool
+		served     []string
+		expect     []string
+		wantMode   ClientMode
+		wantSource string
+	}{
+		{name: "on without names at start is refused", withReader: true, served: []string{"on"}, wantMode: ClientOff, wantSource: SourceRefused},
+		{name: "on without names after an accepted off is refused", withReader: true, served: []string{"off", "on"}, wantMode: ClientOff, wantSource: SourceRefused},
+		{name: "unset after a refusal at start", withReader: true, served: []string{"on", ""}, wantMode: ClientOff, wantSource: SourceFallback},
+		{name: "unset after a refusal that followed an accepted off", withReader: true, served: []string{"off", "on", ""}, wantMode: ClientOff, wantSource: SourceFlag},
+		{name: "malformed after a refusal at start", withReader: true, served: []string{"on", "bogus"}, wantMode: ClientOff, wantSource: SourceFallback},
+		{name: "malformed after a refusal that followed an accepted off", withReader: true, served: []string{"off", "on", "bogus"}, wantMode: ClientOff, wantSource: SourceFlag},
+		{name: "on with names is accepted", withReader: true, served: []string{"on"}, expect: []string{serverID}, wantMode: ClientOn, wantSource: SourceFlag},
+		{name: "no flag reader keeps the fallback", served: []string{"on"}, expect: []string{serverID}, wantMode: ClientOff, wantSource: SourceFallback},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			provider, _ := testProvider(t)
+			flags := newFakeFlags()
+			var reader FlagReader
+			if tc.withReader {
+				reader = flags
+			}
+			proc, err := NewProcess(t.Context(), provider, reader, logger.NewNopLogger(), WithFileConfig(emptyFileConfig(t)))
+			require.NoError(t, err)
+			hop, err := proc.Hop("peers", "hop-flag", HopSettings{Expect: tc.expect})
+			require.NoError(t, err)
+
+			var mode ClientMode
+			var source string
+			for _, value := range tc.served {
+				flags.set("hop-flag", value)
+				mode, source = clientModeWithSource(t.Context(), hop.Mode)
+			}
+			assert.Equal(t, tc.wantMode, mode)
+			assert.Equal(t, tc.wantSource, source)
+		})
+	}
+}
+
 // An empty expected set refuses every server, so a hop that is on from the
 // environment refuses it at startup rather than at every dial. A hop that
 // is off from the environment needs none.

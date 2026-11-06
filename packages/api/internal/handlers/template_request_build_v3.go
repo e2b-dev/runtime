@@ -143,6 +143,7 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Alias:              &identifier,
 		Tags:               tags,
 		CpuCount:           body.CpuCount,
+		MaxCpuCount:        body.MaxCpuCount,
 		MemoryMB:           body.MemoryMB,
 		MinFreeDiskMb:      body.MinFreeDiskMb,
 		Version:            templates.TemplateV2LatestVersion,
@@ -150,7 +151,7 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		FirecrackerVersion: firecrackerVersion,
 	}
 
-	template, apiError := template.RegisterBuild(ctx, a.templateCache, a.sqlcDB, buildReq)
+	template, apiError := template.RegisterBuild(ctx, a.templateCache, a.sqlcDB, a.featureFlags, buildReq)
 	if apiError != nil {
 		if replacesTemplateID != "" {
 			a.templateCache.InvalidateAlias(context.WithoutCancel(ctx), &team.Slug, id.ExtractAlias(identifier))

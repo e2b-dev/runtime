@@ -59,7 +59,7 @@ func TestRun(t *testing.T) {
 	require.Equal(t, teamID, defaultTeam)
 
 	existingTeam := uuid.New()
-	_, err = db.ExecContext(t.Context(), "INSERT INTO teams (id,email,name,tier,is_blocked,slug) VALUES ($1,'test@example.com','Existing project','base_v1',false,$2)", existingTeam, existingTeam.String())
+	_, err = db.ExecContext(t.Context(), "INSERT INTO teams (id,email,name,is_blocked,slug) VALUES ($1,'test@example.com','Existing project',false,$2)", existingTeam, existingTeam.String())
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), "UPDATE users_teams SET is_default=false WHERE user_id=$1", canonicalUserID)
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestRun(t *testing.T) {
 	// configured key kept authenticating as the other team.
 	const foreignKey = "e2b_0f0e0d0c0b0a09080706050403020100"
 	otherTeam := uuid.New()
-	_, err = db.ExecContext(t.Context(), "INSERT INTO teams (id,email,name,tier,is_blocked,slug) VALUES ($1,'other@example.com','Other team','base_v1',false,$2)", otherTeam, otherTeam.String())
+	_, err = db.ExecContext(t.Context(), "INSERT INTO teams (id,email,name,is_blocked,slug) VALUES ($1,'other@example.com','Other team',false,$2)", otherTeam, otherTeam.String())
 	require.NoError(t, err)
 	authDb, err := authdb.NewClient(t.Context(), connectionString)
 	require.NoError(t, err)

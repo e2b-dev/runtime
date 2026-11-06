@@ -122,6 +122,11 @@ type Sandbox struct {
 	// current refusal episode (see RefusalEpisodeStart); the evictor's retry
 	// budget counts from here.
 	RefusedSince time.Time `json:"refusedSince,omitzero"`
+	// EnvdRefusedSince and EnvdRefusedUntil are the guest agent's own refusal
+	// episode, stamped by envd refusals alone; the evictor's bypass grace is
+	// measured against it.
+	EnvdRefusedSince time.Time `json:"envdRefusedSince,omitzero"`
+	EnvdRefusedUntil time.Time `json:"envdRefusedUntil,omitzero"`
 	// AutoPauseFilesystemOnly makes a timeout auto-pause take a filesystem-only
 	// snapshot (no memory) instead of a full memory snapshot. Only consulted when
 	// AutoPause is true; read by the evictor at pause time.
@@ -221,4 +226,14 @@ func (s Sandbox) RefusalEpisodeStart(now time.Time) time.Time {
 	}
 
 	return s.RefusedSince
+}
+
+// EnvdRefusalEpisodeStart is RefusalEpisodeStart over the envd stamps: the
+// first envd refusal while that episode is alive, otherwise now.
+func (s Sandbox) EnvdRefusalEpisodeStart(now time.Time) time.Time {
+	if s.EnvdRefusedSince.IsZero() || now.After(s.EnvdRefusedUntil.Add(RefusalEpisodeGap)) {
+		return now
+	}
+
+	return s.EnvdRefusedSince
 }

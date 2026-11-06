@@ -95,15 +95,28 @@ func (q *Queries) MarkProjectDeleted(ctx context.Context, arg MarkProjectDeleted
 }
 
 const softDeleteProjectEnvironments = `-- name: SoftDeleteProjectEnvironments :many
-UPDATE public.envs
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE team_id = $1::uuid
-  AND deleted_at IS NULL
-RETURNING id
+WITH deleted AS (
+    UPDATE public.envs e
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE e.team_id = $1::uuid
+      AND e.deleted_at IS NULL
+    RETURNING e.id
+),
+stamped AS (
+    UPDATE public.snapshots s
+    SET env_deleted_at = NOW()
+    WHERE s.env_id = ANY (ARRAY(SELECT id FROM deleted))
+)
+SELECT id FROM deleted
 `
 
 // Soft-deletes the project's templates, snapshot templates and paused sandbox
-// snapshots the way a template deletion does.
+// snapshots the way a template deletion does, stamping their snapshots in the
+// same statement.
+// NOW() is the transaction's start time, the deleted_at just written. The
+// array keeps this an env_id index lookup per env: joining the CTE lets the
+// planner hash-join a sequential scan of every snapshot once it expects
+// many envs.
 func (q *Queries) SoftDeleteProjectEnvironments(ctx context.Context, projectID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, softDeleteProjectEnvironments, projectID)
 	if err != nil {

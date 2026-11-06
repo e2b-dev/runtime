@@ -353,9 +353,11 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "envd: re-adopted %d forwarded port(s) after handover\n", readopted)
 		}
 	}
-	go portForwarder.StartForwarding(ctx)
+	if portForwarder.Forwards() {
+		go portForwarder.StartForwarding(ctx)
 
-	go portScanner.ScanAndBroadcast()
+		go portScanner.ScanAndBroadcast()
+	}
 
 	// Live-upgrade outgoing trigger. doUpgrade performs the outgoing
 	// choreography: freeze the workload, then re-exec into newBin (empty

@@ -359,3 +359,28 @@ func TestCompose_SingleFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("solo"), data)
 }
+
+// A source spelled differently from the destination but naming the same file
+// is refused: composing would replace the destination, then remove it as a
+// consumed source.
+func TestCompose_SourceAliasesDestination(t *testing.T) {
+	t.Parallel()
+
+	api, currentUser := newComposeTestAPI(t)
+	dir := t.TempDir()
+	destPath := writeSourceFile(t, dir, "part", []byte("kept"))
+	other := writeSourceFile(t, dir, "other", []byte("other"))
+	sep := string(filepath.Separator)
+
+	w := callCompose(t, api, ComposeRequest{
+		SourcePaths: []string{other, dir + sep + "." + sep + "part"},
+		Destination: destPath,
+		Username:    &currentUser.Username,
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, "kept", string(got))
+	assert.FileExists(t, other)
+}

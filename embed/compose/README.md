@@ -411,7 +411,8 @@ restarts; a single machine has nowhere to drain them to.
   is empty. That line stops once `E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` names a
   collector that answers ([Telemetry](#telemetry)).
   dashboard-api also logs `ADMIN_AUTH_PROVIDER_CONFIG is not configured` once
-  at startup; the management endpoints it guards are not used here.
+  at startup; its admin routes then accept only the admin token, which is
+  all this install uses.
 - To run without the dashboard, remove the `dashboard` and `dashboard-api`
   services from your copy of `compose.yaml`, and `dashboard` from `ready`'s
   `depends_on`; the rest of the stack runs.

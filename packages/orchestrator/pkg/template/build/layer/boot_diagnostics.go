@@ -66,17 +66,17 @@ func (cs *CreateSandbox) preBootHook() (sandbox.PreBootFn, *bootDiagnostics) {
 	diag := &bootDiagnostics{}
 	inspect, inner := cs.inspectFstab, cs.preBootFn
 
-	return func(ctx context.Context, rootfsPath string) error {
+	return func(ctx context.Context, rootfsPath string) (string, error) {
 		start := time.Now()
 		report, err := inspect(ctx, rootfsPath)
 		diag.report = report
 		diag.inspectDuration = time.Since(start)
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		if inner == nil {
-			return nil
+			return "", nil
 		}
 
 		return inner(ctx, rootfsPath)

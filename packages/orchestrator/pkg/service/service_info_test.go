@@ -3,8 +3,11 @@
 package service
 
 import (
+	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +32,9 @@ func TestServiceStatusOverride(t *testing.T) {
 		{orchestratorinfo.ServiceInfoStatus_Healthy, orchestratorinfo.ServiceInfoStatus_Draining, codes.OK},
 		{orchestratorinfo.ServiceInfoStatus_Standby, orchestratorinfo.ServiceInfoStatus_Healthy, codes.OK},
 		{orchestratorinfo.ServiceInfoStatus_Healthy, orchestratorinfo.ServiceInfoStatus_Standby, codes.OK},
+		{orchestratorinfo.ServiceInfoStatus_Healthy, orchestratorinfo.ServiceInfoStatus_NotReady, codes.FailedPrecondition},
+		{orchestratorinfo.ServiceInfoStatus_NotReady, orchestratorinfo.ServiceInfoStatus_Draining, codes.OK},
+		{orchestratorinfo.ServiceInfoStatus_NotReady, orchestratorinfo.ServiceInfoStatus_Healthy, codes.OK},
 	} {
 		t.Run(tc.from.String()+"To"+tc.to.String(), func(t *testing.T) {
 			t.Parallel()
@@ -104,6 +110,63 @@ func TestServiceStatusOverrideRejectsShuttingDown(t *testing.T) {
 			})
 			require.Equal(t, codes.FailedPrecondition, status.Code(err))
 			require.Equal(t, initial, info.GetStatus())
+		})
+	}
+}
+
+// A starting node is NotReady until it first reports ready, and Healthy from
+// then on even when it stops being ready. A status an operator or the
+// shutdown sets while it waits ends the wait and stays.
+func TestHoldUntilReady(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		interrupt  func(context.Context, *ServiceInfo)
+		wantStatus orchestratorinfo.ServiceInfoStatus
+	}{
+		{name: "ready", wantStatus: orchestratorinfo.ServiceInfoStatus_Healthy},
+		{
+			name: "drained while waiting",
+			interrupt: func(ctx context.Context, info *ServiceInfo) {
+				info.OverrideStatus(ctx, orchestratorinfo.ServiceInfoStatus_Draining)
+			},
+			wantStatus: orchestratorinfo.ServiceInfoStatus_Draining,
+		},
+		{
+			name: "shut down while waiting",
+			interrupt: func(ctx context.Context, info *ServiceInfo) {
+				info.SetStatus(ctx, orchestratorinfo.ServiceInfoStatus_ShuttingDown)
+			},
+			wantStatus: orchestratorinfo.ServiceInfoStatus_ShuttingDown,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				info := &ServiceInfo{}
+				var ready atomic.Bool
+				info.HoldUntilReady(t.Context(), ready.Load)
+				require.Equal(t, orchestratorinfo.ServiceInfoStatus_NotReady, info.GetStatus().Status)
+
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Equal(t, orchestratorinfo.ServiceInfoStatus_NotReady, info.GetStatus().Status, "not ready yet")
+
+				if tc.interrupt != nil {
+					tc.interrupt(t.Context(), info)
+				}
+				ready.Store(true)
+				time.Sleep(readinessPollInterval)
+				synctest.Wait()
+				require.Equal(t, tc.wantStatus, info.GetStatus().Status)
+
+				ready.Store(false)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Equal(t, tc.wantStatus, info.GetStatus().Status, "the wait ended for good")
+			})
 		})
 	}
 }

@@ -156,6 +156,9 @@ func processFile(r *http.Request, path string, part io.Reader, uid, gid int, met
 	return http.StatusNoContent, nil
 }
 
+// resolvePath resolves a part's destination and refuses one this request already
+// wrote: the same path, or another name for the same file (a hard or symbolic
+// link), which opening it would truncate.
 func resolvePath(part *multipart.Part, paths *UploadSuccess, u *user.User, defaultPath *string, params PostFilesParams) (string, error) {
 	var pathToResolve string
 
@@ -175,16 +178,20 @@ func resolvePath(part *multipart.Part, paths *UploadSuccess, u *user.User, defau
 		return "", fmt.Errorf("error resolving path: %w", err)
 	}
 
+	var target os.FileInfo
+	if len(*paths) > 0 {
+		target, _ = os.Stat(filePath)
+	}
 	for _, entry := range *paths {
-		if entry.Path == filePath {
+		if entry.Path == filePath || sameFile(target, entry.Path) {
 			var alreadyUploaded []string
 			for _, uploadedFile := range *paths {
-				if uploadedFile.Path != filePath {
+				if uploadedFile.Path != entry.Path {
 					alreadyUploaded = append(alreadyUploaded, uploadedFile.Path)
 				}
 			}
 
-			errMsg := fmt.Errorf("you cannot upload multiple files to the same path '%s' in one upload request, only the first specified file was uploaded", filePath)
+			errMsg := fmt.Errorf("you cannot upload multiple files to the same path '%s' in one upload request, only the first specified file was uploaded", entry.Path)
 
 			if len(alreadyUploaded) > 1 {
 				errMsg = fmt.Errorf("%w, also the following files were uploaded: %v", errMsg, strings.Join(alreadyUploaded, ", "))
@@ -195,6 +202,16 @@ func resolvePath(part *multipart.Part, paths *UploadSuccess, u *user.User, defau
 	}
 
 	return filePath, nil
+}
+
+// sameFile reports whether path names the file target describes.
+func sameFile(target os.FileInfo, path string) bool {
+	if target == nil {
+		return false
+	}
+	info, err := os.Stat(path)
+
+	return err == nil && os.SameFile(target, info)
 }
 
 func (a *API) handlePart(r *http.Request, part *multipart.Part, paths UploadSuccess, u *user.User, uid, gid int, metadata map[string]string, operationID string, params PostFilesParams) (*EntryInfo, int, error) {

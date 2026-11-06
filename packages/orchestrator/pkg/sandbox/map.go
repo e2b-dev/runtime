@@ -114,6 +114,23 @@ func (m *Map) Stopping() int {
 	return max(m.lifecycles.Count()-live, 0)
 }
 
+// StoppingMatching is Stopping for the lifecycles match accepts. Lifecycles are
+// read before the live map, so a lifecycle that leaves it meanwhile counts.
+func (m *Map) StoppingMatching(match func(*Sandbox) bool) int {
+	stopping := 0
+	for _, sbx := range m.lifecycles.Items() {
+		if !match(sbx) {
+			continue
+		}
+		if live, ok := m.live.Get(sbx.Runtime.SandboxID); ok && live == sbx {
+			continue
+		}
+		stopping++
+	}
+
+	return stopping
+}
+
 func (m *Map) Get(sandboxID string) (*Sandbox, bool) {
 	return m.live.Get(sandboxID)
 }

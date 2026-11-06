@@ -110,8 +110,8 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 
 **Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
 - Entry point: `main.go`
-- Spec: `spec/openapi-dashboard.yml`; team reads, template tags, builds, `/v1/management`
-- Talks to Postgres and ClickHouse; never to orchestrators (see `docs/ARCHITECTURE.md`)
+- Spec: `spec/openapi-dashboard.yml`; only the health route
+- Never talks to orchestrators (see `docs/ARCHITECTURE.md`)
 - Port: 3010
 
 **Orchestrator (`packages/orchestrator/`)** - Firecracker microVM orchestration

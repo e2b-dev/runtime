@@ -22,7 +22,6 @@ import (
 	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -66,7 +65,7 @@ func templateClusterTeam(t *testing.T, db *testutils.Database, clusterID *uuid.U
 	t.Helper()
 	teamID := testutils.CreateTestTeam(t, db)
 	team := &types.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
+		Team:   &dbtypes.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
 		Limits: &types.TeamLimits{BuildConcurrency: 32, MaxVcpu: 8, MaxRamMb: 8192, DefaultFreeDiskSizeMb: 10240, MaxFreeDiskSizeMb: 25600},
 	}
 	assignTemplateClusterTeam(t, db, team, clusterID)
@@ -262,7 +261,7 @@ func TestTemplateClusterConcurrentAliasHandoff(t *testing.T) {
 		go func() {
 			templateID := id.Generate()
 			alias := "base"
-			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 				ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: templateID,
 				ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 			})
@@ -320,7 +319,7 @@ func TestTemplateClusterUsesCurrentAssignment(t *testing.T) {
 	require.Contains(t, w.Body.String(), "is not available in the requested cluster")
 	alias := "base"
 	uncommittedID := id.Generate()
-	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 		ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: uncommittedID,
 		ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 	})

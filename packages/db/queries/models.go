@@ -74,6 +74,8 @@ type EnvBuild struct {
 	StatusGroup        types.BuildStatusGroup
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
+	EnvdUnresponsive   *bool
+	MaxVcpu            *int64
 }
 
 type EnvDefault struct {
@@ -95,6 +97,7 @@ type Snapshot struct {
 	AutoPause           bool
 	TeamID              uuid.UUID
 	Config              *types.PausedSandboxConfig
+	EnvDeletedAt        *time.Time
 }
 
 type Volume struct {

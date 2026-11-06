@@ -20,8 +20,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	middleware "github.com/oapi-codegen/gin-middleware"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -31,9 +29,7 @@ import (
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/api"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/dashboard-api/internal/handlers"
-	"github.com/e2b-dev/infra/packages/dashboard-api/internal/identity"
 	dashboardmiddleware "github.com/e2b-dev/infra/packages/dashboard-api/internal/middleware"
-	dbmodule "github.com/e2b-dev/infra/packages/db"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/db/pkg/pool"
@@ -147,14 +143,6 @@ func run() int {
 	}
 	defer db.Close()
 
-	// Insert-only: the api works the jobs dashboard-api enqueues.
-	riverClient, err := river.NewClient(riverpgxv5.New(db.Pool()), &river.Config{Schema: dbmodule.RiverSchema})
-	if err != nil {
-		l.Error(ctx, "Initializing the River client", zap.Error(err))
-
-		return 1
-	}
-
 	authDB, err := authdb.NewClient(
 		ctx,
 		config.AuthDBConnectionString,
@@ -231,14 +219,7 @@ func run() int {
 	}
 	defer authService.Close(ctx)
 
-	identityService, err := newIdentityService(ctx, l, config, authClient, identity.NewQueriesLinkage(authDB.Queries))
-	if err != nil {
-		l.Error(ctx, "Initializing identity service", zap.Error(err))
-
-		return 1
-	}
-
-	apiStore := handlers.NewAPIStore(config, db, authDB, clickhouseClient, authService, identityService, tel.MeterProvider, riverClient)
+	apiStore := handlers.NewAPIStore(config, db, clickhouseClient, authService)
 
 	swagger, err := api.GetSwagger()
 	if err != nil {
@@ -256,7 +237,7 @@ func run() int {
 	}
 
 	if adminVerifier == nil {
-		l.Warn(ctx, "ADMIN_AUTH_PROVIDER_CONFIG is not configured; /v1/management endpoints will reject requests with 401")
+		l.Warn(ctx, "ADMIN_AUTH_PROVIDER_CONFIG is not configured; admin endpoints accept only the admin token")
 	}
 
 	authenticationFunc := sharedauth.CreateAuthenticationFunc(
@@ -270,7 +251,7 @@ func run() int {
 		nil,
 	)
 
-	s := newHTTPServer(config.Port, l, tel, swagger, authenticationFunc, apiStore, dashboardmiddleware.RefuseDeletedProject(db.Dashboard))
+	s := newHTTPServer(config.Port, l, tel, swagger, authenticationFunc, apiStore)
 	httpInner, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.Addr)
 	if err != nil {
 		l.Error(ctx, "Listening on the HTTP port", zap.Error(err))
@@ -313,40 +294,6 @@ func main() {
 	os.Exit(run())
 }
 
-// newIdentityService builds the Ory-backed identity service when Ory is
-// configured. With both Ory variables empty the service runs without an
-// identity provider: API-key requests are unaffected and the identity-backed
-// endpoints answer 503.
-func newIdentityService(
-	ctx context.Context,
-	l logger.Logger,
-	config cfg.Config,
-	httpClient *http.Client,
-	linkage identity.Linkage,
-) (identity.Service, error) {
-	if !config.IdentityProviderConfigured() {
-		l.Warn(ctx, "ORY_SDK_URL and ORY_PROJECT_API_TOKEN are not configured; no identity provider is configured and identity-backed endpoints will respond with 503")
-
-		return identity.NewUnavailableService(), nil
-	}
-
-	oryIssuer, err := identity.ResolveOryIssuer(config.OrySDKURL, config.AuthProvider.JWT)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ory issuer: %w", err)
-	}
-
-	oryDirectory, err := identity.NewOryDirectory(identity.OryConfig{
-		HTTPClient: httpClient,
-		SDKURL:     config.OrySDKURL,
-		Token:      config.OryProjectAPIToken,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize ory identity directory: %w", err)
-	}
-
-	return identity.NewService(map[string]identity.Directory{oryIssuer: oryDirectory}, linkage)
-}
-
 func newHTTPServer(
 	port int,
 	l logger.Logger,
@@ -354,7 +301,6 @@ func newHTTPServer(
 	swagger *openapi3.T,
 	authenticationFunc openapi3filter.AuthenticationFunc,
 	store api.ServerInterface,
-	refuseDeletedProject gin.HandlerFunc,
 ) *http.Server {
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -403,6 +349,8 @@ func newHTTPServer(
 	r.Use(
 		middleware.OapiRequestValidatorWithOptions(swagger,
 			&middleware.Options{
+				// Nothing reads the decoded body; don't hold it for the whole request.
+				DiscardValidatedValue: true,
 				ErrorHandler: func(c *gin.Context, message string, statusCode int) {
 					statusCode = max(c.Writer.Status(), statusCode)
 					c.AbortWithStatusJSON(statusCode, gin.H{
@@ -426,7 +374,7 @@ func newHTTPServer(
 
 	// After authentication, so an unauthenticated request never reads the
 	// database.
-	r.Use(dashboardmiddleware.EnforceBlockedTeam(), refuseDeletedProject)
+	r.Use(dashboardmiddleware.EnforceBlockedTeam())
 
 	api.RegisterHandlers(r, store)
 

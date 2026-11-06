@@ -187,3 +187,93 @@ func TestRequestTemplateMemoryNonDivisibleBy2(t *testing.T) {
 	require.NotNil(t, resp.JSON400)
 	assert.Equal(t, "Memory must be divisible by 2", resp.JSON400.Message)
 }
+
+func TestRequestTemplateBuildMaxCPU(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+	db := setup.GetTestDBClient(t)
+
+	for _, test := range []struct {
+		name string
+		max  *api.CPUCount
+		want *int64
+	}{
+		{name: "above-cpu", max: new(api.CPUCount(4)), want: new(int64(4))},
+		{name: "equal-cpu", max: new(api.CPUCount(2)), want: new(int64(2))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+				Name:        new("test-request-build-max-cpu-" + test.name + "-" + uuid.NewString()),
+				CpuCount:    new(api.CPUCount(2)),
+				MaxCpuCount: test.max,
+				MemoryMB:    new(api.MemoryMB(1024)),
+			}, setup.WithAPIKey())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusAccepted, resp.StatusCode())
+			require.NotNil(t, resp.JSON202)
+			t.Cleanup(func() {
+				deleted, err := c.DeleteTemplatesTemplateIDWithResponse(context.WithoutCancel(t.Context()), resp.JSON202.TemplateID, setup.WithAPIKey())
+				require.NoError(t, err)
+				require.Equal(t, http.StatusNoContent, deleted.StatusCode())
+			})
+
+			var got *int64
+			err = db.Db.TestsRawSQLQuery(t.Context(), `SELECT max_vcpu FROM public.env_builds WHERE id = $1`, func(rows pgx.Rows) error {
+				require.True(t, rows.Next())
+
+				return rows.Scan(&got)
+			}, resp.JSON202.BuildID)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+
+			tmpl, err := c.GetTemplatesTemplateIDWithResponse(t.Context(), resp.JSON202.TemplateID, &api.GetTemplatesTemplateIDParams{}, setup.WithAPIKey())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, tmpl.StatusCode())
+			require.NotNil(t, tmpl.JSON200)
+
+			var found bool
+			for _, b := range tmpl.JSON200.Builds {
+				if b.BuildID.String() != resp.JSON202.BuildID {
+					continue
+				}
+				found = true
+				if test.want == nil {
+					assert.Nil(t, b.MaxCpuCount)
+				} else {
+					require.NotNil(t, b.MaxCpuCount)
+					assert.Equal(t, *test.want, int64(*b.MaxCpuCount))
+				}
+			}
+			assert.True(t, found, "build not listed on template")
+		})
+	}
+}
+
+func TestRequestTemplateBuildMaxCPUInvalid(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+
+	for _, test := range []struct {
+		name string
+		max  api.CPUCount
+		want string
+	}{
+		{name: "below-cpu", max: 1, want: "Max CPU count must be at least the CPU count (2)"},
+		{name: "odd", max: 3, want: "Max CPU count must be 1 or an even number"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), api.TemplateBuildRequestV3{
+				Name:        new("test-request-build-max-cpu-" + test.name + "-" + uuid.NewString()),
+				CpuCount:    new(api.CPUCount(2)),
+				MaxCpuCount: new(test.max),
+				MemoryMB:    new(api.MemoryMB(1024)),
+			}, setup.WithAPIKey())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+			require.NotNil(t, resp.JSON400)
+			assert.Equal(t, test.want, resp.JSON400.Message)
+		})
+	}
+}

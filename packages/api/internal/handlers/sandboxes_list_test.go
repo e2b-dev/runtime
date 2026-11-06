@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -21,8 +26,11 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -108,7 +116,7 @@ func newSandboxListRequest(t *testing.T, teamID uuid.UUID, teamSlug string) (*ht
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v2/sandboxes", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{ID: teamID, Slug: teamSlug},
+		Team: &dbtypes.Team{ID: teamID, Slug: teamSlug},
 	})
 
 	return recorder, ginCtx
@@ -327,6 +335,50 @@ func TestInstanceInfoToPaginatedSandboxes_PaginationTimestampPrecision(t *testin
 		"pagination key should have no sub-microsecond bits")
 }
 
+// GET /sandboxes refuses a list above the cap, counting the sandboxes the
+// metadata filter leaves, since those are what the response would carry.
+func TestGetRunningSandboxes_Cap(t *testing.T) {
+	t.Parallel()
+
+	runningSandboxes := func(n int) []sandbox.Sandbox {
+		sandboxes := make([]sandbox.Sandbox, n)
+		for i := range sandboxes {
+			sandboxes[i] = sandbox.Sandbox{SandboxID: fmt.Sprintf("sbx-%d", i), State: sandbox.StateRunning}
+		}
+		sandboxes[0].Metadata = map[string]string{"app": "one"}
+
+		return sandboxes
+	}
+
+	for _, tc := range []struct {
+		name      string
+		capped    bool
+		sandboxes int
+		metadata  *map[string]string
+		wantCount int
+		wantErr   bool
+	}{
+		{name: "at the cap", capped: true, sandboxes: sandboxesUnboundedMaxCount, wantCount: sandboxesUnboundedMaxCount},
+		{name: "above the cap", capped: true, sandboxes: sandboxesUnboundedMaxCount + 1, wantErr: true},
+		{name: "above the cap before the metadata filter", capped: true, sandboxes: sandboxesUnboundedMaxCount + 1, metadata: &map[string]string{"app": "one"}, wantCount: 1},
+		{name: "cap off", sandboxes: sandboxesUnboundedMaxCount + 1, wantCount: sandboxesUnboundedMaxCount + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			listed, err := getRunningSandboxes(runningSandboxes(tc.sandboxes), tc.metadata, tc.capped)
+			if tc.wantErr {
+				require.ErrorIs(t, err, errTooManyRunningSandboxes)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Len(t, listed, tc.wantCount)
+		})
+	}
+}
+
 // TestGetPausedSandboxes_ReadsFromTheReadClient checks that the paused page is read
 // through sqlcReadDB. The snapshot exists only in the database behind that client.
 func TestGetPausedSandboxes_ReadsFromTheReadClient(t *testing.T) {
@@ -473,7 +525,7 @@ END;
 $$;
 CREATE VIEW public.snapshots AS
 SELECT created_at, env_id, sandbox_id, id, metadata, base_env_id, sandbox_started_at,
-       env_secure, origin_node_id, allow_internet_access, auto_pause, team_id, config
+       env_secure, origin_node_id, allow_internet_access, auto_pause, team_id, config, env_deleted_at
 FROM public.snapshots_for_retry WHERE fail_snapshot_read();`)
 	require.NoError(t, err)
 	_, err = db.SqlcClient.Pool().Exec(ctx, "INSERT INTO snapshot_read_failure (failures, code, message) VALUES ($1, $2, $3)", failures, code, message)
@@ -483,4 +535,229 @@ FROM public.snapshots_for_retry WHERE fail_snapshot_read();`)
 	store := &APIStore{sqlcReadDB: db.SqlcClient, sandboxListSem: sem}
 
 	return store, teamID, templateID
+}
+
+type limitRecorderDBTX struct {
+	queries.DBTX
+
+	limits  []int32
+	onBatch func(batch int)
+}
+
+func (r *limitRecorderDBTX) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if len(args) > 0 {
+		if limit, ok := args[0].(int32); ok {
+			r.limits = append(r.limits, limit)
+		}
+	}
+	if r.onBatch != nil {
+		r.onBatch(len(r.limits))
+	}
+
+	return r.DBTX.Query(ctx, sql, args...)
+}
+
+//nolint:tparallel // subtests share a teamID fixture in public.snapshots and ascending order mutates a row
+func TestGetPausedSandboxes_BatchesLargeRunningExcludeList(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	db := testutils.SetupDatabase(t)
+	teamID := testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, teamID)
+
+	baseTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Create 260 snapshot rows in DB, spaced 1 minute apart (sbx-000 .. sbx-259).
+	for i := range 260 {
+		startedAt := baseTime.Add(time.Duration(i) * time.Minute)
+		totalDiskSize := int64(1024)
+		envdVersion := "v1.0.0"
+		allowInternet := true
+		snapTemplateID := fmt.Sprintf("snap-template-%03d", i)
+		_, err := db.SqlcClient.UpsertSnapshot(ctx, queries.UpsertSnapshotParams{
+			TemplateID:          snapTemplateID,
+			TeamID:              teamID,
+			SandboxID:           fmt.Sprintf("sbx-%03d", i),
+			BaseTemplateID:      templateID,
+			StartedAt:           pgtype.Timestamptz{Time: startedAt, Valid: true},
+			Vcpu:                2,
+			RamMb:               2048,
+			TotalDiskSizeMb:     &totalDiskSize,
+			Metadata:            dbtypes.JSONBStringMap{},
+			KernelVersion:       "6.1.0",
+			FirecrackerVersion:  "1.4.0",
+			EnvdVersion:         &envdVersion,
+			Secure:              true,
+			AllowInternetAccess: &allowInternet,
+			AutoPause:           true,
+			OriginNodeID:        "test-node",
+			Status:              dbtypes.BuildStatusSuccess,
+		})
+		require.NoError(t, err)
+	}
+
+	sem, err := sharedutils.NewAdjustableSemaphore(1)
+	require.NoError(t, err)
+
+	// 800 fake running IDs
+	fakeIDs := make([]string, 0, 800)
+	for i := range 800 {
+		fakeIDs = append(fakeIDs, fmt.Sprintf("fake-running-%d", i))
+	}
+
+	t.Run("descending order", func(t *testing.T) { //nolint:paralleltest // subtests share a teamID fixture
+		ctx := t.Context()
+		td := ldtestdata.DataSource()
+		td.Update(td.Flag(featureflags.PausedSandboxListBatchLimit.Key()).ValueForAll(ldvalue.Int(250)))
+		ff, err := featureflags.NewClientWithDatasource(td)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(ctx)) })
+
+		recorder := &limitRecorderDBTX{DBTX: db.SqlcClient.Pool()}
+		subStore := &APIStore{
+			sqlcReadDB:     &sqlcdb.Client{Queries: queries.New(recorder)},
+			sandboxListSem: sem,
+			featureFlags:   ff,
+		}
+
+		// In SortDesc, newest first: sbx-259 down to sbx-000.
+		// Exclude the first 250 snapshots in sort order: sbx-259 down to sbx-010.
+		// Batch 1 (limit 250) returns these 250 excluded rows, advances cursor to sbx-010,
+		// and Batch 2 returns the remaining rows. Asking for queryLimit 3 should return
+		// sbx-009, sbx-008, sbx-007.
+		runningIDs := append([]string{}, fakeIDs...)
+		for i := 259; i >= 10; i-- {
+			runningIDs = append(runningIDs, fmt.Sprintf("sbx-%03d", i))
+		}
+
+		cursorTime := baseTime.Add(24 * time.Hour)
+		cursorID := utils.MaxSandboxID
+		page, err := subStore.getPausedSandboxes(ctx, teamID, runningIDs, nil, 3, cursorTime, cursorID, utils.SortDesc, time.Time{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []int32{250, 250}, recorder.limits)
+		require.Len(t, page, 3)
+		assert.Equal(t, "sbx-009", page[0].SandboxID)
+		assert.Equal(t, "sbx-008", page[1].SandboxID)
+		assert.Equal(t, "sbx-007", page[2].SandboxID)
+	})
+
+	t.Run("ascending order", func(t *testing.T) { //nolint:paralleltest // subtests share a teamID fixture
+		ctx := t.Context()
+		td := ldtestdata.DataSource()
+		td.Update(td.Flag(featureflags.PausedSandboxListBatchLimit.Key()).ValueForAll(ldvalue.Int(250)))
+		ff, err := featureflags.NewClientWithDatasource(td)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(ctx)) })
+
+		// sbx-100 is in ASC's exclude list ([0..249]) and in every DESC subtest's exclude
+		// list ([10..259]). Register cleanup immediately to restore its original timestamp
+		// so a failure cannot leave the shared fixture modified.
+		t.Cleanup(func() {
+			_, restoreErr := db.SqlcClient.Pool().Exec(context.WithoutCancel(ctx),
+				"UPDATE public.snapshots SET sandbox_started_at = $1 WHERE team_id = $2 AND sandbox_id = 'sbx-100'",
+				baseTime.Add(100*time.Minute),
+				teamID,
+			)
+			require.NoError(t, restoreErr)
+		})
+
+		recorder := &limitRecorderDBTX{
+			DBTX: db.SqlcClient.Pool(),
+		}
+		recorder.onBatch = func(batch int) {
+			if batch == 2 {
+				// Concurrently update sbx-100's started_at into Batch 2's timestamp window.
+				// Since sbx-100 was already excluded in batch 1, it must remain excluded.
+				// sbx-100 is also excluded by all parallel DESC subtests ([10..259]), so
+				// moving its timestamp does not perturb their results.
+				newTime := baseTime.Add(250*time.Minute + 30*time.Second)
+				_, updateErr := db.SqlcClient.Pool().Exec(ctx,
+					"UPDATE public.snapshots SET sandbox_started_at = $1 WHERE team_id = $2 AND sandbox_id = 'sbx-100'",
+					newTime,
+					teamID,
+				)
+				require.NoError(t, updateErr)
+			}
+		}
+
+		subStore := &APIStore{
+			sqlcReadDB:     &sqlcdb.Client{Queries: queries.New(recorder)},
+			sandboxListSem: sem,
+			featureFlags:   ff,
+		}
+
+		// In SortAsc, oldest first: sbx-000 up to sbx-259.
+		// Exclude the first 250 snapshots in sort order: sbx-000 up to sbx-249.
+		// Batch 1 (limit 250) returns these 250 excluded rows, advances cursor to sbx-249,
+		// and Batch 2 returns the remaining rows. Asking for queryLimit 3 should return
+		// sbx-250, sbx-251, sbx-252.
+		ascRunning := append([]string{}, fakeIDs...)
+		for i := range 250 {
+			ascRunning = append(ascRunning, fmt.Sprintf("sbx-%03d", i))
+		}
+
+		cursorTime := time.Time{}
+		cursorID := ""
+		page, err := subStore.getPausedSandboxes(ctx, teamID, ascRunning, nil, 3, cursorTime, cursorID, utils.SortAsc, time.Time{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []int32{250, 250}, recorder.limits)
+		require.Len(t, page, 3)
+		assert.Equal(t, "sbx-250", page[0].SandboxID)
+		assert.Equal(t, "sbx-251", page[1].SandboxID)
+		assert.Equal(t, "sbx-252", page[2].SandboxID)
+	})
+
+	t.Run("default (flag unset) keeps single-query behavior", func(t *testing.T) { //nolint:paralleltest // subtests share a teamID fixture
+		recorder := &limitRecorderDBTX{DBTX: db.SqlcClient.Pool()}
+		subStore := &APIStore{
+			sqlcReadDB:     &sqlcdb.Client{Queries: queries.New(recorder)},
+			sandboxListSem: sem,
+		}
+
+		runningIDs := append([]string{}, fakeIDs...)
+		for i := 259; i >= 10; i-- {
+			runningIDs = append(runningIDs, fmt.Sprintf("sbx-%03d", i))
+		}
+
+		cursorTime := baseTime.Add(24 * time.Hour)
+		cursorID := utils.MaxSandboxID
+		page, err := subStore.getPausedSandboxes(ctx, teamID, runningIDs, nil, 3, cursorTime, cursorID, utils.SortDesc, time.Time{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []int32{1053}, recorder.limits)
+		require.Len(t, page, 3)
+		assert.Equal(t, "sbx-009", page[0].SandboxID)
+		assert.Equal(t, "sbx-008", page[1].SandboxID)
+		assert.Equal(t, "sbx-007", page[2].SandboxID)
+	})
+
+	t.Run("custom batch limit from flag", func(t *testing.T) { //nolint:paralleltest // subtests share a teamID fixture
+		ctx := t.Context()
+		td := ldtestdata.DataSource()
+		td.Update(td.Flag(featureflags.PausedSandboxListBatchLimit.Key()).ValueForAll(ldvalue.Int(150)))
+		ff, err := featureflags.NewClientWithDatasource(td)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(ctx)) })
+
+		recorder := &limitRecorderDBTX{DBTX: db.SqlcClient.Pool()}
+		subStore := &APIStore{
+			sqlcReadDB:     &sqlcdb.Client{Queries: queries.New(recorder)},
+			sandboxListSem: sem,
+			featureFlags:   ff,
+		}
+
+		runningIDs := append([]string{}, fakeIDs...)
+		for i := 259; i >= 10; i-- {
+			runningIDs = append(runningIDs, fmt.Sprintf("sbx-%03d", i))
+		}
+
+		cursorTime := baseTime.Add(24 * time.Hour)
+		cursorID := utils.MaxSandboxID
+		page, err := subStore.getPausedSandboxes(ctx, teamID, runningIDs, nil, 3, cursorTime, cursorID, utils.SortDesc, time.Time{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []int32{150, 150}, recorder.limits)
+		require.Len(t, page, 3)
+		assert.Equal(t, "sbx-009", page[0].SandboxID)
+		assert.Equal(t, "sbx-008", page[1].SandboxID)
+		assert.Equal(t, "sbx-007", page[2].SandboxID)
+	})
 }

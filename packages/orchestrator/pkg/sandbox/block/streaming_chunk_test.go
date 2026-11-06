@@ -71,7 +71,7 @@ type testControl struct {
 
 func newTestChunker(t *testing.T, size int64) *Chunker {
 	t.Helper()
-	c, err := NewChunker(&featureflags.Client{}, size, testBlockSize, t.TempDir()+"/cache", newTestMetrics(t), storage.MemfileObjectType)
+	c, err := NewChunker(&featureflags.Client{}, size, testBlockSize, t.TempDir()+"/cache", newTestMetrics(t), storage.MemfileObjectType, "test-build")
 	require.NoError(t, err)
 
 	return c

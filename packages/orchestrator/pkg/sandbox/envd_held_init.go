@@ -95,14 +95,13 @@ func (s *Sandbox) stagedEnvdVersion() string {
 	return ""
 }
 
-// InheritableEnvdVersion is the version a throwaway resumed from this handle's snapshot
-// inherits for its gate (WithInheritedEnvdVersion): the version the running envd last
-// reported when it is admissible, else the staged binary's version, else "". The report
-// comes ahead of the mark, as it does in what a pause records (snapshotEnvdVersion): the
-// throwaway resumes the envd that answered this life's last /init, which is the rootfs
-// binary when the delivered one died and the guest restarted it, and a throwaway gated by
-// the mark would send that envd a thaw skip it ignores.
-func (s *Sandbox) InheritableEnvdVersion() string {
+// RunningEnvdVersion is the version of the envd that answered this life's last /init when
+// that report is admissible, else the version of the binary the orchestrator staged for
+// this life, else "". Throwaway inheritance (WithInheritedEnvdVersion), the pause record
+// (snapshotEnvdVersion) and CA selection (ExpectedEnvdVersion) all read it. The report comes
+// ahead of the mark: a guest whose delivered envd died and restarted from its rootfs binary
+// runs that binary, and a throwaway gated by the mark would send it a thaw skip it ignores.
+func (s *Sandbox) RunningEnvdVersion() string {
 	if v, ok := admissibleEnvdVersion(s.LiveEnvdVersion()); ok {
 		return v
 	}
@@ -137,8 +136,8 @@ func (s *Sandbox) snapshotEnvdVersion(filesystemOnly bool) string {
 	if filesystemOnly {
 		return ""
 	}
-	v, ok := admissibleEnvdVersion(s.LiveEnvdVersion())
-	if !ok {
+	v := s.RunningEnvdVersion()
+	if v == "" {
 		v = s.envdGateVersion()
 	}
 	if v == s.Config.Envd.Version {
@@ -158,7 +157,7 @@ func (s *Sandbox) snapshotEnvdVersion(filesystemOnly bool) string {
 // clock_correction sample. A new life starts unmarked; a memory pause records the running
 // envd's version for the next life's gate instead (snapshotEnvdVersion), which is the mark
 // only when no admissible report differs from it, and a throwaway inherits the same
-// (InheritableEnvdVersion).
+// (RunningEnvdVersion).
 func (s *Sandbox) MarkEnvdDelivered(v string) {
 	s.deliveredEnvdVersion.Store(&v)
 }
@@ -336,7 +335,7 @@ func (b *mintedInitBody) mintedAt() (time.Time, bool) {
 func (r *envdInitRequest) newHeldHTTPRequest(ctx context.Context) (*http.Request, *mintedInitBody, error) {
 	body := newMintedInitBody(r.body)
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, body)
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, r.sandbox), http.MethodPost, r.address, body)
 	if err != nil {
 		return nil, nil, err
 	}

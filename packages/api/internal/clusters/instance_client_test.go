@@ -17,7 +17,7 @@ func TestLocalInstanceClientDialsWithTheHopCredentials(t *testing.T) {
 	t.Parallel()
 
 	creds := servicetest.NewCredentials()
-	client, err := createClient(telemetry.NewNoopClient(), nil, servicetest.GRPCServer(t), false, creds)
+	client, err := createClient(telemetry.NewNoopClient(), servicetest.GRPCServer(t), false, creds)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
@@ -30,7 +30,7 @@ func TestRemoteTLSInstanceClientKeepsItsOwnCredentials(t *testing.T) {
 	t.Parallel()
 
 	creds := servicetest.NewCredentials()
-	client, err := createClient(telemetry.NewNoopClient(), nil, servicetest.GRPCServer(t), true, creds)
+	client, err := createClient(telemetry.NewNoopClient(), servicetest.GRPCServer(t), true, creds)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 

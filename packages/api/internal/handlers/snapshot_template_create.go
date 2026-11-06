@@ -197,6 +197,11 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 	telemetry.ReportEvent(ctx, "Creating snapshot template")
 
 	result, err := backend.CreateSnapshotTemplate(ctx, teamID, sandboxID, opts)
+	// The template and its alias are persisted before the node is asked, so
+	// the cached miss is stale on a refusal too: a retry must find them.
+	if opts.Alias != nil && opts.Namespace != nil && opts.ExistingTemplateID == nil {
+		a.templateCache.InvalidateAlias(context.WithoutCancel(ctx), opts.Namespace, *opts.Alias)
+	}
 	if err != nil {
 		if errors.Is(err, sandbox.ErrNotFound) {
 			logger.L().Debug(ctx, "Sandbox not found for snapshot", logger.WithSandboxID(sandboxID))
@@ -213,6 +218,22 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 
 		if errors.Is(err, orchestrator.FilesystemOnlyDisabledError{}) {
 			apierrors.SendAPIError(c, filesystemOnlySnapshotDisabledError(sandboxID))
+
+			return
+		}
+
+		// The sandbox is back in Running; the checkpoint that refused this
+		// one ends on its own, so a plain retry succeeds.
+		if errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}) {
+			a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be snapshotted right now because another snapshot of it is in progress, please retry", sandboxID))
+
+			return
+		}
+
+		// The node left the VM running, so a retry can succeed once the
+		// guest agent answers again.
+		if errors.Is(err, orchestrator.PauseRefusedEnvdUnresponsiveError{}) {
+			a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be snapshotted right now because the sandbox guest agent is not responding, please retry", sandboxID))
 
 			return
 		}
@@ -234,11 +255,6 @@ func (a *APIStore) PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID api
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error creating snapshot template")
 
 		return
-	}
-
-	// Invalidate cached tombstone if a new alias was created
-	if opts.Alias != nil && opts.Namespace != nil && opts.ExistingTemplateID == nil {
-		a.templateCache.InvalidateAlias(context.WithoutCancel(ctx), opts.Namespace, *opts.Alias)
 	}
 
 	a.templateCache.Invalidate(context.WithoutCancel(ctx), result.TemplateID, &opts.Tag)

@@ -347,14 +347,13 @@ func ignoreConstraints(err error) error {
 
 func upsertTeam(ctx context.Context, db *authdb.Client) (uuid.UUID, error) {
 	err := db.TestsRawSQL(ctx, `
-INSERT INTO teams (id, email, name, tier, is_blocked, slug)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO teams (id, email, name, is_blocked, slug)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO UPDATE SET
 	email = EXCLUDED.email,
 	name = EXCLUDED.name,
-	tier = EXCLUDED.tier,
 	slug = EXCLUDED.slug
-`, teamID, "team@e2b-dev.local", "local-dev team", "base_v1", false, "local-dev-team")
+`, teamID, "team@e2b-dev.local", "local-dev team", false, "local-dev-team")
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to upsert team: %w", err)
 	}

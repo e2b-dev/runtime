@@ -19,8 +19,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -33,8 +33,12 @@ import (
 // Running, so "never called" is "still Running".
 type snapshotBackendStub struct {
 	supportErr    error
+	createErr     error
 	supportChecks int
 	created       []orchestrator.SnapshotTemplateOpts
+	// onCreate, when set, runs before createErr is answered: the real backend
+	// persists the template and alias before the node refuses.
+	onCreate func()
 }
 
 func (s *snapshotBackendStub) GetSandbox(context.Context, uuid.UUID, string) (sandbox.Sandbox, error) {
@@ -52,6 +56,12 @@ func (s *snapshotBackendStub) EnsureSnapshotSupport(_ context.Context, _ sandbox
 
 func (s *snapshotBackendStub) CreateSnapshotTemplate(_ context.Context, _ uuid.UUID, _ string, opts orchestrator.SnapshotTemplateOpts) (orchestrator.SnapshotTemplateResult, error) {
 	s.created = append(s.created, opts)
+	if s.onCreate != nil {
+		s.onCreate()
+	}
+	if s.createErr != nil {
+		return orchestrator.SnapshotTemplateResult{}, s.createErr
+	}
 
 	return orchestrator.SnapshotTemplateResult{TemplateID: "tpl"}, nil
 }
@@ -71,7 +81,7 @@ func postSnapshot(t *testing.T, backend *snapshotBackendStub, flagOn bool, body 
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/snapshots", bytes.NewBufferString(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -120,6 +130,66 @@ func TestSnapshotTemplate_FlagOffIs400BeforeTransition(t *testing.T) {
 	assert.Equal(t, errCodeFilesystemOnlySnapshotDisabled, snapshotErrorCode(t, recorder))
 	assert.Zero(t, backend.supportChecks, "the flag refusal comes before the node check")
 	assert.Empty(t, backend.created)
+}
+
+// A snapshot refused because another checkpoint of the sandbox is in flight
+// is a 503 asking for a plain retry, never the generic 500.
+func TestSnapshotTemplate_CheckpointInProgressIs503(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{createErr: orchestrator.PauseRefusedCheckpointInProgressError{}}
+	recorder := postSnapshot(t, backend, false, `{}`, nil)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "another snapshot of it is in progress, please retry")
+}
+
+// A snapshot refused because the sandbox's guest agent did not answer the
+// node's health probe is a 503 naming the guest agent, never the busy-node
+// text it also matches.
+func TestSnapshotTemplate_EnvdUnresponsiveIs503(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{createErr: orchestrator.PauseRefusedEnvdUnresponsiveError{}}
+	recorder := postSnapshot(t, backend, false, `{}`, nil)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "guest agent is not responding, please retry")
+}
+
+// A named snapshot refused for a checkpoint in flight still clears the cached
+// alias miss: the template and alias were persisted before the node was asked,
+// so the retry the 503 invites must find them instead of creating a duplicate.
+// The miss is seeded in the cache first and the alias persisted during the
+// refused create, so the only way the final lookup finds the template is the
+// handler clearing the miss on the refusal path.
+func TestSnapshotTemplate_RefusedNamedSnapshotClearsTheCachedMiss(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	cache := templatecache.NewTemplateCache(db.SqlcClient, redis_utils.SetupInstance(t))
+	const alias, namespace = "ckpt-refused-alias", "test-team"
+	ns := namespace
+
+	_, err := cache.ResolveAlias(t.Context(), alias, namespace)
+	require.ErrorIs(t, err, templatecache.ErrTemplateNotFound, "the miss is cached before the request")
+
+	teamID := testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, teamID)
+	backend := &snapshotBackendStub{
+		createErr: orchestrator.PauseRefusedCheckpointInProgressError{},
+		onCreate:  func() { testutils.CreateTestTemplateAliasWithName(t, db, templateID, alias, &ns) },
+	}
+	recorder := postSnapshot(t, backend, false, `{"name": "`+alias+`"}`, cache)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code, recorder.Body.String())
+	require.Len(t, backend.created, 1)
+	require.NotNil(t, backend.created[0].Alias)
+	assert.Equal(t, alias, *backend.created[0].Alias)
+
+	info, err := cache.ResolveAlias(t.Context(), alias, namespace)
+	require.NoError(t, err, "the cached miss must be gone so a retry finds the persisted alias")
+	assert.Equal(t, templateID, info.TemplateID)
 }
 
 // A memory snapshot (memory omitted) passes both gates untouched, flag off and

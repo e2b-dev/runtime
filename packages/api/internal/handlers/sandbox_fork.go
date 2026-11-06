@@ -30,6 +30,22 @@ import (
 // bounding the parallel boots (and the result allocation) per request.
 const maxForkCount = 100
 
+// forkOrchestrator is the slice of the orchestrator the fork handler uses up
+// to the checkpoint, so the handler's answers to a refusal are testable
+// without a real orchestrator.
+type forkOrchestrator interface {
+	GetSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandbox.Sandbox, error)
+	CheckpointSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+}
+
+func (a *APIStore) forkBackend() forkOrchestrator {
+	if a.forkBackendOverride != nil {
+		return a.forkBackendOverride
+	}
+
+	return a.orchestrator
+}
+
 // PostSandboxesSandboxIDFork forks a running sandbox: it checkpoints the
 // sandbox in place (snapshot it and resume it on its node, so the original
 // keeps running with its ID and expiration untouched) and creates count new
@@ -96,7 +112,7 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		return
 	}
 
-	original, err := a.orchestrator.GetSandbox(ctx, teamID, sandboxID)
+	original, err := a.forkBackend().GetSandbox(ctx, teamID, sandboxID)
 	if err != nil {
 		if errors.Is(err, sandbox.ErrNotFound) {
 			apiErr := forkHandleNotRunningSandbox(ctx, a, sandboxID, teamID)
@@ -120,7 +136,7 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 	// Checkpoint the sandbox in place: it is briefly paused on its node,
 	// snapshotted, and resumed under the same execution ID, so the original
 	// keeps its ID, expiration, and concurrency slot.
-	err = a.orchestrator.CheckpointSandbox(ctx, teamID, sandboxID)
+	err = a.forkBackend().CheckpointSandbox(ctx, teamID, sandboxID)
 	var transErr *sandbox.InvalidStateTransitionError
 
 	switch {
@@ -132,6 +148,18 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		return
 	case errors.As(err, &transErr):
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be forked while in '%s' state", sandboxID, transErr.CurrentState))
+
+		return
+	// The sandbox is back in Running; the checkpoint that refused this one
+	// ends on its own, so a plain retry succeeds.
+	case errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because it is being snapshotted, please retry", sandboxID))
+
+		return
+	// The node left the VM running, so a retry can succeed once the guest
+	// agent answers again.
+	case errors.Is(err, orchestrator.PauseRefusedEnvdUnresponsiveError{}):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because the sandbox guest agent is not responding, please retry", sandboxID))
 
 		return
 	case errors.Is(err, orchestrator.PauseQueueExhaustedError{}):

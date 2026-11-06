@@ -17,8 +17,8 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -126,7 +126,7 @@ func TestPostV3TemplatesMinimumFreeDiskPersistence(t *testing.T) {
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v3/templates", strings.NewReader(body))
 			c.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, c, &types.Team{
-				Team: &authqueries.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
+				Team: &dbtypes.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
 				Limits: &types.TeamLimits{
 					BuildConcurrency:      32,
 					MaxVcpu:               8,

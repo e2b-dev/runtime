@@ -104,11 +104,17 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 			switch st.Code() {
 			case codes.FailedPrecondition:
 				finish(nil)
+				if isCheckpointInProgress(err) {
+					return PauseRefusedCheckpointInProgressError{}
+				}
 
 				return fmt.Errorf("checkpoint rejected: %w", err)
 			case codes.ResourceExhausted:
 				logger.L().Warn(ctx, "Checkpoint refused by the node", logger.WithSandboxID(sandboxID), zap.String("node_message", st.Message()))
 				finish(nil)
+				if isEnvdUnresponsive(err) {
+					return PauseRefusedEnvdUnresponsiveError{}
+				}
 
 				return PauseQueueExhaustedError{}
 			case codes.Canceled, codes.DeadlineExceeded:
@@ -142,7 +148,7 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, types.BuildStatusSuccess); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, types.BuildStatusSuccess); err != nil {
 		return errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 
@@ -176,7 +182,7 @@ func (o *Orchestrator) restoreCheckpointed(ctx context.Context, transition sandb
 		if network != nil {
 			logger.L().Warn(ctx, "Checkpoint reported another execution's network placement", logger.WithSandboxID(sbx.SandboxID))
 		}
-		_, err = o.sandboxStore.RestoreRunning(ctx, transition, 0)
+		_, err = o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{})
 	}
 	var stateChanged *sandbox.InvalidStateTransitionError
 	switch {

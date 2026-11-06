@@ -1301,8 +1301,15 @@ type SandboxPauseRequest struct {
 	// a snapshot cold-boots (reboots) from the rootfs. Default false = full memory
 	// snapshot, so existing callers are unaffected.
 	FilesystemOnly bool `protobuf:"varint,4,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// When true, a memory pause proceeds past a guest agent that does not
+	// answer its health probe and reports it in envd_unresponsive, which the
+	// caller must persist. Absent or false refuses on a miss, as a caller that
+	// predates the field expects. A filesystem-only pause is always refused on
+	// a miss, whatever this says: its capture needs the agent to quiesce the
+	// rootfs.
+	AllowEnvdUnresponsive bool `protobuf:"varint,6,opt,name=allow_envd_unresponsive,json=allowEnvdUnresponsive,proto3" json:"allow_envd_unresponsive,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SandboxPauseRequest) Reset() {
@@ -1359,6 +1366,13 @@ func (x *SandboxPauseRequest) GetBuildId() string {
 func (x *SandboxPauseRequest) GetFilesystemOnly() bool {
 	if x != nil {
 		return x.FilesystemOnly
+	}
+	return false
+}
+
+func (x *SandboxPauseRequest) GetAllowEnvdUnresponsive() bool {
+	if x != nil {
+		return x.AllowEnvdUnresponsive
 	}
 	return false
 }
@@ -1483,8 +1497,12 @@ func (x *SchedulingMetadata) GetRootfsBaseBuildId() string {
 type SandboxPauseResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The memory snapshot was taken while the guest agent did not answer its
+	// health probe. A memory resume of it replays the unresponsive agent; the
+	// API refuses one and asks for a resume without memory.
+	EnvdUnresponsive bool `protobuf:"varint,2,opt,name=envd_unresponsive,json=envdUnresponsive,proto3" json:"envd_unresponsive,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SandboxPauseResponse) Reset() {
@@ -1522,6 +1540,13 @@ func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
 		return x.SchedulingMetadata
 	}
 	return nil
+}
+
+func (x *SandboxPauseResponse) GetEnvdUnresponsive() bool {
+	if x != nil {
+		return x.EnvdUnresponsive
+	}
+	return false
 }
 
 type SandboxCheckpointRequest struct {
@@ -2012,14 +2037,15 @@ const file_orchestrator_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
 	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\x99\x01\n" +
+	"\f_kill_reason\"\xef\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
 	"\vtemplate_id\x18\x02 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12'\n" +
-	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\"\xb1\x03\n" +
+	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x126\n" +
+	"\x17allow_envd_unresponsive\x18\x06 \x01(\bR\x15allowEnvdUnresponsiveJ\x04\b\x05\x10\x06R\x16skip_envd_health_probe\"\xb1\x03\n" +
 	"\x12SchedulingMetadata\x121\n" +
 	"\x15memfile_base_build_id\x18\x01 \x01(\tR\x12memfileBaseBuildId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12*\n" +
@@ -2029,9 +2055,10 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x15rootfs_dropped_builds\x18\x06 \x01(\rR\x13rootfsDroppedBuilds\x12.\n" +
 	"\x13memfile_build_bytes\x18\a \x03(\x04R\x11memfileBuildBytes\x12,\n" +
 	"\x12rootfs_build_bytes\x18\b \x03(\x04R\x10rootfsBuildBytes\x12/\n" +
-	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\\\n" +
+	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\x89\x01\n" +
 	"\x14SandboxPauseResponse\x12D\n" +
-	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\"\xff\x01\n" +
+	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x12+\n" +
+	"\x11envd_unresponsive\x18\x02 \x01(\bR\x10envdUnresponsive\"\xff\x01\n" +
 	"\x18SandboxCheckpointRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x19\n" +

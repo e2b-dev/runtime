@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ioutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
@@ -256,6 +259,16 @@ type Template struct {
 	// snapshot is one it can cold-boot / rewrite without repairing the journal.
 	FsQuiesced bool `json:"fs_quiesced,omitempty"`
 
+	// EnvdUnresponsive records that this memory snapshot was taken while the
+	// guest agent did not answer the pause's health probe, so a memory resume
+	// of it replays an unresponsive agent. The zero value (false) is a snapshot
+	// whose agent answered or was not probed, which every snapshot from before
+	// the field has. Stamped at every pause, cleared by a pause whose agent
+	// answered; deliberately NOT carried by the With*/SameVersionTemplate
+	// copy-constructors, like FilesystemOnly. WithPrefetch keeps it, since it
+	// rewrites the same snapshot's metadata.
+	EnvdUnresponsive bool `json:"envd_unresponsive,omitempty"`
+
 	// RunningEnvdVersion is the version of the envd running in this memory snapshot when it
 	// differs from the template-baked one: the version the running envd last reported, else
 	// the one a confirmed live upgrade delivered, else the one this life was resumed with.
@@ -269,6 +282,103 @@ type Template struct {
 	// in-place stamps. V1 metadata discards it, and such a lineage gates on the baked
 	// version unless given one.
 	RunningEnvdVersion string `json:"running_envd_version,omitempty"`
+
+	// GuestOS names the guest profile of the template. Empty is the default
+	// profile, which every pre-existing template has. It is lineage state like
+	// CmdlineArgs: a build fixes it, and the copy-constructors carry it. The
+	// reader refuses a value that no registered profile claims, and
+	// GuestProfile turns it into the profile.
+	GuestOS string `json:"guest_os,omitempty"`
+	// RootfsDriveID, NetIfaceID and RootfsFile are the device names a memory
+	// snapshot bakes when this runtime did not make it: the block device ID and the network
+	// interface ID the API addresses after the load, and the file name the rootfs
+	// is presented at under the sandbox directory. Empty is the runtime's own name for
+	// each, which every snapshot it made has. Lineage state of the memory image:
+	// carried by the copy-constructors that keep the same memory, stamped from the
+	// running VM at every pause, and dropped by BasedOn, whose build cold-boots
+	// and names its own devices.
+	RootfsDriveID string `json:"rootfs_drive_id,omitempty"`
+	NetIfaceID    string `json:"net_iface_id,omitempty"`
+	RootfsFile    string `json:"rootfs_file,omitempty"`
+	// NoMmdsStore marks a memory image whose microVM has no MMDS store, which
+	// only an image made outside this runtime and its paused lineage have:
+	// Firecracker cannot add a store after a restore, so the envd in it
+	// accepts no new access token. EnvdAccessTokenHash is then the
+	// keys.HashAccessToken of the token that envd holds (of "" for none), and
+	// empty when no pause could know it. Both are device truth stamped at every
+	// pause, carried with the memory like the device names, and dropped by
+	// BasedOn, whose build cold-boots with a store.
+	NoMmdsStore         bool   `json:"no_mmds_store,omitempty"`
+	EnvdAccessTokenHash string `json:"envd_access_token_hash,omitempty"`
+}
+
+// guestOSKey is the metadata key of GuestOS. retiredGuestOSKey is the spelling
+// a pre-release writer used; the decoder ignores it, which would serve such a
+// build under the default profile, so a document carrying it is refused instead.
+const (
+	guestOSKey        = "guest_os"
+	retiredGuestOSKey = "guestOS"
+)
+
+// guestOSKeyIn returns the key under which a metadata document names a guest
+// OS with a value other than "" or null (both mean the default), and whether
+// that key is the retired spelling, which wins when both are present. Keys
+// match case-insensitively, as the struct decoder matches them.
+func guestOSKeyIn(data []byte) (key string, raw json.RawMessage, retired bool) {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+	for k, v := range fields {
+		if string(v) == `""` || string(v) == "null" {
+			continue
+		}
+		switch {
+		case strings.EqualFold(k, retiredGuestOSKey):
+			return k, v, true
+		case strings.EqualFold(k, guestOSKey) && key == "":
+			key, raw = k, v
+		}
+	}
+
+	return key, raw, false
+}
+
+// GuestProfile returns the guest profile that claims the template's guest OS.
+// It is the one place that turns the attribute into a profile.
+func (t Template) GuestProfile() (guest.Profile, error) {
+	return guest.Lookup(t.GuestOS)
+}
+
+// rootfsFileRE is the shape of a bare file name the sandbox start script can
+// take unquoted.
+var rootfsFileRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// ValidRootfsFile reports whether name is a bare file name the sandbox start
+// script can take unquoted: letters, digits, '.', '_' and '-', and neither "."
+// nor "..".
+func ValidRootfsFile(name string) bool {
+	return name != "." && name != ".." && rootfsFileRE.MatchString(name)
+}
+
+// WithEnvdToken returns a copy of the template stamped with whether its memory
+// image lacks an MMDS store and, if so, the hash of the token its envd holds.
+func (t Template) WithEnvdToken(noMmdsStore bool, envdAccessTokenHash string) Template {
+	t.NoMmdsStore = noMmdsStore
+	t.EnvdAccessTokenHash = ""
+	if noMmdsStore {
+		t.EnvdAccessTokenHash = envdAccessTokenHash
+	}
+
+	return t
+}
+
+// WithDeviceNames returns a copy of the template stamped with the device names
+// the running VM bakes into its memory snapshot; empty names are the runtime's own.
+func (t Template) WithDeviceNames(rootfsDriveID, netIfaceID, rootfsFile string) Template {
+	t.RootfsDriveID = rootfsDriveID
+	t.NetIfaceID = netIfaceID
+	t.RootfsFile = rootfsFile
+
+	return t
 }
 
 // IsFilesystemOnly reports whether this snapshot persists only the filesystem
@@ -311,6 +421,24 @@ func (t Template) MarkFsQuiesced(quiesced bool) Template {
 	return t
 }
 
+// IsEnvdUnresponsive reports whether this memory snapshot was taken while the
+// guest agent did not answer the pause's health probe.
+func (t Template) IsEnvdUnresponsive() bool {
+	return t.EnvdUnresponsive
+}
+
+// MarkEnvdUnresponsive records whether the guest agent answered the pause's
+// health probe. Unlike MarkFilesystemOnly it never lifts the metadata version:
+// this mark rides on a memory snapshot, and lifting the version of a V1
+// lineage would change the rootfs path its memory image was taken with (see
+// WithVcpuCount). A V1 lineage therefore loses the mark here; the API keeps its
+// own copy on the snapshot row, which is the one a resume is refused on.
+func (t Template) MarkEnvdUnresponsive(unresponsive bool) Template {
+	t.EnvdUnresponsive = unresponsive
+
+	return t
+}
+
 func V1TemplateVersion() Template {
 	return Template{
 		Version: 1,
@@ -331,6 +459,7 @@ func (t Template) BasedOn(
 		Start:        t.Start,
 		FromTemplate: &ft,
 		FromImage:    nil,
+		GuestOS:      t.GuestOS,
 	}
 }
 
@@ -347,6 +476,13 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
 		VcpuCount:        t.VcpuCount,
+		GuestOS:          t.GuestOS,
+		RootfsDriveID:    t.RootfsDriveID,
+		NetIfaceID:       t.NetIfaceID,
+		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -363,6 +499,13 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
 		VcpuCount:        t.VcpuCount,
+		GuestOS:          t.GuestOS,
+		RootfsDriveID:    t.RootfsDriveID,
+		NetIfaceID:       t.NetIfaceID,
+		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -398,7 +541,15 @@ func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 		CPUTemplate:        t.CPUTemplate,
 		BuildCPUTemplate:   t.BuildCPUTemplate,
 		VcpuCount:          t.VcpuCount,
+		EnvdUnresponsive:   t.EnvdUnresponsive,
 		RunningEnvdVersion: t.RunningEnvdVersion,
+		GuestOS:            t.GuestOS,
+		RootfsDriveID:      t.RootfsDriveID,
+		NetIfaceID:         t.NetIfaceID,
+		RootfsFile:         t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -439,13 +590,23 @@ func (t Template) ReplaceFile(path string) error {
 }
 
 func FromFile(path string) (Template, error) {
+	return fromFile(path, claimedGuest)
+}
+
+// FromFileAnyGuest reads a metadata file without checking that a registered
+// guest profile claims its guest OS, for a tool that copies a build whatever its guest.
+func FromFileAnyGuest(path string) (Template, error) {
+	return fromFile(path, anyGuest)
+}
+
+func fromFile(path string, guests guestCheck) (Template, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Template{}, fmt.Errorf("failed to open metadata file: %w", err)
 	}
 	defer f.Close()
 
-	templateMetadata, err := deserialize(f)
+	templateMetadata, err := deserializeWith(f, guests)
 	if err != nil {
 		return Template{}, fmt.Errorf("failed to deserialize metadata: %w", err)
 	}
@@ -456,10 +617,18 @@ func FromFile(path string) (Template, error) {
 func FromBuildID(ctx context.Context, s storage.StorageProvider, buildID string) (Template, error) {
 	return fromTemplate(ctx, s, storage.Paths{
 		BuildID: buildID,
-	})
+	}, claimedGuest)
 }
 
-func fromTemplate(ctx context.Context, s storage.StorageProvider, paths storage.Paths) (Template, error) {
+// FromBuildIDAnyGuest reads a build's metadata without checking that a
+// registered guest profile claims its guest OS, for a tool that copies a build whatever its guest.
+func FromBuildIDAnyGuest(ctx context.Context, s storage.StorageProvider, buildID string) (Template, error) {
+	return fromTemplate(ctx, s, storage.Paths{
+		BuildID: buildID,
+	}, anyGuest)
+}
+
+func fromTemplate(ctx context.Context, s storage.StorageProvider, paths storage.Paths, guests guestCheck) (Template, error) {
 	ctx, span := tracer.Start(ctx, "from template")
 	defer span.End()
 
@@ -473,7 +642,7 @@ func fromTemplate(ctx context.Context, s storage.StorageProvider, paths storage.
 		return Template{}, fmt.Errorf("error reading template metadata from object: %w", err)
 	}
 
-	templateMetadata, err := deserialize(bytes.NewReader(data))
+	templateMetadata, err := deserializeWith(bytes.NewReader(data), guests)
 	if err != nil {
 		return Template{}, err
 	}
@@ -481,7 +650,19 @@ func fromTemplate(ctx context.Context, s storage.StorageProvider, paths storage.
 	return templateMetadata, nil
 }
 
+// guestCheck is whether a reader refuses a guest OS that no registered profile claims.
+type guestCheck bool
+
+const (
+	claimedGuest guestCheck = true
+	anyGuest     guestCheck = false
+)
+
 func deserialize(reader io.Reader) (Template, error) {
+	return deserializeWith(reader, claimedGuest)
+}
+
+func deserializeWith(reader io.Reader, guests guestCheck) (Template, error) {
 	// Read all data into bytes first to avoid double stream read
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -497,6 +678,13 @@ func deserialize(reader io.Reader) (Template, error) {
 	// Handle deprecated version formats gracefully
 	// When any type is used, Go will unmarshal any numeric value as a float64
 	if version, ok := v.Version.(float64); !ok || version <= float64(DeprecatedVersion) {
+		// A stripped version keeps nothing but its number. A guest OS it
+		// dropped would serve the build under the default profile, so a guest OS
+		// in either spelling refuses the file.
+		if key, raw, _ := guestOSKeyIn(data); key != "" {
+			return Template{}, fmt.Errorf("template metadata version %v cannot carry %s %q: it needs version %d or later", v.Version, key, raw, DeprecatedVersion+1)
+		}
+
 		return Template{Version: DeprecatedVersion}, nil
 	}
 
@@ -504,6 +692,19 @@ func deserialize(reader io.Reader) (Template, error) {
 	err = json.Unmarshal(data, &templateMetadata)
 	if err != nil {
 		return Template{}, fmt.Errorf("error unmarshaling template metadata: %w", err)
+	}
+
+	if key, raw, retired := guestOSKeyIn(data); retired {
+		return Template{}, fmt.Errorf("template metadata carries the retired key %s %q: the guest OS is %s", key, raw, guestOSKey)
+	}
+	if guests == claimedGuest {
+		if _, err := templateMetadata.GuestProfile(); err != nil {
+			return Template{}, fmt.Errorf("template metadata: %w", err)
+		}
+	}
+	// The name reaches the start script's shell unquoted.
+	if templateMetadata.RootfsFile != "" && !ValidRootfsFile(templateMetadata.RootfsFile) {
+		return Template{}, fmt.Errorf("template metadata names rootfs file %q, which is not a bare file name of letters, digits, '.', '_' and '-'", templateMetadata.RootfsFile)
 	}
 
 	return templateMetadata, nil

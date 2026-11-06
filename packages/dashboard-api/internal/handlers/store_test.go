@@ -9,13 +9,13 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetTeamFromAPIKeyUsesAuthService(t *testing.T) {
 	t.Parallel()
 
-	team := &authtypes.Team{Team: &authqueries.Team{ID: uuid.New()}}
+	team := &authtypes.Team{Team: &dbtypes.Team{ID: uuid.New()}}
 	authService := &recordingAPIKeyAuthService{team: team}
 	store := &APIStore{authService: authService}
 

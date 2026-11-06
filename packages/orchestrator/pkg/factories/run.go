@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -50,6 +51,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	networkv2 "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network/v2"
@@ -256,6 +258,11 @@ type EgressSetup struct {
 	// and strictly before its guest can run (or resume running). Its error
 	// fails the start; see sandbox.NetworkAssignHook.
 	NetworkAssignHook sandbox.NetworkAssignHook
+	// Ready reports whether the edition can serve new sandboxes (optional).
+	// The node reports NotReady from startup until Ready first answers true,
+	// and Healthy from then on. It is polled every second, so it reads
+	// memory only.
+	Ready func() bool
 
 	// StartupReclaim removes network state the edition's previous process
 	// left (optional). It runs only where the sandbox runtime's startup
@@ -285,6 +292,9 @@ type Options struct {
 	Version       string
 	CommitSHA     string
 	EgressFactory EgressFactory
+	// GuestProfiles are the guest profiles beside the default one; a build
+	// whose guest OS none of them claims is refused.
+	GuestProfiles []guest.Profile
 }
 
 type closer struct {
@@ -307,6 +317,38 @@ type serviceDoneError struct {
 
 func (e serviceDoneError) Error() string {
 	return fmt.Sprintf("service %s finished", e.name)
+}
+
+// runService runs one service to its end. A service that returns an error is
+// recorded in failed, and every end is reported on serviceError, where only
+// the first one before the shutdown signal is read; to the group every end
+// is serviceDoneError.
+func runService(ctx context.Context, l logger.Logger, name string, f func() error, failed *atomic.Bool, serviceError chan<- error) error {
+	l.Info(ctx, "starting service")
+
+	err := f()
+	if err != nil {
+		l.Error(ctx, "service returned an error", zap.Error(err))
+		failed.Store(true)
+	}
+
+	reportServiceError(serviceError, err)
+
+	return serviceDoneError{name: name}
+}
+
+// shutdownFailed reports whether the service group ended in a failure: every
+// service returns serviceDoneError when it stops.
+func shutdownFailed(err error) bool {
+	var sde serviceDoneError
+
+	return err != nil && !errors.As(err, &sde)
+}
+
+// syncFailed reports whether a logger's Sync failed. Sync returns EINVAL when
+// the output is a pipe, as a container's stdout is.
+func syncFailed(err error) bool {
+	return err != nil && !errors.Is(err, syscall.EINVAL)
 }
 
 func newServiceErrorChannel() chan error {
@@ -334,6 +376,14 @@ func Run(opts Options) bool {
 
 	if opts.EgressFactory == nil {
 		log.Fatalf("EgressFactory must be set in Options")
+	}
+
+	guests, err := guest.NewRegistry(opts.GuestProfiles...)
+	if err != nil {
+		log.Fatalf("failed to register guest profiles: %v", err)
+	}
+	if err = guest.Install(guests); err != nil {
+		log.Fatalf("failed to install guest profiles: %v", err)
 	}
 
 	success := run(config, opts)
@@ -523,13 +573,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	serviceError := newServiceErrorChannel()
 	defer close(serviceError)
+	// A service failure is recorded whenever it happens: the channel reports
+	// only the first service to end, and only before the shutdown signal.
+	var servicesFailed atomic.Bool
 
 	var g errgroup.Group
 	// defer waiting on the group so that this runs even when
 	// there's a panic.
 	defer func(g *errgroup.Group) {
-		err := g.Wait()
-		if err != nil {
+		if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
 			log.Printf("error while shutting down: %v", err)
 			success = false
 		}
@@ -571,7 +623,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}))
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down logger: %v", err)
 			success = false
 		}
@@ -589,7 +641,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -606,17 +658,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	startService := func(name string, f func() error) {
 		g.Go(func() error {
-			l := globalLogger.With(zap.String("service", name))
-			l.Info(ctx, "starting service")
-
-			err := f()
-			if err != nil {
-				l.Error(ctx, "service returned an error", zap.Error(err))
-			}
-
-			reportServiceError(serviceError, err)
-
-			return serviceDoneError{name: name}
+			return runService(ctx, globalLogger.With(zap.String("service", name)), name, f, &servicesFailed, serviceError)
 		})
 	}
 
@@ -689,7 +731,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -827,6 +869,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 	})
 	closers = append(closers, closer{"host metrics poller", hostMetrics.Close})
 
+	// host kernel counters (PSI, vmstat); observability only, so warn and run on
+	if kernelCounters, err := metrics.NewKernelCounters(tel.MeterProvider); err != nil {
+		logger.L().Warn(ctx, "failed to register host kernel counters", zap.Error(err))
+	} else {
+		closers = append(closers, closer{"host kernel counters", kernelCounters.Close})
+	}
+
 	// sandbox proxy
 	sandboxProxy, err := proxy.NewSandboxProxy(tel.MeterProvider, config.ProxyPort, sandboxes, featureFlags)
 	if err != nil {
@@ -865,6 +914,11 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 	if egressSetup.Close != nil {
 		closers = append(closers, closer{"egress proxy", egressSetup.Close})
+	}
+	// Before the gRPC and HTTP servers start, so no one sees the node
+	// Healthy first.
+	if egressSetup.Ready != nil {
+		serviceInfo.HoldUntilReady(ctx, egressSetup.Ready)
 	}
 
 	// Sandbox-runtime reclaim must run before NewStorageLocal below: reclaim
@@ -1040,6 +1094,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 		SbxEventsService: eventsService,
 		PeerRegistry:     peerRegistry,
 		Uploads:          uploads,
+		HostMetrics:      hostMetrics,
 	})
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create orchestrator server", zap.Error(err))
@@ -1212,7 +1267,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	case <-sig.Done():
 		logger.L().Info(ctx, "Shutdown signal received")
 	case serviceErr := <-serviceError:
+		// A service that stops before the signal is a failure, even with no error.
 		logger.L().Error(ctx, "Service error", zap.Error(serviceErr))
+		success = false
 	}
 
 	closeCtx, cancelCloseCtx := context.WithCancel(context.Background())
@@ -1259,9 +1316,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 
 	logger.L().Info(ctx, "Waiting for services to finish")
-	var sde serviceDoneError
-	if err := g.Wait(); err != nil && !errors.As(err, &sde) {
-		logger.L().Error(ctx, "service group error", zap.Error(err))
+	if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
+		logger.L().Error(ctx, "service group error", zap.Error(err), zap.Bool("service_failed", servicesFailed.Load()))
 		success = false
 	}
 

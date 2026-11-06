@@ -150,7 +150,7 @@ func TestHandleExistingSandboxAutoResume(t *testing.T) {
 
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			_, err := o.sandboxStore.RestoreRunning(context.WithoutCancel(t.Context()), transition, 0)
+			_, err := o.sandboxStore.RestoreRunning(context.WithoutCancel(t.Context()), transition, sandbox.RestoreOpts{})
 			assert.NoError(t, err)
 			finish(context.WithoutCancel(t.Context()), sandbox.ErrTransitionRestored)
 		}()

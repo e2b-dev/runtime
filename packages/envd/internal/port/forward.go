@@ -72,27 +72,55 @@ type Forwarder struct {
 	sourceIP          net.IP
 }
 
+// forwardingAvailable reports whether this build can forward ports: socat is
+// spawned per port, which the images ship.
+func forwardingAvailable() error { return nil }
+
 func NewForwarder(
 	logger *zerolog.Logger,
 	scanner *Scanner,
 	freezer *cgroups.WorkloadFreezer,
 ) *Forwarder {
-	scannerSub := scanner.AddSubscriber(
-		"port-forwarder",
-		// We only want to forward ports that are actively listening on localhost.
-		&ScannerFilter{
-			IPs:   []string{"127.0.0.1", "localhost", "::1"},
-			State: "LISTEN",
-		},
-	)
+	return newForwarder(logger, scanner, freezer, forwardingAvailable())
+}
 
-	return &Forwarder{
-		logger:            logger,
-		sourceIP:          defaultGatewayIP,
-		ports:             make(map[string]*PortToForward),
-		scannerSubscriber: scannerSub,
-		freezer:           freezer,
+// newForwarder builds the forwarder; unavailable is why this build cannot
+// forward ports, nil where it can.
+func newForwarder(
+	logger *zerolog.Logger,
+	scanner *Scanner,
+	freezer *cgroups.WorkloadFreezer,
+	unavailable error,
+) *Forwarder {
+	f := &Forwarder{
+		logger:   logger,
+		sourceIP: defaultGatewayIP,
+		ports:    make(map[string]*PortToForward),
+		freezer:  freezer,
 	}
+	// Where forwarding is unavailable nothing would receive the scan results,
+	// so the forwarder does not subscribe.
+	if unavailable != nil {
+		logger.Warn().Err(unavailable).Msg("port forwarding disabled")
+	} else {
+		f.scannerSubscriber = scanner.AddSubscriber(
+			"port-forwarder",
+			// We only want to forward ports that are actively listening on localhost.
+			&ScannerFilter{
+				IPs:   []string{"127.0.0.1", "localhost", "::1"},
+				State: "LISTEN",
+			},
+		)
+	}
+
+	return f
+}
+
+// Forwards reports whether the forwarder forwards ports, so whether
+// StartForwarding and the scan it consumes need to run; the scanner has no
+// other subscriber.
+func (f *Forwarder) Forwards() bool {
+	return f.scannerSubscriber != nil
 }
 
 func (f *Forwarder) StartForwarding(ctx context.Context) {

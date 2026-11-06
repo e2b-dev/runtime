@@ -251,9 +251,11 @@ func TestInstallDedupOffKeepsOneWorkerPerFault(t *testing.T) {
 		require.NoError(t, err)
 
 		src, serve := concurrentFaults(t, h, faults, false, false)
-		assert.Equal(t, int64(faults), src.Reads, "with dedup off every fault reads the source, each with its own buffer")
+		// At least: a thread with a signal pending while it blocks re-faults
+		// and queues another message, which gets its own worker and read too.
+		assert.GreaterOrEqual(t, src.Reads, int64(faults), "with dedup off every fault reads the source, each with its own buffer")
 		assert.Zero(t, serve.Deduped)
-		assert.Equal(t, int64(faults), serve.Pages)
+		assert.GreaterOrEqual(t, serve.Pages, int64(faults))
 	})
 }
 

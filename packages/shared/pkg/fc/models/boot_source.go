@@ -17,7 +17,7 @@ import (
 type BootSource struct {
 
 	// Kernel boot arguments
-	BootArgs string `json:"boot_args,omitempty"`
+	BootArgs string `json:"boot_args"`
 
 	// Host level path to the initrd image used to boot the guest
 	InitrdPath string `json:"initrd_path,omitempty"`

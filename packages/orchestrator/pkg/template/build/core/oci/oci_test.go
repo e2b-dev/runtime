@@ -5,6 +5,7 @@ package oci
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
@@ -484,4 +487,37 @@ func TestWrapImagePullErrorUsesPredefinedRegistryCodeMessage(t *testing.T) {
 	require.EqualError(t, err, "access denied to 'registry.example.com/test/image:latest': authentication required or insufficient permissions")
 	assert.NotContains(t, err.Error(), "registry-controlled message")
 	assert.NotErrorIs(t, err, remoteErr)
+}
+
+func TestWrapImagePullErrorKeepsProxyClassificationOnly(t *testing.T) {
+	t.Parallel()
+	original := &transport.Error{StatusCode: http.StatusForbidden, Errors: []transport.Diagnostic{{Code: transport.DeniedErrorCode, Message: "private registry details"}}}
+	err := wrapImagePullError(t.Context(), fmt.Errorf("%w: %w", dockerhub.ErrRepositoryAccessDenied, original), "ubuntu:24.04")
+	require.ErrorIs(t, err, dockerhub.ErrRepositoryAccessDenied)
+	require.NotErrorIs(t, err, original)
+	assert.NotContains(t, err.Error(), "private registry details")
+	assert.NotContains(t, err.Error(), "you don't have permission")
+}
+
+//nolint:paralleltest // replaces the global logger to capture the trusted field
+func TestWrapImagePullErrorLogsTrustedProxyClassification(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	t.Cleanup(logger.ReplaceGlobals(t.Context(), logger.NewTracedLoggerFromCore(core)))
+	spoofed := &transport.Error{StatusCode: http.StatusForbidden, Errors: []transport.Diagnostic{{
+		Code:    transport.DeniedErrorCode,
+		Message: dockerhub.ErrRepositoryAccessDenied.Error() + ` {"dockerhub_proxy_access_denied":true}`,
+	}}}
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{spoofed, false},
+		{fmt.Errorf("%w: %w", dockerhub.ErrRepositoryAccessDenied, spoofed), true},
+	} {
+		err := wrapImagePullError(t.Context(), tc.err, "registry.example.com/test/image:latest")
+		require.Error(t, err)
+		entries := logs.TakeAll()
+		require.Len(t, entries, 1)
+		assert.Equal(t, tc.want, entries[0].ContextMap()["dockerhub_proxy_access_denied"])
+	}
 }

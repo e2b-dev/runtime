@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
@@ -128,6 +129,56 @@ func (l *storageLocker) Obtain(ctx context.Context, lockKey string, timeout time
 			timer.Reset(jitterBackoff(backoff))
 		}
 	}
+}
+
+// ObtainBoth obtains first, then second, so holders of the pair never wait on
+// each other, and returns a release that releases second, then first,
+// attempting both and returning the first error it meets. Like Release, the
+// returned function leaves cancellation to its caller: pass it
+// context.WithoutCancel(ctx). When the second lock cannot be obtained, the
+// first is released and the error returned. The first lock's lease counts
+// down while the second is awaited, so once both are held it is renewed to
+// the full timeout; a first lease lost meanwhile fails the call with both
+// released, so no caller writes under a lease another holder may have.
+func (l *storageLocker) ObtainBoth(ctx context.Context, first, second string, timeout time.Duration) (release func(context.Context) error, err error) {
+	firstLock, err := l.Obtain(ctx, first, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	secondLock, err := l.Obtain(ctx, second, timeout)
+	if err != nil {
+		// The caller's context may be what failed the second lock, so the
+		// first is released without it.
+		if releaseErr := firstLock.Release(context.WithoutCancel(ctx)); releaseErr != nil {
+			return nil, errors.Join(err, releaseErr)
+		}
+
+		return nil, err
+	}
+
+	release = func(ctx context.Context) error {
+		secondErr := secondLock.Release(ctx)
+		firstErr := firstLock.Release(ctx)
+		if secondErr != nil {
+			return secondErr
+		}
+
+		return firstErr
+	}
+
+	if err := firstLock.Refresh(ctx, timeout, l.option); err != nil {
+		err = fmt.Errorf("failed to renew the first lock: %w", err)
+		// A lost first lease is not held to release; any other failure may
+		// have left it held, so both are given back.
+		if releaseErr := release(context.WithoutCancel(ctx)); releaseErr != nil && !errors.Is(releaseErr, redislock.ErrLockNotHeld) {
+			return nil, errors.Join(err, releaseErr)
+		}
+
+		return nil, err
+	}
+
+	return release, nil
 }
 
 func (l *storageLocker) tryLock(ctx context.Context, lockKey string, timeout time.Duration) (*storageLock, error) {

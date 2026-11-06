@@ -115,8 +115,10 @@ func (s *Server) pauseDiskNeed(ctx context.Context, sbx *sandbox.Sandbox, filesy
 
 // memfdExport reports whether the sandbox's memory is exported from a memfd
 // (fc.ExportMemory): one file, streamed straight into the build directory.
+// It follows the restore's choice, which a guest profile can turn off.
 func (s *Server) memfdExport(ctx context.Context, sbx *sandbox.Sandbox) bool {
-	return fc.FCSupportsMemfd(sbx.Config.FirecrackerConfig.FirecrackerVersion) &&
+	return !sbx.Config.GuestProfile().Restore().NoMemfd &&
+		fc.FCSupportsMemfd(sbx.Config.FirecrackerConfig.FirecrackerVersion) &&
 		s.featureFlags.BoolFlag(ctx, featureflags.UseMemFdFlag)
 }
 

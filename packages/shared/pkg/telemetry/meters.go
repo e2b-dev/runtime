@@ -19,16 +19,29 @@ type (
 )
 
 const (
-	ApiRateLimitRequests                 CounterType = "api.rate_limit.requests"
-	ApiSandboxPauseRateLimit             CounterType = "api.sandbox_pause.rate_limit"
-	ApiOrchestratorCreatedSandboxes      CounterType = "api.orchestrator.created_sandboxes"
-	ApiOrchestratorResumeOriginNodeRemap CounterType = "api.orchestrator.resume_origin_node_remapped"
+	ApiRateLimitRequests     CounterType = "api.rate_limit.requests"
+	ApiSandboxPauseRateLimit CounterType = "api.sandbox_pause.rate_limit"
+	// ApiTemplateBuildBuilderVersionRejected counts resizable template build
+	// starts refused because no template builder in the cluster runs a
+	// release that honours maxVCpuCount.
+	ApiTemplateBuildBuilderVersionRejected CounterType = "api.template.build.builder_version_rejected"
+	// ApiTemplateBuildBuilderPinFallback counts builder lookups that could
+	// not honour the pinned machine info at the required version and fell
+	// back to any builder at that version.
+	ApiTemplateBuildBuilderPinFallback       CounterType = "api.template.build.builder_pin_fallback"
+	ApiOrchestratorCreatedSandboxes          CounterType = "api.orchestrator.created_sandboxes"
+	ApiOrchestratorResumeOriginNodeRemap     CounterType = "api.orchestrator.resume_origin_node_remapped"
+	ApiOrchestratorSandboxFeatureUnsupported CounterType = "api.orchestrator.sandbox_feature_unsupported"
 	// ApiOrchestratorPauseRefusalRestore counts what became of a pause the
 	// node refused retryably: outcome restored | restore_failed |
 	// route_restore_failed | superseded, caller request | eviction.
 	// superseded: the ID was reclaimed by a new incarnation meanwhile; nothing
 	// was restored, removed, or killed.
 	ApiOrchestratorPauseRefusalRestore CounterType = "api.orchestrator.pause_refusal_restore"
+	// ApiOrchestratorNetworkUpdateUnstored counts network updates a node
+	// applied that the store then failed to record: the live egress differs
+	// from the stored config until the next update replaces both.
+	ApiOrchestratorNetworkUpdateUnstored CounterType = "api.orchestrator.network_update_unstored"
 	// ApiOrchestratorPlacementsWithoutHugepageCeiling counts hugepage sandboxes
 	// placed under a hugepage limit on a node the limit could not bound, by
 	// node.id and reason: no_capacity (the orchestrator reports no pool
@@ -45,10 +58,16 @@ const (
 	// gate was dropped: every counted eviction takes the fs-only path.
 	ApiEvictorFsOnlyAutoPause CounterType = "api.evictor.fs_only_auto_pause"
 	// ApiEvictorAutoPauseDegraded counts timeout auto-pauses the evictor
-	// downgraded to a filesystem-only snapshot after the node refused the
-	// memory one, by cause: admission_refused (no retry budget, degraded at
-	// the first refusal) or overstay_budget (the retry budget since the first
-	// refusal ran out); a subset of ApiEvictorFsOnlyAutoPause.
+	// answered with a degrade after the node refused the memory one, by
+	// cause: admission_refused (no retry budget, filesystem-only at the first
+	// refusal), overstay_budget (the retry budget since the first refusal ran
+	// out, filesystem-only), envd_grace (the guest agent refused for the whole
+	// grace, memory pause retried without the probe), envd_grace_withheld
+	// (that retry withheld: the record names no execution to pin it to) or
+	// envd_grace_fs_only (that retry withheld: the sweep asks for a
+	// filesystem-only capture, which needs the guest agent, so the sandbox
+	// stays running). The filesystem-only causes are a subset of
+	// ApiEvictorFsOnlyAutoPause.
 	ApiEvictorAutoPauseDegraded CounterType = "api.evictor.auto_pause_degraded"
 	SandboxCreateMeterName      CounterType = "api.env.instance.started"
 
@@ -64,6 +83,8 @@ const (
 	// Held post-checkpoint envd re-inits stopped before they returned, by what stopped
 	// them: a following pause, or the sandbox's Firecracker exiting.
 	EnvdReinitCut CounterType = "orchestrator.sandbox.envd.reinit.cut"
+	// Redirects envd answered the host with, which the host refused, by status code.
+	EnvdRedirectsRefused CounterType = "orchestrator.sandbox.envd.redirects_refused"
 	// EnvdCpuReport counts /init responses for VMs with spare vCPUs by the guest's
 	// reported capacity outcome and by why the /init was sent (init: first start,
 	// reinit after a checkpoint, or repeat). The report is diagnostic, not trusted for CPU limits.
@@ -92,7 +113,9 @@ const (
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
-	// grace flag.
+	// grace flag. The envd probe has its own outcomes: envd_healthy,
+	// envd_unhealthy (refused) and envd_unhealthy_proceeded (the memory
+	// snapshot was taken anyway and recorded as such).
 	OrchestratorSandboxPauseAdmissionCounterName CounterType = "orchestrator.sandbox.pause_admission"
 	// OrchestratorSandboxCheckpointCounterName counts Checkpoint RPCs by flow —
 	// the denominator that makes the in_place-labeled duration histograms
@@ -409,6 +432,13 @@ const (
 	// and outcome (ok|error). The store's load is mostly EVALSHA, which names
 	// no script; this does. A nil reply is a result, so it counts as ok.
 	ApiRedisScriptCalls CounterType = "api.redis.script.calls"
+	// Sandbox store key-form drain: reads the team-tagged key served after the
+	// sandbox-tagged key missed, the healer's index repairs, writes that gave
+	// up after their retries, and the cluster errors the store's commands hit.
+	ApiRedisStorageReadsFallback  CounterType = "api.redis_storage.reads.fallback"
+	ApiRedisStorageIndexHeal      CounterType = "api.redis_storage.index_heal"
+	ApiRedisStorageWriteAnomalies CounterType = "api.redis_storage.write_anomalies"
+	ApiRedisStorageErrors         CounterType = "api.redis_storage.errors"
 
 	// ClientProxyResumeFlightCounterName counts callers of the per-sandbox
 	// resume flight by role (leader|joiner|none) and result
@@ -422,10 +452,15 @@ const (
 const (
 	ApiOrchestratorSbxCreateSuccess ObservableCounterType = "api.orchestrator.sandbox.create.success"
 	ApiOrchestratorSbxCreateFailure ObservableCounterType = "api.orchestrator.sandbox.create.failure"
+
+	OrchestratorHostPressureStall ObservableCounterType = "orchestrator.host.pressure.stall"
+	OrchestratorHostReclaimStalls ObservableCounterType = "orchestrator.host.reclaim.stalls"
+	OrchestratorHostReclaimPages  ObservableCounterType = "orchestrator.host.reclaim.pages"
 )
 
 const (
-	OrchestratorSandboxCountMeterName ObservableUpDownCounterType = "orchestrator.env.sandbox.running"
+	OrchestratorSandboxCountMeterName            ObservableUpDownCounterType = "orchestrator.env.sandbox.running"
+	OrchestratorSandboxNetworkModeCountMeterName ObservableUpDownCounterType = "orchestrator.sandbox.running.by_network_mode"
 
 	ClientProxyServerConnectionsMeterCounterName ObservableUpDownCounterType = "client_proxy.proxy.server.connections.open"
 	ClientProxyPoolConnectionsMeterCounterName   ObservableUpDownCounterType = "client_proxy.proxy.pool.connections.open"
@@ -694,6 +729,11 @@ const (
 	// longer than the lifetime mean the store is being read as fast as the
 	// allowance permits. Exported with explicit buckets (metrics.go).
 	ApiSandboxListAge HistogramType = "api.sandbox.list.age"
+	// ApiRedisStorageListGets is the commands one bulk record read issued, by
+	// the sandbox list, the evictor or the node reconcile: one GET per record
+	// on the sandbox-tagged keys, then one MGET per team chunk on the
+	// team-tagged keys of the records those missed.
+	ApiRedisStorageListGets HistogramType = "api.redis_storage.list.gets"
 
 	// Firecracker net histograms — per-sandbox distribution per metrics flush, no sandbox_id.
 	// Firecracker serializes SharedIncMetric as per-flush deltas (default flush interval: 60 s).
@@ -745,6 +785,22 @@ const (
 	OrchestratorMemoryAllocatedGaugeName GaugeIntType = "orchestrator.sandbox.memory.allocated"
 	OrchestratorDiskAllocatedGaugeName   GaugeIntType = "orchestrator.sandbox.disk.allocated"
 
+	// OrchestratorMemoryGuestGaugeName is the guest memory of running sandboxes
+	// by the page_state their memory handler records: not_present (never
+	// faulted in), installing (a fault being served), clean and zero (read
+	// faults, and pages a checkpoint captured since their last write), dirty
+	// (write faults, and reads written since; under async write-protect the
+	// handler sees no later write, so those stay clean) and removed (released
+	// by the guest). Summed over page_state it is the memory allocated gauge
+	// less the guests no handler serves: cold boots, template builds, and
+	// starts whose Firecracker has not connected yet. It counts the memory
+	// Firecracker registered, not the configured RAM.
+	OrchestratorMemoryGuestGaugeName GaugeIntType = "orchestrator.sandbox.memory.guest"
+
+	// OrchestratorHugePagesFreeGaugeName is the host pool ceiling less used and
+	// reserved pages, before the admission subtracts its pending starts.
+	OrchestratorHugePagesFreeGaugeName GaugeIntType = "orchestrator.hugepages.free"
+
 	// Sandbox metrics
 	SandboxRamUsedGaugeName  GaugeIntType = "e2b.sandbox.ram.used"
 	SandboxRamTotalGaugeName GaugeIntType = "e2b.sandbox.ram.total"
@@ -786,6 +842,16 @@ const (
 	// replicas, never the sum.
 	ApiOrchestratorNodesWithoutHugepageCeiling GaugeIntType = "api.orchestrator.nodes_without_hugepage_ceiling"
 
+	// Sandbox store key-form census, taken by every API replica's healer sweep
+	// over the whole store: read the max across replicas, never the sum.
+	ApiRedisStorageRecordsForm    GaugeIntType = "api.redis_storage.records.form"
+	ApiRedisStorageCensusComplete GaugeIntType = "api.redis_storage.census.complete"
+	// The repairs the healer's two most recent sweeps made on one replica, by
+	// kind, so a rule can compare consecutive sweeps: the interval is
+	// jittered, so counter windows cannot tell sweeps apart.
+	ApiRedisStorageIndexHealLastSweep     GaugeIntType = "api.redis_storage.index_heal.last_sweep"
+	ApiRedisStorageIndexHealPreviousSweep GaugeIntType = "api.redis_storage.index_heal.previous_sweep"
+
 	// Build resource metrics
 	BuildRootfsSizeHistogramName HistogramType = "template.build.rootfs.size"
 )
@@ -793,12 +859,16 @@ const (
 var counterDesc = map[CounterType]string{
 	ApiRateLimitRequests:                         "Number of API group rate-limit checks, by team, group, mode, and decision",
 	ApiSandboxPauseRateLimit:                     "Pause requests checked against the per-sandbox pause rate limit, by team and decision (allowed|deduplicated|limited|error)",
+	ApiTemplateBuildBuilderVersionRejected:       "Resizable template build starts refused because no template builder runs a release that honours maxVCpuCount",
+	ApiTemplateBuildBuilderPinFallback:           "Template builder lookups that fell back to any builder because none with the pinned machine info is at the required version",
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
-	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses degraded to filesystem-only after a node refusal, by cause (admission_refused | overstay_budget).",
+	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without requiring a healthy guest agent, so the node takes it and records the miss (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
+	ApiOrchestratorSandboxFeatureUnsupported:     "Sandbox creates refused because no orchestrator in the cluster runs a release implementing a capability the request needs, by feature",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
+	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
@@ -807,12 +877,13 @@ var counterDesc = map[CounterType]string{
 	EnvdInitCalls:                                "Number of envd initialization calls",
 	EnvdReinitCut:                                "Post-checkpoint envd re-inits stopped before they returned, by what first stopped them, recorded when it did and counted once the re-init returns: pause (a following pause stopped a held one before its pre-pause freeze: cancelled it whatever it had written, or, before its gate chose the held loop, kept it from writing), kill (the sandbox's Firecracker process exited during a held one) or replace (a fresh re-init took its place: cancelled a held one in flight, or kept one from writing on either loop before its gate chose one)",
 	EnvdInitSlowDials:                            "Held envd init dials that took over 500 ms on a first customer start, by how that attempt ended: connect, write, response or success",
+	EnvdRedirectsRefused:                         "Redirects envd answered a host request with, refused rather than followed, by status_code; envd never redirects, so any is unexpected",
 	EnvdInitUnobservedHandlers:                   "Envd /init handlers that thawed the workload inline and completed after their client had gone, as envd counts them on the served /init of a first customer start that succeeded (X-Envd-Init-Unobserved)",
 	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
-	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error) and rpc (pause/checkpoint)",
+	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent) and rpc (pause/checkpoint)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
 	OrchestratorFPHRunCounterName:                "Free-page-hinting drains and runs, labeled by phase (pre-pause, periodic) and outcome (ok, not-configured, refused, timeout, timeout-guest-silent, failed, cancelled, skipped-<reason> incl. skipped-host-busy)",
@@ -873,7 +944,11 @@ var counterDesc = map[CounterType]string{
 	ApiRedisStorageExpirationIndexSwept:    "Members removed from the global expiration index by the evictor scan (reason=orphan|dead_execution|invalid)",
 	ApiRedisStorageExpirationIndexRescored: "Live expiration index members re-scored after drifting from the stored EndTime",
 	ApiRedisStorageExpirationIndexDeferred: "Expired expiration index members moved out of the evictor scan window while their sandbox is in a transition",
-	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_sandbox|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release, outcome=ok|error)",
+	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_sandbox|remove_record|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
+	ApiRedisStorageReadsFallback:           "Sandbox record reads the team-tagged key served after the sandbox-tagged key missed; zero once the census reads no team-form records",
+	ApiRedisStorageIndexHeal:               "Repairs the healer made to sandbox records and their index entries (kind=readded|removed|deleted_stale|twins_deleted); healthy steady state is zero",
+	ApiRedisStorageWriteAnomalies:          "Sandbox store writes that gave up after their retries (kind=remove_stranded|add_unindexed|add_write_unconfirmed); the healer repairs what they left",
+	ApiRedisStorageErrors:                  "Cluster errors the sandbox store's commands returned (kind=crossslot|moved_exhausted|tryagain|other)",
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
@@ -884,12 +959,16 @@ var counterDesc = map[CounterType]string{
 var counterUnits = map[CounterType]string{
 	ApiRateLimitRequests:                         "{request}",
 	ApiSandboxPauseRateLimit:                     "{request}",
+	ApiTemplateBuildBuilderVersionRejected:       "{build}",
+	ApiTemplateBuildBuilderPinFallback:           "{lookup}",
 	SandboxCreateMeterName:                       "{sandbox}",
 	ApiOrchestratorCreatedSandboxes:              "{sandbox}",
 	ApiEvictorFsOnlyAutoPause:                    "{pause}",
 	ApiEvictorAutoPauseDegraded:                  "{pause}",
 	ApiOrchestratorResumeOriginNodeRemap:         "{snapshot}",
+	ApiOrchestratorSandboxFeatureUnsupported:     "{sandbox}",
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
+	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
 	ApiSandboxListReads:                          "{request}",
 	BuildResultCounterName:                       "{build}",
 	BuildCacheResultCounterName:                  "{layer}",
@@ -899,6 +978,7 @@ var counterUnits = map[CounterType]string{
 	EnvdInitUnobservedHandlers:                   "{handler}",
 	EnvdInitSlowDials:                            "{dial}",
 	EnvdReinitCut:                                "{reinit}",
+	EnvdRedirectsRefused:                         "{redirect}",
 	EnvdCpuReport:                                "{response}",
 	EnvdCollapseChunks:                           "{chunk}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
@@ -967,6 +1047,10 @@ var counterUnits = map[CounterType]string{
 	ApiRedisStorageExpirationIndexRescored: "{member}",
 	ApiRedisStorageExpirationIndexDeferred: "{member}",
 	ApiRedisScriptCalls:                    "{call}",
+	ApiRedisStorageReadsFallback:           "{read}",
+	ApiRedisStorageIndexHeal:               "{repair}",
+	ApiRedisStorageWriteAnomalies:          "{write}",
+	ApiRedisStorageErrors:                  "{error}",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "{placement}",
 }
@@ -974,15 +1058,22 @@ var counterUnits = map[CounterType]string{
 var observableCounterDesc = map[ObservableCounterType]string{
 	ApiOrchestratorSbxCreateSuccess: "Counter of successful sandbox creation requests.",
 	ApiOrchestratorSbxCreateFailure: "Counter of failed sandbox creation requests.",
+	OrchestratorHostPressureStall:   "Host PSI stall time from /proc/pressure since the first collection, by resource (cpu|memory|io) and scope (some|full); full means every non-idle task was stalled.",
+	OrchestratorHostReclaimStalls:   "Host direct-reclaim entries since the first collection (/proc/vmstat allocstall, summed over zones).",
+	OrchestratorHostReclaimPages:    "Host pages scanned and reclaimed by direct reclaim since the first collection, by kind (scan|steal; /proc/vmstat pgscan_direct, pgsteal_direct).",
 }
 
 var observableCounterUnits = map[ObservableCounterType]string{
 	ApiOrchestratorSbxCreateSuccess: "{sandbox}",
 	ApiOrchestratorSbxCreateFailure: "{sandbox}",
+	OrchestratorHostPressureStall:   "us",
+	OrchestratorHostReclaimStalls:   "{stall}",
+	OrchestratorHostReclaimPages:    "{page}",
 }
 
 var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "Counter of running sandboxes on the orchestrator.",
+	OrchestratorSandboxNetworkModeCountMeterName:       "Running sandboxes by project and assigned network mode.",
 	ClientProxyServerConnectionsMeterCounterName:       "Open connections to the client proxy from load balancer.",
 	ClientProxyPoolConnectionsMeterCounterName:         "Open connections from the client proxy to the orchestrator proxy.",
 	ClientProxyPoolSizeMeterCounterName:                "Size of the client proxy pool.",
@@ -1000,6 +1091,7 @@ var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
 
 var observableUpDownCounterUnits = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "{sandbox}",
+	OrchestratorSandboxNetworkModeCountMeterName:       "{sandbox}",
 	ClientProxyServerConnectionsMeterCounterName:       "{connection}",
 	ClientProxyPoolConnectionsMeterCounterName:         "{connection}",
 	ClientProxyPoolSizeMeterCounterName:                "{transport}",
@@ -1037,6 +1129,8 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	OrchestratorCpuAllocatedGaugeName:    "Total vCPUs allocated to running sandboxes on the orchestrator node.",
 	OrchestratorMemoryAllocatedGaugeName: "Total memory allocated to running sandboxes on the orchestrator node.",
 	OrchestratorDiskAllocatedGaugeName:   "Total disk space allocated to running sandboxes on the orchestrator node.",
+	OrchestratorMemoryGuestGaugeName:     "Guest memory of running sandboxes on the orchestrator node, by page state.",
+	OrchestratorHugePagesFreeGaugeName:   "Hugepages the orchestrator node can still allocate: the pool ceiling less used and reserved pages.",
 	SandboxRamUsedGaugeName:              "Amount of RAM used by the sandbox.",
 	SandboxRamTotalGaugeName:             "Amount of RAM available to the sandbox.",
 	SandboxRamCacheGaugeName:             "Amount of RAM used by the page cache in the sandbox.",
@@ -1061,6 +1155,11 @@ var gaugeIntDesc = map[GaugeIntType]string{
 	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "Resident pause layers whose own upload failed for good, so this node holds the only copy. Read against orchestrator.snapshot.upload.failed.",
 
 	ApiOrchestratorNodesWithoutHugepageCeiling: "Ready nodes the hugepage placement limit cannot bound, by reason (no_capacity | no_page_size). Every API replica reports the whole fleet: max across replicas, not sum.",
+
+	ApiRedisStorageRecordsForm:            "Sandbox records the healer's last sweep counted, by key form (form=team|sandbox). Every API replica reports the whole store: max across replicas, not sum.",
+	ApiRedisStorageCensusComplete:         "Whether the healer's last sweep counted every sandbox (1 or 0): 0 when a team's scan failed and was skipped, the expiration walk failed, or a probe was refused; the census authorises nothing unless complete.",
+	ApiRedisStorageIndexHealLastSweep:     "Repairs the healer's most recent sweep made on this replica, by kind (readded|removed|deleted_stale|twins_deleted); compared with previous_sweep by the rising-drift rule",
+	ApiRedisStorageIndexHealPreviousSweep: "Repairs the healer's sweep before the most recent made on this replica, by kind (readded|removed|deleted_stale|twins_deleted); absent until the replica's second sweep",
 }
 
 var gaugeIntUnits = map[GaugeIntType]string{
@@ -1077,6 +1176,8 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	OrchestratorCpuAllocatedGaugeName:    "{count}",
 	OrchestratorMemoryAllocatedGaugeName: "{By}",
 	OrchestratorDiskAllocatedGaugeName:   "{By}",
+	OrchestratorMemoryGuestGaugeName:     "{By}",
+	OrchestratorHugePagesFreeGaugeName:   "{page}",
 	SandboxRamUsedGaugeName:              "{By}",
 	SandboxRamTotalGaugeName:             "{By}",
 	SandboxRamCacheGaugeName:             "{By}",
@@ -1101,6 +1202,11 @@ var gaugeIntUnits = map[GaugeIntType]string{
 	OrchestratorTemplateCacheLayersUnlandedGaugeName:    "{layer}",
 
 	ApiOrchestratorNodesWithoutHugepageCeiling: "{node}",
+
+	ApiRedisStorageRecordsForm:            "{record}",
+	ApiRedisStorageCensusComplete:         "1",
+	ApiRedisStorageIndexHealLastSweep:     "{repair}",
+	ApiRedisStorageIndexHealPreviousSweep: "{repair}",
 }
 
 func GetCounter(meter metric.Meter, name CounterType) (metric.Int64Counter, error) {
@@ -1113,15 +1219,18 @@ func GetCounter(meter metric.Meter, name CounterType) (metric.Int64Counter, erro
 	)
 }
 
-func GetObservableCounter(meter metric.Meter, name ObservableCounterType, callback metric.Int64Callback) (metric.Int64ObservableCounter, error) {
-	desc := observableCounterDesc[name]
-	unit := observableCounterUnits[name]
+// GetObservableCounter creates the counter with the given callbacks; pass none
+// to observe it from a meter.RegisterCallback registration instead.
+func GetObservableCounter(meter metric.Meter, name ObservableCounterType, callbacks ...metric.Int64Callback) (metric.Int64ObservableCounter, error) {
+	opts := []metric.Int64ObservableCounterOption{
+		metric.WithDescription(observableCounterDesc[name]),
+		metric.WithUnit(observableCounterUnits[name]),
+	}
+	for _, callback := range callbacks {
+		opts = append(opts, metric.WithInt64Callback(callback))
+	}
 
-	return meter.Int64ObservableCounter(string(name),
-		metric.WithDescription(desc),
-		metric.WithUnit(unit),
-		metric.WithInt64Callback(callback),
-	)
+	return meter.Int64ObservableCounter(string(name), opts...)
 }
 
 func GetObservableUpDownCounter(meter metric.Meter, name ObservableUpDownCounterType, callback metric.Int64Callback) (metric.Int64ObservableUpDownCounter, error) {
@@ -1159,6 +1268,7 @@ var histogramDesc = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 	ApiRedisScriptDuration:                  "Round trip of one Lua script run against the sandbox store, by script",
 	ApiSandboxListAge:                       "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
+	ApiRedisStorageListGets:                 "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys, then one MGET per team chunk on the team-tagged keys of the records those missed; falls toward one per record as the team-tagged records drain",
 
 	FPHRunDurationName:                                "Duration of a completed free-page-hinting drain or run, labeled by phase",
 	FPHStopDurationName:                               "Duration of the stop of an abandoned hinting cycle, acknowledgement wait included",
@@ -1186,7 +1296,7 @@ var histogramDesc = map[HistogramType]string{
 	CheckpointDurationName:                            "Wall time of one Checkpoint RPC from the route decision to the reply, labeled by in_place, fs_only, route, balloon_mode, deferred and success: the per-route latency the checkpoint counter only counts, with deferred separating the CoW-window and synchronous-copy arms of an in-place reporting checkpoint",
 	SnapshotMemorySealDurationName:                    "Time for the background CoW-window memory capture (off the in-place resume critical path), labeled by success",
 	OrchestratorSandboxMemfileDedupDurationName:       "Background memfile dedup latency, from the provisional header's creation at pause to the durable-header swap",
-	OrchestratorSandboxPauseAdmissionWaitDurationName: "Time snapshot admission waited on the durable parent header whenever it waited, labeled by outcome (ready_after_wait/refused)",
+	OrchestratorSandboxPauseAdmissionWaitDurationName: "Time snapshot admission waited on the durable parent header whenever it waited (outcome ready_after_wait/refused), and the guest-agent probe's own round trip under its outcomes (envd_healthy/envd_unhealthy/envd_unhealthy_proceeded)",
 	OrchestratorSandboxStartGateWaitDurationName:      "Time a start waited for a per-node start slot, one sample per acquire attempt, labeled by kind (create|resume|checkpoint|harvest) and outcome (acquired|cancelled|refused); a create never waits, so its samples are zero",
 	OrchestratorEnvdOfflineUpgradeDurationName:        "Wall-time of the offline cold-boot envd rootfs swap (jailed debugfs)",
 	OrchestratorEnvdBinaryCacheSourceStatDurationName: "Wall-time of the resume path's stat of the host envd binary on its mount, by result (ok|error)",
@@ -1253,6 +1363,7 @@ var histogramUnits = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "ms",
 	ApiRedisScriptDuration:                  "ms",
 	ApiSandboxListAge:                       "ms",
+	ApiRedisStorageListGets:                 "{command}",
 
 	FPHRunDurationName:                                "ms",
 	FPHStopDurationName:                               "ms",

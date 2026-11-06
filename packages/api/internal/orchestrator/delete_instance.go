@@ -15,6 +15,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -28,6 +29,54 @@ import (
 const refusalRetryAfter = 10 * time.Second
 
 const pauseTimeout = 80 * time.Second
+
+// killClaimAttempts bounds how many resumes a kill waits out before giving up.
+const killClaimAttempts = 3
+
+// SnapshotDeleteTimeout keeps a snapshot delete inside the kill claim that
+// holds resumes back while it runs.
+const SnapshotDeleteTimeout = redisreservations.KillClaimTTL - 5*time.Second
+
+// ErrSandboxStillResuming means resumes kept winning against a kill.
+var ErrSandboxStillResuming = errors.New("sandbox is still resuming")
+
+// KillAndClaim kills the running sandbox, if any, and claims its ID so that no
+// resume can start while the caller deletes the snapshot. A resume already in
+// flight is waited for, and the sandbox it started is killed too.
+func (o *Orchestrator) KillAndClaim(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts) (claimID string, killed bool, err error) {
+	for attempt := 1; ; attempt++ {
+		err := o.RemoveSandbox(ctx, teamID, sandboxID, opts)
+		switch {
+		case err == nil:
+			killed = true
+		case errors.Is(err, ErrSandboxNotFound):
+		default:
+			return "", killed, err
+		}
+
+		claimID, claimed, err := o.sandboxStore.ClaimKill(ctx, teamID, sandboxID)
+		if err != nil {
+			return "", killed, fmt.Errorf("failed to claim sandbox for kill: %w", err)
+		}
+		if claimed {
+			return claimID, killed, nil
+		}
+		if attempt == killClaimAttempts {
+			return "", killed, ErrSandboxStillResuming
+		}
+
+		if err := o.sandboxStore.WaitForStart(ctx, teamID, sandboxID); err != nil {
+			return "", killed, fmt.Errorf("%w: %w", ErrSandboxStillResuming, err)
+		}
+	}
+}
+
+// ReleaseKillClaim is best-effort; the claim also expires on its own.
+func (o *Orchestrator) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID, claimID string) {
+	if err := o.sandboxStore.ReleaseKillClaim(ctx, teamID, sandboxID, claimID); err != nil {
+		logger.L().Error(ctx, "failed to release paused-kill claim", zap.Error(err), logger.WithSandboxID(sandboxID))
+	}
+}
 
 func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "remove-sandbox")
@@ -97,7 +146,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 			}
 
 			if errors.Is(err, PauseQueueExhaustedError{}) {
-				return PauseQueueExhaustedError{}
+				return refusalOf(err)
 			}
 
 			if errors.Is(err, sandbox.ErrExecutionMismatch) {
@@ -121,7 +170,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		logger.L().Info(ctx, "Sandbox was already in the process of being removed", logger.WithSandboxID(sandboxID), zap.String("state", string(sbx.State)))
 
 		if time.Since(sbx.EndTime) > sandbox.StaleCutoff && opts.Action.Effect == sandbox.TransitionExpires {
-			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 			go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 		}
 
@@ -146,19 +195,24 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		if preserveRecord {
 			return
 		}
-		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID)
+		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 	}()
-	err = o.removeSandboxFromNode(ctx, sbx, opts.Action, opts.Reason, opts.FilesystemOnly)
+	err = o.removeSandboxFromNode(ctx, sbx, opts)
 	if err != nil {
 		if errors.Is(err, PauseQueueExhaustedError{}) {
-			if restoreOnRefusal {
-				outcome := o.restoreRefusedPause(context.WithoutCancel(ctx), transition)
+			refusal := refusalOf(err)
+			// A checkpoint in flight is the node's word that the sandbox is
+			// alive and the refusal ends with it; an unanswered envd probe
+			// left the VM untouched and running. Both restore the record
+			// whatever the flag says for a busy node.
+			if restoreOnRefusal || errors.Is(err, PauseRefusedCheckpointInProgressError{}) || errors.Is(err, PauseRefusedEnvdUnresponsiveError{}) {
+				outcome := o.restoreRefusedPause(context.WithoutCancel(ctx), transition, refusal)
 				o.recordRefusalRestore(ctx, sbx.TeamID.String(), outcome, opts.Eviction)
 				switch outcome {
 				case restoreOutcomeRestored:
 					preserveRecord = true
-					err = sandbox.ErrTransitionRestored
+					err = &sandbox.RestoredTransitionError{Refusal: refusal}
 				case restoreOutcomeSuperseded:
 					preserveRecord = true
 					err = sandbox.ErrTransitionRestored
@@ -181,7 +235,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 				return ErrSandboxOperationFailed
 			}
 
-			return PauseQueueExhaustedError{}
+			return refusal
 		}
 
 		fields := []zap.Field{
@@ -239,9 +293,18 @@ func (o *Orchestrator) killRefusedSandbox(ctx context.Context, sbx sandbox.Sandb
 // restoreRefusedPause puts the record back to Running after the node refused
 // the pause. Routing needs no repair: the node refuses before it stops the
 // sandbox, so its route was never removed.
-func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandbox.StateTransition) restoreOutcome {
+func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandbox.StateTransition, refusal error) restoreOutcome {
 	sbx := transition.Sandbox
-	_, err := o.sandboxStore.RestoreRunning(ctx, transition, refusalRetryAfter)
+	_, err := o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{
+		RetryAfter: refusalRetryAfter,
+		// A checkpoint holding the sandbox or a guest agent that does not
+		// answer says nothing about the node, so the sweep is held without
+		// charging the overstay budget a busy node is measured against.
+		HoldOnly: errors.Is(refusal, PauseRefusedCheckpointInProgressError{}) || errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}),
+		// The guest agent's refusals keep their own episode, which the
+		// evictor's bypass grace is measured against.
+		EnvdRefusal: errors.Is(refusal, PauseRefusedEnvdUnresponsiveError{}),
+	})
 	if err != nil {
 		if errors.Is(err, sandbox.ErrExecutionMismatch) || errors.Is(err, sandbox.ErrRestoreConflict) {
 			logger.L().Warn(ctx, "Pause restore superseded", zap.Error(err), logger.WithSandboxID(sbx.SandboxID))
@@ -257,8 +320,8 @@ func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandb
 		return restoreOutcomeRestoreFailed
 	}
 
-	// Add is lockless: a resume can install a new incarnation right after the
-	// restore, so the ownership check reads the record back.
+	// A resume can install a new incarnation right after the restore releases
+	// its lock, so the ownership check reads the record back.
 	current, err := o.sandboxStore.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	if errors.Is(err, sandbox.ErrNotFound) || (err == nil && current.ExecutionID != sbx.ExecutionID) {
 		return restoreOutcomeSuperseded
@@ -270,15 +333,25 @@ func (o *Orchestrator) restoreRefusedPause(ctx context.Context, transition sandb
 	return restoreOutcomeRestored
 }
 
-func (o *Orchestrator) removeSandboxFromNode(
-	ctx context.Context,
-	sbx sandbox.Sandbox,
-	stateAction sandbox.StateAction,
-	reason sandbox.KillReason,
-	filesystemOnly bool,
-) error {
+// refusalOf narrows a retryable pause refusal to its own type, unwrapped, so
+// the callers above tell a checkpoint in flight or an unresponsive guest
+// agent from a busy node.
+func refusalOf(err error) error {
+	switch {
+	case errors.Is(err, PauseRefusedCheckpointInProgressError{}):
+		return PauseRefusedCheckpointInProgressError{}
+	case errors.Is(err, PauseRefusedEnvdUnresponsiveError{}):
+		return PauseRefusedEnvdUnresponsiveError{}
+	default:
+		return PauseQueueExhaustedError{}
+	}
+}
+
+func (o *Orchestrator) removeSandboxFromNode(ctx context.Context, sbx sandbox.Sandbox, opts sandbox.RemoveOpts) error {
 	ctx, span := tracer.Start(ctx, "remove-sandbox-from-node")
 	defer span.End()
+
+	stateAction, reason := opts.Action, opts.Reason
 
 	node := o.getOrConnectNode(ctx, sbx.ClusterID, sbx.NodeID)
 	if node == nil {
@@ -301,7 +374,7 @@ func (o *Orchestrator) removeSandboxFromNode(
 
 	switch stateAction {
 	case sandbox.StateActionPause:
-		err := o.pauseSandbox(ctx, node, sbx, filesystemOnly)
+		err := o.pauseSandbox(ctx, node, sbx, opts)
 		if err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
 				killErr := o.killSandboxOnNode(ctx, node, sbx.ToNodeSandbox(), sandbox.KillReasonBaseTemplateMissing)

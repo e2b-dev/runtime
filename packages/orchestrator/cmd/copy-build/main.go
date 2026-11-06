@@ -333,14 +333,14 @@ func main() {
 			log.Fatalf("failed to create GCS bucket storage provider: %s", err)
 		}
 
-		m, err := metadata.FromBuildID(ctx, provider, *buildId)
+		m, err := metadata.FromBuildIDAnyGuest(ctx, provider, *buildId)
 		if err != nil {
 			log.Fatalf("failed to read build metadata: %s", err)
 		}
 
 		meta = m
 	} else {
-		m, err := metadata.FromFile(path.Join(*from, "templates", paths.Metadata()))
+		m, err := metadata.FromFileAnyGuest(path.Join(*from, "templates", paths.Metadata()))
 		if err != nil {
 			log.Fatalf("failed to read build metadata: %s", err)
 		}

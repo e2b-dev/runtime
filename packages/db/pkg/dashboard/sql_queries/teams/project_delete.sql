@@ -26,13 +26,26 @@ SET deleted_at = COALESCE(deleted_at, now()),
 WHERE id = sqlc.arg(project_id)::uuid;
 
 -- Soft-deletes the project's templates, snapshot templates and paused sandbox
--- snapshots the way a template deletion does.
+-- snapshots the way a template deletion does, stamping their snapshots in the
+-- same statement.
 -- name: SoftDeleteProjectEnvironments :many
-UPDATE public.envs
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE team_id = sqlc.arg(project_id)::uuid
-  AND deleted_at IS NULL
-RETURNING id;
+WITH deleted AS (
+    UPDATE public.envs e
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE e.team_id = sqlc.arg(project_id)::uuid
+      AND e.deleted_at IS NULL
+    RETURNING e.id
+),
+-- NOW() is the transaction's start time, the deleted_at just written. The
+-- array keeps this an env_id index lookup per env: joining the CTE lets the
+-- planner hash-join a sequential scan of every snapshot once it expects
+-- many envs.
+stamped AS (
+    UPDATE public.snapshots s
+    SET env_deleted_at = NOW()
+    WHERE s.env_id = ANY (ARRAY(SELECT id FROM deleted))
+)
+SELECT id FROM deleted;
 
 -- name: DeleteProjectMembers :exec
 DELETE FROM public.users_teams

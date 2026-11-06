@@ -22,6 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -162,7 +163,7 @@ func runCommandWithAllOptions(
 
 	processCtx, processCancel := context.WithCancel(ctx)
 	defer processCancel()
-	commandStream, err := processC.Start(processCtx, runCmdReq)
+	commandStream, err := processC.Start(sandbox.WithEnvdSandbox(processCtx, sbxlogger.SandboxMetadata{SandboxID: sandboxID}), runCmdReq)
 	// Confirm the command has executed before proceeding
 	close(confirmCh)
 	if err != nil {

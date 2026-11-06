@@ -134,6 +134,12 @@ func newProxyClient(
 			}
 
 			r.SetURL(t.Url)
+			// Rewrite runs after hop-by-hop header removal. Connection must not
+			// let a caller remove the execution selected by the routing lookup.
+			r.Out.Header.Del(ExpectedExecutionIDHeader)
+			if t.ExpectedExecutionID != "" {
+				r.Out.Header.Set(ExpectedExecutionIDHeader, t.ExpectedExecutionID)
+			}
 
 			if t.MaskRequestHost != nil {
 				// Mask the request host to bypass source host protections.

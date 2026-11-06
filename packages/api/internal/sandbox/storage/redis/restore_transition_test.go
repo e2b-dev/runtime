@@ -34,7 +34,7 @@ func TestPauseCallbackPreservesSuccessorTransition(t *testing.T) {
 	require.NoError(t, err)
 
 	finishOld(ctx, sandboxtypes.ErrTransitionRestored)
-	result, err := client.Get(ctx, getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, oldID)).Result()
+	result, err := client.Get(ctx, transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, oldID)).Result()
 	require.NoError(t, err)
 	require.Equal(t, sandboxtypes.ErrTransitionRestored.Error(), result)
 	currentID, err := client.Get(ctx, key).Result()

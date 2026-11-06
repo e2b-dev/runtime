@@ -38,6 +38,10 @@ type updateRejectionStorage struct {
 	sbx sandbox.Sandbox
 }
 
+func (s *updateRejectionStorage) Get(context.Context, uuid.UUID, string) (sandbox.Sandbox, error) {
+	return s.sbx, nil
+}
+
 func (s *updateRejectionStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
 	var err error
 	s.sbx, err = update(s.sbx)

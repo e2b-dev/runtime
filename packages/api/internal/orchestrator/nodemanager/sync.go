@@ -28,18 +28,23 @@ func (n *Node) Sync(ctx context.Context, store *sandbox.Store) error {
 	// not unreachable however the rest of the cycle went.
 	answered := false
 
+	// The connection's state after the last attempt, to tell a node that is
+	// down from a connection that is still reconnecting.
+	var connState connectivity.State
+
 	for range syncMaxRetries {
 		client, ctx := n.GetClient(ctx)
 
 		// A shut-down conn never recovers — e.g. the cluster Instance was
 		// dropped and re-added under the same instance ID, leaving this node
 		// on the dead conn. Escalate for deregistration instead of retrying.
-		if client.Connection.GetState() == connectivity.Shutdown {
+		if client.State() == connectivity.Shutdown {
 			return fmt.Errorf("grpc connection to node %s is shut down", n.ID)
 		}
 
 		requestedAt := time.Now()
 		nodeInfo, err := client.Info.ServiceInfo(ctx, &emptypb.Empty{})
+		connState = client.State()
 		if err != nil {
 			logger.L().Error(ctx, "Error getting node info", zap.Error(err), logger.WithNodeID(n.ID))
 
@@ -97,6 +102,21 @@ func (n *Node) Sync(ctx context.Context, store *sandbox.Store) error {
 	}
 
 	if !syncRetrySuccess {
+		// A remote cluster's instances share a few connections, so one that is
+		// reconnecting fails every node on it at once. StatusInfo already shows
+		// those nodes as Connecting, which keeps them out of placement, and
+		// they recover as soon as the connection is ready; marking them
+		// Unhealthy would hold them out until the next sync. A local node has a
+		// connection of its own, so one stuck reconnecting means the node is down.
+		if n.IsClusterNode() && !answered && (connState == connectivity.TransientFailure || connState == connectivity.Connecting) {
+			logger.L().Warn(ctx, "Failed to sync node while its connection is reconnecting",
+				logger.WithNodeID(n.ID),
+				zap.Stringer("connection_state", connState),
+			)
+
+			return nil
+		}
+
 		logger.L().Error(ctx, "Failed to sync node after max retries, temporarily marking as unhealthy",
 			logger.WithNodeID(n.ID),
 			zap.Bool("answered", answered),

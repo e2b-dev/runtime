@@ -19,6 +19,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	templatemocks "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template/mocks"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -151,4 +152,24 @@ func TestRebootSandboxMarksRejectedCPUTemplateOverride(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A profile that applies no CPU template gets neither the build's nor an
+// override; the default profile is rebootCPUTemplate as before.
+func TestRebootCPUTemplateForGuest(t *testing.T) {
+	t.Parallel()
+
+	a := &cputemplate.Template{KvmCapabilities: []string{"!121"}}
+	meta := metadata.Template{BuildCPUTemplate: a, CPUTemplate: a}
+	override := ldvalue.Parse([]byte(`{"template":{"kvm_capabilities":["!122"]}}`))
+
+	got, overridden, err := rebootCPUTemplateFor(guest.BootConfig{NoCPUTemplate: true}, meta, override)
+	require.NoError(t, err)
+	assert.False(t, overridden)
+	assert.Nil(t, got)
+
+	got, overridden, err = rebootCPUTemplateFor(guest.Default().Boot(), metadata.Template{BuildCPUTemplate: a}, override)
+	require.NoError(t, err)
+	assert.True(t, overridden)
+	assert.Equal(t, &cputemplate.Template{KvmCapabilities: []string{"!122"}}, got)
 }

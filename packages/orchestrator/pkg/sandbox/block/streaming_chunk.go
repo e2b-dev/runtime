@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 const (
@@ -29,6 +31,9 @@ type Chunker struct {
 	fetchTimeout time.Duration
 	featureFlags *featureflags.Client
 	objType      storage.SeekableObjectType
+	// buildID names the build whose file this chunker reads. It goes on every
+	// fetch span, so a fetch can be keyed by (build, file type, offset).
+	buildID string
 
 	size int64
 
@@ -42,6 +47,7 @@ func NewChunker(
 	cachePath string,
 	metrics metrics.Metrics,
 	objType storage.SeekableObjectType,
+	buildID string,
 ) (*Chunker, error) {
 	cache, err := NewCache(size, blockSize, cachePath, false)
 	if err != nil {
@@ -55,6 +61,7 @@ func NewChunker(
 		featureFlags: ff,
 		fetchTimeout: defaultFetchTimeout,
 		objType:      objType,
+		buildID:      buildID,
 	}, nil
 }
 
@@ -207,6 +214,8 @@ func (c *Chunker) runFetch(ctx context.Context, s *fetchSession, upstream storag
 	span.SetAttributes(
 		attribute.Int64("off", s.chunkOff),
 		attribute.Int64("len", s.chunkLen),
+		telemetry.WithBuildID(c.buildID),
+		attribute.String(storage.AttrFileType, c.objType.String()),
 	)
 
 	defer c.releaseSession(s)
@@ -280,6 +289,7 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 	openStart := time.Now()
 	reader, source, err := upstream.OpenRangeReader(ctx, s.chunkOff, s.chunkLen, ft)
 	res.source = source
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String(storage.AttrSource, source.String()))
 	res.openDuration = time.Since(openStart)
 	s.setSource(source)
 	if err != nil {

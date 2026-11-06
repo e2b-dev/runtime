@@ -674,6 +674,7 @@ func TestCheckpointResumeFresh_CheckpointDuringTheWindowIsInProgress(t *testing.
 		_, err := s.Checkpoint(t.Context(), req)
 		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.ErrorContains(t, err, "already in progress")
+		assert.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries its typed detail for the API")
 
 		steps.releaseResume()
 		awaitCheckpoint(t, done)
@@ -726,6 +727,7 @@ func TestCheckpointResumeFresh_PauseDuringTheWindowIsRetryable(t *testing.T) {
 		_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: sbx.Runtime.SandboxID})
 		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 		require.ErrorContains(t, err, "please retry")
+		assert.NotNil(t, checkpointInProgressDetail(t, err), "the API restores on this detail; without it the flag-off pause kills")
 
 		steps.releaseResume()
 		awaitCheckpoint(t, done)

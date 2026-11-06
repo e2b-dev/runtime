@@ -28,6 +28,7 @@ func TestNodeCanAcceptNewRequests(t *testing.T) {
 		api.NodeStatusShuttingDown: false,
 		api.NodeStatusStandby:      false,
 		api.NodeStatusUnhealthy:    false,
+		api.NodeStatusNotReady:     false,
 		api.NodeStatus("nonsense"): false,
 	}
 
@@ -42,13 +43,19 @@ func TestNodeCanAcceptNewRequests(t *testing.T) {
 	}
 }
 
-func TestSendStatusChangeRejectsShuttingDown(t *testing.T) {
+// Only the node enters its own startup and shutdown statuses.
+func TestSendStatusChangeRejectsProcessStatuses(t *testing.T) {
 	t.Parallel()
 
 	node := &Node{ID: "test-node"}
-	err := node.SendStatusChange(t.Context(), api.NodeStatusShuttingDown)
-	require.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
-	require.Equal(t, "shutting_down can only be entered during process shutdown", grpcstatus.Convert(err).Message())
+	for status, message := range map[api.NodeStatus]string{
+		api.NodeStatusShuttingDown: "shutting_down can only be entered during process shutdown",
+		api.NodeStatusNotReady:     "not_ready can only be entered during process startup",
+	} {
+		err := node.SendStatusChange(t.Context(), status)
+		require.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
+		require.Equal(t, message, grpcstatus.Convert(err).Message())
+	}
 }
 
 // Every status the orchestrator can report needs an api.NodeStatus counterpart.
@@ -69,6 +76,7 @@ func TestOrchestratorToApiNodeStateMapperCoversEveryProtoStatus(t *testing.T) {
 		orchestratorinfo.ServiceInfoStatus_Unhealthy:    "unhealthy",
 		orchestratorinfo.ServiceInfoStatus_Standby:      "standby",
 		orchestratorinfo.ServiceInfoStatus_ShuttingDown: "shutting_down",
+		orchestratorinfo.ServiceInfoStatus_NotReady:     "not_ready",
 	}
 
 	for value, name := range orchestratorinfo.ServiceInfoStatus_name {

@@ -317,7 +317,7 @@ func TestWaitForStateChange_NoTransition(t *testing.T) {
 func TestWaitForStateChange_WaitForCompletion(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("wait-completion")
@@ -339,8 +339,7 @@ func TestWaitForStateChange_WaitForCompletion(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the goroutine time to start waiting
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -397,7 +396,7 @@ func TestWaitForStateChange_ContextCancellation(t *testing.T) {
 func TestWaitForStateChange_MultipleWaiters(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("multi-waiters")
@@ -423,8 +422,7 @@ func TestWaitForStateChange_MultipleWaiters(t *testing.T) {
 		}(i)
 	}
 
-	// Give the goroutines time to start waiting
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, numWaiters)
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -499,7 +497,7 @@ func TestStartRemoving_CallbackMarksTransitionCompleted(t *testing.T) {
 	assert.Equal(t, int64(0), exists)
 
 	// Result key should have empty value (success) with TTL
-	resultKey := getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, transitionID)
+	resultKey := transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionID)
 	value, err := client.Get(ctx, resultKey).Result()
 	require.NoError(t, err)
 	assert.Empty(t, value, "Result should be empty string for success")
@@ -541,7 +539,7 @@ func TestStartRemoving_CallbackSetsErrorOnFailure(t *testing.T) {
 	assert.Equal(t, int64(0), exists, "Transition key should be deleted after callback")
 
 	// Result key should contain error message with TTL
-	resultKey := getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, transitionID)
+	resultKey := transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionID)
 	value, err := client.Get(ctx, resultKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, "test error", value, "Result should contain error message")
@@ -585,7 +583,7 @@ func TestStartRemoving_SetsEndTimeWhenNotExpired(t *testing.T) {
 func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("waiter-complete-success")
@@ -606,8 +604,7 @@ func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the waiter time to start
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition successfully
 	callback(ctx, nil)
@@ -631,7 +628,7 @@ func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 func TestStartRemoving_WaiterReceivesErrorOnCallbackFailure(t *testing.T) {
 	t.Parallel()
 
-	storage, _ := setupTestStorage(t)
+	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 
 	sbx := createTestSandbox("waiter-complete-error")
@@ -652,8 +649,7 @@ func TestStartRemoving_WaiterReceivesErrorOnCallbackFailure(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the waiter time to start
-	time.Sleep(30 * time.Millisecond)
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
 
 	// Complete the transition with error
 	callback(ctx, errors.New("connection refused"))
@@ -765,7 +761,7 @@ func TestStartRemoving_TransientTransition(t *testing.T) {
 
 		// Transient transitions signal success even on failure so
 		// concurrent callers (e.g. kill) can proceed.
-		resultKey := getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, transitionID)
+		resultKey := transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionID)
 		value, err := client.Get(ctx, resultKey).Result()
 		require.NoError(t, err)
 		assert.Empty(t, value, "failed transient transition should still write empty result for waiters")
@@ -792,7 +788,7 @@ func TestStartRemoving_TransientTransition(t *testing.T) {
 
 		finish(ctx, nil)
 
-		resultKey := getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, transitionID)
+		resultKey := transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionID)
 		value, err := client.Get(ctx, resultKey).Result()
 		require.NoError(t, err)
 		assert.Contains(t, value, "failed to restore sandbox to running")
@@ -1109,7 +1105,7 @@ func TestCallback_PublishesNotification(t *testing.T) {
 	transitionID, err := client.Get(ctx, transitionKey).Result()
 	require.NoError(t, err)
 
-	expectedRoutingKey := getTransitionRoutingKey(sbx.TeamID.String(), sbx.SandboxID, transitionID)
+	expectedRoutingKey := transitionRoutingKey(transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionID))
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -1218,7 +1214,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish a notification using transition A's routing key (stale).
-	staleRoutingKey := getTransitionRoutingKey(sbx.TeamID.String(), sbx.SandboxID, transitionIDA)
+	staleRoutingKey := transitionRoutingKey(transitionResultKeyFor(formTeam, sbx.TeamID.String(), sbx.SandboxID, transitionIDA))
 	require.NoError(t, client.Publish(t.Context(), globalStorageNotifyChannel, staleRoutingKey).Err())
 
 	// Give time for the stale notification to be (not) delivered.
@@ -1289,7 +1285,7 @@ func TestRestoreRunning_ReinstatesClampedExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, transition.Sandbox.EndTime.Before(sbx.EndTime), "a pause clamps a live sandbox's expiry to now")
 
-	restored, err := storage.RestoreRunning(ctx, transition, 10*time.Second)
+	restored, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	assert.Equal(t, sandboxtypes.StateRunning, restored.State)
 	assert.WithinDuration(t, sbx.EndTime, restored.EndTime, time.Millisecond)
@@ -1310,7 +1306,7 @@ func TestRestoreRunning_ReinstatesClampedExpiry(t *testing.T) {
 	// A second refusal keeps the first refusal's stamp.
 	transition, _, callback, err = storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
-	again, err := storage.RestoreRunning(ctx, transition, 10*time.Second)
+	again, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	assert.WithinDuration(t, restored.RefusedSince, again.RefusedSince, time.Millisecond, "a second refusal keeps the first stamp")
 	callback(ctx, errors.New("refused"))
@@ -1325,7 +1321,7 @@ func TestRestoreRunning_ReinstatesClampedExpiry(t *testing.T) {
 	require.NoError(t, err)
 	transition, _, callback, err = storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
-	fresh, err := storage.RestoreRunning(ctx, transition, 10*time.Second)
+	fresh, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	assert.WithinDuration(t, time.Now(), fresh.RefusedSince, time.Second, "a stale stamp is replaced, not counted against the new episode")
 	callback(ctx, errors.New("refused"))
@@ -1394,7 +1390,7 @@ func TestRestoreRunning_RefusesOtherStates(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = storage.RestoreRunning(ctx, transition, 10*time.Second)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.Error(t, err)
 
 	stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
@@ -1417,14 +1413,14 @@ func TestRestoreRunning_RefusesAnotherExecution(t *testing.T) {
 	require.NoError(t, err)
 	callback(ctx, nil)
 
-	// What a resume does: same ID, new execution, lockless Add.
+	// What a resume does: same ID, new execution, an Add under both form locks.
 	resumed := sbx
 	resumed.ExecutionID = uuid.NewString()
 	resumed.State = sandboxtypes.StatePausing
 	resumed.EndTime = time.Now().Add(time.Hour)
 	require.NoError(t, storage.Add(ctx, resumed))
 
-	_, err = storage.RestoreRunning(ctx, transition, 10*time.Second)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.ErrorIs(t, err, sandboxtypes.ErrExecutionMismatch)
 
 	stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
@@ -1434,7 +1430,7 @@ func TestRestoreRunning_RefusesAnotherExecution(t *testing.T) {
 	assert.WithinDuration(t, resumed.EndTime, stored.EndTime, time.Millisecond)
 
 	transition.Sandbox.ExecutionID = ""
-	_, err = storage.RestoreRunning(ctx, transition, 0)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{})
 	require.ErrorIs(t, err, sandboxtypes.ErrExecutionMismatch, "an empty pin does not match a record that carries an execution")
 }
 
@@ -1454,8 +1450,10 @@ func TestStorage_RecordWithoutNetworkPlacement(t *testing.T) {
 	assert.Nil(t, got.NetworkPlacement)
 }
 
-// Add bypasses the storage lock and can replace the record before the CAS:
-// the restore reads again and finds the successor, which it leaves alone.
+// A write that bypasses the storage lock, as a replica whose lock expired
+// makes, can replace the record before the CAS: the restore reads again and
+// finds the successor, which it leaves alone. Add waits for the lock, so the
+// successor is written directly.
 func TestRestoreRunning_RefusesWhenTheRecordChangesUnderIt(t *testing.T) {
 	t.Parallel()
 
@@ -1464,27 +1462,23 @@ func TestRestoreRunning_RefusesWhenTheRecordChangesUnderIt(t *testing.T) {
 	resumed := sbx
 	resumed.ExecutionID = uuid.NewString()
 	resumed.State = sandboxtypes.StateRunning
+	successorData, err := json.Marshal(resumed)
+	require.NoError(t, err)
 
 	// AddHook is not safe once the client is in use, so the hook goes in
 	// before the storage starts; its body only runs from RestoreRunning below.
 	var storage *Storage
-	var successorData []byte
 	client := redis_utils.SetupInstance(t)
 	var replaced atomic.Bool
-	client.AddHook(restoreCommandHook(func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+	client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
 		if cmd.Name() == "evalsha" && cmd.Args()[1] == restoreSandboxScript.Hash() && replaced.CompareAndSwap(false, true) {
-			if err := storage.Add(ctx, resumed); err != nil {
-				return err
-			}
-			var err error
-			successorData, err = client.Get(ctx, getSandboxKey(sbx.TeamID.String(), sbx.SandboxID)).Bytes()
-			if err != nil {
+			if err := client.Set(ctx, getSandboxKey(sbx.TeamID.String(), sbx.SandboxID), successorData, 0).Err(); err != nil {
 				return err
 			}
 		}
 
 		return next(ctx, cmd)
-	}))
+	}})
 	storage = newTestStorage(t, client)
 	go storage.Start(ctx)
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
@@ -1494,7 +1488,7 @@ func TestRestoreRunning_RefusesWhenTheRecordChangesUnderIt(t *testing.T) {
 	require.NoError(t, err)
 	callback(ctx, nil)
 
-	_, err = storage.RestoreRunning(ctx, transition, 10*time.Second)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.ErrorIs(t, err, sandboxtypes.ErrExecutionMismatch)
 
 	stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
@@ -1529,7 +1523,7 @@ func TestRestoreRunning_RetriesOnceWhenTheSameExecutionIsRewritten(t *testing.T)
 			key := getSandboxKey(sbx.TeamID.String(), sbx.SandboxID)
 			client := redis_utils.SetupInstance(t)
 			var rewrites atomic.Int32
-			client.AddHook(restoreCommandHook(func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+			client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
 				if cmd.Name() == "evalsha" && cmd.Args()[1] == restoreSandboxScript.Hash() && int(rewrites.Add(1)) <= tc.rewrites {
 					data, err := client.Get(ctx, key).Bytes()
 					if err != nil {
@@ -1550,7 +1544,7 @@ func TestRestoreRunning_RetriesOnceWhenTheSameExecutionIsRewritten(t *testing.T)
 				}
 
 				return next(ctx, cmd)
-			}))
+			}})
 			storage := newTestStorage(t, client)
 			go storage.Start(ctx)
 			t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
@@ -1609,7 +1603,7 @@ func TestRestoredTransition_WaitersJoinersAndKillers(t *testing.T) {
 	}()
 	time.Sleep(200 * time.Millisecond)
 
-	_, err = storage.RestoreRunning(ctx, transition, 0)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{})
 	require.NoError(t, err)
 	finish(ctx, sandboxtypes.ErrTransitionRestored)
 
@@ -1648,7 +1642,7 @@ func TestRestoreRunning_HeldSandboxLeavesTheExpiredWindow(t *testing.T) {
 	transition, _, callback, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 
-	_, err = storage.RestoreRunning(ctx, transition, 400*time.Millisecond)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 400 * time.Millisecond})
 	require.NoError(t, err)
 	callback(ctx, errors.New("refused"))
 
@@ -1671,4 +1665,14 @@ func TestRestoreRunning_HeldSandboxLeavesTheExpiredWindow(t *testing.T) {
 
 		return false
 	}, 3*time.Second, 50*time.Millisecond, "once the window passes the sandbox is expired again")
+}
+
+// waitForTransitionWaiters blocks until n waiters subscribed to the sandbox's
+// pending transition: finished first, it leaves them nothing to wait for.
+func waitForTransitionWaiters(t *testing.T, storage *Storage, client redis.UniversalClient, sbx sandboxtypes.Sandbox, n int) {
+	t.Helper()
+
+	form := storage.writeForm()
+	id := pendingTransitionID(t, client, form, sbx.TeamID, sbx.SandboxID)
+	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(form, sbx.TeamID.String(), sbx.SandboxID, id)), n)
 }

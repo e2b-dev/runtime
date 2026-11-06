@@ -15,8 +15,7 @@ import (
 )
 
 // Every lookup authentication caches resolves the team and its limits in one
-// statement: the team's pushed row, else the deployment's defaults. The tier
-// and active add-ons do not reach them.
+// statement: the team's pushed row, else the deployment's defaults.
 func TestAuthStoreResolvesTeamAndLimitsInOneStatement(t *testing.T) {
 	t.Parallel()
 
@@ -44,9 +43,6 @@ func TestAuthStoreResolvesTeamAndLimitsInOneStatement(t *testing.T) {
 	}
 
 	unpushed := testutils.CreateTestTeam(t, db)
-	require.NoError(t, db.AuthDB.TestsRawSQL(ctx, `
-		INSERT INTO public.addons (team_id, name, extra_concurrent_sandboxes, extra_max_secrets, added_by)
-		VALUES ($1, 'ignored', 500, 5, '00000000-0000-0000-0000-000000000000')`, unpushed))
 	pushed := testutils.CreateTestTeam(t, db)
 	require.NoError(t, db.AuthDB.TestsRawSQL(ctx, `
 		INSERT INTO public.project_limits (

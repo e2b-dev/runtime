@@ -4,11 +4,17 @@ package fc
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -17,6 +23,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -38,6 +45,10 @@ func TestValidateFirecrackerBinaryReportsBothMissingPaths(t *testing.T) {
 	require.ErrorContains(t, err, legacyPath)
 }
 
+// TestConfigureRejectsProcessExitBeforeSocketReadiness: a process that exits
+// before its API socket accepts fails the start with that cause, whether the
+// start context or the guard sees the exit first; the guard alone is
+// TestRefuseReapedProcess's.
 func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
 	t.Parallel()
 
@@ -64,11 +75,31 @@ func TestConfigureRejectsProcessExitBeforeSocketReadiness(t *testing.T) {
 	}()
 
 	<-p.Exit.Done()
-	require.NoError(t, os.WriteFile(socketPath, nil, 0o600))
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
+	require.NoError(t, err)
+	defer l.Close()
 
-	err := <-returned
+	err = <-returned
 	require.ErrorIs(t, err, errFirecrackerExitedBeforeSocketReadiness)
 	require.NoError(t, p.Exit.Error(), "startup refusal must not relabel a clean process exit")
+}
+
+// TestRefuseReapedProcess: a socket that accepts is not readiness for a
+// process already reaped, whichever way it exited.
+func TestRefuseReapedProcess(t *testing.T) {
+	t.Parallel()
+
+	running := utils.NewErrorOnce()
+	require.NoError(t, refuseReapedProcess(running), "a running process is ready")
+
+	clean := utils.NewErrorOnce()
+	require.NoError(t, clean.SetSuccess())
+	require.ErrorIs(t, refuseReapedProcess(clean), errFirecrackerExitedBeforeSocketReadiness)
+
+	crashed := utils.NewErrorOnce()
+	boom := errors.New("boom")
+	require.NoError(t, crashed.SetError(boom))
+	require.ErrorIs(t, refuseReapedProcess(crashed), boom)
 }
 
 func TestProcessStopIsIdempotent(t *testing.T) {
@@ -164,4 +195,170 @@ func startSetsidCommand(t *testing.T, ctx context.Context, name string, args ...
 	require.NoError(t, cmd.Start())
 
 	return cmd
+}
+
+// fakeFirecracker answers the Firecracker API calls of a snapshot restore and
+// records them in order. It shows which calls reach the VMM and when, not what
+// a real guest does.
+type fakeFirecracker struct {
+	mu    sync.Mutex
+	calls []string
+	// failResumes is how many vCPU resumes fail before one succeeds.
+	failResumes int
+}
+
+func (f *fakeFirecracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		State    string `json:"state"`
+		ResumeVM bool   `json:"resume_vm"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	call := r.Method + " " + r.URL.Path
+	switch {
+	case call == "PUT /snapshot/load" && body.ResumeVM:
+		call += " resume_vm"
+	case call == "PATCH /vm":
+		call += " " + body.State
+	}
+	f.calls = append(f.calls, call)
+
+	if call == "PATCH /vm Resumed" && f.failResumes > 0 {
+		f.failResumes--
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"fault_message":"resume failed"}`))
+
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *fakeFirecracker) recorded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.calls)
+}
+
+type restoreRootfs struct {
+	rootfs.Provider
+
+	path string
+}
+
+func (r restoreRootfs) Path() (string, error) { return r.path, nil }
+
+// newRestoreProcess is a Process whose VMM is a sleeping placeholder behind
+// fake's API socket.
+func newRestoreProcess(t *testing.T, fake *fakeFirecracker) *Process {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	socket := dir + "/fc.sock"
+	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
+	require.NoError(t, err)
+	server := &http.Server{Handler: fake} //nolint:gosec // no timeouts needed for a stub on a private socket
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	cmd := exec.CommandContext(t.Context(), "sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	p := &Process{
+		cmd:                   cmd,
+		Exit:                  utils.NewErrorOnce(),
+		config:                cfg.BuilderConfig{StorageConfig: storage.Config{SandboxCacheDir: dir}},
+		firecrackerSocketPath: socket,
+		metricsPath:           dir + "/metrics.fifo",
+		rootfsProvider:        restoreRootfs{path: dir + "/rootfs.ext4"},
+		files:                 &storage.SandboxFiles{SandboxID: "test"},
+		client:                newApiClient(socket),
+	}
+	t.Cleanup(func() { _ = p.Stop(context.WithoutCancel(t.Context())) })
+
+	return p
+}
+
+// restore loads a snapshot into p paused, or runs it too when runVcpus is set.
+func restore(t *testing.T, p *Process, runVcpus bool) error {
+	t.Helper()
+
+	dir := filepath.Dir(p.firecrackerSocketPath)
+	uffdSocket := dir + "/uffd.sock"
+	require.NoError(t, os.WriteFile(uffdSocket, nil, 0o600))
+	uffdReady := make(chan struct{})
+	close(uffdReady)
+
+	metadata := sbxlogger.SandboxMetadata{SandboxID: "test"}
+	snapfile := stubSnapfile(dir + "/snapfile")
+	vcpus := ResumeVcpus{Target: 1, Snapshot: 1, Recorded: true}
+	if runVcpus {
+		return p.Resume(t.Context(), metadata, uffdSocket, snapfile, uffdReady, nil,
+			nil, false, false, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
+	}
+
+	return p.RestorePaused(t.Context(), metadata, uffdSocket, snapfile, uffdReady,
+		nil, false, false, "", RateLimiterConfig{}, RateLimiterConfig{}, vcpus)
+}
+
+// A paused restore configures the VM without running a vCPU or setting MMDS.
+// Its resume acts on the same VMM: a failed reply leaves it for a retry, and
+// no resume, repeated or not, loads the snapshot again. MMDS follows the
+// vCPU resume, as in an ordinary resume.
+func TestRestorePausedRunsNoVcpuUntilResumedInPlace(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeFirecracker{failResumes: 1}
+	p := newRestoreProcess(t, fake)
+	require.NoError(t, restore(t, p, false))
+
+	restored := fake.recorded()
+	require.Contains(t, restored, "PUT /snapshot/load")
+	require.NotContains(t, restored, "PUT /mmds")
+	require.NotContains(t, restored, "PATCH /vm Resumed")
+
+	require.Error(t, p.ResumeInPlace(t.Context()))
+	require.False(t, p.Exited(), "a failed resume keeps the VMM for a retry")
+	require.NoError(t, p.ResumeInPlace(t.Context()))
+	accessToken := "token"
+	require.NoError(t, p.SetMmds(t.Context(), sbxlogger.SandboxMetadata{SandboxID: "test"}, &accessToken))
+	require.NoError(t, p.ResumeInPlace(t.Context()), "a repeated resume acts on the running VM")
+
+	resumed := []string{"PATCH /vm Resumed", "PATCH /vm Resumed", "PUT /mmds", "PATCH /vm Resumed"}
+	require.Equal(t, append(restored, resumed...), fake.recorded())
+}
+
+// An ordinary resume is the paused restore followed by one vCPU resume, and
+// MMDS follows the vCPU resume. A failed resume stops the VMM.
+func TestResumeRestoresPausedThenRunsVcpus(t *testing.T) {
+	t.Parallel()
+
+	t.Run("resumes", func(t *testing.T) {
+		t.Parallel()
+
+		paused := &fakeFirecracker{}
+		require.NoError(t, restore(t, newRestoreProcess(t, paused), false))
+
+		fake := &fakeFirecracker{}
+		p := newRestoreProcess(t, fake)
+		require.NoError(t, restore(t, p, true))
+
+		require.Equal(t, append(paused.recorded(), "PATCH /vm Resumed", "PUT /mmds"), fake.recorded())
+		require.False(t, p.Exited())
+	})
+
+	t.Run("resume fails", func(t *testing.T) {
+		t.Parallel()
+
+		fake := &fakeFirecracker{failResumes: 1}
+		p := newRestoreProcess(t, fake)
+		require.Error(t, restore(t, p, true))
+		require.True(t, p.Exited())
+	})
 }

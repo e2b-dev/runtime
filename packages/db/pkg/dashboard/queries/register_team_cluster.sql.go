@@ -362,18 +362,31 @@ func (q *Queries) RequestClusterDeletion(ctx context.Context, clusterID uuid.UUI
 }
 
 const softDeleteClusterEnvironments = `-- name: SoftDeleteClusterEnvironments :many
-UPDATE public.envs
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE cluster_id = $1::uuid
-  AND deleted_at IS NULL
-RETURNING id
+WITH deleted AS (
+    UPDATE public.envs e
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE e.cluster_id = $1::uuid
+      AND e.deleted_at IS NULL
+    RETURNING e.id
+),
+stamped AS (
+    UPDATE public.snapshots s
+    SET env_deleted_at = NOW()
+    WHERE s.env_id = ANY (ARRAY(SELECT id FROM deleted))
+)
+SELECT id FROM deleted
 `
 
 // Step 1 of cluster environment cleanup (run in a tx): soft-deletes every live
-// template, snapshot template and paused sandbox snapshot on the cluster. The
-// UPDATE waits on rows a concurrent build registration has locked, so the
-// alias and active-build cleanup run as separate statements afterwards: their
-// fresh snapshots see rows that registration committed during the wait.
+// template, snapshot template and paused sandbox snapshot on the cluster, and
+// stamps their snapshots in the same statement. The UPDATE waits on rows a
+// concurrent build registration has locked, so the alias and active-build
+// cleanup run as separate statements afterwards: their fresh snapshots see
+// rows that registration committed during the wait.
+// NOW() is the transaction's start time, the deleted_at just written. The
+// array keeps this an env_id index lookup per env: joining the CTE lets the
+// planner hash-join a sequential scan of every snapshot once it expects
+// many envs.
 func (q *Queries) SoftDeleteClusterEnvironments(ctx context.Context, clusterID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, softDeleteClusterEnvironments, clusterID)
 	if err != nil {
@@ -392,18 +405,4 @@ func (q *Queries) SoftDeleteClusterEnvironments(ctx context.Context, clusterID u
 		return nil, err
 	}
 	return items, nil
-}
-
-const teamClusterAssignment = `-- name: TeamClusterAssignment :one
-SELECT cluster_id
-FROM public.teams
-WHERE id = $1::uuid
-  AND cluster_id IS NOT NULL
-`
-
-func (q *Queries) TeamClusterAssignment(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, teamClusterAssignment, teamID)
-	var cluster_id *uuid.UUID
-	err := row.Scan(&cluster_id)
-	return cluster_id, err
 }

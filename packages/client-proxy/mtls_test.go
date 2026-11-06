@@ -15,14 +15,14 @@ func TestAPIHopReportsUnderItsKeyAndReadsItsFlag(t *testing.T) {
 	t.Parallel()
 
 	// The flag turns on a hop that names its expected server; a hop that
-	// names none refuses the flip and stays off on its fallback.
+	// names none refuses the flip and stays off, reported as refused.
 	for _, tc := range []struct {
 		name         string
 		expect       []string
 		mode, source string
 	}{
 		{"names its server", []string{"spiffe://td.example.internal/ns/control/sa/api"}, "on", mtls.SourceFlag},
-		{"names no server", nil, "off", mtls.SourceFallback},
+		{"names no server", nil, "off", mtls.SourceRefused},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

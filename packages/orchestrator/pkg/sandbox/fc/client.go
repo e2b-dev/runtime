@@ -4,12 +4,15 @@ package fc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
+	openapiruntime "github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -77,6 +80,8 @@ func (c *apiClient) loadSnapshot(
 	snapfile template.File,
 	useMemfd bool,
 	useSyncWP bool,
+	clockRealtime bool,
+	netOverride *models.NetworkOverride,
 	cpuTemplate string,
 	teamID string,
 ) error {
@@ -101,14 +106,26 @@ func (c *apiClient) loadSnapshot(
 
 	telemetry.ReportEvent(ctx, "got snapfile path")
 
+	body := &models.SnapshotLoadParams{
+		ResumeVM:            false,
+		EnableDiffSnapshots: false,
+		MemBackend:          backend,
+		SnapshotPath:        &snapfilePath,
+	}
+	// Only sent when set: SnapshotLoadParams is deny_unknown_fields, and the
+	// fleet's FC does not know the field. A guest whose envd does not step its
+	// clock after the restore needs KVM to advance kvmclock by the paused time.
+	if clockRealtime {
+		body.ClockRealtime = clockRealtime
+	}
+	// A snapshot baked with another host's tap name reopens the slot's tap.
+	if netOverride != nil {
+		body.NetworkOverrides = []*models.NetworkOverride{netOverride}
+	}
+
 	snapshotConfig := operations.LoadSnapshotParams{
 		Context: ctx,
-		Body: &models.SnapshotLoadParams{
-			ResumeVM:            false,
-			EnableDiffSnapshots: false,
-			MemBackend:          backend,
-			SnapshotPath:        &snapfilePath,
-		},
+		Body:    body,
 	}
 
 	_, err := c.client.Operations.LoadSnapshot(&snapshotConfig)
@@ -212,6 +229,18 @@ func (c *apiClient) setMmds(ctx context.Context, metadata *MmdsMetadata) error {
 	return nil
 }
 
+// mmdsStoreMissing reports Firecracker's refusal of a metadata put on a microVM
+// restored from a snapshot that carries no MMDS store: an external image, or the
+// lineage this runtime pauses from one, since a restore never configures the store.
+func mmdsStoreMissing(err error) bool {
+	var bad *operations.PutMmdsBadRequest
+	if !errors.As(err, &bad) || bad.Payload == nil {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(bad.Payload.FaultMessage), "data store is not initialized")
+}
+
 func (c *apiClient) flushMetrics(ctx context.Context) error {
 	action := models.InstanceActionInfoActionTypeFlushMetrics
 	params := operations.CreateSyncActionParams{
@@ -259,10 +288,16 @@ func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernel
 	return err
 }
 
-func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEngine *string, rateLimiter *models.RateLimiter) error {
+// setRootfsDrive attaches the rootfs. isRootDevice makes Firecracker name the
+// drive as the root device on the kernel command line; a firmware boot finds
+// its boot partition on the disk itself and does not want that.
+//
+// blkSize is the logical block size the guest sees; 0 leaves it to
+// Firecracker, which reports the backing block device's own logical block
+// size (the NBD device's, 4096) or 512 for a regular file.
+func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEngine *string, rateLimiter *models.RateLimiter, isRootDevice bool, blkSize int64) error {
 	driveID := rootfsDriveID
 
-	isRootDevice := true
 	driversConfig := operations.PutGuestDriveByIDParams{
 		Context: ctx,
 		DriveID: driveID,
@@ -273,6 +308,7 @@ func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEng
 			IsReadOnly:   false,
 			IoEngine:     ioEngine,
 			RateLimiter:  rateLimiter,
+			BlkSize:      blkSize,
 		},
 	}
 
@@ -405,12 +441,36 @@ func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tap
 	return nil
 }
 
-func (c *apiClient) setMachineConfig(
-	ctx context.Context,
-	vCPUCount int64,
-	memoryMB int64,
-	hugePages bool,
-) error {
+// newMachineConfigBody returns the PUT /machine-config body: the orchestrator's
+// model, or, when the guest profile adds machine fields (Boot().MachineConfigExtra),
+// the model's JSON object with those fields merged in; a key the model sets is refused.
+func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra map[string]json.RawMessage) (any, error) {
+	model := machineConfigModel(vCPUCount, memoryMB, hugePages)
+	if len(extra) == 0 {
+		return model, nil
+	}
+
+	merged, err := mergeJSONFields(model, extra)
+	if err != nil {
+		return nil, err
+	}
+
+	return merged, nil
+}
+
+// setMachineConfig sends a body built by newMachineConfigBody.
+func (c *apiClient) setMachineConfig(ctx context.Context, body any) error {
+	params := operations.PutMachineConfigurationParams{Context: ctx}
+	_, err := c.client.Operations.PutMachineConfiguration(&params, withJSONBody(body))
+	if err != nil {
+		return fmt.Errorf("error setting fc machine config: %w", err)
+	}
+
+	return nil
+}
+
+// machineConfigModel is the machine configuration body the orchestrator decides.
+func machineConfigModel(vCPUCount int64, memoryMB int64, hugePages bool) *models.MachineConfiguration {
 	// SMT (Simultaneous Multi-Threading / Hyper-Threading) must be disabled on
 	// ARM64 because ARM processors use a different core topology (big.LITTLE,
 	// efficiency/performance cores) rather than hardware threads per core.
@@ -429,16 +489,47 @@ func (c *apiClient) setMachineConfig(
 	if hugePages {
 		machineConfig.HugePages = models.MachineConfigurationHugePagesNr2M
 	}
-	machineConfigParams := operations.PutMachineConfigurationParams{
-		Context: ctx,
-		Body:    machineConfig,
-	}
-	_, err := c.client.Operations.PutMachineConfiguration(&machineConfigParams)
+
+	return machineConfig
+}
+
+// mergeJSONFields returns the JSON object of model with the extra fields
+// added. A field the model already sets is refused, so a profile cannot
+// override what the orchestrator decides.
+func mergeJSONFields(model any, extra map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	raw, err := json.Marshal(model)
 	if err != nil {
-		return fmt.Errorf("error setting fc machine config: %w", err)
+		return nil, err
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for key, value := range extra {
+		if _, ok := fields[key]; ok {
+			return nil, fmt.Errorf("the guest profile's field %q is already set by the orchestrator", key)
+		}
+		if !json.Valid(value) {
+			return nil, fmt.Errorf("the guest profile's field %q is not valid JSON", key)
+		}
+		fields[key] = value
 	}
 
-	return nil
+	return fields, nil
+}
+
+// withJSONBody replaces an operation's body with body, keeping its other
+// parameters at their defaults.
+func withJSONBody(body any) operations.ClientOption {
+	return func(op *openapiruntime.ClientOperation) {
+		op.Params = openapiruntime.ClientRequestWriterFunc(func(r openapiruntime.ClientRequest, _ strfmt.Registry) error {
+			if err := r.SetTimeout(0); err != nil {
+				return err
+			}
+
+			return r.SetBodyParam(body)
+		})
+	}
 }
 
 // cpuConfigBody renders the PUT /cpu-config body. Unset collections must be omitted:

@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
@@ -47,6 +48,7 @@ func vcpuSandbox(vcpu, maxVcpus int64) *Sandbox {
 			internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second},
 			Config:         NewConfig(Config{Vcpu: vcpu, ConfiguredVmVcpus: maxVcpus}),
 		},
+		egressProxy: network.NewNoopEgressProxy(),
 	}
 }
 
@@ -261,7 +263,7 @@ func TestEnvdInitSendsCpuCount(t *testing.T) { //nolint:paralleltest
 
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		resp, _, err := s.doRequestWithInfiniteRetries(ctx, s.newEnvdInitRequest(server.URL+"/init"))
+		resp, _, err := s.doRequestWithInfiniteRetries(ctx, s.newEnvdInitRequest(server.URL+"/init", ""))
 		require.NoError(t, err)
 		resp.Body.Close()
 

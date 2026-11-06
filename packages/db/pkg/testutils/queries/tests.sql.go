@@ -93,31 +93,28 @@ func (q *Queries) InsertTestEnv(ctx context.Context, arg InsertTestEnvParams) er
 }
 
 const insertTestTeam = `-- name: InsertTestTeam :exec
-INSERT INTO public.teams (id, name, tier, email, slug)
+INSERT INTO public.teams (id, name, email, slug)
 VALUES (
     $1::uuid,
     $2::text,
     $3::text,
-    $4::text,
-    $5::text
+    $4::text
 )
 `
 
 type InsertTestTeamParams struct {
 	ID    uuid.UUID
 	Name  string
-	Tier  string
 	Email string
 	Slug  string
 }
 
-// Inserts a team for tests with explicit id/slug. Uses the default 'base_v1'
-// tier created in migrations.
+// Inserts a team for tests with explicit id/slug and no tier, as the
+// management API creates them.
 func (q *Queries) InsertTestTeam(ctx context.Context, arg InsertTestTeamParams) error {
 	_, err := q.db.Exec(ctx, insertTestTeam,
 		arg.ID,
 		arg.Name,
-		arg.Tier,
 		arg.Email,
 		arg.Slug,
 	)

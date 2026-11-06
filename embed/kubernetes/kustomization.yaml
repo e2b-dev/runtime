@@ -12,10 +12,10 @@ resources:
 images:
   - name: E2B_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/api
-    newTag: v0.14.202610051633-d1cd3db3890 # x-release-please-version
+    newTag: v0.14.202610271447-39ad7ab6a67 # x-release-please-version
   - name: E2B_DB_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/db-migrator
-    newTag: v0.14.202610051633-d1cd3db3890 # x-release-please-version
+    newTag: v0.14.202610271447-39ad7ab6a67 # x-release-please-version
   - name: E2B_CLIENT_PROXY_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy
     newTag: v0.3.202610051633-d1cd3db3890 # x-release-please-version
@@ -24,10 +24,10 @@ images:
     newTag: v0.4.202610051633-d1cd3db3890 # x-release-please-version
   - name: E2B_DASHBOARD_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboard-api
-    newTag: v0.7.202610051633-d1cd3db3890 # x-release-please-version
+    newTag: v0.7.202610271447-39ad7ab6a67 # x-release-please-version
   - name: E2B_DASHBOARD_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/dashboard/dashboard
-    newTag: v0.2.1
+    newTag: v0.4.0
   - name: E2B_TOOLS_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/tools
     newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version

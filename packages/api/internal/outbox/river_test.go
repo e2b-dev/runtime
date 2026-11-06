@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
@@ -27,15 +28,22 @@ func TestRetryPolicyGrowsFromTheFloorToTheCap(t *testing.T) {
 	}
 }
 
-func TestTeardownRetriesForAboutADayBeforeItIsDiscarded(t *testing.T) {
+func TestJobsRetryForAboutADayBeforeTheyAreDiscarded(t *testing.T) {
 	t.Parallel()
 
 	policy := retryPolicy{floor: retryFloor, cap: retryCap}
-	maxAttempts := outbox.TeardownTeamResources{}.InsertOpts().MaxAttempts
-	var total time.Duration
-	for attempt := 1; attempt < maxAttempts; attempt++ {
-		total += policy.delay(unjitteredJobID, attempt)
-	}
+	for _, args := range []interface {
+		Kind() string
+		InsertOpts() river.InsertOpts
+	}{
+		outbox.TeardownTeamResources{},
+		outbox.ContainBannedTeam{},
+	} {
+		var total time.Duration
+		for attempt := 1; attempt < args.InsertOpts().MaxAttempts; attempt++ {
+			total += policy.delay(unjitteredJobID, attempt)
+		}
 
-	require.InDelta(t, 24*time.Hour, total, float64(2*time.Hour))
+		require.InDelta(t, 24*time.Hour, total, float64(2*time.Hour), args.Kind())
+	}
 }

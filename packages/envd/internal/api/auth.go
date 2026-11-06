@@ -132,6 +132,11 @@ func (a *API) validateSigning(r *http.Request, signature *string, signatureExpir
 		signatureUsername = *username
 	}
 
+	// No account name holds a colon, and the signed fields are colon-separated.
+	if strings.Contains(signatureUsername, ":") {
+		return errors.New("invalid signature: a user name cannot contain a colon")
+	}
+
 	if signatureExpiration == nil {
 		expectedSignature, err = a.generateSignature(path, signatureUsername, operation, nil)
 	} else {

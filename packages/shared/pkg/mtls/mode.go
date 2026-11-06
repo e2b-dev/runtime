@@ -140,6 +140,9 @@ const (
 	SourceFallback = "fallback"
 	// SourceFlag means a flag value has been accepted.
 	SourceFlag = "flag"
+	// SourceRefused means the value the flag serves is refused, so the mode
+	// in force is the one from before it.
+	SourceRefused = "refused"
 )
 
 // FlagReader is the one method the package needs from a feature-flag client.
@@ -196,9 +199,12 @@ type flagSource[M flagMode] struct {
 	refused string
 	log     logger.Logger
 
-	mu           sync.Mutex
-	current      M
-	source       string
+	mu      sync.Mutex
+	current M
+	// source is where current came from: SourceFallback or SourceFlag.
+	source string
+	// refusing is set while the value last read is refused.
+	refusing     bool
 	lastRejected string
 }
 
@@ -226,6 +232,7 @@ func (s *flagSource[M]) readWithSource(ctx context.Context) (M, string) {
 	// were made: a slow one cannot land after, and undo, a later one. The
 	// feature-flag client answers from memory, so the lock is held briefly.
 	raw := s.reader.String(ctx, s.key, flagUnset)
+	s.refusing = false
 	if raw == flagUnset {
 		return s.current, s.source
 	}
@@ -238,9 +245,10 @@ func (s *flagSource[M]) readWithSource(ctx context.Context) (M, string) {
 	}
 	if s.accept != nil {
 		if err := s.accept(mode); err != nil {
+			s.refusing = true
 			s.reject(ctx, raw, s.refused, err)
 
-			return s.current, s.source
+			return s.current, SourceRefused
 		}
 	}
 
@@ -255,10 +263,19 @@ func (s *flagSource[M]) readWithSource(ctx context.Context) (M, string) {
 	return mode, SourceFlag
 }
 
-// Source reports where the mode in force came from.
+// Source reports where the mode in force came from, or SourceRefused while
+// the flag's value is refused.
 func (s *flagSource[M]) Source() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	return s.reported()
+}
+
+func (s *flagSource[M]) reported() string {
+	if s.refusing {
+		return SourceRefused
+	}
 
 	return s.source
 }
@@ -270,7 +287,7 @@ func (s *flagSource[M]) reject(ctx context.Context, raw, message string, err err
 	}
 	s.lastRejected = raw
 	s.log.Warn(ctx, message,
-		zap.String("flag", s.key), zap.String("value", raw), zap.Stringer("keeping", s.current), zap.Error(err))
+		zap.String("flag", s.key), zap.String("value", raw), zap.Stringer("keeping", s.current), zap.String("source", s.reported()), zap.Error(err))
 }
 
 // FlagModeSource reads a listener's mode from a flag, starting from the
@@ -345,7 +362,8 @@ type modeSourcer interface {
 }
 
 // sourceOf labels a mode source for the gauges: SourceFlag once a flag value
-// has been accepted, SourceFallback for static sources and before.
+// has been accepted, SourceRefused while one is refused, SourceFallback for
+// static sources and before.
 func sourceOf(src any) string {
 	if s, ok := src.(modeSourcer); ok {
 		return s.Source()

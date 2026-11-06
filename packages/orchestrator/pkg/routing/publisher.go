@@ -3,12 +3,18 @@
 //
 // The record exists exactly while the sandbox is in the live registry: it is
 // written on MarkRunning and deleted on MarkStopping. Both are best-effort: a
-// failed write is logged and counted, the sandbox keeps running. See
-// docs/ARCHITECTURE.md, "Sandbox routing records".
+// failed write is logged and counted, the sandbox keeps running. Publish
+// writes the record of a live lifecycle again and reads it back for a caller
+// that must know it landed. The record names the lifecycle that wrote it, and
+// a delete removes only that lifecycle's record, so the late stop of an
+// execution's earlier lifecycle leaves the record of the one that replaced
+// it. See docs/ARCHITECTURE.md, "Sandbox routing records".
 package routing
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -28,9 +34,13 @@ var _ sandbox.MapSubscriber = (*Publisher)(nil)
 
 // Store is the subset of the Redis catalog the publisher needs.
 type Store interface {
+	GetSandbox(ctx context.Context, sandboxID string) (*catalog.SandboxInfo, error)
 	StoreSandbox(ctx context.Context, sandboxID string, info *catalog.SandboxInfo, expiration time.Duration) error
-	DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error
+	DeleteSandbox(ctx context.Context, sandboxID, executionID, lifecycleID string) error
 }
+
+// errNotPublished reports a record Publish could not confirm.
+var errNotPublished = errors.New("the sandbox routing record is not this lifecycle's")
 
 var _ Store = (*catalog.RedisSandboxCatalog)(nil)
 
@@ -116,27 +126,9 @@ func (p *Publisher) OnInsert(ctx context.Context, sbx *sandbox.Sandbox) {
 	// entry per live sandbox.
 	state.inserted = true
 
-	info := &catalog.SandboxInfo{
-		OrchestratorID:   p.orchestratorID,
-		OrchestratorIP:   p.nodeIP,
-		ExecutionID:      sbx.Runtime.ExecutionID,
-		StartedAt:        sbx.GetStartedAt(),
-		MaxLengthInHours: sbx.Config.MaxSandboxLengthHours,
-		NetworkPlacement: catalog.NetworkPlacementOf(sbx.NetworkPlacement),
-	}
-
-	// Same TTL the API uses today: the full max length from now. MarkStopping
-	// deletes the record earlier in every normal path.
-	expiration := time.Duration(info.MaxLengthInHours) * time.Hour
-
-	// Set before the call: a timeout after Redis applied the SET must still be
-	// followed by a delete on stop.
-	state.written = true
-
-	err := telemetry.Observe0(ctx, tracer, "routing-publish", func(ctx context.Context) error {
-		return p.store.StoreSandbox(ctx, sbx.Runtime.SandboxID, info, expiration)
-	})
-	if err != nil {
+	ctx, cancel := recordContext(ctx)
+	defer cancel()
+	if err := p.write(ctx, state, sbx); err != nil {
 		p.publishCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "error")))
 		logger.L().Error(ctx, "failed to publish sandbox routing record",
 			logger.WithSandboxID(sbx.Runtime.SandboxID),
@@ -150,9 +142,81 @@ func (p *Publisher) OnInsert(ctx context.Context, sbx *sandbox.Sandbox) {
 	p.publishCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "ok")))
 }
 
+// write writes the record of sbx. The caller holds state.mu.
+func (p *Publisher) write(ctx context.Context, state *routeState, sbx *sandbox.Sandbox) error {
+	info := p.recordOf(sbx)
+
+	// Same TTL the API uses today: the full max length from now. MarkStopping
+	// deletes the record earlier in every normal path.
+	expiration := time.Duration(info.MaxLengthInHours) * time.Hour
+
+	// Set before the call: a timeout after Redis applied the SET must still be
+	// followed by a delete on stop.
+	state.written = true
+
+	return telemetry.Observe0(ctx, tracer, "routing-publish", func(ctx context.Context) error {
+		return p.store.StoreSandbox(ctx, sbx.Runtime.SandboxID, info, expiration)
+	})
+}
+
+func (p *Publisher) recordOf(sbx *sandbox.Sandbox) *catalog.SandboxInfo {
+	return &catalog.SandboxInfo{
+		OrchestratorID:   p.orchestratorID,
+		OrchestratorIP:   p.nodeIP,
+		ExecutionID:      sbx.Runtime.ExecutionID,
+		StartedAt:        sbx.GetStartedAt(),
+		MaxLengthInHours: sbx.Config.MaxSandboxLengthHours,
+		LifecycleID:      sbx.LifecycleID,
+		NetworkPlacement: catalog.NetworkPlacementOf(sbx.NetworkPlacement),
+	}
+}
+
+// Publish confirms that the routing record names the live lifecycle sbx: it
+// reads the record back and, when it is missing or another one's, writes it
+// again and reads it back once more, all within ctx. It fails for a
+// lifecycle whose stop began, or one not live yet. It is for the lifecycle
+// taking an execution over, whose record replaces its predecessor's; a
+// lifecycle being replaced must not call it.
+func (p *Publisher) Publish(ctx context.Context, sbx *sandbox.Sandbox) error {
+	key := lifecycleKey(sbx)
+	p.mu.Lock()
+	state, ok := p.routes[key]
+	p.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: the lifecycle is not live", errNotPublished)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.stopped || !state.inserted {
+		return fmt.Errorf("%w: the lifecycle is not live", errNotPublished)
+	}
+	if p.confirmed(ctx, sbx) {
+		return nil
+	}
+	if err := p.write(ctx, state, sbx); err != nil {
+		return err
+	}
+	if !p.confirmed(ctx, sbx) {
+		return errNotPublished
+	}
+
+	return nil
+}
+
+// confirmed reports whether the stored record names this orchestrator and
+// the lifecycle of sbx.
+func (p *Publisher) confirmed(ctx context.Context, sbx *sandbox.Sandbox) bool {
+	stored, err := p.store.GetSandbox(ctx, sbx.Runtime.SandboxID)
+
+	return err == nil && stored.ExecutionID == sbx.Runtime.ExecutionID && stored.LifecycleID == sbx.LifecycleID &&
+		stored.OrchestratorID == p.orchestratorID
+}
+
 // OnStopping deletes the routing record this publisher wrote for the lifecycle.
-// The delete is guarded by execution ID in Redis, so a stale lifecycle never
-// removes the record of a newer execution.
+// The delete is guarded by execution and lifecycle ID in Redis, so a stale
+// lifecycle never removes the record of a newer execution or of the lifecycle
+// its execution moved to.
 func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 	if sbx.Runtime.SandboxType != sandboxtypes.SandboxTypeSandbox {
 		return
@@ -178,8 +242,10 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 		return
 	}
 
+	ctx, cancel := recordContext(ctx)
+	defer cancel()
 	err := telemetry.Observe0(ctx, tracer, "routing-delete", func(ctx context.Context) error {
-		return p.store.DeleteSandbox(ctx, sbx.Runtime.SandboxID, sbx.Runtime.ExecutionID)
+		return p.store.DeleteSandbox(ctx, sbx.Runtime.SandboxID, sbx.Runtime.ExecutionID, sbx.LifecycleID)
 	})
 	if err != nil {
 		p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "error")))
@@ -193,6 +259,18 @@ func (p *Publisher) OnStopping(ctx context.Context, sbx *sandbox.Sandbox) {
 	}
 
 	p.deleteCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "ok")))
+}
+
+// recordTimeout bounds a write's or delete's wait for a Redis connection; the
+// client's own read and write timeouts bound its I/O, as for every write.
+const recordTimeout = 10 * time.Second
+
+// recordContext detaches a record's write or delete from its caller's
+// cancellation: a create past its budget still publishes the sandbox it made
+// live, and a stop whose caller has gone still removes the record, which
+// would otherwise route to a dead sandbox until its TTL.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 }
 
 // OnNetworkRelease is not used by the publisher.

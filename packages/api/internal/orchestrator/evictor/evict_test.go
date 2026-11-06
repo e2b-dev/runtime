@@ -122,6 +122,14 @@ func TestEvictSandbox_ReasonByAction(t *testing.T) {
 		assert.False(t, got.FilesystemOnly)
 	})
 
+	t.Run("the sweep's pause requires a healthy guest, a kill does not", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, run(true, false).RequireEnvdHealthy, "a memory auto-pause is strict until the grace has run")
+		assert.True(t, run(true, true).RequireEnvdHealthy)
+		assert.False(t, run(false, false).RequireEnvdHealthy)
+	})
+
 	t.Run("filesystem-only auto-pause requests a filesystem-only snapshot", func(t *testing.T) {
 		t.Parallel()
 
@@ -245,6 +253,8 @@ func TestPauseSkipReason(t *testing.T) {
 		skip bool
 	}{
 		"node refused":       {err: fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseQueueExhaustedError{}), want: pause.SkipReasonAdmissionRefused, skip: true},
+		"checkpoint running": {err: fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedCheckpointInProgressError{}), want: pause.SkipReasonCheckpointInProgress, skip: true},
+		"envd unresponsive":  {err: fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedEnvdUnresponsiveError{}), want: pause.SkipReasonEnvdUnresponsive, skip: true},
 		"replica draining":   {err: fmt.Errorf("remove: %w", sandbox.ErrDraining), want: pause.SkipReasonDraining, skip: true},
 		"eviction in flight": {err: sandbox.ErrEvictionInProgress, want: pause.SkipReasonNotEvictable, skip: true},
 		"sandbox gone":       {err: sandbox.ErrNotFound, want: pause.SkipReasonNotFound, skip: true},
@@ -279,67 +289,110 @@ func TestRefusalHeld(t *testing.T) {
 }
 
 // The degrade is decided only on a refusal in the same sweep, against the
-// budget counted from the first refusal of the current episode.
+// budget counted from the first refusal of the current episode; the envd
+// bypass likewise, against its own grace.
 func TestEvictSandbox_DegradeDecision(t *testing.T) {
 	t.Parallel()
 
 	refusal := fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseQueueExhaustedError{})
+	hung := fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedEnvdUnresponsiveError{})
+
+	// request is what one removeSandbox call asked the node for: the kind,
+	// and whether a hung guest must refuse it (strict).
+	type request struct {
+		fsOnly bool
+		strict bool
+	}
+	memory := request{strict: true}
+	fsOnly := request{fsOnly: true, strict: true}
+	bypassed := request{}
 
 	// run sweeps one auto-pause sandbox; memoryErr is the node's answer to the
-	// memory pause, fsOnlyErr to a filesystem-only one. refusedFor is how long
-	// ago the current episode's first refusal was stamped (zero: never), and
-	// stale moves that stamp's retry window hours into the past.
+	// strict memory pause, fsOnlyErr to a filesystem-only one, bypassErr to a
+	// memory pause not requiring a healthy guest. refusedFor is how long ago the
+	// node's current episode's first refusal was stamped (zero: never),
+	// envdRefusedFor the same for the guest agent's own episode, stale moves
+	// the stamped retry window hours into the past, and noExecution scans a
+	// record that names no execution to pin the removal to.
 	type sweep struct {
-		budgetMs   *int
-		refusedFor time.Duration
-		stale      bool
-		memoryErr  error
-		fsOnlyErr  error
+		budgetMs        *int
+		graceMs         *int
+		refusedFor      time.Duration
+		envdRefusedFor  time.Duration
+		stale           bool
+		noExecution     bool
+		memoryErr       error
+		fsOnlyErr       error
+		bypassErr       error
+		fsOnlyAutoPause bool
 	}
-	run := func(t *testing.T, sw sweep) ([]bool, map[string]int64) {
+	run := func(t *testing.T, sw sweep) ([]request, map[string]int64) {
 		t.Helper()
 
 		reader := sdkmetric.NewManualReader()
 		meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/evictor")
-		fsOnly, err := telemetry.GetCounter(meter, telemetry.ApiEvictorFsOnlyAutoPause)
+		fsOnlyCounter, err := telemetry.GetCounter(meter, telemetry.ApiEvictorFsOnlyAutoPause)
 		require.NoError(t, err)
 		degraded, err := telemetry.GetCounter(meter, telemetry.ApiEvictorAutoPauseDegraded)
 		require.NoError(t, err)
 
 		var flags *featureflags.Client
-		if sw.budgetMs == nil {
+		if sw.budgetMs == nil && sw.graceMs == nil {
 			flags, err = featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 		} else {
 			td := ldtestdata.DataSource()
-			td.Update(td.Flag(featureflags.AutoPauseOverstayBudgetMs.Key()).ValueForAll(ldvalue.Int(*sw.budgetMs)))
+			if sw.budgetMs != nil {
+				td.Update(td.Flag(featureflags.AutoPauseOverstayBudgetMs.Key()).ValueForAll(ldvalue.Int(*sw.budgetMs)))
+			}
+			if sw.graceMs != nil {
+				td.Update(td.Flag(featureflags.AutoPauseEnvdGraceMs.Key()).ValueForAll(ldvalue.Int(*sw.graceMs)))
+			}
 			flags, err = featureflags.NewClientWithDatasource(td)
 		}
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
 
-		var requests []bool
+		var requests []request
 		e := &Evictor{
 			featureFlags:           flags,
-			fsOnlyAutoPauseCounter: fsOnly,
+			fsOnlyAutoPauseCounter: fsOnlyCounter,
 			degradedCounter:        degraded,
 			removeSandbox: func(_ context.Context, _ uuid.UUID, _ string, opts sandbox.RemoveOpts) error {
-				requests = append(requests, opts.FilesystemOnly)
-				if opts.FilesystemOnly {
+				requests = append(requests, request{fsOnly: opts.FilesystemOnly, strict: opts.RequireEnvdHealthy})
+				switch {
+				case opts.FilesystemOnly:
 					return sw.fsOnlyErr
+				case !opts.RequireEnvdHealthy:
+					return sw.bypassErr
+				default:
+					return sw.memoryErr
 				}
-
-				return sw.memoryErr
 			},
 		}
 		now := time.Now()
-		sbx := sandbox.Sandbox{State: sandbox.StateRunning, SandboxID: "sbx", TeamID: uuid.New(), AutoPause: true, EndTime: now.Add(-time.Hour)}
+		sbx := sandbox.Sandbox{State: sandbox.StateRunning, SandboxID: "sbx", TeamID: uuid.New(), ExecutionID: "exec-1", AutoPause: true, EndTime: now.Add(-time.Hour)}
+		if sw.noExecution {
+			sbx.ExecutionID = ""
+		}
+		sbx.AutoPauseFilesystemOnly = sw.fsOnlyAutoPause
 		if sw.refusedFor > 0 {
 			sbx.RefusedSince = now.Add(-sw.refusedFor)
 			sbx.RefusedUntil = sbx.RefusedSince.Add(10 * time.Second)
-			if sw.stale {
+		}
+		if sw.envdRefusedFor > 0 {
+			sbx.EnvdRefusedSince = now.Add(-sw.envdRefusedFor)
+			sbx.EnvdRefusedUntil = sbx.EnvdRefusedSince.Add(10 * time.Second)
+			sbx.RefusedUntil = sbx.EnvdRefusedUntil
+		}
+		if sw.stale {
+			if sw.refusedFor > 0 {
 				sbx.RefusedSince = now.Add(-3 * time.Hour)
-				sbx.RefusedUntil = sbx.RefusedSince.Add(10 * time.Second)
 			}
+			if sw.envdRefusedFor > 0 {
+				sbx.EnvdRefusedSince = now.Add(-3 * time.Hour)
+				sbx.EnvdRefusedUntil = now.Add(-3*time.Hour + 10*time.Second)
+			}
+			sbx.RefusedUntil = now.Add(-3*time.Hour + 10*time.Second)
 		}
 		e.evictSandbox(t.Context(), sbx)
 
@@ -352,8 +405,27 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(0), memoryErr: refusal})
 
-		assert.Equal(t, []bool{false, true}, requests)
+		assert.Equal(t, []request{memory, fsOnly}, requests)
 		assert.Equal(t, map[string]int64{"admission_refused": 1}, degraded)
+	})
+
+	t.Run("zero budget: a checkpoint in flight never degrades", func(t *testing.T) {
+		t.Parallel()
+
+		held := fmt.Errorf("failed to auto pause sandbox: %w", sandbox.PauseRefusedCheckpointInProgressError{})
+		requests, degraded := run(t, sweep{budgetMs: ms(0), graceMs: ms(0), memoryErr: held})
+
+		assert.Equal(t, []request{memory}, requests, "the next sweep retries the same memory pause")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("zero budget: an unresponsive guest never degrades to filesystem-only", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{budgetMs: ms(0), graceMs: ms(-1), memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests, "the next sweep retries the same memory pause")
+		assert.Empty(t, degraded)
 	})
 
 	t.Run("positive budget: a refusal inside it is retried later", func(t *testing.T) {
@@ -361,7 +433,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(60000), refusedFor: 5 * time.Second, memoryErr: refusal})
 
-		assert.Equal(t, []bool{false}, requests, "the only request this sweep was the memory pause")
+		assert.Equal(t, []request{memory}, requests, "the only request this sweep was the memory pause")
 		assert.Empty(t, degraded)
 	})
 
@@ -370,7 +442,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(1000), refusedFor: 5 * time.Second, memoryErr: refusal})
 
-		assert.Equal(t, []bool{false, true}, requests)
+		assert.Equal(t, []request{memory, fsOnly}, requests)
 		assert.Equal(t, map[string]int64{"overstay_budget": 1}, degraded)
 	})
 
@@ -379,7 +451,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(1000), refusedFor: 5 * time.Second, stale: true, memoryErr: refusal})
 
-		assert.Equal(t, []bool{false}, requests, "a new episode starts now, so the budget has not run out")
+		assert.Equal(t, []request{memory}, requests, "a new episode starts now, so the budget has not run out")
 		assert.Empty(t, degraded)
 	})
 
@@ -388,7 +460,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(1000), refusedFor: 5 * time.Second, stale: true})
 
-		assert.Equal(t, []bool{false}, requests, "the node took the memory snapshot")
+		assert.Equal(t, []request{memory}, requests, "the node took the memory snapshot")
 		assert.Empty(t, degraded)
 	})
 
@@ -397,7 +469,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(1000), refusedFor: 5 * time.Second})
 
-		assert.Equal(t, []bool{false}, requests)
+		assert.Equal(t, []request{memory}, requests)
 		assert.Empty(t, degraded)
 	})
 
@@ -406,7 +478,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(-1), refusedFor: 3 * time.Hour, memoryErr: refusal})
 
-		assert.Equal(t, []bool{false}, requests)
+		assert.Equal(t, []request{memory}, requests)
 		assert.Empty(t, degraded)
 	})
 
@@ -415,7 +487,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{})
 
-		assert.Equal(t, []bool{false}, requests)
+		assert.Equal(t, []request{memory}, requests)
 		assert.Empty(t, degraded)
 	})
 
@@ -424,7 +496,7 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{memoryErr: refusal})
 
-		assert.Equal(t, []bool{false}, requests)
+		assert.Equal(t, []request{memory}, requests)
 		assert.Empty(t, degraded)
 	})
 
@@ -433,8 +505,119 @@ func TestEvictSandbox_DegradeDecision(t *testing.T) {
 
 		requests, degraded := run(t, sweep{budgetMs: ms(0), memoryErr: refusal, fsOnlyErr: errors.New("node unreachable")})
 
-		assert.Equal(t, []bool{false, true}, requests)
+		assert.Equal(t, []request{memory, fsOnly}, requests)
 		assert.Empty(t, degraded, "nothing landed, so nothing is counted")
+	})
+
+	t.Run("negative grace: an unresponsive guest is retried every sweep", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(-1), envdRefusedFor: 3 * time.Hour, memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests, "every sweep's pause stays strict")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("zero grace: the first envd refusal is retried non-strict in the same sweep", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(0), memoryErr: hung})
+
+		assert.Equal(t, []request{memory, bypassed}, requests)
+		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded)
+	})
+
+	t.Run("positive grace: an envd refusal inside it is retried later", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(60000), envdRefusedFor: 5 * time.Second, memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests, "the only request this sweep was the probed memory pause")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("positive grace: an envd refusal past it is retried non-strict in the same sweep", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(1000), envdRefusedFor: 5 * time.Second, memoryErr: hung})
+
+		assert.Equal(t, []request{memory, bypassed}, requests)
+		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded)
+	})
+
+	t.Run("filesystem-only auto-pause: an envd refusal inside the grace is retried later", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(60000), envdRefusedFor: 5 * time.Second, fsOnlyAutoPause: true, fsOnlyErr: hung})
+
+		assert.Equal(t, []request{fsOnly}, requests, "the only request this sweep was the probed filesystem-only pause")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("filesystem-only auto-pause: an envd refusal past the grace is never bypassed, the sandbox stays running", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(1000), envdRefusedFor: 5 * time.Second, fsOnlyAutoPause: true, fsOnlyErr: hung})
+
+		assert.Equal(t, []request{fsOnly}, requests, "a filesystem-only capture of a hung guest cannot quiesce the rootfs; no unprobed retry, and never a memory capture the customer did not ask for")
+		assert.Equal(t, map[string]int64{"envd_grace_fs_only": 1}, degraded)
+	})
+
+	t.Run("a stale envd episode is a fresh one for the grace", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(1000), envdRefusedFor: 5 * time.Second, stale: true, memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests, "the grace counts from this refusal, not a stamp hours old")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("the node's episode and the guest agent's are measured apart", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(1000), refusedFor: 5 * time.Second, memoryErr: hung})
+		assert.Equal(t, []request{memory}, requests, "a live node episode past the grace does not shorten it: the guest agent's own episode starts now")
+		assert.Empty(t, degraded)
+
+		requests, degraded = run(t, sweep{budgetMs: ms(1000), envdRefusedFor: 5 * time.Second, memoryErr: refusal})
+		assert.Equal(t, []request{memory}, requests, "a live envd episode past the budget does not shorten it: the node's own episode starts now")
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("past the grace, a record with no execution id withholds the bypass", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(1000), envdRefusedFor: 5 * time.Second, noExecution: true, memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests, "the sandbox stays for the next sweep")
+		assert.Equal(t, map[string]int64{"envd_grace_withheld": 1}, degraded)
+	})
+
+	t.Run("past the grace and the budget, an envd refusal is retried non-strict and still never filesystem-only", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{budgetMs: ms(0), graceMs: ms(0), memoryErr: hung})
+
+		assert.Equal(t, []request{memory, bypassed}, requests)
+		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded)
+	})
+
+	t.Run("the default grace retries a fresh envd refusal", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{memoryErr: hung})
+
+		assert.Equal(t, []request{memory}, requests)
+		assert.Empty(t, degraded)
+	})
+
+	t.Run("a bypassed pause that fails is requested and counted", func(t *testing.T) {
+		t.Parallel()
+
+		requests, degraded := run(t, sweep{graceMs: ms(0), memoryErr: hung, bypassErr: errors.New("node unreachable")})
+
+		assert.Equal(t, []request{memory, bypassed}, requests)
+		assert.Equal(t, map[string]int64{"envd_grace": 1}, degraded, "the non-strict pause was asked for; its failure is a pause failure")
 	})
 }
 

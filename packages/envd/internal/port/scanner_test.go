@@ -1,11 +1,13 @@
 package port
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/shirou/gopsutil/v4/net"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestScannerSubscriber_Signal_ReturnsOnExit verifies that Signal unparks when
@@ -94,4 +96,38 @@ func TestScanner_Destroy_ExitsWithStalledSubscriber(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ScanAndBroadcast did not exit after Destroy() — goroutine leaked")
 	}
+}
+
+// TestNewForwarder_SubscribesOnlyWhenForwarding: a forwarder that cannot
+// forward must not hold a subscription nobody drains, which would park the
+// scan loop on its first broadcast, and must tell envd not to run the scan.
+func TestNewForwarder_SubscribesOnlyWhenForwarding(t *testing.T) {
+	t.Parallel()
+
+	for name, unavailable := range map[string]error{
+		"available":   nil,
+		"unavailable": errors.New("no forwarding in this build"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			l := zerolog.Nop()
+			scanner := NewScanner(&l, time.Hour)
+			f := newForwarder(&l, scanner, nil, unavailable)
+
+			forwards := unavailable == nil
+			assert.Equal(t, forwards, f.Forwards())
+			assert.Equal(t, forwards, scanner.subs.Count() == 1)
+		})
+	}
+
+	t.Run("this build", func(t *testing.T) {
+		t.Parallel()
+
+		l := zerolog.Nop()
+		scanner := NewScanner(&l, time.Hour)
+		f := NewForwarder(&l, scanner, nil)
+
+		assert.Equal(t, forwardingAvailable() == nil, f.Forwards())
+	})
 }

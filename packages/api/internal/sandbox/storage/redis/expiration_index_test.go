@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -69,6 +68,9 @@ func TestParseExpirationMember(t *testing.T) {
 		{"empty rest", teamID + ":", "", "", "", false},
 		{"non-uuid execution tag", teamID + ":sbx-1:not-a-uuid", "", "", "", false},
 		{"too many parts", teamID + ":sbx-1:x:" + execID, "", "", "", false},
+		{"empty team part", ":sbx-1:" + execID, "", "", "", false},
+		{"braced sandbox part", teamID + ":{sbx-1}:" + execID, "", "", "", false},
+		{"non-uuid team part", "not-a-uuid:sbx-1:" + execID, "", "", "", false},
 	}
 
 	for _, tt := range tests {
@@ -96,16 +98,15 @@ func TestAddRemove_ExecutionScopedMember(t *testing.T) {
 	member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
 
-	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID))
+	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID, sbx.ExecutionID))
 	requireMemberAbsent(t, client, member)
 
 	err := client.Get(t.Context(), getSandboxKey(teamID.String(), sbx.SandboxID)).Err()
 	require.ErrorIs(t, err, redis.Nil)
 }
 
-// TestRemove_DoesNotUnindexFreshExecution replays Race B: a lockless Add for
-// a fresh execution of the same sandbox ID lands its index write while Remove
-// of the old execution runs. The fresh execution's member must survive.
+// Remove's ZREM is scoped to the execution it deleted: a member of another
+// execution of the same sandbox ID survives it.
 func TestRemove_DoesNotUnindexFreshExecution(t *testing.T) {
 	t.Parallel()
 
@@ -117,8 +118,7 @@ func TestRemove_DoesNotUnindexFreshExecution(t *testing.T) {
 	old := makeIndexedSandbox(teamID, sandboxID, uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(-time.Minute))
 	require.NoError(t, storage.Add(t.Context(), old))
 
-	// Simulate the concurrent Add's first phase (index write) for a fresh
-	// execution landing before Remove's cleanup.
+	// Another execution's member, written outside Remove's lock.
 	fresh := makeIndexedSandbox(teamID, sandboxID, uuid.NewString(), time.Now(), time.Now().Add(time.Hour))
 	freshMember := expirationMember(teamID.String(), sandboxID, fresh.ExecutionID)
 	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{
@@ -126,7 +126,7 @@ func TestRemove_DoesNotUnindexFreshExecution(t *testing.T) {
 		Member: freshMember,
 	}).Err())
 
-	require.NoError(t, storage.Remove(t.Context(), teamID, sandboxID))
+	require.NoError(t, storage.Remove(t.Context(), teamID, sandboxID, old.ExecutionID))
 
 	// Old execution's member removed, fresh execution's member intact.
 	requireMemberAbsent(t, client, expirationMember(teamID.String(), sandboxID, old.ExecutionID))
@@ -213,7 +213,7 @@ func TestExpiredItems_SweepsInvalidMember(t *testing.T) {
 	requireMemberAbsent(t, client, legacyMember)
 
 	// Healer restores eviction coverage in the current member format.
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, healed)
 	requireMemberScore(t, client, execMember, float64(sbx.EndTime.UnixMilli()))
@@ -287,11 +287,7 @@ func TestExpiredItems_DefersSandboxInTransition(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
-	storage, err := NewStorage(client, provider)
-	require.NoError(t, err)
+	storage, reader := newMeteredTestStorage(t, client)
 
 	teamID := uuid.New()
 	sbx := makeIndexedSandbox(teamID, "sbx-pausing", uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(-time.Minute))
@@ -415,7 +411,7 @@ func TestHeal_RestoresMissingMember(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, items)
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, healed)
 	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
@@ -438,7 +434,7 @@ func TestHeal_SkipsYoungSandbox(t *testing.T) {
 	member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)
 	require.NoError(t, client.ZRem(t.Context(), globalExpirationSet, member).Err())
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 	requireMemberAbsent(t, client, member)
@@ -481,7 +477,7 @@ func TestHeal_ManySandboxesMultipleBatches(t *testing.T) {
 	_, err := pipe.Exec(t.Context())
 	require.NoError(t, err)
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, len(missingMembers), healed)
 
@@ -492,7 +488,7 @@ func TestHeal_ManySandboxesMultipleBatches(t *testing.T) {
 	}
 
 	// Idempotent: a second pass heals nothing.
-	healed, err = storage.healExpirationIndex(t.Context())
+	healed, _, err = storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 }
@@ -511,7 +507,7 @@ func TestHeal_DoesNotClobberExistingScore(t *testing.T) {
 	freshScore := float64(time.Now().Add(2 * time.Hour).UnixMilli())
 	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{Score: freshScore, Member: member}).Err())
 
-	healed, err := storage.healExpirationIndex(t.Context())
+	healed, _, err := storage.healExpirationIndex(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, healed)
 	requireMemberScore(t, client, member, freshScore)

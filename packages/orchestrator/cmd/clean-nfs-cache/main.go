@@ -218,10 +218,10 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		l.Info(ctx, "feature flag present", zap.String("flag", featureflags.CleanNFSCache.String()))
 	}
 
-	// Percent mode: resolve the target from df. Skipped when a byte budget is set
-	// (the budget replaces it — and on EFS df is meaningless anyway).
+	// Percent mode: resolve the target from the filesystem size. Skipped when a byte budget is set
+	// (the budget replaces it — and on EFS the reported size is meaningless anyway).
 	if opts.TargetBytesToDelete == 0 && opts.MaxCacheBytes == 0 && opts.TargetDiskUsagePercent > 0 {
-		diskInfo, derr := cleaner.GetDiskInfo(ctx, opts.Path)
+		diskInfo, derr := cleaner.GetDiskInfo(opts.Path)
 		if derr != nil {
 			tel.Shutdown(ctx)
 
@@ -233,7 +233,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 			tel.Shutdown(ctx)
 
 			return opts, nil, nil, nil, nil, fmt.Errorf(
-				"df reports %d bytes total for %s — an elastic filesystem (Amazon EFS reports 8 EiB), so disk-usage-target-percent can never trigger; set --max-cache-bytes instead",
+				"statfs reports %d bytes total for %s — an elastic filesystem (Amazon EFS reports 8 EiB), so disk-usage-target-percent can never trigger; set --max-cache-bytes instead",
 				diskInfo.Total, opts.Path)
 		}
 		targetDiskUsage := uint64(opts.TargetDiskUsagePercent / 100 * float64(diskInfo.Total))

@@ -197,37 +197,43 @@ func TestValidateBudgetOptions(t *testing.T) {
 	}
 }
 
-func TestParseDiskInfo(t *testing.T) {
+func TestNewDiskInfo(t *testing.T) {
 	t.Parallel()
 
 	t.Run("real disk", func(t *testing.T) {
 		t.Parallel()
-		out := "Filesystem     1024-blocks      Used Available Capacity Mounted on\n" +
-			"/dev/sdb        1055762868 950186580  51884024      95% /mnt/disks/e2b\n"
-		d, err := parseDiskInfo(out)
+		d, err := newDiskInfo(4096, 263940717, 26394071)
 		require.NoError(t, err)
-		require.Equal(t, uint64(1055762868)*1024, d.Total)
-		require.Equal(t, uint64(950186580)*1024, d.Used)
+		require.Equal(t, uint64(263940717)*4096, d.Total)
+		require.Equal(t, uint64(263940717-26394071)*4096, d.Used)
 		require.False(t, d.Elastic())
 	})
 
 	t.Run("amazon efs reports 8 EiB", func(t *testing.T) {
 		t.Parallel()
 		// 2^53 KiB = 2^63 B: overflows int64 to a negative total; must stay exact.
-		// `df -Pk`: the 48-character source stays on the data line. Plain `df`
-		// would wrap it onto its own line and shift every number by a field.
-		out := "Filesystem                                        1024-blocks  Used        Available Capacity Mounted on\n" +
-			"fs-0123456789abcdef0.efs.us-east-1.amazonaws.com:/ 9007199254740992 0 9007199254740992       0% /cache\n"
-		d, err := parseDiskInfo(out)
+		d, err := newDiskInfo(1024, 1<<53, 1<<53)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1)<<63, d.Total)
 		require.Equal(t, uint64(0), d.Used)
 		require.True(t, d.Elastic())
 	})
 
-	t.Run("header only", func(t *testing.T) {
+	t.Run("more free blocks than blocks", func(t *testing.T) {
 		t.Parallel()
-		_, err := parseDiskInfo("Filesystem 1024-blocks Used Available Capacity Mounted on\n")
+		_, err := newDiskInfo(4096, 100, 101)
 		require.Error(t, err)
 	})
+}
+
+func TestGetDiskInfo(t *testing.T) {
+	t.Parallel()
+
+	d, err := GetDiskInfo(t.TempDir())
+	require.NoError(t, err)
+	require.Positive(t, d.Total)
+	require.LessOrEqual(t, d.Used, d.Total)
+
+	_, err = GetDiskInfo(filepath.Join(t.TempDir(), "missing"))
+	require.Error(t, err)
 }

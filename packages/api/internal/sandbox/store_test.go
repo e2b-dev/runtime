@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
+	reservationsredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -105,6 +106,18 @@ func (n *NoOpReservationStorage) Reserve(_ context.Context, _ uuid.UUID, _ strin
 }
 
 func (n *NoOpReservationStorage) Release(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+func (n *NoOpReservationStorage) ClaimKill(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
+	return "", true, nil
+}
+
+func (n *NoOpReservationStorage) ReleaseKillClaim(_ context.Context, _ uuid.UUID, _, _ string) error {
+	return nil
+}
+
+func (n *NoOpReservationStorage) WaitForStart(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
 
@@ -344,4 +357,51 @@ func TestAdd_ConcurrentCalls(t *testing.T) {
 			assert.NoError(t, err, "expected sandbox %s to be in storage", sandboxID)
 		}
 	})
+}
+
+// A removal naming a predecessor execution that reaches the store after its
+// successor wrote its record, and before the successor's start finished, is
+// refused by the storage and leaves the successor's start reservation alone:
+// a request waiting on that start keeps waiting instead of failing with no
+// result. The successor's own removal still releases the reservation, so a
+// new start is admitted.
+func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	client := redis_utils.SetupInstance(t)
+	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
+	require.NoError(t, err)
+	go storage.Start(ctx)
+	t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
+	reservations := reservationsredis.NewReservationStorage(client, storage.Notifier())
+	store := NewStore(storage, reservations, Callbacks{})
+
+	successor := createTestSandbox()
+	successor.ExecutionID = uuid.NewString()
+	teamID, sandboxID := successor.TeamID, successor.SandboxID
+	finishStart, _, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart)
+	_, waitForStart, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NoError(t, storage.Add(ctx, successor))
+
+	store.Remove(ctx, teamID, sandboxID, uuid.NewString())
+
+	pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	_, err = waitForStart(pending)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the successor's start is still pending")
+	stored, err := storage.Get(ctx, teamID, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, successor.ExecutionID, stored.ExecutionID)
+
+	store.Remove(ctx, teamID, sandboxID, successor.ExecutionID)
+
+	_, err = storage.Get(ctx, teamID, sandboxID)
+	require.ErrorIs(t, err, ErrNotFound)
+	finishStart, _, err = reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart, "the successor's removal released its reservation")
 }

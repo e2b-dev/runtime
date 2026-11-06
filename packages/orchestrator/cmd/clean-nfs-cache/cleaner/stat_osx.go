@@ -32,3 +32,13 @@ func (c *Cleaner) statInDir(df *os.File, filename string) (*Stat, error) {
 	// performance on OS X does not matter, so just use the full stat
 	return c.stat(filepath.Join(df.Name(), filename))
 }
+
+// GetDiskInfo reads the size of the filesystem holding path.
+func GetDiskInfo(path string) (DiskInfo, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return DiskInfo{}, fmt.Errorf("statfs %s: %w", path, err)
+	}
+
+	return newDiskInfo(uint64(st.Bsize), st.Blocks, st.Bfree)
+}

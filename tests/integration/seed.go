@@ -121,9 +121,9 @@ VALUES ($1, $2)
 
 	// Team
 	err = authdb.TestsRawSQL(ctx, `
-INSERT INTO teams (id, email, name, tier, is_blocked, slug)
-VALUES ($1, $2, $3, $4, $5, $6)
-`, data.TeamID, "test-integration@e2b.dev", "E2B", "base_v1", false, "e2b-integration")
+INSERT INTO teams (id, email, name, is_blocked, slug)
+VALUES ($1, $2, $3, $4, $5)
+`, data.TeamID, "test-integration@e2b.dev", "E2B", false, "e2b-integration")
 	if err != nil {
 		return fmt.Errorf("failed to create team: %w", err)
 	}

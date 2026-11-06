@@ -1233,6 +1233,23 @@ func (u *Userfaultfd) PageSize() int64 {
 	return int64(u.pageSize)
 }
 
+// PageStateBytes returns the registered guest memory in each page-tracker
+// state, in bytes. NotPresent is what no other state covers: memory the guest
+// has not faulted in.
+func (u *Userfaultfd) PageStateBytes() (bytes [block.NumStates]int64) {
+	var guest, tracked int64
+	for _, r := range u.ma.Regions {
+		guest += int64(r.Size)
+	}
+	for state, pages := range u.pageTracker.Counts() {
+		bytes[state] = int64(pages) * int64(u.pageSize)
+		tracked += bytes[state]
+	}
+	bytes[block.NotPresent] = max(0, guest-tracked)
+
+	return bytes
+}
+
 func (u *Userfaultfd) Close() error {
 	// Hold the write lock for the entire close sequence so that:
 	//   (a) any Prefault() caller currently holding RLock finishes its

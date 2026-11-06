@@ -9,6 +9,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestCheckTeamBanned(t *testing.T) {
@@ -16,17 +17,17 @@ func TestCheckTeamBanned(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		team    authqueries.Team
+		team    dbtypes.Team
 		wantErr bool
 	}{
 		{
 			name:    "not banned",
-			team:    authqueries.Team{IsBanned: false},
+			team:    dbtypes.Team{IsBanned: false},
 			wantErr: false,
 		},
 		{
 			name:    "banned",
-			team:    authqueries.Team{IsBanned: true},
+			team:    dbtypes.Team{IsBanned: true},
 			wantErr: true,
 		},
 	}
@@ -52,11 +53,11 @@ func TestCheckTeamDeletedRefusesOnlyADeletedTeam(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
-		team    authqueries.Team
+		team    dbtypes.Team
 		allowed bool
 	}{
-		"live team":    {team: authqueries.Team{}, allowed: true},
-		"deleted team": {team: authqueries.Team{IsBlocked: true, DeletedAt: new(time.Now())}, allowed: false},
+		"live team":    {team: dbtypes.Team{}, allowed: true},
+		"deleted team": {team: dbtypes.Team{IsBlocked: true, DeletedAt: new(time.Now())}, allowed: false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -98,24 +99,24 @@ func TestCheckTeamBlocked(t *testing.T) {
 		},
 		{
 			name:    "not blocked",
-			team:    types.NewTeam(authqueries.GetTeamByTeamIDRow{Team: authqueries.Team{IsBlocked: false}}),
+			team:    types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: false}),
 			wantErr: false,
 		},
 		{
 			name:       "blocked without reason",
-			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{Team: authqueries.Team{IsBlocked: true}}),
+			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true}),
 			wantErr:    true,
 			wantMsgHas: "team is blocked",
 		},
 		{
 			name:       "blocked with reason",
-			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{Team: authqueries.Team{IsBlocked: true, BlockedReason: &reason}}),
+			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
 			wantErr:    true,
 			wantMsgHas: reason,
 		},
 		{
 			name:       "blocked with empty reason pointer",
-			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{Team: authqueries.Team{IsBlocked: true, BlockedReason: &empty}}),
+			team:       types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &empty}),
 			wantErr:    true,
 			wantMsgHas: "team is blocked",
 		},

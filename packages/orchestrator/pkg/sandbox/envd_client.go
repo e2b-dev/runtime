@@ -4,15 +4,22 @@ package sandbox
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process/processconnect"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 )
 
 // envdReadMaxBytes caps one envd Connect message, on the wire and after
@@ -123,10 +130,64 @@ func NewEnvdProcessClient(baseURL string, timeout time.Duration) processconnect.
 // envdHTTPClient never follows a redirect: the guest writes envd's responses.
 func envdHTTPClient(rt http.RoundTripper, timeout time.Duration) http.Client {
 	return http.Client{
-		Timeout:   timeout,
-		Transport: rt,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Timeout:       timeout,
+		Transport:     rt,
+		CheckRedirect: refuseEnvdRedirect,
 	}
+}
+
+type envdSandboxKey struct{}
+
+// WithEnvdSandbox returns ctx naming the sandbox its envd requests are for, so
+// a refused redirect is reported with the sandbox's identity.
+func WithEnvdSandbox(ctx context.Context, sbx sbxlogger.LoggerMetadata) context.Context {
+	return context.WithValue(ctx, envdSandboxKey{}, sbx.LoggerMetadata())
+}
+
+// envdRedirectHostMaxLen caps the guest-written redirect host in a log line.
+const envdRedirectHostMaxLen = 256
+
+// refuseEnvdRedirect returns the redirect to the caller and warns: envd never
+// redirects, so one means the guest has changed what answers the host.
+//
+// net/http returns some 3xx responses without calling it: one without a
+// Location, a 300, 304 or 305, and a 307 or 308 whose body cannot be re-sent.
+// None of them could take the host elsewhere, so they go unreported and fail
+// their caller on the status alone.
+func refuseEnvdRedirect(req *http.Request, via []*http.Request) error {
+	orig := via[0]
+	fields := []zap.Field{
+		zap.Int("status_code", req.Response.StatusCode),
+		zap.String("method", orig.Method),
+		zap.String("path", orig.URL.Path),
+		zap.String("envd_host", orig.Host),
+		zap.String("redirect_host", truncateRedirectHost(req.URL.Host)),
+	}
+	if sbx, ok := req.Context().Value(envdSandboxKey{}).(sbxlogger.SandboxMetadata); ok {
+		fields = append(fields,
+			logger.WithSandboxID(sbx.SandboxID),
+			logger.WithTeamID(sbx.TeamID),
+			logger.WithTemplateID(sbx.TemplateID),
+		)
+	}
+
+	logger.L().Warn(req.Context(), "envd answered with a redirect, refused it", fields...)
+	envdRedirectsRefused.Add(req.Context(), 1, metric.WithAttributes(attribute.Int("status_code", req.Response.StatusCode)))
+
+	return http.ErrUseLastResponse
+}
+
+// truncateRedirectHost cuts host to envdRedirectHostMaxLen bytes on a rune
+// boundary: url.Parse admits non-ASCII bytes in a host.
+func truncateRedirectHost(host string) string {
+	if len(host) <= envdRedirectHostMaxLen {
+		return host
+	}
+
+	cut := envdRedirectHostMaxLen
+	for cut > 0 && !utf8.RuneStart(host[cut]) {
+		cut--
+	}
+
+	return host[:cut]
 }

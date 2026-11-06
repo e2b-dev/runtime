@@ -6,7 +6,7 @@ import (
 )
 
 type Team struct {
-	*authqueries.Team
+	*dbtypes.Team
 
 	Limits          *TeamLimits
 	ProjectSettings dbtypes.ProjectSettings
@@ -41,8 +41,10 @@ func newTeamLimits(
 // same columns, so their rows convert to this type; a lookup whose column list
 // drifts stops compiling at the conversion.
 func NewTeam(row authqueries.GetTeamByTeamIDRow) *Team {
+	team := dbtypes.TeamFromRow(row)
+
 	return &Team{
-		Team:            &row.Team,
+		Team:            &team,
 		Limits:          newTeamLimits(&row),
 		ProjectSettings: dbtypes.ProjectSettingsFromRow(row),
 	}

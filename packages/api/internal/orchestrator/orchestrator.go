@@ -72,7 +72,9 @@ type Orchestrator struct {
 	createdSandboxesCounter       metric.Int64Counter
 	resumeOriginNodeRemapCounter  metric.Int64Counter
 	pauseRefusalRestoreCounter    metric.Int64Counter
+	networkUpdateUnstoredCounter  metric.Int64Counter
 	noCeilingPlacementsCounter    metric.Int64Counter
+	featureUnsupportedCounter     metric.Int64Counter
 	teamMetricsObserver           *metrics.TeamObserver
 	accessTokenGenerator          *sandbox.AccessTokenGenerator
 	createdCounter                metric.Int64Counter
@@ -211,6 +213,9 @@ func New(
 		localClusterOwnsOrchestrators: skipNomadSync,
 	}
 
+	// Before the node sync can write a record.
+	o.updateStoreWriteForm(ctx)
+
 	o.sandboxStore = sandbox.NewStore(
 		redisStorage,
 		redisreservations.NewReservationStorage(redisClient, redisStorage.Notifier()),
@@ -247,7 +252,7 @@ func New(
 		return nil, fmt.Errorf("failed to setup metrics: %w", err)
 	}
 
-	go o.updateBestOfKConfig(ctx)
+	go o.refreshFlagConfig(ctx)
 
 	return &o, nil
 }
@@ -345,9 +350,10 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// updateBestOfKConfig periodically updates the BestOfK algorithm configuration from feature flags
-func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second) // Check for config updates every 30 seconds
+// refreshFlagConfig re-reads the flag-driven settings every 30 s: the
+// BestOfK placement configuration and the sandbox store's write key form.
+func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -355,10 +361,8 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			config := getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages)
-
-			// Update the config
-			o.placementAlgorithm.UpdateConfig(config)
+			o.placementAlgorithm.UpdateConfig(getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages))
+			o.updateStoreWriteForm(ctx)
 		}
 	}
 }

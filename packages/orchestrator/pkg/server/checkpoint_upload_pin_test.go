@@ -7,14 +7,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/codes"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
@@ -190,4 +194,96 @@ func TestCheckpointHandoff(t *testing.T) {
 		res.completeUpload(t.Context(), nil)
 		f.returned(t, template.UploadLanded)
 	})
+}
+
+// peerTable is a peer registry kept in memory.
+type peerTable struct {
+	mu    sync.Mutex
+	nodes map[string]string
+}
+
+func (p *peerTable) Register(_ context.Context, buildID string, _ time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.nodes[buildID] = "this-node"
+
+	return nil
+}
+
+func (p *peerTable) Lookup(_ context.Context, buildID string) (string, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	addr, ok := p.nodes[buildID]
+
+	return addr, ok, nil
+}
+
+func (p *peerTable) Unregister(_ context.Context, buildID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.nodes, buildID)
+
+	return nil
+}
+
+// A snapshot is offered to peers from the moment it is cached, before its
+// upload ends. Only a landed upload marks it uploaded and sends peers to
+// storage. A retained capture whose upload failed stays offered from this
+// node, its only copy, while an ordinary pause withdraws it.
+func TestAdvertiseSnapshot(t *testing.T) {
+	t.Parallel()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.PeerToPeerChunkTransferFlag.Key()).VariationForAll(true))
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	for _, tc := range []struct {
+		name           string
+		retained       bool
+		putErr         error
+		abandon        bool
+		wantOutcome    template.UploadOutcome
+		wantAdvertised bool
+	}{
+		{name: "pause upload fails", putErr: storage.ErrObjectNotExist, wantOutcome: template.UploadFailed},
+		{name: "retained upload lands", retained: true, wantOutcome: template.UploadLanded},
+		{name: "retained upload fails", retained: true, putErr: storage.ErrObjectNotExist, wantOutcome: template.UploadFailed, wantAdvertised: true},
+		{name: "retained capture abandoned", retained: true, abandon: true, wantOutcome: template.UploadAbandoned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			const buildID = "build-1"
+			peers := &peerTable{nodes: map[string]string{}}
+			s := &Server{
+				info:                &service.ServiceInfo{},
+				featureFlags:        ff,
+				peerRegistry:        peers,
+				uploadedBuilds:      ttlcache.New[string, struct{}](),
+				uploadFailedCounter: noop.Int64Counter{},
+			}
+			res, f := checkpointUpload(t, tc.putErr)
+			res.completeUpload, res.abandonUpload = s.advertiseSnapshot(t.Context(), res.upload, buildID, tc.retained)
+
+			_, offered, err := peers.Lookup(t.Context(), buildID)
+			require.NoError(t, err)
+			require.True(t, offered, "a target can read the snapshot before its upload ends")
+
+			if tc.abandon {
+				res.abandonUpload(t.Context(), errors.New("capture discarded"))
+			} else {
+				s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+				s.uploadsWG.Wait()
+			}
+
+			f.returned(t, tc.wantOutcome)
+			landed := tc.wantOutcome == template.UploadLanded
+			assert.Equal(t, landed, s.uploadedBuilds.Has(buildID), "only a landed build sends peers to storage")
+			_, offered, err = peers.Lookup(t.Context(), buildID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAdvertised, offered)
+		})
+	}
 }

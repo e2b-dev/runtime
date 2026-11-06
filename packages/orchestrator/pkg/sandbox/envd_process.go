@@ -64,5 +64,5 @@ func (s *Sandbox) startEnvdProcess(
 	}
 	grpc.SetUserHeader(req.Header(), user)
 
-	return pc.Start(ctx, req)
+	return pc.Start(WithEnvdSandbox(ctx, s), req)
 }

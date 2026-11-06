@@ -32,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/socket"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
@@ -186,6 +187,10 @@ type Process struct {
 
 	client *apiClient
 
+	// mmdsStoreMissing is set when Resume found the restored microVM without an
+	// MMDS store; a pause records it, since its envd then keeps its token.
+	mmdsStoreMissing atomic.Bool
+
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
 	// stop's acknowledgement wait keys on them.
@@ -286,6 +291,21 @@ func NewProcess(
 	return p, nil
 }
 
+// refuseReapedProcess refuses readiness for a process the wait owner already
+// reaped: its API socket can accept a connection just before it exits.
+func refuseReapedProcess(exit *utils.ErrorOnce) error {
+	select {
+	case <-exit.Done():
+		if err := exit.Error(); err != nil {
+			return err
+		}
+
+		return errFirecrackerExitedBeforeSocketReadiness
+	default:
+		return nil
+	}
+}
+
 func (p *Process) configure(
 	ctx context.Context,
 	sbxMetadata sbxlogger.LoggerMetadata,
@@ -350,18 +370,9 @@ func (p *Process) configure(
 	}()
 
 	// Wait for the FC process to start so we can use FC API
-	err = socket.Wait(startCtx, p.firecrackerSocketPath)
+	err = socket.WaitAccepting(startCtx, p.firecrackerSocketPath)
 	if err == nil {
-		// The socket file and process exit can become observable together. Do
-		// not publish readiness for a process the wait owner already reaped.
-		select {
-		case <-p.Exit.Done():
-			err = p.Exit.Error()
-			if err == nil {
-				err = errFirecrackerExitedBeforeSocketReadiness
-			}
-		default:
-		}
+		err = refuseReapedProcess(p.Exit)
 	}
 	if err != nil {
 		errMsg := fmt.Errorf("error waiting for fc socket: %w", err)
@@ -436,89 +447,9 @@ func (p *Process) Create(
 	}
 	telemetry.ReportEvent(ctx, "set fc metrics")
 
-	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
-	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
-	kernelArgs := buildKernelArgs(ipv4, options).String()
-	err = p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
+	err = p.configureGuestDevices(ctx, firecrackerVcpuCount, memoryMB, hugePages, freePageReporting, freePageHinting, options, txRateLimit, driveRateLimit)
 	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting fc boot source %q): %w", p.kernelPath, err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "set fc boot source config")
-
-	// Rootfs
-	rootfsPath, err := p.rootfsProvider.Path()
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error getting rootfs path: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "got rootfs path")
-
-	err = utils.SymlinkForce(rootfsPath, p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error symlinking rootfs: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "symlinked rootfs")
-
-	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit))
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting fc drivers config: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "set fc drivers config")
-
-	err = p.client.setNetworkInterface(ctx, p.slot.VpeerName(), p.slot.TapName(), p.slot.TapMAC(), buildRateLimiter(txRateLimit))
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting fc network config: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "set fc network config")
-
-	err = p.client.setMachineConfig(ctx, firecrackerVcpuCount, memoryMB, hugePages)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting fc machine config: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "set fc machine config")
-
-	// A template this host rejects is corrupt metadata or a placement bug.
-	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() {
-		err = p.client.setCPUConfig(ctx, *options.CPUTemplate)
-		if err != nil {
-			fcStopErr := p.Stop(ctx)
-
-			return errors.Join(fmt.Errorf("error setting fc cpu config: %w", err), fcStopErr)
-		}
-		telemetry.ReportEvent(ctx, "set fc cpu config",
-			attribute.String("fc.cpu_template", options.CPUTemplate.Digest()),
-		)
-	}
-
-	err = p.client.setEntropyDevice(ctx)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
-	}
-	telemetry.ReportEvent(ctx, "set fc entropy config")
-
-	if freePageReporting || freePageHinting {
-		if err := p.client.installBalloon(ctx, freePageReporting, freePageHinting); err != nil {
-			fcStopErr := p.Stop(ctx)
-
-			return errors.Join(fmt.Errorf("error installing balloon device: %w", err), fcStopErr)
-		}
-		telemetry.ReportEvent(ctx, "installed balloon device",
-			attribute.Bool("balloon.free_page_reporting", freePageReporting),
-			attribute.Bool("balloon.free_page_hinting", freePageHinting),
-		)
+		return err
 	}
 
 	// Write MMDS metadata before boot when an access token is provided (the
@@ -551,6 +482,123 @@ func (p *Process) Create(
 
 	telemetry.ReportEvent(ctx, "started fc")
 	p.moveLimitToVcpuThreads(ctx, cgroupHandle, cpuQuota, firecrackerVcpuCount)
+
+	return nil
+}
+
+// configureGuestDevices sends Firecracker the boot source, the disk, the
+// network interface with its MMDS binding, the machine, the CPU template, the
+// entropy device and the balloon: the part of Create the guest profile decides.
+// Every error already carries the Stop of the process.
+func (p *Process) configureGuestDevices(
+	ctx context.Context,
+	firecrackerVcpuCount int64,
+	memoryMB int64,
+	hugePages bool,
+	freePageReporting bool,
+	freePageHinting bool,
+	options ProcessOptions,
+	txRateLimit RateLimiterConfig,
+	driveRateLimit RateLimiterConfig,
+) error {
+	boot := p.Versions.GuestProfile().Boot()
+	// Built before the first request, so a misconfigured profile never half-configures the VM.
+	machineConfig, err := newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("invalid guest profile machine config: %w", err), fcStopErr)
+	}
+
+	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
+	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
+	kernelArgs := buildKernelArgs(ipv4, options).String()
+	if boot.NoKernelArgs {
+		kernelArgs = ""
+	}
+	err = p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error setting fc boot source %q): %w", p.kernelPath, err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "set fc boot source config")
+
+	// Rootfs
+	rootfsPath, err := p.rootfsProvider.Path()
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error getting rootfs path: %w", err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "got rootfs path")
+
+	err = utils.SymlinkForce(rootfsPath, p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error symlinking rootfs: %w", err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "symlinked rootfs")
+
+	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit), !boot.NoRootDevice, boot.BlockSectorSize)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error setting fc drivers config: %w", err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "set fc drivers config")
+
+	err = p.client.setNetworkInterface(ctx, p.slot.VpeerName(), p.slot.TapName(), p.slot.TapMAC(), buildRateLimiter(txRateLimit))
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error setting fc network config: %w", err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "set fc network config")
+
+	err = p.client.setMachineConfig(ctx, machineConfig)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error setting fc machine config: %w", err), fcStopErr)
+	}
+	telemetry.ReportEvent(ctx, "set fc machine config", attribute.Int("machine.config_extra_fields", len(boot.MachineConfigExtra)))
+
+	// A template this host rejects is corrupt metadata or a placement bug.
+	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() && !boot.NoCPUTemplate {
+		err = p.client.setCPUConfig(ctx, *options.CPUTemplate)
+		if err != nil {
+			fcStopErr := p.Stop(ctx)
+
+			return errors.Join(fmt.Errorf("error setting fc cpu config: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "set fc cpu config",
+			attribute.String("fc.cpu_template", options.CPUTemplate.Digest()),
+		)
+	}
+
+	if !boot.NoEntropy {
+		err = p.client.setEntropyDevice(ctx)
+		if err != nil {
+			fcStopErr := p.Stop(ctx)
+
+			return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "set fc entropy config")
+	}
+
+	if (freePageReporting || freePageHinting) && !boot.NoBalloon {
+		if err := p.client.installBalloon(ctx, freePageReporting, freePageHinting); err != nil {
+			fcStopErr := p.Stop(ctx)
+
+			return errors.Join(fmt.Errorf("error installing balloon device: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "installed balloon device",
+			attribute.Bool("balloon.free_page_reporting", freePageReporting),
+			attribute.Bool("balloon.free_page_hinting", freePageHinting),
+		)
+	}
 
 	return nil
 }
@@ -703,10 +751,10 @@ func (p *Process) moveLimitToVcpuThreads(ctx context.Context, h *cgroup.CgroupHa
 	})
 }
 
-// ResumeInPlace resumes the already-running Firecracker process after an
-// in-place snapshot (Pause + CreateSnapshot). Unlike Resume it does not
-// reconfigure FC, wait for a UFFD socket or load a snapshot — the process,
-// memory and rootfs overlay are all still live; it only un-pauses the VM.
+// ResumeInPlace runs the vCPUs of the live Firecracker process after an
+// in-place snapshot (Pause + CreateSnapshot) or RestorePaused. It loads
+// nothing, so a retry after an uncertain result acts on the same VM, and a
+// running VM answers it as resumed.
 func (p *Process) ResumeInPlace(
 	ctx context.Context,
 ) error {
@@ -720,6 +768,8 @@ func (p *Process) ResumeInPlace(
 	return nil
 }
 
+// Resume restores the snapshot with RestorePaused, runs its vCPUs and then
+// sets the MMDS metadata. A failure stops the process.
 func (p *Process) Resume(
 	ctx context.Context,
 	sbxMetadata sbxlogger.SandboxMetadata,
@@ -737,6 +787,54 @@ func (p *Process) Resume(
 ) error {
 	ctx, span := tracer.Start(ctx, "resume-fc")
 	defer span.End()
+
+	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
+	if err != nil {
+		return err
+	}
+
+	err = p.client.resumeVM(ctx)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error resuming vm: %w", err), fcStopErr)
+	}
+
+	err = p.SetMmds(ctx, sbxMetadata, accessToken)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(err, fcStopErr)
+	}
+
+	telemetry.SetAttributes(
+		ctx,
+		attribute.String("sandbox.cmd.dir", p.cmd.Dir),
+		attribute.String("sandbox.cmd.path", p.cmd.Path),
+	)
+
+	return nil
+}
+
+// RestorePaused starts the process and loads the snapshot into a paused VM,
+// configured except for the MMDS metadata, so the guest has executed nothing
+// when it returns. The sandbox package's Factory.ResumeVM runs it, sets the
+// metadata and waits for envd. A failure stops the process.
+func (p *Process) RestorePaused(
+	ctx context.Context,
+	sbxMetadata sbxlogger.SandboxMetadata,
+	uffdSocketPath string,
+	snapfile template.File,
+	uffdReady chan struct{},
+	cgroupHandle *cgroup.CgroupHandle,
+	useMemfd bool,
+	useSyncWP bool,
+	cpuTemplate string,
+	txRateLimit RateLimiterConfig,
+	driveRateLimit RateLimiterConfig,
+	vcpus ResumeVcpus,
+) error {
+	ifaceID, netOverride := p.resumeNetworkOverride()
 
 	// Symlink /dev/null to the rootfs link path, so we can start the FC process without the rootfs and then symlink the real rootfs.
 	err := utils.SymlinkForce("/dev/null", p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
@@ -822,6 +920,8 @@ func (p *Process) Resume(
 		snapfile,
 		useMemfd,
 		useSyncWP,
+		p.Versions.GuestProfile().Restore().ClockRealtime,
+		netOverride,
 		cpuTemplate,
 		p.teamID,
 	)
@@ -833,14 +933,14 @@ func (p *Process) Resume(
 
 	// Always apply/reset rate limits before resuming so any limits
 	// persisted in the snapshot are overwritten by the current config.
-	if setErr := p.client.setTxRateLimit(ctx, p.slot.VpeerName(), txRateLimit); setErr != nil {
+	if setErr := p.client.setTxRateLimit(ctx, ifaceID, txRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting TX rate limit: %w", setErr), fcStopErr)
 	}
 	telemetry.ReportEvent(ctx, "configured tx rate limit")
 
-	if setErr := p.client.setDriveRateLimit(ctx, rootfsDriveID, driveRateLimit); setErr != nil {
+	if setErr := p.client.setDriveRateLimit(ctx, p.Versions.RootfsDriveIDOrDefault(), driveRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting drive rate limit: %w", setErr), fcStopErr)
@@ -848,7 +948,7 @@ func (p *Process) Resume(
 	telemetry.ReportEvent(ctx, "configured drive rate limit")
 
 	// The snapshot is loaded and the vCPU threads exist, paused: limit them before the guest runs.
-	// Keep this before resumeVM and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
+	// Keep this before any resume and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
 	err = p.limitVcpusBeforeResume(ctx, cgroupHandle, vcpus.Target, p.resolveVmVcpus(ctx, vcpus.Snapshot, vcpus.Recorded))
 	if err := vcpuCapResumeErr(err, vcpus.RefuseSmallerVM); err != nil {
 		fcStopErr := p.Stop(ctx)
@@ -856,13 +956,12 @@ func (p *Process) Resume(
 		return errors.Join(err, fcStopErr)
 	}
 
-	err = p.client.resumeVM(ctx)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
+	return nil
+}
 
-		return errors.Join(fmt.Errorf("error resuming vm: %w", err), fcStopErr)
-	}
-
+// SetMmds writes the sandbox's MMDS metadata into the running process. A
+// failure leaves the process to the caller.
+func (p *Process) SetMmds(ctx context.Context, sbxMetadata sbxlogger.SandboxMetadata, accessToken *string) error {
 	meta := &MmdsMetadata{
 		SandboxID:            sbxMetadata.SandboxID,
 		TemplateID:           sbxMetadata.TemplateID,
@@ -875,20 +974,37 @@ func (p *Process) Resume(
 		meta.AccessTokenHash = keys.HashAccessToken("")
 	}
 
-	err = p.client.setMmds(ctx, meta)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
-
-		return errors.Join(fmt.Errorf("error setting mmds: %w", err), fcStopErr)
+	if err := p.setRestoredMmds(ctx, meta); err != nil {
+		return fmt.Errorf("error setting mmds: %w", err)
 	}
 
-	telemetry.SetAttributes(
-		ctx,
-		attribute.String("sandbox.cmd.dir", p.cmd.Dir),
-		attribute.String("sandbox.cmd.path", p.cmd.Path),
-	)
+	return nil
+}
+
+// setRestoredMmds writes the metadata a restored guest reads. An image made
+// outside this runtime can carry no MMDS store, nor does any snapshot paused
+// from it, and Firecracker cannot add one after a restore: for a profile whose
+// restore declares the store optional, that refusal is tolerated and
+// remembered; any other refusal, and any under another profile, fails.
+func (p *Process) setRestoredMmds(ctx context.Context, meta *MmdsMetadata) error {
+	err := p.client.setMmds(ctx, meta)
+	if err == nil || !p.Versions.GuestProfile().Restore().MmdsStoreOptional || !mmdsStoreMissing(err) {
+		return err
+	}
+
+	p.mmdsStoreMissing.Store(true)
+	logger.L().Warn(ctx, "the snapshot carries no MMDS store, skipping the metadata put",
+		logger.WithSandboxID(meta.SandboxID),
+		zap.Error(err))
+	telemetry.ReportEvent(ctx, "mmds store missing in the snapshot")
 
 	return nil
+}
+
+// MmdsStoreMissing reports whether this microVM was restored without an MMDS
+// store, so its envd accepts only the token it already holds.
+func (p *Process) MmdsStoreMissing() bool {
+	return p != nil && p.mmdsStoreMissing.Load()
 }
 
 func (p *Process) Pid() (int, error) {
@@ -1354,4 +1470,18 @@ func (p *Process) CreateSnapshot(ctx context.Context, snapfilePath string) error
 	defer childSpan.End()
 
 	return p.client.createSnapshot(ctx, snapfilePath)
+}
+
+// resumeNetworkOverride names the interface a restore addresses (the device
+// name the snapshot bakes; see Config) and, for a snapshot baked with a
+// foreign name, the override that reopens it on the slot's tap.
+func (p *Process) resumeNetworkOverride() (ifaceID string, override *models.NetworkOverride) {
+	ifaceID = p.Versions.NetIfaceIDOrDefault(p.slot.VpeerName())
+	if p.Versions.NetIfaceID == "" {
+		return ifaceID, nil
+	}
+
+	tapName := p.slot.TapName()
+
+	return ifaceID, &models.NetworkOverride{IfaceID: &ifaceID, HostDevName: &tapName}
 }

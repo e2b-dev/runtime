@@ -8,7 +8,6 @@ import (
 	"io"
 	"math/rand"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,7 +50,7 @@ type Options struct {
 	Path string
 
 	// Deletion stops once builds totalling TargetBytesToDelete have been queued.
-	// TargetDiskUsagePercent is resolved to TargetBytesToDelete via df before the
+	// TargetDiskUsagePercent is resolved to TargetBytesToDelete via statfs before the
 	// run (in main); the cleaner itself only reads TargetBytesToDelete.
 	TargetBytesToDelete    uint64
 	TargetDiskUsagePercent float64
@@ -488,7 +487,7 @@ func chunkOnDiskBytes(name string) uint64 {
 	return n
 }
 
-// ElasticTotalThreshold is the df total above which a filesystem is treated as
+// ElasticTotalThreshold is the filesystem total above which a filesystem is treated as
 // elastic (no provisioned capacity). Amazon EFS reports 2^63 bytes (8 EiB); no
 // real disk under this cache is anywhere near 1 PiB.
 const ElasticTotalThreshold uint64 = 1 << 50
@@ -497,59 +496,21 @@ type DiskInfo struct {
 	Total, Used uint64
 }
 
-// Elastic reports whether the df total is a pseudo capacity (EFS and the like),
+// Elastic reports whether the filesystem total is a pseudo capacity (EFS and the like),
 // on which a disk-usage percent target can never fire.
 func (d DiskInfo) Elastic() bool {
 	return d.Total > ElasticTotalThreshold
 }
 
-func GetDiskInfo(ctx context.Context, path string) (DiskInfo, error) {
-	// -P (POSIX) keeps every filesystem on one line. Without it GNU df wraps a
-	// mount source longer than 20 characters onto its own line — every EFS DNS
-	// name is — and the numbers end up on the next line, shifted by one field.
-	// -k pins the unit to 1024-byte blocks: under POSIXLY_CORRECT, -P alone
-	// switches to 512-byte blocks and the parser would read half the size.
-	cmd := exec.CommandContext(ctx, "df", "-Pk", path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return DiskInfo{}, fmt.Errorf("df command failed: %w: %s", err, strings.TrimSpace(string(out)))
+// newDiskInfo matches df: reserved blocks count as used. Keep it uint64: an EFS
+// total (2^53 KiB blocks) times 1024 is exactly 2^63, which overflows int64 to
+// a negative number and silently zeroes the percent math. More free blocks than
+// blocks is an error: Used would wrap to nearly 2^64 and the percent target
+// would evict every cold build.
+func newDiskInfo(blockSize, blocks, free uint64) (DiskInfo, error) {
+	if free > blocks {
+		return DiskInfo{}, fmt.Errorf("filesystem reports %d free blocks of %d", free, blocks)
 	}
 
-	return parseDiskInfo(string(out))
-}
-
-// parseDiskInfo reads the first data row of `df -Pk` output. Sizes are parsed as
-// uint64: an EFS total (2^53 KiB) times 1024 is exactly 2^63, which overflows
-// int64 to a negative number and silently zeroes the percent math.
-func parseDiskInfo(out string) (DiskInfo, error) {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 2 {
-		return DiskInfo{}, fmt.Errorf("unexpected df output: %q", strings.TrimSpace(out))
-	}
-
-	for i := 1; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-
-		totalSize, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			return DiskInfo{}, fmt.Errorf("failed to parse total size: %w", err)
-		}
-
-		usedSpace, err := strconv.ParseUint(fields[2], 10, 64)
-		if err != nil {
-			return DiskInfo{}, fmt.Errorf("failed to parse available space: %w", err)
-		}
-
-		// "df" returns kilobytes, not bytes
-		return DiskInfo{Total: totalSize * 1024, Used: usedSpace * 1024}, nil
-	}
-
-	return DiskInfo{}, fmt.Errorf("could not parse mount point from df output: %q", strings.TrimSpace(out))
+	return DiskInfo{Total: blocks * blockSize, Used: (blocks - free) * blockSize}, nil
 }

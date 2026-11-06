@@ -38,3 +38,33 @@ func TestMapStopping(t *testing.T) {
 	sandboxes.MarkStopped(t.Context(), tracked)
 	assert.Equal(t, 0, sandboxes.Stopping())
 }
+
+// StoppingMatching counts only the stopping lifecycles match accepts; a
+// live one never counts.
+func TestMapStoppingMatching(t *testing.T) {
+	t.Parallel()
+
+	hugePages := func(sbx *Sandbox) bool { return sbx.Config.HugePages }
+	sandboxes := NewSandboxesMap()
+
+	r, err := sandboxes.Reserve("sandbox-1")
+	require.NoError(t, err)
+	huge := testMapSandbox(t, "lifecycle-huge")
+	huge.Config.HugePages = true
+	require.NoError(t, r.MarkRunning(t.Context(), huge))
+	r.Release()
+	assert.Equal(t, 0, sandboxes.StoppingMatching(hugePages), "a live sandbox is not stopping")
+
+	plain := testMapSandbox(t, "lifecycle-plain")
+	plain.Runtime.SandboxID = "sandbox-2"
+	sandboxes.TrackLifecycle(t.Context(), plain)
+	assert.Equal(t, 1, sandboxes.Stopping())
+	assert.Equal(t, 0, sandboxes.StoppingMatching(hugePages), "match leaves the other lifecycle out")
+
+	require.True(t, sandboxes.MarkStopping(t.Context(), "sandbox-1", "lifecycle-huge"))
+	assert.Equal(t, 1, sandboxes.StoppingMatching(hugePages))
+
+	sandboxes.MarkStopped(t.Context(), huge)
+	sandboxes.MarkStopped(t.Context(), plain)
+	assert.Equal(t, 0, sandboxes.StoppingMatching(hugePages))
+}

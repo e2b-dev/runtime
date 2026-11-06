@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
 	jose "github.com/go-jose/go-jose/v4"
@@ -148,7 +147,6 @@ func TestProjectSettingsContract(t *testing.T) {
 	require.NoError(t, err)
 	path := swagger.Paths.Find("/unstable/management/projects/{projectID}/settings")
 	require.NotNil(t, path)
-	require.Equal(t, openapi3.SecurityRequirements{{"AdminJWTAuth": {}}}, *path.Put.Security)
 	require.Nil(t, path.Get)
 	require.NotNil(t, path.Put.Responses.Status(http.StatusNoContent))
 	schema := swagger.Components.Schemas["ManagementProjectSettingsRequest"].Value

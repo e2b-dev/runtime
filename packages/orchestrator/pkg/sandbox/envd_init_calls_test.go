@@ -18,8 +18,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // initTestSeq makes each fixture's baked envd version unique per invocation, so a test
@@ -126,11 +130,52 @@ func loggedAttempts(t *testing.T, version string) int64 {
 func newInitTestSandbox(url string, attempt time.Duration) (*Sandbox, string) {
 	version := uniqueEnvdVersion("0.9.0")
 
-	return &Sandbox{Metadata: &Metadata{
-		internalConfig: internalConfig{EnvdInitRequestTimeout: attempt, envdServerURLOverride: url},
-		Config:         NewConfig(Config{Envd: EnvdMetadata{Version: version}, RamMB: testSandboxRamMB}),
-		Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + version},
-	}}, version
+	return &Sandbox{
+		Metadata: &Metadata{
+			internalConfig: internalConfig{EnvdInitRequestTimeout: attempt, envdServerURLOverride: url},
+			Config:         NewConfig(Config{Envd: EnvdMetadata{Version: version}, RamMB: testSandboxRamMB}),
+			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + version},
+		},
+		egressProxy: network.NewNoopEgressProxy(),
+		networkHook: NoopNetworkAssignHook{},
+	}, version
+}
+
+func TestWaitForEnvdRetryRecordsStartedAtOnce(t *testing.T) {
+	t.Parallel()
+
+	for _, held := range []bool{false, true} {
+		t.Run(fmt.Sprintf("held=%t", held), func(t *testing.T) {
+			t.Parallel()
+
+			e := newHeldEnvd(t)
+			s, version := newHeldSandbox(t, e.srv.URL, "0.10.0", held)
+			s.Resources = &Resources{memory: uffd.NewNoopMemory(4096, 4096)}
+			s.process = &fc.Process{Exit: utils.NewErrorOnce()}
+			t.Cleanup(func() { s.process.Exit.SetSuccess() })
+			preparedAt := time.Unix(1, 0)
+			s.SetStartedAt(preparedAt)
+
+			cancelled, cancel := context.WithCancel(t.Context())
+			cancel()
+			require.ErrorIs(t, s.WaitForEnvd(cancelled, StartTypeResume, time.Second), context.Canceled)
+			assert.Equal(t, preparedAt, s.GetStartedAt())
+			attempts := exitsByType(counterPointsFor(t, telemetry.EnvdInitCalls, version))
+			require.NotEmpty(t, attempts)
+
+			require.NoError(t, s.WaitForEnvd(t.Context(), StartTypeResume, 5*time.Second))
+			startedAt := s.GetStartedAt()
+			require.True(t, startedAt.After(preparedAt), "a successful retry replaces the preparation timestamp")
+			require.NoError(t, s.WaitForEnvd(t.Context(), StartTypeResume, 5*time.Second))
+			assert.Equal(t, startedAt, s.GetStartedAt(), "a later readiness check preserves the successful start")
+			assert.Equal(t, attempts, exitsByType(counterPointsFor(t, telemetry.EnvdInitCalls, version)), "retries do not duplicate startup metrics")
+
+			s.SetStoppedAt(startedAt.Add(time.Minute))
+			duration, ok := s.ExecutionDuration()
+			require.True(t, ok)
+			assert.Equal(t, time.Minute, duration)
+		})
+	}
 }
 
 // stallingEnvd answers /init with 204 and reportedVersion, after holding the first

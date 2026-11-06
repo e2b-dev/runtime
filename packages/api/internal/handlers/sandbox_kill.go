@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/db"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
@@ -59,17 +60,17 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 
 	telemetry.ReportEvent(ctx, "killing sandbox")
 
-	killedOrRemoved := false
-
-	err = a.orchestrator.RemoveSandbox(ctx, teamID, sandboxID, sandbox.RemoveOpts{
+	claimID, killedOrRemoved, err := a.orchestrator.KillAndClaim(ctx, teamID, sandboxID, sandbox.RemoveOpts{
 		Action: sandbox.StateActionKill,
 		Reason: sandbox.KillReasonRequest,
 	})
 	switch {
 	case err == nil:
-		killedOrRemoved = true
-	case errors.Is(err, orchestrator.ErrSandboxNotFound):
-		logger.L().Debug(ctx, "Running sandbox not found", logger.WithSandboxID(sandboxID))
+	case errors.Is(err, orchestrator.ErrSandboxStillResuming):
+		logger.L().Info(ctx, "Refusing to delete sandbox: it is still resuming", logger.WithSandboxID(sandboxID), zap.Error(err))
+		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox %s is still resuming; retry the delete", sandboxID))
+
+		return
 	case errors.Is(err, orchestrator.ErrSandboxOperationFailed):
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error killing sandbox: %s", err))
 
@@ -81,12 +82,15 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 		return
 	}
 
-	// remove any snapshots when the sandbox is not running
-	deleteSnapshotErr := a.deleteSnapshot(ctx, sandboxID, teamID)
+	deleteCtx, cancel := context.WithTimeout(ctx, orchestrator.SnapshotDeleteTimeout)
+	deleteSnapshotErr := a.deleteSnapshot(deleteCtx, sandboxID, teamID)
+	cancel()
 	switch {
 	case errors.Is(deleteSnapshotErr, db.ErrSnapshotNotFound):
 		// no snapshot found, nothing to do
 	case deleteSnapshotErr != nil:
+		// The snapshot survived, so let resumes through again.
+		a.orchestrator.ReleaseKillClaim(context.WithoutCancel(ctx), teamID, sandboxID, claimID)
 		telemetry.ReportError(ctx, "error deleting sandbox", deleteSnapshotErr)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error deleting sandbox: %s", deleteSnapshotErr))
 

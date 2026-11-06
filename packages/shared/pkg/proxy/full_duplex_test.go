@@ -356,6 +356,41 @@ func TestProxyAnswersBeforeARejectedUploadHasEnded(t *testing.T) {
 	}
 }
 
+// TestProxyRefusesAnUploadAtTheLimitWithoutWaitingForIt: a refusal before
+// the request reaches the sandbox, as at the connection limit, answers an
+// upload that has not arrived at once and announces the close, whether the
+// client waits for 100 Continue or has sent only part of a large body.
+func TestProxyRefusesAnUploadAtTheLimitWithoutWaitingForIt(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		request string
+		sent    int
+	}{
+		{"waiting for 100 Continue", "Expect: 100-continue\r\nContent-Length: 1000\r\n\r\n", 0},
+		{"most of a large upload outstanding", "Content-Length: 1048576\r\n\r\n", 64 << 10},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			limits := &ConnectionLimitConfig{Limiter: connlimit.NewConnectionLimiter(), GetMaxLimit: func(context.Context) int { return 0 }}
+			proxy, port, err := newTestProxyWithConnLimit(t, destinationFor(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}, "limited"), limits)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = proxy.Close() })
+			conn, reader := dialProxy(t, int(port))
+			require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+			_, err = fmt.Fprintf(conn, "POST /files HTTP/1.1\r\nHost: example\r\n%s", tt.request)
+			require.NoError(t, err)
+			_, err = conn.Write(bytes.Repeat([]byte("u"), tt.sent))
+			require.NoError(t, err)
+			resp, err := http.ReadResponse(reader, nil)
+			require.NoError(t, err, "the refusal arrives without the upload")
+			require.NoError(t, resp.Body.Close())
+			assert.GreaterOrEqual(t, resp.StatusCode, 400)
+			assert.True(t, resp.Close, "the refusal announces the close")
+		})
+	}
+}
+
 // A sandbox that answers once it has the whole upload must not cost the client
 // its connection, whether or not the answer is a refusal.
 func TestProxyKeepsConnectionWhenSandboxReadsTheUpload(t *testing.T) {
@@ -737,7 +772,7 @@ func TestHandlerEnablesFullDuplex(t *testing.T) {
 
 	recorder := &fullDuplexRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx-1-00000000.localhost/", nil)
-	handler(p, destinationFor(backendURL, "full-duplex-pin"), nil).ServeHTTP(recorder, req)
+	handler(p, destinationFor(backendURL, "full-duplex-pin"), nil, options{}).ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 	assert.True(t, recorder.enabled, "the handler should enable full duplex before proxying")

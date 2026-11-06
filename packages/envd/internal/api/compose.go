@@ -76,6 +76,9 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lstat: a destination that is itself a link to a source is replaced,
+	// not aliased.
+	destInfo, destErr := os.Lstat(destPath)
 	resolvedSources := make([]string, len(req.SourcePaths))
 	for i, src := range req.SourcePaths {
 		resolved, err := permissions.ExpandAndResolve(src, u, a.defaults.Workdir)
@@ -100,6 +103,12 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 
 		if !info.Mode().IsRegular() {
 			jsonError(w, http.StatusBadRequest, fmt.Errorf("source path is not a regular file: %s", src))
+
+			return
+		}
+
+		if destErr == nil && os.SameFile(info, destInfo) {
+			jsonError(w, http.StatusBadRequest, fmt.Errorf("source path %q cannot be the same as destination", src))
 
 			return
 		}
@@ -190,7 +199,13 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lstat: a source that is a link to the composed file is removed as the
+	// link it is, and only the composed file's own entry is kept.
+	composed, composedErr := os.Stat(destPath)
 	for _, srcPath := range resolvedSources {
+		if info, err := os.Lstat(srcPath); err == nil && composedErr == nil && os.SameFile(info, composed) {
+			continue
+		}
 		os.Remove(srcPath)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -318,6 +319,34 @@ func TestCheckMMDSHash(t *testing.T) {
 
 		assert.False(t, matches)
 		assert.False(t, exists)
+	})
+
+	t.Run("retries a failed read once while the request is live", func(t *testing.T) {
+		t.Parallel()
+		var reads atomic.Int32
+		mmdsClient := &mockMMDSClient{err: assert.AnError, onGet: func() { reads.Add(1) }}
+		api := newTestAPI(nil, mmdsClient)
+
+		api.checkMMDSHash(ctx, secureTokenPtr("any-token"))
+
+		assert.Equal(t, int32(2), reads.Load())
+	})
+
+	t.Run("does not retry a read that failed because the request ended", func(t *testing.T) {
+		t.Parallel()
+		reqCtx, cancel := context.WithCancel(ctx)
+		var reads atomic.Int32
+		mmdsClient := &mockMMDSClient{err: context.Canceled, onGet: func() {
+			reads.Add(1)
+			cancel()
+		}}
+		api := newTestAPI(nil, mmdsClient)
+
+		matches, exists := api.checkMMDSHash(reqCtx, secureTokenPtr("any-token"))
+
+		assert.False(t, matches)
+		assert.False(t, exists)
+		assert.Equal(t, int32(1), reads.Load())
 	})
 
 	t.Run("returns false, false when MMDS returns empty hash with non-nil request", func(t *testing.T) {

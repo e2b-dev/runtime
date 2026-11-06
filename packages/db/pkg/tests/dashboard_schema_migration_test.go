@@ -55,7 +55,8 @@ func TestDashboardSchemaMigration(t *testing.T) {
 				}
 			}
 
-			teamID := testutils.CreateTestTeam(t, db)
+			// The schema may be rewound to before teams.tier became optional.
+			teamID := seedTeam(t, sqlDB, "dashboard-schema")
 			templateID := testutils.CreateTestTemplate(t, db, teamID)
 			const description = "Default template"
 

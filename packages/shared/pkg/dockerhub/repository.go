@@ -2,6 +2,7 @@ package dockerhub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,9 @@ import (
 )
 
 type RemoteRepositoryProvider string
+
+// ErrRepositoryAccessDenied identifies failures of the platform's registry credentials.
+var ErrRepositoryAccessDenied = errors.New("configured image proxy is unavailable")
 
 const (
 	GCPStorageProvider   RemoteRepositoryProvider = "GCP_REMOTE_REPOSITORY"

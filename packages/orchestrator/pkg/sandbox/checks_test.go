@@ -10,7 +10,7 @@ import (
 // TestChecks_StopBeforeStart_DoesNotStartHealthLoop is a regression test for
 // the Checks start/stop race.
 //
-// Checks.Start is launched in its own goroutine (go sbx.Checks.Start(execCtx)),
+// Checks.Start is launched in its own goroutine (go sbx.Checks().Start(execCtx)),
 // so the sandbox teardown path can run Checks.Stop before that goroutine is
 // scheduled. execCtx is derived via context.WithoutCancel and never
 // auto-cancels, so the logHealth ticker loop is only ever ended by Stop

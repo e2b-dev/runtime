@@ -89,7 +89,7 @@ spec:
           image: clickhouse/clickhouse-server:25.8.30.16
           restartPolicy: Always
           env:
-            - { name: CLICKHOUSE_DB, value: default }
+            # No CLICKHOUSE_DB: see the compose service.
             - { name: CLICKHOUSE_USER, value: clickhouse }
             - { name: CLICKHOUSE_PASSWORD, value: clickhouse }
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
@@ -263,8 +263,8 @@ spec:
         # sidecar gates the next init container on its startup probe, and only
         # `ready` should wait for the dashboard, as on compose ---
         # dashboard-api holds the api's admin token (the same Secret key) and
-        # reads the same three stores on loopback. No identity provider is
-        # configured, so /v1/management answers 401; nothing here calls it.
+        # reads the same three stores on loopback. No admin JWT issuer is
+        # configured, so its admin routes accept only that token.
         - name: dashboard-api
           image: E2B_DASHBOARD_API_IMAGE
           restartPolicy: Always

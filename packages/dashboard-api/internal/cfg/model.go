@@ -29,9 +29,6 @@ type Config struct {
 	RedisTLSEnabled  bool   `env:"REDIS_TLS_ENABLED"`
 	RedisPassword    string `env:"REDIS_PASSWORD"`
 
-	OrySDKURL          string `env:"ORY_SDK_URL"`
-	OryProjectAPIToken string `env:"ORY_PROJECT_API_TOKEN,unset"`
-
 	// TLS is the mutual TLS settings of the HTTP port.
 	TLS TLSConfig
 }
@@ -40,8 +37,6 @@ type FailureCondition string
 
 const (
 	FailureConditionMissingRedisConnection FailureCondition = "missing_redis_connection"
-	FailureConditionMissingOrySDKURL       FailureCondition = "missing_ory_sdk_url"
-	FailureConditionMissingOryProjectToken FailureCondition = "missing_ory_project_api_token"
 )
 
 type FailureError struct {
@@ -91,35 +86,5 @@ func Parse() (Config, error) {
 		err = newFailureError(FailureConditionMissingRedisConnection, "at least one of REDIS_URL or REDIS_CLUSTER_URL must be set")
 	}
 
-	if err == nil {
-		err = validateOryConfig(&config)
-	}
-
 	return config, err
-}
-
-// validateOryConfig keeps the two Ory variables all-or-nothing. Setting
-// neither is a supported configuration: the service starts without an
-// identity provider, API-key flows are unaffected, and the endpoints that
-// need one answer 503. Setting exactly one is always a mistake.
-func validateOryConfig(config *Config) error {
-	if config.OrySDKURL == "" && config.OryProjectAPIToken == "" {
-		return nil
-	}
-
-	if config.OrySDKURL == "" {
-		return newFailureError(FailureConditionMissingOrySDKURL, "ORY_SDK_URL is required when ORY_PROJECT_API_TOKEN is set")
-	}
-	if config.OryProjectAPIToken == "" {
-		return newFailureError(FailureConditionMissingOryProjectToken, "ORY_PROJECT_API_TOKEN is required when ORY_SDK_URL is set")
-	}
-
-	return nil
-}
-
-// IdentityProviderConfigured reports whether an identity provider is
-// configured. Parse guarantees both Ory variables are set when either is, so
-// one of them decides.
-func (c Config) IdentityProviderConfigured() bool {
-	return c.OrySDKURL != ""
 }

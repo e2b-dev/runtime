@@ -66,8 +66,11 @@ func NewStore(
 	}
 }
 
-// Add inserts a sandbox into the store. A non-nil creation argument fires the
-// AsyncNewlyCreatedSandbox callback; nil indicates a sync/reconcile re-add.
+// Add inserts a sandbox into the store. A non-nil creation argument is a
+// create's write, which fires the AsyncNewlyCreatedSandbox callback and never
+// overwrites a stored record of the same execution (a retried or delayed
+// duplicate of it must not take the record back); nil is a sync/reconcile
+// re-add, which replaces whatever is stored.
 func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMetadata) error {
 	sbxlogger.I(sandbox).Debug(ctx, "Adding sandbox to cache",
 		zap.Bool("newly_created", creation != nil),
@@ -81,7 +84,12 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 		sandbox.EndTime = sandbox.StartTime.Add(sandbox.MaxInstanceLength)
 	}
 
-	err := s.storage.Add(ctx, sandbox)
+	var err error
+	if creation != nil {
+		err = s.storage.Add(ctx, sandbox)
+	} else {
+		err = s.storage.Replace(ctx, sandbox)
+	}
 	if err != nil {
 		return err
 	}
@@ -98,9 +106,19 @@ func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sa
 	return s.storage.Get(ctx, teamID, sandboxID)
 }
 
-func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID string) {
-	err := s.storage.Remove(ctx, teamID, sandboxID)
-	if err != nil {
+// Remove deletes the sandbox's record when it is the expected execution's,
+// or any execution's when none is expected, and releases its reservation. A
+// record another execution took over is left in place with its reservation:
+// the successor's own lifecycle releases it, and a release here would drop
+// a start still pending and the result its waiters read.
+func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) {
+	err := s.storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
+	switch {
+	case errors.Is(err, ErrExecutionMismatch):
+		logger.L().Info(ctx, "Sandbox record superseded, left in place", logger.WithSandboxID(sandboxID))
+
+		return
+	case err != nil:
 		logger.L().Error(ctx, "Failed to remove sandbox from storage", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
 
@@ -130,8 +148,8 @@ func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID s
 	return s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
 }
 
-func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, retryAfter time.Duration) (Sandbox, error) {
-	return s.storage.RestoreRunning(ctx, transition, retryAfter)
+func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, opts RestoreOpts) (Sandbox, error) {
+	return s.storage.RestoreRunning(ctx, transition, opts)
 }
 
 func (s *Store) RestoreCheckpointed(ctx context.Context, transition StateTransition, placement *orchestrator.SandboxNetworkPlacement) (Sandbox, error) {
@@ -173,4 +191,16 @@ func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string,
 	}
 
 	return finishStart, waitForStart, nil
+}
+
+func (s *Store) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (string, bool, error) {
+	return s.reservations.ClaimKill(ctx, teamID, sandboxID)
+}
+
+func (s *Store) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID, claimID string) error {
+	return s.reservations.ReleaseKillClaim(ctx, teamID, sandboxID, claimID)
+}
+
+func (s *Store) WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+	return s.reservations.WaitForStart(ctx, teamID, sandboxID)
 }

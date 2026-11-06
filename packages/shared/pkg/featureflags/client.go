@@ -118,25 +118,7 @@ func NewClientWithDatasource(source *ldtestdata.TestDataSource) (*Client, error)
 // The same names, with serviceVersion, identify the process as a LaunchDarkly
 // application; see applicationInfo.
 func NewClient(deploymentEnvironment, serviceName, serviceVersion string, opts ...Option) (*Client, error) {
-	if firecrackerVersionsEnvErr != nil {
-		return nil, firecrackerVersionsEnvErr
-	}
-
-	if launchDarklyApiKey == "" {
-		c, err := NewClientWithDatasource(launchDarklyOfflineStore)
-		if err != nil {
-			return nil, err
-		}
-
-		return newClient(c.ld, true, deploymentEnvironment, serviceName), nil
-	}
-
-	cfg := ldclient.Config{
-		ApplicationInfo:  applicationInfo(deploymentEnvironment, serviceName, serviceVersion),
-		ServiceEndpoints: serviceEndpoints(),
-	}
-
-	return connect(launchDarklyApiKey, cfg, waitForInit, deploymentEnvironment, serviceName, opts...)
+	return NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion, ldlog.Info, opts...)
 }
 
 // connect makes the SDK client and waits up to wait for its first payload.
@@ -183,9 +165,13 @@ func NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion st
 		ServiceEndpoints: serviceEndpoints(),
 	}
 
-	if launchDarklyApiKey == "" {
+	sdkKey, err := configureAuthentication(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if sdkKey == "" {
 		cfg.DataSource = launchDarklyOfflineStore
-		// Disable all outbound network traffic when no API key is configured.
 		cfg.Events = ldcomponents.NoEvents()
 		cfg.DiagnosticOptOut = true
 		ldClient, err := ldclient.MakeCustomClient("", cfg, 0)
@@ -196,7 +182,15 @@ func NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion st
 		return newClient(ldClient, true, deploymentEnvironment, serviceName), nil
 	}
 
-	return connect(launchDarklyApiKey, cfg, waitForInit, deploymentEnvironment, serviceName, opts...)
+	return connect(sdkKey, cfg, waitForInit, deploymentEnvironment, serviceName, opts...)
+}
+
+func configureAuthentication(cfg *ldclient.Config) (string, error) {
+	if launchDarklyApiKey != "" {
+		return launchDarklyApiKey, nil
+	}
+
+	return configureOAuth(cfg)
 }
 
 // LAUNCH_DARKLY_BASE_URL redirects streaming, polling and events together.
@@ -208,9 +202,7 @@ func serviceEndpoints() interfaces.ServiceEndpoints {
 	return interfaces.ServiceEndpoints{}
 }
 
-// Live reports whether flag values can change at runtime. A client built
-// without an API key serves the offline store's values for the life of the
-// process, and a nil client serves fallbacks.
+// Live reports whether flag values can change at runtime.
 func (c *Client) Live() bool {
 	return c != nil && c.ld != nil && !c.static
 }

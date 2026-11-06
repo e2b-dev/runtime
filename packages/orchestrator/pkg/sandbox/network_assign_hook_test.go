@@ -129,6 +129,8 @@ func BenchmarkFactoryRunNetworkAssignHook(b *testing.B) {
 
 func (networkAssignHookFunc) OnNetworkUpdate(context.Context, *Sandbox) {}
 
+func (networkAssignHookFunc) OnEnvdReady(context.Context, *Sandbox, string) error { return nil }
+
 // updateRecorder records the sandboxes whose committed updates reached the hook.
 type updateRecorder struct {
 	NoopNetworkAssignHook
