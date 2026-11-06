@@ -48,6 +48,25 @@ func (a *APIStore) GetNodesNodeID(c *gin.Context, nodeID api.NodeID, params api.
 	c.JSON(http.StatusOK, result)
 }
 
+func (a *APIStore) GetNodesNodeIDSandboxes(c *gin.Context, nodeID api.NodeID, params api.GetNodesNodeIDSandboxesParams) {
+	ctx := c.Request.Context()
+	clusterID := clusters.WithClusterFallback(params.ClusterID)
+	result, err := a.orchestrator.AdminNodeSandboxes(ctx, clusterID, nodeID)
+	if errors.Is(err, orchestrator.ErrNodeNotFound) {
+		c.Status(http.StatusNotFound)
+
+		return
+	}
+	if err != nil {
+		telemetry.ReportError(ctx, "error when listing the node's sandboxes", err)
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when listing the node's sandboxes")
+
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 func (a *APIStore) PostNodesNodeID(c *gin.Context, nodeId api.NodeID) {
 	ctx := c.Request.Context()
 

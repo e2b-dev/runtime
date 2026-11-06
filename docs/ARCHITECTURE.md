@@ -253,7 +253,16 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   returns an empty list. The local cluster has no edge deployment and answers 501 for every rig
   operation.
 - **Extra listeners**: internal gRPC :5009 and edge gRPC :5109 expose `ResumeSandbox` so
-  client-proxy can wake paused sandboxes on incoming traffic.
+  client-proxy can wake paused sandboxes on incoming traffic. The internal listener also
+  serves `SandboxPlacementService` (`e2b.sandbox.placement.v1`) for the sandbox migration
+  manager: `GetSandboxPlacement` admits a move between two local nodes, `HoldExecution`
+  holds a running execution's record so pause, kill and timeout refuse it, and
+  `ResolveExecutionHold` moves the record to the target, releases it, or ends it. Only a
+  chain-verified caller named in `E2B_TLS_PLACEMENT_ALLOW` is served; the listener's own
+  allow-list is not enough, since client-proxy shares it. Every call is safe to repeat.
+- **Node sandboxes**: admin `GET /nodes/{nodeID}/sandboxes` lists the sandboxes a node runs
+  that the store records as running on it with the same execution, with the deadline of an
+  operation holding each, for the operator view that picks a sandbox to migrate.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
   works jobs that need the orchestrator connections. Its job arguments live in
   `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted

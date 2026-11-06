@@ -47,12 +47,14 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandboxmigration"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/kube"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
@@ -791,4 +793,8 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 	}
 
 	return team, nil
+}
+
+func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
 }

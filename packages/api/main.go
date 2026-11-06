@@ -16,15 +16,19 @@ import (
 	"syscall"
 	"time"
 
+	"buf.build/go/protovalidate"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	limits "github.com/gin-contrib/size"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	protovalidatemw "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
 	middleware "github.com/oapi-codegen/gin-middleware"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
@@ -41,6 +45,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	"github.com/e2b-dev/infra/packages/shared/pkg/httpserver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -487,7 +492,21 @@ func run() int {
 		l.Fatal(ctx, "failed to create proxy grpc listener", zap.Error(err))
 	}
 
-	grpcServer := e2bgrpc.NewGRPCServer(tel, grpcTLSOptions(tlsConfig.internalGRPC)...)
+	placementCallers, err := mtls.ParseAllowList(config.TLS.PlacementAllow, mtls.WithoutWildcards())
+	if err != nil {
+		l.Fatal(ctx, "invalid placement caller allow-list", zap.Error(err))
+	}
+	validator, err := protovalidate.New()
+	if err != nil {
+		l.Fatal(ctx, "failed to create request validator", zap.Error(err))
+	}
+	// The placement calls carry the caller's deadline; the proxy's resume
+	// on the same listener must not be bounded by a server ceiling.
+	grpcServer := e2bgrpc.NewGRPCServer(tel, append(grpcTLSOptions(tlsConfig.internalGRPC),
+		e2bgrpc.WithRecoveryHandler(func(any) error { return status.Error(codes.Internal, "internal error") }),
+		e2bgrpc.WithUnaryInterceptors(protovalidatemw.UnaryServerInterceptor(validator)),
+	)...)
+	placementpb.RegisterSandboxPlacementServiceServer(grpcServer, apiStore.SandboxPlacementService(placementCallers))
 	proxygrpc.RegisterSandboxServiceServer(grpcServer, handlers.NewSandboxService(apiStore, false, nil))
 
 	edgeGrpcAddr := fmt.Sprintf("0.0.0.0:%d", config.APIEdgeGrpcPort)

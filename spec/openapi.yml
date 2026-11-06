@@ -3543,6 +3543,47 @@ components:
           format: int
           description: Number of starting Sandboxes
 
+    NodeSandboxes:
+      description: The sandboxes the API confirms are running on a node, as the node and the API's records agree on them when read. A guest the node runs for an execution the API records elsewhere, or does not record, is left out.
+      required:
+        - nodeID
+        - observedAt
+        - items
+      properties:
+        nodeID:
+          type: string
+          description: Identifier of the node
+        observedAt:
+          type: string
+          format: date-time
+          description: Time the node's sandboxes were read
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeSandbox"
+
+    NodeSandbox:
+      required:
+        - teamID
+        - sandboxID
+        - executionID
+      properties:
+        teamID:
+          type: string
+          format: uuid
+          description: Identifier of the team
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        executionID:
+          type: string
+          format: uuid
+          description: Identifier of the running execution
+        lifecycleHoldUntil:
+          type: string
+          format: date-time
+          description: Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
+
     NodeDetail:
       required:
         - id
@@ -7119,6 +7160,39 @@ paths:
           $ref: "#/components/responses/400"
         "409":
           $ref: "#/components/responses/409"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /nodes/{nodeID}/sandboxes:
+    get:
+      summary: Node sandboxes
+      description: List the sandboxes the API confirms are running on the node
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/nodeID"
+        - in: query
+          name: clusterID
+          description: Identifier of the cluster
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Successfully returned the node's sandboxes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeSandboxes"
         "401":
           $ref: "#/components/responses/401"
         "404":

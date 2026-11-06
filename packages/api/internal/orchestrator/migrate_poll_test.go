@@ -234,7 +234,7 @@ func TestPollSkipsAListingItAlreadyApplied(t *testing.T) {
 	ctx := t.Context()
 	sbx := h.running(t)
 	req := h.start(t, sbx)
-	hold := sandbox.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, ID: req.GetMigrationId()}
+	hold := sandbox.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: req.GetMigrationId()}
 	aborted := migrationOf(req, sandboxmigration.Outcome_OUTCOME_ABORTED)
 
 	h.migrations.setMigrations(aborted)

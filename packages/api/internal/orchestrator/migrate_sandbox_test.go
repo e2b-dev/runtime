@@ -523,7 +523,7 @@ func TestStartRefuses(t *testing.T) {
 			prepare: func(t *testing.T) sandbox.Sandbox {
 				t.Helper()
 				sbx := h.running(t)
-				require.NoError(t, h.store.HoldExecution(t.Context(), sandbox.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, ID: uuid.NewString()}, time.Now().Add(time.Hour)))
+				require.NoError(t, h.store.HoldExecution(t.Context(), sandbox.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: uuid.NewString()}, time.Now().Add(time.Hour)))
 
 				return sbx
 			},
