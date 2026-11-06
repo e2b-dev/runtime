@@ -75,3 +75,49 @@ func TestSnapshotArtifactExclusivity(t *testing.T) {
 		require.NotNil(t, r.ClusterNodeID, "exclusive build must carry cluster_node_id for routing")
 	}
 }
+
+// The snapshot deletion path must never even consider the BASE template's build
+// as a deletion candidate: the base build is assigned to the base template, not
+// to the snapshot's template, so GetExclusiveBuildsForTemplateDeletion for the
+// snapshot's template must exclude it. This is the complement of the live-root
+// guard — together they ensure deleting a checkpoint-derived snapshot removes
+// only the snapshot's own COW diff layer and never the base it stacks on.
+func TestSnapshotArtifactExclusivity_BaseBuildNotCandidate(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	baseEnvID := testutils.CreateTestTemplate(t, db, teamID)
+
+	// The snapshot's source build lives on the BASE template; the snapshot gets
+	// its own diff build on its own template.
+	_, snapTemplateID, snapshotBuildID := createTestSnapshot(t, db, teamID, baseEnvID)
+
+	// Deleting the snapshot => query exclusivity for the snapshot's template.
+	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
+		`UPDATE public.envs SET deleted_at = NOW() WHERE id = $1`, snapTemplateID))
+
+	rows, err := db.SqlcClient.GetExclusiveBuildsForTemplateDeletion(ctx, snapTemplateID)
+	require.NoError(t, err)
+	got := buildIDs(rows)
+
+	assert.Contains(t, got, snapshotBuildID, "the snapshot's own diff build is a deletion candidate")
+
+	// Collect the base template's builds; none of them may appear as a candidate
+	// of the snapshot's template.
+	baseRows, err := db.SqlcClient.GetExclusiveBuildsForTemplateDeletion(ctx, baseEnvID)
+	require.NoError(t, err)
+	for _, br := range baseRows {
+		assert.NotContains(t, got, br.BuildID, "a base-template build must never be a deletion candidate of the snapshot template")
+	}
+
+	// And the snapshot build protects the base on the base-delete direction:
+	// it is a live root for the team when the base template is deleted.
+	liveRoots, err := db.SqlcClient.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
+		TeamID:     teamID,
+		TemplateID: baseEnvID,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, liveRoots, snapshotBuildID, "the snapshot build must be a live root when its base template is deleted")
+}
