@@ -32,7 +32,7 @@ func writeTeamSandbox(t *testing.T, storage *Storage, sbx sandboxtypes.Sandbox) 
 	t.Helper()
 
 	team := sbx.TeamID.String()
-	writeRecord(t, storage.redisClient, recordKey(formTeam, team, sbx.SandboxID), GetSandboxStorageTeamIndexKey(team), sbx)
+	writeRecord(t, storage.redisClient, recordKey(sbx.SandboxID), GetSandboxStorageTeamIndexKey(team), sbx)
 }
 
 func sandboxIDsOf(sbxs []sandboxtypes.Sandbox) []string {
@@ -109,7 +109,7 @@ func TestTeamItems_SkipsUndecodableRecord(t *testing.T) {
 
 	writeTeamSandbox(t, storage, seedTeamSandbox(t, teamID, "sbx-live", sandboxtypes.StateRunning))
 
-	require.NoError(t, client.Set(t.Context(), getSandboxKey(teamID.String(), "sbx-corrupt"), "not-json", 0).Err())
+	require.NoError(t, client.Set(t.Context(), recordKey("sbx-corrupt"), "not-json", 0).Err())
 	require.NoError(t, client.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(teamID.String()), "sbx-corrupt").Err())
 
 	items, err := storage.TeamItems(t.Context(), teamID, nil)

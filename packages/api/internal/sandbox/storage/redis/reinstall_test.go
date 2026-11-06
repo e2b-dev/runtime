@@ -93,7 +93,7 @@ func reinstallBeforeAssert(ctx context.Context, client redis.UniversalClient, sb
 		return err
 	}
 
-	key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	keys := []string{key, goneKeyFor(key)}
 
 	return RunScript(ctx, client, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, "1", int(goneExecutionsTTL.Seconds())).Err()
@@ -279,7 +279,7 @@ func TestAdd_AssertsItsMemberAfterItsRecordWrite(t *testing.T) {
 				var client redis.UniversalClient
 				var landed atomic.Bool
 				storage, client = hookedStorage(t, commandHook{single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-					if !isAddScript(cmd, recordKey(formSandbox, teamID.String(), sbx.SandboxID)) || !landed.CompareAndSwap(false, true) {
+					if !isAddScript(cmd, recordKey(sbx.SandboxID)) || !landed.CompareAndSwap(false, true) {
 						return next(ctx, cmd)
 					}
 					if hole.before {
@@ -331,7 +331,7 @@ func TestAdd_AFailedAssertionIsLeftToTheHealer(t *testing.T) {
 	var swept, failed atomic.Bool
 	storage, client := hookedStorage(t, commandHook{
 		single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-			if isAddScript(cmd, recordKey(formSandbox, teamID.String(), sbx.SandboxID)) && swept.CompareAndSwap(false, true) {
+			if isAddScript(cmd, recordKey(sbx.SandboxID)) && swept.CompareAndSwap(false, true) {
 				if _, err := storage.ExpiredItems(ctx); err != nil {
 					return err
 				}

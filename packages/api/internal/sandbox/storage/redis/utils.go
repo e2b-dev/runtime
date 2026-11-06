@@ -15,29 +15,9 @@ const (
 	transitionKeyPrefix = "transition"
 	lockKeyPrefix       = "lock"
 	notifySuffix        = "notify"
-	sandboxesKey        = "sandboxes"
 	indexKey            = "index"
 	recordSuffix        = "record"
 )
-
-// keyForm selects where a sandbox's record, lock and transition keys live: in
-// the team's hash slot, as every record written so far, or in a slot of the
-// sandbox's own. A record keeps the form it was written with.
-type keyForm uint8
-
-const (
-	formTeam    keyForm = 1
-	formSandbox keyForm = 2
-)
-
-// other returns the form a sandbox's keys are not in.
-func (f keyForm) other() keyForm {
-	if f == formSandbox {
-		return formTeam
-	}
-
-	return formSandbox
-}
 
 var (
 	// globalStorageNotifyChannel is the single Redis PubSub channel used by
@@ -98,29 +78,14 @@ func GetTeamPrefix(teamID string) string {
 	return redis_utils.CreateKey(sandboxKeyPrefix, redis_utils.SameSlot(teamID))
 }
 
-func getSandboxKey(teamID, sandboxID string) string {
-	return redis_utils.CreateKey(GetTeamPrefix(teamID), sandboxesKey, sandboxID)
-}
-
-// goneKeyFor names the gone set beside a record key, in the record's slot
-// whatever the key's form.
+// goneKeyFor names the gone set beside a record key, in the record's slot.
 func goneKeyFor(recordKey string) string {
 	return redis_utils.CreateKey(recordKey, "gone")
-}
-
-// getSandboxGoneKey names the set of executions removed or replaced under a
-// sandbox ID, in the sandbox key's slot.
-func getSandboxGoneKey(teamID, sandboxID string) string {
-	return goneKeyFor(getSandboxKey(teamID, sandboxID))
 }
 
 // GetSandboxStorageTeamIndexKey returns the storage team index key for external packages (e.g. reservations).
 func GetSandboxStorageTeamIndexKey(teamID string) string {
 	return redis_utils.CreateKey(GetTeamPrefix(teamID), indexKey)
-}
-
-func getTransitionKey(teamID, sandboxID string) string {
-	return redis_utils.CreateKey(GetTeamPrefix(teamID), transitionKeyPrefix, sandboxID)
 }
 
 // validID reports whether id can be a hash tag: an empty tag makes Redis
@@ -140,62 +105,37 @@ func checkID(id string) {
 	}
 }
 
-// checkKeyInputs panics on a form that is neither, or on a team or sandbox
-// ID that cannot be a hash tag.
-func checkKeyInputs(form keyForm, teamID, sandboxID string) {
-	if form != formTeam && form != formSandbox {
-		panic(fmt.Sprintf("sandbox store: unknown key form %d", form))
-	}
-
-	checkID(teamID)
-	checkID(sandboxID)
-}
-
-// sandboxPrefix returns the prefix of a sandbox's sandbox-form keys, tagged
-// with the sandbox ID so they share one cluster slot.
+// sandboxPrefix returns the prefix of a sandbox's keys, tagged with the
+// sandbox ID so they share one cluster slot.
 func sandboxPrefix(sandboxID string) string {
 	checkID(sandboxID)
 
 	return redis_utils.CreateKey(sandboxKeyPrefix, redis_utils.SameSlot(sandboxID))
 }
 
-// recordKey returns the record key of a sandbox in the given form. The team
-// form is getSandboxKey, byte for byte: every record written so far lives
-// under that key. The lock key is redis_utils.GetLockKey of the record key in
-// either form.
-func recordKey(form keyForm, teamID, sandboxID string) string {
-	checkKeyInputs(form, teamID, sandboxID)
-	if form == formSandbox {
-		return redis_utils.CreateKey(sandboxPrefix(sandboxID), recordSuffix)
-	}
-
-	return getSandboxKey(teamID, sandboxID)
+// recordKey returns the record key of a sandbox. The lock key is
+// redis_utils.GetLockKey of the record key.
+func recordKey(sandboxID string) string {
+	return redis_utils.CreateKey(sandboxPrefix(sandboxID), recordSuffix)
 }
 
-// transitionKeyFor returns the transition marker key of a sandbox in the
-// given form.
-func transitionKeyFor(form keyForm, teamID, sandboxID string) string {
-	checkKeyInputs(form, teamID, sandboxID)
-	if form == formSandbox {
-		return redis_utils.CreateKey(sandboxPrefix(sandboxID), transitionKeyPrefix)
-	}
-
-	return getTransitionKey(teamID, sandboxID)
+// transitionKeyFor returns the transition marker key of a sandbox.
+func transitionKeyFor(sandboxID string) string {
+	return redis_utils.CreateKey(sandboxPrefix(sandboxID), transitionKeyPrefix)
 }
 
 // transitionResultKeyFor returns the result key of one transition of a
-// sandbox in the given form. The transition ID follows the hash tag, so it
-// cannot move the slot and is not checked; the wait reads it back from the
-// store.
-func transitionResultKeyFor(form keyForm, teamID, sandboxID, transitionID string) string {
-	return redis_utils.CreateKey(transitionKeyFor(form, teamID, sandboxID), transitionID)
+// sandbox. The transition ID follows the hash tag, so it cannot move the
+// slot and is not checked; the wait reads it back from the store.
+func transitionResultKeyFor(sandboxID, transitionID string) string {
+	return redis_utils.CreateKey(transitionKeyFor(sandboxID), transitionID)
 }
 
 // transitionRoutingKey returns the routing key, embedded in the payload of
 // messages published to globalStorageNotifyChannel, of the transition whose
-// result key is given. Derived from the key, it follows the key form the way
-// getLockRoutingKey does, and it names the transition so a notification can
-// never wake the waiters of another transition of the same sandbox.
+// result key is given. Derived from the key, it names the transition so a
+// notification can never wake the waiters of another transition of the same
+// sandbox.
 func transitionRoutingKey(resultKey string) string {
 	return redis_utils.CreateKey(resultKey, notifySuffix)
 }

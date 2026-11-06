@@ -52,8 +52,8 @@ concurrency limit, appear in its lists, and once their end time passes the
 evictor removes them like sandboxes whose node is gone, emitting a stopped
 sandbox's usage events for each. Seed a dedicated, non-billed test team and
 run -delete before the end time. The healer's census, the
-api.redis_storage.records.form gauge, shows the records of each form after
-its next sweep.
+api.redis_storage.records.form gauge, shows the records after its next
+sweep.
 
 Flags:
 `

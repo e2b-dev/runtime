@@ -14,52 +14,41 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// sandboxKeys returns every per-sandbox key of one form: the record, its
-// lock, the transition marker, a transition result and its refusal class.
-func sandboxKeys(form keyForm, teamID, sandboxID, transitionID string) []string {
-	record := recordKey(form, teamID, sandboxID)
-	result := transitionResultKeyFor(form, teamID, sandboxID, transitionID)
+// sandboxKeys returns every per-sandbox key: the record, its lock, the
+// transition marker, a transition result and its refusal class.
+func sandboxKeys(sandboxID, transitionID string) []string {
+	record := recordKey(sandboxID)
+	result := transitionResultKeyFor(sandboxID, transitionID)
 
 	return []string{
 		record,
 		redis_utils.GetLockKey(record),
-		transitionKeyFor(form, teamID, sandboxID),
+		transitionKeyFor(sandboxID),
 		result,
 		refusalClassKey(result),
 	}
 }
 
-// Every key of both forms carries exactly one hash tag. A sandbox's
-// sandbox-form keys share a slot of their own, so the scripts and the MGET
-// that span them stay single-slot; its team-form keys share the team's slot
-// with the team index and with every other sandbox of the team.
-func TestRecordKeyFormsHaveOneTagEach(t *testing.T) {
+// Every key carries exactly one hash tag, and a sandbox's keys share a slot
+// of their own, so the scripts and the MGET that span them stay single-slot
+// while two sandboxes' records are spread over the cluster.
+func TestSandboxKeysShareOneSlot(t *testing.T) {
 	t.Parallel()
 
-	const team, sandboxA, sandboxB, transition = "team-a", "sbx-a", "sbx-b", "tx-1"
+	const sandboxA, sandboxB, transition = "sbx-a", "sbx-b", "tx-1"
 
-	for _, form := range []keyForm{formTeam, formSandbox} {
-		for _, key := range sandboxKeys(form, team, sandboxA, transition) {
-			open, closing := strings.Index(key, "{"), strings.Index(key, "}")
-			assert.Equal(t, 1, strings.Count(key, "{"), key)
-			assert.Equal(t, 1, strings.Count(key, "}"), key)
-			assert.Less(t, open+1, closing, "empty or reversed tag in %q", key)
-		}
+	keys := sandboxKeys(sandboxA, transition)
+	for _, key := range keys {
+		open, closing := strings.Index(key, "{"), strings.Index(key, "}")
+		assert.Equal(t, 1, strings.Count(key, "{"), key)
+		assert.Equal(t, 1, strings.Count(key, "}"), key)
+		assert.Less(t, open+1, closing, "empty or reversed tag in %q", key)
 	}
-
-	sandboxForm := sandboxKeys(formSandbox, team, sandboxA, transition)
-	assert.True(t, redis_utils.AllSameSlot(sandboxForm...), "sandbox-form keys span slots: %q", sandboxForm)
+	assert.True(t, redis_utils.AllSameSlot(keys...), "a sandbox's keys span slots: %q", keys)
 	assert.NotEqual(t,
-		redis_utils.HashSlot(recordKey(formSandbox, team, sandboxA)),
-		redis_utils.HashSlot(recordKey(formSandbox, team, sandboxB)),
-		"two sandboxes' sandbox-form records share a slot")
-
-	teamForm := append(sandboxKeys(formTeam, team, sandboxA, transition), GetSandboxStorageTeamIndexKey(team))
-	assert.True(t, redis_utils.AllSameSlot(teamForm...), "team-form keys span slots: %q", teamForm)
-	assert.Equal(t,
-		redis_utils.HashSlot(recordKey(formTeam, team, sandboxA)),
-		redis_utils.HashSlot(recordKey(formTeam, team, sandboxB)),
-		"two sandboxes' team-form records are in different slots")
+		redis_utils.HashSlot(recordKey(sandboxA)),
+		redis_utils.HashSlot(recordKey(sandboxB)),
+		"two sandboxes' records share a slot")
 }
 
 // An empty ID would make Redis hash the whole key, and a brace would move or
@@ -70,69 +59,19 @@ func TestBuildersRejectBadIDs(t *testing.T) {
 
 	for _, bad := range []string{"", "a{b", "a}b"} {
 		assert.Panics(t, func() { sandboxPrefix(bad) }, "sandboxPrefix(%q)", bad)
-
-		for _, form := range []keyForm{formTeam, formSandbox} {
-			assert.Panics(t, func() { recordKey(form, bad, "sbx") }, "recordKey(%d, team %q)", form, bad)
-			assert.Panics(t, func() { recordKey(form, "team", bad) }, "recordKey(%d, sandbox %q)", form, bad)
-			assert.Panics(t, func() { transitionKeyFor(form, bad, "sbx") }, "transitionKeyFor(%d, team %q)", form, bad)
-			assert.Panics(t, func() { transitionKeyFor(form, "team", bad) }, "transitionKeyFor(%d, sandbox %q)", form, bad)
-			assert.Panics(t, func() { transitionResultKeyFor(form, bad, "sbx", "tx") }, "transitionResultKeyFor(%d, team %q)", form, bad)
-			assert.Panics(t, func() { transitionResultKeyFor(form, "team", bad, "tx") }, "transitionResultKeyFor(%d, sandbox %q)", form, bad)
-		}
+		assert.Panics(t, func() { recordKey(bad) }, "recordKey(%q)", bad)
+		assert.Panics(t, func() { transitionKeyFor(bad) }, "transitionKeyFor(%q)", bad)
+		assert.Panics(t, func() { transitionResultKeyFor(bad, "tx") }, "transitionResultKeyFor(%q)", bad)
 	}
 }
 
-// The form of a sandbox is the form of the record that exists, the sandbox
-// form when both do; only a sandbox with no record takes the sandbox form,
-// which new records are written in.
-func TestResolveForm(t *testing.T) {
-	t.Parallel()
-
-	client := redis_utils.SetupInstance(t)
-	storage := newTestStorage(t, client)
-	ctx := t.Context()
-	teamID := uuid.New()
-	team := teamID.String()
-
-	// existing is the form formOfExisting reports, 0 for no record.
-	records := []struct {
-		name     string
-		written  []keyForm
-		existing keyForm
-	}{
-		{"none", nil, 0},
-		{"team", []keyForm{formTeam}, formTeam},
-		{"sandbox", []keyForm{formSandbox}, formSandbox},
-		{"both", []keyForm{formTeam, formSandbox}, formSandbox},
-	}
-	for _, tc := range records {
-		sandboxID := "sbx-" + tc.name
-		for _, form := range tc.written {
-			require.NoError(t, client.Set(ctx, recordKey(form, team, sandboxID), mustJSON(t, newRecord(teamID, sandboxID)), 0).Err())
-		}
-		existing, exists, err := storage.formOfExisting(ctx, team, sandboxID)
-		require.NoError(t, err)
-		assert.Equal(t, tc.existing != 0, exists, tc.name)
-		assert.Equal(t, tc.existing, existing, tc.name)
-
-		want := tc.existing
-		if want == 0 {
-			want = formSandbox
-		}
-		resolved, err := storage.resolveForm(ctx, team, sandboxID)
-		require.NoError(t, err)
-		assert.Equal(t, want, resolved, tc.name)
-	}
-}
-
-// A sandbox-form record of another team is not found by the probe, so no
-// caller takes the owner's lock for it: while the owner's lock is held, Get,
-// Update, StartRemoving and Remove by another team answer as for an absent
-// sandbox instead of waiting for the lock, run no closure, start no
-// transition, and touch neither the record, the owner's index entry and
-// expiration member, nor the caller's index. The owner reads the record. A
-// team-form record under the caller's key that names another team is not
-// found either.
+// A record of another team is not found by the pre-lock probe, so no caller
+// takes the owner's lock for it: while the owner's lock is held, Get,
+// Update, StartRemoving, Remove and WaitForStateChange by another team
+// answer as for an absent sandbox instead of waiting for the lock or the
+// transition, run no closure, start no transition, and touch neither the
+// record, the owner's index entry and expiration member, nor the caller's
+// index. The owner reads the record.
 func TestOtherTeamIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -140,21 +79,15 @@ func TestOtherTeamIsRefused(t *testing.T) {
 	storage := newTestStorage(t, client)
 	owner, caller := uuid.New(), uuid.New()
 	sbx := newRecord(owner, "sbx-held")
-	key := addRecord(t, storage, formSandbox, sbx)
-	callerTeamLock, _ := lockKeys(caller, sbx.SandboxID)
+	key := addRecord(t, storage, sbx)
 
-	_, exists, err := storage.formOfExisting(t.Context(), caller.String(), sbx.SandboxID)
-	require.ErrorIs(t, err, sandboxtypes.ErrNotFound)
-	assert.False(t, exists)
-	_, err = storage.resolveForm(t.Context(), caller.String(), sbx.SandboxID)
-	require.ErrorIs(t, err, sandboxtypes.ErrNotFound)
-
-	// The held lock is the sandbox-form one, which carries no team: a call
-	// that reached it would wait out the context and fail with another
-	// error than the guard's.
+	// The held lock carries no team: a call that reached it would wait out
+	// the context and fail with another error than the guard's. The owner's
+	// transition marker is what a caller joining the wait would follow.
 	held, err := storage.locker.Obtain(t.Context(), redis_utils.GetLockKey(key), time.Minute)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, held.Release(context.WithoutCancel(t.Context()))) })
+	require.NoError(t, client.Set(t.Context(), transitionKeyFor(sbx.SandboxID), uuid.NewString(), transitionKeyTTL).Err())
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
@@ -186,6 +119,7 @@ func TestOtherTeamIsRefused(t *testing.T) {
 		}, sandboxtypes.ErrNotFound},
 		{"Remove", func() error { return storage.Remove(ctx, caller, sbx.SandboxID, "") }, nil},
 		{"Remove of the execution", func() error { return storage.Remove(ctx, caller, sbx.SandboxID, sbx.ExecutionID) }, nil},
+		{"WaitForStateChange", func() error { return storage.WaitForStateChange(ctx, caller, sbx.SandboxID) }, sandboxtypes.ErrNotFound},
 	} {
 		if tc.want == nil {
 			require.NoError(t, tc.call(), tc.name)
@@ -196,17 +130,9 @@ func TestOtherTeamIsRefused(t *testing.T) {
 		requireIndexed(t, client, GetSandboxStorageTeamIndexKey(owner.String()), sbx.SandboxID, true)
 		requireIndexed(t, client, GetSandboxStorageTeamIndexKey(caller.String()), sbx.SandboxID, false)
 		requireMemberScore(t, client, sandboxExpirationMember(sbx), float64(sbx.EndTime.UnixMilli()))
-		requireNoRecord(t, client, transitionKeyFor(formSandbox, caller.String(), sbx.SandboxID))
-		requireNoRecord(t, client, transitionKeyFor(formTeam, caller.String(), sbx.SandboxID))
-		require.False(t, lockHeld(t, storage.locker, callerTeamLock), tc.name)
 	}
 
 	got, err := storage.Get(t.Context(), owner, sbx.SandboxID)
 	require.NoError(t, err)
 	require.Equal(t, mustJSON(t, sbx), mustJSON(t, got))
-
-	teamForm := newRecord(owner, "sbx-team-form")
-	writeRecord(t, client, recordKey(formTeam, caller.String(), teamForm.SandboxID), "", teamForm)
-	_, err = storage.Get(t.Context(), caller, teamForm.SandboxID)
-	require.ErrorIs(t, err, sandboxtypes.ErrNotFound)
 }

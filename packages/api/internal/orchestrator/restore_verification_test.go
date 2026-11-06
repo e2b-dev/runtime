@@ -70,11 +70,10 @@ func isRestoreRunningScript(cmd redis.Cmder) bool {
 	return numKeys == 1 && isRecordKey(key) && !strings.Contains(key, "lock:sandbox:")
 }
 
-// isRecordKey reports whether key is a sandbox record key of either form:
-// team-tagged (":sandboxes:") or sandbox-tagged (":record"). Contains, not
+// isRecordKey reports whether key is a sandbox record key. Contains, not
 // HasPrefix: a namespaced test client puts its prefix before the key.
 func isRecordKey(key string) bool {
-	return strings.Contains(key, ":sandboxes:") || strings.Contains(key, ":record")
+	return strings.Contains(key, ":record")
 }
 
 func successorOf(sbx sandbox.Sandbox) sandbox.Sandbox {

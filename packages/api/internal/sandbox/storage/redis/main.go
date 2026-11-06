@@ -57,11 +57,7 @@ type Storage struct {
 	metrics expirationIndexMetrics
 	// writeAnomalies counts writes that gave up after their retries, by kind.
 	writeAnomalies metric.Int64Counter
-	// readsFallback counts record reads the team form served after the
-	// sandbox form missed.
-	readsFallback metric.Int64Counter
-	// listGets records the commands one bulk record read issued: its
-	// sandbox-form GETs and its team-form MGETs.
+	// listGets records the GETs one bulk record read issued.
 	listGets metric.Int64Histogram
 	// indexHeal counts the healer's repairs of records and index entries,
 	// by kind.
@@ -70,7 +66,7 @@ type Storage struct {
 	// census and sweep gauges observe; nil before the first sweep.
 	heals atomic.Pointer[healHistory]
 	// danglingSince is when the healer first saw each index entry without
-	// a record in either form, so it removes one only after a grace period.
+	// a record, so it removes one only after a grace period.
 	danglingSince map[recordRef]time.Time
 
 	// faults is the test hook of faults.go; nil in production.
@@ -124,8 +120,8 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 	}, nil
 }
 
-// Write anomaly kinds, the metric's kind attribute: a sandbox-form record
-// left after its index entry was removed, when its delete kept failing,
+// Write anomaly kinds, the metric's kind attribute: a record left after its
+// index entry was removed, when its delete kept failing,
 // which the healer deletes once it is stale; a record written without its
 // index entry, which the healer indexes once it is older than the grace
 // period; a record write that failed and whose cleanup failed too, so a
@@ -171,7 +167,6 @@ func NewStorage(
 		reconcileSlots: semaphore.NewWeighted(maxConcurrentReconciles),
 		metrics:        metrics,
 		writeAnomalies: utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageWriteAnomalies)),
-		readsFallback:  utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageReadsFallback)),
 		listGets:       utils.Must(telemetry.GetHistogram(meter, telemetry.ApiRedisStorageListGets)),
 		indexHeal:      utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageIndexHeal)),
 	}
@@ -188,8 +183,7 @@ func NewStorage(
 			return nil
 		}
 		report := heals.last
-		o.ObserveInt64(recordsForm, int64(report.TeamForm), metric.WithAttributes(attribute.String(recordsFormAttr, "team")))
-		o.ObserveInt64(recordsForm, int64(report.SandboxForm), metric.WithAttributes(attribute.String(recordsFormAttr, "sandbox")))
+		o.ObserveInt64(recordsForm, int64(report.Records), metric.WithAttributes(attribute.String(recordsFormAttr, "sandbox")))
 		var complete int64
 		if report.Complete {
 			complete = 1
@@ -217,7 +211,6 @@ func observeRepairs(o metric.Observer, gauge metric.Int64ObservableGauge, report
 	observe(healReadded, report.Readded)
 	observe(healRemoved, report.Removed)
 	observe(healDeletedStale, report.DeletedStale)
-	observe(healTwinsDeleted, report.TwinsDeleted)
 }
 
 // Start writes the scheme marker, subscribes to the global PubSub channel

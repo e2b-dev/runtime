@@ -71,10 +71,9 @@ func TestReconcile_CapsConcurrentPipelines(t *testing.T) {
 // or a live sandbox in one chunk would be reported as an orphan from another.
 //
 // It also asserts the chunking itself through a client hook: the GETs of every
-// pipeline sent and the keys of every MGET, none above sandboxScanBatchSize,
-// one of each per candidate. The orphan-set check alone passes with a single
-// unbounded pipeline, so without this a revert of the chunking would go
-// unnoticed.
+// pipeline sent, none above sandboxScanBatchSize, one per candidate. The
+// orphan-set check alone passes with a single unbounded pipeline, so without
+// this a revert of the chunking would go unnoticed.
 func TestReconcile_SpansSeveralBatches(t *testing.T) {
 	t.Parallel()
 
@@ -87,12 +86,10 @@ func TestReconcile_SpansSeveralBatches(t *testing.T) {
 
 	// More than two full chunks plus a partial one, all in the store.
 	stored := sandboxScanBatchSize*2 + 37
-	seedTeamSandboxes(t, client, teamID, stored, sandboxtypes.StateRunning)
-
 	var nodeSandboxes []sandboxtypes.NodeSandbox
-	for i := range stored {
+	for _, id := range seedTeamSandboxes(t, client, teamID, stored, sandboxtypes.StateRunning) {
 		nodeSandboxes = append(nodeSandboxes, sandboxtypes.NodeSandbox{
-			SandboxID: fmt.Sprintf("sbx-%s-%04d", sandboxtypes.StateRunning, i),
+			SandboxID: id,
 			TeamID:    teamID,
 			StartTime: started,
 		})
@@ -129,15 +126,12 @@ func TestReconcile_SpansSeveralBatches(t *testing.T) {
 	}
 
 	// Candidates = stored + 3 orphans; the fresh one is filtered before any
-	// read. 552 refs / 256 per chunk = 3 chunks. The records are in the team
-	// form, so every chunk's sandbox-form pipeline misses them all and one
-	// team-form MGET of the same size follows: 256, 256, 40 of each.
+	// read. 552 refs / 256 per chunk = 3 chunks of GETs: 256, 256, 40.
 	candidates := stored + len(orphans)
 	var want []int
 	for start := 0; start < candidates; start += sandboxScanBatchSize {
 		want = append(want, min(sandboxScanBatchSize, candidates-start))
 	}
-	gets, mgets := snapshot()
+	gets := snapshot()
 	require.Equal(t, want, gets, "GETs per pipeline sent")
-	require.Equal(t, want, mgets, "keys per MGET sent")
 }

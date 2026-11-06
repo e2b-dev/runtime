@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
@@ -45,12 +44,10 @@ func intHistogram(t *testing.T, reader *sdkmetric.ManualReader, name string) (co
 	return count, sum
 }
 
-// A read of refs in both forms finds the sandbox-form records in the first
-// pipeline and the team-form ones in the MGET that follows, counted as
-// fallback reads. A ref with no record in either form is absent. A
-// sandbox-form record that does not decode, or that belongs to another
-// team, is in neither partition, probes no other form, and the team list
-// does not show it. The GETs and the MGET are recorded once per call.
+// A read of refs finds the records in one pipeline of GETs. A ref with no
+// record is absent. A record that does not decode, or that belongs to
+// another team, is in neither partition, and the team list does not show
+// it. The GETs are recorded once per call.
 func TestFetchRecordsClassifies(t *testing.T) {
 	t.Parallel()
 
@@ -59,15 +56,15 @@ func TestFetchRecordsClassifies(t *testing.T) {
 	teamID := uuid.New()
 	team := teamID.String()
 
-	forms := map[string]keyForm{"sbx-s1": formSandbox, "sbx-t1": formTeam, "sbx-s2": formSandbox, "sbx-t2": formTeam, "sbx-t3": formTeam}
-	want := make(map[recordRef]string, len(forms))
-	for id, form := range forms {
+	ids := []string{"sbx-s1", "sbx-t1", "sbx-s2", "sbx-t2", "sbx-t3"}
+	want := make(map[recordRef]string, len(ids))
+	for _, id := range ids {
 		sbx := newRecord(teamID, id)
-		addRecord(t, storage, form, sbx)
+		addRecord(t, storage, sbx)
 		want[recordRef{TeamID: team, SandboxID: id}] = sbx.ExecutionID
 	}
-	addRecord(t, storage, formSandbox, newRecord(uuid.New(), "sbx-other"))
-	require.NoError(t, client.Set(t.Context(), recordKey(formSandbox, team, "sbx-corrupt"), "not-json", 0).Err())
+	addRecord(t, storage, newRecord(uuid.New(), "sbx-other"))
+	require.NoError(t, client.Set(t.Context(), recordKey("sbx-corrupt"), "not-json", 0).Err())
 	require.NoError(t, client.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(team), "sbx-other", "sbx-corrupt").Err())
 
 	var refs []recordRef
@@ -84,20 +81,18 @@ func TestFetchRecordsClassifies(t *testing.T) {
 	}
 	assert.Equal(t, []recordRef{{TeamID: team, SandboxID: "sbx-gone"}}, absent)
 
-	assert.Equal(t, int64(3), counterTotal(t, reader, string(telemetry.ApiRedisStorageReadsFallback)))
 	count, sum := intHistogram(t, reader, string(telemetry.ApiRedisStorageListGets))
 	assert.Equal(t, uint64(1), count)
-	assert.Equal(t, int64(len(refs)+1), sum, "one sandbox-form GET per ref, then one team-form MGET for the team's refs the first pipeline answered nil for")
+	assert.Equal(t, int64(len(refs)), sum, "one GET per ref")
 
 	items, err := storage.TeamItems(t.Context(), teamID, nil)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"sbx-s1", "sbx-t1", "sbx-s2", "sbx-t2", "sbx-t3"}, sandboxIDsOf(items))
 }
 
-// A sandbox-form record key of another type, which GET refuses, skips that
-// sandbox alone: the rest of the batch is read, the skipped one is neither
-// found nor absent, and the team form is not probed for it, whose MGET has
-// always answered such a key with nil.
+// A record key of another type, which GET refuses, skips that sandbox
+// alone: the rest of the batch is read, and the skipped one is neither
+// found nor absent.
 func TestFetchRecordsSkipsAKeyOfAnotherType(t *testing.T) {
 	t.Parallel()
 
@@ -106,8 +101,8 @@ func TestFetchRecordsSkipsAKeyOfAnotherType(t *testing.T) {
 	teamID := uuid.New()
 	team := teamID.String()
 	good := newRecord(teamID, "sbx-good")
-	addRecord(t, storage, formSandbox, good)
-	require.NoError(t, client.HSet(t.Context(), recordKey(formSandbox, team, "sbx-hash"), "field", "value").Err())
+	addRecord(t, storage, good)
+	require.NoError(t, client.HSet(t.Context(), recordKey("sbx-hash"), "field", "value").Err())
 
 	// The refused key first, so the pipeline's first error is its reply.
 	found, absent, err := storage.fetchRecords(t.Context(), []recordRef{
@@ -122,7 +117,7 @@ func TestFetchRecordsSkipsAKeyOfAnotherType(t *testing.T) {
 
 // A record the reader skips, one that does not decode or one of another
 // team, is neither an orphan for the node reconcile nor a stale member for
-// the evictor: only a ref with no record in either form is. A bad record is
+// the evictor: only a ref with no record is. A bad record is
 // logged and left running, never killed, and its expiration member leaves
 // the expired window for the recheck delay instead of being read and logged
 // again on the next tick.
@@ -133,8 +128,8 @@ func TestSkippedRecordsAreNotOrphans(t *testing.T) {
 	storage, reader := newMeteredTestStorage(t, client)
 	teamID := uuid.New()
 	team := teamID.String()
-	addRecord(t, storage, formSandbox, newRecord(uuid.New(), "sbx-other"))
-	require.NoError(t, client.Set(t.Context(), recordKey(formSandbox, team, "sbx-corrupt"), "not-json", 0).Err())
+	addRecord(t, storage, newRecord(uuid.New(), "sbx-other"))
+	require.NoError(t, client.Set(t.Context(), recordKey("sbx-corrupt"), "not-json", 0).Err())
 	ids := []string{"sbx-other", "sbx-corrupt", "sbx-gone"}
 
 	started := time.Now().Add(-2 * orphanGracePeriod)
@@ -178,13 +173,13 @@ func TestReadersSkipRecordsWhosePayloadIDDiffers(t *testing.T) {
 	teamID := uuid.New()
 	team := teamID.String()
 	index := GetSandboxStorageTeamIndexKey(team)
-	addRecord(t, storage, formSandbox, newRecord(teamID, "sbx-live"))
+	addRecord(t, storage, newRecord(teamID, "sbx-live"))
 
 	score := float64(time.Now().Add(-time.Minute).UnixMilli())
 	members := make(map[string]string, 2)
 	for key, payloadID := range map[string]string{"sbx-empty": "", "sbx-braced": "{sbx-1}"} {
 		sbx := makeIndexedSandbox(teamID, payloadID, uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(-time.Minute))
-		require.NoError(t, client.Set(t.Context(), recordKey(formTeam, team, key), mustJSON(t, sbx), 0).Err())
+		require.NoError(t, client.Set(t.Context(), recordKey(key), mustJSON(t, sbx), 0).Err())
 		require.NoError(t, client.SAdd(t.Context(), index, key).Err())
 		members[key] = expirationMember(team, key, sbx.ExecutionID)
 		require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{Score: score, Member: members[key]}).Err())
@@ -229,7 +224,7 @@ func TestRedisErrorsAreCounted(t *testing.T) {
 	require.Len(t, counterPoints(t, collected, string(telemetry.ApiRedisStorageErrors)), 4)
 
 	team := uuid.NewString()
-	setKey := recordKey(formSandbox, team, "sbx-set")
+	setKey := recordKey("sbx-set")
 	require.NoError(t, client.SAdd(t.Context(), setKey, "member").Err())
 	others := errorsOf(errorKindOther)
 	_, _, err := storage.fetchRecords(t.Context(), []recordRef{{TeamID: team, SandboxID: "sbx-gone"}, {TeamID: team, SandboxID: "sbx-set"}})
@@ -251,10 +246,10 @@ func TestRedisErrorsAreCounted(t *testing.T) {
 	}
 }
 
-// A nil ahead of a refused reply in the sandbox-form pipeline hides neither:
-// Exec reports only the first error, so every reply is read on its own. The
-// refused reply, a GET of a key holding a set (WRONGTYPE), skips its sandbox
-// alone; the nil one is probed in the team form and absent.
+// A nil ahead of a refused reply in the pipeline hides neither: Exec reports
+// only the first error, so every reply is read on its own. The refused
+// reply, a GET of a key holding a set (WRONGTYPE), skips its sandbox alone;
+// the nil one is absent.
 func TestFetchRecordsNilThenRefusedReply(t *testing.T) {
 	t.Parallel()
 
@@ -263,8 +258,8 @@ func TestFetchRecordsNilThenRefusedReply(t *testing.T) {
 	teamID := uuid.New()
 	team := teamID.String()
 	live := newRecord(teamID, "sbx-live")
-	addRecord(t, storage, formSandbox, live)
-	require.NoError(t, client.SAdd(t.Context(), recordKey(formSandbox, team, "sbx-set"), "member").Err())
+	addRecord(t, storage, live)
+	require.NoError(t, client.SAdd(t.Context(), recordKey("sbx-set"), "member").Err())
 
 	found, absent, err := storage.fetchRecords(t.Context(), []recordRef{
 		{TeamID: team, SandboxID: "sbx-gone"},
@@ -277,101 +272,27 @@ func TestFetchRecordsNilThenRefusedReply(t *testing.T) {
 	assert.Equal(t, []recordRef{{TeamID: team, SandboxID: "sbx-gone"}}, absent)
 }
 
-// The team-form probe is one MGET per team per chunk of sandboxScanBatchSize
-// keys, which share the team's slot, not one GET per ref: a team's 300
-// misses are two MGETs, and another team's are one of its own. Each element
-// is classified as a GET's reply is: nil is absent in the team form, a value
-// that does not decode or is another team's is skipped, the rest are found,
-// and every value counts as a fallback read.
-func TestFetchRecordsTeamFormProbeIsOneMGETPerTeamChunk(t *testing.T) {
-	t.Parallel()
-
-	client := redis_utils.SetupInstance(t)
-	storage, reader := newMeteredTestStorage(t, client)
-	hook, snapshot := recordGets()
-	client.AddHook(hook)
-	teamA, teamB := uuid.New(), uuid.New()
-	team := teamA.String()
-
-	pipe := client.Pipeline()
-	var refs []recordRef
-	for i := range sandboxScanBatchSize + 44 {
-		id := fmt.Sprintf("sbx-a-%03d", i)
-		refs = append(refs, recordRef{TeamID: team, SandboxID: id})
-		if i > 2 {
-			pipe.Set(t.Context(), recordKey(formTeam, team, id), mustJSON(t, newRecord(teamA, id)), 0)
-		}
-	}
-	// The first three are not found: no record, another team's record, and
-	// one that is not JSON.
-	pipe.Set(t.Context(), recordKey(formTeam, team, "sbx-a-001"), mustJSON(t, newRecord(teamB, "sbx-a-001")), 0)
-	pipe.Set(t.Context(), recordKey(formTeam, team, "sbx-a-002"), "not-json", 0)
-	// Another team's refs, interleaved, are read by an MGET of their own.
-	for i := range 3 {
-		id := fmt.Sprintf("sbx-b-%d", i)
-		refs = slices.Insert(refs, i*100, recordRef{TeamID: teamB.String(), SandboxID: id})
-		pipe.Set(t.Context(), recordKey(formTeam, teamB.String(), id), mustJSON(t, newRecord(teamB, id)), 0)
-	}
-	_, err := pipe.Exec(t.Context())
-	require.NoError(t, err)
-
-	found, absent, err := storage.fetchRecords(t.Context(), refs)
-	require.NoError(t, err)
-
-	require.Len(t, found, len(refs)-3)
-	for _, id := range []string{"sbx-a-001", "sbx-a-002"} {
-		assert.NotContains(t, found, recordRef{TeamID: team, SandboxID: id})
-	}
-	assert.Equal(t, []recordRef{{TeamID: team, SandboxID: "sbx-a-000"}}, absent)
-
-	gets, mgets := snapshot()
-	assert.Equal(t, []int{len(refs)}, gets, "one pipeline of sandbox-form GETs")
-	assert.ElementsMatch(t, []int{sandboxScanBatchSize, 44, 3}, mgets, "keys per team-form MGET")
-	assert.Equal(t, int64(len(refs)-1), counterTotal(t, reader, string(telemetry.ApiRedisStorageReadsFallback)), "every team-form value, the skipped ones included")
-	_, sum := intHistogram(t, reader, string(telemetry.ApiRedisStorageListGets))
-	assert.Equal(t, int64(len(refs)+3), sum, "the GETs and the three MGETs")
-}
-
-// A read that a command fails aborts with that error and classifies
+// A read whose pipeline fails aborts with that error and classifies
 // nothing: a pipeline refused before it ran leaves its commands with no
 // error and empty values, which must not pass for records that do not
-// decode, and a team-form MGET that fails leaves the refs it would have read
-// neither found nor absent.
-func TestFetchRecordsAbortsWhenACommandFails(t *testing.T) {
+// decode.
+func TestFetchRecordsAbortsWhenThePipelineNeverRan(t *testing.T) {
 	t.Parallel()
 
 	errRefused := errors.New("refused")
-	for _, tc := range []struct {
-		name string
-		hook cmdHook
-	}{
-		{"pipeline never ran", cmdHook{pipeline: func(context.Context, []redis.Cmder, redis.ProcessPipelineHook) error { return errRefused }}},
-		{"team-form MGET fails", cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-			if cmd.Name() == "mget" {
-				return errRefused
-			}
+	client := redis_utils.SetupInstance(t)
+	storage := newTestStorage(t, client)
+	teamID := uuid.New()
+	addRecord(t, storage, newRecord(teamID, "sbx-live"))
+	client.AddHook(cmdHook{pipeline: func(context.Context, []redis.Cmder, redis.ProcessPipelineHook) error { return errRefused }})
 
-			return next(ctx, cmd)
-		}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			client := redis_utils.SetupInstance(t)
-			storage := newTestStorage(t, client)
-			teamID := uuid.New()
-			addRecord(t, storage, formTeam, newRecord(teamID, "sbx-live"))
-			client.AddHook(tc.hook)
-
-			found, absent, err := storage.fetchRecords(t.Context(), []recordRef{
-				{TeamID: teamID.String(), SandboxID: "sbx-gone"},
-				{TeamID: teamID.String(), SandboxID: "sbx-live"},
-			})
-			require.ErrorIs(t, err, errRefused)
-			assert.Empty(t, found)
-			assert.Empty(t, absent)
-		})
-	}
+	found, absent, err := storage.fetchRecords(t.Context(), []recordRef{
+		{TeamID: teamID.String(), SandboxID: "sbx-gone"},
+		{TeamID: teamID.String(), SandboxID: "sbx-live"},
+	})
+	require.ErrorIs(t, err, errRefused)
+	assert.Empty(t, found)
+	assert.Empty(t, absent)
 }
 
 // An ID no key can be built from, an index member for the team list or a
@@ -384,7 +305,7 @@ func TestReadersSkipIDsNoKeyCanBeBuiltFrom(t *testing.T) {
 	client := redis_utils.SetupInstance(t)
 	storage := newTestStorage(t, client)
 	teamID := uuid.New()
-	addRecord(t, storage, formSandbox, newRecord(teamID, "sbx-live"))
+	addRecord(t, storage, newRecord(teamID, "sbx-live"))
 	require.NoError(t, client.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(teamID.String()), "", "{sbx-braced}").Err())
 
 	items, err := storage.TeamItems(t.Context(), teamID, nil)

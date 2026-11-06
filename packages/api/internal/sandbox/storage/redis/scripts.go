@@ -74,29 +74,14 @@ var (
 		return 0
 	`)
 
-	// A write-form flip must preserve duplicate creates, gone executions and
-	// held records with the same semantics as the destination write.
-	clearOtherFormScript = redis.NewScript(isHeldLua + `
-		local raw = redis.call('GET', KEYS[1])
-		local ok, stored = pcall(cjson.decode, raw or '')
-		if ARGV[2] == '0' then
-			if ok and stored['executionID'] == ARGV[1] then return 0 end
-			if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then return 2 end
-		end
-		if ok and is_held(stored) then return 3 end
-		redis.call('DEL', KEYS[1])
-		return 1
-	`)
-
-	// addSandboxScript atomically stores a record and, when KEYS[3] is given,
-	// adds it to the team index; the sandbox form passes no index key, its
-	// entry lives in another slot. Unless ARGV[4] is '1', the write is refused
+	// addSandboxScript atomically stores a record; its index entry lives in
+	// another slot and follows. Unless ARGV[4] is '1', the write is refused
 	// (nothing written) when it is a late duplicate (see Add): 0 when its
 	// execution is already stored, 2 when its execution is in the gone set
 	// (KEYS[2], in the record's slot), which holds the executions removed or
 	// replaced under this sandbox ID for ARGV[5] seconds. A write that
 	// replaces another execution's record puts that execution in the gone set.
-	// KEYS[1] = sandbox key, KEYS[2] = gone set, KEYS[3] = team index key, optional
+	// KEYS[1] = sandbox key, KEYS[2] = gone set
 	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID,
 	// ARGV[3] = execution ID, ARGV[4] = '1' to replace a stored record of the
 	// same execution, ARGV[5] = gone set TTL in seconds
@@ -129,31 +114,26 @@ var (
 			redis.call('EXPIRE', KEYS[2], ARGV[5])
 		end
 		redis.call('SET', KEYS[1], ARGV[1])
-		if KEYS[3] then
-			redis.call('SADD', KEYS[3], ARGV[2])
-		end
 		return 1
 	`)
 
-	// removeSandboxScript atomically removes a record and, when KEYS[4] is
-	// given, its team index entry, and returns the removed JSON so the caller
-	// can scope the expiration-index cleanup to the execution it removed. The
-	// sandbox form passes no index key: its entry lives in another slot. With
-	// ARGV[2] set, a record of another execution is returned and left alone,
-	// index entry included: a script re-executed after a lost reply, or
-	// delayed past the lock, cannot remove a successor. An absent record is
-	// nil and writes nothing; its index entry may be a successor's in the
-	// other form. The removed execution goes into the gone set (KEYS[2], in
-	// the record's slot), so a late duplicate of its create cannot bring it
-	// back. With ARGV[5] set, the record goes only while KEYS[3] still holds
-	// that lock value: a removal delayed past its lock cannot remove what a
-	// later holder wrote. Add's cleanup, which holds no lock, passes none and
-	// relies on the execution guard. A held record is refused. With ARGV[4] set, only a record
-	// under that live hold is removed: a holder whose hold lapsed finds the
-	// record another operation's, or nobody's, and removes nothing.
+	// removeSandboxScript atomically removes a record and returns the removed
+	// JSON so the caller can scope the expiration-index cleanup to the
+	// execution it removed; the index entry lives in another slot. With
+	// ARGV[2] set, a record of another execution is returned and left alone:
+	// a script re-executed after a lost reply, or delayed past the lock,
+	// cannot remove a successor. An absent record is nil and writes nothing.
+	// The removed execution goes into the gone set (KEYS[2], in the record's
+	// slot), so a late duplicate of its create cannot bring it back. With
+	// ARGV[5] set, the record goes only while KEYS[3] still holds that lock
+	// value: a removal delayed past its lock cannot remove what a later
+	// holder wrote. Add's cleanup, which holds no lock, passes none and
+	// relies on the execution guard. A held record is refused. With ARGV[4]
+	// set, only a record under that live hold is removed: a holder whose
+	// hold lapsed finds the record another operation's, or nobody's, and
+	// removes nothing.
 	// KEYS[1] = sandbox key, KEYS[2] = gone set, both in the record's slot
 	// KEYS[3] = the record's lock key, in the record's slot
-	// KEYS[4] = team index key, optional
 	// ARGV[1] = sandbox ID
 	// ARGV[2] = expected execution ID, or "" to remove any execution
 	// ARGV[3] = gone set TTL in seconds
@@ -184,9 +164,6 @@ var (
 			return {0, data}
 		end
 		redis.call('DEL', KEYS[1])
-		if KEYS[4] then
-			redis.call('SREM', KEYS[4], ARGV[1])
-		end
 		if ok and decoded['executionID'] then
 			redis.call('SADD', KEYS[2], decoded['executionID'])
 			redis.call('EXPIRE', KEYS[2], ARGV[3])
@@ -358,7 +335,7 @@ func (m scriptMetrics) run(ctx context.Context, client redis.Scripter, name stri
 	cmd := script.Run(ctx, client, keys, args...)
 	elapsed := time.Since(start)
 
-	// A nil reply is the script's result (remove_sandbox on a missing key), not a failed run.
+	// A nil reply is the script's result (remove_record on a missing key), not a failed run.
 	outcome := scriptOutcomeOK
 	if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
 		outcome = scriptOutcomeError

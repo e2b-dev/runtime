@@ -123,7 +123,7 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 	resumed := sbx
 	resumed.ExecutionID = uuid.NewString()
 	resumed.State = sandboxtypes.StateRunning
-	writeRecord(t, storage.redisClient, recordKey(formSandbox, resumed.TeamID.String(), resumed.SandboxID), "", resumed)
+	writeRecord(t, storage.redisClient, recordKey(resumed.SandboxID), "", resumed)
 
 	finishPause(ctx, nil)
 
@@ -163,15 +163,14 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 func transitionKeysFor(t *testing.T, client redis.UniversalClient, sbx sandboxtypes.Sandbox, transitionID string) []string {
 	t.Helper()
 
-	team := sbx.TeamID.String()
-	key := recordKey(formSandbox, team, sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	lockKey := redis_utils.GetLockKey(key)
 	require.NoError(t, client.Set(t.Context(), lockKey, transitionLockValue, 0).Err())
 
 	return []string{
 		key,
-		transitionKeyFor(formSandbox, team, sbx.SandboxID),
-		transitionResultKeyFor(formSandbox, team, sbx.SandboxID, transitionID),
+		transitionKeyFor(sbx.SandboxID),
+		transitionResultKeyFor(sbx.SandboxID, transitionID),
 		lockKey,
 	}
 }

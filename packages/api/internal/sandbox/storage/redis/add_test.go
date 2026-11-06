@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -80,26 +79,22 @@ func failAt(p faultPoint, err error) func(faultPoint) error {
 	}
 }
 
-func lockKeys(teamID uuid.UUID, sandboxID string) (team, sandbox string) {
-	return redis_utils.GetLockKey(recordKey(formTeam, teamID.String(), sandboxID)),
-		redis_utils.GetLockKey(recordKey(formSandbox, teamID.String(), sandboxID))
+// lockKeyOf returns the sandbox's lock key.
+func lockKeyOf(sandboxID string) string {
+	return redis_utils.GetLockKey(recordKey(sandboxID))
 }
 
-// requireLocksFree asserts that neither form's lock of the sandbox is held.
-func requireLocksFree(t *testing.T, s *Storage, teamID uuid.UUID, sandboxID string) {
+// requireLocksFree asserts that the sandbox's lock is not held.
+func requireLocksFree(t *testing.T, s *Storage, sandboxID string) {
 	t.Helper()
 
-	teamLock, sandboxLock := lockKeys(teamID, sandboxID)
-	require.Falsef(t, lockHeld(t, s.locker, teamLock), "lock %s is held", teamLock)
-	require.Falsef(t, lockHeld(t, s.locker, sandboxLock), "lock %s is held", sandboxLock)
+	lock := lockKeyOf(sandboxID)
+	require.Falsef(t, lockHeld(t, s.locker, lock), "lock %s is held", lock)
 }
 
-// Add writes the record in the sandbox form with its index entry, its
-// expiration member and its team's global entry, and nothing in the team
-// form: a record of the same sandbox left there, as a crashed predecessor
-// of the release that wrote that form leaves one, is gone. That the delete
-// precedes the write is shown by TestAddRecordWriteFailureCleansUp.
-func TestAddWritesSandboxForm(t *testing.T) {
+// Add writes the record with its index entry, its expiration member and its
+// team's global entry.
+func TestAddWritesRecordIndexMemberAndTeam(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
@@ -107,53 +102,40 @@ func TestAddWritesSandboxForm(t *testing.T) {
 	teamID := uuid.New()
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	sbx := newRecord(teamID, "sbx-written")
-	stale := recordKey(formTeam, teamID.String(), sbx.SandboxID)
-	writeRecord(t, client, stale, "", newRecord(teamID, sbx.SandboxID))
 
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	requireRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID), mustJSON(t, sbx))
-	requireNoRecord(t, client, stale)
+	requireRecord(t, client, recordKey(sbx.SandboxID), mustJSON(t, sbx))
 	requireIndexed(t, client, index, sbx.SandboxID, true)
 	requireMemberScore(t, client, sandboxExpirationMember(sbx), float64(sbx.EndTime.UnixMilli()))
 	require.NoError(t, client.ZScore(t.Context(), globalTeamsSet, teamID.String()).Err())
 }
 
-// Add waits for the sandbox's lock in either form, and takes the team form's
-// first, so a predecessor's operation under either lock finishes before it
-// writes.
-func TestAddTakesBothLocks(t *testing.T) {
+// Add waits for the sandbox's lock, so a predecessor's operation under it
+// finishes before it writes.
+func TestAddWaitsForTheRecordLock(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
 	storage := newTestStorage(t, client)
 	startNotifications(t, storage)
 	teamID := uuid.New()
+	sbx := newRecord(teamID, "sbx-locked")
+	sandboxLock := lockKeyOf(sbx.SandboxID)
 
-	for _, held := range []keyForm{formTeam, formSandbox} {
-		sbx := newRecord(teamID, fmt.Sprintf("sbx-%d", held))
-		teamLock, sandboxLock := lockKeys(teamID, sbx.SandboxID)
-		heldLock := redis_utils.GetLockKey(recordKey(held, teamID.String(), sbx.SandboxID))
+	holder, err := storage.locker.Obtain(t.Context(), sandboxLock, testLockTimeout)
+	require.NoError(t, err)
 
-		holder, err := storage.locker.Obtain(t.Context(), heldLock, testLockTimeout)
-		require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- storage.Add(t.Context(), sbx) }()
 
-		done := make(chan error, 1)
-		go func() { done <- storage.Add(t.Context(), sbx) }()
+	waitForLockWaiter(t, storage.subManager, getLockRoutingKey(sandboxLock), done)
+	requireNoRecord(t, client, recordKey(sbx.SandboxID))
 
-		waitForLockWaiter(t, storage.subManager, getLockRoutingKey(heldLock), done)
-		if held == formTeam {
-			require.False(t, lockHeld(t, storage.locker, sandboxLock), "the sandbox-form lock was taken before the team-form one")
-		} else {
-			require.True(t, lockHeld(t, storage.locker, teamLock), "the team-form lock is not held while the sandbox-form one is awaited")
-		}
-		requireNoRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID))
-
-		require.NoError(t, holder.Release(context.WithoutCancel(t.Context())))
-		requireNoErrorFromChannel(t, done)
-		requireRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID), mustJSON(t, sbx))
-		requireLocksFree(t, storage, teamID, sbx.SandboxID)
-	}
+	require.NoError(t, holder.Release(context.WithoutCancel(t.Context())))
+	requireNoErrorFromChannel(t, done)
+	requireRecord(t, client, recordKey(sbx.SandboxID), mustJSON(t, sbx))
+	requireLocksFree(t, storage, sbx.SandboxID)
 }
 
 // An index entry that fails after the record is written is retried; when
@@ -197,15 +179,13 @@ func TestAddIndexFailureIsRepairableSuccess(t *testing.T) {
 	})
 	require.NoError(t, storage.Add(t.Context(), sbx))
 	require.Equal(t, addIndexRetries+1, attempts)
-	requireRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID), mustJSON(t, sbx))
+	requireRecord(t, client, recordKey(sbx.SandboxID), mustJSON(t, sbx))
 	requireIndexed(t, client, index, sbx.SandboxID, false)
 	require.Equal(t, int64(1), writeAnomalies(t, reader, writeAnomalyAddUnindexed))
 }
 
 // A record write that fails before it runs leaves nothing of this Add: no
-// record in either form, the team form's stale record already deleted, no
-// index entry, even one the healer had added for the deleted record; Add
-// returns the error and releases the locks.
+// record, no index entry; Add returns the error and releases the lock.
 func TestAddRecordWriteFailureCleansUp(t *testing.T) {
 	t.Parallel()
 
@@ -214,43 +194,19 @@ func TestAddRecordWriteFailureCleansUp(t *testing.T) {
 	teamID := uuid.New()
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	errWrite := errors.New("write failed")
-	storage.SetFaultHook(failAt(faultAddAfterOtherDel, errWrite))
+	storage.SetFaultHook(failAt(faultAddBeforeRecordWrite, errWrite))
 	sbx := newRecord(teamID, "sbx-failed")
-	stale := recordKey(formTeam, teamID.String(), sbx.SandboxID)
-	writeRecord(t, client, stale, index, newRecord(teamID, sbx.SandboxID))
 
 	require.ErrorIs(t, storage.Add(t.Context(), sbx), errWrite)
 
-	requireNoRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID))
-	requireNoRecord(t, client, stale)
+	requireNoRecord(t, client, recordKey(sbx.SandboxID))
 	requireIndexed(t, client, index, sbx.SandboxID, false)
-	requireLocksFree(t, storage, teamID, sbx.SandboxID)
-}
-
-// A predecessor's record in the team form must survive a fault at
-// faultAddBeforeOtherDel, which sits before Add's DEL of it. The fault
-// matrix cannot tell: its predecessor was paused out before the Add.
-func TestAddFaultBeforeOtherDelSparesTeamFormRecord(t *testing.T) {
-	t.Parallel()
-
-	client := redis_utils.SetupInstance(t)
-	storage := newTestStorage(t, client)
-	teamID := uuid.New()
-	sbx := newRecord(teamID, "sbx-adv")
-	teamKey := recordKey(formTeam, teamID.String(), sbx.SandboxID)
-	data := writeRecord(t, client, teamKey, "", newRecord(teamID, sbx.SandboxID))
-	storage.SetFaultHook(failAt(faultAddBeforeOtherDel, errInjected))
-
-	require.ErrorIs(t, storage.Add(t.Context(), sbx), errInjected)
-
-	requireRecord(t, client, teamKey, data)
+	requireLocksFree(t, storage, sbx.SandboxID)
 }
 
 // A write whose reply is lost after it landed is undone the way every
-// removal is ordered, the index entry first, then the guarded record delete.
-// The entry a healer re-index of a crashed predecessor had made, whose
-// team-form record this Add deleted before the write, goes with it: neither
-// form holds a record any more.
+// removal is ordered, the index entry first, then the guarded record delete;
+// nothing of the sandbox remains.
 func TestAddLostReplyCleansUp(t *testing.T) {
 	t.Parallel()
 
@@ -260,18 +216,14 @@ func TestAddLostReplyCleansUp(t *testing.T) {
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	errLost := errors.New("reply lost")
 	sbx := newRecord(teamID, "sbx-lost")
-	key := recordKey(formSandbox, teamID.String(), sbx.SandboxID)
-	predecessor := recordKey(formTeam, teamID.String(), sbx.SandboxID)
-	writeRecord(t, client, predecessor, index, newRecord(teamID, sbx.SandboxID))
+	key := recordKey(sbx.SandboxID)
 	storage.SetFaultHook(func(p faultPoint) error {
 		if p != faultAddRecordWrite {
 			return nil
 		}
-		// The write landed, the predecessor is gone and its entry is
-		// there; the reply is lost now.
+		// The write landed; the entry follows the write; the reply is lost now.
 		requireRecord(t, client, key, mustJSON(t, sbx))
-		requireNoRecord(t, client, predecessor)
-		requireIndexed(t, client, index, sbx.SandboxID, true)
+		requireIndexed(t, client, index, sbx.SandboxID, false)
 
 		return errLost
 	})
@@ -279,7 +231,6 @@ func TestAddLostReplyCleansUp(t *testing.T) {
 	require.ErrorIs(t, storage.Add(t.Context(), sbx), errLost)
 
 	requireNoRecord(t, client, key)
-	requireNoRecord(t, client, predecessor)
 	requireIndexed(t, client, index, sbx.SandboxID, false)
 }
 
@@ -294,7 +245,7 @@ func TestAddCleanupRunsPastCancellation(t *testing.T) {
 	teamID := uuid.New()
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	sbx := newRecord(teamID, "sbx-cancelled")
-	key := recordKey(formSandbox, teamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	storage.SetFaultHook(func(p faultPoint) error {
@@ -311,7 +262,7 @@ func TestAddCleanupRunsPastCancellation(t *testing.T) {
 	requireNoRecord(t, client, key)
 	requireIndexed(t, client, index, sbx.SandboxID, false)
 	require.Zero(t, writeAnomalies(t, reader, writeAnomalyAddWriteUnconfirmed))
-	requireLocksFree(t, storage, teamID, sbx.SandboxID)
+	requireLocksFree(t, storage, sbx.SandboxID)
 }
 
 // A caller gone once the record is committed, its context cancelled before
@@ -337,11 +288,11 @@ func TestAddFinishesPastCancellation(t *testing.T) {
 
 	require.NoError(t, storage.Add(ctx, sbx))
 
-	requireRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID), mustJSON(t, sbx))
+	requireRecord(t, client, recordKey(sbx.SandboxID), mustJSON(t, sbx))
 	requireIndexed(t, client, GetSandboxStorageTeamIndexKey(teamID.String()), sbx.SandboxID, true)
 	require.NoError(t, client.ZScore(t.Context(), globalTeamsSet, teamID.String()).Err())
 	require.Zero(t, writeAnomalies(t, reader, writeAnomalyAddUnindexed))
-	requireLocksFree(t, storage, teamID, sbx.SandboxID)
+	requireLocksFree(t, storage, sbx.SandboxID)
 }
 
 // A write that never ran may leave a stranded predecessor's record under the
@@ -355,9 +306,9 @@ func TestAddCleanupSparesStrandedPredecessor(t *testing.T) {
 	teamID := uuid.New()
 	index := GetSandboxStorageTeamIndexKey(teamID.String())
 	errWrite := errors.New("write failed")
-	storage.SetFaultHook(failAt(faultAddAfterOtherDel, errWrite))
+	storage.SetFaultHook(failAt(faultAddBeforeRecordWrite, errWrite))
 	sbx := newRecord(teamID, "sbx-stranded")
-	key := recordKey(formSandbox, teamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	stranded := writeRecord(t, client, key, index, newRecord(teamID, sbx.SandboxID))
 
 	require.ErrorIs(t, storage.Add(t.Context(), sbx), errWrite)
@@ -385,5 +336,5 @@ func TestAddCleanupFailureIsCounted(t *testing.T) {
 	require.ErrorIs(t, storage.Add(t.Context(), sbx), errLost)
 
 	require.Equal(t, int64(1), writeAnomalies(t, reader, writeAnomalyAddWriteUnconfirmed))
-	requireRecord(t, client, recordKey(formSandbox, teamID.String(), sbx.SandboxID), mustJSON(t, sbx))
+	requireRecord(t, client, recordKey(sbx.SandboxID), mustJSON(t, sbx))
 }

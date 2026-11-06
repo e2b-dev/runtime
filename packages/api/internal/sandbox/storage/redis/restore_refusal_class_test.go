@@ -39,8 +39,8 @@ func TestStartRemoving_JoinerIsAnsweredWithTheRestoredRefusalsClass(t *testing.T
 				joiner <- err
 			}()
 			go func() { waiter <- storage.WaitForStateChange(t.Context(), sbx.TeamID, sbx.SandboxID) }()
-			id := pendingTransitionID(t, storage.redisClient, formSandbox, sbx.TeamID, sbx.SandboxID)
-			routingKey := transitionRoutingKey(transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, id))
+			id := pendingTransitionID(t, storage.redisClient, sbx.SandboxID)
+			routingKey := transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, id))
 			require.Eventually(t, func() bool { return waitersOn(storage, routingKey) == 2 },
 				5*time.Second, 5*time.Millisecond, "both waiters must be on the transition before it is finished")
 

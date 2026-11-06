@@ -27,7 +27,7 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 		return fmt.Errorf("hold deadline %s already passed", until.Format(time.RFC3339Nano))
 	}
 
-	return s.withRecordLock(ctx, hold.TeamID, hold.SandboxID, func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox) error {
+	return s.withRecordLock(ctx, hold.TeamID, hold.SandboxID, func(lock *storageLock, sbx sandboxtypes.Sandbox) error {
 		// Read again under the lock: the wait for it may have outlasted the
 		// deadline, and a hold written past it would read as released.
 		now := time.Now()
@@ -43,7 +43,7 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 			return sandboxtypes.ErrHoldConflict
 		}
 		// Under the record's lock, which every transition's start takes.
-		inTransition, err := s.redisClient.Exists(ctx, transitionKeyFor(form, hold.TeamID.String(), hold.SandboxID)).Result()
+		inTransition, err := s.redisClient.Exists(ctx, transitionKeyFor(hold.SandboxID)).Result()
 		if err != nil {
 			return fmt.Errorf("read the sandbox's transition: %w", err)
 		}
@@ -52,7 +52,7 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 		}
 		sbx.LifecycleHold, sbx.LifecycleHoldUntil = hold.ID, until.UnixMilli()
 
-		return s.writeHeld(ctx, form, lock, sbx)
+		return s.writeHeld(ctx, lock, sbx)
 	})
 }
 
@@ -66,7 +66,7 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 // sandboxtypes.ErrNotFound a record gone.
 func (s *Storage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold, nodeID string) (bool, error) {
 	moved := false
-	err := s.withHeldRecord(ctx, hold, func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
+	err := s.withHeldRecord(ctx, hold, func(lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
 		switch {
 		case !held && sbx.NodeID == nodeID:
 			return nil
@@ -75,7 +75,7 @@ func (s *Storage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold,
 		}
 		sbx.NodeID = nodeID
 		sbx.LifecycleHold, sbx.LifecycleHoldUntil = "", 0
-		if err := s.writeHeld(ctx, form, lock, sbx); err != nil {
+		if err := s.writeHeld(ctx, lock, sbx); err != nil {
 			return err
 		}
 		moved = true
@@ -89,30 +89,30 @@ func (s *Storage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold,
 // ReleaseHeldExecution clears the hold without moving the record;
 // sandboxtypes.ErrNotHeld when the record is not under this hold.
 func (s *Storage) ReleaseHeldExecution(ctx context.Context, hold sandboxtypes.Hold) error {
-	return s.withHeldRecord(ctx, hold, func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
+	return s.withHeldRecord(ctx, hold, func(lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
 		if !held {
 			return sandboxtypes.ErrNotHeld
 		}
 		sbx.LifecycleHold, sbx.LifecycleHoldUntil = "", 0
 
-		return s.writeHeld(ctx, form, lock, sbx)
+		return s.writeHeld(ctx, lock, sbx)
 	})
 }
 
 // RemoveHeldExecution removes the held record and returns it as it was: no
 // guest of this execution may run anywhere, and a node still running one
 // finds it an orphan. Under the record's lock it removes the record, still
-// held, through the form's remove path, so the gone set, the index entry and
-// the expiration member go as Remove takes them. A removal that fails keeps
-// the hold for a retry, and a retry after the record went finds
+// held, through the remove path, so the gone set, the index entry and the
+// expiration member go as Remove takes them. A removal that fails keeps the
+// hold for a retry, and a retry after the record went finds
 // sandboxtypes.ErrNotFound.
 func (s *Storage) RemoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold) (sandboxtypes.Sandbox, error) {
 	var removed sandboxtypes.Sandbox
-	err := s.withHeldRecord(ctx, hold, func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
+	err := s.withHeldRecord(ctx, hold, func(lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error {
 		if !held {
 			return sandboxtypes.ErrNotHeld
 		}
-		if err := s.removeUnderLock(ctx, form, lock, hold.TeamID, hold.SandboxID, hold.ExecutionID, hold.ID); err != nil {
+		if err := s.removeUnderLock(ctx, lock, hold.TeamID, hold.SandboxID, hold.ExecutionID, hold.ID); err != nil {
 			return err
 		}
 		removed = sbx
@@ -132,48 +132,28 @@ func (s *Storage) RemoveHeldExecution(ctx context.Context, hold sandboxtypes.Hol
 func (s *Storage) withHeldRecord(
 	ctx context.Context,
 	hold sandboxtypes.Hold,
-	change func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error,
+	change func(lock *storageLock, sbx sandboxtypes.Sandbox, held bool) error,
 ) error {
 	if hold.ID == "" {
 		return errors.New("empty hold ID")
 	}
 
-	return s.withRecordLock(ctx, hold.TeamID, hold.SandboxID, func(form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox) error {
+	return s.withRecordLock(ctx, hold.TeamID, hold.SandboxID, func(lock *storageLock, sbx sandboxtypes.Sandbox) error {
 		if sbx.ExecutionID != hold.ExecutionID {
 			return fmt.Errorf("sandbox %q: %w", hold.SandboxID, sandboxtypes.ErrExecutionMismatch)
 		}
 
-		return change(form, lock, sbx, sbx.LifecycleHold == hold.ID && sbx.Held(time.Now()))
+		return change(lock, sbx, sbx.LifecycleHold == hold.ID && sbx.Held(time.Now()))
 	})
 }
 
-// withRecordLock runs change on the sandbox's record under the lock of the
-// form it is in, resolved and retried once as Update does when a resume
-// moved the record to the other form meanwhile.
-func (s *Storage) withRecordLock(ctx context.Context, teamID uuid.UUID, sandboxID string, change func(keyForm, *storageLock, sandboxtypes.Sandbox) error) error {
-	team := teamID.String()
-	form, err := s.resolveForm(ctx, team, sandboxID)
-	if err != nil {
+// withRecordLock runs change on the sandbox's record under its lock; a
+// record of another team is not found before the lock is taken.
+func (s *Storage) withRecordLock(ctx context.Context, teamID uuid.UUID, sandboxID string, change func(*storageLock, sandboxtypes.Sandbox) error) (err error) {
+	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
 		return err
 	}
-
-	err = s.withRecordLockIn(ctx, form, teamID, sandboxID, change)
-	if errors.Is(err, errAbsentUnderLock) {
-		if form, err = s.formMovedTo(ctx, team, sandboxID, form); err != nil {
-			return err
-		}
-		if err = s.withRecordLockIn(ctx, form, teamID, sandboxID, change); errors.Is(err, errAbsentUnderLock) {
-			return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
-		}
-	}
-
-	return err
-}
-
-// withRecordLockIn runs change on the record in form under that form's lock;
-// errAbsentUnderLock when the form holds no record of the team.
-func (s *Storage) withRecordLockIn(ctx context.Context, form keyForm, teamID uuid.UUID, sandboxID string, change func(keyForm, *storageLock, sandboxtypes.Sandbox) error) (err error) {
-	key := recordKey(form, teamID.String(), sandboxID)
+	key := recordKey(sandboxID)
 	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to obtain lock: %w", err)
@@ -181,23 +161,20 @@ func (s *Storage) withRecordLockIn(ctx context.Context, form keyForm, teamID uui
 	defer releaseLock(ctx, lock.Release, &err)
 
 	_, sbx, err := s.readRecord(ctx, key, teamID, sandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		return errAbsentUnderLock
-	}
 	if err != nil {
 		return err
 	}
 
-	return change(form, lock, sbx)
+	return change(lock, sbx)
 }
 
 // writeHeld writes sbx back to its record while lock still holds it.
-func (s *Storage) writeHeld(ctx context.Context, form keyForm, lock *storageLock, sbx sandboxtypes.Sandbox) error {
+func (s *Storage) writeHeld(ctx context.Context, lock *storageLock, sbx sandboxtypes.Sandbox) error {
 	data, err := json.Marshal(sbx)
 	if err != nil {
 		return fmt.Errorf("failed to marshal sandbox: %w", err)
 	}
-	if err := s.setUnderLock(ctx, lock, recordKey(form, sbx.TeamID.String(), sbx.SandboxID), data); err != nil {
+	if err := s.setUnderLock(ctx, lock, recordKey(sbx.SandboxID), data); err != nil {
 		return fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
 

@@ -157,18 +157,19 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   default, zero, gives every request its own read with the same store commands as before.
   Only the two list endpoints use the snapshot; the evictor, reconcile, template delete and
   team teardown keep reading the store directly.
-- **Sandbox store key forms**: a sandbox's record, lock and transition keys are tagged with its
-  own sandbox ID, so one team's sandboxes no longer share one Redis Cluster slot and thread; the
-  team index and reservations stay under the team tag. Records earlier releases wrote are tagged
-  with the team ID and keep that form until they expire: each operation on an existing sandbox
-  first finds its form, and a create takes the sandbox's lock in both forms. A healer re-indexes a
-  running record that lost its index entry, deletes a stale non-running one, drops recordless
-  entries and the older of a sandbox's two records. Upgrading: an API older than 0.30.0 does not
-  read sandbox-tagged records and kills their sandboxes as orphans, so no such replica may run
-  once a replica of this release has started: stop every older replica before starting this
-  release rather than rolling them over, and never roll back to one while sandbox-tagged records
-  exist. A release that reads both forms writes a marker key on start; this release warns on start
-  when the marker was absent, which a single-replica install may ignore.
+- **Sandbox store keys**: a sandbox's record, lock and transition keys are tagged with its
+  own sandbox ID, so one team's sandboxes do not share one Redis Cluster slot and thread; the
+  team index and reservations stay under the team tag. Releases before 0.30.0 tagged records
+  with the team ID and read that form only; 0.30.0 and later tag them with the sandbox ID and
+  read that form only, so neither side sees the other's records. A healer re-indexes a running
+  record that lost its index entry, deletes a stale non-running one and drops recordless
+  entries. Upgrading from a release before 0.30.0 is a cold cut: stop every API replica, then
+  start 0.30.0 or later. Sandboxes created before the cut are invisible to the new API, which
+  reports them absent and lets the reconcile kill them as orphans, so end them first or accept
+  their loss; a rolling upgrade that runs replicas from both sides at once is unsupported.
+  Never roll back to a release older than 0.30.0 once sandboxes have been created on 0.30.0 or
+  later, for the same reason in the other direction. The API writes a marker key on start and
+  warns when it was absent, which a single-replica install may ignore.
 - **Workload identity**: sandbox create accepts an optional `iam.tokens` map of caller-named
   workload-token definitions (each an exact `audience` and `tokenType`). A non-empty, validated
   map enables workload identity, whose identity the orchestrator derives from the sandbox's

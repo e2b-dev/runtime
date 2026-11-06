@@ -90,7 +90,7 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 	}
 
 	// A failed read leaves the batch untouched: a member is swept only once
-	// both forms are known to hold no record.
+	// its record is known to be absent.
 	found, absent, err := s.fetchRecords(ctx, refs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the expired sandboxes' records: %w", err)
@@ -242,7 +242,7 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 // its record, and the removal took it; the member and the record live in
 // different slots, so no one command can check the record as it removes the
 // member. The sweep holds no lock, so a complete Replace can land inside it;
-// a Remove holds its form's lock, so only a Replace written past an expired
+// a Remove holds the record's lock, so only a Replace written past an expired
 // lock can land inside that one. A Replace landing after this read asserts
 // its member again after its record's write (see add), so the two reads
 // together leave no stored record unindexed by an acknowledged removal. The

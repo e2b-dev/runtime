@@ -18,14 +18,14 @@ import (
 const sandboxScanBatchSize = 256
 
 // sandboxBatchFunc receives one bounded batch of a team's index: the records
-// that decode and are the team's, and the entries whose record is absent in
-// both forms or that no key can be built from.
+// that decode and are the team's, and the entries whose record is absent or
+// that no key can be built from.
 type sandboxBatchFunc func(teamID string, batch []sandboxtypes.Sandbox, absent []recordRef) error
 
 // forEachSandboxBatch walks every team's sandbox index and invokes fn with
 // bounded batches of decoded records (all states; undecodable records are
-// skipped) and of the index entries whose record is absent in both forms or
-// that no key can be built from.
+// skipped) and of the index entries whose record is absent or that no key
+// can be built from.
 //
 // Per-team failures — including errors returned by fn — are isolated: the
 // failing team is skipped and the remaining teams are still scanned, and the
@@ -93,11 +93,10 @@ func (s *Storage) forEachTeamSandboxBatch(ctx context.Context, teamID string, fn
 	}
 }
 
-// fetchSandboxBatch reads one bounded batch of sandbox records, in both key
-// forms, and returns the records found and the refs of the index entries
-// whose record is absent in both forms (deleted already, or never written)
-// or that no key can be built from, which the healer removes. Unparseable
-// records are in neither.
+// fetchSandboxBatch reads one bounded batch of sandbox records and returns
+// the records found and the refs of the index entries whose record is
+// absent (deleted already, or never written) or that no key can be built
+// from, which the healer removes. Unparseable records are in neither.
 func (s *Storage) fetchSandboxBatch(ctx context.Context, teamID string, sandboxIDs []string) ([]sandboxtypes.Sandbox, []recordRef, error) {
 	if len(sandboxIDs) == 0 {
 		return nil, nil, nil

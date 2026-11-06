@@ -60,7 +60,6 @@ func (s *Storage) startHealer(ctx context.Context) {
 					zap.Int("readded", report.Readded),
 					zap.Int("removed", report.Removed),
 					zap.Int("deleted_stale", report.DeletedStale),
-					zap.Int("twins_deleted", report.TwinsDeleted),
 				)
 			}
 
@@ -70,8 +69,8 @@ func (s *Storage) startHealer(ctx context.Context) {
 }
 
 // teamWalk is what one walk of the team indexes found beside the records it
-// streamed: the entries whose record is absent in both forms or that no key
-// can be built from, and whether every team was walked.
+// streamed: the entries whose record is absent or that no key can be built
+// from, and whether every team was walked.
 type teamWalk struct {
 	dangling []recordRef
 	complete bool
@@ -175,20 +174,19 @@ const (
 	healReadded      healKind = "readded"       // index entry of a Running record added back
 	healRemoved      healKind = "removed"       // index entry without a record removed
 	healDeletedStale healKind = "deleted_stale" // stale non-Running record without an entry deleted
-	healTwinsDeleted healKind = "twins_deleted" // older of a sandbox's two records deleted
 )
 
 // healKinds is every kind, in the order the counter and the sweep gauges
 // report them.
-var healKinds = []healKind{healReadded, healRemoved, healDeletedStale, healTwinsDeleted}
+var healKinds = []healKind{healReadded, healRemoved, healDeletedStale}
 
 // healReport is what one index-consistency sweep repaired and counted. The
 // census is complete when every team's index was walked and every sandbox
 // with an expiration member was probed.
 type healReport struct {
-	Readded, Removed, DeletedStale, TwinsDeleted int
-	TeamForm, SandboxForm                        int
-	Complete                                     bool
+	Readded, Removed, DeletedStale int
+	Records                        int
+	Complete                       bool
 }
 
 func (r *healReport) add(kind healKind) {
@@ -199,13 +197,11 @@ func (r *healReport) add(kind healKind) {
 		r.Removed++
 	case healDeletedStale:
 		r.DeletedStale++
-	case healTwinsDeleted:
-		r.TwinsDeleted++
 	}
 }
 
 func (r *healReport) repairs() int {
-	return r.Readded + r.Removed + r.DeletedStale + r.TwinsDeleted
+	return r.Readded + r.Removed + r.DeletedStale
 }
 
 // healHistory is the reports of the last two sweeps, which the census and
@@ -220,8 +216,7 @@ type healState uint8
 
 const (
 	unindexedRecord healState = iota + 1 // a record without its index entry
-	danglingEntry                        // an index entry without a record in either form
-	twinRecords                          // a record in both forms
+	danglingEntry                        // an index entry without a record
 	unusableEntry                        // an index entry no key can be built from
 )
 
@@ -233,7 +228,7 @@ type nominee struct {
 
 // healIndexConsistency repairs the states an interrupted Add or Remove, or a
 // replication loss, leaves between a sandbox's record, its index entry and
-// its expiration member, and takes the key-form census. The expiration walk
+// its expiration member, and takes the census. The expiration walk
 // here and the team walk behind walk nominate without a lock; every repair
 // is made under the sandbox's lock, after the state is read again there.
 func (s *Storage) healIndexConsistency(ctx context.Context, walk teamWalk) (report healReport, err error) {
@@ -293,11 +288,11 @@ func (s *Storage) healIndexConsistency(ctx context.Context, walk teamWalk) (repo
 }
 
 // walkExpirationMembers probes, for every sandbox with an expiration member,
-// the record in each form and the index entry, counts the records by form
-// into report, and returns the sandboxes whose record has no index entry or
-// exists in both forms. A member that does not parse, or whose probe the
-// server refused, counts nowhere, the latter leaving the census incomplete;
-// a sandbox is probed once however many executions' members it has.
+// the record and the index entry, counts the records into report, and
+// returns the sandboxes whose record has no index entry. A member that does
+// not parse, or whose probe the server refused, counts nowhere, the latter
+// leaving the census incomplete; a sandbox is probed once however many
+// executions' members it has.
 func (s *Storage) walkExpirationMembers(ctx context.Context, report *healReport) ([]nominee, error) {
 	var nominees []nominee
 	seen := make(map[recordRef]struct{})
@@ -338,20 +333,12 @@ func (s *Storage) walkExpirationMembers(ctx context.Context, report *healReport)
 
 				continue
 			}
-			// Counted under the form formOfExisting resolves, the sandbox
-			// form first; a member without a record is the evictor's.
-			switch {
-			case p.inSandbox:
-				report.SandboxForm++
-			case p.inTeam:
-				report.TeamForm++
-			default:
+			// A member without a record is the evictor's.
+			if !p.exists {
 				continue
 			}
-			switch {
-			case p.inSandbox && p.inTeam:
-				nominees = append(nominees, nominee{ref: refs[i], state: twinRecords})
-			case !p.indexed:
+			report.Records++
+			if !p.indexed {
 				nominees = append(nominees, nominee{ref: refs[i], state: unindexedRecord})
 			}
 		}
@@ -370,19 +357,19 @@ func (s *Storage) walkExpirationMembers(ctx context.Context, report *healReport)
 	return nominees, nil
 }
 
-// recordProbe is what the walk saw of one sandbox: a record in each form,
-// and its index entry; or the reply that refused one of its probes.
+// recordProbe is what the walk saw of one sandbox: its record and its index
+// entry; or the reply that refused one of its probes.
 type recordProbe struct {
-	inSandbox, inTeam, indexed bool
-	err                        error
+	exists, indexed bool
+	err             error
 }
 
-// probeRecords probes the refs' records in both forms and their index
-// entries through one pipeline. A probe the server refused, such as
-// SISMEMBER on an index key of another type, is returned on its probe for
-// the caller to skip; an error that is no reply, the connection, a redirect
-// that ran out, or a hook that never ran the commands, ends the walk before
-// the untouched empty replies could pass for absent records.
+// probeRecords probes the refs' records and their index entries through one
+// pipeline. A probe the server refused, such as SISMEMBER on an index key of
+// another type, is returned on its probe for the caller to skip; an error
+// that is no reply, the connection, a redirect that ran out, or a hook that
+// never ran the commands, ends the walk before the untouched empty replies
+// could pass for absent records.
 func (s *Storage) probeRecords(ctx context.Context, refs []recordRef) ([]recordProbe, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -390,15 +377,14 @@ func (s *Storage) probeRecords(ctx context.Context, refs []recordRef) ([]recordP
 
 	pipe := s.redisClient.Pipeline()
 	type cmds struct {
-		inSandbox, inTeam *redis.IntCmd
-		indexed           *redis.BoolCmd
+		exists  *redis.IntCmd
+		indexed *redis.BoolCmd
 	}
 	all := make([]cmds, len(refs))
 	for i, ref := range refs {
 		all[i] = cmds{
-			inSandbox: pipe.Exists(ctx, recordKey(formSandbox, ref.TeamID, ref.SandboxID)),
-			inTeam:    pipe.Exists(ctx, recordKey(formTeam, ref.TeamID, ref.SandboxID)),
-			indexed:   pipe.SIsMember(ctx, GetSandboxStorageTeamIndexKey(ref.TeamID), ref.SandboxID),
+			exists:  pipe.Exists(ctx, recordKey(ref.SandboxID)),
+			indexed: pipe.SIsMember(ctx, GetSandboxStorageTeamIndexKey(ref.TeamID), ref.SandboxID),
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !refusedProbe(err) {
@@ -409,7 +395,7 @@ func (s *Storage) probeRecords(ctx context.Context, refs []recordRef) ([]recordP
 
 	probes := make([]recordProbe, len(refs))
 	for i, c := range all {
-		if err := cmp.Or(c.inSandbox.Err(), c.inTeam.Err(), c.indexed.Err()); err != nil {
+		if err := cmp.Or(c.exists.Err(), c.indexed.Err()); err != nil {
 			recordRedisError(ctx, err)
 			if !refusedProbe(err) {
 				return nil, fmt.Errorf("failed to probe sandbox records: %w", err)
@@ -418,7 +404,7 @@ func (s *Storage) probeRecords(ctx context.Context, refs []recordRef) ([]recordP
 
 			continue
 		}
-		probes[i] = recordProbe{inSandbox: c.inSandbox.Val() > 0, inTeam: c.inTeam.Val() > 0, indexed: c.indexed.Val()}
+		probes[i] = recordProbe{exists: c.exists.Val() > 0, indexed: c.indexed.Val()}
 	}
 
 	return probes, nil
@@ -439,31 +425,25 @@ func refusedProbe(err error) bool {
 // healNominee repairs one nominee under its lock and returns the repair
 // made, or "" when none. The state is read again under the lock: the walk's
 // read may predate a Remove that completed or a resume of the ID that was
-// admitted. A twin is read under both forms' locks, in Add's order. An
-// entry no key can be built from is removed without a lock, which no writer
-// can hold for its ID. A simulated crash leaves the lock held, as every
-// operation's does.
+// admitted. An entry no key can be built from is removed without a lock,
+// which no writer can hold for its ID. A simulated crash leaves the lock
+// held, as every operation's does.
 func (s *Storage) healNominee(ctx context.Context, n nominee, now time.Time) (kind healKind, err error) {
 	if err := s.fault(faultHealerAfterNominate); err != nil {
 		return "", err
-	}
-	if n.state == twinRecords {
-		return s.healTwin(ctx, n.ref)
 	}
 	if n.state == unusableEntry {
 		return s.removeEntry(ctx, n.ref)
 	}
 
-	// Another team's record in the sandbox form is nothing of this entry's
-	// team to repair, as the guard under the lock finds too.
-	form, err := s.resolveForm(ctx, n.ref.TeamID, n.ref.SandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
+	// Another team's record under the key is nothing of this entry's team
+	// to repair, as the guard under the lock finds too.
+	if err := s.refuseOtherTeam(ctx, n.ref.TeamID, n.ref.SandboxID); errors.Is(err, sandboxtypes.ErrNotFound) {
 		return "", nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return "", err
 	}
-	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(recordKey(form, n.ref.TeamID, n.ref.SandboxID)), lockTimeout)
+	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(recordKey(n.ref.SandboxID)), lockTimeout)
 	if err != nil {
 		return "", fmt.Errorf("failed to obtain lock: %w", err)
 	}
@@ -473,15 +453,17 @@ func (s *Storage) healNominee(ctx context.Context, n nominee, now time.Time) (ki
 	}
 
 	if n.state != danglingEntry {
-		return s.healUnindexed(ctx, form, lock, n.ref, now)
+		return s.healUnindexed(ctx, lock, n.ref, now)
 	}
-	// The entry goes while the sandbox still has no record in either form.
-	_, exists, err := s.formOfExisting(ctx, n.ref.TeamID, n.ref.SandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
+	// The entry goes while the key still holds no record; a record there,
+	// whoever's, is a writer's to judge, as the guard under the lock finds
+	// too.
+	exists, err := s.redisClient.Exists(ctx, recordKey(n.ref.SandboxID)).Result()
+	if err != nil {
+		return "", fmt.Errorf("EXISTS: %w", err)
+	}
+	if exists > 0 {
 		return "", nil
-	}
-	if err != nil || exists {
-		return "", err
 	}
 
 	return s.removeEntry(ctx, n.ref)
@@ -491,8 +473,8 @@ func (s *Storage) healNominee(ctx context.Context, n nominee, now time.Time) (ki
 // grace period, and deletes a non-Running one, with its expiration member,
 // once it is stale: its VM is gone, and indexed again it would be listed,
 // counted, and returned by a resume as live.
-func (s *Storage) healUnindexed(ctx context.Context, form keyForm, lock *storageLock, ref recordRef, now time.Time) (healKind, error) {
-	key := recordKey(form, ref.TeamID, ref.SandboxID)
+func (s *Storage) healUnindexed(ctx context.Context, lock *storageLock, ref recordRef, now time.Time) (healKind, error) {
+	key := recordKey(ref.SandboxID)
 	sbx, ok, err := s.readRecordOf(ctx, key, ref)
 	if err != nil || !ok {
 		return "", err
@@ -552,47 +534,6 @@ func (s *Storage) removeEntry(ctx context.Context, ref recordRef) (healKind, err
 	}
 
 	return healRemoved, nil
-}
-
-// healTwin deletes the older of a sandbox's two records by StartTime, the
-// team form's on a tie, under both forms' locks, when both still exist and
-// both are the sandbox's. The index entry stays for the other. A simulated
-// crash leaves both locks held.
-func (s *Storage) healTwin(ctx context.Context, ref recordRef) (kind healKind, err error) {
-	teamFormKey := recordKey(formTeam, ref.TeamID, ref.SandboxID)
-	sandboxFormKey := recordKey(formSandbox, ref.TeamID, ref.SandboxID)
-	release, err := s.locker.ObtainBoth(ctx, redis_utils.GetLockKey(teamFormKey), redis_utils.GetLockKey(sandboxFormKey), lockTimeout)
-	if err != nil {
-		return "", fmt.Errorf("failed to obtain locks: %w", err)
-	}
-	defer releaseLock(ctx, release, &err)
-	if err := s.fault(faultHealerUnderLock); err != nil {
-		return "", err
-	}
-
-	inTeam, ok, err := s.readRecordOf(ctx, teamFormKey, ref)
-	if err != nil || !ok {
-		return "", err
-	}
-	inSandbox, ok, err := s.readRecordOf(ctx, sandboxFormKey, ref)
-	if err != nil || !ok {
-		return "", err
-	}
-	older, victim := teamFormKey, inTeam
-	if inSandbox.StartTime.Before(inTeam.StartTime) {
-		older, victim = sandboxFormKey, inSandbox
-	}
-	// The twin's lock is the other form's, which this repair does not hold:
-	// the execution guard alone scopes the delete.
-	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{older, goneKeyFor(older), redis_utils.GetLockKey(older)}, ref.SandboxID, victim.ExecutionID, int(goneExecutionsTTL.Seconds()), "", ""))
-	if err != nil {
-		return "", fmt.Errorf("remove_record: %w", err)
-	}
-	if !deleted {
-		return "", nil
-	}
-
-	return healTwinsDeleted, nil
 }
 
 // readRecordOf reads the record under key and reports whether it is ref's:

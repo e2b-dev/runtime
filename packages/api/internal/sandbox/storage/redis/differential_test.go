@@ -19,35 +19,26 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// The flip store runs as two instances on one server whose flips are a few
-// operations apart and which take the operations in turn, as replicas
-// upgraded a few operations apart do: before its flip an instance creates
-// records in the team form directly, as the release that wrote it did, and
-// from it in the sandbox form through Add. Every operation is checked
-// against the in-memory model as it runs, so a divergence names the seed,
-// the operation and the store.
+// The store runs as two instances on one server that take the operations
+// in turn, as two replicas do. Every operation is checked against the
+// in-memory model as it runs, so a divergence names the seed, the operation
+// and the store.
 
 const (
 	differentialOperations = 500
 	differentialTeams      = 2
 	differentialSandboxes  = 20
 
-	// differentialFlipAt is the operation before which the flip store's
-	// first instance flips to the sandbox form; its second instance flips
-	// differentialFlipLag operations later.
-	differentialFlipAt  = 250
-	differentialFlipLag = 10
-
 	// differentialHold keeps a refused pause's sandbox out of the expiration
 	// sweep past the end of the run, so no operation sees the hold pass.
 	differentialHold = time.Hour
 
 	// differentialFar is how far from the run every EndTime lies, so that
-	// the wall clock never crosses one while the three stores replay.
+	// the wall clock never crosses one while the store replays.
 	differentialFar = time.Hour
 
-	// garbageSandboxID names a sandbox-form record that does not decode,
-	// seeded with an expiration member and no index entry in every store:
+	// garbageSandboxID names a record that does not decode, seeded with an
+	// expiration member and no index entry in every store:
 	// the readers skip it, so it is never listed, never an orphan and never
 	// swept, and the healer nominates it every sweep and repairs nothing.
 	garbageSandboxID = "sbx-garbage"
@@ -591,8 +582,8 @@ func (m *differentialModel) projectionTrace() string {
 // re-added, its repairs, how many records its census found, and whether it
 // was complete.
 func healTrace(healed int, repairs healReport, records int, complete bool) string {
-	return fmt.Sprintf("healed=%d readded=%d removed=%d stale=%d twins=%d records=%d complete=%t",
-		healed, repairs.Readded, repairs.Removed, repairs.DeletedStale, repairs.TwinsDeleted, records, complete)
+	return fmt.Sprintf("healed=%d readded=%d removed=%d stale=%d records=%d complete=%t",
+		healed, repairs.Readded, repairs.Removed, repairs.DeletedStale, records, complete)
 }
 
 // randomUUID draws a UUID from rng, so every store of a seed sees the same
@@ -648,19 +639,13 @@ func generateDifferential(seed uint64) differentialCase {
 	}
 }
 
-// differentialRun is one store under the differential: one instance, or
-// two on one server that take the operations in turn and flip at different
-// operations.
+// differentialRun is the store under the differential: two instances on one
+// server that take the operations in turn.
 type differentialRun struct {
-	name      string
 	instances []*Storage
-	// flipAt is the operation from which each instance creates records in
-	// the sandbox form through Add, instead of the team form directly; 0
-	// from the start, -1 never.
-	flipAt []int
 }
 
-func newDifferentialRun(t *testing.T, name string, garbage recordRef) differentialRun {
+func newDifferentialRun(t *testing.T, garbage recordRef) differentialRun {
 	t.Helper()
 
 	client := redis_utils.SetupInstance(t)
@@ -671,23 +656,17 @@ func newDifferentialRun(t *testing.T, name string, garbage recordRef) differenti
 
 		return s
 	}
-	switch name {
-	case "team":
-		return differentialRun{name: name, instances: []*Storage{instance()}, flipAt: []int{-1}}
-	case "sandbox":
-		return differentialRun{name: name, instances: []*Storage{instance()}, flipAt: []int{0}}
-	default:
-		return differentialRun{name: name, instances: []*Storage{instance(), instance()}, flipAt: []int{differentialFlipAt, differentialFlipAt + differentialFlipLag}}
-	}
+
+	return differentialRun{instances: []*Storage{instance(), instance()}}
 }
 
-// writeGarbageRecord stores a value that does not decode under the
-// sandbox-form key of ref, with an expiration member whose score has
-// passed and no index entry, and returns the member.
+// writeGarbageRecord stores a value that does not decode under the record
+// key of ref, with an expiration member whose score has passed and no index
+// entry, and returns the member.
 func writeGarbageRecord(t *testing.T, client redis.UniversalClient, ref recordRef) string {
 	t.Helper()
 
-	require.NoError(t, client.Set(t.Context(), recordKey(formSandbox, ref.TeamID, ref.SandboxID), "not json", 0).Err())
+	require.NoError(t, client.Set(t.Context(), recordKey(ref.SandboxID), "not json", 0).Err())
 	member := expirationMember(ref.TeamID, ref.SandboxID, uuid.NewString())
 	require.NoError(t, client.ZAdd(t.Context(), globalExpirationSet, redis.Z{Score: float64(time.Now().Add(-differentialFar).UnixMilli()), Member: member}).Err())
 
@@ -700,42 +679,24 @@ func (r differentialRun) actors(index int) (actor, other *Storage) {
 	return r.instances[index%len(r.instances)], r.instances[(index+1)%len(r.instances)]
 }
 
-// createForm returns the form the instance that runs the operation at index
-// creates records in.
-func (r differentialRun) createForm(index int) keyForm {
-	if at := r.flipAt[index%len(r.instances)]; at < 0 || index < at {
-		return formTeam
-	}
-
-	return formSandbox
-}
-
-// Three stores that differ only in the form their records are created in,
-// and a model, show the
-// same sandboxes to every reader through a generated sequence of creates,
-// keepalives, timeout changes, pauses with every ending, kills, snapshots,
-// removes naming a removed execution, evictions, listings, keepalives
-// naming another team, reconciles, counts, reads and healer sweeps, waiters
-// included; the flip store's two instances flip ten operations apart.
+// Two instances of one store and a model show the same sandboxes to every
+// reader through a generated sequence of creates, keepalives, timeout
+// changes, pauses with every ending, kills, snapshots, removes naming a
+// removed execution, evictions, listings, keepalives naming another team,
+// reconciles, counts, reads and healer sweeps, waiters included.
 // The suite runs before the package's parallel tests: its load on the shared
 // server starves their pub/sub and lock timing windows on a loaded runner.
 //
 //nolint:paralleltest,tparallel // see above; its seeds still run in parallel with each other
-func TestDifferentialOldNewAndFlip(t *testing.T) {
+func TestDifferentialAgainstModel(t *testing.T) {
 	for _, seed := range differentialSeeds {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 
 			c := generateDifferential(seed)
-			projections := make(map[string]string)
-			for _, name := range []string{"team", "sandbox", "flip"} {
-				run := newDifferentialRun(t, name, c.garbage)
-				projections[name] = runDifferential(t, c, run)
-			}
+			projection := runDifferential(t, c, newDifferentialRun(t, c.garbage))
 
-			require.Equalf(t, projections["team"], projections["sandbox"], "seed %d: the team-form and sandbox-form stores differ", seed)
-			require.Equalf(t, projections["team"], projections["flip"], "seed %d: the team-form and flipped stores differ", seed)
-			require.Equalf(t, c.projection, projections["team"], "seed %d: the stores differ from the model", seed)
+			require.Equalf(t, c.projection, projection, "seed %d: the store differs from the model", seed)
 		})
 	}
 }
@@ -748,8 +709,8 @@ func runDifferential(t *testing.T, c differentialCase, run differentialRun) stri
 
 	for _, op := range c.ops {
 		actor, other := run.actors(op.index)
-		got := applyDifferentialOp(t, actor, other, c.teams, op, run.createForm(op.index))
-		require.Equalf(t, op.expect, got, "seed %d, operation %d (%s) on the %s store", c.seed, op.index, op, run.name)
+		got := applyDifferentialOp(t, actor, other, c.teams, op)
+		require.Equalf(t, op.expect, got, "seed %d, operation %d (%s)", c.seed, op.index, op)
 	}
 
 	var projection string
@@ -757,7 +718,7 @@ func runDifferential(t *testing.T, c differentialCase, run differentialRun) stri
 		assertInvariants(t, instance, c.refs)
 		seen := projectionTrace(t, instance, c.teams, c.report)
 		if i > 0 {
-			require.Equalf(t, projection, seen, "seed %d: the %s store's instances differ", c.seed, run.name)
+			require.Equalf(t, projection, seen, "seed %d: the store's instances differ", c.seed)
 		}
 		projection = seen
 	}
@@ -765,21 +726,14 @@ func runDifferential(t *testing.T, c differentialCase, run differentialRun) stri
 	return projection
 }
 
-// applyDifferentialOp runs op on actor, creating a record in createForm: the
-// team form directly, as the release that wrote it did, or the sandbox form
-// through Add.
-func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID, op differentialOp, createForm keyForm) string {
+// applyDifferentialOp runs op on actor.
+func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID, op differentialOp) string {
 	t.Helper()
 
 	ctx := t.Context()
 	switch op.kind {
 	case kindAdd:
 		sbx := makeIndexedSandbox(uuid.MustParse(op.ref.TeamID), op.ref.SandboxID, op.exec, time.Now().Add(-2*healGracePeriod), op.end)
-		if createForm == formTeam {
-			writeTeamRecord(ctx, t, actor.redisClient, sbx)
-
-			return "added"
-		}
 		if err := actor.Add(ctx, sbx); err != nil {
 			return "add error: " + err.Error()
 		}
@@ -824,7 +778,7 @@ func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID,
 			return "heal error: " + err.Error()
 		}
 
-		return healTrace(healed, report, report.TeamForm+report.SandboxForm, report.Complete)
+		return healTrace(healed, report, report.Records, report.Complete)
 	case kindForeign:
 		return foreignTrace(t, actor, teams, op.ref)
 	}
@@ -833,9 +787,8 @@ func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID,
 }
 
 // foreignTrace addresses the sandbox with the other team's ID, as a
-// keepalive would, and shows the result and every listing after: the
-// sandbox form's key carries no team, so only the record's team can refuse
-// the caller.
+// keepalive would, and shows the result and every listing after: the key
+// carries no team, so only the record's team can refuse the caller.
 func foreignTrace(t *testing.T, s *Storage, teams []uuid.UUID, ref recordRef) string {
 	t.Helper()
 
@@ -911,12 +864,9 @@ func runTransition(t *testing.T, actor, other *Storage, ref recordRef, action sa
 func registerTransitionWaiter(t *testing.T, s *Storage, ref recordRef) {
 	t.Helper()
 
-	form, ok, err := s.formOfExisting(t.Context(), ref.TeamID, ref.SandboxID)
+	id, err := s.redisClient.Get(t.Context(), transitionKeyFor(ref.SandboxID)).Result()
 	require.NoError(t, err)
-	require.Truef(t, ok, "no record of %s to wait on", ref.SandboxID)
-	id, err := s.redisClient.Get(t.Context(), transitionKeyFor(form, ref.TeamID, ref.SandboxID)).Result()
-	require.NoError(t, err)
-	waitForRegisteredWaiters(t, s.subManager, transitionRoutingKey(transitionResultKeyFor(form, ref.TeamID, ref.SandboxID, id)), 1)
+	waitForRegisteredWaiters(t, s.subManager, transitionRoutingKey(transitionResultKeyFor(ref.SandboxID, id)), 1)
 }
 
 func waitTrace(waiter <-chan error) string {
@@ -1083,10 +1033,10 @@ func projectionTrace(t *testing.T, s *Storage, teams []uuid.UUID, report []nodeR
 	return strings.Join([]string{listTrace(t, s, teams), countTrace(t, s, teams), expired, "orphans=" + orphanIDs(t, s, report)}, " | ")
 }
 
-// assertInvariants checks the consistency model's invariants 1 to 3 over
-// refs: a sandbox has a record in at most one form; every index entry has a
-// record, or has dangled for less than the grace period by the last sweep's
-// account; every record has its index entry and its expiration member.
+// assertInvariants checks the consistency model's invariants over refs:
+// every index entry has a record, or has dangled for less than the grace
+// period by the last sweep's account; every record has its index entry and
+// its expiration member.
 func assertInvariants(t *testing.T, s *Storage, refs []recordRef) {
 	t.Helper()
 
@@ -1094,20 +1044,13 @@ func assertInvariants(t *testing.T, s *Storage, refs []recordRef) {
 	teams := make(map[string]struct{})
 	for _, ref := range refs {
 		teams[ref.TeamID] = struct{}{}
-		records := int64(0)
-		for _, form := range []keyForm{formTeam, formSandbox} {
-			n, err := s.redisClient.Exists(ctx, recordKey(form, ref.TeamID, ref.SandboxID)).Result()
-			require.NoError(t, err)
-			records += n
-		}
-		require.LessOrEqualf(t, records, int64(1), "sandbox %s has a record in both forms", ref.SandboxID)
-		if records == 0 {
+		n, err := s.redisClient.Exists(ctx, recordKey(ref.SandboxID)).Result()
+		require.NoError(t, err)
+		if n == 0 {
 			continue
 		}
 
-		form, _, err := s.formOfExisting(ctx, ref.TeamID, ref.SandboxID)
-		require.NoError(t, err)
-		data, err := s.redisClient.Get(ctx, recordKey(form, ref.TeamID, ref.SandboxID)).Bytes()
+		data, err := s.redisClient.Get(ctx, recordKey(ref.SandboxID)).Bytes()
 		require.NoError(t, err)
 		var sbx sandboxtypes.Sandbox
 		require.NoError(t, json.Unmarshal(data, &sbx))
@@ -1121,9 +1064,9 @@ func assertInvariants(t *testing.T, s *Storage, refs []recordRef) {
 		members, err := s.redisClient.SMembers(ctx, GetSandboxStorageTeamIndexKey(team)).Result()
 		require.NoError(t, err)
 		for _, id := range members {
-			_, exists, err := s.formOfExisting(ctx, team, id)
+			n, err := s.redisClient.Exists(ctx, recordKey(id)).Result()
 			require.NoError(t, err)
-			if exists {
+			if n == 1 {
 				continue
 			}
 			since, seen := s.danglingSince[recordRef{TeamID: team, SandboxID: id}]

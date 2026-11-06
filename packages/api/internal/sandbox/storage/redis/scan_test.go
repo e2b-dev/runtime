@@ -173,23 +173,29 @@ func TestScannedItems_StateFilter(t *testing.T) {
 }
 
 // seedTeamSandboxes writes sandbox records + index entries directly (bypassing
-// Storage.Add) and registers the team in the global teams index.
-func seedTeamSandboxes(t *testing.T, client redis.UniversalClient, teamID uuid.UUID, count int, state sandboxtypes.State) {
+// Storage.Add), registers the team in the global teams index and returns the
+// IDs written. The IDs carry the team: a record key carries the sandbox ID
+// alone, so two teams' seeds must not share one.
+func seedTeamSandboxes(t *testing.T, client redis.UniversalClient, teamID uuid.UUID, count int, state sandboxtypes.State) []string {
 	t.Helper()
 
+	ids := make([]string, 0, count)
 	pipe := client.Pipeline()
 	for i := range count {
-		sbx := makeIndexedSandbox(teamID, fmt.Sprintf("sbx-%s-%04d", state, i), uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+		sbx := makeIndexedSandbox(teamID, fmt.Sprintf("sbx-%s-%s-%04d", teamID.String()[:8], state, i), uuid.NewString(), time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 		sbx.State = state
 		sbx.NodeID = "test-node"
 
 		data, err := json.Marshal(sbx)
 		require.NoError(t, err)
 
-		pipe.Set(t.Context(), getSandboxKey(teamID.String(), sbx.SandboxID), data, 0)
+		pipe.Set(t.Context(), recordKey(sbx.SandboxID), data, 0)
 		pipe.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(teamID.String()), sbx.SandboxID)
+		ids = append(ids, sbx.SandboxID)
 	}
 	pipe.ZAdd(t.Context(), globalTeamsSet, redis.Z{Score: float64(time.Now().Unix()), Member: teamID.String()})
 	_, err := pipe.Exec(t.Context())
 	require.NoError(t, err)
+
+	return ids
 }

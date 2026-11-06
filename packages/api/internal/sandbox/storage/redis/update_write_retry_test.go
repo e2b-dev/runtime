@@ -69,7 +69,7 @@ func TestUpdateRetriesAFailedWrite(t *testing.T) {
 	sbx := createTestSandbox("sbx-write-retry")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	hook, writes := failingWrites(recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID), 2)
+	hook, writes := failingWrites(recordKey(sbx.SandboxID), 2)
 	// Loaded first, so a NOSCRIPT resend does not count one write twice.
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
@@ -93,7 +93,7 @@ func TestUpdateGivesUpOnAPersistentWriteFailure(t *testing.T) {
 	sbx := createTestSandbox("sbx-write-fails")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	hook, writes := failingWrites(recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID), 1<<20)
+	hook, writes := failingWrites(recordKey(sbx.SandboxID), 1<<20)
 	// Loaded first, so a NOSCRIPT resend does not count one write twice.
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
@@ -115,7 +115,7 @@ func TestUpdateRefusesTheWriteWhenTheLockChangedHands(t *testing.T) {
 	storage, client := setupTestStorage(t)
 	sbx := createTestSandbox("sbx-lock-lost")
 	require.NoError(t, storage.Add(t.Context(), sbx))
-	key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 
 	_, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		// The lock expires during the update, and another caller takes it.

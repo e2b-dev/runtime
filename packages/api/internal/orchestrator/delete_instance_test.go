@@ -185,10 +185,10 @@ func (h *transitionReadHook) ProcessHook(next redis.ProcessHook) redis.ProcessHo
 	}
 }
 
-// isTransitionMarker matches the marker key of either record form:
-// "...:transition:<sandboxID>" (team) and "...:transition" (sandbox).
+// isTransitionMarker matches the transition marker key, which ends in
+// :transition; a result key carries the transition ID after it.
 func isTransitionMarker(key string) bool {
-	return strings.Contains(key, ":transition:") || strings.HasSuffix(key, ":transition")
+	return strings.HasSuffix(key, ":transition")
 }
 
 func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error, hooks ...redis.Hook) refusalFixture {

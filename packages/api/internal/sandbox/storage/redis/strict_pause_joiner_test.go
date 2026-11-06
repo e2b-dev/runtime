@@ -40,12 +40,8 @@ func TestStartRemoving_StrictPauseDoesNotJoinAPauseInFlight(t *testing.T) {
 		}
 		joiner <- err
 	}()
-	form, ok, err := storage.formOfExisting(t.Context(), sbx.TeamID.String(), sbx.SandboxID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	id, err := storage.redisClient.Get(t.Context(), transitionKeyFor(form, sbx.TeamID.String(), sbx.SandboxID)).Result()
-	require.NoError(t, err)
-	routingKey := transitionRoutingKey(transitionResultKeyFor(form, sbx.TeamID.String(), sbx.SandboxID, id))
+	id := pendingTransitionID(t, storage.redisClient, sbx.SandboxID)
+	routingKey := transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, id))
 	require.Eventually(t, func() bool { return waitersOn(storage, routingKey) == 1 },
 		5*time.Second, 5*time.Millisecond, "the plain pause must be waiting on the transition")
 	finish(context.WithoutCancel(t.Context()), nil)

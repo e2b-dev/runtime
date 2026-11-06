@@ -16,8 +16,8 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// addIndexRetries is how many times a sandbox-form index entry is retried
-// after the record is written, on top of the client's own retries.
+// addIndexRetries is how many times an index entry is retried after the
+// record is written, on top of the client's own retries.
 const addIndexRetries = 3
 
 // goneExecutionsTTL is how long an execution removed or replaced under a
@@ -26,25 +26,24 @@ const addIndexRetries = 3
 const goneExecutionsTTL = 10 * time.Minute
 
 // releaseLock, deferred with a pointer to the operation's named error
-// result, releases the lock or locks once it returns, unless it returned a
-// simulated crash, after which they stay held as a crashed replica's would.
+// result, releases the lock once it returns, unless it returned a simulated
+// crash, after which it stays held as a crashed replica's would.
 func releaseLock(ctx context.Context, release func(context.Context) error, err *error) {
 	if crashed(*err) {
 		return
 	}
 	if releaseErr := release(context.WithoutCancel(ctx)); releaseErr != nil {
-		logger.L().Error(ctx, "Failed to release lock(s)", zap.Error(releaseErr))
+		logger.L().Error(ctx, "Failed to release lock", zap.Error(releaseErr))
 	}
 }
 
-// Add stores a sandbox record in the sandbox form and indexes it, under the
-// sandbox's lock in both forms, the team form first, so a predecessor's
-// operation under either lock finishes before it writes. The record write is
-// the commit point: a write that fails after the client's retries may have
-// landed with its reply lost, so Add removes its own execution, index entry
-// first, and returns the error; an index entry that fails after the record
-// is written is a success with the record unindexed, reachable by ID until
-// the healer indexes it.
+// Add stores a sandbox record and indexes it, under the sandbox's lock, so a
+// predecessor's operation under it finishes before it writes. The record
+// write is the commit point: a write that fails after the client's retries
+// may have landed with its reply lost, so Add removes its own execution,
+// index entry first, and returns the error; an index entry that fails after
+// the record is written is a success with the record unindexed, reachable by
+// ID until the healer indexes it.
 //
 // The write is idempotent per execution: the locks order operations, not a
 // command that lands twice (a retried command, a segment delivered after
@@ -68,17 +67,14 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	}
 
 	teamID := sbx.TeamID.String()
-	key := recordKey(formSandbox, teamID, sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	teamKey := GetSandboxStorageTeamIndexKey(teamID)
 
-	release, err := s.locker.ObtainBoth(ctx,
-		redis_utils.GetLockKey(recordKey(formTeam, teamID, sbx.SandboxID)),
-		redis_utils.GetLockKey(recordKey(formSandbox, teamID, sbx.SandboxID)),
-		lockTimeout)
+	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
 	if err != nil {
-		return fmt.Errorf("failed to obtain locks: %w", err)
+		return fmt.Errorf("failed to obtain lock: %w", err)
 	}
-	defer releaseLock(ctx, release, &err)
+	defer releaseLock(ctx, lock.Release, &err)
 
 	// Index by EndTime first, so an interrupted Add leaks nothing: ExpiredItems
 	// sweeps a member whose record never appears. The member is scoped to
@@ -96,20 +92,6 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 		return fmt.Errorf("failed to add sandbox to global expiration index: %w", err)
 	}
 
-	// A crashed predecessor's record in the team form goes before the
-	// write, so an interrupted Add leaves no record rather than a twin.
-	var otherResult int64
-	err = s.run(faultAddBeforeOtherDel, func() error {
-		other := recordKey(formTeam, teamID, sbx.SandboxID)
-		var err error
-		otherResult, err = RunScript(ctx, s.redisClient, "clear_other_form", clearOtherFormScript, []string{other, goneKeyFor(other)}, sbx.ExecutionID, replace).Int64()
-
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("failed to delete the team-form record: %w", err)
-	}
-
 	// The commit point, the gone set beside the record in its slot; the
 	// index entry lives in another slot and follows.
 	keys := []string{key, goneKeyFor(key)}
@@ -117,29 +99,27 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	if replace {
 		replaceFlag = "1"
 	}
-	written := otherResult
-	if written == 1 {
-		err = s.run(faultAddAfterOtherDel, func() (runErr error) {
-			written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
+	var written int64
+	err = s.run(faultAddBeforeRecordWrite, func() (runErr error) {
+		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
 
-			return runErr
-		})
-		if err == nil {
-			err = s.fault(faultAddRecordWrite)
+		return runErr
+	})
+	if err == nil {
+		err = s.fault(faultAddRecordWrite)
+	}
+	if crashed(err) {
+		return err
+	}
+	if err != nil {
+		// The caller may be gone by now; the cleanup runs regardless, as
+		// the lock release does.
+		if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), sbx); cleanupErr != nil {
+			logger.L().Error(ctx, "Failed to clean up an unconfirmed sandbox record write", zap.Error(cleanupErr), logger.WithSandboxID(sbx.SandboxID))
+			s.countWriteAnomaly(ctx, writeAnomalyAddWriteUnconfirmed)
 		}
-		if crashed(err) {
-			return err
-		}
-		if err != nil {
-			// The caller may be gone by now; the cleanup runs regardless, as
-			// the lock release does.
-			if cleanupErr := s.cleanupAdd(context.WithoutCancel(ctx), sbx); cleanupErr != nil {
-				logger.L().Error(ctx, "Failed to clean up an unconfirmed sandbox record write", zap.Error(cleanupErr), logger.WithSandboxID(sbx.SandboxID))
-				s.countWriteAnomaly(ctx, writeAnomalyAddWriteUnconfirmed)
-			}
 
-			return fmt.Errorf("failed to store sandbox in Redis: %w", err)
-		}
+		return fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
 	switch written {
 	case 3:
@@ -228,30 +208,14 @@ func (s *Storage) indexSandbox(ctx context.Context, teamKey, sandboxID string) (
 // index entry go, the entry first, and a record of another execution, a
 // stranded predecessor's, is left whole. A delete that exhausts its retries
 // is logged as stranded and counted under remove_stranded beside
-// add_write_unconfirmed. Then the entry goes when neither form holds a
-// record: the healer may have re-indexed a crashed predecessor whose
-// team-form record the delete before the write removed. The guard relies on
-// Add's execution ID being set, as every caller sets it: with an empty one
-// the delete would adopt whatever execution it finds.
+// add_write_unconfirmed. The guard relies on Add's execution ID being set,
+// as every caller sets it: with an empty one the delete would adopt whatever
+// execution it finds.
 func (s *Storage) cleanupAdd(ctx context.Context, sbx sandboxtypes.Sandbox) error {
 	teamID := sbx.TeamID.String()
-	teamKey := GetSandboxStorageTeamIndexKey(teamID)
-
-	_, err := s.removeSandboxRecord(ctx, recordKey(formSandbox, teamID, sbx.SandboxID), teamKey, nil, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID, "")
+	_, err := s.removeSandboxRecord(ctx, recordKey(sbx.SandboxID), GetSandboxStorageTeamIndexKey(teamID), nil, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID, "")
 	if err != nil && !errors.Is(err, sandboxtypes.ErrExecutionMismatch) {
 		return err
-	}
-
-	// Another team's record in the sandbox form is none of this sandbox's.
-	_, exists, err := s.formOfExisting(ctx, teamID, sbx.SandboxID)
-	if err != nil && !errors.Is(err, sandboxtypes.ErrNotFound) {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	if err := s.redisClient.SRem(ctx, teamKey, sbx.SandboxID).Err(); err != nil {
-		return fmt.Errorf("SREM: %w", err)
 	}
 
 	return nil
@@ -259,9 +223,9 @@ func (s *Storage) cleanupAdd(ctx context.Context, sbx sandboxtypes.Sandbox) erro
 
 // readRecord reads and decodes the record under key, the tenant guard
 // included: an absent record and another team's are both
-// sandboxtypes.ErrNotFound, since a sandbox-form key carries no team and
-// the record's own is what scopes the read. The bytes read are returned for
-// a compare-and-set against them.
+// sandboxtypes.ErrNotFound, since the key carries no team and the record's
+// own is what scopes the read. The bytes read are returned for a
+// compare-and-set against them.
 func (s *Storage) readRecord(ctx context.Context, key string, teamID uuid.UUID, sandboxID string) ([]byte, sandboxtypes.Sandbox, error) {
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -281,101 +245,83 @@ func (s *Storage) readRecord(ctx context.Context, key string, teamID uuid.UUID, 
 	return data, sbx, nil
 }
 
-// Get reads a sandbox's record, the sandbox form first, without a lock. A
-// record of another team is not found: the sandbox-form key carries no team.
-func (s *Storage) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, error) {
-	team := teamID.String()
-	_, sbx, err := s.readRecord(ctx, recordKey(formSandbox, team, sandboxID), teamID, sandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		_, sbx, err = s.readRecord(ctx, recordKey(formTeam, team, sandboxID), teamID, sandboxID)
-		if err == nil {
-			s.readsFallback.Add(ctx, 1)
-		}
+// refuseOtherTeam is sandboxtypes.ErrNotFound when the record under the
+// sandbox's key names another team, and nil when it is the team's or
+// absent. The key carries no team, so this runs before an operation takes
+// the lock or follows the transition marker: another team's caller never
+// waits on or holds the owner's lock, and never joins the owner's wait.
+func (s *Storage) refuseOtherTeam(ctx context.Context, teamID, sandboxID string) error {
+	data, err := s.redisClient.Get(ctx, recordKey(sandboxID)).Bytes()
+	switch {
+	case errors.Is(err, redis.Nil):
+		return nil
+	case err != nil:
+		return fmt.Errorf("failed to probe the record key: %w", err)
 	}
+	var stored sandboxtypes.Sandbox
+	if json.Unmarshal(data, &stored) == nil && stored.TeamID.String() != teamID {
+		return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
+	}
+
+	return nil
+}
+
+// Get reads a sandbox's record without a lock. A record of another team is
+// not found: the key carries no team.
+func (s *Storage) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, error) {
+	_, sbx, err := s.readRecord(ctx, recordKey(sandboxID), teamID, sandboxID)
 
 	return sbx, err
 }
 
-// removeRecordRetries is how many times a sandbox-form record delete is
-// retried after its index entry is removed, on top of the client's own
-// retries.
+// removeRecordRetries is how many times a record delete is retried after
+// its index entry is removed, on top of the client's own retries.
 const removeRecordRetries = 3
 
 // Remove deletes a sandbox's record, its team index entry and its expiration
-// member, under the lock of the form its record is in. It removes the record
-// of the expected execution, or of any execution when none is expected; a
-// record of another execution is left whole, index entry included, and
+// member, under the sandbox's lock. It removes the record of the expected
+// execution, or of any execution when none is expected; a record of another
+// execution is left whole, index entry included, and
 // sandboxtypes.ErrExecutionMismatch returned. A sandbox already gone is a
-// success, as is a sandbox-form record of another team, whose key carries no
-// team.
-//
-// A form found empty under its lock is checked against the other form
-// before the lock is released: an Add holds both form locks while it
-// writes, so a record of the sandbox there is a completed resume's, with a
-// new execution, that moved the sandbox to its own write form while this
-// Remove waited, which a replica whose write form differs cannot tell from
-// a sandbox gone without looking. It is a mismatch, not a removal, so
-// Store.Remove keeps its reservation; both forms empty under the lock is a
-// sandbox gone.
-func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) error {
-	team := teamID.String()
-	form, err := s.resolveForm(ctx, team, sandboxID)
+// success, as is a record of another team, whose key carries no team.
+func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) (err error) {
+	err = s.refuseOtherTeam(ctx, teamID.String(), sandboxID)
 	if errors.Is(err, sandboxtypes.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-
-	return s.removeInForm(ctx, form, teamID, sandboxID, expectedExecutionID)
-}
-
-// removeInForm removes the record in form under that form's lock, with its
-// index entry and then the expiration member of the execution deleted. The
-// ZREM is scoped to the execution deleted, so a member another execution
-// wrote is never unindexed here.
-func (s *Storage) removeInForm(ctx context.Context, form keyForm, teamID uuid.UUID, sandboxID, expectedExecutionID string) (err error) {
-	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(recordKey(form, teamID.String(), sandboxID)), lockTimeout)
+	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(recordKey(sandboxID)), lockTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to obtain lock: %w", err)
 	}
 	defer releaseLock(ctx, lock.Release, &err)
 
-	return s.removeUnderLock(ctx, form, lock, teamID, sandboxID, expectedExecutionID, "")
+	return s.removeUnderLock(ctx, lock, teamID, sandboxID, expectedExecutionID, "")
 }
 
-// removeUnderLock is removeInForm's removal, run while the caller holds lock,
-// the lock of form, which the record's delete requires to still hold the
-// caller's value. With holdID, only a record under that live hold is
-// removed, sandboxtypes.ErrNotHeld otherwise; without, a held record is
-// refused with sandboxtypes.ErrLifecycleHeld.
-func (s *Storage) removeUnderLock(ctx context.Context, form keyForm, lock *storageLock, teamID uuid.UUID, sandboxID, expectedExecutionID, holdID string) (err error) {
+// removeUnderLock is Remove's removal, run while the caller holds lock, the
+// record's, which the record's delete requires to still hold the caller's
+// value: the index entry and then the expiration member of the execution
+// deleted go with the record. The ZREM is scoped to the execution deleted,
+// so a member another execution wrote is never unindexed here. With holdID,
+// only a record under that live hold is removed, sandboxtypes.ErrNotHeld
+// otherwise; without, a held record is refused with
+// sandboxtypes.ErrLifecycleHeld.
+func (s *Storage) removeUnderLock(ctx context.Context, lock *storageLock, teamID uuid.UUID, sandboxID, expectedExecutionID, holdID string) (err error) {
 	team := teamID.String()
-	key := recordKey(form, team, sandboxID)
+	key := recordKey(sandboxID)
 	teamKey := GetSandboxStorageTeamIndexKey(team)
 
-	var deleted string
-	if form == formTeam {
-		deleted, err = s.removeTeamRecord(ctx, key, teamKey, lock, sandboxID, expectedExecutionID, holdID)
-	} else {
-		deleted, err = s.removeSandboxRecord(ctx, key, teamKey, lock, teamID, sandboxID, expectedExecutionID, holdID)
-	}
+	deleted, err := s.removeSandboxRecord(ctx, key, teamKey, lock, teamID, sandboxID, expectedExecutionID, holdID)
 	if err != nil {
 		return err
 	}
 	if deleted == "" {
-		// Another team's record in the sandbox form is none of this sandbox's.
-		other, exists, probeErr := s.formOfExisting(ctx, team, sandboxID)
-		switch {
-		case errors.Is(probeErr, sandboxtypes.ErrNotFound):
-			return nil
-		case probeErr != nil:
-			return probeErr
-		case !exists || other == form:
-			return nil
-		}
-
-		return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
+		// Gone, or another team's record under the key, which is none of
+		// this sandbox's.
+		return nil
 	}
 
 	// Only the deleted execution's member: one left by a record already gone
@@ -414,26 +360,6 @@ func lockValueOf(lock *storageLock) string {
 	return lock.Token() + lock.Metadata()
 }
 
-// removeTeamRecord removes a team-form record with its index entry in one
-// command, the deleted execution going into the gone set, and returns the
-// JSON deleted, empty when the record was absent. It runs under lock, nil
-// for Add's cleanup, which holds none.
-func (s *Storage) removeTeamRecord(ctx context.Context, key, teamKey string, lock *storageLock, sandboxID, expectedExecutionID, holdID string) (string, error) {
-	deleted, raw, absent, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_sandbox", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), teamKey}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds()), holdID, lockValueOf(lock)))
-	switch {
-	case errors.Is(err, sandboxtypes.ErrLockLost):
-		return "", err
-	case err != nil:
-		return "", fmt.Errorf("failed to remove sandbox from Redis: %w", err)
-	case absent:
-		return "", nil
-	case !deleted:
-		return "", refusedRemoval(raw, sandboxID, expectedExecutionID, holdID)
-	}
-
-	return raw, nil
-}
-
 // refusedRemoval is the error of a removal the script refused with the
 // record raw left in place: the record is another execution's, held by
 // another operation, or, for a holder, not under its hold any more.
@@ -451,16 +377,17 @@ func refusedRemoval(raw, sandboxID, expectedExecutionID, holdID string) error {
 	return fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrExecutionMismatch)
 }
 
-// removeSandboxRecord removes a sandbox-form record, the index entry first,
-// then the record, guarded by the execution expected or the one read, and
-// returns the JSON deleted, empty when the record was absent or another
-// team's. The read comes before the entry goes: a successor admitted while
-// this Remove waited for its lock keeps its entry. The script's guard covers
-// a change after the read, which only a lock expired under a stalled Remove
-// admits; such a successor keeps its record and the healer indexes it again
-// once it is older than the grace period. The delete is retried
-// removeRecordRetries times; when it keeps failing the record is left
-// stranded for the healer, the anomaly counted and the error returned.
+// removeSandboxRecord removes a record, the index entry first, then the
+// record, guarded by the execution expected or the one read, and returns
+// the JSON deleted, empty when the record was absent or another team's. The
+// read comes before the entry goes: a successor admitted while this Remove
+// waited for its lock keeps its entry. The script's guard covers a change
+// after the read, which only a lock expired under a stalled Remove admits;
+// such a successor keeps its record and the healer indexes it again once it
+// is older than the grace period. The delete is retried removeRecordRetries
+// times; when it keeps failing the record is left stranded for the healer,
+// the anomaly counted and the error returned. It runs under lock, nil for
+// Add's cleanup, which holds none.
 func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, lock *storageLock, teamID uuid.UUID, sandboxID, expectedExecutionID, holdID string) (string, error) {
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -557,59 +484,13 @@ func (s *Storage) TeamItems(ctx context.Context, teamID uuid.UUID, states []sand
 	return items.out, nil
 }
 
-// errAbsentUnderLock reports a form found empty under its own lock to the
-// operation that resolved it, which then looks at the other form once.
-var errAbsentUnderLock = errors.New("record absent under its form's lock")
-
-// formMovedTo returns the form a sandbox's record moved to while the caller
-// waited for the lock of form, or sandboxtypes.ErrNotFound when no form
-// holds one: a resume that took both locks meanwhile wrote its successor in
-// its own write form, which a replica whose write form differs cannot tell
-// from a sandbox gone without looking.
-func (s *Storage) formMovedTo(ctx context.Context, team, sandboxID string, form keyForm) (keyForm, error) {
-	other, exists, err := s.formOfExisting(ctx, team, sandboxID)
-	if err != nil {
-		return 0, err
-	}
-	if !exists || other == form {
-		return 0, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
-	}
-
-	return other, nil
-}
-
-// Update modifies a sandbox atomically, under the lock of the form its record
-// is in, resolved before the lock. A form found empty under that lock is
-// resolved once more and the record a resume moved to the other form is
-// updated there, under its own lock. A record of another team is not found,
-// as in Get.
-func (s *Storage) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error)) (sandboxtypes.Sandbox, error) {
-	team := teamID.String()
-	form, err := s.resolveForm(ctx, team, sandboxID)
-	if err != nil {
+// Update modifies a sandbox atomically under its lock. A record of another
+// team is not found, as in Get, before the lock is taken.
+func (s *Storage) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error)) (_ sandboxtypes.Sandbox, err error) {
+	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	if err := s.fault(faultUpdateAfterResolve); err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-
-	updated, err := s.updateIn(ctx, form, teamID, sandboxID, updateFunc)
-	if errors.Is(err, errAbsentUnderLock) {
-		if form, err = s.formMovedTo(ctx, team, sandboxID, form); err != nil {
-			return sandboxtypes.Sandbox{}, err
-		}
-		if updated, err = s.updateIn(ctx, form, teamID, sandboxID, updateFunc); errors.Is(err, errAbsentUnderLock) {
-			return sandboxtypes.Sandbox{}, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
-		}
-	}
-
-	return updated, err
-}
-
-// updateIn applies updateFunc to the record in form, under that form's
-// lock; errAbsentUnderLock when the form holds no record of the team.
-func (s *Storage) updateIn(ctx context.Context, form keyForm, teamID uuid.UUID, sandboxID string, updateFunc func(sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error)) (_ sandboxtypes.Sandbox, err error) {
-	key := recordKey(form, teamID.String(), sandboxID)
+	key := recordKey(sandboxID)
 	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to obtain lock: %w", err)
@@ -618,9 +499,6 @@ func (s *Storage) updateIn(ctx context.Context, form keyForm, teamID uuid.UUID, 
 	defer releaseLock(ctx, lock.Release, &err)
 
 	_, sbx, err := s.readRecord(ctx, key, teamID, sandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		return sandboxtypes.Sandbox{}, errAbsentUnderLock
-	}
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}

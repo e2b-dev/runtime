@@ -16,7 +16,7 @@ func TestSandboxStoreKeysMeterMapsPopulated(t *testing.T) {
 
 	meter := sdkmetric.NewMeterProvider().Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry")
 
-	for _, name := range []CounterType{ApiRedisStorageReadsFallback, ApiRedisStorageIndexHeal, ApiRedisStorageWriteAnomalies, ApiRedisStorageErrors} {
+	for _, name := range []CounterType{ApiRedisStorageIndexHeal, ApiRedisStorageWriteAnomalies, ApiRedisStorageErrors} {
 		assert.NotEmptyf(t, counterDesc[name], "missing description for counter %s", name)
 		assert.NotEmptyf(t, counterUnits[name], "missing unit for counter %s", name)
 		_, err := GetCounter(meter, name)

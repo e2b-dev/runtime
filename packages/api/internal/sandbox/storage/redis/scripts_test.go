@@ -28,19 +28,18 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	metrics, err := newScriptMetrics(provider.Meter(meterScope))
 	require.NoError(t, err)
 
-	key := getSandboxKey("team", "sbx")
-	teamKey := GetSandboxStorageTeamIndexKey("team")
-	goneKey := getSandboxGoneKey("team", "sbx")
+	key := recordKey("sbx")
+	goneKey := goneKeyFor(key)
 
-	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey, teamKey}, "{}", "sbx", "exec", "0", 60).Err())
+	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey}, "{}", "sbx", "exec", "0", 60).Err())
 	lockRecord(t, client, key)
 
-	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key), teamKey}, "sbx", "", 60, "", testLockValue))
+	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key)}, "sbx", "", 60, "", testLockValue))
 	require.NoError(t, err)
 	require.True(t, deleted)
 	require.Equal(t, "{}", raw)
 
-	err = metrics.run(t.Context(), client, "remove_sandbox", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key), teamKey}, "sbx", "", 60, "", testLockValue).Err()
+	err = metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key)}, "sbx", "", 60, "", testLockValue).Err()
 	require.ErrorIs(t, err, redis.Nil)
 
 	failing := redis.NewScript(`return redis.call('NOSUCHCOMMAND')`)
@@ -54,13 +53,13 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	calls := counterPoints(t, collected, string(telemetry.ApiRedisScriptCalls))
 	require.Len(t, calls, 3)
 	require.Equal(t, int64(1), calls[scriptAttrs("add_sandbox", scriptOutcomeOK)])
-	require.Equal(t, int64(2), calls[scriptAttrs("remove_sandbox", scriptOutcomeOK)])
+	require.Equal(t, int64(2), calls[scriptAttrs("remove_record", scriptOutcomeOK)])
 	require.Equal(t, int64(1), calls[scriptAttrs("failing", scriptOutcomeError)])
 
 	durations := histogramCounts(t, collected, string(telemetry.ApiRedisScriptDuration))
 	require.Len(t, durations, 3)
 	require.Equal(t, uint64(1), durations[durationAttrs("add_sandbox")])
-	require.Equal(t, uint64(2), durations[durationAttrs("remove_sandbox")])
+	require.Equal(t, uint64(2), durations[durationAttrs("remove_record")])
 	require.Equal(t, uint64(1), durations[durationAttrs("failing")])
 }
 

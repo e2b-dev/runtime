@@ -101,7 +101,7 @@ func TestAddRemove_ExecutionScopedMember(t *testing.T) {
 	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID, sbx.ExecutionID))
 	requireMemberAbsent(t, client, member)
 
-	err := client.Get(t.Context(), recordKey(formSandbox, teamID.String(), sbx.SandboxID)).Err()
+	err := client.Get(t.Context(), recordKey(sbx.SandboxID)).Err()
 	require.ErrorIs(t, err, redis.Nil)
 }
 
@@ -458,7 +458,7 @@ func TestHeal_ManySandboxesMultipleBatches(t *testing.T) {
 		data, err := json.Marshal(sbx)
 		require.NoError(t, err)
 
-		pipe.Set(t.Context(), getSandboxKey(teamID.String(), sbx.SandboxID), data, 0)
+		pipe.Set(t.Context(), recordKey(sbx.SandboxID), data, 0)
 		pipe.SAdd(t.Context(), GetSandboxStorageTeamIndexKey(teamID.String()), sbx.SandboxID)
 
 		member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)

@@ -22,7 +22,7 @@ import (
 // StartRemoving initiates a state transition for a sandbox using atomic Lua scripts.
 //
 // The function handles concurrent requests safely:
-//  1. Resolves the form the record is in and acquires that form's lock on the sandbox
+//  1. Acquires the sandbox's lock
 //  2. Checks if there's an ongoing transition via the transition key:
 //     - If the same target state is in progress, waits for completion and returns the result
 //     - If a different state is in progress, waits for it to complete, then retries
@@ -31,40 +31,17 @@ import (
 //  4. Atomically updates the sandbox state and sets the transition key with a unique ID
 //  5. Returns a callback that the caller must invoke to signal completion
 //
-// Every per-sandbox key is built from the resolved form. A record of another
-// team is not found, as in Get: the sandbox-form key carries no team.
+// A record of another team is not found, as in Get, before the lock is
+// taken.
 //
 // The callback is critical: it deletes the transition key
 // and sets the result value with short TTL to notify waiters of the outcome.
-// A form found empty under its lock is resolved once more: the record a resume
-// moved to the other form meanwhile is the live one, so the transition
-// starts on it there, under its own lock; a pinned call still refuses it.
 func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
-	team := teamID.String()
-	form, err := s.resolveForm(ctx, team, sandboxID)
-	if err != nil {
+	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
 		return sandboxtypes.StateTransition{}, false, nil, err
 	}
-
-	transition, done, finish, err := s.startRemovingIn(ctx, form, teamID, sandboxID, opts)
-	if errors.Is(err, errAbsentUnderLock) {
-		if form, err = s.formMovedTo(ctx, team, sandboxID, form); err != nil {
-			return sandboxtypes.StateTransition{}, false, nil, err
-		}
-		if transition, done, finish, err = s.startRemovingIn(ctx, form, teamID, sandboxID, opts); errors.Is(err, errAbsentUnderLock) {
-			return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrNotFound)
-		}
-	}
-
-	return transition, done, finish, err
-}
-
-// startRemovingIn starts the transition on the record in form, under that
-// form's lock; errAbsentUnderLock when the form holds no record of the team.
-func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
-	team := teamID.String()
-	key := recordKey(form, team, sandboxID)
-	transitionKey := transitionKeyFor(form, team, sandboxID)
+	key := recordKey(sandboxID)
+	transitionKey := transitionKeyFor(sandboxID)
 	lockKey := redis_utils.GetLockKey(key)
 
 	// Acquire distributed lock
@@ -86,9 +63,6 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 	}()
 
 	_, sbx, err := s.readRecord(ctx, key, teamID, sandboxID)
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		return sandboxtypes.StateTransition{}, false, nil, errAbsentUnderLock
-	}
 	if err != nil {
 		return sandboxtypes.StateTransition{}, false, nil, err
 	}
@@ -144,7 +118,7 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 			logger.L().Warn(ctx, "Failed to release lock before waiting", zap.Error(releaseErr))
 		}
 
-		return s.handleExistingTransition(ctx, teamID, sbx, opts, transitionRef{form: form, id: transactionID})
+		return s.handleExistingTransition(ctx, teamID, sbx, opts, transactionID)
 	}
 
 	// Check if already in target state
@@ -177,7 +151,7 @@ func (s *Storage) startRemovingIn(ctx context.Context, form keyForm, teamID uuid
 
 	// Generate transition ID
 	transitionID := uuid.New().String()
-	resultKey := transitionResultKeyFor(form, team, sandboxID, transitionID)
+	resultKey := transitionResultKeyFor(sandboxID, transitionID)
 
 	// Use atomic Lua script to update sandbox and set transition key with UUID
 	ttlSeconds := int(transitionKeyTTL.Seconds())
@@ -328,24 +302,21 @@ func (s *Storage) RestoreCheckpointed(ctx context.Context, transition sandboxtyp
 
 // restoreRunning puts the transition's record back to Running with its
 // pre-clamp expiry and change applied, if the record is still the
-// transition's execution in the transition's state, under the lock of the
-// form the record is in, resolved before the lock. The write compares the
-// whole record read under the lock, so a record replaced past an expired
-// lock is left alone. A record rewritten under the compare is read again
-// once, so a successor that landed meanwhile is reported as such, and
-// ErrRestoreConflict only when the record keeps changing. A form found
-// empty under its lock is checked against the other form, as Remove does:
-// a record there is a resume's successor, reported as a mismatch.
+// transition's execution in the transition's state, under the sandbox's
+// lock. A record of another team is not found, as in Get, before the lock
+// is taken. The write compares the whole record read under the lock, so a
+// record replaced past an expired lock is left alone. A record rewritten
+// under the compare is read again once, so a successor that landed
+// meanwhile is reported as such, and ErrRestoreConflict only when the
+// record keeps changing.
 func (s *Storage) restoreRunning(ctx context.Context, transition sandboxtypes.StateTransition, change func(*sandboxtypes.Sandbox)) (_ sandboxtypes.Sandbox, err error) {
 	if transition.OriginalEndTime == nil {
 		return sandboxtypes.Sandbox{}, errors.New("transition has no rollback expiry")
 	}
-	team := transition.Sandbox.TeamID.String()
-	form, err := s.resolveForm(ctx, team, transition.Sandbox.SandboxID)
-	if err != nil {
+	if err := s.refuseOtherTeam(ctx, transition.Sandbox.TeamID.String(), transition.Sandbox.SandboxID); err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	key := recordKey(form, team, transition.Sandbox.SandboxID)
+	key := recordKey(transition.Sandbox.SandboxID)
 	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to obtain restore lock: %w", err)
@@ -355,17 +326,6 @@ func (s *Storage) restoreRunning(ctx context.Context, transition sandboxtypes.St
 	restored, err := s.compareAndRestore(ctx, key, transition, change)
 	if errors.Is(err, sandboxtypes.ErrRestoreConflict) {
 		restored, err = s.compareAndRestore(ctx, key, transition, change)
-	}
-	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		// An Add holds both form locks, so a record in the other form under
-		// this lock is a completed resume's successor, not this execution.
-		_, moveErr := s.formMovedTo(ctx, team, transition.Sandbox.SandboxID, form)
-		switch {
-		case moveErr == nil:
-			return sandboxtypes.Sandbox{}, fmt.Errorf("sandbox %q: %w", transition.Sandbox.SandboxID, sandboxtypes.ErrExecutionMismatch)
-		case !errors.Is(moveErr, sandboxtypes.ErrNotFound):
-			return sandboxtypes.Sandbox{}, moveErr
-		}
 	}
 
 	return restored, err
@@ -406,59 +366,35 @@ func (s *Storage) compareAndRestore(ctx context.Context, key string, transition 
 	return restored, nil
 }
 
-// WaitForStateChange waits for a sandbox state transition to complete. The
-// transition marker names the form. A record that exists in either form is
-// waited on in that form only: no other form's marker can be the live
-// record's, and a stale one, left by a crashed transition until its TTL, is
-// not joined. Without a record, as on the kill path, the sandbox form's
-// marker is probed first, then the team form's. A sandbox-form record of
-// another team is not found by the probe, as in Get, so its transition is
-// never joined. Past the probe the wait takes no tenant guard: without a
-// record the sandbox form's marker carries no team, and every caller has
-// read the record as the team's before it waits.
+// WaitForStateChange waits for a sandbox's pending transition, found by its
+// marker, to complete. The key carries no team, so a record of another team
+// is refused before the marker is read, as in Get; without a record, as on
+// the kill path, the marker alone is followed.
 func (s *Storage) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	team := teamID.String()
-	recordForm, exists, err := s.formOfExisting(ctx, team, sandboxID)
-	if err != nil {
+	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
 		return err
 	}
-	forms := []keyForm{formSandbox, formTeam}
-	if exists {
-		forms = []keyForm{recordForm}
+	id, err := s.redisClient.Get(ctx, transitionKeyFor(sandboxID)).Result()
+	if errors.Is(err, redis.Nil) {
+		logger.L().Debug(ctx, "No ongoing transition", logger.WithSandboxID(sandboxID))
+
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check transition key: %w", err)
 	}
 
-	for _, form := range forms {
-		id, err := s.redisClient.Get(ctx, transitionKeyFor(form, team, sandboxID)).Result()
-		if errors.Is(err, redis.Nil) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("failed to check transition key: %w", err)
-		}
-
-		return s.waitForTransition(ctx, teamID, sandboxID, transitionRef{form: form, id: id})
-	}
-
-	logger.L().Debug(ctx, "No ongoing transition", logger.WithSandboxID(sandboxID))
-
-	return nil
+	return s.waitForTransition(ctx, sandboxID, id)
 }
 
-// transitionRef names a transition by the form its keys are in and its ID.
-// A wait holds the pair it found: once the transition finishes neither
-// marker exists, or a successor's does under the other form, so resolving
-// again would read the wrong result key.
-type transitionRef struct {
-	form keyForm
-	id   string
-}
-
-// waitForTransition waits for a specific transition to complete.
-// It should receive a signal via the fan-out PubSub channel or fallback to a 1-second ticker
-func (s *Storage) waitForTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, ref transitionRef) error {
-	team := teamID.String()
-	transitionKey := transitionKeyFor(ref.form, team, sandboxID)
-	resultKey := transitionResultKeyFor(ref.form, team, sandboxID, ref.id)
+// waitForTransition waits for a specific transition to complete. A wait
+// holds the ID it found: once the transition finishes the marker is gone,
+// or a successor's is there, so reading it again would follow the wrong
+// result key. It should receive a signal via the fan-out PubSub channel or
+// fallback to a 1-second ticker.
+func (s *Storage) waitForTransition(ctx context.Context, sandboxID, transitionID string) error {
+	transitionKey := transitionKeyFor(sandboxID)
+	resultKey := transitionResultKeyFor(sandboxID, transitionID)
 	routingKey := transitionRoutingKey(resultKey)
 
 	// Subscribe to this specific transition's routing key so notifications
@@ -468,7 +404,7 @@ func (s *Storage) waitForTransition(ctx context.Context, teamID uuid.UUID, sandb
 
 	// Initial check: the transition may have completed before we subscribed.
 	currentID, err := s.redisClient.Get(ctx, transitionKey).Result()
-	if errors.Is(err, redis.Nil) || currentID != ref.id {
+	if errors.Is(err, redis.Nil) || currentID != transitionID {
 		return s.checkTransitionResult(ctx, resultKey)
 	}
 	if err != nil {
@@ -488,7 +424,7 @@ func (s *Storage) waitForTransition(ctx context.Context, teamID uuid.UUID, sandb
 		case <-ticker.C:
 			// Fallback poll: check whether the transition key is still present.
 			currentID, err := s.redisClient.Get(ctx, transitionKey).Result()
-			if errors.Is(err, redis.Nil) || currentID != ref.id {
+			if errors.Is(err, redis.Nil) || currentID != transitionID {
 				return s.checkTransitionResult(ctx, resultKey)
 			}
 			if err != nil {
@@ -549,7 +485,7 @@ func (s *Storage) handleExistingTransition(
 	teamID uuid.UUID,
 	sbx sandboxtypes.Sandbox,
 	opts sandboxtypes.RemoveOpts,
-	ref transitionRef,
+	transitionID string,
 ) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
 	newState := opts.Action.TargetState
 	transition := sandboxtypes.StateTransition{Sandbox: sbx}
@@ -573,7 +509,7 @@ func (s *Storage) handleExistingTransition(
 			logger.WithSandboxID(sbx.SandboxID),
 			zap.String("state", string(newState)))
 
-		err := s.waitForTransition(ctx, teamID, sbx.SandboxID, ref)
+		err := s.waitForTransition(ctx, sbx.SandboxID, transitionID)
 		if restored, ok := errors.AsType[*sandboxtypes.RestoredTransitionError](err); ok {
 			// The pause the joiner rode was refused as one the guest cannot take
 			// and the sandbox is running again: a joiner asking for the same
@@ -598,7 +534,7 @@ func (s *Storage) handleExistingTransition(
 		return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 	}
 
-	err := s.waitForTransition(ctx, teamID, sbx.SandboxID, ref)
+	err := s.waitForTransition(ctx, sbx.SandboxID, transitionID)
 	if err != nil && !errors.Is(err, sandboxtypes.ErrTransitionRestored) {
 		return transition, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
 	}

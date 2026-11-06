@@ -96,202 +96,133 @@ func lockRecord(t *testing.T, client redis.UniversalClient, key string) {
 	require.NoError(t, client.Set(t.Context(), redis_utils.GetLockKey(key), testLockValue, 0).Err())
 }
 
-// removeScript is one of the remove scripts, run on a sandbox of the team
-// in the form whose record it guards, under the lock lockRecord holds, as
-// the hold holdID when one is named.
+// removeScript is the remove script, run on a sandbox of the team under the
+// lock lockRecord holds, as the hold holdID when one is named.
 type removeScript struct {
-	name string
-	form keyForm
-	run  func(ctx context.Context, sandboxID, expected string) *redis.Cmd
-	as   func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd
+	run func(ctx context.Context, sandboxID, expected string) *redis.Cmd
+	as  func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd
 }
 
-// removeScripts returns the remove script's two calls: the team form's,
-// which removes the record with its index entry, and the sandbox form's,
-// which removes the record alone, its index entry living in another slot.
-func removeScripts(client redis.UniversalClient, teamID uuid.UUID, index string) []removeScript {
-	as := func(form keyForm, name string, keys func(key string) []string) func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
-		return func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
-			return RunScript(ctx, client, name, removeSandboxScript, keys(recordKey(form, teamID.String(), sandboxID)), sandboxID, expected, 60, holdID, lockValue)
-		}
-	}
-	team := as(formTeam, "remove_sandbox", func(key string) []string { return []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), index} })
-	sandbox := as(formSandbox, "remove_record", func(key string) []string { return []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)} })
+// newRemoveScript returns the remove script's call: it removes the record
+// alone, its index entry living in another slot.
+func newRemoveScript(client redis.UniversalClient) removeScript {
+	as := func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
+		key := recordKey(sandboxID)
 
-	return []removeScript{
-		{"remove_sandbox", formTeam, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
-			return team(ctx, sandboxID, expected, "", testLockValue)
-		}, team},
-		{"remove_record", formSandbox, func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
-			return sandbox(ctx, sandboxID, expected, "", testLockValue)
-		}, sandbox},
+		return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)}, sandboxID, expected, 60, holdID, lockValue)
+	}
+
+	return removeScript{
+		run: func(ctx context.Context, sandboxID, expected string) *redis.Cmd {
+			return as(ctx, sandboxID, expected, "", testLockValue)
+		},
+		as: as,
 	}
 }
 
-// A remove script removes the record for the execution the caller names, or
-// for any execution when it names none, and returns what it removed. For
+// The remove script removes the record for the execution the caller names,
+// or for any execution when it names none, and returns what it removed. For
 // another execution it returns the record it found and writes nothing. An
-// absent record is nil, and nothing is written. The team form's script
-// takes the index entry with the record and leaves it with a refused or an
-// absent one: the entry may be a successor's, held in the other form.
+// absent record is nil, and nothing is written.
 func TestRemoveScriptGuards(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
 	teamID := uuid.New()
-	index := GetSandboxStorageTeamIndexKey(teamID.String())
+	script := newRemoveScript(client)
+	write := func(name string) (sbx sandboxtypes.Sandbox, key, data string) {
+		t.Helper()
 
-	for _, script := range removeScripts(client, teamID, index) {
-		t.Run(script.name, func(t *testing.T) {
-			t.Parallel()
+		sbx = newRecord(teamID, "sbx-"+name)
+		key = recordKey(sbx.SandboxID)
+		lockRecord(t, client, key)
 
-			// Only the team form's script can touch the index.
-			requireEntry := func(sandboxID string, want bool) {
-				t.Helper()
-
-				if script.form == formTeam {
-					requireIndexed(t, client, index, sandboxID, want)
-				}
-			}
-			write := func(name string) (sbx sandboxtypes.Sandbox, key, data string) {
-				t.Helper()
-
-				sbx = newRecord(teamID, fmt.Sprintf("sbx-%s-%s", script.name, name))
-				key = recordKey(script.form, teamID.String(), sbx.SandboxID)
-				lockRecord(t, client, key)
-
-				return sbx, key, writeRecord(t, client, key, index, sbx)
-			}
-
-			sbx, key, data := write("match")
-			requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, sbx.ExecutionID), removed(data))
-			requireNoRecord(t, client, key)
-			requireEntry(sbx.SandboxID, false)
-
-			sbx, key, data = write("other")
-			requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, uuid.NewString()), refused(data))
-			requireRecord(t, client, key, data)
-			requireEntry(sbx.SandboxID, true)
-
-			sbx, key, data = write("unguarded")
-			requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, ""), removed(data))
-			requireNoRecord(t, client, key)
-			requireEntry(sbx.SandboxID, false)
-
-			absent := "sbx-" + script.name + "-absent"
-			require.NoError(t, client.SAdd(t.Context(), index, absent).Err())
-			requireRemoveReply(t, script.run(t.Context(), absent, ""), absentReply)
-			requireRemoveReply(t, script.run(t.Context(), absent, uuid.NewString()), absentReply)
-			requireEntry(absent, true)
-		})
+		return sbx, key, writeRecord(t, client, key, "", sbx)
 	}
+
+	sbx, key, data := write("match")
+	requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, sbx.ExecutionID), removed(data))
+	requireNoRecord(t, client, key)
+
+	sbx, key, data = write("other")
+	requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, uuid.NewString()), refused(data))
+	requireRecord(t, client, key, data)
+
+	sbx, key, data = write("unguarded")
+	requireRemoveReply(t, script.run(t.Context(), sbx.SandboxID, ""), removed(data))
+	requireNoRecord(t, client, key)
+
+	requireRemoveReply(t, script.run(t.Context(), "sbx-absent", ""), absentReply)
+	requireRemoveReply(t, script.run(t.Context(), "sbx-absent", uuid.NewString()), absentReply)
 }
 
-// A remove script re-executed after a lost reply finds its record gone, or
-// finds a successor of the same sandbox ID and leaves it whole: the
-// successor's record and index entry survive, whichever form it was written
-// in.
+// The remove script re-executed after a lost reply finds its record gone,
+// or finds a successor of the same sandbox ID and leaves it whole.
 func TestRemoveScriptReexecutionIsNoop(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
 	teamID := uuid.New()
-	index := GetSandboxStorageTeamIndexKey(teamID.String())
+	script := newRemoveScript(client)
+	sandboxID := "sbx-reexecuted"
+	key := recordKey(sandboxID)
 
-	for _, script := range removeScripts(client, teamID, index) {
-		t.Run(script.name, func(t *testing.T) {
-			t.Parallel()
+	lockRecord(t, client, key)
+	sbx := newRecord(teamID, sandboxID)
+	data := writeRecord(t, client, key, "", sbx)
+	requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), removed(data))
+	requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), absentReply)
 
-			sandboxID := "sbx-" + script.name
-			key := recordKey(script.form, teamID.String(), sandboxID)
-
-			lockRecord(t, client, key)
-			sbx := newRecord(teamID, sandboxID)
-			data := writeRecord(t, client, key, index, sbx)
-			requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), removed(data))
-			requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), absentReply)
-
-			// A successor in the same form: refused, and left whole.
-			successor := newRecord(teamID, sandboxID)
-			successorData := writeRecord(t, client, key, index, successor)
-			requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), refused(successorData))
-			requireRecord(t, client, key, successorData)
-			// Only the team form's script can touch the index.
-			if script.form == formTeam {
-				requireIndexed(t, client, index, sandboxID, true)
-			}
-			requireRemoveReply(t, script.run(t.Context(), sandboxID, successor.ExecutionID), removed(successorData))
-
-			// A successor in the other form shares the index entry: absent
-			// here, and the entry stays.
-			otherKey := recordKey(script.form.other(), teamID.String(), sandboxID)
-			successor = newRecord(teamID, sandboxID)
-			successorData = writeRecord(t, client, otherKey, index, successor)
-			requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), absentReply)
-			requireRecord(t, client, otherKey, successorData)
-			if script.form == formTeam {
-				requireIndexed(t, client, index, sandboxID, true)
-			}
-		})
-	}
+	// A successor: refused, and left whole.
+	successor := newRecord(teamID, sandboxID)
+	successorData := writeRecord(t, client, key, "", successor)
+	requireRemoveReply(t, script.run(t.Context(), sandboxID, sbx.ExecutionID), refused(successorData))
+	requireRecord(t, client, key, successorData)
+	requireRemoveReply(t, script.run(t.Context(), sandboxID, successor.ExecutionID), removed(successorData))
 }
 
-// A remove script writes nothing once the record's lock no longer holds the
-// caller's value, and, run as a hold, removes only a record under that live
-// hold: one whose hold lapsed, or that nobody holds, is left whole with its
-// index entry, as is one under another operation's hold.
+// The remove script writes nothing once the record's lock no longer holds
+// the caller's value, and, run as a hold, removes only a record under that
+// live hold: one whose hold lapsed, or that nobody holds, is left whole, as
+// is one under another operation's hold.
 func TestRemoveScriptRequiresTheLockAndTheLiveHold(t *testing.T) {
 	t.Parallel()
 
 	client := redis_utils.SetupInstance(t)
 	teamID := uuid.New()
-	index := GetSandboxStorageTeamIndexKey(teamID.String())
+	script := newRemoveScript(client)
+	write := func(name, holdID string, until time.Time) (sbx sandboxtypes.Sandbox, key, data string) {
+		t.Helper()
 
-	for _, script := range removeScripts(client, teamID, index) {
-		t.Run(script.name, func(t *testing.T) {
-			t.Parallel()
+		sbx = newRecord(teamID, "sbx-"+name)
+		sbx.LifecycleHold, sbx.LifecycleHoldUntil = holdID, until.UnixMilli()
+		key = recordKey(sbx.SandboxID)
+		lockRecord(t, client, key)
 
-			requireKept := func(sbx sandboxtypes.Sandbox, key, data string) {
-				t.Helper()
-				requireRecord(t, client, key, data)
-				if script.form == formTeam {
-					requireIndexed(t, client, index, sbx.SandboxID, true)
-				}
-			}
-			write := func(name, holdID string, until time.Time) (sbx sandboxtypes.Sandbox, key, data string) {
-				t.Helper()
-
-				sbx = newRecord(teamID, fmt.Sprintf("sbx-%s-%s", script.name, name))
-				sbx.LifecycleHold, sbx.LifecycleHoldUntil = holdID, until.UnixMilli()
-				key = recordKey(script.form, teamID.String(), sbx.SandboxID)
-				lockRecord(t, client, key)
-
-				return sbx, key, writeRecord(t, client, key, index, sbx)
-			}
-
-			sbx, key, data := write("lock-lost", "", time.Time{})
-			_, err := readRemoveReply(script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", "another-lock"))
-			require.ErrorIs(t, err, sandboxtypes.ErrLockLost)
-			requireKept(sbx, key, data)
-
-			sbx, key, data = write("expired-hold", "op", time.Now().Add(-time.Second))
-			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
-			requireKept(sbx, key, data)
-
-			sbx, key, data = write("unheld", "", time.Time{})
-			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
-			requireKept(sbx, key, data)
-
-			sbx, key, data = write("other-hold", "other", time.Now().Add(time.Minute))
-			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
-			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", testLockValue), refused(data))
-			requireKept(sbx, key, data)
-
-			sbx, key, data = write("held", "op", time.Now().Add(time.Minute))
-			requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), removed(data))
-			requireNoRecord(t, client, key)
-		})
+		return sbx, key, writeRecord(t, client, key, "", sbx)
 	}
+
+	sbx, key, data := write("lock-lost", "", time.Time{})
+	_, err := readRemoveReply(script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", "another-lock"))
+	require.ErrorIs(t, err, sandboxtypes.ErrLockLost)
+	requireRecord(t, client, key, data)
+
+	sbx, key, data = write("expired-hold", "op", time.Now().Add(-time.Second))
+	requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+	requireRecord(t, client, key, data)
+
+	sbx, key, data = write("unheld", "", time.Time{})
+	requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+	requireRecord(t, client, key, data)
+
+	sbx, key, data = write("other-hold", "other", time.Now().Add(time.Minute))
+	requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), refused(data))
+	requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "", testLockValue), refused(data))
+	requireRecord(t, client, key, data)
+
+	sbx, key, data = write("held", "op", time.Now().Add(time.Minute))
+	requireRemoveReply(t, script.as(t.Context(), sbx.SandboxID, sbx.ExecutionID, "op", testLockValue), removed(data))
+	requireNoRecord(t, client, key)
 }
 
 // parseRemoveReply distinguishes the replies and names any other shape in

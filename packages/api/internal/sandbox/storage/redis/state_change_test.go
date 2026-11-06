@@ -459,7 +459,7 @@ func TestStartRemoving_TransitionKeyTTL(t *testing.T) {
 	assert.False(t, alreadyDone)
 
 	// Check transition key exists
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	exists, err := client.Exists(ctx, transitionKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), exists)
@@ -490,7 +490,7 @@ func TestStartRemoving_CallbackMarksTransitionCompleted(t *testing.T) {
 	require.NotNil(t, callback)
 
 	// Check transition key exists and get the transition ID
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	transitionID, err := client.Get(ctx, transitionKey).Result()
 	require.NoError(t, err)
 	assert.NotEmpty(t, transitionID, "Transition ID should be stored in transition key")
@@ -504,7 +504,7 @@ func TestStartRemoving_CallbackMarksTransitionCompleted(t *testing.T) {
 	assert.Equal(t, int64(0), exists)
 
 	// Result key should have empty value (success) with TTL
-	resultKey := transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionID)
+	resultKey := transitionResultKeyFor(sbx.SandboxID, transitionID)
 	value, err := client.Get(ctx, resultKey).Result()
 	require.NoError(t, err)
 	assert.Empty(t, value, "Result should be empty string for success")
@@ -532,7 +532,7 @@ func TestStartRemoving_CallbackSetsErrorOnFailure(t *testing.T) {
 	require.NotNil(t, callback)
 
 	// Check transition key exists and get the transition ID
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	transitionID, err := client.Get(ctx, transitionKey).Result()
 	require.NoError(t, err)
 	assert.NotEmpty(t, transitionID, "Transition ID should be stored in transition key")
@@ -546,7 +546,7 @@ func TestStartRemoving_CallbackSetsErrorOnFailure(t *testing.T) {
 	assert.Equal(t, int64(0), exists, "Transition key should be deleted after callback")
 
 	// Result key should contain error message with TTL
-	resultKey := transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionID)
+	resultKey := transitionResultKeyFor(sbx.SandboxID, transitionID)
 	value, err := client.Get(ctx, resultKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, "test error", value, "Result should contain error message")
@@ -694,7 +694,7 @@ func TestStartRemoving_DifferentExecutionID(t *testing.T) {
 	callback(ctx, nil)
 
 	// Verify transition key is deleted on success
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	exists, err := client.Exists(ctx, transitionKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), exists)
@@ -760,7 +760,7 @@ func TestStartRemoving_TransientTransition(t *testing.T) {
 		_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: transientAction})
 		require.NoError(t, err)
 
-		transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+		transitionKey := transitionKeyFor(sbx.SandboxID)
 		transitionID, err := client.Get(ctx, transitionKey).Result()
 		require.NoError(t, err)
 
@@ -768,7 +768,7 @@ func TestStartRemoving_TransientTransition(t *testing.T) {
 
 		// Transient transitions signal success even on failure so
 		// concurrent callers (e.g. kill) can proceed.
-		resultKey := transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionID)
+		resultKey := transitionResultKeyFor(sbx.SandboxID, transitionID)
 		value, err := client.Get(ctx, resultKey).Result()
 		require.NoError(t, err)
 		assert.Empty(t, value, "failed transient transition should still write empty result for waiters")
@@ -787,15 +787,15 @@ func TestStartRemoving_TransientTransition(t *testing.T) {
 		require.NoError(t, err)
 
 		// Remove the sandbox key to force restoreToRunning to fail
-		client.Del(ctx, recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID))
+		client.Del(ctx, recordKey(sbx.SandboxID))
 
-		transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+		transitionKey := transitionKeyFor(sbx.SandboxID)
 		transitionID, err := client.Get(ctx, transitionKey).Result()
 		require.NoError(t, err)
 
 		finish(ctx, nil)
 
-		resultKey := transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionID)
+		resultKey := transitionResultKeyFor(sbx.SandboxID, transitionID)
 		value, err := client.Get(ctx, resultKey).Result()
 		require.NoError(t, err)
 		assert.Contains(t, value, "failed to restore sandbox to running")
@@ -1129,11 +1129,11 @@ func TestCallback_PublishesNotification(t *testing.T) {
 	require.NotNil(t, callback)
 
 	// Read the transitionID so we can build the expected routing key
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	transitionID, err := client.Get(ctx, transitionKey).Result()
 	require.NoError(t, err)
 
-	expectedRoutingKey := transitionRoutingKey(transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionID))
+	expectedRoutingKey := transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, transitionID))
 
 	// Complete the transition
 	callback(ctx, nil)
@@ -1212,7 +1212,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	require.NotNil(t, callbackA)
 
 	// Get transition A's ID so we can craft its routing key later.
-	transitionKey := transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	transitionKey := transitionKeyFor(sbx.SandboxID)
 	transitionIDA, err := client.Get(t.Context(), transitionKey).Result()
 	require.NoError(t, err)
 
@@ -1242,7 +1242,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish a notification using transition A's routing key (stale).
-	staleRoutingKey := transitionRoutingKey(transitionResultKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID, transitionIDA))
+	staleRoutingKey := transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, transitionIDA))
 	require.NoError(t, client.Publish(t.Context(), globalStorageNotifyChannel, staleRoutingKey).Err())
 
 	// Give time for the stale notification to be (not) delivered.
@@ -1470,7 +1470,7 @@ func TestStorage_RecordWithoutNetworkPlacement(t *testing.T) {
 
 	teamID := uuid.New()
 	old := `{"sandboxID":"sbx-old","teamID":"` + teamID.String() + `","executionID":"exec-1","nodeID":"node-1","state":"running"}`
-	require.NoError(t, client.Set(ctx, recordKey(formSandbox, teamID.String(), "sbx-old"), old, time.Minute).Err())
+	require.NoError(t, client.Set(ctx, recordKey("sbx-old"), old, time.Minute).Err())
 
 	got, err := storage.Get(ctx, teamID, "sbx-old")
 	require.NoError(t, err)
@@ -1500,7 +1500,7 @@ func TestRestoreRunning_RefusesWhenTheRecordChangesUnderIt(t *testing.T) {
 	var replaced atomic.Bool
 	client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
 		if cmd.Name() == "evalsha" && cmd.Args()[1] == restoreSandboxScript.Hash() && replaced.CompareAndSwap(false, true) {
-			if err := client.Set(ctx, recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID), successorData, 0).Err(); err != nil {
+			if err := client.Set(ctx, recordKey(sbx.SandboxID), successorData, 0).Err(); err != nil {
 				return err
 			}
 		}
@@ -1524,7 +1524,7 @@ func TestRestoreRunning_RefusesWhenTheRecordChangesUnderIt(t *testing.T) {
 	assert.Equal(t, resumed.ExecutionID, stored.ExecutionID)
 	assert.Equal(t, sandboxtypes.StateRunning, stored.State)
 	assert.True(t, stored.RefusedUntil.IsZero(), "the refusal window belongs to the old incarnation")
-	after, err := client.Get(ctx, recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)).Bytes()
+	after, err := client.Get(ctx, recordKey(sbx.SandboxID)).Bytes()
 	require.NoError(t, err)
 	assert.Equal(t, successorData, after)
 }
@@ -1548,7 +1548,7 @@ func TestRestoreRunning_RetriesOnceWhenTheSameExecutionIsRewritten(t *testing.T)
 
 			ctx := t.Context()
 			sbx := createTestSandbox("restore-cas-rewrite")
-			key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+			key := recordKey(sbx.SandboxID)
 			client := redis_utils.SetupInstance(t)
 			var rewrites atomic.Int32
 			client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
@@ -1613,7 +1613,7 @@ func readsTransition(ctx context.Context, sbx sandboxtypes.Sandbox) (context.Con
 	var once sync.Once
 
 	return context.WithValue(ctx, transitionReadKey{}, transitionRead{
-		key:    transitionKeyFor(formSandbox, sbx.TeamID.String(), sbx.SandboxID),
+		key:    transitionKeyFor(sbx.SandboxID),
 		signal: func() { once.Do(func() { close(read) }) },
 	}), read
 }
@@ -1830,7 +1830,81 @@ func TestRestoreRunning_HeldSandboxLeavesTheExpiredWindow(t *testing.T) {
 func waitForTransitionWaiters(t *testing.T, storage *Storage, client redis.UniversalClient, sbx sandboxtypes.Sandbox, n int) {
 	t.Helper()
 
-	form := formSandbox
-	id := pendingTransitionID(t, client, form, sbx.TeamID, sbx.SandboxID)
-	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(form, sbx.TeamID.String(), sbx.SandboxID, id)), n)
+	id := pendingTransitionID(t, client, sbx.SandboxID)
+	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, id)), n)
+}
+
+// pendingTransitionID reads the ID the sandbox's transition marker holds.
+func pendingTransitionID(t *testing.T, client redis.UniversalClient, sandboxID string) string {
+	t.Helper()
+
+	id, err := client.Get(t.Context(), transitionKeyFor(sandboxID)).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+
+	return id
+}
+
+// Without a record, as on the kill path, where the record goes before the
+// transition finishes, the wait still finds the marker.
+func TestWaitFindsMarkerWithoutRecord(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	storage := newTestStorage(t, client)
+	startNotifications(t, storage)
+	teamID := uuid.New()
+	sbx := newRecord(teamID, "sbx-no-record")
+	key := addRecord(t, storage, sbx)
+	_, _, finish, err := storage.StartRemoving(t.Context(), teamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
+	require.NoError(t, err)
+	id := pendingTransitionID(t, client, sbx.SandboxID)
+	require.NoError(t, client.Del(t.Context(), key).Err())
+
+	waiter := make(chan error, 1)
+	go func() { waiter <- storage.WaitForStateChange(t.Context(), teamID, sbx.SandboxID) }()
+	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, id)), 1)
+
+	finish(t.Context(), nil)
+	requireNoErrorFromChannel(t, waiter)
+}
+
+// A wait holds the ID of the transition it joined. The first transition
+// fails after a waiter joined it, and a successor's transition for the same
+// sandbox ID replaces the marker before the waiter looks again. The waiter
+// returns the first transition's failure, not the successor's empty result.
+func TestWaitCarriesTransitionID(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	// No notifications: the fallback poll is the waiter's only wake-up, so the
+	// successor is in place before the waiter looks again.
+	storage := newTestStorage(t, client)
+	teamID := uuid.New()
+	sbx := newRecord(teamID, "sbx-carried")
+	addRecord(t, storage, sbx)
+	_, _, finish, err := storage.StartRemoving(t.Context(), teamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	require.NoError(t, err)
+	first := pendingTransitionID(t, client, sbx.SandboxID)
+
+	waiter := make(chan error, 1)
+	go func() { waiter <- storage.WaitForStateChange(t.Context(), teamID, sbx.SandboxID) }()
+	waitForRegisteredWaiters(t, storage.subManager, transitionRoutingKey(transitionResultKeyFor(sbx.SandboxID, first)), 1)
+	// Past the waiter's first look at the marker, well before its first poll.
+	time.Sleep(50 * time.Millisecond)
+
+	finish(t.Context(), errors.New("boom"))
+	addRecord(t, storage, newRecord(teamID, sbx.SandboxID))
+	_, _, finishSuccessor, err := storage.StartRemoving(t.Context(), teamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	require.NoError(t, err)
+	second := pendingTransitionID(t, client, sbx.SandboxID)
+
+	select {
+	case err := <-waiter:
+		require.ErrorContains(t, err, "boom")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the waiter never returned")
+	}
+	require.Equal(t, second, pendingTransitionID(t, client, sbx.SandboxID), "the successor's transition is still pending")
+	finishSuccessor(t.Context(), nil)
 }

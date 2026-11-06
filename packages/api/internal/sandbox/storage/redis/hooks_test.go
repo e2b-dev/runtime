@@ -36,21 +36,11 @@ func (h cmdHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proce
 }
 
 // recordGets returns a hook that records the GET count of every pipeline the
-// client sends that carries one and the key count of every MGET, and the
-// function that reads both.
-func recordGets() (cmdHook, func() (gets, mgets []int)) {
+// client sends that carries one, and the function that reads them.
+func recordGets() (cmdHook, func() []int) {
 	var mu sync.Mutex
-	var gets, mgets []int
+	var gets []int
 	hook := cmdHook{
-		process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-			if cmd.Name() == "mget" {
-				mu.Lock()
-				mgets = append(mgets, len(cmd.Args())-1)
-				mu.Unlock()
-			}
-
-			return next(ctx, cmd)
-		},
 		pipeline: func(ctx context.Context, cmds []redis.Cmder, next redis.ProcessPipelineHook) error {
 			n := 0
 			for _, cmd := range cmds {
@@ -67,11 +57,11 @@ func recordGets() (cmdHook, func() (gets, mgets []int)) {
 			return next(ctx, cmds)
 		},
 	}
-	snapshot := func() ([]int, []int) {
+	snapshot := func() []int {
 		mu.Lock()
 		defer mu.Unlock()
 
-		return slices.Clone(gets), slices.Clone(mgets)
+		return slices.Clone(gets)
 	}
 
 	return hook, snapshot

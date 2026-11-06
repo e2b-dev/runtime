@@ -80,7 +80,7 @@ func TestLifecycleHold(t *testing.T) {
 	storage, client := setupTestStorage(t)
 	ctx := t.Context()
 	sbx := heldSandbox(t, storage, "held")
-	key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	holdID := uuid.NewString()
 	until := time.Now().Add(time.Minute)
 
@@ -254,7 +254,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	ctx := t.Context()
 
 	sbx := heldSandbox(t, storage, "expired-hold")
-	key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	unheld := client.Get(ctx, key).Val()
 	require.Error(t, holdExecution(t, storage, sbx, "op", time.Now()), "a deadline already passed")
 	assert.Equal(t, unheld, client.Get(ctx, key).Val(), "a refused hold writes nothing")
@@ -285,16 +285,16 @@ func TestLifecycleHoldExpires(t *testing.T) {
 
 	// The remove script refuses the hold until Redis's clock passes it.
 	short := heldSandbox(t, storage, "short-hold")
-	shortKey := recordKey(formSandbox, short.TeamID.String(), short.SandboxID)
+	shortKey := recordKey(short.SandboxID)
 	until := time.Now().Add(300 * time.Millisecond)
 	require.NoError(t, holdExecution(t, storage, short, "op", until))
 	lockRecord(t, client, shortKey)
 	removeKeys := []string{shortKey, goneKeyFor(shortKey), redis_utils.GetLockKey(shortKey)}
-	deleted, _, _, err := parseRemoveReply(RunScript(ctx, client, "remove_sandbox", removeSandboxScript, removeKeys, short.SandboxID, short.ExecutionID, 60, "", testLockValue))
+	deleted, _, _, err := parseRemoveReply(RunScript(ctx, client, "remove_record", removeSandboxScript, removeKeys, short.SandboxID, short.ExecutionID, 60, "", testLockValue))
 	require.NoError(t, err)
 	assert.False(t, deleted, "refused while held")
 	time.Sleep(time.Until(until) + 50*time.Millisecond)
-	deleted, _, _, err = parseRemoveReply(RunScript(ctx, client, "remove_sandbox", removeSandboxScript, removeKeys, short.SandboxID, short.ExecutionID, 60, "", testLockValue))
+	deleted, _, _, err = parseRemoveReply(RunScript(ctx, client, "remove_record", removeSandboxScript, removeKeys, short.SandboxID, short.ExecutionID, 60, "", testLockValue))
 	require.NoError(t, err)
 	assert.True(t, deleted, "removed once the hold passed")
 }
@@ -351,13 +351,13 @@ func TestLifecycleHoldMoveRefusesARecordItNoLongerHolds(t *testing.T) {
 	until := time.Now().Add(time.Minute)
 
 	gone := heldSandbox(t, storage, "gone")
-	goneKey := recordKey(formSandbox, gone.TeamID.String(), gone.SandboxID)
+	goneKey := recordKey(gone.SandboxID)
 	require.NoError(t, holdExecution(t, storage, gone, "op", until))
 	require.NoError(t, client.Del(ctx, goneKey).Err())
 	require.ErrorIs(t, moveHeldExecution(t, storage, gone, "op", "node-b"), sandboxtypes.ErrNotFound)
 
 	replaced := heldSandbox(t, storage, "replaced")
-	replacedKey := recordKey(formSandbox, replaced.TeamID.String(), replaced.SandboxID)
+	replacedKey := recordKey(replaced.SandboxID)
 	require.NoError(t, holdExecution(t, storage, replaced, "op", until))
 	successor := replaced
 	successor.ExecutionID, successor.NodeID = uuid.NewString(), "node-b"
@@ -390,7 +390,7 @@ func TestLifecycleHoldRefusesADeadlineThatPassedWaitingForTheLock(t *testing.T) 
 	storage, _ := setupTestStorage(t)
 	ctx := t.Context()
 	sbx := heldSandbox(t, storage, "late-hold")
-	key := recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID)
+	key := recordKey(sbx.SandboxID)
 	held, err := storage.locker.Obtain(ctx, redis_utils.GetLockKey(key), time.Minute)
 	require.NoError(t, err)
 
@@ -437,7 +437,7 @@ func TestLifecycleHoldRemoveRefusesALapsedHold(t *testing.T) {
 	// check and the script.
 	lapsed := heldSandbox(t, storage, "lapsed")
 	require.NoError(t, holdExecution(t, storage, lapsed, "op", time.Now().Add(time.Minute)))
-	key := recordKey(formSandbox, lapsed.TeamID.String(), lapsed.SandboxID)
+	key := recordKey(lapsed.SandboxID)
 	lock, err := storage.locker.Obtain(ctx, redis_utils.GetLockKey(key), time.Minute)
 	require.NoError(t, err)
 	stored, err := storage.Get(ctx, lapsed.TeamID, lapsed.SandboxID)
@@ -446,44 +446,8 @@ func TestLifecycleHoldRemoveRefusesALapsedHold(t *testing.T) {
 	data, err := json.Marshal(stored)
 	require.NoError(t, err)
 	require.NoError(t, client.Set(ctx, key, data, 0).Err())
-	err = storage.removeUnderLock(ctx, formSandbox, lock, lapsed.TeamID, lapsed.SandboxID, lapsed.ExecutionID, "op")
+	err = storage.removeUnderLock(ctx, lock, lapsed.TeamID, lapsed.SandboxID, lapsed.ExecutionID, "op")
 	require.ErrorIs(t, err, sandboxtypes.ErrNotHeld)
 	require.NoError(t, lock.Release(ctx))
 	assert.Equal(t, string(data), client.Get(ctx, key).Val(), "the record stays")
-}
-
-// A hold on a record in the team form, left by a release that wrote that
-// form, keeps refusing ordinary writes from a replica that writes the
-// sandbox form, and the holder moves and removes the record in the form it
-// is in.
-func TestLifecycleHoldOnATeamFormRecord(t *testing.T) {
-	t.Parallel()
-
-	storage, client := setupTestStorage(t)
-	ctx, until := t.Context(), time.Now().Add(time.Minute)
-	sbx := createTestSandbox("team-form")
-	sbx.NodeID = "node-a"
-	sbx.StartTime = time.Now().Add(-time.Hour)
-	sbx.NetworkPlacement = &orchestrator.SandboxNetworkPlacement{ExecutionId: sbx.ExecutionID, NetworkMode: "full-router", RouterId: uuid.NewString()}
-	teamKey := recordKey(formTeam, sbx.TeamID.String(), sbx.SandboxID)
-	writeRecord(t, client, teamKey, GetSandboxStorageTeamIndexKey(sbx.TeamID.String()), sbx)
-	require.NoError(t, holdExecution(t, storage, sbx, "op", until))
-	require.NoError(t, storage.Add(ctx, sbx), "a duplicate create keeps the held record")
-	requireNoRecord(t, client, recordKey(formSandbox, sbx.TeamID.String(), sbx.SandboxID))
-	require.ErrorIs(t, storage.Replace(ctx, sbx), sandboxtypes.ErrLifecycleHeld)
-	require.ErrorIs(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID), sandboxtypes.ErrLifecycleHeld)
-	require.ErrorIs(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, "other"), sandboxtypes.ErrExecutionMismatch)
-	foreign := sbx
-	foreign.TeamID = uuid.New()
-	require.ErrorIs(t, moveHeldExecution(t, storage, foreign, "op", "node-b"), sandboxtypes.ErrNotFound)
-	require.NoError(t, moveHeldExecution(t, storage, sbx, "op", "node-b"))
-	record, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
-	require.NoError(t, err)
-	require.Equal(t, "node-b", record.NodeID)
-	require.NoError(t, holdExecution(t, storage, sbx, "next", until))
-	require.NoError(t, removeHeldExecution(t, storage, sbx, "next"))
-	for _, form := range []keyForm{formTeam, formSandbox} {
-		assert.Zero(t, client.Exists(ctx, recordKey(form, sbx.TeamID.String(), sbx.SandboxID)).Val(), "no record in form %d", form)
-	}
-	require.ErrorIs(t, moveHeldExecution(t, storage, sbx, "op", "node-b"), sandboxtypes.ErrNotFound)
 }

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/bsm/redislock"
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -40,7 +39,7 @@ func TestStorageLocker_ObtainAfterReleaseNotification(t *testing.T) {
 
 	locker, subManager := setupTestLocker(t, true)
 
-	key := getSandboxKey(uuid.NewString(), "lock-notification")
+	key := recordKey("lock-notification")
 	lockKey := redis_utils.GetLockKey(key)
 	routingKey := getLockRoutingKey(lockKey)
 
@@ -69,7 +68,7 @@ func TestStorageLocker_ObtainTimesOutWhenHeld(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-timeout"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-timeout"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -88,7 +87,7 @@ func TestStorageLocker_ObtainUsesProvidedContext(t *testing.T) {
 	t.Parallel()
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-parent-deadline"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-parent-deadline"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -116,7 +115,7 @@ func TestStorageLocker_ObtainReturnsContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-context-cancel"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-context-cancel"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -138,7 +137,7 @@ func TestStorageLocker_ObtainFallsBackWhenNotificationMissed(t *testing.T) {
 	// notification and verifies the exponential fallback still makes progress.
 	locker, subManager := setupTestLocker(t, false)
 
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-fallback"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-fallback"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -165,7 +164,7 @@ func TestStorageLock_ReleaseUsesProvidedContext(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, false)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-canceled-release"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-canceled-release"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	pubsub := locker.redisClient.Subscribe(t.Context(), globalStorageNotifyChannel)
@@ -188,7 +187,7 @@ func TestStorageLock_ReleaseReturnsErrorWhenLockAlreadyReleased(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-double-release"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-double-release"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -200,7 +199,7 @@ func TestStorageLocker_IgnoresUnrelatedNotification(t *testing.T) {
 	t.Parallel()
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-unrelated-notification"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-unrelated-notification"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -535,7 +534,7 @@ func TestStorageLocker_ConcurrentWaitersRemainExclusive(t *testing.T) {
 	const waiterCount = 32
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "concurrent-waiters"))
+	lockKey := redis_utils.GetLockKey(recordKey("concurrent-waiters"))
 	routingKey := getLockRoutingKey(lockKey)
 	incumbent, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -586,159 +585,6 @@ func TestStorageLocker_ConcurrentWaitersRemainExclusive(t *testing.T) {
 	}
 }
 
-func TestObtainBothOrderAndRelease(t *testing.T) {
-	t.Parallel()
-
-	locker, subManager, recorder := setupRecordingTestLocker(t)
-	teamID, sandboxID := uuid.NewString(), uuid.NewString()
-	first := redis_utils.GetLockKey(recordKey(formTeam, teamID, sandboxID))
-	second := redis_utils.GetLockKey(recordKey(formSandbox, teamID, sandboxID))
-
-	holder, err := locker.Obtain(t.Context(), second, testLockTimeout)
-	require.NoError(t, err)
-
-	var release func(context.Context) error
-	done := make(chan error, 1)
-	go func() {
-		var obtainErr error
-		release, obtainErr = locker.ObtainBoth(t.Context(), first, second, testLockTimeout)
-		done <- obtainErr
-	}()
-
-	waitForLockWaiter(t, subManager, getLockRoutingKey(second), done)
-	require.True(t, lockHeld(t, locker, first))
-
-	require.NoError(t, holder.Release(context.WithoutCancel(t.Context())))
-	requireNoErrorFromChannel(t, done)
-	require.True(t, lockHeld(t, locker, second))
-
-	require.NoError(t, release(context.WithoutCancel(t.Context())))
-	require.False(t, lockHeld(t, locker, first))
-	require.False(t, lockHeld(t, locker, second))
-	// The holder's release, then the pair's: the second lock before the first.
-	require.Equal(t, []string{getLockRoutingKey(second), getLockRoutingKey(second), getLockRoutingKey(first)}, recorder.published())
-}
-
-func TestObtainBothSecondFailsReleasesFirst(t *testing.T) {
-	t.Parallel()
-
-	locker, _, recorder := setupRecordingTestLocker(t)
-	teamID, sandboxID := uuid.NewString(), uuid.NewString()
-	first := redis_utils.GetLockKey(recordKey(formTeam, teamID, sandboxID))
-	second := redis_utils.GetLockKey(recordKey(formSandbox, teamID, sandboxID))
-
-	holder, err := locker.Obtain(t.Context(), second, testLockTimeout)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = holder.Release(context.WithoutCancel(t.Context()))
-	})
-
-	// The deadline bounds the wait, not the lock TTL: a first lock freed by
-	// its TTL would pass the check below without a release.
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
-
-	release, err := locker.ObtainBoth(ctx, first, second, testLockTimeout)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Nil(t, release)
-	require.False(t, lockHeld(t, locker, first))
-	require.True(t, lockHeld(t, locker, second))
-	require.Equal(t, []string{getLockRoutingKey(first)}, recorder.published())
-}
-
-func TestObtainBothReleaseAttemptsBoth(t *testing.T) {
-	t.Parallel()
-
-	locker, _, recorder := setupRecordingTestLocker(t)
-	teamID, sandboxID := uuid.NewString(), uuid.NewString()
-	first := redis_utils.GetLockKey(recordKey(formTeam, teamID, sandboxID))
-	second := redis_utils.GetLockKey(recordKey(formSandbox, teamID, sandboxID))
-
-	release, err := locker.ObtainBoth(t.Context(), first, second, testLockTimeout)
-	require.NoError(t, err)
-
-	// The second lock is gone, as after its TTL.
-	require.NoError(t, locker.redisClient.Del(t.Context(), second).Err())
-
-	require.ErrorIs(t, release(context.WithoutCancel(t.Context())), redislock.ErrLockNotHeld)
-	require.False(t, lockHeld(t, locker, first))
-	require.Equal(t, []string{getLockRoutingKey(first)}, recorder.published())
-}
-
-// Once both locks are held, the first lease, which counted down while the
-// second was awaited, is renewed to the full timeout.
-func TestObtainBothRenewsFirstLease(t *testing.T) {
-	t.Parallel()
-
-	locker, subManager, _ := setupRecordingTestLocker(t)
-	teamID, sandboxID := uuid.NewString(), uuid.NewString()
-	first := redis_utils.GetLockKey(recordKey(formTeam, teamID, sandboxID))
-	second := redis_utils.GetLockKey(recordKey(formSandbox, teamID, sandboxID))
-
-	holder, err := locker.Obtain(t.Context(), second, testLockTimeout)
-	require.NoError(t, err)
-
-	var release func(context.Context) error
-	done := make(chan error, 1)
-	go func() {
-		var obtainErr error
-		release, obtainErr = locker.ObtainBoth(t.Context(), first, second, testLockTimeout)
-		done <- obtainErr
-	}()
-
-	// The first lease has nearly run out by the time the second is freed.
-	waitForLockWaiter(t, subManager, getLockRoutingKey(second), done)
-	require.NoError(t, locker.redisClient.PExpire(t.Context(), first, time.Minute).Err())
-
-	require.NoError(t, holder.Release(context.WithoutCancel(t.Context())))
-	requireNoErrorFromChannel(t, done)
-	ttl, err := locker.redisClient.PTTL(t.Context(), first).Result()
-	require.NoError(t, err)
-	require.Greater(t, ttl, testLockTimeout-testWaitTimeout, "the first lease was not renewed")
-	require.NoError(t, release(context.WithoutCancel(t.Context())))
-}
-
-// A first lease that ran out while the second lock was awaited fails the
-// call: both locks are given back and an error returned, not the crash
-// sentinel, so the caller does not write under a lease another holder may
-// have taken meanwhile.
-func TestObtainBothFailsWhenFirstLeaseLost(t *testing.T) {
-	t.Parallel()
-
-	locker, subManager, _ := setupRecordingTestLocker(t)
-	teamID, sandboxID := uuid.NewString(), uuid.NewString()
-	first := redis_utils.GetLockKey(recordKey(formTeam, teamID, sandboxID))
-	second := redis_utils.GetLockKey(recordKey(formSandbox, teamID, sandboxID))
-
-	holder, err := locker.Obtain(t.Context(), second, testLockTimeout)
-	require.NoError(t, err)
-
-	done := make(chan error, 1)
-	go func() {
-		_, obtainErr := locker.ObtainBoth(t.Context(), first, second, testLockTimeout)
-		done <- obtainErr
-	}()
-
-	waitForLockWaiter(t, subManager, getLockRoutingKey(second), done)
-	require.NoError(t, locker.redisClient.PExpire(t.Context(), first, time.Millisecond).Err())
-	require.Eventually(t, func() bool {
-		n, err := locker.redisClient.Exists(context.WithoutCancel(t.Context()), first).Result()
-
-		return err == nil && n == 0
-	}, testWaitTimeout, testPollInterval, "the first lease did not run out")
-
-	require.NoError(t, holder.Release(context.WithoutCancel(t.Context())))
-	select {
-	case err = <-done:
-	case <-time.After(testWaitTimeout):
-		require.FailNow(t, "ObtainBoth did not return")
-	}
-	require.ErrorIs(t, err, redislock.ErrNotObtained)
-	require.False(t, crashed(err))
-	require.False(t, lockHeld(t, locker, first))
-	require.False(t, lockHeld(t, locker, second))
-}
-
 func TestLockNotificationRetryDelayStaysWithinConfiguredRange(t *testing.T) {
 	t.Parallel()
 
@@ -783,42 +629,6 @@ func setupTestLocker(t *testing.T, startSubManager bool) (*storageLocker, *subsc
 	}
 
 	return newStorageLocker(redisClient, subManager, pub), subManager
-}
-
-// recordingNotifier records the routing keys released locks publish, in call
-// order, and forwards them so waiters still wake. The publisher drains its
-// queue with a worker pool, so the wire order of two back-to-back publishes
-// is not observable.
-type recordingNotifier struct {
-	inner notifier
-
-	mu   sync.Mutex
-	keys []string
-}
-
-func (n *recordingNotifier) Publish(ctx context.Context, routingKey string) {
-	n.mu.Lock()
-	n.keys = append(n.keys, routingKey)
-	n.mu.Unlock()
-
-	n.inner.Publish(ctx, routingKey)
-}
-
-func (n *recordingNotifier) published() []string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	return append([]string(nil), n.keys...)
-}
-
-func setupRecordingTestLocker(t *testing.T) (*storageLocker, *subscriptionManager, *recordingNotifier) {
-	t.Helper()
-
-	locker, subManager := setupTestLocker(t, true)
-	recorder := &recordingNotifier{inner: locker.notifier}
-	locker.notifier = recorder
-
-	return locker, subManager, recorder
 }
 
 func lockHeld(t *testing.T, locker *storageLocker, lockKey string) bool {
