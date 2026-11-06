@@ -108,12 +108,6 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - OpenAPI code generation: `internal/api/*.gen.go`
 - Port: 80
 
-**Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
-- Entry point: `main.go`
-- Spec: `spec/openapi-dashboard.yml`; only the health route
-- Never talks to orchestrators (see `docs/ARCHITECTURE.md`)
-- Port: 3010
-
 **Orchestrator (`packages/orchestrator/`)** - Firecracker microVM orchestration
 - Entry point: `main.go`
 - VM management: `pkg/sandbox/`

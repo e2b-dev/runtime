@@ -43,7 +43,6 @@ flowchart TB
 
     subgraph controlplane["Control plane (API node pool)"]
         API["API<br/>REST :80, gRPC :5009/:5109"]
-        DashAPI["dashboard-api :3010"]
         CP["client-proxy<br/>:3002"]
     end
 
@@ -78,7 +77,6 @@ flowchart TB
     ORCH --> ENVD
     ENVD --> USERPROC
     API --> PG & RD & CH
-    DashAPI --> PG & CH
     ORCH --> OS & CH
     TM --> OS
 ```
@@ -92,7 +90,6 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
-| Dashboard API | `packages/dashboard-api` | API nodes | Backend for the web dashboard; serves only its health route |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -101,7 +98,9 @@ Supporting packages: `packages/shared` (protos, telemetry, storage clients, feat
 
 ### API (`packages/api`)
 
-The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, port 80).
+The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, port 80). The web
+dashboard is a client of it: a separate repository (github.com/e2b-dev/dashboard) published as an
+image, which E2B Embed runs on port 3001 against the API alone.
 
 - **Resources**: sandboxes (create/list/kill/pause/resume/connect/timeout/metrics/logs),
   templates and builds (including the web dashboard's build listings under `/unstable/builds`),
@@ -115,6 +114,12 @@ The control-plane entry point (Gin, OpenAPI-generated from `spec/openapi.yml`, p
   registered before the validator, which rejects undeclared paths.
 - **Auth** (via `packages/auth`): team API keys (`X-API-Key`, `e2b_` prefix), auth-provider JWTs
   (OIDC), and either an admin token or a service JWT verified from the configured admin JWKS.
+  The admin JWKS issuers and audiences come from the JSON `ADMIN_AUTH_PROVIDER_CONFIG` value — the
+  same config shape as `AUTH_PROVIDER_CONFIG` — with accepted signing methods derived from each
+  JWK's required `alg` metadata. An issuer normally configures at least one accepted audience,
+  binding a JWT to its intended target. An issuer may omit `audiences` only with no
+  `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
+  and temporal-claim verification remain required.
   Backed by an auth DB (Postgres) with a Redis team cache.
 - **API-group rate limits**: operations declare a group through the `x-api-group` OpenAPI
   extension. After authentication succeeds, its callback wrapper reads the validator's
@@ -373,8 +378,8 @@ ledger row stores it beside the revision. Each delivery the ledger accepts recor
 since then in `dashboard-api.management.apply_lag` with `projection` `project_limits`,
 `project_blocks` or `project_bans`; one without `decided_at`
 counts in `dashboard-api.management.origin_unknown` instead, never as zero lag. Dropped, refused
-and failed deliveries record nothing. The names keep the dashboard-api prefix from when
-dashboard-api served these writes, so the alert and dashboard reading them carry on unchanged.
+and failed deliveries record nothing. The alert and dashboard reading these metrics match these
+exact names, so renaming them means changing both.
 
 Project deletion soft-deletes any project, including a member's default project; whether a project
 may be deleted is the caller's decision. `envs`, `snapshots` and `volumes` reference `teams` with
@@ -724,36 +729,16 @@ answers **409** with the header on a user port and the same page as **503** on t
 SDK reads an envd 409 as "already exists"); a request whose client left before it was routed
 answers 408.
 
-### Dashboard API (`packages/dashboard-api`)
-
-A separate REST service (port 3010, spec `spec/openapi-dashboard.yml`) for the web dashboard,
-not the SDK. It serves only its health route: the killed-sandbox record, template reads and the
-admin routes are served by the API. It still loads the admin JWKS: issuers and audiences are
-configured through the JSON `ADMIN_AUTH_PROVIDER_CONFIG` value — the same config shape as
-`AUTH_PROVIDER_CONFIG` — with accepted signing methods derived from each JWK's required `alg`
-metadata. Never talks to orchestrators. The web dashboard itself is a separate repository (github.com/e2b-dev/dashboard)
-published as an image; E2B Embed runs it on port 3001 against the API alone.
-
-An issuer normally configures at least one accepted audience, binding a JWT to its intended target.
-An issuer may omit `audiences` only with no `audienceMatchPolicy`; this deliberately disables
-audience matching while issuer, signature, and temporal-claim verification remain required.
-
-The cluster's half of the contract the workspace residency owns is served by the API, not here:
-project upsert, membership, limits, block state and deletion under
-`/unstable/management/projects/{projectID}`, the cluster lifecycle under
-`/unstable/management/clusters`, and team bans under `/unstable/admin/teams` (see API above).
-dashboard-api serves no `/v1/management` route.
-
 ## Data stores
 
 | Store | Owner packages | What lives there |
 |---|---|---|
 | **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `tiers` and `addons` (legacy; no limit is read from them), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
-| **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by API and dashboard-api |
+| **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
 
-The API and dashboard-api share `packages/db/migrations`, tracked in PostgreSQL's
+The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
 `_migrations` table. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.
 Any existing `_dashboard_migrations` table is retained as historical bookkeeping and
@@ -763,8 +748,8 @@ Rolling back this migration retains the table and its data.
 
 The same database holds River's job tables in the `river` schema, which a goose migration
 creates. The db-migrator applies the goose migrations and then River's own, under one advisory
-lock; `make migrate` runs it, because the goose CLI cannot apply River's. At startup the API and
-dashboard-api refuse a database whose goose version is older than the one they were built against,
+lock; `make migrate` runs it, because the goose CLI cannot apply River's. At startup the API
+refuses a database whose goose version is older than the one it was built against,
 or whose River migrations are not current. The API works jobs from that schema (see its Outbox).
 
 A template and a paused-sandbox snapshot have the **same artifact shape** — a snapshot is just a
@@ -1463,7 +1448,7 @@ flowchart TB
     LB["Load balancer + TLS<br/>api.* → API | *.domain → client-proxy"]
 
     subgraph control["control plane"]
-        AJ["api, dashboard-api, client-proxy,<br/>redis, otel-collector"]
+        AJ["api, client-proxy,<br/>redis, otel-collector"]
     end
     subgraph sandboxnodes["sandbox nodes (autoscaled)"]
         OJ["orchestrator<br/>+ Firecracker sandboxes"]
@@ -1479,7 +1464,7 @@ flowchart TB
     AJ -->|gRPC| OJ & TJ
 ```
 
-- **Control-plane services** (api, dashboard-api, client-proxy) are stateless containers and the
+- **Control-plane services** (api, client-proxy) are stateless containers and the
   only LB backends. The api discovers orchestrator nodes through
   `packages/shared/pkg/servicediscovery` (Kubernetes, DNS, a static list, or the legacy Nomad
   backend the code still carries).
@@ -1506,15 +1491,14 @@ packages/
   orchestrator/         Sandbox runtime + template builder (one binary, per-node)
   client-proxy/         Edge router for sandbox traffic
   envd/                 In-VM agent (pkg/version.go is release-please's; see Envd)
-  dashboard-api/        Web-dashboard backend
   shared/               Protos, telemetry, storage clients, proxy engine, feature flags
-  auth/                 AuthN library (API keys, JWT/OIDC) used by api + dashboard-api
+  auth/                 AuthN library (API keys, JWT/OIDC) used by api
   db/                   Postgres migrations (goose) + queries (sqlc)
   clickhouse/           ClickHouse schema, batching writers, query clients
   otel-collector/       Collector config
   nomad-nodepool-apm/   Nomad autoscaler metric and deployment-aware target plugins
   local-dev/            docker-compose local stack + DB seeding
-spec/                   OpenAPI specs (public, edge, dashboard) — codegen sources
+spec/                   OpenAPI specs (public, edge, hyperloop) — codegen sources
 tests/integration/      Integration tests against a live deployment
 embed/                  E2B Embed: the whole stack on one machine (Compose, Terraform, Kubernetes)
 ```
