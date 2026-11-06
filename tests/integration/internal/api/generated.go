@@ -3471,6 +3471,26 @@ type GetSandboxesSandboxIDMetricsParams struct {
 	End   *int64 `form:"end,omitempty" json:"end,omitempty"`
 }
 
+// PostSandboxesSandboxIDSnapshotsParams defines parameters for PostSandboxesSandboxIDSnapshots.
+type PostSandboxesSandboxIDSnapshotsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // GetSecretsParams defines parameters for GetSecrets.
 type GetSecretsParams struct {
 	// NextToken Cursor to start the list from
@@ -4905,7 +4925,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDSnapshots Create snapshot
 	//
@@ -4914,7 +4934,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBody Set sandbox timeout
 	//
@@ -6878,8 +6898,8 @@ func (c *Client) PostSandboxesSandboxIDResume(ctx context.Context, sandboxID San
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, contentType, body)
+func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6897,8 +6917,8 @@ func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sa
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, body)
+func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11092,18 +11112,18 @@ func NewPostSandboxesSandboxIDResumeRequestWithBody(server string, sandboxID San
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequest calls the generic PostSandboxesSandboxIDSnapshots builder with application/json body
-func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, "application/json", bodyReader)
+	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, params, "application/json", bodyReader)
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequestWithBody constructs an http.Request for the PostSandboxesSandboxIDSnapshots method, with any body, and a specified content type
-func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11134,6 +11154,21 @@ func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -15999,7 +16034,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDSnapshotsWithResponse Create snapshot
 	//
@@ -16008,7 +16043,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBodyWithResponse Set sandbox timeout
 	//
@@ -20395,9 +20430,39 @@ func (r PostSandboxesSandboxIDResumeResponse) ContentType() string {
 	return ""
 }
 
+// PostSandboxesSandboxIDSnapshotsResponse400Headers the declared response headers of an HTTP 400 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse404Headers the declared response headers of an HTTP 404 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse409Headers the declared response headers of an HTTP 409 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse422Headers the declared response headers of an HTTP 422 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostSandboxesSandboxIDSnapshotsResponse429Headers the declared response headers of an HTTP 429 response for PostSandboxesSandboxIDSnapshots
 type PostSandboxesSandboxIDSnapshotsResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse500Headers the declared response headers of an HTTP 500 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse503Headers the declared response headers of an HTTP 503 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostSandboxesSandboxIDSnapshotsResponse struct {
@@ -20406,19 +20471,35 @@ type PostSandboxesSandboxIDSnapshotsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *SnapshotInfo
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostSandboxesSandboxIDSnapshotsResponse400Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostSandboxesSandboxIDSnapshotsResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostSandboxesSandboxIDSnapshotsResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostSandboxesSandboxIDSnapshotsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesSandboxIDSnapshotsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostSandboxesSandboxIDSnapshotsResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostSandboxesSandboxIDSnapshotsResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -20427,7 +20508,7 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON201() *SnapshotInfo {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *N400 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -20437,8 +20518,18 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON401() *N401 {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *N404 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *Error {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -20447,12 +20538,12 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *N500 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON503() *N503 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON503() *Error {
 	return r.JSON503
 }
 
@@ -27884,8 +27975,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithResponse(ctx conte
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -27899,8 +27990,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithRespons
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -32549,7 +32640,7 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -32563,11 +32654,25 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -32577,14 +32682,14 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -32593,6 +32698,46 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostSandboxesSandboxIDSnapshotsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostSandboxesSandboxIDSnapshotsResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostSandboxesSandboxIDSnapshotsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostSandboxesSandboxIDSnapshotsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSandboxesSandboxIDSnapshotsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -32603,6 +32748,26 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostSandboxesSandboxIDSnapshotsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostSandboxesSandboxIDSnapshotsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
