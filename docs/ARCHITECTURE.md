@@ -723,7 +723,7 @@ admin routes are served by the API. It still loads the admin JWKS: issuers and a
 configured through the JSON `ADMIN_AUTH_PROVIDER_CONFIG` value — the same config shape as
 `AUTH_PROVIDER_CONFIG` — with accepted signing methods derived from each JWK's required `alg`
 metadata. Never talks to orchestrators. The web dashboard itself is a separate repository (github.com/e2b-dev/dashboard)
-published as an image; E2B Embed runs it on port 3001 beside dashboard-api.
+published as an image; E2B Embed runs it on port 3001 against the API alone.
 
 An issuer normally configures at least one accepted audience, binding a JWT to its intended target.
 An issuer may omit `audiences` only with no `audienceMatchPolicy`; this deliberately disables

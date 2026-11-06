@@ -163,9 +163,9 @@ has no counterpart here.
 ### What runs where
 
 One pod on the labelled node. The stores, Vector, the orchestrator, api,
-client-proxy, dashboard-api and the dashboard are sidecar init containers
-started in the compose order, host preparation first and the dashboard pair
-last, so the `base` template never waits on the browser UI; the one-shots are
+client-proxy and the dashboard are sidecar init containers started in the
+compose order, host preparation first and the dashboard last, so the `base`
+template never waits on the browser UI; the one-shots are
 ordinary init containers between them; `ready` turns the pod Ready once the
 `base` template exists and the dashboard answers.
 
@@ -184,15 +184,15 @@ stack.
 
 ### Ports
 
-The node exposes the same thirteen ports as a compose host, and Postgres,
+The node exposes the same twelve ports as a compose host, and Postgres,
 Redis, ClickHouse and Vector listen on loopback here too, as does the
 collector under Telemetry once it is patched in. The SDK variables
 `ready` prints use the node's IP: reach 3000, 3001 and 3002 on it and firewall
-the other ten (3003, 3010, 5007, 5008, 5009, 5109 and the sandbox egress
+the other nine (3003, 5007, 5008, 5009, 5109 and the sandbox egress
 proxies 5010, 5016, 5017 and 5018), since 5008 is an unauthenticated control
 API and the egress proxies expect no external client.
 
-k3s adds two ports of its own on top of those thirteen: `*:6443`, the
+k3s adds two ports of its own on top of those twelve: `*:6443`, the
 Kubernetes API server, and `*:10250`, the kubelet. They belong to the
 cluster rather than to the stack, and they want the same firewall treatment
 as the ten, more urgently if anything: the install above writes the
@@ -210,8 +210,7 @@ The api's two secrets, `ADMIN_TOKEN` and `SANDBOX_ACCESS_TOKEN_HASH_SEED`,
 come from the `e2b-api` Secret created during the install; nothing in the
 manifest carries them. Compose generates them per install in an
 `api-secrets` one-shot, which has no counterpart here: rotate them by
-replacing the Secret and restarting the pod. dashboard-api takes `ADMIN_TOKEN`
-from the same Secret.
+replacing the Secret and restarting the pod.
 
 The team API key is different: the seed generates it on the first start and
 keeps it in `/var/lib/e2b/data/seed-state/team-api-key` on the node, where
@@ -235,8 +234,8 @@ clears it.
 
 ### Telemetry
 
-api, the orchestrator, client-proxy and dashboard-api take their OpenTelemetry
-collector from the `OTEL_COLLECTOR_GRPC_ENDPOINT` literal of the
+api, the orchestrator and client-proxy take their OpenTelemetry collector
+from the `OTEL_COLLECTOR_GRPC_ENDPOINT` literal of the
 `e2b-settings` ConfigMap in [`kustomization.yaml`](kustomization.yaml). It
 ships empty, which exports nothing; `127.0.0.1:4317`, or any `host:port` the
 node can reach, sends their metrics, traces and logs there over OTLP/gRPC.
@@ -250,7 +249,7 @@ commented line at the end of that file:
 From a checkout, set the literal to `127.0.0.1:4317`, uncomment that line and
 run `kubectl apply -k embed/kubernetes`.
 [`patches/otel-collector.yaml`](patches/otel-collector.yaml) appends an
-`otel-collector` sidecar after the dashboard pair, reading
+`otel-collector` sidecar after the dashboard, reading
 [`config/otel-collector.yaml`](config/otel-collector.yaml) from the
 `otel-config` ConfigMap, and `curl -s 127.0.0.1:13133` on the node answers
 while it runs. Unlike compose, where nothing waits for it, its startup probe
@@ -329,7 +328,7 @@ when they disagree.
 - There is no `smoke` service. Try it above has the recipe that replaces it.
 - A node that carries a taint needs a toleration, added with a kustomize
   patch; a commented example is in [`statefulset.yaml`](statefulset.yaml).
-- To run without the dashboard, drop both of its containers with a
+- To run without the dashboard, drop its container with a
   strategic-merge patch beside [`kustomization.yaml`](kustomization.yaml),
   referenced from it as `patches: [{ path: no-dashboard.yaml }]`; the rest of
   the stack runs.
@@ -343,8 +342,6 @@ when they disagree.
     template:
       spec:
         initContainers:
-          - name: dashboard-api
-            $patch: delete
           - name: dashboard
             $patch: delete
   ```

@@ -1,10 +1,10 @@
 # The security group denies ingress by default; these rules are the whole
-# policy. The stack binds thirteen ports on every interface (api 3000, 5009,
-# 5109; dashboard 3001; client-proxy 3002, 3003; dashboard-api 3010;
-# orchestrator 5007, 5008 and the sandbox egress proxies 5010, 5016, 5017,
-# 5018); 5008 is an unauthenticated control API and the egress proxies and
-# dashboard-api expect no external client, so only 3000, 3001 and 3002 are
-# opened, and only to the operator's CIDRs. Session Manager reaches the
+# policy. The stack binds twelve ports on every interface (api 3000, 5009,
+# 5109; dashboard 3001; client-proxy 3002, 3003; orchestrator 5007, 5008 and
+# the sandbox egress proxies 5010, 5016, 5017, 5018); 5008 is an
+# unauthenticated control API and the egress proxies expect no external
+# client, so only 3000, 3001 and 3002 are opened, and only to the operator's
+# CIDRs. Session Manager reaches the
 # instance through its agent's outbound connection, so no port 22 either.
 locals {
   client_ports = [3000, 3001, 3002]

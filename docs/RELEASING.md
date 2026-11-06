@@ -13,7 +13,7 @@ appear in this repository.
 | client-proxy | `packages/client-proxy` | image `us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy` |
 | clickhouse-migrator | `packages/clickhouse` | image `us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator` |
 | dashboard-api | `packages/dashboard-api` | image `us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboard-api` |
-| embed | `embed` | images `us-docker.pkg.dev/e2b-artifacts/embed/tools`, `…/embed/node-e2b` and `…/embed/seed` (released as one unit; the release moves every platform pin in `embed/compose/.env` and `embed/kubernetes/kustomization.yaml` — api, db-migrator, dashboard-api, client-proxy, clickhouse-migrator, orchestrator and these three — to its own version) |
+| embed | `embed` | images `us-docker.pkg.dev/e2b-artifacts/embed/tools`, `…/embed/node-e2b` and `…/embed/seed` (released as one unit; the release moves every platform pin in `embed/compose/.env` and `embed/kubernetes/kustomization.yaml` — api, db-migrator, client-proxy, clickhouse-migrator, orchestrator and these three — to its own version) |
 | envd | `packages/envd` | binary `https://storage.googleapis.com/e2b-artifact-binaries/envd/v<version>/envd` |
 | nomad-nodepool-apm | `packages/nomad-nodepool-apm` | binaries `nomad-nodepool-apm`, `nomad-deployment-aware-target` under `…/nomad-nodepool-apm/v<version>/` |
 | orchestrator | `packages/orchestrator` | binaries `orchestrator`, `clean-nfs-cache` under `…/orchestrator/v<version>/` |
