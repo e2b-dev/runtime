@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,48 +78,6 @@ func TestParse(t *testing.T) {
 		assert.Equal(t, "secrets-backend:5000", result.SecretsStoreBackendGrpcAddress)
 	})
 
-	t.Run("sandbox migrations are off by default", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel
-		for _, key := range []string{"SANDBOX_MIGRATION_MANAGER_GRPC_ADDRESS", "SANDBOX_MIGRATION_POLL_INTERVAL"} {
-			removeEnv(t, key)
-		}
-
-		result, err := Parse()
-		require.NoError(t, err)
-		assert.Empty(t, result.SandboxMigrationManagerGrpcAddress)
-		assert.Equal(t, 5*time.Second, result.SandboxMigrationPollInterval)
-	})
-
-	t.Run("sandbox migration settings are read when set", func(t *testing.T) {
-		t.Setenv("SANDBOX_MIGRATION_MANAGER_GRPC_ADDRESS", "dns:///migrations:5000")
-		t.Setenv("SANDBOX_MIGRATION_POLL_INTERVAL", "250ms")
-
-		result, err := Parse()
-		require.NoError(t, err)
-		assert.Equal(t, "dns:///migrations:5000", result.SandboxMigrationManagerGrpcAddress)
-		assert.Equal(t, 250*time.Millisecond, result.SandboxMigrationPollInterval)
-	})
-
-	t.Run("a malformed sandbox migration poll interval is refused", func(t *testing.T) {
-		t.Setenv("SANDBOX_MIGRATION_POLL_INTERVAL", "5")
-
-		_, err := Parse()
-		assert.ErrorContains(t, err, "SandboxMigrationPollInterval")
-	})
-
-	// A ticker built from zero or less panics in the poller, so the value is
-	// refused when the config is parsed.
-	t.Run("a non-positive sandbox migration poll interval is refused", func(t *testing.T) {
-		for _, value := range []string{"0s", "-1s"} {
-			t.Setenv("SANDBOX_MIGRATION_POLL_INTERVAL", value)
-
-			_, err := Parse()
-			require.Error(t, err, value)
-			condition, ok := ParseFailureCondition(err)
-			require.True(t, ok, value)
-			assert.Equal(t, FailureConditionInvalidSandboxMigrationPollInterval, condition)
-		}
-	})
-
 	t.Run("composed service discovery provider is accepted", func(t *testing.T) {
 		t.Setenv("SERVICE_DISCOVERY_PROVIDER", ServiceDiscoveryProviderNomadKubernetes)
 
@@ -174,8 +131,6 @@ func TestParse(t *testing.T) {
 		t.Setenv("E2B_TLS_WEBHOOKS_CLIENT_MODE", "on")
 		t.Setenv("E2B_TLS_ANALYTICS_EXPECT", "spiffe://td.example.internal/ns/events/sa/collector")
 		t.Setenv("E2B_TLS_ORCHESTRATOR_SERVER_NAME", "orchestrator.td.example.internal")
-		t.Setenv("E2B_TLS_SANDBOX_MIGRATION_EXPECT", "spiffe://td.example.internal/ns/migrations/sa/migrations")
-		t.Setenv("E2B_TLS_SANDBOX_MIGRATION_CLIENT_MODE", "on")
 
 		config, err := Parse()
 		require.NoError(t, err)
@@ -188,9 +143,6 @@ func TestParse(t *testing.T) {
 		assert.Equal(t, "on", config.TLS.Webhooks.Mode)
 		assert.Equal(t, []string{"spiffe://td.example.internal/ns/events/sa/collector"}, config.TLS.Analytics.Expect)
 		assert.Equal(t, "orchestrator.td.example.internal", config.TLS.Orchestrator.ServerName)
-		assert.Equal(t, []string{"spiffe://td.example.internal/ns/migrations/sa/migrations"}, config.TLS.SandboxMigration.Expect)
-		assert.Equal(t, "on", config.TLS.SandboxMigration.Mode)
-		assert.NotEqual(t, config.TLS.SandboxMigration, config.TLS.Orchestrator, "each hop reads its own prefix")
 	})
 
 	t.Run("mutual TLS settings are empty when the chart renders none", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel

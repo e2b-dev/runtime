@@ -48,7 +48,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandboxmigration"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
@@ -260,13 +259,6 @@ type APIStore struct {
 	webhooksConn      *grpc.ClientConn
 	webhookManagement webhookmanagement.WebhookManagementServiceClient
 	sandboxEvents     webhookevents.SandboxEventsServiceClient
-
-	// sandboxMigrationConn is nil when no sandbox migration address is
-	// configured.
-	sandboxMigrationConn *grpc.ClientConn
-	// stopMigrationPoller ends the migration poller and waits for it, nil
-	// without one.
-	stopMigrationPoller func()
 }
 
 const (
@@ -405,43 +397,10 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		logger.L().Fatal(ctx, "failed to create snapshot build query semaphore", zap.Error(err))
 	}
 
-	// An unset address turns sandbox migrations off: nothing is dialed or
-	// polled. The client's health check asks for the contract's service, so
-	// a migration service is picked only while it reports that service
-	// SERVING.
-	var (
-		sandboxMigrationConn *grpc.ClientConn
-		sandboxMigrations    sandboxmigration.SandboxMigrationManagerServiceClient
-	)
-	if config.SandboxMigrationManagerGrpcAddress != "" {
-		sandboxMigrationConn, err = newReadinessBalancedClient(config.SandboxMigrationManagerGrpcAddress, hops.SandboxMigration,
-			sandboxmigration.SandboxMigrationManagerService_ServiceDesc.ServiceName, "sandbox migration service")
-		if err != nil {
-			logger.L().Fatal(ctx, "Initializing sandbox migration client", zap.Error(err))
-		}
-
-		sandboxMigrations = sandboxmigration.NewSandboxMigrationManagerServiceClient(sandboxMigrationConn)
-	}
-
-	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator, sandboxMigrations)
+	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
 	}
-	// Close stops the poller first, before the clients a settlement needs.
-	var stopMigrationPoller func()
-	if sandboxMigrations != nil {
-		pollCtx, cancel := context.WithCancel(ctx)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			orch.RunMigrationPoller(pollCtx)
-		}()
-		stopMigrationPoller = func() {
-			cancel()
-			<-done
-		}
-	}
-
 	pauseLimiter, err := pauselimit.New(redisClient, featureFlags, tel.MeterProvider)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
@@ -529,8 +488,6 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		webhookManagement:     webhookManagement,
 		sandboxEvents:         sandboxEvents,
 		secretsManagement:     secretsManagement,
-		sandboxMigrationConn:  sandboxMigrationConn,
-		stopMigrationPoller:   stopMigrationPoller,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
@@ -587,12 +544,6 @@ func (a *APIStore) Drain(ctx context.Context) error {
 }
 
 func (a *APIStore) Close(ctx context.Context) error {
-	// A settlement in flight writes through the store and reports through the
-	// analytics and node clients, which the closes below end.
-	if a.stopMigrationPoller != nil {
-		a.stopMigrationPoller()
-	}
-
 	a.templateSpawnCounter.Close(ctx)
 
 	errs := []error{}
@@ -662,12 +613,6 @@ func (a *APIStore) Close(ctx context.Context) error {
 	if a.webhooksConn != nil {
 		if err := a.webhooksConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing webhooks backend client: %w", err))
-		}
-	}
-
-	if a.sandboxMigrationConn != nil {
-		if err := a.sandboxMigrationConn.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing sandbox migration client: %w", err))
 		}
 	}
 

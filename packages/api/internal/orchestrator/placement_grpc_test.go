@@ -11,8 +11,10 @@ import (
 	"buf.build/go/protovalidate"
 	"github.com/google/uuid"
 	protovalidatemw "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -20,14 +22,20 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	workerpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
+	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 
 const placementCaller = "spiffe://test.internal/ns/platform/sa/coordinator"
@@ -59,17 +67,92 @@ func placementClient(t *testing.T, service *SandboxPlacementService, peer mtls.P
 	return placementpb.NewSandboxPlacementServiceClient(conn)
 }
 
-func localPlacementHarness(t *testing.T) (*migrationHarness, *SandboxPlacementService) {
+type placementHarness struct {
+	o              *Orchestrator
+	store          *sandbox.Store
+	source, target *nodemanager.Node
+	stops          *recordingCollector
+}
+
+// localPlacementHarness is an Orchestrator over a real store on Redis with
+// two local nodes on the same CPU, and the service authorizing one caller.
+func localPlacementHarness(t *testing.T) (*placementHarness, *SandboxPlacementService) {
 	t.Helper()
-	h := newMigrationHarness(t)
-	h.clusterID = consts.LocalClusterID
-	h.source.ClusterID, h.target.ClusterID = h.clusterID, h.clusterID
-	h.o.registerNode(h.source)
-	h.o.registerNode(h.target)
+	ctx := t.Context()
+	redisClient := redisutils.SetupInstance(t)
+	storage, err := sandboxredis.NewStorage(redisClient, noop.NewMeterProvider())
+	require.NoError(t, err)
+	go storage.Start(ctx)
+	t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
+	store := sandbox.NewStore(storage, redisreservations.NewReservationStorage(redisClient, storage.Notifier()), sandbox.Callbacks{})
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(ctx)) })
+	posthog, err := analyticscollector.NewPosthogClient(ctx, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = posthog.Close() })
+	stops := &recordingCollector{}
+	o := &Orchestrator{sandboxStore: store, nodes: smap.New[*nodemanager.Node](), featureFlagsClient: flags, posthogClient: posthog, analytics: analyticscollector.NewAnalyticsWithClient(stops)}
+	h := &placementHarness{o: o, store: store, stops: stops}
+	h.source = h.node("node-a", api.NodeStatusReady, nodemanager.WithServiceInstanceID(uuid.NewString()))
+	h.target = h.node("node-b", api.NodeStatusReady, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	callers, err := mtls.ParseAllowList([]string{placementCaller}, mtls.WithoutWildcards())
 	require.NoError(t, err)
 
 	return h, NewSandboxPlacementService(h.o, callers)
+}
+
+func (h *placementHarness) node(id string, status api.NodeStatus, opts ...nodemanager.TestOptions) *nodemanager.Node {
+	node := nodemanager.NewTestNode(id, status, 0, 8, append([]nodemanager.TestOptions{nodemanager.WithCPUInfo("x86_64", "6", "106")}, opts...)...)
+	node.ClusterID = consts.LocalClusterID
+	h.o.registerNode(node)
+
+	return node
+}
+
+func (h *placementHarness) running(t *testing.T) sandbox.Sandbox {
+	t.Helper()
+
+	return h.runningWith(t, func(*sandbox.Sandbox) {})
+}
+
+// runningWith stores a running Full-Router execution on the source.
+func (h *placementHarness) runningWith(t *testing.T, change func(*sandbox.Sandbox)) sandbox.Sandbox {
+	t.Helper()
+
+	executionID := uuid.NewString()
+	sbx := sandbox.Sandbox{
+		SandboxID:         "sbx" + uuid.NewString()[:8],
+		TemplateID:        "template",
+		TeamID:            uuid.New(),
+		ExecutionID:       executionID,
+		NodeID:            h.source.ID,
+		ClusterID:         consts.LocalClusterID,
+		StartTime:         time.Now().Add(-time.Hour),
+		EndTime:           time.Now().Add(time.Hour),
+		MaxInstanceLength: 24 * time.Hour,
+		State:             sandbox.StateRunning,
+		NetworkPlacement: &workerpb.SandboxNetworkPlacement{
+			ExecutionId:    executionID,
+			NetworkMode:    string(catalog.NetworkModeFullRouter),
+			RouterId:       uuid.NewString(),
+			IngressAddress: "10.0.0.1",
+			IngressPort:    5007,
+		},
+	}
+	change(&sbx)
+	require.NoError(t, h.store.Add(t.Context(), sbx, nil))
+
+	return sbx
+}
+
+func (h *placementHarness) get(t *testing.T, sbx sandbox.Sandbox) sandbox.Sandbox {
+	t.Helper()
+
+	stored, err := h.store.Get(t.Context(), sbx.TeamID, sbx.SandboxID)
+	require.NoError(t, err)
+
+	return stored
 }
 
 func executionHoldOf(sbx sandbox.Sandbox) *placementpb.ExecutionHold {
@@ -243,7 +326,7 @@ func TestPlacementEndAfterTheHoldLapsed(t *testing.T) {
 
 // lapsedHold writes a hold of sbx whose deadline has passed, as a hold the
 // store took earlier looks once its deadline lapsed, and returns it.
-func (h *migrationHarness) lapsedHold(t *testing.T, sbx sandbox.Sandbox) *placementpb.ExecutionHold {
+func (h *placementHarness) lapsedHold(t *testing.T, sbx sandbox.Sandbox) *placementpb.ExecutionHold {
 	t.Helper()
 
 	hold := executionHoldOf(sbx)
