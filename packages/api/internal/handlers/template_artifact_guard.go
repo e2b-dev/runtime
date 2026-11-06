@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
@@ -75,15 +76,82 @@ func (a *APIStore) reachabilityKeepSet(ctx context.Context, teamID uuid.UUID, te
 		return nil, errReaderUnconfigured
 	}
 
-	liveRoots, err := a.sqlcDB.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
-		TeamID:     teamID,
-		TemplateID: templateID,
-	})
+	liveRoots, err := collectLiveRoots(ctx, a.liveRootSourcesOrDefault(), teamID, templateID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errLiveRootsQuery, err)
+		return nil, err
 	}
 
 	return reachableKeepSet(ctx, a.buildAncestors, liveRoots)
+}
+
+// liveRootSource yields a set of build IDs that may protect a deletion candidate
+// by referencing it through their header closure. The reachability guard unions
+// every source's roots and expands each root's ancestor closure. A source that
+// returns an error makes the whole guard fail closed (the caller deletes
+// nothing), so a source must return an error — never a silently empty slice —
+// when it cannot authoritatively enumerate its roots.
+type liveRootSource interface {
+	// liveRoots returns the build IDs this source contributes as live roots for
+	// the team, excluding the template being deleted. An error means the set is
+	// unknown and the guard must fail closed.
+	liveRoots(ctx context.Context, teamID uuid.UUID, templateID string) ([]uuid.UUID, error)
+	// name is a short, low-cardinality label for logs/metrics.
+	name() string
+}
+
+// dbLiveRootSource is the production live-root source. In one query it unions
+// (1) other active templates' assigned builds, (2) the team's in-progress/
+// pending builds, and (3) the team's snapshot builds (paused sandboxes /
+// checkpoints) regardless of whether the snapshot's own env is still active —
+// see get_live_build_roots.sql. Source (3) is what keeps a base template's
+// builds protected while a checkpoint-derived snapshot still references them
+// through its COW header mapping, even after the snapshot's env is soft-deleted.
+type dbLiveRootSource struct {
+	db *sqlcdb.Client
+}
+
+func (s dbLiveRootSource) name() string { return "db" }
+
+func (s dbLiveRootSource) liveRoots(ctx context.Context, teamID uuid.UUID, templateID string) ([]uuid.UUID, error) {
+	return s.db.GetLiveBuildRootsForTeamExcludingTemplate(ctx, queries.GetLiveBuildRootsForTeamExcludingTemplateParams{
+		TeamID:     teamID,
+		TemplateID: templateID,
+	})
+}
+
+// collectLiveRoots unions the roots of every configured source. It fails closed
+// on the FIRST source error: a partial root set is more dangerous than none,
+// because a missing root means its ancestor closure is absent from the keep set
+// and a still-referenced build could then be deleted. The error is wrapped as
+// errLiveRootsQuery so the caller classifies it as a fail-closed reason.
+func collectLiveRoots(ctx context.Context, sources []liveRootSource, teamID uuid.UUID, templateID string) ([]uuid.UUID, error) {
+	seen := make(map[uuid.UUID]struct{})
+	var roots []uuid.UUID
+	for _, src := range sources {
+		ids, err := src.liveRoots(ctx, teamID, templateID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: source %s: %w", errLiveRootsQuery, src.name(), err)
+		}
+		for _, id := range ids {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			roots = append(roots, id)
+		}
+	}
+
+	return roots, nil
+}
+
+// liveRootSourcesOrDefault returns the injected sources, or the default DB
+// source when none were set (production). Tests inject stubs.
+func (a *APIStore) liveRootSourcesOrDefault() []liveRootSource {
+	if len(a.liveRootSources) > 0 {
+		return a.liveRootSources
+	}
+
+	return []liveRootSource{dbLiveRootSource{db: a.sqlcDB}}
 }
 
 // reachableKeepSet unions the ancestor closure of every live root build into a

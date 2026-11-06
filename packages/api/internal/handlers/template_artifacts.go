@@ -11,6 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -34,8 +35,8 @@ type deleteBuildFn func(ctx context.Context, buildID uuid.UUID, templateID strin
 // (metrics unavailable), in which case counting is skipped but cleanup still
 // runs. The invariant that makes orphaned storage observable is:
 //
-//	candidates == deleted + failed + skippedNilNode + guardKept   (success path)
-//	candidates with failClosed > 0                                 (nothing deleted)
+//	candidates == deleted + failed + skippedNilNode + guardKept + skippedTooNew  (success path)
+//	candidates with failClosed > 0                                               (nothing deleted)
 //
 // so "how many artifacts did we fail to reclaim" is derivable, not guessed.
 type artifactCleanupCounters struct {
@@ -44,6 +45,7 @@ type artifactCleanupCounters struct {
 	failed         metric.Int64Counter // delete attempted, RPC failed (potential orphan)
 	skippedNilNode metric.Int64Counter // build never materialized on a node; nothing to delete
 	guardKept      metric.Int64Counter // reachability guard protected a still-referenced ancestor
+	skippedTooNew  metric.Int64Counter // materialized but younger than the grace window; deferred to the offline sweeper
 	failClosed     metric.Int64Counter // guard could not prove reachability; whole cleanup aborted
 }
 
@@ -115,7 +117,12 @@ func (a *APIStore) deleteTemplateArtifacts(ctx context.Context, teamID uuid.UUID
 		return
 	}
 
-	processExclusiveBuilds(ctx, templateID, builds, keep, deleteFn, counters)
+	// The online grace window defers very-new candidates to the offline sweeper
+	// (narrows the live-root-query -> DeleteBuild TOCTOU). Flag in seconds;
+	// <=0 disables the window. Fallback 24h.
+	minAge := time.Duration(a.featureFlags.IntFlag(ctx, featureflags.TemplateArtifactMinAgeSeconds)) * time.Second
+
+	processExclusiveBuilds(ctx, templateID, builds, keep, deleteFn, counters, time.Now(), minAge)
 }
 
 // artifactCleanupCounters resolves the reconciliation counters, logging (not
@@ -129,8 +136,9 @@ func (a *APIStore) artifactCleanupCounters(ctx context.Context, templateID strin
 	skipped, e4 := telemetry.GetCounter(meter, telemetry.ApiTemplateArtifactsSkippedNilNode)
 	kept, e5 := telemetry.GetCounter(meter, telemetry.ApiTemplateArtifactsGuardKept)
 	failClosed, e6 := telemetry.GetCounter(meter, telemetry.ApiTemplateArtifactsFailClosed)
+	tooNew, e7 := telemetry.GetCounter(meter, telemetry.ApiTemplateArtifactsSkippedTooNew)
 
-	if err := firstErr(e1, e2, e3, e4, e5, e6); err != nil {
+	if err := firstErr(e1, e2, e3, e4, e5, e6, e7); err != nil {
 		logger.L().Error(ctx, "failed to create template artifact cleanup counters",
 			logger.WithTemplateID(templateID),
 			logger.WithError(err),
@@ -143,6 +151,7 @@ func (a *APIStore) artifactCleanupCounters(ctx context.Context, templateID strin
 		failed:         failed,
 		skippedNilNode: skipped,
 		guardKept:      kept,
+		skippedTooNew:  tooNew,
 		failClosed:     failClosed,
 	}
 }
@@ -151,12 +160,16 @@ func (a *APIStore) artifactCleanupCounters(ctx context.Context, templateID strin
 // A candidate lands in EXACTLY ONE bucket so the counts reconcile:
 //   - protected by the reachability guard (still reachable from a live root)  -> guardKept, skip
 //   - not yet materialized on a node (nil ClusterNodeID)                       -> skippedNilNode, skip
+//   - materialized but younger than minAge (grace window)                      -> skippedTooNew, skip
 //   - deleted                                                                  -> deleted
 //   - delete attempted but failed                                             -> failed (potential orphan)
 //
-// Each delete is attempted independently with bounded concurrency; a failure on
-// one never aborts the others. It takes no DB dependency so it is unit-testable
-// directly: keep is passed in already computed.
+// The bucket order encodes precedence: guardKept (correctness) first, then
+// nil-node (nothing to delete regardless of age), then the grace window, then
+// delete. Each delete is attempted independently with bounded concurrency; a
+// failure on one never aborts the others. It takes no DB dependency so it is
+// unit-testable directly: keep, now and minAge are passed in. A minAge of 0
+// disables the grace window.
 func processExclusiveBuilds(
 	ctx context.Context,
 	templateID string,
@@ -164,6 +177,8 @@ func processExclusiveBuilds(
 	keep map[uuid.UUID]struct{},
 	deleteFn deleteBuildFn,
 	counters artifactCleanupCounters,
+	now time.Time,
+	minAge time.Duration,
 ) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(artifactCleanupConcurrency)
@@ -189,6 +204,21 @@ func processExclusiveBuilds(
 				logger.WithBuildID(b.BuildID.String()),
 			)
 			addCount(gctx, counters.skippedNilNode, 1)
+
+			continue
+		}
+
+		if minAge > 0 && now.Sub(b.CreatedAt) < minAge {
+			// Materialized but younger than the grace window. A freshly created
+			// build may have just been reused as a cache-hit ancestor by a
+			// concurrent build whose protecting row/header has not landed yet;
+			// deleting it now risks orphaning that reuse. Defer to the offline
+			// sweeper, which re-derives liveness and age from ground truth.
+			logger.L().Info(gctx, "skipping build younger than the online grace window (deferred to offline sweep)",
+				logger.WithTemplateID(templateID),
+				logger.WithBuildID(b.BuildID.String()),
+			)
+			addCount(gctx, counters.skippedTooNew, 1)
 
 			continue
 		}

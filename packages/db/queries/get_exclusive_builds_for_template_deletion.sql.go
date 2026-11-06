@@ -7,12 +7,13 @@ package queries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const getExclusiveBuildsForTemplateDeletion = `-- name: GetExclusiveBuildsForTemplateDeletion :many
-SELECT DISTINCT eb.id as build_id, eb.cluster_node_id, e.cluster_id
+SELECT DISTINCT eb.id as build_id, eb.cluster_node_id, e.cluster_id, eb.created_at
 FROM "public"."env_build_assignments" eba
 JOIN "public"."env_builds" eb ON eb.id = eba.build_id
 JOIN "public"."envs" e ON e.id = eba.env_id
@@ -28,11 +29,14 @@ type GetExclusiveBuildsForTemplateDeletionRow struct {
 	BuildID       uuid.UUID
 	ClusterNodeID *string
 	ClusterID     *uuid.UUID
+	CreatedAt     time.Time
 }
 
 // Returns builds that are ONLY assigned to this template (safe to delete).
 // Builds shared with other templates are excluded.
 // DISTINCT needed because builds may have multiple tag assignments to the same template.
+// Join raw envs (not the active_envs view) so the query still resolves the
+// cluster after softDeleteTemplate has stamped the template's deleted_at.
 func (q *Queries) GetExclusiveBuildsForTemplateDeletion(ctx context.Context, templateID string) ([]GetExclusiveBuildsForTemplateDeletionRow, error) {
 	rows, err := q.db.Query(ctx, getExclusiveBuildsForTemplateDeletion, templateID)
 	if err != nil {
@@ -42,7 +46,12 @@ func (q *Queries) GetExclusiveBuildsForTemplateDeletion(ctx context.Context, tem
 	var items []GetExclusiveBuildsForTemplateDeletionRow
 	for rows.Next() {
 		var i GetExclusiveBuildsForTemplateDeletionRow
-		if err := rows.Scan(&i.BuildID, &i.ClusterNodeID, &i.ClusterID); err != nil {
+		if err := rows.Scan(
+			&i.BuildID,
+			&i.ClusterNodeID,
+			&i.ClusterID,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

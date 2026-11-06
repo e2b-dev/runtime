@@ -641,6 +641,14 @@ var (
 	// 0 probes the parent header's readiness without waiting; a positive value
 	// waits up to that long before refusing retryably.
 	PauseAdmissionGraceMs = NewIntFlag("pause-admission-grace-milliseconds", -1)
+	// TemplateArtifactMinAgeSeconds is the online template-artifact deletion
+	// grace window, in seconds. A DB-exclusive deletion candidate younger than
+	// this is NOT deleted on the online path; it is counted as skipped_too_new
+	// and left to the offline sweeper. This narrows the TOCTOU window between
+	// the live-root query and DeleteBuild (a fresh build may have just been
+	// reused as a cache-hit ancestor whose protecting row/header has not landed
+	// yet). Fallback 86400 (24h); 0 or negative disables the window.
+	TemplateArtifactMinAgeSeconds = NewIntFlag("template-artifact-min-age-seconds", 86400)
 	// PauseEnvdHealthTimeoutMs gates the envd health probe a memory pause runs
 	// before anything destructive, in milliseconds. 0 or less (default -1)
 	// disables the probe: an HTTP request cannot complete inside a zero
