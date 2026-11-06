@@ -779,6 +779,9 @@ const (
 	SandboxFCBlockIOEngineThrottled     HistogramType = "orchestrator.sandbox.fc.block.io_engine_throttled"
 	SandboxFCBlockRemainingReqs         HistogramType = "orchestrator.sandbox.fc.block.remaining_reqs"
 
+	// Cold-boot InstanceStart latency; Firecracker builds the VM before answering.
+	SandboxFCInstanceStartDuration HistogramType = "orchestrator.sandbox.fc.instance_start.duration"
+
 	SnapshotDiffBytes  HistogramType = "orchestrator.sandbox.snapshot.diff.bytes"
 	SnapshotDiffRatio  HistogramType = "orchestrator.sandbox.snapshot.diff.ratio"
 	SnapshotTotalBytes HistogramType = "orchestrator.sandbox.snapshot.total.bytes"
@@ -1381,6 +1384,7 @@ var histogramDesc = map[HistogramType]string{
 	SandboxFCBlockRateLimiterEventCount: "Distribution of Firecracker VMM block rate limiter events per metrics flush",
 	SandboxFCBlockIOEngineThrottled:     "Distribution of Firecracker VMM block ops throttled by io_uring engine per metrics flush",
 	SandboxFCBlockRemainingReqs:         "Distribution of Firecracker VMM block queue remaining-request events per metrics flush",
+	SandboxFCInstanceStartDuration:      "Time Firecracker took to answer InstanceStart on a cold boot, by success",
 
 	SnapshotDiffBytes:  "Per-snapshot dirty/empty bytes per file",
 	SnapshotDiffRatio:  "Per-snapshot dirty/empty as fraction of total mapped size (1.0 = 100%)",
@@ -1475,6 +1479,7 @@ var histogramUnits = map[HistogramType]string{
 	SandboxFCBlockRateLimiterEventCount: "{event}",
 	SandboxFCBlockIOEngineThrottled:     "{op}",
 	SandboxFCBlockRemainingReqs:         "{event}",
+	SandboxFCInstanceStartDuration:      "ms",
 
 	SnapshotDiffBytes:  "{By}",
 	SnapshotDiffRatio:  "{1}",
