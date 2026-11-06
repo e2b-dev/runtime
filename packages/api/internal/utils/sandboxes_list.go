@@ -84,21 +84,35 @@ func ParseCursor(cursor string) (time.Time, string, SortDirection, error) {
 func FilterBasedOnCursor(sandboxes []PaginatedSandbox, cursorTime time.Time, cursorID string, order SortDirection) []PaginatedSandbox {
 	var filteredSandboxes []PaginatedSandbox
 	for _, sandbox := range sandboxes {
-		var include bool
-		if order == SortAsc {
-			include = sandbox.PaginationTimestamp.After(cursorTime) ||
-				(sandbox.PaginationTimestamp.Equal(cursorTime) && sandbox.SandboxID < cursorID)
-		} else {
-			include = sandbox.PaginationTimestamp.Before(cursorTime) ||
-				(sandbox.PaginationTimestamp.Equal(cursorTime) && sandbox.SandboxID > cursorID)
-		}
-
-		if include {
+		if isAfterCursor(sandbox, cursorTime, cursorID, order) {
 			filteredSandboxes = append(filteredSandboxes, sandbox)
 		}
 	}
 
 	return filteredSandboxes
+}
+
+// FilterUpToCursor keeps the sandboxes FilterBasedOnCursor drops: those at or before the
+// cursor in the order.
+func FilterUpToCursor(sandboxes []PaginatedSandbox, cursorTime time.Time, cursorID string, order SortDirection) []PaginatedSandbox {
+	filteredSandboxes := make([]PaginatedSandbox, 0, len(sandboxes))
+	for _, sandbox := range sandboxes {
+		if !isAfterCursor(sandbox, cursorTime, cursorID, order) {
+			filteredSandboxes = append(filteredSandboxes, sandbox)
+		}
+	}
+
+	return filteredSandboxes
+}
+
+func isAfterCursor(sandbox PaginatedSandbox, cursorTime time.Time, cursorID string, order SortDirection) bool {
+	if order == SortAsc {
+		return sandbox.PaginationTimestamp.After(cursorTime) ||
+			(sandbox.PaginationTimestamp.Equal(cursorTime) && sandbox.SandboxID < cursorID)
+	}
+
+	return sandbox.PaginationTimestamp.Before(cursorTime) ||
+		(sandbox.PaginationTimestamp.Equal(cursorTime) && sandbox.SandboxID > cursorID)
 }
 
 // SortPaginatedSandboxes sorts the sandboxes by PaginationTimestamp then SandboxID for
