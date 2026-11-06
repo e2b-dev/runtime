@@ -305,7 +305,7 @@ build-template: fetch-busybox
 	COMPRESS_LEVEL=$(COMPRESS_LEVEL) \
 	COMPRESS_FRAME_ENCODE_WORKERS=$(COMPRESS_FRAME_ENCODE_WORKERS) \
 	ENVIRONMENT=local \
-	go run cmd/create-build/main.go \
+	go run ./cmd/create-build \
 	-template $(TEMPLATE_ID) \
 	-to-build $(BUILD_ID) \
 	-kernel $(KERNEL_VERSION) \

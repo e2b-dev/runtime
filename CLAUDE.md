@@ -123,7 +123,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - Template caching: `pkg/sandbox/template/`
 - Template building: `pkg/template/`
 - gRPC server: `pkg/server/`
-- Utilities: `cmd/clean-nfs-cache/`, `cmd/inspect-build/`, `cmd/dummy-orchestrator/`
+- Utilities: `cmd/clean-nfs-cache/`, `cmd/dummy-orchestrator/`
 
 **Envd (`packages/envd/`)** - In-VM daemon using Connect RPC
 - Runs inside each Firecracker VM
