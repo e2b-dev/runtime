@@ -1226,12 +1226,12 @@ const (
 	// patches, and it restores snapshots taken by every older line. It starts
 	// at 0.4.0 because e2b release numbers rise across lines and v1.14-0
 	// already shipped 0.3.x; the version gates key on that number.
-	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.0"
+	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.1"
 	// New template builds get the current release; existing builds keep
 	// resolving within their own line below (cross-line upgrades are an
 	// operator decision via the firecracker-versions flag, never a baked
 	// default — the map invariant key == LDKey(value) enforces it).
-	DefaultFirecrackerVersion = DefaultFirecrackerV1_14_0Version
+	DefaultFirecrackerVersion = DefaultFirecrackerV1_17_0Version
 )
 
 var FirecrackerVersionMap = map[string]string{

@@ -23,6 +23,7 @@ declare -gA SHA256=(
   ["orchestrator/v0.11.0/orchestrator"]="d43e9c6d0b64433e71d5442367dab5142bc868028c144d0439bc84634c116629"
   ["envd/v0.7.0/envd"]="9cda948e73383708c2a3fe2b323ee02483bc0f85d3c2dd8ffea4b1c60cfe35d5"
   ["firecrackers/v1.14-0.2.0/amd64/firecracker"]="ef22aec7cbffcf6cc44a8436a4db79f9e6fe5c52218c81af321dd20f10ad6e5d"
+  ["firecrackers/v1.17-0.4.1/amd64/firecracker"]="ac6a99c9f158e2dffc5284ac00dd957abee1e36f86b788b0b0d6c07de591d963"
   ["kernels/vmlinux-6.1.177_5008931/amd64/vmlinux.bin"]="9191ced12d24e6e381753a7ab12ec850877524d453eae75c20aeb176f3b5ad05"
   ["busybox/1.36.1/amd64/busybox"]="d7cce939adb09a41a22a5f846d22ba8d576b38dbb2b46a5c77a3a3e27ec52520"
   ["orchestrator/v0.15.0/orchestrator"]="b46e64241f830ceaedf91fccdf4598fcf818179ea156130def16946ce342ecc4"
@@ -35,6 +36,7 @@ declare -gA SHA256=(
   # when this table has no row. Rows here are only for versions that
   # predate the sidecar, or a rollback that still needs an in-image pin.
   ["firecrackers/v1.14-0.2.0/arm64/firecracker"]="66a8347a08741e47f850da1720cc6153a6998a2c9e87666958261afbcc9ba05e"
+  ["firecrackers/v1.17-0.4.1/arm64/firecracker"]="ef7ed9ca1e2eefb0c709e3ef4075750e49783b1f36cbbe00ed55d5977be89257"
   ["kernels/vmlinux-6.1.177_5008931/arm64/vmlinux.bin"]="3e134b55a6e4feec481f6f3a2813d42860e28c273eeb91c02df0661322e61dab"
   ["busybox/1.36.1/arm64/busybox"]="eddab48ed02fe55034a3f9321c6d4f9db10d699bc92880bd334d94a5c55363e3"
 )
