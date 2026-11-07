@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -227,8 +229,7 @@ func (d *Dispatch) completeAsync(ctx context.Context, cmd command, perform func(
 		select {
 		case d.fatal <- err:
 		default:
-			d.logger.Error(ctx, "nbd command failed while the dispatcher was already failing",
-				append(cmd.fields(), zap.Error(err))...)
+			d.logCmdFailure(ctx, "nbd command failed while the dispatcher was already failing", cmd, err)
 		}
 	}()
 }
@@ -384,6 +385,33 @@ func (d *Dispatch) Handle(ctx context.Context) error {
 	}
 }
 
+// isExpectedTeardownError reports whether err is the ordinary consequence of a
+// sandbox shutting down rather than a genuine backend or socket failure. When a
+// VM exits, in-flight commands observe the cancelled dispatch context
+// (context.Canceled / context.DeadlineExceeded) and the reply socket is closed
+// under us (net.ErrClosed, or EPIPE / "broken pipe" on a half-closed pipe).
+// These are expected during teardown; logging them at Error drowns out the real
+// backend failures that Error is meant to surface.
+func isExpectedTeardownError(err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE)
+}
+
+// logCmdFailure logs a failed NBD command, downgrading expected teardown errors
+// to Warn so they cannot mask real failures logged at Error.
+func (d *Dispatch) logCmdFailure(ctx context.Context, msg string, cmd command, err error) {
+	fields := append(cmd.fields(), zap.Error(err))
+	if isExpectedTeardownError(err) {
+		d.logger.Warn(ctx, msg, fields...)
+
+		return
+	}
+
+	d.logger.Error(ctx, msg, fields...)
+}
+
 func (d *Dispatch) cmdRead(ctx context.Context, cmd command) error {
 	if err := d.admit(); err != nil {
 		return err
@@ -431,7 +459,7 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmd command) error {
 			// Per-request backend failure: signal it to the NBD client via the
 			// response error byte and keep the dispatch loop alive. Only
 			// writeResponse errors (dead NBD socket) escalate through d.fatal.
-			d.logger.Error(ctx, "nbd backend read failed", append(cmd.fields(), zap.Error(readErr))...)
+			d.logCmdFailure(ctx, "nbd backend read failed", cmd, readErr)
 			recordLegFault(ctx)
 
 			return d.writeResponse(1, cmd.handle, []byte{})
@@ -474,7 +502,7 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmd command, cmdData []byte) er
 		}
 
 		if writeErr != nil {
-			d.logger.Error(ctx, "nbd backend write failed", append(cmd.fields(), zap.Error(writeErr))...)
+			d.logCmdFailure(ctx, "nbd backend write failed", cmd, writeErr)
 			recordLegFault(ctx)
 
 			return d.writeResponse(1, cmd.handle, []byte{})
@@ -525,7 +553,7 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmd command) error {
 		var respErr uint32
 		if zeroErr != nil {
 			respErr = 1
-			d.logger.Error(ctx, "nbd backend punch failed", append(cmd.fields(), zap.Error(zeroErr))...)
+			d.logCmdFailure(ctx, "nbd backend punch failed", cmd, zeroErr)
 			recordLegFault(ctx)
 		}
 
