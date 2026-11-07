@@ -33,6 +33,25 @@ type Config struct {
 	Skipper Skipper
 }
 
+// levelForStatus maps an HTTP status to the log level its access-log line is
+// emitted at. 5xx is a server fault (Error). A 404 is the client asking for a
+// route that does not exist; on a public endpoint that is dominated by bots and
+// scanners probing paths like /.env or /HNAP1, so it is logged at Info to keep
+// it out of the WARN stream that actionable 4xx (401/403/429/validation) use.
+// Other 4xx stay at Warn. Anything below 400 uses the configured default.
+func levelForStatus(status int, def zapcore.Level) zapcore.Level {
+	switch {
+	case status >= http.StatusInternalServerError:
+		return zapcore.ErrorLevel
+	case status == http.StatusNotFound:
+		return zapcore.InfoLevel
+	case status >= http.StatusBadRequest:
+		return zapcore.WarnLevel
+	default:
+		return def
+	}
+}
+
 func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 	skipPaths := make(map[string]bool, len(conf.SkipPaths))
 	for _, path := range conf.SkipPaths {
@@ -107,15 +126,7 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 				fields = append(fields, zap.Error(errors.Join(errs...)))
 			}
 
-			level := conf.DefaultLevel
-			switch {
-			case status >= http.StatusInternalServerError:
-				level = zapcore.ErrorLevel
-			case status >= http.StatusBadRequest:
-				level = zapcore.WarnLevel
-			}
-
-			logger.Log(ctx, level, path, fields...)
+			logger.Log(ctx, levelForStatus(status, conf.DefaultLevel), path, fields...)
 		}
 	}
 }
