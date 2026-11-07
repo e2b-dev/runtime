@@ -111,6 +111,8 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 			switch {
 			case status >= http.StatusInternalServerError:
 				level = zapcore.ErrorLevel
+			case status == http.StatusNotFound:
+				level = zapcore.InfoLevel
 			case status >= http.StatusBadRequest:
 				level = zapcore.WarnLevel
 			}
