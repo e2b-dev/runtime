@@ -17,6 +17,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -431,7 +432,15 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmd command) error {
 			// Per-request backend failure: signal it to the NBD client via the
 			// response error byte and keep the dispatch loop alive. Only
 			// writeResponse errors (dead NBD socket) escalate through d.fatal.
-			d.logger.Error(ctx, "nbd backend read failed", append(cmd.fields(), zap.Error(readErr))...)
+			// ErrObjectNotExist is permanent (the build object is gone); the
+			// DiffStore negative cache absorbs the kernel's retry storm. Log it at
+			// WARN so dashboards are not flooded with expected 404s, while transient
+			// backend errors stay at ERROR as actionable signal.
+			if errors.Is(readErr, storage.ErrObjectNotExist) {
+				d.logger.Warn(ctx, "nbd backend read failed: build object not found in store", append(cmd.fields(), zap.Error(readErr))...)
+			} else {
+				d.logger.Error(ctx, "nbd backend read failed", append(cmd.fields(), zap.Error(readErr))...)
+			}
 			recordLegFault(ctx)
 
 			return d.writeResponse(1, cmd.handle, []byte{})
