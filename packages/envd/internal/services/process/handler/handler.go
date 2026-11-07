@@ -237,6 +237,7 @@ func New(
 			Groups: groups,
 		},
 	}
+	configureProcessGroup(cmd.SysProcAttr, req.GetPty() != nil)
 	applyCgroupFD(cmd.SysProcAttr, cgroupFD, ok)
 
 	resolvedPath, err := permissions.ExpandAndResolve(req.GetProcess().GetCwd(), user, defaults.Workdir)
@@ -490,25 +491,50 @@ func getProcType(req *rpc.StartRequest) cgroups.ProcessType {
 	return cgroups.ProcessTypeUser
 }
 
-func (p *Handler) SendSignal(signal syscall.Signal) error {
+func configureProcessGroup(attr *syscall.SysProcAttr, hasPTY bool) {
+	// PTY startup creates a new session (and therefore a new process group).
+	// Non-PTY commands need an explicit process group so callers can opt into
+	// signalling the command and its descendants without affecting envd.
+	if !hasPTY {
+		attr.Setpgid = true
+	}
+}
+
+func (p *Handler) SendSignal(signal syscall.Signal, descendants bool) error {
+	pid := int(p.Pid())
+	if pid == 0 {
+		return errors.New("process not started")
+	}
+
+	var err error
+	switch {
+	case descendants:
+		pgid, groupErr := syscall.Getpgid(pid)
+		if groupErr != nil {
+			return fmt.Errorf("get process group for pid %d: %w", pid, groupErr)
+		}
+		if pgid != pid {
+			return fmt.Errorf("process %d does not own a process group", pid)
+		}
+
+		err = syscall.Kill(-pgid, signal)
+	case p.cmd == nil:
+		// Re-adopted handler (post live-upgrade): no cmd, signal by stored pid.
+		err = syscall.Kill(pid, signal)
+	default:
+		err = p.cmd.Process.Signal(signal)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Keep delivering output when signal validation or delivery fails. Once a terminal signal has
+	// actually been sent, stop the pumps promptly instead of waiting for every inherited pipe to close.
 	if signal == syscall.SIGKILL || signal == syscall.SIGTERM {
 		p.outCancel()
 	}
 
-	// Re-adopted handler (post live-upgrade): no cmd, signal by stored pid.
-	if p.cmd == nil {
-		if p.pid == 0 {
-			return errors.New("process not started")
-		}
-
-		return syscall.Kill(int(p.pid), signal)
-	}
-
-	if p.cmd.Process == nil {
-		return errors.New("process not started")
-	}
-
-	return p.cmd.Process.Signal(signal)
+	return nil
 }
 
 func (p *Handler) ResizeTty(size *pty.Winsize) error {
