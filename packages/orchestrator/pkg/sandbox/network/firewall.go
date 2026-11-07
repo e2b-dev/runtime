@@ -38,6 +38,7 @@ const (
 	postureRules    = "rules"
 	postureBYOP     = "byop"
 	postureIsolated = "isolated"
+	postureDeny     = "deny"
 )
 
 // NonDNSUDPMode selects what the filter chain does with guest UDP datagrams
@@ -221,7 +222,7 @@ func NewFirewall(netNSPath string, tapIf string, orchestratorInternalIP string, 
 		conn.AddObj(counter.obj)
 	}
 
-	installed := ChainDescriptor{Mode: nonDNSUDPMode, Posture: egressPosture(false, nil, nil)}
+	installed := ChainDescriptor{Mode: nonDNSUDPMode, Posture: egressPosture(false, nil, nil, false)}
 	live := -1
 	if nonDNSUDPMode != NonDNSUDPModeOff {
 		live = 0
@@ -249,7 +250,7 @@ func NewFirewall(netNSPath string, tapIf string, orchestratorInternalIP string, 
 	}
 
 	// Install default rules and initial set data in a single flush.
-	fw.installRules(false, nonDNSUDPMode, counters[0].obj)
+	fw.installRules(false, nonDNSUDPMode, counters[0].obj, false)
 	if err := fw.bufferUserRules(nil, nil); err != nil {
 		return nil, fmt.Errorf("error while configuring initial data: %w", err)
 	}
@@ -273,8 +274,10 @@ func (fw *Firewall) Installed() ChainDescriptor {
 	return fw.installed
 }
 
-func egressPosture(byop bool, allowedCIDRs, deniedCIDRs []string) string {
+func egressPosture(byop bool, allowedCIDRs, deniedCIDRs []string, defaultDeny bool) string {
 	switch {
+	case defaultDeny:
+		return postureDeny
 	case byop:
 		return postureBYOP
 	case len(allowedCIDRs)+len(deniedCIDRs) > 0:
@@ -747,7 +750,7 @@ func notInSet(ipSet *nftables.Set) *expr.Lookup {
 // non-TCP only (TCP shifts to the userspace SOCKS5 proxy); otherwise it drops
 // all protocols. The non-DNS UDP rule counts on counter. Buffer-only; the
 // caller must Flush.
-func (fw *Firewall) installRules(byop bool, nonDNSUDPMode NonDNSUDPMode, counter *nftables.CounterObj) {
+func (fw *Firewall) installRules(byop bool, nonDNSUDPMode NonDNSUDPMode, counter *nftables.CounterObj, defaultDeny bool) {
 	// FILTER CHAIN (PREROUTING, priority -150)
 	//   0. EgressProxy.HeadFilterRules, if any
 	//   0. IPv4 UDP to a port other than 53, destination in neither allow set → named counter, DROP in drop mode (absent in off mode)
@@ -789,9 +792,39 @@ func (fw *Firewall) installRules(byop bool, nonDNSUDPMode NonDNSUDPMode, counter
 	// Only non-TCP traffic is affected; TCP goes to proxy
 	fw.addNonTCPSetFilterRule(fw.userDenySet.Set(), true)
 
+	// Rule 6 (default-deny only): terminal non-TCP drop. Established flows,
+	// the predefined allow set (orchestrator control IP + extra allowed CIDRs)
+	// and the user allow set were already accepted above, so what reaches here
+	// is non-TCP the operator did not allow — dropped. TCP is unaffected (it is
+	// REDIRECTed to the userspace proxy, which enforces default-deny there).
+	if defaultDeny {
+		fw.addNonTCPDefaultDenyRule()
+	}
+
 	// Default policy: ACCEPT
-	// - Non-TCP not in user sets: allowed (default policy)
+	// - Non-TCP not in user sets: allowed by default, OR dropped by Rule 6 under default-deny
 	// - TCP: iptables REDIRECT handles TCP traffic to proxy
+}
+
+// addNonTCPDefaultDenyRule buffers a terminal rule that drops every non-TCP
+// packet from the tap interface. Installed last under the default-deny posture,
+// after the established/allow-set accepts, so only traffic the operator did not
+// explicitly allow reaches it. TCP is never matched (it leaves via the REDIRECT
+// to the userspace proxy). Buffer-only; the caller flushes.
+func (fw *Firewall) addNonTCPDefaultDenyRule() {
+	fw.conn.AddRule(&nftables.Rule{
+		Table: fw.table,
+		Chain: fw.filterChain,
+		Exprs: append(fw.tapIfaceMatch(),
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Cmp{
+				Op:       expr.CmpOpNeq,
+				Register: 1,
+				Data:     []byte{unix.IPPROTO_TCP},
+			},
+			&expr.Verdict{Kind: expr.VerdictDrop},
+		),
+	})
 }
 
 // bufferUserRules buffers a full replacement of every firewall set.
@@ -834,7 +867,7 @@ func (fw *Firewall) bufferUserRules(allowedCIDRs, deniedCIDRs []string) error {
 //
 // On any failure the conn is replaced via resetConn, so a poisoned batch can
 // never leak into a later flush.
-func (fw *Firewall) ApplyRules(ctx context.Context, byop bool, nonDNSUDPMode NonDNSUDPMode, allowedCIDRs, deniedCIDRs []string) (err error) {
+func (fw *Firewall) ApplyRules(ctx context.Context, byop bool, nonDNSUDPMode NonDNSUDPMode, allowedCIDRs, deniedCIDRs []string, defaultDeny bool) (err error) {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 
@@ -848,10 +881,17 @@ func (fw *Firewall) ApplyRules(ctx context.Context, byop bool, nonDNSUDPMode Non
 		}
 	}()
 
-	next := ChainDescriptor{Mode: nonDNSUDPMode, Posture: egressPosture(byop, allowedCIDRs, deniedCIDRs)}
+	// Default-deny forces the non-DNS UDP rule into drop mode: the terminal
+	// non-TCP drop below would drop those datagrams anyway, but keeping the
+	// counter rule in drop mode preserves the per-slot UDP tally.
+	if defaultDeny {
+		nonDNSUDPMode = NonDNSUDPModeDrop
+	}
+
+	next := ChainDescriptor{Mode: nonDNSUDPMode, Posture: egressPosture(byop, allowedCIDRs, deniedCIDRs, defaultDeny)}
 
 	return fw.replaceChainLocked(ctx, next, func(counter *nftables.CounterObj) error {
-		fw.installRules(byop, nonDNSUDPMode, counter)
+		fw.installRules(byop, nonDNSUDPMode, counter, defaultDeny)
 
 		return fw.bufferUserRules(allowedCIDRs, deniedCIDRs)
 	})

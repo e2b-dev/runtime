@@ -312,7 +312,7 @@ func TestFirewall_NonDNSUDP_PacketPath(t *testing.T) { //nolint:paralleltest // 
 
 	fw, err := NewFirewall(h.fwNSPath(), h.tap, config.OrchestratorInSandboxIPAddress, []string{harnessPlatformIP + "/32"}, nil, NonDNSUDPModeCount)
 	require.NoError(t, err)
-	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, tenantAllowed, nil))
+	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, tenantAllowed, nil, false))
 	slot := &Slot{Idx: idx, Firewall: fw, config: config, sandboxID: "sandbox-packet-path"}
 	t.Cleanup(func() { _ = slot.CloseFirewall(context.WithoutCancel(t.Context())) })
 
@@ -358,7 +358,7 @@ func TestFirewall_NonDNSUDP_PacketPath(t *testing.T) { //nolint:paralleltest // 
 	require.Positive(t, snapshot.Bytes)
 
 	// Drop mode on the live flow: its conntrack entry must not keep it open.
-	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeDrop, tenantAllowed, nil))
+	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeDrop, tenantAllowed, nil, false))
 	require.False(t, sendAndExpectReply(t, flow, "flow-3"), "drop mode drops an established flow")
 	require.False(t, sendAndExpectReply(t, flow, "flow-4"))
 	require.False(t, sendAndExpectReply(t, flow, "flow-5"))
@@ -644,7 +644,7 @@ func TestFirewall_HostThreadOperatesOnSlotNamespace(t *testing.T) { //nolint:par
 	require.Equal(t, defaultChain, filterChainShapes(t, h.fwNS), "the default chain is in the slot namespace")
 	require.False(t, hostTableExists(t), "building the firewall adds nothing to the host namespace")
 
-	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, []string{"8.8.8.8/32"}))
+	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, []string{"8.8.8.8/32"}, false))
 	require.Equal(t, []ruleShape{nonDNSUDPCount, establishedNonUDPAccept, establishedReplyAccept, allowSetAccept, denySetDrop, nonTCPUserAllow, nonTCPUserDeny},
 		filterChainShapes(t, h.fwNS), "the update replaced the chain in the slot namespace")
 
@@ -822,7 +822,7 @@ func TestFirewall_NonDNSUDP_CloseAfterFailedReopenExportsTally(t *testing.T) { /
 	fw.conn.AddRule(&nftables.Rule{Table: missing, Chain: &nftables.Chain{Name: "missing", Table: missing}, Exprs: accept()})
 	restore, err := forbidNewFileDescriptors()
 	require.NoError(t, err)
-	applyErr := fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, []string{"8.8.8.8/32"})
+	applyErr := fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, []string{"8.8.8.8/32"}, false)
 	restore()
 	require.ErrorIs(t, applyErr, unix.EMFILE, "the reopen must have been the step that failed")
 
@@ -847,7 +847,7 @@ func TestFirewall_FailedConnReopenKeepsOneConn(t *testing.T) { //nolint:parallel
 
 	restore, err := forbidNewFileDescriptors()
 	require.NoError(t, err)
-	applyErr := fw.ApplyRules(ctx, false, NonDNSUDPModeOff, nil, []string{"10.0.0.0/8"})
+	applyErr := fw.ApplyRules(ctx, false, NonDNSUDPModeOff, nil, []string{"10.0.0.0/8"}, false)
 	restore()
 	require.ErrorIs(t, applyErr, unix.EMFILE, "the reopen must have been the step that failed")
 	require.Same(t, before, fw.conn, "the firewall keeps its one connection")
@@ -893,7 +893,7 @@ func TestFirewall_OperationsAfterCloseAreRefused(t *testing.T) { //nolint:parall
 	require.Equal(t, errFirewallClosed, fw.Close(ctx), "a second close")
 	_, err = fw.Harvest()
 	require.Equal(t, errFirewallClosed, err, "a read")
-	require.Equal(t, errFirewallClosed, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, nil), "a rebuild")
+	require.Equal(t, errFirewallClosed, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, nil, false), "a rebuild")
 	require.Equal(t, errFirewallClosed, fw.DenyEgress(ctx), "an isolation")
 }
 

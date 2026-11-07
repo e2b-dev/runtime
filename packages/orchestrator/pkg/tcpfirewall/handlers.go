@@ -178,7 +178,7 @@ func proxyWithDial(ctx context.Context, c egressConn, upstreamAddr string, dial 
 // Priority order:
 //  1. Allow domain / Allow CIDR (if either matches → allow)
 //  2. Deny domain / Deny CIDR (if either matches → deny)
-//  3. Default: allow
+//  3. Default: allow, or deny when the egress config opts into default_deny
 func isEgressAllowed(sbx *sandbox.Sandbox, hostname string, ip net.IP) (bool, MatchType, error) {
 	egress := sbx.Config.GetNetworkEgress()
 	if egress == nil {
@@ -207,6 +207,15 @@ func isEgressAllowed(sbx *sandbox.Sandbox, hostname string, ip net.IP) (bool, Ma
 		}
 	}
 
+	// Priority 2: Check denied domains
+	if hostname != noHostnameValue {
+		for _, domain := range egress.GetDeniedDomains() {
+			if matchDomain(hostname, domain) {
+				return false, MatchTypeDomain, nil // Explicitly denied by domain
+			}
+		}
+	}
+
 	// Priority 2: Check denied CIDRs
 	for _, cidr := range egress.GetDeniedCidrs() {
 		_, ipNet, err := net.ParseCIDR(cidr)
@@ -219,7 +228,14 @@ func isEgressAllowed(sbx *sandbox.Sandbox, hostname string, ip net.IP) (bool, Ma
 		}
 	}
 
-	// Default: allow all traffic.
+	// Priority 3: default posture. Under opt-in default-deny, anything not
+	// explicitly allowed above is dropped — this also closes the no-SNI / no-Host
+	// blind pass (cidrOnlyHandler reaches here with no hostname, so only an
+	// allowed CIDR can let it through). Default-allow is the historical behaviour.
+	if egress.GetDefaultDeny() {
+		return false, MatchTypeNone, nil
+	}
+
 	return true, MatchTypeNone, nil
 }
 
