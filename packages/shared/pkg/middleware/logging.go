@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -82,9 +81,14 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 
 			status := c.Writer.Status()
 			cause := CancelCause(c)
-			if errors.Is(cause, ErrRequestTimeout) {
+			switch {
+			case errors.Is(cause, ErrRequestTimeout):
 				fields = append(fields, zap.Bool("request_timeout", true))
-			} else if errors.Is(cause, context.Canceled) {
+			case IsServerShutdown(cause):
+				// The server cut this request on teardown; it is not the
+				// client closing the connection.
+				fields = append(fields, zap.Bool("server_shutdown", true))
+			case IsClientDisconnect(cause):
 				status = StatusClientClosedRequest // 499
 				fields = append(fields, zap.Bool("client_canceled", true))
 			}
