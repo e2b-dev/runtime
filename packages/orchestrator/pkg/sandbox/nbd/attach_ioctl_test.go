@@ -262,6 +262,13 @@ func (a *abandonedSessions) take(s *ioctlSession) {
 	a.sess = append(a.sess, s)
 }
 
+func (a *abandonedSessions) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return len(a.sess)
+}
+
 func (a *abandonedSessions) join(t *testing.T) {
 	t.Helper()
 	a.mu.Lock()
@@ -367,6 +374,9 @@ func TestIoctlAttachCancelledWhileConfigurationBlocksReturns(t *testing.T) {
 		break
 	}
 	require.Less(t, elapsed, 3*time.Second, "the attach must answer the cancelled caller while the configuration still blocks")
+	// Without the session in hand, join would return at once and the slot
+	// would be released while the session still configures its device.
+	require.Equal(t, 1, abandoned.count(), "the attach hands over the session it left configuring before it returns")
 
 	releaseOnce()
 	// The caller closes its sockets on the way out; that is what ends the

@@ -92,7 +92,8 @@ type ioctlAttachConfig struct {
 	// started reports the device as started; nil reads sysfs. Only tests set
 	// it, beforeConfigure, which runs on the session thread after the device
 	// open and before the first NBD_SET_SOCK, and abandoned, which receives a
-	// session that finished configuring after its caller left.
+	// session its caller left while it was still configuring, before the
+	// attach returns.
 	started         func(index uint32) bool
 	beforeConfigure func(index uint32)
 	abandoned       func(*ioctlSession)
@@ -244,11 +245,11 @@ func (s *ioctlSession) awaitConfigured(ctx context.Context, configured <-chan er
 	case err := <-configured:
 		return s.configuredOrAbandoned(ctx, err)
 	case <-ctx.Done():
+		if abandoned != nil {
+			abandoned(s)
+		}
 		go func() {
 			if err := <-configured; err == nil {
-				if abandoned != nil {
-					abandoned(s)
-				}
 				s.endEarly(context.WithoutCancel(ctx))
 			}
 		}()
