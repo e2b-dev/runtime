@@ -41,7 +41,7 @@ func (s *Server) waitForAcquire(ctx context.Context, kind string) error {
 		s.recordStartGateWait(ctx, kind, startGateCancelled, waited)
 		telemetry.ReportEvent(ctx, "too many resuming sandboxes on node")
 
-		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node, please retry")
+		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node: current=%d, max=%d, please retry", s.startingSandboxes.Current(), s.startingSandboxes.Limit())
 	}
 	s.recordStartGateWait(ctx, kind, startGateAcquired, waited)
 
