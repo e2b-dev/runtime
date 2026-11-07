@@ -41,3 +41,35 @@ func TestAPIHopReportsUnderItsKeyAndReadsItsFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestRouterHopReportsUnderItsKeyAndReadsItsFlag(t *testing.T) {
+	t.Parallel()
+
+	// As for the api hop; the mode is reported when the transport is built.
+	for _, tc := range []struct {
+		name         string
+		expect       []string
+		mode, source string
+	}{
+		{"names its server", []string{"spiffe://td.example.internal/ns/router/sa/router"}, "on", mtls.SourceFlag},
+		{"names no server", nil, "off", mtls.SourceRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			flags, source := servicetest.Flags(t)
+			proc, metrics := servicetest.NewProcess(t, flags.StringReader())
+			settings := cfg.TLSConfig{Router: mtls.HopSettings{Expect: tc.expect}}
+			wrap, err := newRouterHop(proc, settings)
+			require.NoError(t, err)
+			wrap(nil)
+			assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "router", "off", mtls.SourceFallback))
+
+			servicetest.SetFlag(source, "mtls-client-proxy-router-client-mode", "on")
+			wrap, err = newRouterHop(proc, settings)
+			require.NoError(t, err)
+			wrap(nil)
+			assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "router", tc.mode, tc.source))
+		})
+	}
+}

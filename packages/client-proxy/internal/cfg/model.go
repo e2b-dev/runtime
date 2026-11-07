@@ -33,7 +33,7 @@ type Config struct {
 	// name the sandbox in X-Forwarded-Host; empty ignores the header.
 	ForwardedHostDomains []string `env:"FORWARDED_HOST_DOMAINS"`
 
-	// TLS is the mutual TLS settings of the hop to the api.
+	// TLS is the mutual TLS settings of the client hops.
 	TLS TLSConfig
 }
 

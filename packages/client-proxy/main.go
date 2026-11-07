@@ -120,6 +120,12 @@ func run() int {
 
 		return 1
 	}
+	routerHop, err := newRouterHop(tlsProcess, config.TLS)
+	if err != nil {
+		l.Error(ctx, "Invalid mutual TLS configuration for the router hop", zap.Error(err))
+
+		return 1
+	}
 
 	redisClient, err := factories.NewRedisClient(signalCtx, factories.RedisConfig{
 		RedisURL:         config.RedisURL,
@@ -183,6 +189,7 @@ func run() int {
 		pausedSandboxResumer,
 		featureFlagsClient,
 		config.ForwardedHostDomains,
+		e2bproxy.WithRouterHop(routerHop),
 	)
 	if err != nil {
 		l.Error(ctx, "Failed to create client proxy", zap.Error(err))

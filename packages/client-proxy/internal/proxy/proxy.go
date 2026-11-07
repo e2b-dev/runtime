@@ -186,11 +186,36 @@ func handlePausedSandbox(
 	return route, autoResumeSucceeded, nil
 }
 
+// RouterConnectionKey keys the pool client of full-router traffic, apart
+// from pool.ClientProxyConnectionKey, so the Router hop's transport serves
+// that traffic alone and is built once.
+const RouterConnectionKey = "client-proxy-router"
+
+// Option configures NewClientProxy.
+type Option func(*options)
+
+type options struct {
+	routerHop func(*http.Transport) *http.Transport
+}
+
+// WithRouterHop builds the transport of full-router traffic through wrap,
+// given the pool's own.
+func WithRouterHop(wrap func(base *http.Transport) *http.Transport) Option {
+	return func(o *options) {
+		o.routerHop = wrap
+	}
+}
+
 // NewClientProxy returns the proxy and, when resumes are enabled, the closer
 // that stops the resume flights still running after the proxy has shut down.
 // forwardedHostDomains lists the domains whose sandbox hosts a request's
 // X-Forwarded-Host may restore (restoreForwardedHost); empty turns that off.
-func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, sandboxes catalog.SandboxesCatalog, sandboxResumer SandboxResumer, featureFlagsClient *featureflags.Client, forwardedHostDomains []string) (*reverseproxy.Proxy, ResumeCloser, error) {
+func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, sandboxes catalog.SandboxesCatalog, sandboxResumer SandboxResumer, featureFlagsClient *featureflags.Client, forwardedHostDomains []string, opts ...Option) (*reverseproxy.Proxy, ResumeCloser, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	meter := meterProvider.Meter(serviceName)
 
 	var resumer SandboxResumer
@@ -203,6 +228,17 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 
 		resumer = flights
 		resumeCloser = flights
+	}
+
+	proxyOptions := []reverseproxy.Option{reverseproxy.WithProbe()}
+	if o.routerHop != nil {
+		proxyOptions = append(proxyOptions, reverseproxy.WithTransportWrap(func(key string, base *http.Transport) *http.Transport {
+			if key == RouterConnectionKey {
+				return o.routerHop(base)
+			}
+
+			return base
+		}))
 	}
 
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
@@ -294,8 +330,10 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 			)
 
 			var expectedExecutionID string
+			connectionKey := pool.ClientProxyConnectionKey
 			if placement := route.NetworkPlacement; placement != nil && placement.NetworkMode == catalog.NetworkModeFullRouter {
 				expectedExecutionID = route.ExecutionID
+				connectionKey = RouterConnectionKey
 			}
 
 			return &pool.Destination{
@@ -303,7 +341,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 				SandboxId:           sandboxId,
 				RequestLogger:       l,
 				SandboxPort:         port,
-				ConnectionKey:       pool.ClientProxyConnectionKey,
+				ConnectionKey:       connectionKey,
 				Url:                 url,
 				MaskRequestHost: clientProxyMaskRequestHost(
 					ctx,
@@ -316,7 +354,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		},
 		nil,
 		false,
-		reverseproxy.WithProbe(),
+		proxyOptions...,
 	)
 
 	_, err := telemetry.GetObservableUpDownCounter(
