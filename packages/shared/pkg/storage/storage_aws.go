@@ -249,6 +249,28 @@ func (s *awsStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
 	}, nil
 }
 
+// mapAWSError maps a well-known S3 error to a storage-layer sentinel, or nil if
+// err is not one the storage layer recognizes. NoSuchKey (GetObject) and
+// NotFound (HeadObject) both mean the object is gone; InvalidObjectState means
+// it is in an archived storage class. Callers that get nil keep their own
+// operation-specific error context.
+func mapAWSError(err error) error {
+	switch {
+	case isAWSErr[*types.NoSuchKey](err), isAWSErr[*types.NotFound](err):
+		return ErrObjectNotExist
+	case isAWSErr[*types.InvalidObjectState](err):
+		return ErrObjectArchived
+	default:
+		return nil
+	}
+}
+
+func isAWSErr[T error](err error) bool {
+	_, ok := errors.AsType[T](err)
+
+	return ok
+}
+
 func (o *awsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err error) {
 	start := time.Now()
 	defer func() { RecordReadBlob(ctx, time.Since(start), n, o.path, SourceAWS, err) }()
@@ -258,8 +280,8 @@ func (o *awsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err er
 
 	resp, err := o.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &o.bucketName, Key: &o.path})
 	if err != nil {
-		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
-			return 0, ErrObjectNotExist
+		if mapped := mapAWSError(err); mapped != nil {
+			return 0, mapped
 		}
 
 		return 0, err
@@ -402,8 +424,8 @@ func (o *awsObject) openRangeReader(ctx context.Context, off, length int64) (Ran
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", off, off+length-1)),
 	})
 	if err != nil {
-		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
-			return nil, ErrObjectNotExist
+		if mapped := mapAWSError(err); mapped != nil {
+			return nil, mapped
 		}
 
 		return nil, fmt.Errorf("failed to create S3 range reader for %q: %w", o.path, err)
@@ -422,10 +444,8 @@ func (o *awsObject) Size(ctx context.Context) (_ int64, err error) {
 
 	resp, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &o.bucketName, Key: &o.path})
 	if err != nil {
-		var nsk *types.NoSuchKey
-		var nfd *types.NotFound
-		if errors.As(err, &nsk) || errors.As(err, &nfd) {
-			return 0, ErrObjectNotExist
+		if mapped := mapAWSError(err); mapped != nil {
+			return 0, mapped
 		}
 
 		return 0, err
