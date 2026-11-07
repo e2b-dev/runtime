@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -301,4 +302,115 @@ func TestErrorHandlerStillRecordsTheBodyElsewhere(t *testing.T) {
 
 	require.NotEmpty(t, c.Errors)
 	assert.Contains(t, c.Errors[0].Error(), marker)
+}
+
+// fakeNetError is a net.Error used to simulate a body-read network failure
+// (client disconnect / server read deadline) the way kin-openapi surfaces it.
+type fakeNetError struct{ timeout bool }
+
+func (e fakeNetError) Error() string   { return "read tcp: i/o timeout" }
+func (e fakeNetError) Timeout() bool   { return e.timeout }
+func (e fakeNetError) Temporary() bool { return false }
+
+var _ net.Error = fakeNetError{}
+
+// readingFailed builds the SecurityRequirementsError kin-openapi returns when
+// the request body read fails before auth runs: a RequestError{reading failed}
+// wrapping cause, carried among the security errors.
+func readingFailed(cause error) *openapi3filter.SecurityRequirementsError {
+	return &openapi3filter.SecurityRequirementsError{
+		Errors: []error{
+			&openapi3filter.RequestError{Reason: "reading failed", Err: cause},
+		},
+	}
+}
+
+// TestMultiErrorHandlerClassifiesClientDisconnect proves a failed body read
+// caused by a network error is tagged as a client disconnect, while a reading
+// failure with a non-network cause, and a genuine auth error, are not.
+func TestMultiErrorHandlerClassifiesClientDisconnect(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		err            *openapi3filter.SecurityRequirementsError
+		wantDisconnect bool
+	}{
+		"body read timed out on the network": {
+			err:            readingFailed(fakeNetError{timeout: true}),
+			wantDisconnect: true,
+		},
+		"body read failed for a non-network reason stays an auth error": {
+			err:            readingFailed(errors.New("malformed chunked encoding")),
+			wantDisconnect: false,
+		},
+		"a real missing-credential error stays an auth error": {
+			err:            &openapi3filter.SecurityRequirementsError{Errors: []error{fmt.Errorf("Invalid API key. %w", sharedauth.ErrNoAuthHeader)}},
+			wantDisconnect: false,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := MultiErrorHandler(openapi3.MultiError{tc.err}).Error()
+			if tc.wantDisconnect {
+				assert.True(t, strings.HasPrefix(got, "client disconnected: "),
+					"want client-disconnect prefix, got %q", got)
+			} else {
+				assert.False(t, strings.HasPrefix(got, "client disconnected: "),
+					"did not want client-disconnect prefix, got %q", got)
+			}
+		})
+	}
+}
+
+// TestErrorHandlerClientDisconnectReturns499 proves a client-disconnect message
+// is answered with 499, carries no response body, and is not pushed onto
+// c.Errors (it is an informational span event, not a reported error).
+func TestErrorHandlerClientDisconnectReturns499(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes", nil)
+
+	ErrorHandler(c, "client disconnected: read tcp: i/o timeout", http.StatusUnauthorized)
+
+	assert.Equal(t, 499, recorder.Code)
+	assert.Empty(t, recorder.Body.Bytes(), "a disconnected client should get no response body")
+	assert.Empty(t, c.Errors, "a client disconnect must not be recorded as an error")
+}
+
+// TestMultiToErrorHandlerClientDisconnectEndToEnd runs the real validator output
+// through both stages: a network body-read failure becomes a 499, while the same
+// shape with a non-network cause remains an auth 401.
+func TestMultiToErrorHandlerClientDisconnectEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	t.Run("network read failure -> 499", func(t *testing.T) {
+		t.Parallel()
+		msg := MultiErrorHandler(openapi3.MultiError{readingFailed(fakeNetError{timeout: true})}).Error()
+
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes", nil)
+		ErrorHandler(c, msg, http.StatusUnauthorized)
+
+		assert.Equal(t, 499, recorder.Code)
+		assert.Empty(t, c.Errors)
+	})
+
+	t.Run("non-network read failure -> auth error", func(t *testing.T) {
+		t.Parallel()
+		msg := MultiErrorHandler(openapi3.MultiError{readingFailed(errors.New("malformed chunked encoding"))}).Error()
+
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes", nil)
+		ErrorHandler(c, msg, http.StatusUnauthorized)
+
+		assert.NotEqual(t, 499, recorder.Code)
+		assert.NotEmpty(t, c.Errors)
+	})
 }
