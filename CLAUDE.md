@@ -54,7 +54,6 @@ make tidy
 ```bash
 # From packages/api/
 make run-local          # Run API server on :3000
-make dev                # Run with air (hot reload)
 
 # From packages/orchestrator/
 make run-local          # Run orchestrator

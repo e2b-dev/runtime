@@ -106,11 +106,6 @@ run-local: $(LOCAL_BUILD_TARGET)
 	$(call setup_local_env)
 	NODE_ID=$(HOSTNAME) ./bin/api --port 3000
 
-# Run the API using air
-.PHONY: dev
-dev:
-	go tool air
-
 # You run the parametrized command like this:
 # make metric=heap interval=90 profiler
 .PHONY: profiler

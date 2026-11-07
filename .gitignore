@@ -3,7 +3,6 @@
 .env*
 !/.envrc
 .last_used_env
-.air
 go.work.sum
 .infisical.json
 .vscode/mise-tools
