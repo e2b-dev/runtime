@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc
 				Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
 			if err != nil {
-				l = l.Int("error_code", int(connect.CodeOf(err)))
+				l = l.Int("error_code", int(codeOf(err)))
 			}
 
 			if req != nil {
@@ -116,7 +117,7 @@ func LogServerStreamWithoutEvents[T any, R any](
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
 	if err != nil {
-		logEvent = logEvent.Int("error_code", int(connect.CodeOf(err)))
+		logEvent = logEvent.Int("error_code", int(codeOf(err)))
 	} else {
 		logEvent = logEvent.Interface("response", nil)
 	}
@@ -146,7 +147,7 @@ func LogClientStreamWithoutEvents[T any, R any](
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
 	if err != nil {
-		logEvent = logEvent.Int("error_code", int(connect.CodeOf(err)))
+		logEvent = logEvent.Int("error_code", int(codeOf(err)))
 	}
 
 	if res != nil && err == nil {
@@ -162,11 +163,39 @@ func LogClientStreamWithoutEvents[T any, R any](
 	return res, err
 }
 
-// Return logger with error level if err is not nil, otherwise return logger with debug level
+// getErrDebugLogEvent picks the log level by the nature of err, so a routine
+// client-side cancellation of a streaming call (the client stopped reading the
+// stream — it timed out, was cancelled by a sibling task, or the caller went
+// away) is not logged at ERROR next to genuine failures.
+//
+//   - nil                      -> Debug (normal completion)
+//   - context.Canceled         -> Info  (client went away; expected, not a fault)
+//   - context.DeadlineExceeded -> Warn  (the call outran its deadline)
+//   - anything else            -> Error (a real failure)
 func getErrDebugLogEvent(logger *zerolog.Logger, err error) *zerolog.Event {
-	if err != nil {
+	switch {
+	case err == nil:
+		return logger.Debug() //nolint:zerologlint // this builds an event, it is not expected to return it
+	case errors.Is(err, context.Canceled):
+		return logger.Info().Err(err) //nolint:zerologlint // this builds an event, it is not expected to return it
+	case errors.Is(err, context.DeadlineExceeded):
+		return logger.Warn().Err(err) //nolint:zerologlint // this builds an event, it is not expected to return it
+	default:
 		return logger.Error().Err(err) //nolint:zerologlint // this builds an event, it is not expected to return it
 	}
+}
 
-	return logger.Debug() //nolint:zerologlint // this builds an event, it is not expected to return it
+// codeOf maps an error to a connect code, recognizing the standard context
+// sentinels that connect.CodeOf otherwise reports as CodeUnknown. This keeps
+// error_code meaningful for downstream aggregation: a client cancellation is
+// CodeCanceled and a deadline is CodeDeadlineExceeded, not Unknown.
+func codeOf(err error) connect.Code {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.CodeDeadlineExceeded
+	default:
+		return connect.CodeOf(err)
+	}
 }
