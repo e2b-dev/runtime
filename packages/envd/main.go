@@ -197,7 +197,7 @@ func run() error {
 	// Not closed - producers may outlive the consumer.
 	mmdsChan := make(chan *host.MMDSOpts, 1)
 	if !isNotFC {
-		go host.PollForMMDSOpts(ctx, mmdsChan, defaults.EnvVars)
+		go host.PollForMMDSOpts(ctx, mmdsChan, defaults.EnvVars, isNotFC)
 	}
 
 	logFlusher := api.NewNoopLogFlusher()
