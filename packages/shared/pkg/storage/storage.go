@@ -39,6 +39,11 @@ var ErrObjectSoftDeleted = errors.New("object soft-deleted by storage index")
 // backend instead of assuming there is no tombstone.
 var ErrMetadataUnsupported = errors.New("blob does not support reading custom metadata")
 
+// ErrListUnsupported means the storage backend cannot enumerate objects under a
+// prefix. Callers (e.g. the template GC mark tool) must fail closed when they
+// get this rather than treat the bucket as empty.
+var ErrListUnsupported = errors.New("storage provider does not support listing objects")
+
 // ObjectMetadataSoftDeleted is the storage-index soft-delete tombstone key.
 const ObjectMetadataSoftDeleted = storageopts.ObjectMetadataSoftDeleted
 
@@ -147,6 +152,38 @@ type Blob interface {
 // metadata without downloading it. Backends that can't answer cheaply omit it.
 type MetadataReader interface {
 	Metadata(ctx context.Context) (ObjectMetadata, error)
+}
+
+// ObjectInfo describes one object returned by ObjectLister.
+type ObjectInfo struct {
+	// Path is the object's full key (e.g. "{buildID}/memfile.header").
+	Path string
+	// Size is the object size in bytes.
+	Size int64
+	// LastModified is the object's last-modified time, used by the GC grace
+	// window: a build prefix is only a deletion candidate when every object
+	// under it is older than the grace period.
+	LastModified time.Time
+}
+
+// ObjectLister is an optional StorageProvider capability: enumerate every object
+// under a prefix (paginated internally). Required by full-bucket operations like
+// the template GC mark tool; backends that cannot list omit it and callers fail
+// closed via ErrListUnsupported.
+type ObjectLister interface {
+	ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error)
+}
+
+// ListObjects lists every object under prefix, or returns ErrListUnsupported if
+// the provider cannot enumerate — so callers can distinguish "bucket empty" from
+// "couldn't list" and refuse to treat an unlistable bucket as having no objects.
+func ListObjects(ctx context.Context, p StorageProvider, prefix string) ([]ObjectInfo, error) {
+	l, ok := p.(ObjectLister)
+	if !ok {
+		return nil, ErrListUnsupported
+	}
+
+	return l.ListObjects(ctx, prefix)
 }
 
 // BlobCustomMetadata returns the blob's custom metadata, or ErrMetadataUnsupported
