@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -175,14 +177,20 @@ func newProxyClient(
 			}
 
 			if err != nil {
-				if t.SandboxPort == uint64(consts.DefaultEnvdServerPort) {
-					if errors.Is(err, context.Canceled) {
-						t.RequestLogger.Warn(ctx, "sandbox request canceled by client", zap.Error(err))
-					} else {
-						t.RequestLogger.Error(ctx, "sandbox error handler called", zap.Error(err))
-					}
-				} else {
-					t.RequestLogger.Warn(ctx, "sandbox error handler called", zap.Error(err))
+				// Client-caused disconnects (cancel, connection reset, EOF) are not
+				// server faults: an SDK/browser that gives up mid-request, or a weak
+				// (CGNAT/mobile) link that drops a large upload, surfaces here. Log
+				// them at Warn so they do not drown real upstream faults in ERROR.
+				clientGone := errors.Is(err, context.Canceled) ||
+					errors.Is(err, syscall.ECONNRESET) ||
+					errors.Is(err, io.EOF)
+				switch {
+				case clientGone:
+					t.RequestLogger.Warn(ctx, "sandbox request aborted by client", zap.Error(err))
+				case t.SandboxPort == uint64(consts.DefaultEnvdServerPort):
+					t.RequestLogger.Error(ctx, "sandbox upstream error", zap.Error(err))
+				default:
+					t.RequestLogger.Warn(ctx, "sandbox upstream error", zap.Error(err))
 				}
 			}
 
@@ -201,7 +209,10 @@ func newProxyClient(
 				return
 			}
 
-			cors.Error(w, "Failed to route request to sandbox", http.StatusBadGateway)
+			// Destination resolved; this is an upstream/transport failure reaching
+			// the sandbox, not a routing failure. A distinct message and 502 let
+			// logs and clients tell it apart from the 500 routing failures above.
+			cors.Error(w, "Failed to reach sandbox (upstream connection error)", http.StatusBadGateway)
 		},
 		ModifyResponse: func(r *http.Response) error {
 			ctx := r.Request.Context()
