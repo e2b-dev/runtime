@@ -2,7 +2,7 @@
 SELECT
   b.created_at,
   b.finished_at,
-  b.status,
+  b.status_group,
   b.reason,
   COALESCE(ea.names, ARRAY[]::text[])::text[] AS names
 FROM public.env_builds b

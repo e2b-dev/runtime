@@ -63,7 +63,7 @@ func TestFinishTemplateBuild_OverwritesVersionsWhenProvided(t *testing.T) {
 
 	err := db.SqlcClient.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		BuildID:            buildID,
-		Status:             types.BuildStatusUploaded,
+		StatusGroup:        types.BuildStatusGroupReady,
 		TotalDiskSizeMb:    &totalDisk,
 		EnvdVersion:        &envdVersion,
 		KernelVersion:      reportedKernel,
@@ -96,7 +96,7 @@ func TestFinishTemplateBuild_PreservesVersionsWhenEmpty(t *testing.T) {
 
 	err := db.SqlcClient.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		BuildID:            buildID,
-		Status:             types.BuildStatusUploaded,
+		StatusGroup:        types.BuildStatusGroupReady,
 		TotalDiskSizeMb:    &totalDisk,
 		EnvdVersion:        &envdVersion,
 		KernelVersion:      "",
@@ -125,7 +125,7 @@ func TestFinishTemplateBuild_PreservesSingleVersionWhenOnlyOneEmpty(t *testing.T
 
 	err := db.SqlcClient.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		BuildID:            buildID,
-		Status:             types.BuildStatusUploaded,
+		StatusGroup:        types.BuildStatusGroupReady,
 		KernelVersion:      reportedKernel,
 		FirecrackerVersion: "",
 	})

@@ -31,8 +31,8 @@ func TestInvalidateUnstartedTemplateBuilds_InvalidatesWaitingBuilds(t *testing.T
 	require.NoError(t, err)
 
 	// Verify build status changed to failed
-	status := testutils.GetBuildStatus(t, ctx, db, buildID)
-	assert.Equal(t, "failed", status, "Waiting build should be invalidated to failed")
+	status := testutils.GetBuildStatusGroup(t, ctx, db, buildID)
+	assert.Equal(t, types.BuildStatusGroupFailed, status, "Waiting build should be invalidated to failed")
 }
 
 func TestInvalidateUnstartedTemplateBuilds_OnlyAffectsSpecificTag(t *testing.T) {
@@ -62,11 +62,11 @@ func TestInvalidateUnstartedTemplateBuilds_OnlyAffectsSpecificTag(t *testing.T) 
 	require.NoError(t, err)
 
 	// Verify only default build was invalidated
-	defaultStatus := testutils.GetBuildStatus(t, ctx, db, defaultBuildID)
-	assert.Equal(t, "failed", defaultStatus, "Default tag build should be invalidated")
+	defaultStatus := testutils.GetBuildStatusGroup(t, ctx, db, defaultBuildID)
+	assert.Equal(t, types.BuildStatusGroupFailed, defaultStatus, "Default tag build should be invalidated")
 
-	v1Status := testutils.GetBuildStatus(t, ctx, db, v1BuildID)
-	assert.Equal(t, "waiting", v1Status, "v1 tag build should NOT be affected")
+	v1Status := testutils.GetBuildStatusGroup(t, ctx, db, v1BuildID)
+	assert.Equal(t, types.BuildStatusGroupPending, v1Status, "v1 tag build should NOT be affected")
 }
 
 func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectOtherTemplates(t *testing.T) {
@@ -94,11 +94,11 @@ func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectOtherTemplates(t *testin
 	require.NoError(t, err)
 
 	// Verify only template1's build was invalidated
-	status1 := testutils.GetBuildStatus(t, ctx, db, build1ID)
-	assert.Equal(t, "failed", status1, "Template1's build should be invalidated")
+	status1 := testutils.GetBuildStatusGroup(t, ctx, db, build1ID)
+	assert.Equal(t, types.BuildStatusGroupFailed, status1, "Template1's build should be invalidated")
 
-	status2 := testutils.GetBuildStatus(t, ctx, db, build2ID)
-	assert.Equal(t, "waiting", status2, "Template2's build should NOT be affected")
+	status2 := testutils.GetBuildStatusGroup(t, ctx, db, build2ID)
+	assert.Equal(t, types.BuildStatusGroupPending, status2, "Template2's build should NOT be affected")
 }
 
 func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectNonWaitingBuilds(t *testing.T) {
@@ -128,14 +128,14 @@ func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectNonWaitingBuilds(t *test
 	require.NoError(t, err)
 
 	// Verify only waiting build was invalidated
-	waitingStatus := testutils.GetBuildStatus(t, ctx, db, waitingBuildID)
-	assert.Equal(t, "failed", waitingStatus, "Waiting build should be invalidated")
+	waitingStatus := testutils.GetBuildStatusGroup(t, ctx, db, waitingBuildID)
+	assert.Equal(t, types.BuildStatusGroupFailed, waitingStatus, "Waiting build should be invalidated")
 
-	buildingStatus := testutils.GetBuildStatus(t, ctx, db, buildingBuildID)
-	assert.Equal(t, "building", buildingStatus, "Building build should NOT be affected")
+	buildingStatus := testutils.GetBuildStatusGroup(t, ctx, db, buildingBuildID)
+	assert.Equal(t, types.BuildStatusGroupInProgress, buildingStatus, "Building build should NOT be affected")
 
-	uploadedStatus := testutils.GetBuildStatus(t, ctx, db, uploadedBuildID)
-	assert.Equal(t, "uploaded", uploadedStatus, "Uploaded build should NOT be affected")
+	uploadedStatus := testutils.GetBuildStatusGroup(t, ctx, db, uploadedBuildID)
+	assert.Equal(t, types.BuildStatusGroupReady, uploadedStatus, "Uploaded build should NOT be affected")
 }
 
 func TestInvalidateUnstartedTemplateBuilds_MultipleWaitingBuilds(t *testing.T) {
@@ -165,9 +165,9 @@ func TestInvalidateUnstartedTemplateBuilds_MultipleWaitingBuilds(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all waiting builds were invalidated
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, build1ID), "Build 1 should be invalidated")
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, build2ID), "Build 2 should be invalidated")
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, build3ID), "Build 3 should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, build1ID), "Build 1 should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, build2ID), "Build 2 should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, build3ID), "Build 3 should be invalidated")
 }
 
 func TestInvalidateUnstartedTemplateBuilds_MultipleTagsInSingleCall(t *testing.T) {
@@ -207,10 +207,10 @@ func TestInvalidateUnstartedTemplateBuilds_MultipleTagsInSingleCall(t *testing.T
 	require.NoError(t, err)
 
 	// Verify the specified tags were invalidated
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, defaultBuildID), "Default tag build should be invalidated")
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, v1BuildID), "v1 tag build should be invalidated")
-	assert.Equal(t, "failed", testutils.GetBuildStatus(t, ctx, db, v2BuildID), "v2 tag build should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, defaultBuildID), "Default tag build should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, v1BuildID), "v1 tag build should be invalidated")
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, v2BuildID), "v2 tag build should be invalidated")
 
 	// Verify the 'stable' tag was NOT affected
-	assert.Equal(t, "waiting", testutils.GetBuildStatus(t, ctx, db, stableBuildID), "stable tag build should NOT be affected")
+	assert.Equal(t, types.BuildStatusGroupPending, testutils.GetBuildStatusGroup(t, ctx, db, stableBuildID), "stable tag build should NOT be affected")
 }

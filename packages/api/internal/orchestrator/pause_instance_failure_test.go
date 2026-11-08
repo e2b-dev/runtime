@@ -85,16 +85,16 @@ func newPauseFixture(t *testing.T, pauseErr error) (*Orchestrator, *testutils.Da
 
 // snapshotBuildStatus reads back the build UpsertSnapshot created for the
 // sandbox, not the source build the fixture seeded.
-func snapshotBuildStatus(t *testing.T, db *testutils.Database, sandboxID string) (string, bool) {
+func snapshotBuildStatus(t *testing.T, db *testutils.Database, sandboxID string) (types.BuildStatusGroup, bool) {
 	t.Helper()
 
 	var (
-		buildStatus string
+		buildStatus types.BuildStatusGroup
 		finishedAt  *time.Time
 	)
 
 	err := db.SqlcClient.TestsRawSQLQuery(t.Context(),
-		`SELECT b.status, b.finished_at
+		`SELECT b.status_group, b.finished_at
 		 FROM public.snapshots s
 		 JOIN public.env_build_assignments eba ON eba.env_id = s.env_id
 		 JOIN public.env_builds b ON b.id = eba.build_id
@@ -126,7 +126,7 @@ func TestPauseSandbox_FailsBuildWhenPauseRPCFails(t *testing.T) {
 	require.Error(t, err)
 
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusFailed), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupFailed, buildStatus)
 	assert.True(t, hasFinishedAt, "a terminal build must record finished_at")
 }
 
@@ -146,7 +146,7 @@ func TestPauseSandbox_FailsBuildWhenCheckpointInProgress(t *testing.T) {
 	require.ErrorIs(t, err, PauseQueueExhaustedError{}, "a checkpoint in flight is one of the retryable refusals")
 
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusFailed), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupFailed, buildStatus)
 	assert.True(t, hasFinishedAt, "a terminal build must record finished_at")
 }
 
@@ -168,7 +168,7 @@ func TestPauseSandbox_FailsBuildWhenEnvdUnresponsive(t *testing.T) {
 	require.NotErrorIs(t, err, PauseRefusedCheckpointInProgressError{})
 
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusFailed), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupFailed, buildStatus)
 	assert.True(t, hasFinishedAt, "a terminal build must record finished_at")
 }
 
@@ -182,7 +182,7 @@ func TestPauseSandbox_FailsBuildWhenPauseQueueExhausted(t *testing.T) {
 	require.ErrorIs(t, err, PauseQueueExhaustedError{})
 
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusFailed), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupFailed, buildStatus)
 	assert.True(t, hasFinishedAt, "a terminal build must record finished_at")
 }
 
@@ -253,7 +253,7 @@ func TestPauseSandbox_EnvdUnresponsiveReachesTheBuildRow(t *testing.T) {
 
 	require.NoError(t, o.pauseSandbox(t.Context(), node, sbx, sandbox.RemoveOpts{Action: sandbox.StateActionPause}))
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 	assert.True(t, hasFinishedAt)
 	mark := snapshotBuildEnvdUnresponsive(t, db, sbx.SandboxID)
 	require.NotNil(t, mark, "the mark must be written with the build's success")

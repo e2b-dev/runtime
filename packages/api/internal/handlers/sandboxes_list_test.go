@@ -605,7 +605,7 @@ func TestGetPausedSandboxes_LargeRunningExcludeList(t *testing.T) {
 			AllowInternetAccess: &allowInternet,
 			AutoPause:           true,
 			OriginNodeID:        "test-node",
-			Status:              dbtypes.BuildStatusSuccess,
+			StatusGroup:         dbtypes.BuildStatusGroupReady,
 		})
 		require.NoError(t, err)
 	}

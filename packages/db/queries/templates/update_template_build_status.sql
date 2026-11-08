@@ -1,6 +1,13 @@
 -- name: UpdateEnvBuildStatus :exec
 UPDATE "public"."env_builds"
-SET status = @status,
+SET status_group = @status_group,
+    -- Mirrors status_group until the status column is dropped.
+    status = CASE @status_group
+        WHEN 'pending' THEN 'waiting'
+        WHEN 'in_progress' THEN 'building'
+        WHEN 'ready' THEN 'uploaded'
+        WHEN 'failed' THEN 'failed'
+    END,
     finished_at = @finished_at,
     reason = sqlc.narg(reason),
     version = @version
@@ -13,7 +20,14 @@ WHERE id = @build_id;
 -- own.
 WITH failed AS (
     UPDATE "public"."env_builds"
-    SET status = @status,
+    SET status_group = @status_group,
+        -- Mirrors status_group until the status column is dropped.
+        status = CASE @status_group
+            WHEN 'pending' THEN 'waiting'
+            WHEN 'in_progress' THEN 'building'
+            WHEN 'ready' THEN 'uploaded'
+            WHEN 'failed' THEN 'failed'
+        END,
         finished_at = @finished_at,
         reason = sqlc.narg(reason),
         version = @version

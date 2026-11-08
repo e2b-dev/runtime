@@ -58,17 +58,6 @@ func buildStatusGroups(status api.BuildStatus) []types.BuildStatusGroup {
 	}
 }
 
-func buildStatusFromStatus(status types.BuildStatus) api.BuildStatus {
-	switch status {
-	case types.BuildStatusFailed:
-		return api.BuildStatusFailed
-	case types.BuildStatusUploaded, types.BuildStatusSuccess:
-		return api.BuildStatusSuccess
-	default:
-		return api.BuildStatusBuilding
-	}
-}
-
 func buildStatusFromStatusGroup(group types.BuildStatusGroup) api.BuildStatus {
 	switch group {
 	case types.BuildStatusGroupFailed:

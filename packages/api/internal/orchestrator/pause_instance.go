@@ -144,7 +144,7 @@ func (o *Orchestrator) pauseSandbox(ctx context.Context, node *nodemanager.Node,
 
 	// The node may capture a full pause as disk-only (a powered-off guest);
 	// both records carry the kind it took.
-	if err := o.finishSnapshotBuildWithKind(ctx, result.BuildID, sbx.SandboxID, currentKind, captured, marked, types.BuildStatusSuccess, captured != filesystemOnly); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, result.BuildID, sbx.SandboxID, currentKind, captured, marked, captured != filesystemOnly); err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
 		return fmt.Errorf("error pausing sandbox: %w", err)
@@ -238,7 +238,7 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, curr
 			Iam:                     sbx.Iam,
 		},
 		OriginNodeID: node.ID,
-		Status:       types.BuildStatusSnapshotting,
+		StatusGroup:  types.BuildStatusGroupInProgress,
 		// Pin the snapshot's CPU info to the source build instead of the executing
 		// node, so a pause/resume across CPU generations stays compatible.
 		SourceBuildID:       sbx.BuildID,

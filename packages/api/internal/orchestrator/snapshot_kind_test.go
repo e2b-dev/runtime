@@ -37,7 +37,7 @@ func seedFilesystemOnlyBuild(t *testing.T, o *Orchestrator, node *nodemanager.No
 
 	row, err := o.throttledUpsertSnapshot(t.Context(), buildUpsertSnapshotParams(sbx, node, true, true))
 	require.NoError(t, err)
-	require.NoError(t, o.finishSnapshotBuild(t.Context(), row.BuildID, types.BuildStatusSuccess))
+	require.NoError(t, o.finishSnapshotBuild(t.Context(), row.BuildID))
 }
 
 // lastSnapshotBuildKind is the kind recorded on the build a resume of the
@@ -83,7 +83,7 @@ func TestPauseSandbox_SuccessRecordsRequestedKind(t *testing.T) {
 	assert.False(t, kind, "a memory pause records a memory build")
 	assert.False(t, lastSnapshotBuildKind(t, o, sbx.SandboxID), "the memory pause's build is labelled memory")
 	buildStatus, _ := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 
 	require.NoError(t, o.pauseSandbox(t.Context(), node, sbx, sandbox.RemoveOpts{Action: sandbox.StateActionPause, FilesystemOnly: true}))
 	kind, err = o.sqlcDB.GetSnapshotFilesystemOnly(t.Context(), sbx.SandboxID)
@@ -117,7 +117,7 @@ func TestPauseSandbox_SuccessRecordsCapturedKind(t *testing.T) {
 	assert.True(t, kind, "the snapshot row carries the captured kind")
 	assert.True(t, lastSnapshotBuildKind(t, o, sbx.SandboxID), "the build carries the captured kind")
 	buildStatus, _ := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 }
 
 // pauseCapturingLateClient answers a pause once its caller's deadline has
@@ -147,7 +147,7 @@ func TestPauseSandbox_CapturedKindSurvivesAnExhaustedBudget(t *testing.T) {
 	require.NoError(t, o.pauseSandbox(ctx, node, sbx, sandbox.RemoveOpts{Action: sandbox.StateActionPause}))
 	assert.True(t, lastSnapshotBuildKind(t, o, sbx.SandboxID), "the build carries the captured kind")
 	buildStatus, _ := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 }
 
 // The captured kind's write goes through the client's retry: one transient
@@ -180,7 +180,7 @@ func TestPauseSandbox_CapturedKindRetriesATransientWrite(t *testing.T) {
 	assert.GreaterOrEqual(t, attempts, int64(2), "the refused write was retried")
 	assert.True(t, lastSnapshotBuildKind(t, o, sbx.SandboxID), "the new build is the one a resume starts from, labelled disk-only")
 	buildStatus, _ := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 }
 
 // The captured-kind write and the status write share one detached budget: a

@@ -203,7 +203,7 @@ func TestGetUnstableAdminSandboxesSandboxIDBuildsReturnsEveryBuildField(t *testi
 			"buildID": "`+buildID.String()+`",
 			"templateID": "`+templateID+`",
 			"tag": "default",
-			"status": "snapshotting",
+			"status": "in_progress",
 			"statusGroup": "in_progress",
 			"clusterNodeID": "test-node",
 			"assignedAt": "2026-01-01T12:00:00Z",

@@ -50,7 +50,7 @@ func (a *APIStore) GetUnstableBuildsBuildID(c *gin.Context, buildID api.BuildID)
 		return
 	}
 
-	status := buildStatusFromStatus(row.Status)
+	status := buildStatusFromStatusGroup(row.StatusGroup)
 	c.JSON(http.StatusOK, api.BuildInfo{
 		Names:         &row.Names,
 		CreatedAt:     row.CreatedAt,

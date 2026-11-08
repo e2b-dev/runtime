@@ -64,7 +64,7 @@ func TestUpsertSnapshot_NewSnapshot(t *testing.T) {
 		},
 		OriginNodeID:  originNodeID,
 		SourceBuildID: sourceBuildID,
-		Status:        "snapshotting",
+		StatusGroup:   "in_progress",
 	}
 
 	// Execute UpsertSnapshot for a new snapshot
@@ -146,7 +146,7 @@ func TestUpsertSnapshot_ExistingSnapshot(t *testing.T) {
 		},
 		OriginNodeID:  originNodeID,
 		SourceBuildID: sourceBuildID,
-		Status:        "snapshotting",
+		StatusGroup:   "in_progress",
 	}
 
 	// Create the initial snapshot
@@ -204,7 +204,7 @@ func TestUpsertSnapshot_ExistingSnapshot(t *testing.T) {
 		Config:              updatedConfig,       // Updated config
 		OriginNodeID:        updatedOriginNodeID, // Updated from node-1
 		SourceBuildID:       sourceBuildID,
-		Status:              "snapshotting",
+		StatusGroup:         "in_progress",
 	}
 
 	// Execute UpsertSnapshot for the existing snapshot (same sandbox_id)
@@ -262,7 +262,7 @@ func TestUpsertSnapshot_ExistingSnapshot(t *testing.T) {
 		Config:              updatedConfig,
 		OriginNodeID:        "node-3",
 		SourceBuildID:       sourceBuildID,
-		Status:              "snapshotting",
+		StatusGroup:         "in_progress",
 	}
 
 	thirdResult, err := client.SqlcClient.UpsertSnapshot(ctx, thirdParams)
@@ -336,7 +336,7 @@ func TestUpsertSnapshot_CopiesMaxVcpuFromSourceBuild(t *testing.T) {
 				Config:             &types.PausedSandboxConfig{Version: types.PausedSandboxConfigVersion},
 				OriginNodeID:       "node-1",
 				SourceBuildID:      sourceBuildID,
-				Status:             "snapshotting",
+				StatusGroup:        "in_progress",
 			}
 
 			for range 2 {

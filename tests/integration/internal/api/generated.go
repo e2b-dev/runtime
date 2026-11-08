@@ -715,7 +715,8 @@ type AdminSandboxBuild struct {
 	// snapshot template is not deleted
 	Restorable bool `json:"restorable"`
 
-	// Status Build status as stored, for example ready, snapshotting or waiting
+	// Status Same value as statusGroup
+	// Deprecated: Use statusGroup
 	Status string `json:"status"`
 
 	// StatusGroup Coarse build state derived from the build status: pending (pending,
@@ -836,7 +837,8 @@ type AdminSandboxOverviewBuild struct {
 	// Restorable Always false, the newest assignment is already current
 	Restorable bool `json:"restorable"`
 
-	// Status Build status as stored, for example ready, snapshotting or waiting
+	// Status Same value as statusGroup
+	// Deprecated: Use statusGroup
 	Status string `json:"status"`
 
 	// StatusGroup Coarse build state, null when the stored group is not one of the known values

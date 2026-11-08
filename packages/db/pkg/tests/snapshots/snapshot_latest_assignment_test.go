@@ -170,7 +170,7 @@ func TestGetLastSnapshot_OnlyReturnsSuccessBuilds(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Create second snapshot with snapshotting status (not success)
-	testutils.UpsertTestSnapshotWithStatus(t, ctx, db, snapshotTemplateID, sandboxID, teamID, baseTemplateID, types.BuildStatusSnapshotting)
+	testutils.UpsertTestSnapshotWithStatus(t, ctx, db, snapshotTemplateID, sandboxID, teamID, baseTemplateID, types.BuildStatusGroupInProgress)
 
 	// GetLastSnapshot should return the success build, not the snapshotting one
 	snapshot, err := db.SqlcClient.GetLastSnapshot(ctx, sandboxID)
