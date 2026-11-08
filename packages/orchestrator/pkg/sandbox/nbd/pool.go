@@ -29,6 +29,9 @@ const (
 	// releaseRetryDelay is how long ReleaseDevice waits before retrying a device
 	// that is still in use.
 	releaseRetryDelay = 500 * time.Millisecond
+	// slotHoldWarnThreshold flags an ioctl session still holding its device
+	// long after its disconnect bound (disconnectTimeout) should have ended it.
+	slotHoldWarnThreshold = 5 * time.Minute
 )
 
 var (
@@ -136,6 +139,50 @@ func (d *DevicePool) Disown(ctx context.Context, idx DeviceSlot) {
 	d.mu.Unlock()
 
 	released.Add(ctx, 1)
+}
+
+// disownAfter keeps a slot claimed until the ioctl session that held its
+// device has let go of it, then disowns it: sysfs reads a device as free
+// while a session still configures it, so the slot must not reach the feeder
+// before then. A pool that closes first leaves the slot to Close. A session
+// still holding the device after slotHoldWarnThreshold is logged then, and
+// again when the slot returns.
+func (d *DevicePool) disownAfter(ctx context.Context, idx DeviceSlot, deviceReleased <-chan struct{}, lg logger.Logger) {
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		start := time.Now()
+		watchdog := time.AfterFunc(slotHoldWarnThreshold, func() {
+			lg.Warn(ctx, "NBD device slot still claimed: its ioctl session has not let go of the device",
+				zap.Uint32("device_index", idx),
+				zap.Duration("threshold", slotHoldWarnThreshold),
+			)
+		})
+		select {
+		case <-deviceReleased:
+		case <-d.done:
+		}
+		stalled := !watchdog.Stop()
+
+		// Close publishes done under mu before it snapshots the claimed slots.
+		d.mu.Lock()
+		select {
+		case <-d.done:
+			d.mu.Unlock()
+
+			return
+		default:
+		}
+		d.usedSlots.Clear(uint(idx))
+		d.mu.Unlock()
+
+		released.Add(ctx, 1)
+		if stalled {
+			lg.Warn(ctx, "NBD device slot returned after its ioctl session held the device past the threshold",
+				zap.Uint32("device_index", idx),
+				zap.Duration("held", time.Since(start)),
+			)
+		}
+	}()
 }
 
 func getMaxDevices() (uint, error) {
