@@ -307,6 +307,7 @@ type Options struct {
 type Runtime struct {
 	Server  *server.Server
 	Factory *sandbox.Factory
+	Info    *service.ServiceInfo
 	// Routes publishes the sandbox routing records, nil without Redis.
 	Routes *routing.Publisher
 }
@@ -1219,7 +1220,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 
 	if opts.Runtime != nil {
-		closeEdition, err := opts.Runtime(ctx, Runtime{Server: orchestratorService, Factory: sandboxFactory, Routes: routingPublisher})
+		closeEdition, err := opts.Runtime(ctx, Runtime{Server: orchestratorService, Factory: sandboxFactory, Info: serviceInfo, Routes: routingPublisher})
 		if err != nil {
 			logger.L().Fatal(ctx, "failed to hand the runtime to the edition", zap.Error(err))
 		}

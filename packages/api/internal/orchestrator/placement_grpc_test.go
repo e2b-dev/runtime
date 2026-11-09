@@ -172,12 +172,13 @@ func resolveRequest(hold *placementpb.ExecutionHold, action placementpb.Resoluti
 	return placementpb.ResolveExecutionHoldRequest_builder{Hold: hold, Action: action, TargetNodeId: target}.Build()
 }
 
-// A move through the service: the placement read admits the target, the
-// hold refuses ordinary lifecycle, and the move settles the record on the
-// target. Every call survives a lost reply by being repeated.
+// A move off a shutting-down node admits a ready target, holds the execution
+// against ordinary lifecycle changes, and settles placement on the target.
+// Repeating a call after a lost reply is safe.
 func TestPlacementMove(t *testing.T) {
 	t.Parallel()
 	h, service := localPlacementHarness(t)
+	h.source = h.node(h.source.ID, api.NodeStatusShuttingDown, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	sbx := h.running(t)
 	var lose atomic.Bool
 	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, &lose)
@@ -392,12 +393,14 @@ func TestPlacementRefusals(t *testing.T) {
 		code    codes.Code
 		message string
 	}{
-		"source":    {codes.FailedPrecondition, "placement changed"},
-		"execution": {codes.FailedPrecondition, "placement changed"},
-		"remote":    {codes.FailedPrecondition, "local cluster"},
-		"unknown":   {codes.NotFound, "unknown"},
-		"target":    {codes.FailedPrecondition, "is draining"},
-		"cpu":       {codes.FailedPrecondition, "CPU differs"},
+		"source":               {codes.FailedPrecondition, "placement changed"},
+		"execution":            {codes.FailedPrecondition, "placement changed"},
+		"remote":               {codes.FailedPrecondition, "local cluster"},
+		"unknown":              {codes.NotFound, "unknown"},
+		"unhealthy source":     {codes.FailedPrecondition, "is unhealthy"},
+		"draining target":      {codes.FailedPrecondition, "is draining"},
+		"shutting down target": {codes.FailedPrecondition, "is shutting_down"},
+		"cpu":                  {codes.FailedPrecondition, "CPU differs"},
 	} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
@@ -415,8 +418,12 @@ func TestPlacementRefusals(t *testing.T) {
 				req.SetExpectedExecutionId(uuid.NewString())
 			case "unknown":
 				req.SetTargetNodeId("node-" + uuid.NewString())
-			case "target":
-				h.target = h.node("node-b", api.NodeStatusDraining, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "unhealthy source":
+				h.node(h.source.ID, api.NodeStatusUnhealthy, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "draining target":
+				h.node(h.target.ID, api.NodeStatusDraining, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "shutting down target":
+				h.node(h.target.ID, api.NodeStatusShuttingDown, nodemanager.WithServiceInstanceID(uuid.NewString()))
 			case "cpu":
 				h.target = h.node("node-b", api.NodeStatusReady, nodemanager.WithCPUInfo("x86_64", "6", "999"), nodemanager.WithServiceInstanceID(uuid.NewString()))
 			}

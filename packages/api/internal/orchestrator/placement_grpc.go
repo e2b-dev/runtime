@@ -32,17 +32,14 @@ var (
 	errNodeUnknown     = fmt.Errorf("%w: the node is unknown", errNodeUnavailable)
 )
 
-// migrationNodes resolves the running execution's source and the requested
-// target as nodes a move may take place between: the source Ready or
-// Draining, since a draining node still serves its sandboxes and is the
-// usual one to migrate off, the target accepting new requests, another
-// process than the source's, the CPU a checkpoint restores on, and room in
-// its hugepage pool, the admission a create runs.
+// migrationNodes allows a source that is ready or draining existing work.
+// The target must accept new requests, run in a different process, have
+// a matching CPU, and pass the same memory admission as a create.
 func (o *Orchestrator) migrationNodes(ctx context.Context, sbx sandbox.Sandbox, targetNodeID string) (*nodemanager.Node, *nodemanager.Node, error) {
 	source, err := o.migrationNode(sbx.ClusterID, sbx.NodeID, func(n *nodemanager.Node) bool {
 		status := n.Status()
 
-		return status == api.NodeStatusReady || status == api.NodeStatusDraining
+		return status == api.NodeStatusReady || status == api.NodeStatusDraining || status == api.NodeStatusShuttingDown
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("source: %w", err)
