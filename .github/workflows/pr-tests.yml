@@ -132,6 +132,12 @@ jobs:
             sudo: true
             race: true
             runner: infra-tests
+          - package: packages/scheduling-api
+            test_path: ./...
+            postgres: true
+            sudo: false
+            race: true
+            runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/shared
             test_path: ./pkg/...
             redis: true

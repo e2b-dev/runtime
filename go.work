@@ -10,6 +10,7 @@ use (
 	./packages/local-dev
 	./packages/nomad-nodepool-apm
 	./packages/orchestrator
+	./packages/scheduling-api
 	./packages/shared
 
 	./tests/integration

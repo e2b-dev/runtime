@@ -90,7 +90,7 @@ download-public-firecrackers:
 	find ./packages/fc-versions/builds/ -name firecracker -exec chmod +x {} \;
 
 .PHONY: generate
-generate: generate/api generate/orchestrator generate/client-proxy generate/envd generate/db generate/shared generate-tests generate-mocks
+generate: generate/api generate/orchestrator generate/client-proxy generate/envd generate/db generate/shared generate/scheduling-api generate-tests generate-mocks
 generate/%:
 	@echo "Generating code for *$(notdir $@)*"
 	$(MAKE) -C packages/$(notdir $@) generate

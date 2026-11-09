@@ -197,7 +197,7 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 ## Important Development Notes
 
 ### Working with Proto/gRPC
-- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`
+- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`, scheduling protos at `packages/scheduling-api/e2b/` (`make -C packages/scheduling-api generate`)
 - Shared protos: `packages/shared/pkg/grpc/`
 - After editing proto files, run `make generate/orchestrator` and `make generate/shared`
 
