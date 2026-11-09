@@ -40,7 +40,7 @@ func EnsureDirs(path string, uid, gid int) error {
 
 			// Chown even if another process created the directory (os.IsExist),
 			// since it may not have called Chown yet. Chown is idempotent.
-			err = os.Chown(subpath, uid, gid)
+			err = Chown(subpath, uid, gid)
 			if err != nil {
 				return fmt.Errorf("failed to chown directory: %w", err)
 			}
