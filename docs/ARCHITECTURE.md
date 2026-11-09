@@ -122,6 +122,15 @@ image, which E2B Embed runs on port 3001 against the API alone.
   `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
   and temporal-claim verification remain required.
   Backed by an auth DB (Postgres) with a Redis team cache.
+- **Validation errors**: a request the OpenAPI validator refuses gets the first line of the
+  validator's message. For a body field it names the field and the rule it failed, not the value;
+  a parameter of a non-string type that cannot be parsed has its value quoted. The body of a
+  refused request is never logged. Fields that carry credentials (webhook signing secrets,
+  registry credentials, secret values) are marked `format: password` in the spec.
+- **Request URLs in telemetry**: the shared access log and tracing middleware record the route
+  template (e.g. `/sandboxes/:sandboxID`) instead of the path, and no query, so no value a client
+  put in the URL is recorded. A request that matches no route is recorded as `<unmatched route>`.
+  Handlers add the IDs worth recording, such as `sandbox.id`, as span attributes.
 - **API-group rate limits**: operations declare a group through the `x-api-group` OpenAPI
   extension. After authentication succeeds, its callback wrapper reads the validator's
   already-matched operation and stores the API group directly in Gin's context. The rate limiter
@@ -230,7 +239,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   crosses that hop, and no response - here or in a log, a span or an error - carries a secret
   value. What a caller stores is a runtime marker, not a resolved secret; orchestrator-ee resolves
   a marker to a value at sandbox egress, never here. Without a configured address, or with the flag
-  off, the routes stay registered and answer 403. Responses are `Cache-Control: no-store`, request bodies are capped at 512 KiB, and values
+  off, the routes stay registered and answer 403. The handlers mark their responses
+  `Cache-Control: no-store`, request bodies are capped at 512 KiB, and values
   at 64 KiB. A create carries the cap on live secrets the backend enforces: `max_secrets` is one
   of the team's limits and resolves with the rest of them in the statement that loads the team (its
   `project_limits` value, else the deployment's `default_limits`).
@@ -245,8 +255,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   does not depend on how a deployment is wired. A backend failure the caller cannot act on is
   answered with the endpoint's own message; the outcomes that keep their identity are
   not-found, a rejected request, the webhook-count limit, and a timeout. A create or update
-  body carries the webhook's signing secret, so a request rejected before the handler has its
-  body kept out of the response, the access log and the span. Reads are capped at 100
+  body carries the webhook's signing secret; like every refused request's body, it is kept out
+  of the response, the access log and the span. Reads are capped at 100
   deliveries per page.
 - **Rig passthrough**: admin endpoints under `/clusters/{clusterID}/rigs` manage a cluster's
   orchestrator node pools ("rigs"). They list rigs, change rig capacity, list and terminate

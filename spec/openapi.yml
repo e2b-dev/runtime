@@ -3119,6 +3119,7 @@ components:
           type: string
           description: AWS Access Key ID for ECR authentication
         awsSecretAccessKey:
+          format: password
           type: string
           description: AWS Secret Access Key for ECR authentication
         awsRegion:
@@ -3136,6 +3137,7 @@ components:
           enum: [gcp]
           description: Type of registry authentication
         serviceAccountJson:
+          format: password
           type: string
           description: Service Account JSON for GCP authentication
 
@@ -3154,6 +3156,7 @@ components:
           type: string
           description: Username to use for the registry
         password:
+          format: password
           type: string
           description: Password to use for the registry
 
@@ -4070,6 +4073,7 @@ components:
             lower-cased before storage and returned in that canonical form;
             the sec_ prefix is reserved for secret identifiers.
         value:
+          format: password
           type: string
           description: Runtime marker stored as the secret's first version. The runtime resolves it to a value at sandbox egress.
         metadata:
@@ -4081,6 +4085,7 @@ components:
         - value
       properties:
         value:
+          format: password
           type: string
           description: Runtime marker stored as the secret's new version. The runtime resolves it to a value at sandbox egress.
         metadata:
@@ -4167,6 +4172,7 @@ components:
           type: boolean
           default: true
         signatureSecret:
+          format: password
           type: string
           description: Secret used to sign the webhook payloads
     WebhookCreation:
@@ -4251,6 +4257,7 @@ components:
           items:
             type: string
         signatureSecret:
+          format: password
           type: string
           description: Secret used to sign the webhook payloads
     WebhookDelivery:

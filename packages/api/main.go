@@ -125,10 +125,6 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 	r.Use(gin.Recovery())
 
-	// Every secrets response is uncacheable, whichever layer answers. Must run
-	// before anything that can write a response.
-	r.Use(customMiddleware.NoStoreSecrets())
-
 	r.Use(
 		// We use custom otel gin middleware because we want to log 4xx errors in the otel
 		sharedmiddleware.ExcludeRoutes(

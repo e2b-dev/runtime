@@ -33,6 +33,19 @@ type Config struct {
 	Skipper Skipper
 }
 
+// RouteTemplateOf is the route template the request matched, or a fixed
+// placeholder when it matched none.
+func RouteTemplateOf(c *gin.Context) string {
+	if route := c.FullPath(); route != "" {
+		return route
+	}
+
+	return "<unmatched route>"
+}
+
+// LoggingMiddleware writes one access log line per request. It names the
+// route the request matched instead of its path, and records no query, so no
+// value a client put in the URL is recorded.
 func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 	skipPaths := make(map[string]bool, len(conf.SkipPaths))
 	for _, path := range conf.SkipPaths {
@@ -43,9 +56,9 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		start := time.Now()
 
-		// Preserve this if any middleware modifies these values
+		// Preserve this if any middleware modifies it; it decides only whether
+		// the request is logged.
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
 		c.Next()
 		track := true
 
@@ -72,10 +85,10 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 				end = end.UTC()
 			}
 
+			route := RouteTemplateOf(c)
 			fields := []zapcore.Field{
 				zap.String("method", c.Request.Method),
-				zap.String("path", path),
-				zap.String("query", query),
+				zap.String("path", route),
 				zap.String("user-agent", c.Request.UserAgent()),
 				zap.Duration("latency", latency),
 			}
@@ -115,7 +128,7 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 				level = zapcore.WarnLevel
 			}
 
-			logger.Log(ctx, level, path, fields...)
+			logger.Log(ctx, level, route, fields...)
 		}
 	}
 }
