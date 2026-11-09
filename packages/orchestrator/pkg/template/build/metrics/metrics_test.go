@@ -19,7 +19,9 @@ func TestRecordBuildResultLabels(t *testing.T) {
 	m, err := NewBuildMetrics(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
 	require.NoError(t, err)
 
-	m.RecordBuildResult(t.Context(), "team-1", BuildResultSuccess, "resizable", "not_resizable")
+	m.RecordBuildResult(t.Context(), "team-1", BuildResultSuccess, BuildSizing{
+		VcpuSizing: "resizable", VcpuBuilt: "not_resizable", MemorySizing: "resizable", MemoryBuilt: "resizable",
+	})
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &rm))
@@ -35,6 +37,8 @@ func TestRecordBuildResultLabels(t *testing.T) {
 				attribute.String("result", "success"),
 				attribute.String("vcpu_sizing", "resizable"),
 				attribute.String("built", "not_resizable"),
+				attribute.String("memory_sizing", "resizable"),
+				attribute.String("memory_built", "resizable"),
 				telemetry.WithTeamID("team-1"),
 			)
 			assert.True(t, want.Equals(&sum.DataPoints[0].Attributes), sum.DataPoints[0].Attributes.Encoded(attribute.DefaultEncoder()))

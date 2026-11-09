@@ -371,6 +371,8 @@ func (f *Factory) startInPlace(ctx context.Context, from *Sandbox, endAt time.Ti
 		return nil, fmt.Errorf("sandbox end time %s is in the past", endAt)
 	}
 
+	// prepareColdBoot has resolved the boot's vCPU capacity and hotplug region into from.Config,
+	// from the request or the snapshot, so the refusals in takeForBoot see what this boot will use.
 	h, err := from.takeForBoot(ctx)
 	if err != nil {
 		return nil, err
@@ -412,9 +414,13 @@ const fsRecoveryTriggerGuestReset = "guest_reset"
 
 // takeForBoot refuses a boot the guest cannot take before anything moves,
 // then takes the slot and the overlay: a refusal inside CreateSandbox would
-// come after the take and before the new cleanup chain holds them.
+// come after the take and before the new cleanup chain holds them. It reads
+// s.Config, so it must run after prepareColdBoot has resolved the boot into it.
 func (s *Sandbox) takeForBoot(ctx context.Context) (*handedOver, error) {
 	if err := refuseColdBootVcpus(s.Config); err != nil {
+		return nil, err
+	}
+	if _, err := coldBootMemoryHotplug(s.Config, fc.ProcessOptions{}); err != nil {
 		return nil, err
 	}
 

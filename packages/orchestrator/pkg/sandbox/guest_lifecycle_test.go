@@ -240,3 +240,19 @@ func TestExitCountersWanted(t *testing.T) {
 		assert.True(t, (&Factory{featureFlags: on}).exitCountersWanted(t.Context(), linux.Runtime, linux.Config), flag.Key())
 	}
 }
+
+// A reboot in place whose hotplug region this boot cannot carry is refused before the slot and
+// the overlay move, like a guest that cannot take its vCPUs.
+func TestTakeForBootRefusesAnUnsupportedRegion(t *testing.T) { //nolint:paralleltest // its Close counts in the closed-sandbox metric the map tests read
+	f := newRebootFixture(t, time.Now().Add(time.Hour))
+	f.old.Config.MemoryHotplugMB = 3072
+	f.old.Config.FirecrackerConfig.FirecrackerVersion = "v1.14-0.3.1"
+
+	h, err := f.old.takeForBoot(t.Context())
+	require.ErrorIs(t, err, fc.ErrMemoryHotplugFirecracker)
+	assert.Nil(t, h)
+	assert.Equal(t, [2]int32{0, 0}, f.releases(), "nothing moved and nothing was released")
+
+	require.NoError(t, f.old.Close(t.Context()))
+	assert.Equal(t, [2]int32{1, 1}, f.releases(), "the old lifecycle returned both")
+}

@@ -68,3 +68,28 @@ func TestHasTscKhzTemplate(t *testing.T) {
 		assert.Equal(t, tc.want, info.HasTscKhzTemplate(), "HasTscKhzTemplate(%s)", tc.version)
 	}
 }
+
+// v1.17-0.4.0 is the first release whose memory endpoints report the full
+// snapshot layout, which a hotplug region with gaps needs.
+func TestHasMemoryHotplug(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"v1.17-0.4.0", true},
+		{"v1.17-0.4.1", true},
+		{"v1.17-1.0.0", true},
+		{"v1.14-0.3.1", false},
+		{"v1.14-0.2.1", false},
+		{"v1.17.0", false},         // bare upstream: never qualifies
+		{"v1.14.1_431f1fc", false}, // legacy: never qualifies
+	}
+
+	for _, tc := range cases {
+		info, err := New(tc.version)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, info.HasMemoryHotplug(), "HasMemoryHotplug(%s)", tc.version)
+	}
+}

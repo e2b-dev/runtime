@@ -99,6 +99,7 @@ type Server struct {
 	sandboxKilledCounter      metric.Int64Counter
 	sandboxCrashedCounter     metric.Int64Counter
 	guestRebootsCounter       metric.Int64Counter
+	memoryHotplugRefused      metric.Int64Counter
 	guestRebootDuration       metric.Int64Histogram
 	sandboxCheckpointCounter  metric.Int64Counter
 	sandboxCheckpointDuration metric.Int64Histogram
@@ -229,6 +230,12 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to register guest reboots counter: %w", err)
 	}
 	server.guestRebootsCounter = guestRebootsCounter
+
+	memoryHotplugRefused, err := telemetry.GetCounter(meter, telemetry.SandboxMemoryHotplugRefused)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register memory hotplug refusals counter: %w", err)
+	}
+	server.memoryHotplugRefused = memoryHotplugRefused
 
 	guestRebootDuration, err := telemetry.GetHistogram(meter, telemetry.GuestRebootDurationHistogramName)
 	if err != nil {

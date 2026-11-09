@@ -549,6 +549,15 @@ var (
 	// 0 applies no default.
 	ResizableTemplateDefaultMaxCpuFlag = NewIntFlag("resizable-template-default-max-cpu", 0)
 
+	// TemplateMemoryHotplugMaxRatioFlag caps a template build's memory hotplug region
+	// (maxMemoryMB - memoryMB) at this many times its boot RAM (memoryMB); 0 is no cap.
+	// The template-manager evaluates it per build with the template and team contexts.
+	// The default 3 matches the guest's auto-movable ratio (301%), within which every
+	// plugged block is onlined movable and so stays unpluggable. It applies only when a
+	// template is built: resumes, cold boots and reboots of templates built under a
+	// looser cap keep working if it is lowered later.
+	TemplateMemoryHotplugMaxRatioFlag = NewIntFlag("template-memory-hotplug-max-ratio", 3)
+
 	// CustomerSecretsFlag gates the customer-facing secret management routes
 	// per project during rollout. It falls back to off, so a deployment that
 	// cannot reach LaunchDarkly keeps the routes dark.

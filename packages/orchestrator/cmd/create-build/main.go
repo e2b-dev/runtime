@@ -79,6 +79,8 @@ func main() {
 	vcpu := flag.Int("vcpu", 2, "vCPUs")
 	maxVcpu := flag.Int("max-vcpus", 0, "vCPUs in the final template VM, of which -vcpu are online; 0 means -vcpu")
 	memory := flag.Int("memory", 1024, "memory MB")
+	maxMemory := flag.Int("max-memory-mb", 0, "memory MB the final template VM can grow to, -memory of boot RAM plus a hotplug region; 0 means -memory")
+	maxMemoryRatio := flag.Int("max-memory-ratio", sbxfc.DefaultMemoryHotplugMaxRatio, "cap on the hotplug region as a multiple of -memory; 0 means no cap")
 	disk := flag.Int("disk", 1024, "disk MB")
 	hugePages := flag.Bool("hugepages", true, "use 2MB huge pages for memory (false = 4KB pages)")
 	disableMemfd := flag.Bool("disable-memfd", false, "disable memfd-backed guest memory")
@@ -114,6 +116,15 @@ func main() {
 		}
 		if !sbxfc.ValidMachineVcpus(int64(*maxVcpu)) {
 			log.Fatalf("invalid -max-vcpus %d: cannot boot a VM with %d vcpus on this host", *maxVcpu, *maxVcpu)
+		}
+	}
+
+	if *maxMemory != 0 {
+		if err := sbxfc.ValidateMemoryHotplug(int64(*memory), int64(*maxMemory), "-memory", "-max-memory-mb"); err != nil {
+			log.Fatalf("invalid flags: %v", err)
+		}
+		if err := sbxfc.ValidateMemoryHotplugRatio(int64(*memory), int64(*maxMemory), int64(*maxMemoryRatio), "-max-memory-mb"); err != nil {
+			log.Fatalf("invalid flags: %v", err)
 		}
 	}
 
@@ -161,7 +172,7 @@ func main() {
 		log.Fatalf("network config: %v", err)
 	}
 
-	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *maxVcpu, *memory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, cpuTmpl, localMode, *verbose, *timeout, builderConfig, networkConfig)
+	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *maxVcpu, *memory, *maxMemory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, cpuTmpl, localMode, *verbose, *timeout, builderConfig, networkConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -256,7 +267,7 @@ func setupEnv(ctx context.Context, storagePath, sandboxDir, kernel, fc string, l
 func doBuild(
 	parentCtx context.Context,
 	templateID, buildID, fromBuild, kernel, fc string,
-	vcpu, maxVcpu, memory, disk int,
+	vcpu, maxVcpu, memory, maxMemory, disk int,
 	hugePages bool,
 	startCmd, setupCmd, readyCmd string,
 	cpuTemplate *cputemplate.Template,
@@ -435,6 +446,10 @@ func doBuild(
 		}
 	}
 
+	if err := (sbxfc.Config{KernelVersion: kernel, FirecrackerVersion: fc}).RefuseMemoryHotplug(int64(max(maxMemory-memory, 0))); err != nil {
+		return fmt.Errorf("-max-memory-mb: %w", err)
+	}
+
 	tmpl := config.TemplateConfig{
 		Version:            templates.TemplateV2LatestVersion,
 		TemplateID:         templateID,
@@ -442,6 +457,7 @@ func doBuild(
 		VCpuCount:          int64(vcpu),
 		MaxVCpuCount:       int64(maxVcpu),
 		MemoryMB:           int64(memory),
+		MaxMemoryMB:        int64(maxMemory),
 		DiskSizeMB:         int64(disk),
 		FreeDiskSizeMB:     int64(disk),
 		HugePages:          hugePages,

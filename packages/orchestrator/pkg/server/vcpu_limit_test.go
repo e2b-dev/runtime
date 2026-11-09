@@ -1,19 +1,25 @@
 package server
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 func TestCreate_RefusesInvalidVcpuLimits(t *testing.T) {
@@ -97,4 +103,43 @@ func TestValidateColdBootVcpus(t *testing.T) {
 		assert.Equal(t, codes.InvalidArgument, status.Code(validateColdBootVcpus(2, 3, 0)))
 		assert.Equal(t, codes.InvalidArgument, status.Code(validateColdBootVcpus(3, 0, 0)))
 	}
+}
+
+// A region the start cannot carry is refused for good, with its reason named in the refusal and
+// counted, so a firecracker-versions line below the hotplug release is an alertable signal.
+func TestMemoryHotplugRefusalIsNamedAndCounted(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	counter, err := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server").Int64Counter("refused")
+	require.NoError(t, err)
+	s := &Server{memoryHotplugRefused: counter}
+
+	refusal := s.memoryHotplugRefusal(t.Context(), fmt.Errorf("resume: %w", fc.ErrMemoryHotplugFirecracker), sandboxtypes.RuntimeMetadata{})
+	require.Error(t, refusal)
+	st := status.Convert(refusal)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Contains(t, st.Message(), "memory hotplug refused (firecracker)")
+	createRefusalDetail(t, st)
+
+	_, ok := s.countMemoryHotplugRefusal(t.Context(), fmt.Errorf("boot: %w", fc.ErrMemoryHotplugKernel), memoryHotplugPathReboot)
+	assert.True(t, ok)
+	require.NoError(t, s.memoryHotplugRefusal(t.Context(), errors.New("network slot unavailable"), sandboxtypes.RuntimeMetadata{}))
+	assert.False(t, guestCannotRun(fc.ErrMemoryHotplugFirecracker), "the hotplug refusal has its own branch")
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, md := range sm.Metrics {
+			sum, ok := md.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			for _, dp := range sum.DataPoints {
+				reason, _ := dp.Attributes.Value("reason")
+				path, _ := dp.Attributes.Value("path")
+				got[reason.AsString()+"/"+path.AsString()] += dp.Value
+			}
+		}
+	}
+	assert.Equal(t, map[string]int64{"firecracker/start": 1, "kernel/reboot": 1}, got)
 }

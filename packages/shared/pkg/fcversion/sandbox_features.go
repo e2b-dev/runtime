@@ -21,6 +21,13 @@ var (
 	// x86_tsc_khz (v1.14-0.3.0). firecracker-versions must not map a line below
 	// it: snapshots built above it store x86_tsc_khz, and their cold boots would fail.
 	tscKhzTemplateMinE2B = semver.New(0, 3, 0, "", "")
+	// memoryHotplugMinE2B is the first release (v1.17-0.4.0) whose memory
+	// endpoints report the full snapshot layout with unplugged hotplug slots as
+	// gaps. An older one packs plugged slots together, so exporting a snapshot
+	// with a gap below plugged memory copies the wrong pages. firecracker-versions must not map
+	// a line below it while templates with a memory hotplug region exist: their resumes and cold
+	// boots are refused there.
+	memoryHotplugMinE2B = semver.New(0, 4, 0, "", "")
 )
 
 func (v *Info) atLeastE2B(minVersion *semver.Version) bool {
@@ -47,6 +54,12 @@ func (v *Info) HasFilesystemSnapshots() bool {
 // x86_tsc_khz.
 func (v *Info) HasTscKhzTemplate() bool {
 	return v.atLeastE2B(tscKhzTemplateMinE2B)
+}
+
+// HasMemoryHotplug reports whether this build's release contract includes a
+// virtio-mem hotplug region whose snapshots the orchestrator can export.
+func (v *Info) HasMemoryHotplug() bool {
+	return v.atLeastE2B(memoryHotplugMinE2B)
 }
 
 func (v *Info) HasFreePageReporting() bool {

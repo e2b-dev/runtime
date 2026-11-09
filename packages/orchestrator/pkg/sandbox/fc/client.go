@@ -616,6 +616,31 @@ func (c *apiClient) setEntropyDevice(ctx context.Context) error {
 	})
 }
 
+func (c *apiClient) getMemoryHotplug(ctx context.Context) (*models.MemoryHotplugStatus, error) {
+	res, err := c.client.Operations.GetMemoryHotplug(&operations.GetMemoryHotplugParams{Context: ctx})
+	if err != nil {
+		return nil, fmt.Errorf("error getting memory hotplug: %w", err)
+	}
+
+	return res.Payload, nil
+}
+
+func (c *apiClient) setMemoryHotplug(ctx context.Context, totalMib int64) error {
+	_, err := c.client.Operations.PutMemoryHotplug(&operations.PutMemoryHotplugParams{
+		Context: ctx,
+		Body: &models.MemoryHotplugConfig{
+			TotalSizeMib: totalMib,
+			BlockSizeMib: MemoryHotplugBlockMiB,
+			SlotSizeMib:  MemoryHotplugSlotMiB,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error setting memory hotplug: %w", err)
+	}
+
+	return nil
+}
+
 func (c *apiClient) startVM(ctx context.Context) error {
 	return telemetry.Observe0(ctx, tracer, "start-vm-fc", func(ctx context.Context) error {
 		start := models.InstanceActionInfoActionTypeInstanceStart

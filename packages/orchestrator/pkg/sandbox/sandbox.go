@@ -141,6 +141,10 @@ type Config struct {
 	// ConfiguredVmVcpus is the requested or inherited VM capacity; 0 means unspecified.
 	// On a memory resume, the snapshot's recorded capacity takes precedence.
 	ConfiguredVmVcpus int64
+	// MemoryHotplugMB is the virtio-mem hotplug region, in MiB above RamMB, a cold boot
+	// configures with nothing plugged; 0 is none. A memory resume ignores it and keeps the
+	// region its snapshot recorded.
+	MemoryHotplugMB int64
 
 	// TotalDiskSizeMB optional, now used only for metrics.
 	TotalDiskSizeMB   int64
@@ -521,8 +525,13 @@ type Sandbox struct {
 	balloonMode atomic.Uint32
 	// resolvedVmVcpus is the capacity recorded on pause; inferred for legacy snapshots.
 	resolvedVmVcpus int64
+	// memoryHotplugMB is the hotplug region this VM has: the one a cold boot configured, or
+	// the one its snapshot recorded. Pause records it.
+	memoryHotplugMB int64
 	// readBalloonCaps replaces the device read in tests; nil means the process.
 	readBalloonCaps func(context.Context) (fc.BalloonCaps, error)
+	// readPluggedMemory replaces the hotplug status read in tests; nil means the process.
+	readPluggedMemory func(context.Context) (int64, error)
 	// balloonReadRetryAt (unix ns) holds off the checkpoint-time device read
 	// after a failure, so an unreadable balloon does not cost every checkpoint
 	// the full read bound.
@@ -761,6 +770,12 @@ func networkModeOf(placement *orchestrator.SandboxNetworkPlacement) catalog.Netw
 // as the snapshot's vcpu_count. 0 when unknown (a legacy snapshot that never recorded it).
 func (s *Sandbox) MachineVcpus() int64 {
 	return s.resolvedVmVcpus
+}
+
+// MemoryHotplugMB is the virtio-mem hotplug region the Firecracker VM has above its boot RAM,
+// in MiB; 0 is none. Pause records it as the snapshot's memory_hotplug_mb.
+func (s *Sandbox) MemoryHotplugMB() int64 {
+	return s.memoryHotplugMB
 }
 
 func (s *Sandbox) LoggerMetadata() sbxlogger.SandboxMetadata {
@@ -1297,6 +1312,10 @@ func (f *Factory) CreateSandbox(
 	if err := refuseColdBootVcpus(config); err != nil {
 		return nil, err
 	}
+	processOptions, err := coldBootMemoryHotplug(config, processOptions)
+	if err != nil {
+		return nil, err
+	}
 
 	createOpts := createOptions{networkAssignReason: NetworkAssignReasonCreate}
 	for _, opt := range opts {
@@ -1531,6 +1550,7 @@ func (f *Factory) CreateSandbox(
 	// resume configures none.
 	sbx.StampBalloonMode(balloonModeOf(bootBalloonCaps(config, freePageHinting)))
 	sbx.resolvedVmVcpus = max(config.Vcpu, config.ConfiguredVmVcpus)
+	sbx.memoryHotplugMB = processOptions.MemoryHotplugMB
 
 	processOptions.ACPIPowerOff = acpiPowerOffFor(ctx, f.featureFlags, runtime, config)
 	err = fcHandle.Create(
@@ -1869,6 +1889,9 @@ func (f *Factory) ResumeSandbox(
 		return nil, err
 	}
 	if err := refuseEnvdTokenReplacement(meta, config.Envd.AccessToken, !config.SkipEnvdWait); err != nil {
+		return nil, err
+	}
+	if err := config.FirecrackerConfig.RefuseMemoryHotplugRestore(meta.MemoryHotplugMB); err != nil {
 		return nil, err
 	}
 
@@ -2261,6 +2284,7 @@ func (f *Factory) ResumeSandbox(
 		// of the per-resume KPI histograms (see WaitForEnvd).
 		skipStartupMetrics: !ropts.describesCustomerStart(),
 		resolvedVmVcpus:    resolvedVmVcpus,
+		memoryHotplugMB:    meta.MemoryHotplugMB,
 
 		skipThaw:             ropts.skipThaw,
 		inheritedEnvdVersion: resumeGateEnvdVersion(ropts.inheritedEnvdVersion, meta.RunningEnvdVersion),
@@ -3055,6 +3079,9 @@ func (s *Sandbox) Pause(
 	if s.resolvedVmVcpus > 0 {
 		m = m.WithVcpuCount(s.resolvedVmVcpus)
 	}
+	// Device truth over lineage, like the balloon: a cold boot that configured no region
+	// records none, whatever its template was built with.
+	m = m.WithMemoryHotplugMB(s.memoryHotplugMB)
 	// The device names the memory image bakes are the ones this VM was loaded with;
 	// a snapshot this runtime made has none and stays as it was.
 	m = m.WithDeviceNames(s.Config.FirecrackerConfig.RootfsDriveID, s.Config.FirecrackerConfig.NetIfaceID, s.Config.FirecrackerConfig.RootfsFile)

@@ -240,6 +240,18 @@ type Template struct {
 	// arrive as max_vcpus (or vcpu when the allocation is unchanged).
 	VcpuCount int64 `json:"vcpu_count,omitempty"`
 
+	// MemoryHotplugMB is the size in MiB of the virtio-mem hotplug region the VM in this snapshot
+	// was booted with, above its boot RAM; 0 is none. Firecracker fixes the region at first boot
+	// and a memory snapshot carries it, so the memfile is boot RAM plus this region, and a cold
+	// boot of the lineage must configure the same region to come back with the same capacity.
+	//
+	// It does not lift the version. Readers only special-case versions at or below
+	// DeprecatedVersion and parse any later one as this struct, so a binary that predates the
+	// field would read a bumped file the same way and still drop the field on its next pause;
+	// a bump cannot make it refuse. Rollback safety comes from every orchestrator running this
+	// code before a template with a region exists.
+	MemoryHotplugMB int64 `json:"memory_hotplug_mb,omitempty"`
+
 	// FilesystemOnly marks a snapshot that persists only the filesystem (no
 	// memory snapshot); resuming it must cold-boot (reboot) from the rootfs. The
 	// zero value (false) is a full memory snapshot, so pre-existing snapshots
@@ -459,7 +471,7 @@ func V1TemplateVersion() Template {
 
 // BasedOn derives the metadata of a build that starts FROM another template.
 //
-// Deliberately does NOT carry CmdlineArgs, CPU templates or VcpuCount: a new build resolves its
+// Deliberately does NOT carry CmdlineArgs, CPU templates, VcpuCount or MemoryHotplugMB: a new build resolves its
 // own settings and cold-boots a VM at its own size, which Pause records in its snapshot.
 func (t Template) BasedOn(
 	ft FromTemplate,
@@ -488,6 +500,7 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
 		VcpuCount:        t.VcpuCount,
+		MemoryHotplugMB:  t.MemoryHotplugMB,
 		GuestOS:          t.GuestOS,
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
@@ -511,6 +524,7 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 		CPUTemplate:      t.CPUTemplate,
 		BuildCPUTemplate: t.BuildCPUTemplate,
 		VcpuCount:        t.VcpuCount,
+		MemoryHotplugMB:  t.MemoryHotplugMB,
 		GuestOS:          t.GuestOS,
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
@@ -538,6 +552,15 @@ func (t Template) WithVcpuCount(vcpus int64) Template {
 	return t
 }
 
+// WithMemoryHotplugMB returns a copy of the template stamped with the hotplug region the VM has.
+// Like WithVcpuCount it never lifts the version: a V1 file keeps only its version, so the size is
+// lost there, and no V1 lineage has a hotplug region.
+func (t Template) WithMemoryHotplugMB(mb int64) Template {
+	t.MemoryHotplugMB = mb
+
+	return t
+}
+
 // WithPrefetch returns a copy of the template with the given prefetch mapping.
 func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 	return Template{
@@ -553,6 +576,7 @@ func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 		CPUTemplate:        t.CPUTemplate,
 		BuildCPUTemplate:   t.BuildCPUTemplate,
 		VcpuCount:          t.VcpuCount,
+		MemoryHotplugMB:    t.MemoryHotplugMB,
 		EnvdUnresponsive:   t.EnvdUnresponsive,
 		RunningEnvdVersion: t.RunningEnvdVersion,
 		GuestOS:            t.GuestOS,

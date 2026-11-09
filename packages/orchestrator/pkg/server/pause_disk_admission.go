@@ -80,7 +80,7 @@ func statNearestExisting(path string) (unix.Stat_t, bool) {
 }
 
 // pauseDiskNeed bounds the bytes a pause writes under the build directory. The
-// memory diff cannot exceed the guest's memory, and dirty pages are only
+// memory diff cannot exceed boot RAM plus the plugged hotplug memory, and dirty pages are only
 // countable once the guest is paused, which is too late to refuse; without a
 // memfd the export writes the raw diff and dedups it into a second file before
 // closing the first, so both exist at once. The rootfs diff is what the
@@ -93,7 +93,7 @@ func statNearestExisting(path string) (unix.Stat_t, bool) {
 func (s *Server) pauseDiskNeed(ctx context.Context, sbx *sandbox.Sandbox, filesystemOnly, shared bool) (int64, error) {
 	need := pauseSnapfileAllowance
 	if !filesystemOnly {
-		ram := sbx.Config.RamMB << 20
+		ram := s.pauseMemoryMB(ctx, sbx) << 20
 		need += ram
 		if !s.memfdExport(ctx, sbx) && s.memfileDedupEnabled(ctx) {
 			need += ram
@@ -111,6 +111,24 @@ func (s *Server) pauseDiskNeed(ctx context.Context, sbx *sandbox.Sandbox, filesy
 	}
 
 	return need, nil
+}
+
+// pauseMemoryMB bounds the memory a pause exports: dirty pages live only in boot RAM and in the
+// slots plugged now. A sandbox without a region asks Firecracker nothing; one whose plugged size
+// cannot be read is bounded by its whole region.
+func (s *Server) pauseMemoryMB(ctx context.Context, sbx *sandbox.Sandbox) int64 {
+	if sbx.MemoryHotplugMB() == 0 {
+		return sbx.Config.RamMB
+	}
+	plugged, err := sbx.PluggedMemoryMB(ctx)
+	if err != nil {
+		sbxlogger.I(sbx).Warn(ctx, "Cannot read the plugged memory, bounding the pause by the whole hotplug region",
+			zap.Error(err), zap.Int64("memory_hotplug_mb", sbx.MemoryHotplugMB()))
+
+		return sbx.Config.RamMB + sbx.MemoryHotplugMB()
+	}
+
+	return sbx.Config.RamMB + plugged
 }
 
 // memfdExport reports whether the sandbox's memory is exported from a memfd

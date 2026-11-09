@@ -98,6 +98,12 @@ message TemplateConfig {
   // Provisioning and step VMs boot with vCpuCount; absent means the final VM does too.
   // On x86, both counts must be 1 or even because each is a physical VM size.
   optional int32 maxVCpuCount = 18;
+
+  // Memory size the final template VM can grow to, in MiB, of which memoryMB is
+  // boot RAM and the rest a hotplug region with nothing plugged. Provisioning and
+  // step VMs boot without it; absent or equal to memoryMB means no hotplug region.
+  // The region (maxMemoryMB - memoryMB) must be a multiple of 128 MiB.
+  optional int32 maxMemoryMB = 19;
 }
 
 message TemplateCreateRequest {

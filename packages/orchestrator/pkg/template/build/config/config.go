@@ -44,6 +44,11 @@ type TemplateConfig struct {
 	// The amount of RAM memory to allocate to the VM, in MiB.
 	MemoryMB int64
 
+	// Memory size, in MiB, the final template VM can grow to: MemoryMB of boot RAM plus a
+	// hotplug region with nothing plugged. Provisioning and step VMs boot without the region;
+	// 0 or MemoryMB means none.
+	MaxMemoryMB int64
+
 	// The amount of free rootfs working space provided before build steps, in MiB.
 	DiskSizeMB int64
 
@@ -163,6 +168,34 @@ func VcpuSizing(vcpus, maxVCpus int64) string {
 	case maxVCpus == 0:
 		return "absent"
 	case maxVCpus > vcpus:
+		return "resizable"
+	default:
+		return "equal"
+	}
+}
+
+// MemoryHotplugMB is the hotplug region of the final template VM, in MiB; 0 is none.
+func (e TemplateConfig) MemoryHotplugMB() int64 {
+	return MemoryHotplugRegionMB(e.MemoryMB, e.MaxMemoryMB)
+}
+
+// MemoryHotplugRegionMB is the hotplug region above memoryMB of boot RAM for a maximum of
+// maxMemoryMB; 0 when the maximum is absent or not above boot RAM.
+func MemoryHotplugRegionMB(memoryMB, maxMemoryMB int64) int64 {
+	if maxMemoryMB <= memoryMB {
+		return 0
+	}
+
+	return maxMemoryMB - memoryMB
+}
+
+// MemorySizing labels the memory a build requests: absent (maxMemoryMB 0), equal, or resizable
+// (a hotplug region above boot RAM).
+func MemorySizing(memoryMB, maxMemoryMB int64) string {
+	switch {
+	case maxMemoryMB == 0:
+		return "absent"
+	case maxMemoryMB > memoryMB:
 		return "resizable"
 	default:
 		return "equal"

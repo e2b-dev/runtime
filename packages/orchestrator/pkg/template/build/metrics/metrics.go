@@ -121,13 +121,24 @@ func (m *BuildMetrics) RecordPhaseDuration(ctx context.Context, teamID string, d
 	m.BuildPhaseDurationHistogram.Record(ctx, duration.Milliseconds(), metric.WithAttributes(attrs...))
 }
 
+// BuildSizing labels what a build requested and what it built: VcpuSizing and MemorySizing are
+// absent|equal|resizable, VcpuBuilt and MemoryBuilt resizable|not_resizable|none.
+type BuildSizing struct {
+	VcpuSizing   string
+	VcpuBuilt    string
+	MemorySizing string
+	MemoryBuilt  string
+}
+
 // RecordBuildResult records the result of a build (success, user_error, or internal_error),
-// the vCPU sizing it requested and whether it built a resizable template.
-func (m *BuildMetrics) RecordBuildResult(ctx context.Context, teamID string, resultType BuildResultType, vcpuSizing, built string) {
+// the vCPU and memory sizing it requested and whether it built a resizable template.
+func (m *BuildMetrics) RecordBuildResult(ctx context.Context, teamID string, resultType BuildResultType, sizing BuildSizing) {
 	attrs := []attribute.KeyValue{
 		attribute.String("result", string(resultType)),
-		attribute.String("vcpu_sizing", vcpuSizing),
-		attribute.String("built", built),
+		attribute.String("vcpu_sizing", sizing.VcpuSizing),
+		attribute.String("built", sizing.VcpuBuilt),
+		attribute.String("memory_sizing", sizing.MemorySizing),
+		attribute.String("memory_built", sizing.MemoryBuilt),
 		telemetry.WithTeamID(teamID),
 	}
 	m.BuildResultCounter.Add(ctx, 1, metric.WithAttributes(attrs...))

@@ -441,3 +441,47 @@ func TestAdmitPauseDisk_NoReleaseLandsBetweenTheSampleAndTheReservation(t *testi
 	held.Release()
 	assert.Zero(t, s.buildDisk.reserved.Load())
 }
+
+// A pause can only write dirty pages from boot RAM and the slots plugged now, so the bound is
+// boot RAM plus what Firecracker reports as plugged, the whole region when that cannot be read,
+// and boot RAM alone, without asking Firecracker, for a sandbox without a region.
+func TestAdmitPauseDisk_BoundsTheHotplugRegionByWhatIsPlugged(t *testing.T) {
+	t.Parallel()
+
+	errUnreadable := errors.New("hotplug status unreadable")
+	for _, tc := range []struct {
+		name     string
+		region   int64
+		plugged  int64
+		readErr  error
+		wantMiB  int64
+		wantRead bool
+	}{
+		{name: "region with nothing plugged", region: 3072, plugged: 0, wantMiB: 2048, wantRead: true},
+		{name: "region with some plugged", region: 3072, plugged: 1024, wantMiB: 2048 + 1024, wantRead: true},
+		{name: "unreadable plugged size", region: 3072, readErr: errUnreadable, wantMiB: 2048 + 3072, wantRead: true},
+		{name: "no region", region: 0, wantMiB: 2048},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := diskAdmissionTestServer(t, 0, 64*testGiB)
+			sbx := diskAdmissionSandbox(t, "sbx-disk-hotplug", 27, 2048)
+			sbx.SetMemoryHotplugMBForTest(tc.region)
+			read := false
+			sbx.SetPluggedMemoryReaderForTest(func(ctx context.Context) (int64, error) {
+				read = true
+				_, hasDeadline := ctx.Deadline()
+				assert.True(t, hasDeadline, "the read is bounded")
+
+				return tc.plugged, tc.readErr
+			})
+
+			reservation, err := s.admitPauseDisk(t.Context(), sbx, false)
+			require.NoError(t, err)
+			assert.Equal(t, pauseSnapfileAllowance+tc.wantMiB*testMiB, s.buildDisk.reserved.Load())
+			assert.Equal(t, tc.wantRead, read)
+			reservation.Release()
+		})
+	}
+}

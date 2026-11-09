@@ -451,7 +451,10 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 			return nil, createRefused(ctx, codes.InvalidArgument, "%s", err.Error())
 		}
-		if errors.Is(err, sandbox.ErrEnvdTokenNotReplaceable) || errors.Is(err, sandbox.ErrColdBootVcpus) {
+		if refusal := s.memoryHotplugRefusal(ctx, err, runtime); refusal != nil {
+			return nil, refusal
+		}
+		if guestCannotRun(err) {
 			logger.L().Warn(ctx, "start refused: the guest cannot run this request", zap.Error(err),
 				logger.WithSandboxID(runtime.SandboxID),
 				logger.WithBuildID(runtime.BuildID),
@@ -1327,6 +1330,9 @@ func (s *Server) rebootEnded(ctx context.Context, sbx *sandbox.Sandbox, res sand
 		zap.Int("consecutive_resets", res.ConsecutiveResets),
 	}
 	if res.Sandbox == nil {
+		if reason, ok := s.countMemoryHotplugRefusal(ctx, res.Err, memoryHotplugPathReboot); ok {
+			fields = append(fields, zap.String("memory_hotplug_refused", reason))
+		}
 		sbxlogger.I(sbx).Warn(ctx, "guest reset, sandbox not booted again", append(fields, zap.Error(res.Err))...)
 
 		if killReason, ok := bootKillToPublish(res); ok {
@@ -3898,6 +3904,47 @@ func envdUpgradeDeclineReason(sentUser string, workdirWithheld, envdPreserves bo
 	}
 
 	return ""
+}
+
+// guestCannotRun reports a start the guest cannot take on any node, so placement must not retry it.
+func guestCannotRun(err error) bool {
+	return errors.Is(err, sandbox.ErrEnvdTokenNotReplaceable) || errors.Is(err, sandbox.ErrColdBootVcpus)
+}
+
+const (
+	memoryHotplugPathStart  = "start"
+	memoryHotplugPathReboot = "reboot"
+)
+
+// memoryHotplugRefusal answers a start whose hotplug region cannot run here. Like guestCannotRun
+// it is not retried elsewhere: the same template resolves to the same Firecracker and kernel on
+// every node. It is named and counted, so a firecracker-versions line below the hotplug release
+// shows as reason=firecracker rather than as generic resume failures.
+func (s *Server) memoryHotplugRefusal(ctx context.Context, err error, runtime sandboxtypes.RuntimeMetadata) error {
+	reason, ok := s.countMemoryHotplugRefusal(ctx, err, memoryHotplugPathStart)
+	if !ok {
+		return nil
+	}
+	logger.L().Warn(ctx, "start refused: the sandbox's memory hotplug region cannot run here", zap.Error(err),
+		zap.String("reason", reason),
+		logger.WithSandboxID(runtime.SandboxID),
+		logger.WithBuildID(runtime.BuildID),
+		logger.WithTemplateID(runtime.TemplateID))
+
+	return createRefused(ctx, codes.FailedPrecondition, "memory hotplug refused (%s): %s", reason, err.Error())
+}
+
+// countMemoryHotplugRefusal counts err when it is a memory hotplug refusal, returning its reason.
+func (s *Server) countMemoryHotplugRefusal(ctx context.Context, err error, path string) (string, bool) {
+	if !errors.Is(err, fc.ErrMemoryHotplugUnsupported) {
+		return "", false
+	}
+	reason := fc.MemoryHotplugRefusalReason(err)
+	if s.memoryHotplugRefused != nil {
+		s.memoryHotplugRefused.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason), attribute.String("path", path)))
+	}
+
+	return reason, true
 }
 
 // createRefused is a create refusal no other node and no retry changes, with

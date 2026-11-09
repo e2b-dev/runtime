@@ -125,6 +125,16 @@ func (s *Sandbox) SetMachineVcpusForTest(n int64) {
 	s.resolvedVmVcpus = n
 }
 
+// SetMemoryHotplugMBForTest sets the hotplug region the sandbox reports as its VM's.
+func (s *Sandbox) SetMemoryHotplugMBForTest(mb int64) {
+	s.memoryHotplugMB = mb
+}
+
+// SetPluggedMemoryReaderForTest replaces the hotplug status read PluggedMemoryMB makes.
+func (s *Sandbox) SetPluggedMemoryReaderForTest(read func(context.Context) (int64, error)) {
+	s.readPluggedMemory = read
+}
+
 // SetFeatureFlagsForTest gives the sandbox the flag client its flag reads use.
 func (s *Sandbox) SetFeatureFlagsForTest(ff *featureflags.Client) {
 	s.featureFlags = ff

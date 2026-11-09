@@ -53,6 +53,9 @@ type ServerStore struct {
 	templateStorage storage.StorageProvider
 	buildStorage    storage.StorageProvider
 
+	// memorySizing replaces the memory_sizing counter in tests; nil is the package's.
+	memorySizing metric.Int64Counter
+
 	wg           *sync.WaitGroup // wait group for running builds
 	activeBuilds atomic.Int64    // counter for active builds (for debugging)
 

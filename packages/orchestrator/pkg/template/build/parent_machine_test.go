@@ -315,6 +315,52 @@ func TestAdoptParentMachineRefusesAResizableRequest(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A resumed parent's memory layout is fixed at its first boot, so a request to grow is refused;
+// a default (booting) parent cold-boots its child's finalize, which may add a region of its own.
+func TestAdoptParentMachineRefusesAMemoryMaximumOnAResumingParent(t *testing.T) {
+	t.Parallel()
+
+	index := parentIndex{parents: map[string]metadata.Template{
+		"p":              {Version: metadata.CurrentVersion, GuestOS: "resuming", VcpuCount: 2},
+		"default-parent": {Version: metadata.CurrentVersion, Template: metadata.TemplateMetadata{BuildID: "default-parent", KernelVersion: "vmlinux-6.1.158", FirecrackerVersion: "v1.14.1_431f1fc"}, MemoryHotplugMB: 3072},
+	}}
+	sized := func(context.Context, string) (int64, error) { return 4096, nil }
+
+	in := requestedContext("p")
+	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount, in.Config.MaxMemoryMB = 4096, 2, 0, 8192
+	_, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.ErrorIs(t, err, errNoMemoryHotplug)
+	require.NotNil(t, phases.UnwrapPhaseBuildError(err), "the request is the user's to change")
+
+	in.Config.MaxMemoryMB = 4096
+	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.NoError(t, err, "a maximum equal to the memory size is no region")
+	assert.Zero(t, bc.Config.MaxMemoryMB)
+
+	in = requestedContext("default-parent")
+	in.Config.MaxMemoryMB = 2048
+	bc, err = adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.NoError(t, err)
+	assert.Equal(t, int64(2048), bc.Config.MaxMemoryMB, "a booting parent keeps the request's maximum")
+}
+
+// The memfile of a parent with a hotplug region is boot RAM plus the region; the machine size
+// the child must match is the boot RAM.
+func TestAdoptParentMachineSizesBootRAMWithoutTheRegion(t *testing.T) {
+	t.Parallel()
+
+	index := parentIndex{parents: map[string]metadata.Template{
+		"p": {Version: metadata.CurrentVersion, GuestOS: "resuming", VcpuCount: 2, MemoryHotplugMB: 1024},
+	}}
+	sized := func(context.Context, string) (int64, error) { return 5120, nil }
+
+	in := requestedContext("p")
+	in.Config.MemoryMB, in.Config.VCpuCount, in.Config.MaxVCpuCount = 4096, 2, 0
+	bc, err := adoptParentMachine(t.Context(), in, index, sized, flagsOn(true), logger.NewNopLogger())
+	require.NoError(t, err)
+	assert.Equal(t, int64(4096), bc.Config.MemoryMB)
+}
+
 // A resumed parent that records no vCPU count is refused: the size the child
 // would advertise could differ from the VM its snapshot restores.
 func TestAdoptParentMachineRefusesAnUnknownVcpuCount(t *testing.T) {

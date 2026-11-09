@@ -127,6 +127,10 @@ const (
 	// path is running for a live sandbox, start for a reset before envd
 	// first answered on a create or resume.
 	OrchestratorSandboxGuestRebootsCounterName CounterType = "orchestrator.sandbox.guest_reboots"
+	// SandboxMemoryHotplugRefused counts starts and in-place reboots refused because their
+	// memory hotplug region cannot run here, by reason and path; reason=firecracker is a
+	// firecracker-versions line below the hotplug release.
+	SandboxMemoryHotplugRefused CounterType = "orchestrator.sandbox.memory_hotplug.refused"
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
@@ -416,6 +420,9 @@ const (
 	// TemplateBuildVcpuSizing counts the VM sizing builds request, before they run;
 	// template.build.result says what they built.
 	TemplateBuildVcpuSizing CounterType = "orchestrator.template.build.vcpu_sizing"
+	// TemplateBuildMemorySizing counts the memory sizing builds request, once per request before
+	// they run; result is absent|equal|resizable|rejected, and a rejection carries its reason.
+	TemplateBuildMemorySizing CounterType = "orchestrator.template.build.memory_sizing"
 
 	// PauseResumePrefetchHarvestAttempts counts pause-resume prefetch harvest
 	// attempts, by result (success|resume_failed|collect_failed|skipped). The
@@ -911,6 +918,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (guest_reset/guest_crash/guest_poweroff/clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
 	OrchestratorSandboxGuestRebootsCounterName:   "Guest resets the orchestrator handled, labeled by outcome, guest_os and path",
+	SandboxMemoryHotplugRefused:                  "Sandbox starts and in-place reboots refused because their memory hotplug region cannot run here, by reason (firecracker|kernel|invalid) and path (start|reboot)",
 	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent) and rpc (pause/checkpoint)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
@@ -936,6 +944,7 @@ var counterDesc = map[CounterType]string{
 	TemplateBuildCmdlineArgs:                     "Template builds by the guest kernel cmdline parameters applied",
 	TemplateBuildCPUTemplate:                     "Template builds by the digest of the custom Firecracker CPU template applied and by result (result=applied|rejected|none|malformed)",
 	TemplateBuildVcpuSizing:                      "Template build VM sizing requested, counted before the build runs, by result (absent|equal|resizable|rejected)",
+	TemplateBuildMemorySizing:                    "Template build memory sizing requested, counted once per request when the template-manager accepts or refuses it (a retry of a registered build is not counted again), by result (absent|equal|resizable|rejected) and, for rejected, reason (invalid|ratio|firecracker|kernel|internal); refusals inside the build show on template.build.result",
 	OrchestratorEnvdUpgradeGated:                 "Resumes where the envd-upgrade-target flag named a target but a gate declined the upgrade, by reason",
 	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss), upgrade path, and on a miss its cause (not_warmed|stalled|cancelled|unreadable|no_cache)",
 	OrchestratorEnvdBinaryCacheDeliveries:        "Host envd binary reads at delivery time, by outcome (copy|stale) and upgrade path",
@@ -1013,6 +1022,7 @@ var counterUnits = map[CounterType]string{
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
 	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
 	OrchestratorSandboxGuestRebootsCounterName:   "{reset}",
+	SandboxMemoryHotplugRefused:                  "{sandbox}",
 	OrchestratorSandboxPauseAdmissionCounterName: "{decision}",
 	OrchestratorSandboxCheckpointCounterName:     "{checkpoint}",
 	OrchestratorFPRResumeCounterName:             "{resume}",
@@ -1038,6 +1048,7 @@ var counterUnits = map[CounterType]string{
 	TemplateBuildCmdlineArgs:                     "{build}",
 	TemplateBuildCPUTemplate:                     "{build}",
 	TemplateBuildVcpuSizing:                      "{build}",
+	TemplateBuildMemorySizing:                    "{build}",
 	OrchestratorEnvdUpgradeGated:                 "{sandbox}",
 	OrchestratorEnvdBinaryCacheReads:             "{read}",
 	OrchestratorEnvdBinaryCacheWarms:             "{warm}",

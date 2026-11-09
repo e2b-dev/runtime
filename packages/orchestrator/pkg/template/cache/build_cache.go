@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -144,6 +145,9 @@ func (c *BuildCache) Get(buildID string) (*BuildInfo, error) {
 	return value, nil
 }
 
+// ErrBuildExists is a Create for a build ID the cache already holds, as an API retry sends.
+var ErrBuildExists = errors.New("already exists in cache")
+
 // Create creates a new build if it doesn't exist in the cache or the build was already finished.
 func (c *BuildCache) Create(teamID string, buildID string, logs *buildlogger.LogEntryLogger) (*BuildInfo, error) {
 	info := &BuildInfo{
@@ -157,7 +161,7 @@ func (c *BuildCache) Create(teamID string, buildID string, logs *buildlogger.Log
 		ttlcache.WithDisableTouchOnHit[string, *BuildInfo](),
 	)
 	if found {
-		return nil, fmt.Errorf("build %s already exists in cache", buildID)
+		return nil, fmt.Errorf("build %s %w", buildID, ErrBuildExists)
 	}
 
 	return info, nil
