@@ -74,7 +74,7 @@ func TestEveryWorkedKindReportsAtZeroInEveryQueueClassAndState(t *testing.T) {
 	observed := observeBacklog(t, BacklogConfig{
 		Kinds:        []string{"apply_project_limits", "purge_user"},
 		QueueClasses: []string{"default", "control_plane"},
-	}, nil, 0)
+	}, &backlogSnapshot{collectedAt: time.Now()}, 0)
 
 	assert.Len(t, observed["outbox.jobs"], 2*2*len(ActiveJobStates))
 	assert.Len(t, observed["outbox.oldest_available_age"], 2*2)
@@ -122,8 +122,7 @@ func TestTheSnapshotAgeCountsFromStartBeforeTheFirstRead(t *testing.T) {
 	observed := observeBacklog(t, BacklogConfig{Kinds: []string{"meter_usage"}}, nil, time.Minute)
 
 	assert.GreaterOrEqual(t, observed.value(t, "outbox.snapshot_age", map[string]string{}), 59.0)
-	assert.InDelta(t, 0, observed.value(t, "outbox.jobs", map[string]string{"job.kind": "meter_usage", "queue.class": "default", "state": "available"}), 0,
-		"a service with no queue classes reports its queues as default")
+	assert.Empty(t, observed["outbox.jobs"], "a missing snapshot must never look like an empty backlog")
 }
 
 func with(attributes map[string]string, key, value string) map[string]string {

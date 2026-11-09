@@ -1919,6 +1919,10 @@ func (f *Factory) ResumeSandbox(
 	//
 	// Register as PRIORITY so teardown cancels the fetch before normal cleanup.
 	prefetchCtx, cancelPrefetch := context.WithCancel(execCtx)
+	if ropts.vmPaused {
+		// Keep prefetch in the paused restore trace while the sandbox owns cancellation.
+		prefetchCtx = trace.ContextWithSpanContext(prefetchCtx, trace.SpanContextFromContext(ctx))
+	}
 	cleanup.AddPriority(ctx, func(context.Context) error {
 		cancelPrefetch()
 
@@ -2010,6 +2014,7 @@ func (f *Factory) ResumeSandbox(
 			// last-cycle fetch begins.
 			if initMapping != nil {
 				p := prefetch.New(sbxLogger, memfile, fcUffd, initMapping, f.featureFlags)
+				p.RestorePaused = ropts.vmPaused
 				if err := p.Start(prefetchCtx); err != nil {
 					sbxLogger.Error(ctx, "failed to start init prefetcher", zap.Error(err))
 				}
@@ -2018,6 +2023,7 @@ func (f *Factory) ResumeSandbox(
 			// Last-cycle diff, fetch-only.
 			if lastCycleMapping != nil {
 				p := prefetch.New(sbxLogger, memfile, fcUffd, lastCycleMapping, f.featureFlags)
+				p.RestorePaused = ropts.vmPaused
 				p.Prefault = false
 				if err := p.Start(prefetchCtx); err != nil {
 					sbxLogger.Error(ctx, "failed to start last-cycle prefetcher", zap.Error(err))
