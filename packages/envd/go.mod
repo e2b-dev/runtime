@@ -39,7 +39,7 @@ require (
 	github.com/go-openapi/jsonpointer v1.0.1 // indirect
 	github.com/go-openapi/testify/v2 v2.8.0 // indirect
 	github.com/gofrs/uuid/v5 v5.5.1 // indirect
-	github.com/jackc/pgx/v5 v5.11.0 // indirect
+	github.com/jackc/pgx/v5 v5.12.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
