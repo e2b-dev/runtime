@@ -132,7 +132,7 @@ services:
   # host is the check. No service depends on it, `ready` included.
   otel-collector:
     logging: *logging
-    image: otel/opentelemetry-collector-contrib:0.163.2
+    image: otel/opentelemetry-collector-contrib:0.164.0
     profiles: [otel]
     restart: unless-stopped
     network_mode: host

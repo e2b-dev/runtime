@@ -18,7 +18,7 @@
   path: /spec/template/spec/initContainers/-
   value:
     name: otel-collector
-    image: otel/opentelemetry-collector-contrib:0.163.2
+    image: otel/opentelemetry-collector-contrib:0.164.0
     restartPolicy: Always
     args: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumeMounts:
