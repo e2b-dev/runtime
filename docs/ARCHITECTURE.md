@@ -562,8 +562,10 @@ Key mechanisms (all under `pkg/sandbox/`):
   scratch directories.
 - **Networking** (`network/`): each sandbox gets a slot — a network namespace with a veth pair
   and a tap device, unique host-side IP (from a /16), NAT, and per-slot nftables egress firewall
-  (with SNI/Host-inspecting TCP firewall for domain allow/deny lists). Slots are pooled and
-  reused; slot indexes are allocated locally against the node's netns state (leftover
+  (with SNI/Host-inspecting TCP firewall for domain allow/deny lists). The TCP firewall bounds
+  concurrent HTTP Host and TLS SNI classifications per sandbox and gives each classification a
+  read deadline before applying the existing connection limit to the routed connection.
+  Slots are pooled and reused; slot indexes are allocated locally against the node's netns state (leftover
   namespaces from a previous run are torn down by startup reclaim).
   NFS release removes the old lifecycle's route, closes MOUNT admission and invalidates its
   handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
