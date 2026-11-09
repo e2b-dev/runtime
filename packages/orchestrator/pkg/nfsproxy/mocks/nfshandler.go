@@ -19,10 +19,19 @@ func NewMockHandler(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockHandler {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockHandler{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -67,7 +76,7 @@ type MockHandler_Change_Call struct {
 // Change is a helper method to define mock.On call
 //   - context1 context.Context
 //   - filesystem billy.Filesystem
-func (_e *MockHandler_Expecter) Change(context1 interface{}, filesystem interface{}) *MockHandler_Change_Call {
+func (_e *MockHandler_Expecter) Change(context1 any, filesystem any) *MockHandler_Change_Call {
 	return &MockHandler_Change_Call{Call: _e.mock.On("Change", context1, filesystem)}
 }
 
@@ -125,7 +134,7 @@ type MockHandler_FSStat_Call struct {
 //   - context1 context.Context
 //   - filesystem billy.Filesystem
 //   - fSStat *nfs.FSStat
-func (_e *MockHandler_Expecter) FSStat(context1 interface{}, filesystem interface{}, fSStat interface{}) *MockHandler_FSStat_Call {
+func (_e *MockHandler_Expecter) FSStat(context1 any, filesystem any, fSStat any) *MockHandler_FSStat_Call {
 	return &MockHandler_FSStat_Call{Call: _e.mock.On("FSStat", context1, filesystem, fSStat)}
 }
 
@@ -206,7 +215,7 @@ type MockHandler_FromHandle_Call struct {
 // FromHandle is a helper method to define mock.On call
 //   - ctx context.Context
 //   - fh []byte
-func (_e *MockHandler_Expecter) FromHandle(ctx interface{}, fh interface{}) *MockHandler_FromHandle_Call {
+func (_e *MockHandler_Expecter) FromHandle(ctx any, fh any) *MockHandler_FromHandle_Call {
 	return &MockHandler_FromHandle_Call{Call: _e.mock.On("FromHandle", ctx, fh)}
 }
 
@@ -308,7 +317,7 @@ type MockHandler_InvalidateHandle_Call struct {
 //   - context1 context.Context
 //   - filesystem billy.Filesystem
 //   - bytes []byte
-func (_e *MockHandler_Expecter) InvalidateHandle(context1 interface{}, filesystem interface{}, bytes interface{}) *MockHandler_InvalidateHandle_Call {
+func (_e *MockHandler_Expecter) InvalidateHandle(context1 any, filesystem any, bytes any) *MockHandler_InvalidateHandle_Call {
 	return &MockHandler_InvalidateHandle_Call{Call: _e.mock.On("InvalidateHandle", context1, filesystem, bytes)}
 }
 
@@ -390,7 +399,7 @@ type MockHandler_Mount_Call struct {
 //   - context1 context.Context
 //   - conn net.Conn
 //   - mountRequest nfs.MountRequest
-func (_e *MockHandler_Expecter) Mount(context1 interface{}, conn interface{}, mountRequest interface{}) *MockHandler_Mount_Call {
+func (_e *MockHandler_Expecter) Mount(context1 any, conn any, mountRequest any) *MockHandler_Mount_Call {
 	return &MockHandler_Mount_Call{Call: _e.mock.On("Mount", context1, conn, mountRequest)}
 }
 
@@ -455,7 +464,7 @@ type MockHandler_ToHandle_Call struct {
 //   - cxt context.Context
 //   - fs billy.Filesystem
 //   - path []string
-func (_e *MockHandler_Expecter) ToHandle(cxt interface{}, fs interface{}, path interface{}) *MockHandler_ToHandle_Call {
+func (_e *MockHandler_Expecter) ToHandle(cxt any, fs any, path any) *MockHandler_ToHandle_Call {
 	return &MockHandler_ToHandle_Call{Call: _e.mock.On("ToHandle", cxt, fs, path)}
 }
 

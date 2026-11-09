@@ -18,10 +18,19 @@ func NewMockChunkService_ReadAtBuildSeekableClient(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockChunkService_ReadAtBuildSeekableClient {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockChunkService_ReadAtBuildSeekableClient{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -263,7 +272,7 @@ type MockChunkService_ReadAtBuildSeekableClient_RecvMsg_Call struct {
 
 // RecvMsg is a helper method to define mock.On call
 //   - m any
-func (_e *MockChunkService_ReadAtBuildSeekableClient_Expecter) RecvMsg(m interface{}) *MockChunkService_ReadAtBuildSeekableClient_RecvMsg_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableClient_Expecter) RecvMsg(m any) *MockChunkService_ReadAtBuildSeekableClient_RecvMsg_Call {
 	return &MockChunkService_ReadAtBuildSeekableClient_RecvMsg_Call{Call: _e.mock.On("RecvMsg", m)}
 }
 
@@ -314,7 +323,7 @@ type MockChunkService_ReadAtBuildSeekableClient_SendMsg_Call struct {
 
 // SendMsg is a helper method to define mock.On call
 //   - m any
-func (_e *MockChunkService_ReadAtBuildSeekableClient_Expecter) SendMsg(m interface{}) *MockChunkService_ReadAtBuildSeekableClient_SendMsg_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableClient_Expecter) SendMsg(m any) *MockChunkService_ReadAtBuildSeekableClient_SendMsg_Call {
 	return &MockChunkService_ReadAtBuildSeekableClient_SendMsg_Call{Call: _e.mock.On("SendMsg", m)}
 }
 

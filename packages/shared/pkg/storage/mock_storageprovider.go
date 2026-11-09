@@ -17,10 +17,19 @@ func NewMockStorageProvider(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockStorageProvider {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockStorageProvider{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -63,7 +72,7 @@ type MockStorageProvider_DeleteObjectsWithPrefix_Call struct {
 // DeleteObjectsWithPrefix is a helper method to define mock.On call
 //   - ctx context.Context
 //   - prefix string
-func (_e *MockStorageProvider_Expecter) DeleteObjectsWithPrefix(ctx interface{}, prefix interface{}) *MockStorageProvider_DeleteObjectsWithPrefix_Call {
+func (_e *MockStorageProvider_Expecter) DeleteObjectsWithPrefix(ctx any, prefix any) *MockStorageProvider_DeleteObjectsWithPrefix_Call {
 	return &MockStorageProvider_DeleteObjectsWithPrefix_Call{Call: _e.mock.On("DeleteObjectsWithPrefix", ctx, prefix)}
 }
 
@@ -175,7 +184,7 @@ type MockStorageProvider_OpenBlob_Call struct {
 // OpenBlob is a helper method to define mock.On call
 //   - ctx context.Context
 //   - path string
-func (_e *MockStorageProvider_Expecter) OpenBlob(ctx interface{}, path interface{}) *MockStorageProvider_OpenBlob_Call {
+func (_e *MockStorageProvider_Expecter) OpenBlob(ctx any, path any) *MockStorageProvider_OpenBlob_Call {
 	return &MockStorageProvider_OpenBlob_Call{Call: _e.mock.On("OpenBlob", ctx, path)}
 }
 
@@ -243,7 +252,7 @@ type MockStorageProvider_OpenSeekable_Call struct {
 // OpenSeekable is a helper method to define mock.On call
 //   - ctx context.Context
 //   - path string
-func (_e *MockStorageProvider_Expecter) OpenSeekable(ctx interface{}, path interface{}) *MockStorageProvider_OpenSeekable_Call {
+func (_e *MockStorageProvider_Expecter) OpenSeekable(ctx any, path any) *MockStorageProvider_OpenSeekable_Call {
 	return &MockStorageProvider_OpenSeekable_Call{Call: _e.mock.On("OpenSeekable", ctx, path)}
 }
 
@@ -310,7 +319,7 @@ type MockStorageProvider_UploadSignedURL_Call struct {
 //   - ctx context.Context
 //   - path string
 //   - ttl time.Duration
-func (_e *MockStorageProvider_Expecter) UploadSignedURL(ctx interface{}, path interface{}, ttl interface{}) *MockStorageProvider_UploadSignedURL_Call {
+func (_e *MockStorageProvider_Expecter) UploadSignedURL(ctx any, path any, ttl any) *MockStorageProvider_UploadSignedURL_Call {
 	return &MockStorageProvider_UploadSignedURL_Call{Call: _e.mock.On("UploadSignedURL", ctx, path, ttl)}
 }
 

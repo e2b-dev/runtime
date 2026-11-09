@@ -18,10 +18,19 @@ func NewMockFeatureFlagsClient(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFeatureFlagsClient {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFeatureFlagsClient{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -71,9 +80,9 @@ type MockFeatureFlagsClient_BoolFlag_Call struct {
 //   - ctx context.Context
 //   - flagName featureflags.BoolFlag
 //   - contexts ...ldcontext.Context
-func (_e *MockFeatureFlagsClient_Expecter) BoolFlag(ctx interface{}, flagName interface{}, contexts ...interface{}) *MockFeatureFlagsClient_BoolFlag_Call {
+func (_e *MockFeatureFlagsClient_Expecter) BoolFlag(ctx any, flagName any, contexts ...any) *MockFeatureFlagsClient_BoolFlag_Call {
 	return &MockFeatureFlagsClient_BoolFlag_Call{Call: _e.mock.On("BoolFlag",
-		append([]interface{}{ctx, flagName}, contexts...)...)}
+		append([]any{ctx, flagName}, contexts...)...)}
 }
 
 func (_c *MockFeatureFlagsClient_BoolFlag_Call) Run(run func(ctx context.Context, flagName featureflags.BoolFlag, contexts ...ldcontext.Context)) *MockFeatureFlagsClient_BoolFlag_Call {

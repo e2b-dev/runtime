@@ -20,10 +20,19 @@ func NewMockDiff(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockDiff {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockDiff{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -162,7 +171,7 @@ type MockDiff_CachePath_Call struct {
 
 // CachePath is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockDiff_Expecter) CachePath(ctx interface{}) *MockDiff_CachePath_Call {
+func (_e *MockDiff_Expecter) CachePath(ctx any) *MockDiff_CachePath_Call {
 	return &MockDiff_CachePath_Call{Call: _e.mock.On("CachePath", ctx)}
 }
 
@@ -266,7 +275,7 @@ type MockDiff_FileSize_Call struct {
 
 // FileSize is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockDiff_Expecter) FileSize(ctx interface{}) *MockDiff_FileSize_Call {
+func (_e *MockDiff_Expecter) FileSize(ctx any) *MockDiff_FileSize_Call {
 	return &MockDiff_FileSize_Call{Call: _e.mock.On("FileSize", ctx)}
 }
 
@@ -329,7 +338,7 @@ type MockDiff_ReadAt_Call struct {
 //   - p []byte
 //   - off int64
 //   - ft *storage.FrameTable
-func (_e *MockDiff_Expecter) ReadAt(ctx interface{}, p interface{}, off interface{}, ft interface{}) *MockDiff_ReadAt_Call {
+func (_e *MockDiff_Expecter) ReadAt(ctx any, p any, off any, ft any) *MockDiff_ReadAt_Call {
 	return &MockDiff_ReadAt_Call{Call: _e.mock.On("ReadAt", ctx, p, off, ft)}
 }
 
@@ -404,7 +413,7 @@ type MockDiff_Size_Call struct {
 
 // Size is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockDiff_Expecter) Size(ctx interface{}) *MockDiff_Size_Call {
+func (_e *MockDiff_Expecter) Size(ctx any) *MockDiff_Size_Call {
 	return &MockDiff_Size_Call{Call: _e.mock.On("Size", ctx)}
 }
 
@@ -469,7 +478,7 @@ type MockDiff_Slice_Call struct {
 //   - off int64
 //   - length int64
 //   - ft *storage.FrameTable
-func (_e *MockDiff_Expecter) Slice(ctx interface{}, off interface{}, length interface{}, ft interface{}) *MockDiff_Slice_Call {
+func (_e *MockDiff_Expecter) Slice(ctx any, off any, length any, ft any) *MockDiff_Slice_Call {
 	return &MockDiff_Slice_Call{Call: _e.mock.On("Slice", ctx, off, length, ft)}
 }
 

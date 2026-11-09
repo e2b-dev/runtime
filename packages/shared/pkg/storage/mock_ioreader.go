@@ -14,10 +14,19 @@ func NewMockReader(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockReader {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockReader{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -68,7 +77,7 @@ type MockReader_Read_Call struct {
 
 // Read is a helper method to define mock.On call
 //   - p []byte
-func (_e *MockReader_Expecter) Read(p interface{}) *MockReader_Read_Call {
+func (_e *MockReader_Expecter) Read(p any) *MockReader_Read_Call {
 	return &MockReader_Read_Call{Call: _e.mock.On("Read", p)}
 }
 

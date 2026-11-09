@@ -18,10 +18,19 @@ func NewMockBlob(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockBlob {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockBlob{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -72,7 +81,7 @@ type MockBlob_Exists_Call struct {
 
 // Exists is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockBlob_Expecter) Exists(ctx interface{}) *MockBlob_Exists_Call {
+func (_e *MockBlob_Expecter) Exists(ctx any) *MockBlob_Exists_Call {
 	return &MockBlob_Exists_Call{Call: _e.mock.On("Exists", ctx)}
 }
 
@@ -131,9 +140,9 @@ type MockBlob_Put_Call struct {
 //   - ctx context.Context
 //   - data []byte
 //   - opts ...storageopts.PutOption
-func (_e *MockBlob_Expecter) Put(ctx interface{}, data interface{}, opts ...interface{}) *MockBlob_Put_Call {
+func (_e *MockBlob_Expecter) Put(ctx any, data any, opts ...any) *MockBlob_Put_Call {
 	return &MockBlob_Put_Call{Call: _e.mock.On("Put",
-		append([]interface{}{ctx, data}, opts...)...)}
+		append([]any{ctx, data}, opts...)...)}
 }
 
 func (_c *MockBlob_Put_Call) Run(run func(ctx context.Context, data []byte, opts ...storageopts.PutOption)) *MockBlob_Put_Call {
@@ -205,7 +214,7 @@ type MockBlob_WriteTo_Call struct {
 // WriteTo is a helper method to define mock.On call
 //   - ctx context.Context
 //   - dst io.Writer
-func (_e *MockBlob_Expecter) WriteTo(ctx interface{}, dst interface{}) *MockBlob_WriteTo_Call {
+func (_e *MockBlob_Expecter) WriteTo(ctx any, dst any) *MockBlob_WriteTo_Call {
 	return &MockBlob_WriteTo_Call{Call: _e.mock.On("WriteTo", ctx, dst)}
 }
 

@@ -14,10 +14,19 @@ func NewMockFile(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFile {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFile{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -200,7 +209,7 @@ type MockFile_Read_Call struct {
 
 // Read is a helper method to define mock.On call
 //   - p []byte
-func (_e *MockFile_Expecter) Read(p interface{}) *MockFile_Read_Call {
+func (_e *MockFile_Expecter) Read(p any) *MockFile_Read_Call {
 	return &MockFile_Read_Call{Call: _e.mock.On("Read", p)}
 }
 
@@ -261,7 +270,7 @@ type MockFile_ReadAt_Call struct {
 // ReadAt is a helper method to define mock.On call
 //   - p []byte
 //   - off int64
-func (_e *MockFile_Expecter) ReadAt(p interface{}, off interface{}) *MockFile_ReadAt_Call {
+func (_e *MockFile_Expecter) ReadAt(p any, off any) *MockFile_ReadAt_Call {
 	return &MockFile_ReadAt_Call{Call: _e.mock.On("ReadAt", p, off)}
 }
 
@@ -327,7 +336,7 @@ type MockFile_Seek_Call struct {
 // Seek is a helper method to define mock.On call
 //   - offset int64
 //   - whence int
-func (_e *MockFile_Expecter) Seek(offset interface{}, whence interface{}) *MockFile_Seek_Call {
+func (_e *MockFile_Expecter) Seek(offset any, whence any) *MockFile_Seek_Call {
 	return &MockFile_Seek_Call{Call: _e.mock.On("Seek", offset, whence)}
 }
 
@@ -383,7 +392,7 @@ type MockFile_Truncate_Call struct {
 
 // Truncate is a helper method to define mock.On call
 //   - size int64
-func (_e *MockFile_Expecter) Truncate(size interface{}) *MockFile_Truncate_Call {
+func (_e *MockFile_Expecter) Truncate(size any) *MockFile_Truncate_Call {
 	return &MockFile_Truncate_Call{Call: _e.mock.On("Truncate", size)}
 }
 
@@ -487,7 +496,7 @@ type MockFile_Write_Call struct {
 
 // Write is a helper method to define mock.On call
 //   - p []byte
-func (_e *MockFile_Expecter) Write(p interface{}) *MockFile_Write_Call {
+func (_e *MockFile_Expecter) Write(p any) *MockFile_Write_Call {
 	return &MockFile_Write_Call{Call: _e.mock.On("Write", p)}
 }
 

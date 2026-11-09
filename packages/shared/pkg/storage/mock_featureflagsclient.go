@@ -18,10 +18,19 @@ func NewMockFeatureFlagsClient(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFeatureFlagsClient {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFeatureFlagsClient{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -71,9 +80,9 @@ type MockFeatureFlagsClient_BoolFlag_Call struct {
 //   - ctx context.Context
 //   - flag featureflags.BoolFlag
 //   - ldctx ...ldcontext.Context
-func (_e *MockFeatureFlagsClient_Expecter) BoolFlag(ctx interface{}, flag interface{}, ldctx ...interface{}) *MockFeatureFlagsClient_BoolFlag_Call {
+func (_e *MockFeatureFlagsClient_Expecter) BoolFlag(ctx any, flag any, ldctx ...any) *MockFeatureFlagsClient_BoolFlag_Call {
 	return &MockFeatureFlagsClient_BoolFlag_Call{Call: _e.mock.On("BoolFlag",
-		append([]interface{}{ctx, flag}, ldctx...)...)}
+		append([]any{ctx, flag}, ldctx...)...)}
 }
 
 func (_c *MockFeatureFlagsClient_BoolFlag_Call) Run(run func(ctx context.Context, flag featureflags.BoolFlag, ldctx ...ldcontext.Context)) *MockFeatureFlagsClient_BoolFlag_Call {
@@ -143,9 +152,9 @@ type MockFeatureFlagsClient_IntFlag_Call struct {
 //   - ctx context.Context
 //   - flag featureflags.IntFlag
 //   - ldctx ...ldcontext.Context
-func (_e *MockFeatureFlagsClient_Expecter) IntFlag(ctx interface{}, flag interface{}, ldctx ...interface{}) *MockFeatureFlagsClient_IntFlag_Call {
+func (_e *MockFeatureFlagsClient_Expecter) IntFlag(ctx any, flag any, ldctx ...any) *MockFeatureFlagsClient_IntFlag_Call {
 	return &MockFeatureFlagsClient_IntFlag_Call{Call: _e.mock.On("IntFlag",
-		append([]interface{}{ctx, flag}, ldctx...)...)}
+		append([]any{ctx, flag}, ldctx...)...)}
 }
 
 func (_c *MockFeatureFlagsClient_IntFlag_Call) Run(run func(ctx context.Context, flag featureflags.IntFlag, ldctx ...ldcontext.Context)) *MockFeatureFlagsClient_IntFlag_Call {

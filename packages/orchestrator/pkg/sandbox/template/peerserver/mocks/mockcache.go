@@ -20,10 +20,19 @@ func NewMockCache(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockCache {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockCache{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -77,7 +86,7 @@ type MockCache_LookupDiff_Call struct {
 // LookupDiff is a helper method to define mock.On call
 //   - buildID string
 //   - diffType build.DiffType
-func (_e *MockCache_Expecter) LookupDiff(buildID interface{}, diffType interface{}) *MockCache_LookupDiff_Call {
+func (_e *MockCache_Expecter) LookupDiff(buildID any, diffType any) *MockCache_LookupDiff_Call {
 	return &MockCache_LookupDiff_Call{Call: _e.mock.On("LookupDiff", buildID, diffType)}
 }
 
@@ -153,7 +162,7 @@ type MockCache_LookupPinned_Call struct {
 // LookupPinned is a helper method to define mock.On call
 //   - ctx context.Context
 //   - buildID string
-func (_e *MockCache_Expecter) LookupPinned(ctx interface{}, buildID interface{}) *MockCache_LookupPinned_Call {
+func (_e *MockCache_Expecter) LookupPinned(ctx any, buildID any) *MockCache_LookupPinned_Call {
 	return &MockCache_LookupPinned_Call{Call: _e.mock.On("LookupPinned", ctx, buildID)}
 }
 

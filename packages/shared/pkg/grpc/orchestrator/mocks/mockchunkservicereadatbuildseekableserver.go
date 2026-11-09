@@ -18,10 +18,19 @@ func NewMockChunkService_ReadAtBuildSeekableServer(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockChunkService_ReadAtBuildSeekableServer {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockChunkService_ReadAtBuildSeekableServer{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -109,7 +118,7 @@ type MockChunkService_ReadAtBuildSeekableServer_RecvMsg_Call struct {
 
 // RecvMsg is a helper method to define mock.On call
 //   - m any
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) RecvMsg(m interface{}) *MockChunkService_ReadAtBuildSeekableServer_RecvMsg_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) RecvMsg(m any) *MockChunkService_ReadAtBuildSeekableServer_RecvMsg_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_RecvMsg_Call{Call: _e.mock.On("RecvMsg", m)}
 }
 
@@ -160,7 +169,7 @@ type MockChunkService_ReadAtBuildSeekableServer_Send_Call struct {
 
 // Send is a helper method to define mock.On call
 //   - readAtBuildSeekableResponse *orchestrator.ReadAtBuildSeekableResponse
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) Send(readAtBuildSeekableResponse interface{}) *MockChunkService_ReadAtBuildSeekableServer_Send_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) Send(readAtBuildSeekableResponse any) *MockChunkService_ReadAtBuildSeekableServer_Send_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_Send_Call{Call: _e.mock.On("Send", readAtBuildSeekableResponse)}
 }
 
@@ -211,7 +220,7 @@ type MockChunkService_ReadAtBuildSeekableServer_SendHeader_Call struct {
 
 // SendHeader is a helper method to define mock.On call
 //   - mD metadata.MD
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SendHeader(mD interface{}) *MockChunkService_ReadAtBuildSeekableServer_SendHeader_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SendHeader(mD any) *MockChunkService_ReadAtBuildSeekableServer_SendHeader_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_SendHeader_Call{Call: _e.mock.On("SendHeader", mD)}
 }
 
@@ -262,7 +271,7 @@ type MockChunkService_ReadAtBuildSeekableServer_SendMsg_Call struct {
 
 // SendMsg is a helper method to define mock.On call
 //   - m any
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SendMsg(m interface{}) *MockChunkService_ReadAtBuildSeekableServer_SendMsg_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SendMsg(m any) *MockChunkService_ReadAtBuildSeekableServer_SendMsg_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_SendMsg_Call{Call: _e.mock.On("SendMsg", m)}
 }
 
@@ -313,7 +322,7 @@ type MockChunkService_ReadAtBuildSeekableServer_SetHeader_Call struct {
 
 // SetHeader is a helper method to define mock.On call
 //   - mD metadata.MD
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SetHeader(mD interface{}) *MockChunkService_ReadAtBuildSeekableServer_SetHeader_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SetHeader(mD any) *MockChunkService_ReadAtBuildSeekableServer_SetHeader_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_SetHeader_Call{Call: _e.mock.On("SetHeader", mD)}
 }
 
@@ -353,7 +362,7 @@ type MockChunkService_ReadAtBuildSeekableServer_SetTrailer_Call struct {
 
 // SetTrailer is a helper method to define mock.On call
 //   - mD metadata.MD
-func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SetTrailer(mD interface{}) *MockChunkService_ReadAtBuildSeekableServer_SetTrailer_Call {
+func (_e *MockChunkService_ReadAtBuildSeekableServer_Expecter) SetTrailer(mD any) *MockChunkService_ReadAtBuildSeekableServer_SetTrailer_Call {
 	return &MockChunkService_ReadAtBuildSeekableServer_SetTrailer_Call{Call: _e.mock.On("SetTrailer", mD)}
 }
 
