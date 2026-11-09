@@ -202,7 +202,7 @@ func TestPauseSandbox_CapturedKindSharesTheFinalizationBudget(t *testing.T) {
 		$$;
 		CREATE TRIGGER slow_kind_write BEFORE UPDATE OF filesystem_only ON env_builds
 			FOR EACH ROW EXECUTE FUNCTION slow_build_write();
-		CREATE TRIGGER slow_status_write BEFORE UPDATE OF status ON env_builds
+		CREATE TRIGGER slow_status_write BEFORE UPDATE OF status_group ON env_builds
 			FOR EACH ROW EXECUTE FUNCTION slow_build_write();
 	`, half.Seconds()))
 	require.NoError(t, err)

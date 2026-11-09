@@ -84,7 +84,6 @@ new_build as (
         firecracker_version,
         envd_version,
         status_group,
-        status,
         cluster_node_id,
         total_disk_size_mb,
         updated_at,
@@ -106,13 +105,6 @@ new_build as (
         $17,
         $18,
         $19,
-        -- Mirrors status_group until the status column is dropped.
-        CASE $19
-            WHEN 'pending' THEN 'waiting'
-            WHEN 'in_progress' THEN 'building'
-            WHEN 'ready' THEN 'uploaded'
-            WHEN 'failed' THEN 'failed'
-        END,
         $10,
         $20,
         now(),

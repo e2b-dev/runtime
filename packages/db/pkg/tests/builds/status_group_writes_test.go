@@ -15,8 +15,8 @@ import (
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
-// trg_compute_status_group overwrites status_group from status, so only with
-// it disabled does a test show that every writer sets the group itself.
+// trg_compute_status_group derives one status column from the other, so only
+// with it disabled does a test show that every writer sets the group itself.
 func TestBuildWritersSetStatusGroupThemselves(t *testing.T) {
 	t.Parallel()
 
@@ -91,16 +91,6 @@ func TestBuildWritersSetStatusGroupThemselves(t *testing.T) {
 
 	for _, w := range writes {
 		assert.Equal(t, w.want, readStatusGroup(t, ctx, db, w.buildID), w.writer)
-	}
-
-	// The status each writer stores alongside must give back the same group
-	// through the trigger, or the trigger would rewrite it on the next update.
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`ALTER TABLE public.env_builds ENABLE TRIGGER trg_compute_status_group`))
-	for _, w := range writes {
-		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-			`UPDATE public.env_builds SET status = status WHERE id = $1`, w.buildID))
-		assert.Equal(t, w.want, readStatusGroup(t, ctx, db, w.buildID), w.writer+" through the trigger")
 	}
 }
 

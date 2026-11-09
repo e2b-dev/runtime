@@ -13,8 +13,6 @@ RETURNING id;
 WITH invalidated AS (
     UPDATE "public"."env_builds" eb
     SET status_group = 'failed',
-        -- Mirrors status_group until the status column is dropped.
-        status = 'failed',
         reason = @reason,
         updated_at = NOW(),
         finished_at = NOW()
@@ -42,7 +40,6 @@ INSERT INTO "public"."env_builds" (
     team_id,
     updated_at,
     status_group,
-    status,
     ram_mb,
     vcpu,
     kernel_version,
@@ -59,13 +56,6 @@ INSERT INTO "public"."env_builds" (
     (SELECT team_id FROM "public"."envs" WHERE id = sqlc.arg(template_id)::text),
     NOW(),
     @status_group,
-    -- Mirrors status_group until the status column is dropped.
-    CASE @status_group
-        WHEN 'pending' THEN 'waiting'
-        WHEN 'in_progress' THEN 'building'
-        WHEN 'ready' THEN 'uploaded'
-        WHEN 'failed' THEN 'failed'
-    END,
     @ram_mb,
     @vcpu,
     @kernel_version,

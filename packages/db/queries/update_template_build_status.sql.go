@@ -17,13 +17,6 @@ const failTemplateBuildAndDeactivate = `-- name: FailTemplateBuildAndDeactivate 
 WITH failed AS (
     UPDATE "public"."env_builds"
     SET status_group = $1,
-        -- Mirrors status_group until the status column is dropped.
-        status = CASE $1
-            WHEN 'pending' THEN 'waiting'
-            WHEN 'in_progress' THEN 'building'
-            WHEN 'ready' THEN 'uploaded'
-            WHEN 'failed' THEN 'failed'
-        END,
         finished_at = $2,
         reason = $3,
         version = $4
@@ -65,13 +58,6 @@ func (q *Queries) FailTemplateBuildAndDeactivate(ctx context.Context, arg FailTe
 const updateEnvBuildStatus = `-- name: UpdateEnvBuildStatus :exec
 UPDATE "public"."env_builds"
 SET status_group = $1,
-    -- Mirrors status_group until the status column is dropped.
-    status = CASE $1
-        WHEN 'pending' THEN 'waiting'
-        WHEN 'in_progress' THEN 'building'
-        WHEN 'ready' THEN 'uploaded'
-        WHEN 'failed' THEN 'failed'
-    END,
     finished_at = $2,
     reason = $3,
     version = $4

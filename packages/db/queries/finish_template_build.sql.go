@@ -19,13 +19,6 @@ WITH finished AS (
         finished_at = NOW(),
         total_disk_size_mb = $1,
         status_group = $2,
-        -- Mirrors status_group until the status column is dropped.
-        status = CASE $2
-                WHEN 'pending' THEN 'waiting'
-                WHEN 'in_progress' THEN 'building'
-                WHEN 'ready' THEN 'uploaded'
-                WHEN 'failed' THEN 'failed'
-            END,
         envd_version = $3,
         kernel_version = COALESCE(NULLIF($4::text, ''), kernel_version),
         firecracker_version = COALESCE(NULLIF($5::text, ''), firecracker_version)

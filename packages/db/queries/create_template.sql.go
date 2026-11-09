@@ -52,7 +52,6 @@ INSERT INTO "public"."env_builds" (
     team_id,
     updated_at,
     status_group,
-    status,
     ram_mb,
     vcpu,
     kernel_version,
@@ -69,13 +68,6 @@ INSERT INTO "public"."env_builds" (
     (SELECT team_id FROM "public"."envs" WHERE id = $2::text),
     NOW(),
     $3,
-    -- Mirrors status_group until the status column is dropped.
-    CASE $3
-        WHEN 'pending' THEN 'waiting'
-        WHEN 'in_progress' THEN 'building'
-        WHEN 'ready' THEN 'uploaded'
-        WHEN 'failed' THEN 'failed'
-    END,
     $4,
     $5,
     $6,
@@ -135,8 +127,6 @@ const invalidateUnstartedTemplateBuilds = `-- name: InvalidateUnstartedTemplateB
 WITH invalidated AS (
     UPDATE "public"."env_builds" eb
     SET status_group = 'failed',
-        -- Mirrors status_group until the status column is dropped.
-        status = 'failed',
         reason = $1,
         updated_at = NOW(),
         finished_at = NOW()
