@@ -656,6 +656,7 @@ type AdminClusterCreateRequest struct {
 	EndpointTls        bool                `json:"endpoint_tls"`
 	Name               string              `json:"name"`
 	SandboxProxyDomain *string             `json:"sandbox_proxy_domain,omitempty"`
+	TelemetryClientId  *string             `json:"telemetry_client_id,omitempty"`
 	Token              string              `json:"token"`
 }
 
@@ -1531,6 +1532,7 @@ type ManagementClusterRegistrationRequest struct {
 	EndpointTls        bool    `json:"endpoint_tls"`
 	Name               string  `json:"name"`
 	SandboxProxyDomain *string `json:"sandbox_proxy_domain,omitempty"`
+	TelemetryClientId  *string `json:"telemetry_client_id,omitempty"`
 	Token              string  `json:"token"`
 }
 
@@ -1932,11 +1934,17 @@ type NodeSandbox struct {
 	// LifecycleHoldUntil Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
 	LifecycleHoldUntil *time.Time `json:"lifecycleHoldUntil,omitempty"`
 
+	// NetworkMode Network the execution runs on, legacy, egress-router or full-router
+	NetworkMode string `json:"networkMode"`
+
 	// SandboxID Identifier of the sandbox
 	SandboxID string `json:"sandboxID"`
 
 	// TeamID Identifier of the team
 	TeamID openapi_types.UUID `json:"teamID"`
+
+	// VolumesAttached Whether the sandbox runs with managed volumes attached
+	VolumesAttached bool `json:"volumesAttached"`
 }
 
 // NodeSandboxes The sandboxes the API confirms are running on a node, as the node and the API's records agree on them when read. A guest the node runs for an execution the API records elsewhere, or does not record, is left out.
@@ -2646,6 +2654,25 @@ type TeamUser struct {
 
 	// Id Identifier of the user
 	Id openapi_types.UUID `json:"id"`
+}
+
+// TelemetryClusterName defines model for TelemetryClusterName.
+type TelemetryClusterName struct {
+	ClientId *string            `json:"clientId,omitempty"`
+	Id       openapi_types.UUID `json:"id"`
+	Name     string             `json:"name"`
+}
+
+// TelemetryNames defines model for TelemetryNames.
+type TelemetryNames struct {
+	Clusters []TelemetryClusterName       `json:"clusters"`
+	Teams    map[string]TelemetryTeamName `json:"teams"`
+}
+
+// TelemetryTeamName defines model for TelemetryTeamName.
+type TelemetryTeamName struct {
+	ClusterId *openapi_types.UUID `json:"clusterId,omitempty"`
+	Name      string              `json:"name"`
 }
 
 // Template defines model for Template.
@@ -5531,7 +5558,7 @@ type ClientInterface interface {
 
 	// ManagementRegisterClusterWithBody Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5540,7 +5567,7 @@ type ClientInterface interface {
 
 	// ManagementRegisterCluster Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5688,6 +5715,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettings(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementTelemetryNames Read team and cluster names for telemetry.
+	//
+	// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+	//
+	// Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
+	ManagementTelemetryNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetUnstableSandboxesSandboxIDRecord Sandbox record
 	//
@@ -8201,7 +8235,7 @@ func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterI
 
 // ManagementRegisterClusterWithBody Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8220,7 +8254,7 @@ func (c *Client) ManagementRegisterClusterWithBody(ctx context.Context, clusterI
 
 // ManagementRegisterCluster Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8549,6 +8583,23 @@ func (c *Client) ManagementSetProjectSettingsWithBody(ctx context.Context, proje
 // Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 func (c *Client) ManagementSetProjectSettings(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementSetProjectSettingsRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementTelemetryNames Read team and cluster names for telemetry.
+//
+// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+//
+// Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
+func (c *Client) ManagementTelemetryNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementTelemetryNamesRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -14543,6 +14594,33 @@ func NewManagementSetProjectSettingsRequestWithBody(server string, projectID ope
 	return req, nil
 }
 
+// NewManagementTelemetryNamesRequest constructs an http.Request for the ManagementTelemetryNames method
+func NewManagementTelemetryNamesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/telemetry/names")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetUnstableSandboxesSandboxIDRecordRequest constructs an http.Request for the GetUnstableSandboxesSandboxIDRecord method
 func NewGetUnstableSandboxesSandboxIDRecordRequest(server string, sandboxID SandboxID) (*http.Request, error) {
 	var err error
@@ -16712,7 +16790,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16721,7 +16799,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementRegisterClusterWithResponse Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16881,6 +16959,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettingsWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementSetProjectSettingsResponse, error)
+
+	// ManagementTelemetryNamesWithResponse Read team and cluster names for telemetry.
+	//
+	// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
+	ManagementTelemetryNamesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ManagementTelemetryNamesResponse, error)
 
 	// GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
 	//
@@ -25546,6 +25633,61 @@ func (r ManagementSetProjectSettingsResponse) ContentType() string {
 	return ""
 }
 
+type ManagementTelemetryNamesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TelemetryNames
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ManagementTelemetryNamesResponse) GetJSON200() *TelemetryNames {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementTelemetryNamesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementTelemetryNamesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementTelemetryNamesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementTelemetryNamesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementTelemetryNamesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementTelemetryNamesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetUnstableSandboxesSandboxIDRecordResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableSandboxesSandboxIDRecord
 type GetUnstableSandboxesSandboxIDRecordResponse429Headers struct {
 	RetryAfter *int
@@ -29072,7 +29214,7 @@ func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Co
 
 // ManagementRegisterClusterWithBodyWithResponse Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29087,7 +29229,7 @@ func (c *ClientWithResponses) ManagementRegisterClusterWithBodyWithResponse(ctx 
 
 // ManagementRegisterClusterWithResponse Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29360,6 +29502,21 @@ func (c *ClientWithResponses) ManagementSetProjectSettingsWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseManagementSetProjectSettingsResponse(rsp)
+}
+
+// ManagementTelemetryNamesWithResponse Read team and cluster names for telemetry.
+//
+// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
+func (c *ClientWithResponses) ManagementTelemetryNamesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ManagementTelemetryNamesResponse, error) {
+	rsp, err := c.ManagementTelemetryNames(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementTelemetryNamesResponse(rsp)
 }
 
 // GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
@@ -37055,6 +37212,46 @@ func ParseManagementSetProjectSettingsResponse(rsp *http.Response) (*ManagementS
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementTelemetryNamesResponse parses an HTTP response from a ManagementTelemetryNamesWithResponse call
+func ParseManagementTelemetryNamesResponse(rsp *http.Response) (*ManagementTelemetryNamesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementTelemetryNamesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TelemetryNames
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500

@@ -99,6 +99,7 @@ func TestAuthProviderTeamAuthHeaderRoutes(t *testing.T) {
 		"AuthProviderTeamAuth":   auth.HeaderTeamID,
 		"AdminApiKeyAuth":        auth.HeaderAdminToken,
 		"AdminJWTAuth":           auth.HeaderAuthorization,
+		"TelemetryJWTAuth":       auth.HeaderAuthorization,
 		"AdminTeamAuth":          auth.HeaderTeamID,
 	}
 
@@ -186,6 +187,7 @@ func TestAdminTeamAuthSchemeOrder(t *testing.T) {
 		"AuthProviderTeamAuth":   auth.HeaderTeamID,
 		"AdminApiKeyAuth":        auth.HeaderAdminToken,
 		"AdminJWTAuth":           auth.HeaderAuthorization,
+		"TelemetryJWTAuth":       auth.HeaderAuthorization,
 		"AdminTeamAuth":          auth.HeaderTeamID,
 	}
 

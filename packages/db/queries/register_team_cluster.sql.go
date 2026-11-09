@@ -96,6 +96,7 @@ INSERT INTO public.clusters (
     token,
     sandbox_proxy_domain,
     auth_org_id,
+    telemetry_client_id,
     deletion_protection
 )
 VALUES (
@@ -106,7 +107,8 @@ VALUES (
     $5::text,
     $6::text,
     $7::text,
-    $8::boolean
+    $8::text,
+    $9::boolean
 )
 ON CONFLICT (id) DO UPDATE
 SET id = EXCLUDED.id
@@ -116,6 +118,7 @@ WHERE clusters.name = EXCLUDED.name
   AND clusters.token = EXCLUDED.token
   AND clusters.sandbox_proxy_domain IS NOT DISTINCT FROM EXCLUDED.sandbox_proxy_domain
   AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
+  AND clusters.telemetry_client_id IS NOT DISTINCT FROM EXCLUDED.telemetry_client_id
 RETURNING id
 `
 
@@ -127,6 +130,7 @@ type CreateClusterParams struct {
 	Token              string
 	SandboxProxyDomain *string
 	AuthOrgID          *string
+	TelemetryClientID  *string
 	DeletionProtection bool
 }
 
@@ -141,6 +145,7 @@ func (q *Queries) CreateCluster(ctx context.Context, arg CreateClusterParams) (u
 		arg.Token,
 		arg.SandboxProxyDomain,
 		arg.AuthOrgID,
+		arg.TelemetryClientID,
 		arg.DeletionProtection,
 	)
 	var id uuid.UUID
@@ -287,6 +292,7 @@ INSERT INTO public.clusters (
     token,
     sandbox_proxy_domain,
     auth_org_id,
+    telemetry_client_id,
     deletion_protection
 )
 VALUES (
@@ -297,15 +303,16 @@ VALUES (
     $5::text,
     $6::text,
     $7::text,
-    $8::boolean
+    $8::text,
+    $9::boolean
 )
 ON CONFLICT (id) DO UPDATE
 SET token = EXCLUDED.token,
     endpoint = EXCLUDED.endpoint,
     endpoint_tls = EXCLUDED.endpoint_tls,
-    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain
-WHERE clusters.name = EXCLUDED.name
-  AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
+    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain,
+    telemetry_client_id = COALESCE(EXCLUDED.telemetry_client_id, clusters.telemetry_client_id)
+WHERE clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
 RETURNING id
 `
 
@@ -317,13 +324,12 @@ type RegisterManagedClusterParams struct {
 	Token              string
 	SandboxProxyDomain *string
 	AuthOrgID          *string
+	TelemetryClientID  *string
 	DeletionProtection bool
 }
 
-// Management registration of an existing cluster with the same name and auth
-// organization updates its connection details and credential, so a cluster
-// that moves to a new domain keeps its identity. Assignments and stored
-// deletion protection survive.
+// Registration preserves the regional display name and assignments when a
+// cluster refreshes its credentials or moves to a new domain.
 func (q *Queries) RegisterManagedCluster(ctx context.Context, arg RegisterManagedClusterParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, registerManagedCluster,
 		arg.ClusterID,
@@ -333,6 +339,7 @@ func (q *Queries) RegisterManagedCluster(ctx context.Context, arg RegisterManage
 		arg.Token,
 		arg.SandboxProxyDomain,
 		arg.AuthOrgID,
+		arg.TelemetryClientID,
 		arg.DeletionProtection,
 	)
 	var id uuid.UUID

@@ -36,6 +36,7 @@ type Cluster struct {
 	Name                string
 	DeletionProtection  bool
 	DeletionRequestedAt *time.Time
+	TelemetryClientID   *string
 }
 
 type EnvAlias struct {

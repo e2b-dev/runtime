@@ -85,6 +85,7 @@ type Cluster struct {
 	Name                string
 	DeletionProtection  bool
 	DeletionRequestedAt *time.Time
+	TelemetryClientID   pgtype.Text
 }
 
 type DefaultLimit struct {

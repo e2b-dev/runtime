@@ -104,7 +104,7 @@ var (
 	serviceVersion             = "0.30.0" // x-release-please-version
 )
 
-func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T) *http.Server {
+func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier, telemetryJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T) *http.Server {
 	// Rendered before the servers are cleared below, so the served document
 	// keeps them.
 	openAPISpec, err := openapispec.Handler(swagger)
@@ -197,6 +197,7 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 			auth.NewAuthProviderTeamAuthenticator(apiStore.GetTeamFromAuthProviderToken),
 			auth.NewAdminApiKeyAuthenticator(config.AdminToken),
 			auth.NewAdminJWTAuthenticator(adminJWTVerifier),
+			auth.NewTelemetryJWTAuthenticator(telemetryJWTVerifier),
 			auth.NewAdminTeamAuthenticator(apiStore.GetTeamFromAdminToken),
 		},
 		metricsMiddleware.SetProcessingStartTime,
@@ -481,6 +482,13 @@ func run() int {
 		l.Warn(ctx, "ADMIN_AUTH_PROVIDER_CONFIG is not configured; admin JWT requests will return 401")
 	}
 
+	telemetryJWTVerifier, err := auth.NewTelemetryJWKSVerifier(ctx, config.AdminAuthProvider, http.DefaultClient)
+	if err != nil {
+		l.Error(ctx, "initializing telemetry JWT verifier", zap.Error(err))
+
+		return 1
+	}
+
 	grpcAddr := fmt.Sprintf("0.0.0.0:%d", config.APIInternalGrpcPort)
 	grpcListener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", grpcAddr)
 	if err != nil {
@@ -526,7 +534,7 @@ func run() int {
 	}
 
 	// Pass ctx so in-flight requests survive the serve goroutines' exit during graceful shutdown.
-	s := NewGinServer(ctx, config, tel, l, apiStore, adminJWTVerifier, redisClient, featureFlags, swagger)
+	s := NewGinServer(ctx, config, tel, l, apiStore, adminJWTVerifier, telemetryJWTVerifier, redisClient, featureFlags, swagger)
 	httpListener := mtls.WrapHTTPServer(s, httpInner, tlsConfig.http, tlsConfig.httpHealthPaths)
 	httpserver.ConfigureH2C(s)
 

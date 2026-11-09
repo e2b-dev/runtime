@@ -48,6 +48,25 @@ func NewJWKSVerifier(ctx context.Context, config ProviderConfig, httpClient *htt
 	return token.NewJWKSVerifier(ctx, config, httpClient)
 }
 
+// NewTelemetryJWKSVerifier uses a separate audience so a names token cannot
+// authenticate to an older API that does not understand telemetry scopes.
+func NewTelemetryJWKSVerifier(ctx context.Context, config ProviderConfig, httpClient *http.Client) (*JWKSVerifier, error) {
+	telemetryConfig := ProviderConfig{}
+	for _, entry := range config.JWT {
+		if len(entry.Issuer.Audiences) == 0 {
+			continue
+		}
+		audiences := make([]string, len(entry.Issuer.Audiences))
+		for i, audience := range entry.Issuer.Audiences {
+			audiences[i] = audience + ":telemetry-names"
+		}
+		entry.Issuer.Audiences = audiences
+		telemetryConfig.JWT = append(telemetryConfig.JWT, entry)
+	}
+
+	return token.NewJWKSVerifier(ctx, telemetryConfig, httpClient)
+}
+
 // TokenIdentity is what a verified token asserts about itself: the issuer and
 // subject it names, and the claims it carried.
 type TokenIdentity = oidc.TokenIdentity

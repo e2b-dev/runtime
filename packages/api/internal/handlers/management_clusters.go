@@ -38,6 +38,7 @@ var (
 )
 
 type clusterRegistration struct {
+	TelemetryClientID  *string
 	ClusterID          *uuid.UUID
 	Name               string
 	Endpoint           string
@@ -69,6 +70,7 @@ func (a *APIStore) ManagementRegisterCluster(c *gin.Context, clusterID api.Clust
 		Token:              body.Token,
 		SandboxProxyDomain: body.SandboxProxyDomain,
 		AuthOrgID:          body.AuthOrgId,
+		TelemetryClientID:  body.TelemetryClientId,
 		// An authorized replacement keeps the descriptor and assignments but
 		// generates a new edge credential. Generic admin creation stays strict.
 		RefreshToken: true,
@@ -102,6 +104,7 @@ func (a *APIStore) createCluster(ctx context.Context, registration clusterRegist
 	registration.Token = strings.TrimSpace(registration.Token)
 	registration.SandboxProxyDomain = trimmedOptional(registration.SandboxProxyDomain)
 	registration.AuthOrgID = trimmedOptional(registration.AuthOrgID)
+	registration.TelemetryClientID = trimmedOptional(registration.TelemetryClientID)
 	if registration.Name == "" || registration.Endpoint == "" || registration.Token == "" ||
 		registration.ClusterID != nil && *registration.ClusterID == uuid.Nil {
 		return uuid.Nil, errInvalidClusterRegistration
@@ -115,6 +118,7 @@ func (a *APIStore) createCluster(ctx context.Context, registration clusterRegist
 		Token:              registration.Token,
 		SandboxProxyDomain: registration.SandboxProxyDomain,
 		AuthOrgID:          registration.AuthOrgID,
+		TelemetryClientID:  registration.TelemetryClientID,
 		DeletionProtection: registration.DeletionProtection,
 	}
 	if registration.RefreshToken {

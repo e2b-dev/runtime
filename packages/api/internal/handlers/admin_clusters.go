@@ -95,6 +95,7 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 		Token:              body.Token,
 		SandboxProxyDomain: body.SandboxProxyDomain,
 		AuthOrgID:          body.AuthOrgId,
+		TelemetryClientID:  body.TelemetryClientId,
 		DeletionProtection: true,
 	})
 	switch {

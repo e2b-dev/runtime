@@ -52,7 +52,7 @@ func TestHTTPPortServesThroughTheMTLSListener(t *testing.T) {
 	assert.Equal(t, []string{"/health"}, tlsConfig.httpHealthPaths)
 	swagger, err := api.GetSpec()
 	require.NoError(t, err)
-	s := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, flags, swagger)
+	s := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, nil, flags, swagger)
 	inner, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	listener := mtls.WrapHTTPServer(s, inner, tlsConfig.http, tlsConfig.httpHealthPaths)

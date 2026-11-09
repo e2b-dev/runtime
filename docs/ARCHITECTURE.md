@@ -122,6 +122,13 @@ image, which E2B Embed runs on port 3001 against the API alone.
   `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
   and temporal-claim verification remain required.
   Backed by an auth DB (Postgres) with a Redis team cache.
+- **Telemetry names**: `GET /unstable/management/telemetry/names` returns live cluster and
+  assigned-team display names from the regional database. Cluster registration projects the
+  telemetry client ID into `clusters.telemetry_client_id`, so collectors can resolve the verified
+  token subject without opening another database connection. The endpoint accepts only service
+  JWTs with scope `telemetry:read` and an audience formed by appending `:telemetry-names` to a
+  configured admin audience. Issuers without an explicit audience cannot authorize this endpoint.
+  Admin authentication rejects telemetry-scoped tokens; ordinary admin tokens cannot read names.
 - **Validation errors**: a request the OpenAPI validator refuses gets the first line of the
   validator's message. For a body field it names the field and the rule it failed, not the value;
   a parameter of a non-string type that cannot be parsed has its value quoted. The body of a
@@ -452,9 +459,9 @@ The owning management service also drives a replay-safe cluster lifecycle under
 registers a stable cluster UUID, assigns it only to the named project, detaches that exact
 assignment before provider cleanup, and deletes the cluster only after no project references it.
 Replaying the same registration or assignment succeeds. Registering the cluster again with the same
-name and auth organization may change its endpoint, TLS setting, sandbox proxy domain and token, for
-example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
-sync and gives sandboxes the new domain. A changed name or auth organization, a different
+auth organization preserves its stored display name and may change its endpoint, TLS setting, sandbox
+proxy domain and token, for example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
+sync and gives sandboxes the new domain. A changed auth organization, a different
 assignment, an inexact detach, or deletion of a referenced cluster returns a conflict. The
 assignment does not check the project's tier; the caller decides which projects may use a cluster.
 A cluster first registered through this surface starts without deletion protection; one created any

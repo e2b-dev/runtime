@@ -28,6 +28,11 @@ components:
       type: apiKey
       in: header
       name: X-Admin-Token
+    TelemetryJWTAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Service JWT with the telemetry:read scope and a regional audience suffixed with :telemetry-names.
     AdminJWTAuth:
       type: http
       scheme: bearer
@@ -438,6 +443,39 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    TelemetryNames:
+      type: object
+      required: [teams, clusters]
+      properties:
+        teams:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/TelemetryTeamName"
+        clusters:
+          type: array
+          items:
+            $ref: "#/components/schemas/TelemetryClusterName"
+    TelemetryTeamName:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        clusterId:
+          type: string
+          format: uuid
+    TelemetryClusterName:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        clientId:
+          type: string
+
     Rig:
       description: An orchestrator node pool backed by one cloud scaling group
       required:
@@ -1857,6 +1895,10 @@ components:
         auth_org_id:
           type: string
           nullable: true
+
+        telemetry_client_id:
+          type: string
+          minLength: 1
 
     ClusterUpdateRequest:
       type: object
@@ -4463,6 +4505,10 @@ components:
         auth_org_id:
           type: string
           nullable: true
+
+        telemetry_client_id:
+          type: string
+          minLength: 1
 
     ManagementClusterProjects:
       type: object
@@ -7654,13 +7700,33 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /unstable/management/telemetry/names:
+    get:
+      operationId: managementTelemetryNames
+      summary: Read team and cluster names for telemetry.
+      description: Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+      tags: [admin]
+      security:
+        - TelemetryJWTAuth: []
+      responses:
+        "200":
+          description: Current regional names.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryNames"
+        "401":
+          $ref: "#/components/responses/401"
+        "500":
+          $ref: "#/components/responses/500"
+
   /unstable/management/clusters/{clusterID}:
     parameters:
       - $ref: "#/components/parameters/clusterID"
     put:
       operationId: managementRegisterCluster
       summary: Register a cluster.
-      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
       tags: [admin]
       security:
         - AdminJWTAuth: []

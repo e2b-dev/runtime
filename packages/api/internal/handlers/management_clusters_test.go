@@ -58,7 +58,6 @@ func TestManagementRegisterClusterRejectsIdentityChange(t *testing.T) {
 	for name, tc := range map[string]struct {
 		change func(*api.ManagementClusterRegistrationRequest)
 	}{
-		"name":                      {func(r *api.ManagementClusterRegistrationRequest) { r.Name = "different cluster" }},
 		"auth organization":         {func(r *api.ManagementClusterRegistrationRequest) { r.AuthOrgId = new("changed-org") }},
 		"missing auth organization": {func(r *api.ManagementClusterRegistrationRequest) { r.AuthOrgId = nil }},
 	} {
@@ -995,4 +994,29 @@ func mustJSON(t *testing.T, value any) string {
 	require.NoError(t, err)
 
 	return string(body)
+}
+
+func TestRegistrationProjectsUniqueTelemetryClientIdentity(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	store := newAdminClusterStore(db)
+	clusterID := uuid.New()
+	registration := managementClusterRegistration()
+	registration.TelemetryClientId = new("client_first")
+	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, registration).Code)
+	rows, err := db.SqlcClient.ListTelemetryNames(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, rows, queries.ListTelemetryNamesRow{Kind: "cluster", ID: clusterID.String(), Name: registration.Name, TelemetryClientID: "client_first"})
+	require.Equal(t, http.StatusConflict, callManagementRegisterCluster(t, store, uuid.New(), registration).Code)
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.clusters SET name='Renamed cluster' WHERE id=$1`, clusterID))
+	registration.TelemetryClientId = new("client_replacement")
+	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, registration).Code)
+	rows, err = db.SqlcClient.ListTelemetryNames(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, rows, queries.ListTelemetryNamesRow{Kind: "cluster", ID: clusterID.String(), Name: "Renamed cluster", TelemetryClientID: "client_replacement"})
+	registration.TelemetryClientId = nil
+	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, registration).Code)
+	rows, err = db.SqlcClient.ListTelemetryNames(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, rows, queries.ListTelemetryNamesRow{Kind: "cluster", ID: clusterID.String(), Name: "Renamed cluster", TelemetryClientID: "client_replacement"})
 }

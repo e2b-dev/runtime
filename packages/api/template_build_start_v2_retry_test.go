@@ -46,7 +46,7 @@ func TestTemplateBuildStartV2IdempotencyKeyBeforeHandler(t *testing.T) {
 			flags, err := featureflags.NewClientWithDatasource(source)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
-			server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, flags, spec)
+			server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, nil, flags, spec)
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/templates/tpl/builds/00000000-0000-0000-0000-000000000000", strings.NewReader(`{"fromImage":"alpine"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Idempotency-Key", tc.key)

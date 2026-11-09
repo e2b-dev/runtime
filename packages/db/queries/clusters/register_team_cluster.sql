@@ -9,6 +9,7 @@ INSERT INTO public.clusters (
     token,
     sandbox_proxy_domain,
     auth_org_id,
+    telemetry_client_id,
     deletion_protection
 )
 VALUES (
@@ -19,6 +20,7 @@ VALUES (
     sqlc.arg(token)::text,
     sqlc.narg(sandbox_proxy_domain)::text,
     sqlc.narg(auth_org_id)::text,
+    sqlc.narg(telemetry_client_id)::text,
     sqlc.arg(deletion_protection)::boolean
 )
 ON CONFLICT (id) DO UPDATE
@@ -29,13 +31,12 @@ WHERE clusters.name = EXCLUDED.name
   AND clusters.token = EXCLUDED.token
   AND clusters.sandbox_proxy_domain IS NOT DISTINCT FROM EXCLUDED.sandbox_proxy_domain
   AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
+  AND clusters.telemetry_client_id IS NOT DISTINCT FROM EXCLUDED.telemetry_client_id
 RETURNING id;
 
 -- name: RegisterManagedCluster :one
--- Management registration of an existing cluster with the same name and auth
--- organization updates its connection details and credential, so a cluster
--- that moves to a new domain keeps its identity. Assignments and stored
--- deletion protection survive.
+-- Registration preserves the regional display name and assignments when a
+-- cluster refreshes its credentials or moves to a new domain.
 INSERT INTO public.clusters (
     id,
     name,
@@ -44,6 +45,7 @@ INSERT INTO public.clusters (
     token,
     sandbox_proxy_domain,
     auth_org_id,
+    telemetry_client_id,
     deletion_protection
 )
 VALUES (
@@ -54,15 +56,16 @@ VALUES (
     sqlc.arg(token)::text,
     sqlc.narg(sandbox_proxy_domain)::text,
     sqlc.narg(auth_org_id)::text,
+    sqlc.narg(telemetry_client_id)::text,
     sqlc.arg(deletion_protection)::boolean
 )
 ON CONFLICT (id) DO UPDATE
 SET token = EXCLUDED.token,
     endpoint = EXCLUDED.endpoint,
     endpoint_tls = EXCLUDED.endpoint_tls,
-    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain
-WHERE clusters.name = EXCLUDED.name
-  AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
+    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain,
+    telemetry_client_id = COALESCE(EXCLUDED.telemetry_client_id, clusters.telemetry_client_id)
+WHERE clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
 RETURNING id;
 
 -- name: LockClusterDeletionProtection :one
