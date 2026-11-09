@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/creack/pty"
 	"github.com/rs/zerolog"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
@@ -471,12 +470,12 @@ func (p *Handler) SendSignal(signal syscall.Signal) error {
 	return p.sysSignal(signal)
 }
 
-func (p *Handler) ResizeTty(size *pty.Winsize) error {
+func (p *Handler) ResizeTty(cols, rows uint16) error {
 	if p.tty == nil {
 		return errors.New("tty not assigned to process")
 	}
 
-	return p.sysResizeTty(size)
+	return p.sysResizeTty(cols, rows)
 }
 
 func (p *Handler) WriteStdin(data []byte) error {
