@@ -28,6 +28,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
@@ -187,6 +188,8 @@ func TestPlacementMove(t *testing.T) {
 	assert.Equal(t, h.source.Metadata().ServiceInstanceID, placement.GetSource().GetServiceInstanceId())
 	assert.Equal(t, h.target.IPAddress, placement.GetTarget().GetIpAddress())
 	assert.Equal(t, sbx.NetworkPlacement.GetRouterId(), placement.GetRouterId())
+	assert.True(t, placement.HasVolumesAttached(), "an API that knows the field always reports it")
+	assert.False(t, placement.GetVolumesAttached())
 
 	hold := executionHoldOf(sbx)
 	lose.Store(true)
@@ -365,6 +368,21 @@ func TestPlacementCaller(t *testing.T) {
 			require.Equal(t, expected, status.Code(err))
 		})
 	}
+}
+
+// The placement reports attached volumes from the stored record and leaves
+// the decision to the caller.
+func TestPlacementReportsVolumeMounts(t *testing.T) {
+	t.Parallel()
+	h, service := localPlacementHarness(t)
+	sbx := h.runningWith(t, func(s *sandbox.Sandbox) {
+		s.VolumeMounts = []*types.SandboxVolumeMountConfig{{ID: uuid.NewString(), Type: "persistent", Name: "data", Path: "/data"}}
+	})
+	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, nil)
+
+	placement, err := client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: sbx.TeamID.String(), SandboxId: sbx.SandboxID, ExpectedExecutionId: sbx.ExecutionID, ExpectedSourceNodeId: sbx.NodeID, TargetNodeId: h.target.ID}.Build())
+	require.NoError(t, err)
+	assert.True(t, placement.GetVolumesAttached())
 }
 
 // Every refusal names its reason: the caller shows it to the operator.

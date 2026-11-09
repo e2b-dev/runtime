@@ -147,11 +147,12 @@ func (s *SandboxPlacementService) GetSandboxPlacement(ctx context.Context, req *
 	}
 
 	return placementpb.GetSandboxPlacementResponse_builder{
-		ExecutionId: sbx.ExecutionID,
-		NetworkMode: sbx.NetworkPlacement.GetNetworkMode(),
-		RouterId:    sbx.NetworkPlacement.GetRouterId(),
-		Source:      placementNode(source),
-		Target:      placementNode(target),
+		ExecutionId:     sbx.ExecutionID,
+		NetworkMode:     sbx.NetworkPlacement.GetNetworkMode(),
+		RouterId:        sbx.NetworkPlacement.GetRouterId(),
+		Source:          placementNode(source),
+		Target:          placementNode(target),
+		VolumesAttached: new(len(sbx.VolumeMounts) > 0),
 	}.Build(), nil
 }
 
