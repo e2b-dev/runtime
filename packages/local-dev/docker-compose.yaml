@@ -27,12 +27,12 @@ services:
       - "53000:3000"
 
   loki:
-    image: grafana/loki:3.4.1
+    image: grafana/loki:3.7.9
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
     healthcheck:
-      test: wget --quiet --tries=1 --output-document=- http://localhost:3100/ready | grep -q -w ready || exit 1
+      test: ["CMD", "/usr/bin/loki", "-health"]
       start_period: 20s
       interval: 10s
       timeout: 1s
