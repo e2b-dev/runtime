@@ -451,10 +451,14 @@ func TestAdminNodeSandboxes(t *testing.T) {
 	ended := h.running(t)
 	elsewhere := h.runningWith(t, func(s *sandbox.Sandbox) { s.NodeID = h.target.ID })
 	held := h.running(t)
+	volume := h.runningWith(t, func(s *sandbox.Sandbox) {
+		s.VolumeMounts = []*types.SandboxVolumeMountConfig{{ID: uuid.NewString(), Type: "persistent", Name: "data", Path: "/data"}}
+	})
+	legacy := h.runningWith(t, func(s *sandbox.Sandbox) { s.NetworkPlacement = nil })
 	until := time.Now().Add(time.Minute).Truncate(time.Millisecond)
 	require.NoError(t, h.store.HoldExecution(ctx, sandbox.Hold{TeamID: held.TeamID, SandboxID: held.SandboxID, ExecutionID: held.ExecutionID, SourceNodeID: held.NodeID, ID: uuid.NewString()}, until))
 	w := &placementWorker{}
-	for _, s := range []sandbox.Sandbox{sbx, stale, ended, elsewhere, held} {
+	for _, s := range []sandbox.Sandbox{sbx, stale, ended, elsewhere, held, volume, legacy} {
 		w.items = append(w.items, &workerpb.RunningSandbox{SandboxId: s.SandboxID, TeamId: s.TeamID.String(), ExecutionId: s.ExecutionID})
 	}
 	w.items[1].ExecutionId = uuid.NewString()
@@ -477,10 +481,17 @@ func TestAdminNodeSandboxes(t *testing.T) {
 	listed, err := h.o.AdminNodeSandboxes(ctx, consts.LocalClusterID, h.source.ID)
 	require.NoError(t, err)
 	assert.Equal(t, h.source.ID, listed.NodeID)
-	require.Len(t, listed.Items, 2)
-	assert.Equal(t, api.NodeSandbox{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: uuid.MustParse(sbx.ExecutionID)}, listed.Items[0])
+	require.Len(t, listed.Items, 4)
+	assert.Equal(t, api.NodeSandbox{
+		TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: uuid.MustParse(sbx.ExecutionID),
+		NetworkMode: sbx.NetworkPlacement.GetNetworkMode(), VolumesAttached: false,
+	}, listed.Items[0])
 	assert.Equal(t, held.SandboxID, listed.Items[1].SandboxID)
 	assert.Equal(t, until.UnixMilli(), listed.Items[1].LifecycleHoldUntil.UnixMilli())
+	assert.Equal(t, volume.SandboxID, listed.Items[2].SandboxID)
+	assert.True(t, listed.Items[2].VolumesAttached)
+	assert.Equal(t, legacy.SandboxID, listed.Items[3].SandboxID)
+	assert.Equal(t, "legacy", listed.Items[3].NetworkMode, "a record without a Router placement runs on the legacy network")
 	server.Stop()
 	_, err = h.o.AdminNodeSandboxes(ctx, consts.LocalClusterID, h.source.ID)
 	require.Error(t, err)

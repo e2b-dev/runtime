@@ -3571,6 +3571,8 @@ components:
         - teamID
         - sandboxID
         - executionID
+        - networkMode
+        - volumesAttached
       properties:
         teamID:
           type: string
@@ -3587,6 +3589,12 @@ components:
           type: string
           format: date-time
           description: Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
+        networkMode:
+          type: string
+          description: Network the execution runs on, legacy, egress-router or full-router
+        volumesAttached:
+          type: boolean
+          description: Whether the sandbox runs with managed volumes attached
 
     NodeDetail:
       required:

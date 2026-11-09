@@ -270,7 +270,9 @@ image, which E2B Embed runs on port 3001 against the API alone.
   client-proxy shares it. Every call is safe to repeat.
 - **Node sandboxes**: admin `GET /nodes/{nodeID}/sandboxes` lists the sandboxes a node runs
   that the store records as running on it with the same execution, with the deadline of an
-  operation holding each, for the operator view that picks a sandbox to migrate.
+  operation holding each, its network mode and whether managed volumes are attached, for
+  the operator view that picks a sandbox to migrate. The migration manager decides whether
+  a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
   works jobs that need the orchestrator connections. Its job arguments live in
   `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted

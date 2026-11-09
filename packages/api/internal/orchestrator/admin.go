@@ -12,6 +12,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 )
 
 func (o *Orchestrator) TeamRunningSandboxCounts(ctx context.Context) (map[uuid.UUID]int64, error) {
@@ -155,7 +156,17 @@ func (o *Orchestrator) AdminNodeSandboxes(ctx context.Context, clusterID uuid.UU
 		if err != nil {
 			return nil, fmt.Errorf("sandbox %q execution ID: %w", sbx.SandboxID, err)
 		}
-		item := api.NodeSandbox{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: executionID}
+		networkMode := string(catalog.NetworkModeLegacy)
+		if sbx.NetworkPlacement != nil {
+			networkMode = sbx.NetworkPlacement.GetNetworkMode()
+		}
+		item := api.NodeSandbox{
+			TeamID:          sbx.TeamID,
+			SandboxID:       sbx.SandboxID,
+			ExecutionID:     executionID,
+			NetworkMode:     networkMode,
+			VolumesAttached: len(sbx.VolumeMounts) > 0,
+		}
 		if sbx.Held(now) {
 			until := time.UnixMilli(sbx.LifecycleHoldUntil)
 			item.LifecycleHoldUntil = &until
