@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/oauth"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -57,9 +60,14 @@ type teamAuthServiceStub struct {
 	sharedauth.Service
 
 	team *authtypes.Team
+	err  error
 }
 
 func (s teamAuthServiceStub) GetTeamByID(context.Context, uuid.UUID) (*authtypes.Team, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+
 	return s.team, nil
 }
 
@@ -76,6 +84,15 @@ func newFilesystemOnlyResumeService(t *testing.T, backend *autoResumeBackendStub
 // newFilesystemOnlyResumeStore seeds the sandbox newFilesystemOnlyResumeService
 // serves and returns the store over the given backend.
 func newFilesystemOnlyResumeStore(t *testing.T, backend *autoResumeBackendStub) (*APIStore, string) {
+	t.Helper()
+
+	return newResumeStore(t, backend, dbtypes.SandboxAutoResumeAny)
+}
+
+// newResumeStore seeds a sandbox whose latest snapshot is filesystem-only
+// with the given auto-resume policy and returns the store over the given
+// backend.
+func newResumeStore(t *testing.T, backend *autoResumeBackendStub, autoResumePolicy dbtypes.SandboxAutoResumePolicy) (*APIStore, string) {
 	t.Helper()
 
 	db := testutils.SetupDatabase(t)
@@ -105,7 +122,7 @@ func newFilesystemOnlyResumeStore(t *testing.T, backend *autoResumeBackendStub) 
 		OriginNodeID:       "test-node",
 		StatusGroup:        dbtypes.BuildStatusGroupReady,
 		Config: &dbtypes.PausedSandboxConfig{
-			AutoResume:     &dbtypes.SandboxAutoResumeConfig{Policy: dbtypes.SandboxAutoResumeAny},
+			AutoResume:     &dbtypes.SandboxAutoResumeConfig{Policy: autoResumePolicy},
 			FilesystemOnly: true,
 		},
 	})
@@ -203,6 +220,106 @@ func TestResumeSandbox_EdgeCallerCredentialFailuresAreUnauthenticated(t *testing
 			assert.Zero(t, backend.routed)
 		})
 	}
+}
+
+// resumeCase is one edge client-proxy's ResumeSandbox call against a seeded
+// sandbox.
+type resumeCase struct {
+	callerOrg     string
+	policy        dbtypes.SandboxAutoResumePolicy
+	teamClusterID *uuid.UUID
+	teamErr       error
+	// unknownID asks for a sandbox ID that was never seeded.
+	unknownID bool
+}
+
+type resumeOutcome struct {
+	code    codes.Code
+	message string
+	routed  bool
+}
+
+// resumeWith seeds a running sandbox as c describes, on a control plane whose
+// clusters are pool, and resumes it.
+func resumeWith(t *testing.T, pool *clusters.Pool, c resumeCase) resumeOutcome {
+	t.Helper()
+
+	backend := &autoResumeBackendStub{sbx: sandbox.Sandbox{State: sandbox.StateRunning}, resp: &proxygrpc.SandboxResumeResponse{OrchestratorIp: "10.0.0.1"}}
+	store, sandboxID := newResumeStore(t, backend, c.policy)
+	team := store.authService.(teamAuthServiceStub).team
+	team.ClusterID = c.teamClusterID
+	store.authService = teamAuthServiceStub{team: team, err: c.teamErr}
+	store.clusters = pool
+	if c.unknownID {
+		sandboxID = "i" + id.Generate()
+	}
+
+	svc := NewSandboxService(store, true, verifierStub{claims: oauth.Claims{OrgID: c.callerOrg, Scopes: []string{oauth.RequiredScope}}})
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"))
+
+	_, err := svc.ResumeSandbox(ctx, &proxygrpc.SandboxResumeRequest{SandboxId: sandboxID})
+
+	return resumeOutcome{code: status.Code(err), message: status.Convert(err).Message(), routed: backend.routed > 0}
+}
+
+// The snapshot lookup spans every cluster, so an edge caller is routed only to
+// sandboxes on its org's clusters, and until it is known to be allowed to see
+// a sandbox, every outcome answers exactly as an org mismatch does: NotFound,
+// not PermissionDenied, which client-proxy reads as "this sandbox is here".
+// Otherwise the answer tells the caller whether the ID exists on another org's
+// cluster, how it is configured, or which cluster holds it.
+func TestResumeSandbox_EdgeCallerSeesOnlyItsOrgsSandboxes(t *testing.T) {
+	t.Parallel()
+
+	clusterID := uuid.New()
+	unknownClusterID := uuid.New()
+	pool := clusters.NewTestPool(clusters.NewCluster(clusterID, nil, "org-a", nil, nil, nil))
+
+	orgMismatch := resumeWith(t, pool, resumeCase{callerOrg: "org-b", policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &clusterID})
+	require.Equal(t, codes.NotFound, orgMismatch.code)
+	require.False(t, orgMismatch.routed)
+
+	tests := []struct {
+		name string
+		c    resumeCase
+	}{
+		{name: "unknown sandbox ID", c: resumeCase{policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &clusterID, unknownID: true}},
+		{name: "sandbox on the main cluster, which no org owns", c: resumeCase{policy: dbtypes.SandboxAutoResumeAny}},
+		{name: "another org's sandbox with auto-resume off", c: resumeCase{policy: dbtypes.SandboxAutoResumeOff, teamClusterID: &clusterID}},
+		{name: "sandbox whose cluster this API does not know", c: resumeCase{policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &unknownClusterID}},
+		{name: "sandbox whose team is banned", c: resumeCase{policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &clusterID, teamErr: &sharedauth.TeamForbiddenError{Message: "team is banned"}}},
+		{name: "sandbox whose team is gone", c: resumeCase{policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &clusterID, teamErr: fmt.Errorf("failed to get team from team ID: %w", pgx.ErrNoRows)}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.c.callerOrg = "org-b"
+			assert.Equal(t, orgMismatch, resumeWith(t, pool, tt.c))
+		})
+	}
+
+	t.Run("the sandbox's own org routes it", func(t *testing.T) {
+		t.Parallel()
+
+		own := resumeWith(t, pool, resumeCase{callerOrg: "org-a", policy: dbtypes.SandboxAutoResumeAny, teamClusterID: &clusterID})
+
+		assert.Equal(t, codes.OK, own.code)
+		assert.True(t, own.routed)
+	})
+
+	// Once the caller is allowed to see the sandbox, it learns why it is
+	// refused.
+	t.Run("the sandbox's own org is told auto-resume is off", func(t *testing.T) {
+		t.Parallel()
+
+		own := resumeWith(t, pool, resumeCase{callerOrg: "org-a", policy: dbtypes.SandboxAutoResumeOff, teamClusterID: &clusterID})
+
+		assert.Equal(t, codes.NotFound, own.code)
+		assert.NotEqual(t, orgMismatch.message, own.message)
+		assert.False(t, own.routed)
+	})
 }
 
 // The placement reaches a client over a real TCP gRPC connection, and a
