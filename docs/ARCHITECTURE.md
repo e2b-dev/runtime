@@ -330,6 +330,12 @@ image, which E2B Embed runs on port 3001 against the API alone.
   defined there); a LaunchDarkly value wins. LaunchDarkly feature flags also gate placement
   parameters, rate limits, and rollouts.
 
+Administrators can update only an existing cluster's telemetry identity with
+`PUT /unstable/management/clusters/{clusterID}/telemetry`, authenticated using the
+existing admin service JWT. The update preserves credentials, endpoints, display
+names and assignments, refuses deleting or missing clusters, and retains the
+unique telemetry identity constraint.
+
 #### Project management writes (`/unstable/management`)
 
 `PUT /unstable/management/projects/{projectID}/settings` applies a revisioned settings

@@ -3744,6 +3744,11 @@ type GetUnstableBuildsStatusesParams struct {
 	BuildIds BuildIDs `form:"build_ids" json:"build_ids"`
 }
 
+// ManagementUpdateClusterTelemetryJSONBody defines parameters for ManagementUpdateClusterTelemetry.
+type ManagementUpdateClusterTelemetryJSONBody struct {
+	TelemetryClientId string `json:"telemetry_client_id"`
+}
+
 // GetUnstableTemplatesSearchParams defines parameters for GetUnstableTemplatesSearch.
 type GetUnstableTemplatesSearchParams struct {
 	// Search Case-insensitive substring match on the template ID, its aliases and its names.
@@ -3977,6 +3982,9 @@ type PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody = AdminDefault
 
 // ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
 type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
+
+// ManagementUpdateClusterTelemetryJSONRequestBody defines body for ManagementUpdateClusterTelemetry for application/json ContentType.
+type ManagementUpdateClusterTelemetryJSONRequestBody ManagementUpdateClusterTelemetryJSONBody
 
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
@@ -5594,6 +5602,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
@@ -8312,6 +8338,44 @@ func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterI
 // Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *Client) ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpdateClusterTelemetryRequestWithBody(c.Server, clusterID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *Client) ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpdateClusterTelemetryRequest(c.Server, clusterID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14189,6 +14253,53 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	return req, nil
 }
 
+// NewManagementUpdateClusterTelemetryRequest calls the generic ManagementUpdateClusterTelemetry builder with application/json body
+func NewManagementUpdateClusterTelemetryRequest(server string, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementUpdateClusterTelemetryRequestWithBody(server, clusterID, "application/json", bodyReader)
+}
+
+// NewManagementUpdateClusterTelemetryRequestWithBody constructs an http.Request for the ManagementUpdateClusterTelemetry method, with any body, and a specified content type
+func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/telemetry", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewManagementDeleteProjectRequest constructs an http.Request for the ManagementDeleteProject method
 func NewManagementDeleteProjectRequest(server string, projectID openapi_types.UUID) (*http.Request, error) {
 	var err error
@@ -16832,6 +16943,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
+
+	// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
+
+	// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -25040,6 +25169,75 @@ func (r ManagementListClusterProjectsResponse) ContentType() string {
 	return ""
 }
 
+type ManagementUpdateClusterTelemetryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementUpdateClusterTelemetryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementUpdateClusterTelemetryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementUpdateClusterTelemetryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementUpdateClusterTelemetryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementDeleteProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29285,6 +29483,36 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseManagementListClusterProjectsResponse(rsp)
+}
+
+// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
+	rsp, err := c.ManagementUpdateClusterTelemetryWithBody(ctx, clusterID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpdateClusterTelemetryResponse(rsp)
+}
+
+// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
+	rsp, err := c.ManagementUpdateClusterTelemetry(ctx, clusterID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpdateClusterTelemetryResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -36730,6 +36958,63 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementUpdateClusterTelemetryResponse parses an HTTP response from a ManagementUpdateClusterTelemetryWithResponse call
+func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*ManagementUpdateClusterTelemetryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementUpdateClusterTelemetryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500

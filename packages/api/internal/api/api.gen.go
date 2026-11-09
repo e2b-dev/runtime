@@ -3749,6 +3749,11 @@ type GetUnstableBuildsStatusesParams struct {
 	BuildIds BuildIDs `form:"build_ids" json:"build_ids"`
 }
 
+// ManagementUpdateClusterTelemetryJSONBody defines parameters for ManagementUpdateClusterTelemetry.
+type ManagementUpdateClusterTelemetryJSONBody struct {
+	TelemetryClientId string `json:"telemetry_client_id"`
+}
+
 // GetUnstableTemplatesSearchParams defines parameters for GetUnstableTemplatesSearch.
 type GetUnstableTemplatesSearchParams struct {
 	// Search Case-insensitive substring match on the template ID, its aliases and its names.
@@ -3982,6 +3987,9 @@ type PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody = AdminDefault
 
 // ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
 type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
+
+// ManagementUpdateClusterTelemetryJSONRequestBody defines body for ManagementUpdateClusterTelemetry for application/json ContentType.
+type ManagementUpdateClusterTelemetryJSONRequestBody ManagementUpdateClusterTelemetryJSONBody
 
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
@@ -5599,6 +5607,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
@@ -8317,6 +8343,44 @@ func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterI
 // Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *Client) ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpdateClusterTelemetryRequestWithBody(c.Server, clusterID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *Client) ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpdateClusterTelemetryRequest(c.Server, clusterID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14194,6 +14258,53 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	return req, nil
 }
 
+// NewManagementUpdateClusterTelemetryRequest calls the generic ManagementUpdateClusterTelemetry builder with application/json body
+func NewManagementUpdateClusterTelemetryRequest(server string, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementUpdateClusterTelemetryRequestWithBody(server, clusterID, "application/json", bodyReader)
+}
+
+// NewManagementUpdateClusterTelemetryRequestWithBody constructs an http.Request for the ManagementUpdateClusterTelemetry method, with any body, and a specified content type
+func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/telemetry", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewManagementDeleteProjectRequest constructs an http.Request for the ManagementDeleteProject method
 func NewManagementDeleteProjectRequest(server string, projectID openapi_types.UUID) (*http.Request, error) {
 	var err error
@@ -16837,6 +16948,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
+
+	// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
+
+	// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
+	//
+	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+	ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -25045,6 +25174,75 @@ func (r ManagementListClusterProjectsResponse) ContentType() string {
 	return ""
 }
 
+type ManagementUpdateClusterTelemetryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementUpdateClusterTelemetryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementUpdateClusterTelemetryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementUpdateClusterTelemetryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementUpdateClusterTelemetryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementDeleteProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29290,6 +29488,36 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseManagementListClusterProjectsResponse(rsp)
+}
+
+// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
+	rsp, err := c.ManagementUpdateClusterTelemetryWithBody(ctx, clusterID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpdateClusterTelemetryResponse(rsp)
+}
+
+// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
+//
+// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
+func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
+	rsp, err := c.ManagementUpdateClusterTelemetry(ctx, clusterID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpdateClusterTelemetryResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -36748,6 +36976,63 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 	return response, nil
 }
 
+// ParseManagementUpdateClusterTelemetryResponse parses an HTTP response from a ManagementUpdateClusterTelemetryWithResponse call
+func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*ManagementUpdateClusterTelemetryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementUpdateClusterTelemetryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseManagementDeleteProjectResponse parses an HTTP response from a ManagementDeleteProjectWithResponse call
 func ParseManagementDeleteProjectResponse(rsp *http.Response) (*ManagementDeleteProjectResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -39106,6 +39391,9 @@ type ServerInterface interface {
 	// ManagementListClusterProjects List the projects assigned to a cluster.
 	// (GET /unstable/management/clusters/{clusterID}/projects)
 	ManagementListClusterProjects(c *gin.Context, clusterID ClusterID)
+	// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
+	// (PUT /unstable/management/clusters/{clusterID}/telemetry)
+	ManagementUpdateClusterTelemetry(c *gin.Context, clusterID ClusterID)
 	// ManagementDeleteProject Soft-delete a project.
 	// (DELETE /unstable/management/projects/{projectID})
 	ManagementDeleteProject(c *gin.Context, projectID openapi_types.UUID)
@@ -42273,6 +42561,31 @@ func (siw *ServerInterfaceWrapper) ManagementListClusterProjects(c *gin.Context)
 	siw.Handler.ManagementListClusterProjects(c, clusterID)
 }
 
+// ManagementUpdateClusterTelemetry operation middleware
+func (siw *ServerInterfaceWrapper) ManagementUpdateClusterTelemetry(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementUpdateClusterTelemetry(c, clusterID)
+}
+
 // ManagementDeleteProject operation middleware
 func (siw *ServerInterfaceWrapper) ManagementDeleteProject(c *gin.Context) {
 
@@ -43217,6 +43530,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/unstable/management/telemetry/names", wrapper.ManagementTelemetryNames)
 	router.DELETE(options.BaseURL+"/unstable/management/clusters/:clusterID", wrapper.ManagementDeleteCluster)
 	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID", wrapper.ManagementRegisterCluster)
+	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID/telemetry", wrapper.ManagementUpdateClusterTelemetry)
 	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/projects", wrapper.ManagementListClusterProjects)
 	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID/deletion", wrapper.ManagementRequestClusterDeletion)
 	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/destroy-readiness", wrapper.ManagementClusterDestroyReadiness)
@@ -43850,72 +44164,75 @@ var swaggerSpec = []string{
 	"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",
-	"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",
+	"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",
+	"/f8PAA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

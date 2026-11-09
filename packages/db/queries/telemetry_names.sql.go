@@ -7,6 +7,8 @@ package queries
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const listTelemetryNames = `-- name: ListTelemetryNames :many
@@ -49,4 +51,34 @@ func (q *Queries) ListTelemetryNames(ctx context.Context) ([]ListTelemetryNamesR
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateClusterTelemetryClient = `-- name: UpdateClusterTelemetryClient :one
+WITH updated AS (
+    UPDATE public.clusters
+    SET telemetry_client_id = $2::text
+    WHERE id = $1::uuid
+      AND deletion_requested_at IS NULL
+      AND (telemetry_client_id IS NULL OR telemetry_client_id = $2::text)
+    RETURNING id
+)
+SELECT EXISTS(SELECT 1 FROM updated) AS updated,
+       EXISTS(SELECT 1 FROM public.clusters WHERE id = $1::uuid AND deletion_requested_at IS NULL) AS found
+`
+
+type UpdateClusterTelemetryClientParams struct {
+	ClusterID         uuid.UUID
+	TelemetryClientID string
+}
+
+type UpdateClusterTelemetryClientRow struct {
+	Updated bool
+	Found   bool
+}
+
+func (q *Queries) UpdateClusterTelemetryClient(ctx context.Context, arg UpdateClusterTelemetryClientParams) (UpdateClusterTelemetryClientRow, error) {
+	row := q.db.QueryRow(ctx, updateClusterTelemetryClient, arg.ClusterID, arg.TelemetryClientID)
+	var i UpdateClusterTelemetryClientRow
+	err := row.Scan(&i.Updated, &i.Found)
+	return i, err
 }

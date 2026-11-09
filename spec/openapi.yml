@@ -7766,6 +7766,41 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /unstable/management/clusters/{clusterID}/telemetry:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    put:
+      operationId: managementUpdateClusterTelemetry
+      summary: Update the telemetry identity of an existing cluster.
+      description: Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [telemetry_client_id]
+              properties:
+                telemetry_client_id:
+                  type: string
+                  minLength: 1
+      responses:
+        "204":
+          description: Telemetry identity updated.
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
   /unstable/management/clusters/{clusterID}/projects:
     parameters:
       - $ref: "#/components/parameters/clusterID"
