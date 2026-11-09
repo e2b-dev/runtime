@@ -130,17 +130,29 @@ func (h *HTTPWriter) Write(source []byte) (n int, err error) {
 	go func() {
 		defer wg.Done()
 
+		// A failed line is skipped, not fatal to the rest of the batch: a
+		// single unreachable/slow destination must not drop every remaining
+		// line in this Write (previously the first error returned and silently
+		// abandoned the rest of the buffer, amplifying loss when the collector
+		// is down). Failures are aggregated and logged once per Write instead
+		// of once per line, so a degraded collector cannot flood stderr.
+		var dropped int
+		var droppedBytes int
+		var lastErr error
+		route := func(line []byte) {
+			if err := h.routeLogLine(line); err != nil {
+				// Never log the line itself: it is customer log content.
+				dropped++
+				droppedBytes += len(line)
+				lastErr = err
+			}
+		}
+
 		start := 0
 		for i, b := range p {
 			if b == '\n' {
 				if start < i { // Ignore empty lines
-					line := p[start:i]
-					if err := h.routeLogLine(line); err != nil {
-						// Never log the line itself: it is customer log content.
-						log.Printf("error routing log line (%d bytes): %v\n", len(line), err)
-
-						return
-					}
+					route(p[start:i])
 				}
 				start = i + 1 // Move start to the next line
 			}
@@ -148,13 +160,11 @@ func (h *HTTPWriter) Write(source []byte) (n int, err error) {
 
 		// Handle the last line if there’s no trailing newline
 		if start < len(p) {
-			line := p[start:]
-			if err := h.routeLogLine(line); err != nil {
-				// Never log the line itself: it is customer log content.
-				log.Printf("error routing log line (%d bytes): %v\n", len(line), err)
+			route(p[start:])
+		}
 
-				return
-			}
+		if dropped > 0 {
+			log.Printf("dropped %d log line(s) (%d bytes) while routing; last error: %v\n", dropped, droppedBytes, lastErr)
 		}
 	}()
 
