@@ -104,7 +104,7 @@ func TestScanner_Destroy_ExitsWithStalledSubscriber(t *testing.T) {
 func TestNewForwarder_SubscribesOnlyWhenForwarding(t *testing.T) {
 	t.Parallel()
 
-	for name, unavailable := range map[string]error{
+	for name, forwardingErr := range map[string]error{
 		"available":   nil,
 		"unavailable": errors.New("no forwarding in this build"),
 	} {
@@ -113,9 +113,9 @@ func TestNewForwarder_SubscribesOnlyWhenForwarding(t *testing.T) {
 
 			l := zerolog.Nop()
 			scanner := NewScanner(&l, time.Hour)
-			f := newForwarder(&l, scanner, nil, unavailable)
+			f := newForwarder(&l, scanner, nil, forwardingErr)
 
-			forwards := unavailable == nil
+			forwards := forwardingErr == nil
 			assert.Equal(t, forwards, f.Forwards())
 			assert.Equal(t, forwards, scanner.subs.Count() == 1)
 		})
@@ -128,6 +128,6 @@ func TestNewForwarder_SubscribesOnlyWhenForwarding(t *testing.T) {
 		scanner := NewScanner(&l, time.Hour)
 		f := NewForwarder(&l, scanner, nil)
 
-		assert.Equal(t, forwardingAvailable() == nil, f.Forwards())
+		assert.Equal(t, checkForwarding() == nil, f.Forwards())
 	})
 }

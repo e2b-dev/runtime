@@ -4,8 +4,8 @@ package port
 
 import "syscall"
 
-// forwardingAvailable: socat is spawned per port, which the images ship.
-func forwardingAvailable() error { return nil }
+// checkForwarding passes: socat is spawned per port, which the images ship.
+func checkForwarding() error { return nil }
 
 // socatProcAttr puts every socat in its own process group so a forward can be
 // killed as a whole.
