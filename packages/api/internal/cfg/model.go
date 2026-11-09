@@ -177,6 +177,11 @@ type Config struct {
 	// 0.5, so clusters without a pool should set this false and rank on CPU.
 	BestOfKHugepageMemory bool `env:"BEST_OF_K_HUGEPAGE_MEMORY" envDefault:"true"`
 
+	// TemplatesDefaultPublic is the visibility a template gets when a build
+	// creates it. Templates that already exist keep their stored visibility.
+	// Self-hosted deployments whose teams start each other's templates set it true.
+	TemplatesDefaultPublic bool `env:"TEMPLATES_DEFAULT_PUBLIC"`
+
 	// OutboxMaxWorkers is how many River outbox jobs one API replica works at
 	// once.
 	OutboxMaxWorkers int `env:"OUTBOX_MAX_WORKERS" envDefault:"10"`

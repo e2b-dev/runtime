@@ -1385,6 +1385,10 @@ sequenceDiagram
     API->>API: mark build ready in Postgres
 ```
 
+A template a build creates is private to its team unless the api runs with
+`TEMPLATES_DEFAULT_PUBLIC=true`; then it is public, so any team on the same cluster can start it by
+template ID or `<team-slug>/<alias>`. A rebuild keeps the visibility the template already has.
+
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
 with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies

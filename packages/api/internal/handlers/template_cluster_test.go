@@ -376,3 +376,45 @@ func TestTemplateStartCluster(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateDefaultVisibility(t *testing.T) {
+	t.Parallel()
+	other := uuid.New()
+	for _, tt := range []struct {
+		name          string
+		defaultPublic bool
+		// rebuild makes the first template private, then builds the alias
+		// again on moveTo (nil keeps the team on its cluster).
+		rebuild bool
+		moveTo  *uuid.UUID
+		want    bool
+	}{
+		{name: "new-default-private", want: false},
+		{name: "new-default-public", defaultPublic: true, want: true},
+		{name: "rebuild-keeps-private", defaultPublic: true, rebuild: true, want: false},
+		{name: "cross-cluster-rebuild-keeps-private", defaultPublic: true, rebuild: true, moveTo: &other, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store, db := templateClusterStore(t)
+			store.config.TemplatesDefaultPublic = tt.defaultPublic
+			team := templateClusterTeam(t, db, nil)
+
+			result := requestClusterTemplate(t, store, team)
+			require.Equal(t, http.StatusAccepted, result.StatusCode(), string(result.Body))
+			require.NotNil(t, result.JSON202)
+			if tt.rebuild {
+				require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET public = false WHERE id = $1`, result.JSON202.TemplateID))
+				assignTemplateClusterTeam(t, db, team, tt.moveTo)
+				result = requestClusterTemplate(t, store, team)
+				require.Equal(t, http.StatusAccepted, result.StatusCode(), string(result.Body))
+				require.NotNil(t, result.JSON202)
+			}
+
+			require.Equal(t, tt.want, result.JSON202.Public)
+			template, err := db.SqlcClient.GetTemplateById(t.Context(), result.JSON202.TemplateID)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, template.Public)
+		})
+	}
+}
