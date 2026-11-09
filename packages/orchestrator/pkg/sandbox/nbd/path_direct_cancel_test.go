@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -21,10 +22,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
-
-func withAfterConnect(f func(deviceIndex uint32)) MountOption {
-	return func(m *DirectPathMount) { m.afterConnect = f }
-}
 
 // feedSlots supplies pool with free device slots, standing in for Populate. Populate cannot be
 // used here: it would re-acquire the very slot the test asserts was released. But the pool
@@ -104,8 +101,8 @@ func TestPathDirect_OpenCancelledAfterConnect(t *testing.T) {
 	testOpenCancelledAfterConnect(t, featureFlags)
 }
 
-// The ioctl attach has no wait loop of its own, so its post-connect
-// cancellation goes through the same unwind.
+// An ioctl attach that sees its caller gone once the device has started ends
+// the session itself, and the slot comes back once the session lets go.
 func TestPathDirect_OpenCancelledAfterConnectViaIoctl(t *testing.T) {
 	t.Parallel()
 
@@ -153,13 +150,12 @@ func testOpenCancelledAfterConnect(t *testing.T, featureFlags *featureflags.Clie
 	// from here on nothing else may take the slot whose release is under test, and nothing
 	// can, because the device is connected and so reads as in-use.
 	connected := DeviceSlot(math.MaxUint32)
-	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L(),
-		withAfterConnect(func(deviceIndex uint32) {
-			connected = deviceIndex
-			stopAndJoinFeeder()
-			cancel()
-		}),
-	)
+	mnt := NewDirectPathMount(overlay, pool, featureFlags, logger.L())
+	afterAttach(mnt.ops, func(deviceIndex uint32) {
+		connected = deviceIndex
+		stopAndJoinFeeder()
+		cancel()
+	})
 
 	idx, err := mnt.Open(ctx)
 
@@ -171,10 +167,8 @@ func testOpenCancelledAfterConnect(t *testing.T, featureFlags *featureflags.Clie
 	require.NoError(t, err)
 	assert.False(t, stillConnected, "nbd%d is still connected after a cancelled Open", connected)
 
-	pool.mu.Lock()
-	used := pool.usedSlots.Test(uint(connected))
-	pool.mu.Unlock()
-	assert.False(t, used, "slot %d was never released back to the pool", connected)
+	assert.Eventually(t, func() bool { return !slotHeld(pool, connected) }, 10*time.Second, 10*time.Millisecond,
+		"slot %d was never released back to the pool", connected)
 
 	// Callers close on any Open error, and that must stay harmless.
 	assert.NoError(t, mnt.Close(t.Context()))
