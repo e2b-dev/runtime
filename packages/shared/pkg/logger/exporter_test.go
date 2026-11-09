@@ -2,7 +2,9 @@ package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -11,6 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHTTPWriterSendLogLineStatus(t *testing.T) {
@@ -526,4 +531,59 @@ func TestDynamicHTTPWriterNilResolverIsLegacy(t *testing.T) {
 	if count.Load() != 1 {
 		t.Errorf("expected 1 request with nil resolver, got %d", count.Load())
 	}
+}
+
+// TestHTTPWriterWriteContinuesAfterFailedLine verifies a line the collector
+// rejects does not stop the remaining lines of the same Write from being sent.
+func TestHTTPWriterWriteContinuesAfterFailedLine(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var delivered []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if string(body) == "rejected" {
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		mu.Lock()
+		delivered = append(delivered, string(body))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	writer := NewHTTPWriter(t.Context(), server.URL)
+	_, err := writer.Write([]byte("first\nrejected\nsecond\nthird"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Sync())
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"first", "second", "third"}, delivered)
+}
+
+// TestRouteFailureLogReportsAtMostOncePerInterval verifies failures from many
+// Writes are folded into one stderr report per interval, with nothing lost
+// from the counts.
+func TestRouteFailureLogReportsAtMostOncePerInterval(t *testing.T) {
+	t.Parallel()
+
+	var failures routeFailureLog
+	start := time.Now()
+	sendErr := errors.New("collector down")
+
+	msg, ok := failures.record(start, 1, 10, sendErr)
+	require.True(t, ok, "first failure must be reported immediately")
+	assert.Equal(t, "dropped 1 log line(s) (10 bytes) while routing since the last report; last error: collector down", msg)
+
+	_, ok = failures.record(start.Add(time.Second), 2, 20, sendErr)
+	assert.False(t, ok)
+	_, ok = failures.record(start.Add(routeFailureLogInterval-time.Nanosecond), 1, 5, sendErr)
+	assert.False(t, ok)
+
+	msg, ok = failures.record(start.Add(routeFailureLogInterval), 1, 7, sendErr)
+	require.True(t, ok, "a failure after the interval must be reported")
+	assert.Contains(t, msg, "dropped 4 log line(s) (32 bytes)")
 }

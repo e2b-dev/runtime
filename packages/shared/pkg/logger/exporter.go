@@ -83,6 +83,40 @@ type HTTPWriter struct {
 
 	wgLock sync.Mutex
 	wg     *sync.WaitGroup
+
+	routeFailures routeFailureLog
+}
+
+// routeFailureLogInterval is the minimum time between two stderr reports of
+// dropped lines. zap calls Write once per entry, so without it a down
+// collector would print one stderr line per log entry.
+const routeFailureLogInterval = 10 * time.Second
+
+// routeFailureLog folds the routing failures of every Write into at most one
+// report per routeFailureLogInterval. The per-line failure metric still counts
+// every drop, including ones not yet reported here.
+type routeFailureLog struct {
+	mu         sync.Mutex
+	lastReport time.Time
+	lines      int
+	bytes      int
+}
+
+// record adds one Write's failures and returns the report to print, if one is due.
+func (r *routeFailureLog) record(now time.Time, lines, bytes int, lastErr error) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.lines += lines
+	r.bytes += bytes
+	if !r.lastReport.IsZero() && now.Sub(r.lastReport) < routeFailureLogInterval {
+		return "", false
+	}
+
+	msg := fmt.Sprintf("dropped %d log line(s) (%d bytes) while routing since the last report; last error: %v", r.lines, r.bytes, lastErr)
+	r.lastReport, r.lines, r.bytes = now, 0, 0
+
+	return msg, true
 }
 
 func NewHTTPWriter(ctx context.Context, endpoint string) zapcore.WriteSyncer {
@@ -130,17 +164,23 @@ func (h *HTTPWriter) Write(source []byte) (n int, err error) {
 	go func() {
 		defer wg.Done()
 
+		var dropped int
+		var droppedBytes int
+		var lastErr error
+		route := func(line []byte) {
+			if err := h.routeLogLine(line); err != nil {
+				// Never log the line itself: it is customer log content.
+				dropped++
+				droppedBytes += len(line)
+				lastErr = err
+			}
+		}
+
 		start := 0
 		for i, b := range p {
 			if b == '\n' {
 				if start < i { // Ignore empty lines
-					line := p[start:i]
-					if err := h.routeLogLine(line); err != nil {
-						// Never log the line itself: it is customer log content.
-						log.Printf("error routing log line (%d bytes): %v\n", len(line), err)
-
-						return
-					}
+					route(p[start:i])
 				}
 				start = i + 1 // Move start to the next line
 			}
@@ -148,12 +188,12 @@ func (h *HTTPWriter) Write(source []byte) (n int, err error) {
 
 		// Handle the last line if there’s no trailing newline
 		if start < len(p) {
-			line := p[start:]
-			if err := h.routeLogLine(line); err != nil {
-				// Never log the line itself: it is customer log content.
-				log.Printf("error routing log line (%d bytes): %v\n", len(line), err)
+			route(p[start:])
+		}
 
-				return
+		if dropped > 0 {
+			if msg, ok := h.routeFailures.record(time.Now(), dropped, droppedBytes, lastErr); ok {
+				log.Print(msg)
 			}
 		}
 	}()
