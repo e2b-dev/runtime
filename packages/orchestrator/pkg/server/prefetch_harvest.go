@@ -154,6 +154,7 @@ func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Temp
 	if r.hold != nil {
 		releaseHugePages := r.hold(ctx, config)
 		defer releaseHugePages()
+		opts = append(opts, sandbox.WithGuestMemoryReserved(releaseHugePages))
 	}
 	sbx, err := r.factory.ResumeSandbox(
 		ctx,

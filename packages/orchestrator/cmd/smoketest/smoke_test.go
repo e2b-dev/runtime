@@ -24,6 +24,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	hostmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
@@ -117,6 +118,17 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 			meta, err := tmpl.Metadata()
 			require.NoError(t, err)
 
+			// A hugepage start stops counting toward the node's admission once
+			// its guest memory is reported reserved: the pool must show it by then.
+			var reported bool
+			var committedBytes uint64
+			memoryReserved := sandbox.WithGuestMemoryReserved(func() {
+				reported = true
+				if m, err := hostmetrics.NewHostMetrics().GetMemoryMetrics(ctx); err == nil {
+					committedBytes = (m.HugePagesUsed + m.HugePagesReserved) * m.HugePageSizeBytes
+				}
+			})
+
 			token := "smoke-test"
 			t0 := time.Now()
 			sbx, err := infra.factory.ResumeSandbox(
@@ -146,9 +158,16 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 				t0,
 				t0.Add(10*time.Minute),
 				nil,
+				memoryReserved,
 			)
 			require.NoError(t, err, "resume failed for FC %s", fcVersion)
 			t.Logf("resumed in %s", time.Since(t0))
+
+			// Only a Firecracker that passes its memory file has it mapped.
+			require.Equal(t, fc.FCSupportsMemfd(fcVersion), reported, "guest memory reported reserved")
+			if reported {
+				require.GreaterOrEqual(t, committedBytes, uint64(512<<20), "the hugepage pool shows the 512 MiB guest once its memory is reported reserved")
+			}
 
 			// Phase 3: freeze and thaw the live guest rootfs. (envd readiness
 			// is already guaranteed: ResumeSandbox runs WaitForEnvd before

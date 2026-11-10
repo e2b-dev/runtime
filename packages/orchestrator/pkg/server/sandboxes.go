@@ -414,7 +414,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	} else {
 		// Defer routing until after the resume-time envd upgrade's post-/init
 		// (see markSandboxLive below).
-		opts := []sandbox.ResumeOption{sandbox.WithDeferredLiveRegistration()}
+		opts := []sandbox.ResumeOption{sandbox.WithDeferredLiveRegistration(), sandbox.WithGuestMemoryReserved(releaseHugePages)}
 		if rebootOnReset {
 			opts = append(opts, sandbox.WithRebootOnGuestReset(s.startRebootReport(guestOSLabel(config))))
 		}

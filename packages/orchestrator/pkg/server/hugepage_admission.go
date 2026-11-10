@@ -20,9 +20,11 @@ import (
 )
 
 // hugePageAdmission holds the starts of hugepage guests to the pages the node
-// can still allocate. A start faults its guest memory in over seconds, so the
-// pool does not show it yet: the memory of every start it admitted counts as
-// taken until that start ends.
+// can still allocate. The pool shows a start's guest memory only once the
+// start has mapped it, which reserves the pages: the memory of every start it
+// admitted counts as taken until then. A start that maps none, or whose guest
+// may be booted again, faults its pages in over seconds and counts until it
+// ends.
 type hugePageAdmission struct {
 	// read serves the last good sample when a read fails, and errs only
 	// before the first one.

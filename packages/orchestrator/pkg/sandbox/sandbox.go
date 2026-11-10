@@ -1693,6 +1693,9 @@ type resumeOptions struct {
 	// lifecycleID, when set, is the lifecycle the resume starts. See
 	// WithLifecycleID.
 	lifecycleID string
+	// guestMemoryReserved runs once the guest memory file is mapped. See
+	// WithGuestMemoryReserved.
+	guestMemoryReserved func()
 }
 
 // describesCustomerStart reports whether this resume's start-path telemetry describes a
@@ -1803,6 +1806,23 @@ func WithSkippedThaw() ResumeOption {
 // recorded at pause (metadata.Template.RunningEnvdVersion). An empty v is ignored.
 func WithInheritedEnvdVersion(v string) ResumeOption {
 	return func(o *resumeOptions) { o.inheritedEnvdVersion = v }
+}
+
+// WithGuestMemoryReserved runs f once the resume has mapped the guest memory
+// file: the mapping reserves a hugepage guest's pages, so the pool shows them
+// from then on. f does not run for a restore that maps no guest memory file,
+// nor for a resume that may boot its guest again (WithRebootOnGuestReset):
+// that boot takes its memory without reserving it.
+func WithGuestMemoryReserved(f func()) ResumeOption {
+	return func(o *resumeOptions) { o.guestMemoryReserved = f }
+}
+
+// reportGuestMemoryReserved runs the WithGuestMemoryReserved callback if
+// memory holds the mapped guest memory file and no boot can follow.
+func (o *resumeOptions) reportGuestMemoryReserved(ctx context.Context, memory uffd.MemoryBackend) {
+	if o.guestMemoryReserved != nil && o.rebootOnReset == nil && memory.PeekMemfd(ctx) != nil {
+		o.guestMemoryReserved()
+	}
 }
 
 // ErrVcpuExceedsSnapshot is fc.ErrVcpuExceedsSnapshot, so a refusal before and after the snapshot loads match.
@@ -2418,6 +2438,9 @@ func (f *Factory) ResumeSandbox(
 	if fcStartErr != nil {
 		return nil, fmt.Errorf("failed to start FC: %w", fcStartErr)
 	}
+	// The handshake mapped the guest memory file, if Firecracker passed one,
+	// before the restore returned.
+	ropts.reportGuestMemoryReserved(ctx, fcUffd)
 	// For a snapshot that never recorded its size, the loaded VM's count is what the next pause records.
 	if n := fcHandle.VmVcpus(); n > 0 {
 		sbx.resolvedVmVcpus = n
