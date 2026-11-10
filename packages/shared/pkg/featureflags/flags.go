@@ -536,6 +536,12 @@ var (
 	// context; the fallback keeps interception at its existing transform span.
 	EgressProxyInterceptTracingFlag = NewBoolFlag("egress-proxy-intercept-tracing", false)
 
+	// EgressProxyBufferedCopyFlag makes the egress proxy copy each direction of
+	// a passthrough connection through a userspace buffer. Target the sandbox
+	// or team context. The fallback leaves the copy eligible for splice. Read
+	// once per connection.
+	EgressProxyBufferedCopyFlag = NewBoolFlag("egress-proxy-buffered-copy", false)
+
 	// SandboxIamTokensFlag gates the sandbox IAM workload token configuration
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
