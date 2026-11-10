@@ -2,8 +2,10 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -33,44 +35,42 @@ func TestMaskRequestHostAPIParameter(t *testing.T) {
 	envdClient := setup.GetEnvdClient(t, ctx)
 
 	port := 8080
-	// Single-shot listener that dumps the raw request to a file. Uses the
+	// Single-shot listener that answers with the raw request it received. Uses the
 	// preinstalled python instead of installing netcat via apt-get, which is
 	// page-fault-heavy enough to wedge the sandbox under parallel test load.
-	outputFile := "/tmp/nc_output.txt"
-	listener := fmt.Sprintf(
-		`import socket; s=socket.socket(); s.bind(("0.0.0.0",%d)); s.listen(1); c,_=s.accept(); open(%q,"wb").write(c.recv(65536))`,
-		port, outputFile)
+	listener := `import socket, sys
+s = socket.socket()
+s.bind(("0.0.0.0", int(sys.argv[1])))
+s.listen(1)
+c, _ = s.accept()
+req = b""
+while b"\r\n\r\n" not in req:
+    chunk = c.recv(65536)
+    if not chunk:
+        break
+    req += chunk
+c.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: " + str(len(req)).encode() + b"\r\n\r\n" + req)
+c.close()
+`
+	listenerDone := make(chan error, 1)
 	go func() {
-		_ = utils.ExecCommandAsRoot(t, ctx, sbx, envdClient, "python3", "-c", listener)
+		listenerDone <- utils.ExecCommandAsRoot(t, ctx, sbx, envdClient, "python3", "-c", listener, strconv.Itoa(port))
 	}()
 
-	// Wait for the listener to be up
-	time.Sleep(2 * time.Second)
-
-	// Prepare the sandbox URL using helpers
-	url, err := url.Parse(setup.EnvdProxy)
+	proxyURL, err := url.Parse(setup.EnvdProxy)
 	require.NoError(t, err)
 
-	req := utils.NewRequest(sbx, url, port, nil)
-	// The request doesn't finish properly and blocks, but the headers are still sent to the netcat
-	go func() {
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return
-		}
-		resp.Body.Close()
-	}()
-
-	// Give netcat listener time to receive and write to file
-	time.Sleep(2 * time.Second)
-
-	// Read file contents
-	data, err := utils.ExecCommandAsRootWithOutput(t, ctx, sbx, envdClient, "cat", outputFile)
-	require.NoError(t, err)
-
-	// Verify the Host header seen by netcat is the one set via maskRequestHost
+	// The proxy answers 502 until python has bound the port, which takes seconds under parallel load.
+	resp := utils.WaitForStatus(t, &http.Client{Timeout: 10 * time.Second}, sbx, proxyURL, port, nil, http.StatusOK)
+	require.NotNil(t, resp, "listener never answered through the proxy")
+	data, err := io.ReadAll(resp.Body)
 	t.Logf("Data: %s", data)
-	assert.Contains(t, data, fmt.Sprintf("Host: %s:%d", hostname, port))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.NoError(t, <-listenerDone)
+
+	// Verify the Host header the listener received is the one set via maskRequestHost
+	assert.Contains(t, string(data), fmt.Sprintf("Host: %s:%d", hostname, port))
 }
 
 func TestMaskRequestHostIncorrectUrl(t *testing.T) {

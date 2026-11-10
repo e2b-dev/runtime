@@ -60,7 +60,7 @@ target "seed" {
   // target, so an arm64 image costs one native Go build rather than an
   // emulated one; the runtime stage is the target platform's Alpine.
   dockerfile-inline = <<-DOCKERFILE
-    FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.24 AS builder
+    FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24 AS builder
     ARG SRC=go/oss
     ARG TARGETARCH
     WORKDIR /src
@@ -73,7 +73,7 @@ target "seed" {
     FROM alpine:3.24
     # Bump this date to force a rebuild from here down, so the upgrade below
     # resolves against the current Alpine package index. Nothing reads the value.
-    ENV LAST_FORCED_UPDATE=2026-09-11
+    ENV LAST_FORCED_UPDATE=2026-10-21
     RUN apk upgrade --no-cache
     COPY --from=builder /seed /seed
     ENTRYPOINT ["/seed"]

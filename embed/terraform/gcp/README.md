@@ -2,15 +2,17 @@
 
 Creates one Ubuntu 24.04 VM with nested virtualization, in a managed instance
 group of one, which installs Docker, writes the two files Embed ships and runs
-`docker compose up -d --wait`. It is a single-machine evaluation
-package rather than a deployment pattern; the hub is
+`docker compose up -d --wait`. It is a single-machine package rather
+than a deployment pattern; the hub is
 [`../../README.md`](../../README.md).
 
 ## Requirements
 
 - Terraform 1.7.5 or newer.
-- A GCP project with the Compute Engine API enabled, and credentials for it
-  (`gcloud auth application-default login`, or a service account).
+- A GCP project with the Compute Engine and Cloud Resource Manager APIs
+  enabled (the second one grants the instance's service account its logging
+  role), and credentials for it (`gcloud auth application-default login`, or
+  a service account).
 - No machine of your own. The module creates it.
 - The module source has to be the repository, not a copy of this directory:
   it reads `../../compose/compose.yaml` and `../../compose/.env` relative to
@@ -28,6 +30,7 @@ module "e2b" {
 
 output "api_url" { value = module.e2b.api_url }
 output "sandbox_url" { value = module.e2b.sandbox_url }
+output "dashboard_url" { value = module.e2b.dashboard_url }
 output "ssh_command" { value = module.e2b.ssh_command }
 output "e2b_api_key" {
   value     = module.e2b.e2b_api_key
@@ -39,7 +42,7 @@ output "e2b_api_key" {
 terraform init && terraform apply
 ```
 
-A module's outputs are not the root module's, so the four `output` blocks are
+A module's outputs are not the root module's, so the five `output` blocks are
 what makes `terraform output` see them; without them the Try it commands below
 print nothing.
 
@@ -60,6 +63,11 @@ export E2B_API_URL="$(terraform output -raw api_url)"
 export E2B_SANDBOX_URL="$(terraform output -raw sandbox_url)"
 export E2B_API_KEY="$(terraform output -raw e2b_api_key)"
 ```
+
+Open `terraform output -raw dashboard_url` in a browser and paste the key
+(`terraform output -raw e2b_api_key`) into its key form. The instance's `.env`
+carries `E2B_DASHBOARD_HOST=<its address>`, so the browser reaches sandbox
+traffic at the same address, no tunnel needed.
 
 Install the SDK in a virtual environment, which is what keeps it off the
 system Python that Ubuntu's `pip` refuses to write to. This runs on your own
@@ -118,8 +126,8 @@ templates you built are gone.
 
 ### Firewall
 
-Three rules, and nothing else reaches the instance from outside: 3000 and
-3002 from `client_cidrs`, 3000 from Google's health checkers, and 22 from
+Three rules, and nothing else reaches the instance from outside: 3000, 3001
+and 3002 from `client_cidrs`, 3000 from Google's health checkers, and 22 from
 IAP. The orchestrator's unauthenticated control port 5008 in particular stays
 inside the VM.
 
@@ -165,6 +173,10 @@ them; read the key with `terraform output -raw e2b_api_key`. Set
 `team_api_key` to choose the key instead; change it and recreate the instance
 to rotate it.
 
+The dashboard keeps the key you paste in an httpOnly browser cookie for a
+year, not marked Secure because the instance serves plain http; sign-out
+clears it.
+
 ### Upgrading
 
 A newer ref points at newer files, which changes the instance template.
@@ -183,9 +195,25 @@ replacement must be delete-before-create. That is a fresh instance, so the
 also sets the group's update policy type to proactive; the next
 `terraform apply` sets it back, which is the only change it will show.
 
+The instance's `.env` and `compose.yaml` are written once, on first boot, so
+an install created before the dashboard existed keeps running the Compose file
+it was created with, which has no dashboard, until that replace.
+
 `compose_base_url` points the first boot at the Compose files of a specific
 commit instead of the files the module ships, for example
 `https://raw.githubusercontent.com/e2b-dev/runtime/<commit>/embed/compose`.
+
+### Telemetry
+
+`otel_collector = true` runs the built-in OpenTelemetry collector on the
+instance, keeping the sandbox and team metrics behind the dashboard's
+monitoring charts in its own ClickHouse, and `otel_collector_grpc_endpoint`
+sends the services' metrics, traces and logs to a collector of your own. Set
+one or the other: with both, the services export to your endpoint and the
+built-in collector receives nothing, so the dashboard's charts stay empty.
+Both reach the instance's `.env` at first boot only, so changing either later
+takes the replace under Upgrading; the reference's
+[Observability](../../docs/REFERENCE.md#observability) has the rest.
 
 ### Limitations
 
@@ -193,34 +221,37 @@ commit instead of the files the module ships, for example
   disk, rebuilds the `base` template and loses the templates you built.
 - Template builds with `copy()` steps upload through the orchestrator's port
   5008, which the firewall keeps closed. Run them on the instance, or tunnel
-  the three ports and point the SDK at `http://127.0.0.1:3000` and
+  the four ports and point the SDK at `http://127.0.0.1:3000` and
   `http://127.0.0.1:3002`:
 
   ```bash
-  eval "$(terraform output -raw ssh_command) -- -N -L 3000:127.0.0.1:3000 -L 3002:127.0.0.1:3002 -L 5008:127.0.0.1:5008"
+  eval "$(terraform output -raw ssh_command) -- -N -L 3000:127.0.0.1:3000 -L 3001:127.0.0.1:3001 -L 3002:127.0.0.1:3002 -L 5008:127.0.0.1:5008"
   ```
 
 ### Variables
 
 | Input | Default | What it is |
 |-------|---------|------------|
-| `project_id` | required | the GCP project; the Compute Engine API must be enabled |
-| `client_cidrs` | required | the CIDRs allowed to reach 3000 and 3002; at least one |
+| `project_id` | required | the GCP project; the Compute Engine and Cloud Resource Manager APIs must be enabled |
+| `client_cidrs` | required | the CIDRs allowed to reach 3000, 3001 and 3002; at least one, and a browser's has to be its public IPv4 address |
 | `zone` | `us-west1-b` | the zone; the subnet's and the address's region follows from it |
 | `name` | `e2b-embed` | name prefix for every resource |
 | `machine_type` | `n4-standard-4` | 12 GiB RAM recommended; the default has 16 |
 | `boot_disk_size_gb` | `50` | 20 GiB has to stay free after the OS and Docker |
 | `boot_disk_type` | `hyperdisk-balanced` | n4 machine types support only Hyperdisk |
-| `image` | Ubuntu 24.04 LTS | the stack needs apt, a writable `/etc` and glibc 2.34 or newer; x86-64 only (this template is a nested-virtualization VM with Docker's amd64 repository in its startup script; GCE's arm64 machine types have no nested virtualization, metal included; the metal types run the stack on their bare `/dev/kvm`, so an arm64 shape would be a metal instance, not this nested-virt VM template) |
+| `image` | Ubuntu 24.04 LTS | the stack needs apt, a writable `/etc` and glibc 2.34 or newer; x86-64 only (this template is a nested-virtualization VM with Docker's amd64 repository in its startup script; GCE's arm64 machine types have no nested virtualization, metal included; the metal types run the stack on their bare `/dev/kvm`, so an arm64 install would be a metal instance, not this nested-virt VM template) |
 | `hugepages` | `2048` | 2 MiB hugepages reserved for sandboxes; 2048 is 4 GiB |
 | `team_api_key` | generated | `e2b_` plus an even number of lowercase hex characters, at least 32 |
 | `compose_base_url` | the shipped files | a directory URL to fetch the two files from at first boot |
+| `otel_collector_grpc_endpoint` | empty | host:port of an OTLP/gRPC collector the services export metrics, traces and logs to, with no scheme; empty disables export unless `otel_collector` is on |
+| `otel_collector` | `false` | run the built-in collector on the instance, writing sandbox and team metrics into its own ClickHouse; implies `127.0.0.1:4317` when the endpoint is empty |
 | `labels` | `{}` | labels for the instance template and the address |
 
 | Output | What it is |
 |--------|------------|
 | `api_url` | `E2B_API_URL` for the SDK |
 | `sandbox_url` | `E2B_SANDBOX_URL` for the SDK |
+| `dashboard_url` | the dashboard, for a browser; sign in with `e2b_api_key` |
 | `e2b_api_key` | `E2B_API_KEY`, the team API key the seed inserted (sensitive) |
 | `instance_group` | the self link of the managed instance group |
 | `ssh_command` | a shell snippet for `eval`: SSH through IAP to the current instance |

@@ -165,8 +165,8 @@ func parseConnectionStringSharedKey(connectionString string) (accountName, accou
 
 func (s *azureStorage) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
 	// An empty prefix would match, and delete, every blob in the container.
-	if prefix == "" {
-		return errors.New("refusing to delete objects with an empty prefix")
+	if err := validateObjectPath(prefix); err != nil {
+		return err
 	}
 
 	// Deletes are sequential per blob for now. azblob does have Blob Batch
@@ -213,6 +213,10 @@ func (s *azureStorage) GetDetails() string {
 
 // Put Blob also requires the "x-ms-blob-type" request header, which a SAS cannot carry, so it travels back in Headers for the external client to send.
 func (s *azureStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	blobURL := s.container.NewBlobClient(path).URL()
 
 	now := time.Now().UTC()
@@ -268,6 +272,10 @@ func sasProtocolFor(blobURL string) sas.Protocol {
 }
 
 func (s *azureStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &azureObject{
 		container:     s.container,
 		containerName: s.containerName,
@@ -277,6 +285,10 @@ func (s *azureStorage) OpenSeekable(_ context.Context, path string) (Seekable, e
 }
 
 func (s *azureStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	return &azureObject{
 		container:     s.container,
 		containerName: s.containerName,
@@ -330,12 +342,9 @@ func (o *azureObject) StoreFile(ctx context.Context, path string, opts ...PutOpt
 		})
 	}
 
-	// Inherit the caller's context for the block upload. UploadFile stages
-	// blocks concurrently (Concurrency=8, BlockSize=10MB) and commits the block
-	// list at the end — a tight static timeout here would cancel an in-flight
-	// multi-GB snapshot upload. The caller (pkg/server/sandboxes.go) already
-	// scopes a per-attempt deadline (uploadTimeout = 20m) with retry budget on
-	// top, matching the AWS/GCP paths which also inherit the caller's ctx.
+	// UploadFile uses ctx for staging every block and committing the list, so
+	// a fixed timeout here would cancel a large upload mid-transfer. The
+	// caller sets the deadline for each attempt.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, [32]byte{}, fmt.Errorf("failed to open file %s: %w", path, err)

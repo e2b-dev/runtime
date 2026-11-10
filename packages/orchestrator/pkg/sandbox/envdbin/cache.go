@@ -22,10 +22,12 @@
 // Lookup's source stat is on the mount, and deliberately so: the cache key
 // is the source's identity, which is also how a promotion becomes visible, so a
 // resume necessarily stats it. That is one metadata round trip against a
-// TTL-cached mount, against the demand-paged exec it replaces — and it is not
-// bounded either, for the same reason as above, so a wedged mount can still hold
-// a resume's lookup. What moving the copy off the path removes is the unbounded
-// work: the exec and the 13 MB read.
+// TTL-cached mount, against the demand-paged exec it replaces. It cannot be
+// interrupted either, for the same reason as above, so the lookup does not wait
+// on it past lookupStatBudget: concurrent lookups share one stat, and a stat that
+// outlives the budget defers the upgrade for that resume like any other miss
+// (statSourceForLookup). What moving the copy off the path removes is the
+// unbounded work: the exec and the 13 MB read.
 //
 // The source (/fc-envd/envd, or envd.<sha> beside it) lives on a read-only
 // gcsfuse mount. Promotion overwrites the object in place (gcloud storage cp
@@ -57,6 +59,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +75,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -80,6 +84,8 @@ import (
 // meter is the package's own, so the cache and the resolver report through one
 // instrumentation scope.
 var meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin")
+
+var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin")
 
 // warms counts how a warm of the source ended, including the ones that declined
 // to copy anything and the miss that is answered without a warm at all, when the
@@ -91,6 +97,11 @@ var meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandb
 // broken would serve every resume from the mount and look no different from one
 // whose cache is working.
 var warms = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorEnvdBinaryCacheWarms))
+
+// sourceStatDuration times every resume-path stat of the source when it returns,
+// including the ones every lookup had given up on, so its tail measures the mount
+// rather than the budget.
+var sourceStatDuration = utils.Must(telemetry.GetHistogram(meter, telemetry.OrchestratorEnvdBinaryCacheSourceStatDurationName))
 
 const (
 	// maxEntries bounds the cache to the paths that can be in play at once: the
@@ -120,9 +131,12 @@ const (
 	// stages after it then go without.
 	//
 	// No stage needs a number of its own. The structural check and the probe work
-	// on the local copy, and the freshness re-check — the one that stats the mount,
-	// and so the one that could otherwise stall for the life of the process — is
-	// already released on this shared deadline by statSourceBounded.
+	// on the local copy, and the freshness re-check — the one that stats the mount
+	// by path, and so the one that could otherwise stall for the life of the
+	// process — is already released on this shared deadline by statSourceBounded.
+	// The copy's reads and its fstat of the opened source are not: a call already
+	// blocked in the kernel cannot be interrupted (see copyContext), which is why
+	// the warm runs off the resume path.
 	warmBudget = 30 * time.Second
 
 	// backoffBase and backoffCeiling schedule retries of a failure that may clear
@@ -145,7 +159,20 @@ const (
 
 	// copyChunk is the granularity at which a copy checks its deadline.
 	copyChunk = 1 << 20
+
+	// lookupStatBudget bounds how long a lookup waits for the source stat. A healthy
+	// stat is one metadata round trip, well under a second even from a node far from
+	// the bucket; past this, the mount is stalled and the resume is better off
+	// skipping the upgrade than waiting for it.
+	lookupStatBudget = 2 * time.Second
 )
+
+// errSourceStatStalled marks a lookup whose source stat did not return within
+// lookupStatBudget. The lookup is answered as a deferral, not as an unreadable
+// source: a slow mount is not a broken target, and it clears on its own.
+// It wraps featureflags.ErrEnvdSourceStalled, which the upgrade resolver maps to
+// its source_stalled reason.
+var errSourceStatStalled = fmt.Errorf("envd binary source stat stalled: %w", featureflags.ErrEnvdSourceStalled)
 
 // errCacheUnusable labels a failure of the cache directory itself, as opposed to
 // a failure of the source or of the deadline, so a log line says which side was
@@ -339,6 +366,8 @@ type Cache struct {
 	// through statSource, which falls back to os.Stat, so the field's existence
 	// cannot change how a Cache behaves in production.
 	statSrc func(string) (os.FileInfo, error)
+	// lookupBudget overrides lookupStatBudget when positive. Tests only, like budget.
+	lookupBudget time.Duration
 
 	// reapTemps clears temporary files left by a previous process, once per
 	// cache. It cannot run as part of the regular sweep: that would race a
@@ -379,6 +408,10 @@ type Cache struct {
 	// states report binary_not_cached at the call sites, making the starvation
 	// indistinguishable from a cold node.
 	backoff map[string]*pathBackoff
+	// statFlights holds, per source path, the lookup stat currently in the kernel.
+	// Lookups of the same path share it, so a stalled mount costs one stuck goroutine
+	// per path rather than one per resume.
+	statFlights map[string]*statFlight
 
 	// load deduplicates concurrent misses. A busy node can see many resumes at
 	// once, so an undeduplicated miss is a thundering herd of reads of the same
@@ -399,7 +432,23 @@ func NewCache(dir string, probe func(context.Context, string) (string, error)) *
 		inFlight: make(map[string]int),
 		warming:  make(map[string]time.Time),
 		backoff:  make(map[string]*pathBackoff),
+
+		statFlights: make(map[string]*statFlight),
 	}
+}
+
+// statFlight is one source stat shared by the lookups that arrive while it runs.
+// fi, err, landed and warmOnLanding are guarded by Cache.mu; done is closed once
+// the result is recorded, after which fi and err are read without the lock.
+// warmOnLanding is set by a lookup that stopped waiting before the stat landed
+// and wanted the warm.
+type statFlight struct {
+	started       time.Time
+	done          chan struct{}
+	fi            os.FileInfo
+	err           error
+	landed        bool
+	warmOnLanding bool
 }
 
 // pathBackoff is one source path's defence against repeating a failure. The two
@@ -426,6 +475,9 @@ type pathBackoff struct {
 	// warnedAt rate-limits the log line for a path that keeps failing, so a fault
 	// that recurs on every resume costs one line per window rather than a flood.
 	warnedAt time.Time
+	// stallWarnedAt does the same for stalls, separately, so a stall cannot spend
+	// the window and demote a genuine failure on the same path to Debug.
+	stallWarnedAt time.Time
 }
 
 // statSourceBounded stats the source without letting a wedged mount retain the
@@ -455,6 +507,166 @@ func (c *Cache) statSourceBounded(ctx context.Context, path string) (os.FileInfo
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// statSourceForLookup is the resume path's source stat: bounded like
+// statSourceBounded, and shared between concurrent lookups of the same path.
+//
+// Sharing is what keeps the bound cheap. A stat stuck in the kernel cannot be
+// interrupted, so each abandoned call leaks its goroutine until the mount answers;
+// a lookup per resume would leak one per resume for the length of the stall. Here
+// every lookup joins the stat already in flight, and once that stat has outlived
+// the budget, later lookups fail at once instead of waiting it out again. A stall
+// therefore costs each resume at most one budget, and the node one goroutine.
+//
+// A lookup that gives up defers its upgrade and has no identity to warm with, so
+// a stat that lands after its lookups gave up starts the warm itself. Without
+// that, a mount slower than the budget but otherwise healthy would never fill a
+// cold cache. On a warm node a stall turns hits into deferrals for its length;
+// the entries are kept, and hits resume once the mount answers again. warmLate
+// says whether this caller wants that warm; a caller not using the cache does not.
+func (c *Cache) statSourceForLookup(ctx context.Context, path string, warmLate bool) (os.FileInfo, error) {
+	budget := lookupStatBudget
+	if c.lookupBudget > 0 {
+		budget = c.lookupBudget
+	}
+
+	c.mu.Lock()
+	if c.statFlights == nil {
+		c.statFlights = make(map[string]*statFlight)
+	}
+	f, ok := c.statFlights[path]
+	if !ok {
+		f = &statFlight{started: time.Now(), done: make(chan struct{})}
+		c.statFlights[path] = f
+		warmCtx := context.WithoutCancel(ctx)
+		go func() {
+			fi, err := c.statSource(path)
+			recordSourceStat(warmCtx, f.started, err)
+			if warm := c.landFlight(path, f, fi, err); warm && err == nil && c.lookup(path, fi) == nil {
+				c.warmAsyncFor(warmCtx, path, fi)
+			}
+		}()
+	}
+	c.mu.Unlock()
+
+	remaining := budget - time.Since(f.started)
+	if remaining <= 0 {
+		if landed, fi, err := c.abandonFlight(f, warmLate); landed {
+			return fi, err
+		}
+
+		return nil, fmt.Errorf("%w: in flight for %s", errSourceStatStalled, time.Since(f.started).Round(time.Millisecond))
+	}
+
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+
+	select {
+	case <-f.done:
+		return f.fi, f.err
+	case <-timer.C:
+		if landed, fi, err := c.abandonFlight(f, warmLate); landed {
+			return fi, err
+		}
+
+		return nil, fmt.Errorf("%w: no answer within %s", errSourceStatStalled, budget)
+	case <-ctx.Done():
+		if landed, fi, err := c.abandonFlight(f, warmLate); landed {
+			return fi, err
+		}
+
+		return nil, ctx.Err()
+	}
+}
+
+// landFlight records f's result and retires it, and reports whether a lookup that
+// wanted the warm had already given up on it. It runs under the same lock as
+// abandonFlight, so a lookup and the stat cannot both decide the other will start
+// the warm: either the stat sees the abandonment and warms, or the lookup sees the
+// result and takes it.
+func (c *Cache) landFlight(path string, f *statFlight, fi os.FileInfo, err error) (warm bool) {
+	c.mu.Lock()
+	f.fi, f.err, f.landed = fi, err, true
+	if c.statFlights[path] == f {
+		delete(c.statFlights, path)
+	}
+	warm = f.warmOnLanding
+	c.mu.Unlock()
+	close(f.done)
+
+	return warm
+}
+
+// abandonFlight gives up on f for a lookup, asking for the warm on landing when
+// warm is set, unless its stat has already landed, in which case it returns the
+// result for the lookup to use instead.
+func (c *Cache) abandonFlight(f *statFlight, warm bool) (landed bool, fi os.FileInfo, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if f.landed {
+		return true, f.fi, f.err
+	}
+	f.warmOnLanding = f.warmOnLanding || warm
+
+	return false, nil, nil
+}
+
+// recordSourceStat times one source stat from when its flight started.
+func recordSourceStat(ctx context.Context, started time.Time, err error) {
+	result := "ok"
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		result = "not_found"
+	case err != nil:
+		result = "error"
+	}
+	sourceStatDuration.Record(ctx, time.Since(started).Milliseconds(), metric.WithAttributes(attribute.String("result", result)))
+}
+
+// BoundedStat stats path through the shared, bounded lookup stat without asking
+// for a warm, for a caller that is not using the cache. A nil Cache stats once,
+// bounded but unshared.
+func (c *Cache) BoundedStat(ctx context.Context, path string) (os.FileInfo, error) {
+	if c != nil {
+		return c.statSourceForLookup(ctx, path, false)
+	}
+
+	type result struct {
+		fi  os.FileInfo
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		fi, err := os.Stat(path)
+		done <- result{fi: fi, err: err}
+	}()
+
+	timer := time.NewTimer(lookupStatBudget)
+	defer timer.Stop()
+
+	select {
+	case r := <-done:
+		return r.fi, r.err
+	case <-timer.C:
+		return nil, fmt.Errorf("%w: no answer within %s", errSourceStatStalled, lookupStatBudget)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// noteSourceStalled reports a lookup that gave up on a stalled source stat. It
+// arms no schedule and counts no warm, because nothing was attempted; the stat
+// starts the warm itself when it lands. Rate-limited per path on its own window,
+// since a stall recurs on every resume until the mount answers.
+func (c *Cache) noteSourceStalled(ctx context.Context, srcPath string, cause error) {
+	if c == nil || !c.shouldWarnStall(srcPath) {
+		return
+	}
+
+	logger.L().Warn(ctx, "envd binary cache: source stat stalled; resumes skip the envd upgrade until the mount answers",
+		zap.String("path", srcPath), zap.Error(cause))
 }
 
 // validateImage reports whether the copy at path is a complete ELF image of
@@ -519,10 +731,10 @@ func (c *Cache) statSource(path string) (os.FileInfo, error) {
 // probe, so the unbounded work this cache exists to remove -- exec'ing the binary off
 // the mount, and streaming it -- is not reachable from here. The source stat is
 // the one thing that does touch the mount, by design (see the package comment);
-// a wedged mount can still hold it.
+// it is bounded by lookupStatBudget, and a stat that outlives it is a miss.
 func (c *Cache) Lookup(srcPath string) (*Entry, bool) {
 	// A stat that failed yields no entry, so the error needs no separate test.
-	e, _, _ := c.lookupSource(srcPath)
+	e, _, _ := c.lookupSource(context.Background(), srcPath)
 
 	return e, e != nil
 }
@@ -535,14 +747,15 @@ func (c *Cache) Lookup(srcPath string) (*Entry, bool) {
 // down is what keeps the resume path at one metadata op instead of two. The error
 // is handed back for the same reason: a caller whose own stat has just failed
 // knows something no warm could discover more cheaply, since a warm would start
-// by taking that same stat.
-func (c *Cache) lookupSource(srcPath string) (*Entry, os.FileInfo, error) {
+// by taking that same stat. A stalled stat (errSourceStatStalled) is not such a
+// failure: the mount has not answered no, it has not answered yet.
+func (c *Cache) lookupSource(ctx context.Context, srcPath string) (*Entry, os.FileInfo, error) {
 	// A nil cache is a caller built without one; a miss is the honest answer.
 	if c == nil {
 		return nil, nil, errNoCache
 	}
 
-	fi, err := c.statSource(srcPath)
+	fi, err := c.statSourceForLookup(ctx, srcPath, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stat envd binary %q: %w", srcPath, err)
 	}
@@ -759,10 +972,10 @@ func (c *Cache) warm(ctx context.Context, srcPath string) (string, error) {
 // stat-ed the source and hands the result down, so nothing here asks the mount
 // for metadata a resume has just paid for.
 //
-// A stale fi needs no special handling. The copy re-checks the source when it
-// comes up short, and publication re-checks it again, so a generation the source
-// has already moved past is abandoned as superseded rather than published or
-// judged.
+// A stale fi needs no special handling. The copy checks that the file it read is
+// still fi's generation, and publication re-checks the source, so a generation
+// the source has already moved past is abandoned as superseded rather than
+// published or judged.
 func (c *Cache) warmWith(ctx context.Context, srcPath string, fi os.FileInfo) (result string, err error) {
 	// A panic is contained here rather than being allowed to reach the goroutine
 	// this runs on, where it would take the orchestrator down with every sandbox on
@@ -1057,6 +1270,14 @@ func (c *Cache) copyInUnchecked(ctx context.Context, srcPath string, fi os.FileI
 			// promotion as a corrupt target, with the loud warn and warms{bad_target}
 			// that carries, and pin an identity the source has already left behind.
 			// Publication would never get to call it superseded.
+			err = errSuperseded
+		}
+	}
+	if err == nil {
+		// A same-size promotion before or during the copy would put another generation under fi's name.
+		if cur, serr := src.Stat(); serr != nil {
+			err = fmt.Errorf("stat opened source: %w", serr)
+		} else if cur.Size() != fi.Size() || !cur.ModTime().Equal(fi.ModTime()) {
 			err = errSuperseded
 		}
 	}
@@ -1358,6 +1579,21 @@ func (c *Cache) shouldWarn(srcPath string) bool {
 		return false
 	}
 	b.warnedAt = now
+
+	return true
+}
+
+// shouldWarnStall is shouldWarn for stalls, on its own window (stallWarnedAt).
+func (c *Cache) shouldWarnStall(srcPath string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	b := c.backoffLocked(srcPath)
+	now := time.Now()
+	if !b.stallWarnedAt.IsZero() && now.Sub(b.stallWarnedAt) < backoffCeiling {
+		return false
+	}
+	b.stallWarnedAt = now
 
 	return true
 }

@@ -144,6 +144,56 @@ func TestTemplateStorage_URLIgnoresLegacyPathStyleEnv(t *testing.T) {
 	assert.Equal(t, storage.Spec{Provider: storage.AWSStorageProvider, Bucket: "url-bucket"}, spec)
 }
 
+func TestTemplateStorage_LegacySSEEnv(t *testing.T) {
+	// The legacy SSE envs are folded into the synthesized URL for both roles,
+	// alongside path style.
+	t.Setenv("TEMPLATE_STORAGE_URL", "")
+	t.Setenv("BUILD_CACHE_STORAGE_URL", "")
+	t.Setenv("STORAGE_PROVIDER", "AWSBucket")
+	t.Setenv("TEMPLATE_BUCKET_NAME", "legacy-templates")
+	t.Setenv("BUILD_CACHE_BUCKET_NAME", "legacy-cache")
+	t.Setenv("S3_USE_PATH_STYLE", "true")
+	t.Setenv("S3_SSE_TYPE", "aws:kms")
+	t.Setenv("S3_SSE_KMS_KEY_ID", "arn:aws:kms:us-east-1:111111111111:key/test")
+
+	want := storage.Spec{
+		Provider:             storage.AWSStorageProvider,
+		UsePathStyle:         true,
+		ServerSideEncryption: storage.SSEAWSKMS,
+		SSEKMSKeyID:          "arn:aws:kms:us-east-1:111111111111:key/test",
+	}
+
+	spec, err := TemplateStorage()
+	require.NoError(t, err)
+	want.Bucket = "legacy-templates"
+	assert.Equal(t, want, spec)
+
+	spec, err = BuildCacheStorage()
+	require.NoError(t, err)
+	want.Bucket = "legacy-cache"
+	assert.Equal(t, want, spec)
+}
+
+func TestTemplateStorage_LegacyInvalidSSEEnvFails(t *testing.T) {
+	t.Setenv("TEMPLATE_STORAGE_URL", "")
+	t.Setenv("STORAGE_PROVIDER", "AWSBucket")
+	t.Setenv("TEMPLATE_BUCKET_NAME", "legacy-templates")
+	t.Setenv("S3_SSE_TYPE", "yes")
+
+	_, err := TemplateStorage()
+	require.ErrorContains(t, err, `invalid ssetype "yes"`)
+}
+
+func TestTemplateStorage_URLIgnoresLegacySSEEnv(t *testing.T) {
+	// A defined storage URL is self-describing: SSE comes from its query only.
+	t.Setenv("TEMPLATE_STORAGE_URL", "s3://url-bucket")
+	t.Setenv("S3_SSE_TYPE", "AES256")
+
+	spec, err := TemplateStorage()
+	require.NoError(t, err)
+	assert.Equal(t, storage.Spec{Provider: storage.AWSStorageProvider, Bucket: "url-bucket"}, spec)
+}
+
 func TestStorage_MalformedPathStyleEnvFailsFast(t *testing.T) {
 	// Deliberate: a malformed S3_USE_PATH_STYLE fails resolution loudly
 	// (even for URL-configured roles) instead of silently meaning false.
@@ -192,4 +242,30 @@ func TestTemplateStorage_InvalidURL(t *testing.T) {
 
 	_, err := TemplateStorage()
 	require.ErrorContains(t, err, "unsupported query parameter")
+}
+
+func TestBuildCacheStorageIsLocal(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		env      map[string]string
+		expected bool
+	}{
+		{"unconfigured bucket provider", map[string]string{"STORAGE_PROVIDER": "GCPBucket"}, false},
+		{"legacy local provider", map[string]string{"STORAGE_PROVIDER": "Local"}, true},
+		{"file URL", map[string]string{"BUILD_CACHE_STORAGE_URL": "file:///var/lib/build-cache"}, true},
+		{"malformed file URL", map[string]string{"BUILD_CACHE_STORAGE_URL": "FILE://host/x"}, true},
+		{"bucket URL over a local provider", map[string]string{"STORAGE_PROVIDER": "Local", "BUILD_CACHE_STORAGE_URL": "gs://cache"}, false},
+		{"unparseable environment", map[string]string{"S3_USE_PATH_STYLE": "maybe"}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, key := range []string{"STORAGE_PROVIDER", "BUILD_CACHE_STORAGE_URL", "S3_USE_PATH_STYLE"} {
+				t.Setenv(key, "")
+			}
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			assert.Equal(t, tt.expected, BuildCacheStorageIsLocal())
+		})
+	}
 }

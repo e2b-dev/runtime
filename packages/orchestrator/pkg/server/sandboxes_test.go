@@ -3,11 +3,18 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net"
 	"reflect"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,12 +24,18 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 var (
@@ -46,6 +59,8 @@ func Test_server_List(t *testing.T) {
 		wantErr bool
 		data    []*sandbox.Sandbox
 		endAt   time.Time
+
+		poweredOff bool
 	}{
 		{
 			name: "should return all sandboxes",
@@ -75,7 +90,6 @@ func Test_server_List(t *testing.T) {
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
-						Config: &orchestrator.SandboxConfig{TemplateId: "template-id"},
 						// ClientId:  "client-id",
 						StartTime:   timestamppb.New(startTime),
 						EndTime:     timestamppb.New(endTime),
@@ -84,6 +98,53 @@ func Test_server_List(t *testing.T) {
 						ExecutionId: listExecutionID,
 						Vcpu:        2,
 						RamMb:       512,
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "should mark a sandbox whose guest powered off",
+
+			poweredOff: true,
+
+			args: args{
+				in1: &emptypb.Empty{},
+			},
+			data: []*sandbox.Sandbox{
+				{
+					APIStoredConfig: &orchestrator.SandboxConfig{
+						TemplateId: "template-id",
+					},
+					Metadata: &sandbox.Metadata{
+						Runtime: sandboxtypes.RuntimeMetadata{
+							SandboxID:   listSandboxID,
+							TeamID:      listTeamID,
+							ExecutionID: listExecutionID,
+						},
+						Config: sandbox.NewConfig(sandbox.Config{Vcpu: 2, RamMB: 512}),
+					},
+					Resources: &sandbox.Resources{
+						Slot: &network.Slot{HostIP: net.IPv4(127, 0, 0, 1)},
+					},
+				},
+			},
+			endAt: endTime,
+			want: &orchestrator.SandboxListResponse{
+				Sandboxes: []*orchestrator.RunningSandbox{
+					{
+						// ClientId:  "client-id",
+						StartTime:   timestamppb.New(startTime),
+						EndTime:     timestamppb.New(endTime),
+						SandboxId:   listSandboxID,
+						TeamId:      listTeamID,
+						ExecutionId: listExecutionID,
+						Vcpu:        2,
+						RamMb:       512,
+
+						Ended:      true,
+						GuestEvent: orchestrator.GuestEvent_GUEST_EVENT_POWER_OFF,
+						DiskKept:   true,
 					},
 				},
 			},
@@ -104,6 +165,9 @@ func Test_server_List(t *testing.T) {
 				sbx.SetEndAt(tt.endAt)
 				sandboxes.AssignNetwork(t.Context(), sbx)
 				sandboxes.MarkRunning(t.Context(), sbx)
+				if tt.poweredOff {
+					sbx.HoldPoweredOff()
+				}
 			}
 			got, err := s.List(t.Context(), tt.args.in1)
 			if (err != nil) != tt.wantErr {
@@ -146,6 +210,44 @@ func TestGetSandboxExecutionData(t *testing.T) {
 	assert.Positive(t, result["execution_time"].(int64))
 }
 
+func TestGetSandboxExecutionDataSurvivesCheckpointHandlerRebuild(t *testing.T) {
+	t.Parallel()
+
+	executionStartedAt := time.Now().Add(-7 * time.Hour)
+	handlerStartedAt := time.Now().Add(-13 * time.Second)
+
+	sbx := &sandbox.Sandbox{
+		Metadata: &sandbox.Metadata{
+			Config: sandbox.NewConfig(sandbox.Config{}),
+		},
+	}
+	sbx.SetExecutionStartedAt(executionStartedAt)
+	sbx.SetStartedAt(handlerStartedAt)
+
+	result := (&Server{}).getSandboxExecutionData(sbx)
+
+	assert.Equal(t, executionStartedAt.UTC().Format(time.RFC3339), result["started_at"])
+	assert.GreaterOrEqual(t, result["execution_time"].(int64), (7 * time.Hour).Milliseconds())
+}
+
+func TestGetSandboxExecutionDataKeepsReadinessStartOnFreshSandbox(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+
+	sbx := &sandbox.Sandbox{
+		Metadata: &sandbox.Metadata{
+			Config: sandbox.NewConfig(sandbox.Config{}),
+		},
+	}
+	sbx.SetStartedAt(startedAt)
+	sbx.SetExecutionStartedAt(startedAt.Add(2 * time.Second))
+
+	result := (&Server{}).getSandboxExecutionData(sbx)
+
+	assert.Equal(t, startedAt.UTC().Format(time.RFC3339), result["started_at"])
+}
+
 func TestAddKillReason(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +270,55 @@ func TestAddKillReason(t *testing.T) {
 	})
 }
 
+func TestAddPauseMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		filesystemOnly bool
+		want           string
+	}{
+		{"full snapshot", false, "full"},
+		{"filesystem-only snapshot", true, "filesystem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			eventData := map[string]any{executionEventDataKey: map[string]any{}}
+			addPauseMode(eventData, tt.filesystemOnly)
+
+			assert.Equal(t, tt.want, eventData["pause_mode"])
+			assert.Contains(t, eventData, executionEventDataKey, "existing keys are kept")
+		})
+	}
+}
+
+func TestAddResumeMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		filesystemBooted bool
+		want             string
+	}{
+		{"memory restored", false, "restore"},
+		{"cold-booted from the filesystem", true, "reboot"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			eventData := map[string]any{}
+			addResumeMode(eventData, tt.filesystemBooted)
+
+			assert.Equal(t, tt.want, eventData["resume_mode"])
+		})
+	}
+}
+
 func TestRecordSandboxKill(t *testing.T) {
 	t.Parallel()
 
@@ -176,8 +327,8 @@ func TestRecordSandboxKill(t *testing.T) {
 	counter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxKilledCounterName)
 	require.NoError(t, err)
 
-	recordSandboxKill(t.Context(), counter, "timeout")
-	recordSandboxKill(t.Context(), counter, "")
+	recordSandboxKill(t.Context(), counter, "team-1", "timeout")
+	recordSandboxKill(t.Context(), counter, "team-2", "")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &rm))
@@ -193,15 +344,366 @@ func TestRecordSandboxKill(t *testing.T) {
 			require.True(t, ok)
 
 			for _, dp := range sum.DataPoints {
-				v, ok := dp.Attributes.Value(attribute.Key("kill_reason"))
+				reason, ok := dp.Attributes.Value(attribute.Key("kill_reason"))
+				require.True(t, ok)
+				team, ok := dp.Attributes.Value(attribute.Key("team.id"))
+				require.True(t, ok)
+				got[team.AsString()+"/"+reason.AsString()] += dp.Value
+			}
+		}
+	}
+
+	assert.Equal(t, map[string]int64{"team-1/timeout": 1, "team-2/" + killReasonUnknown: 1}, got)
+}
+
+// The crash path runs for sandboxes that ended badly, including ones that
+// never got a process: an absent exit must not panic and must not be guessed.
+func TestRecordCrashWithoutFirecrackerProcess(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
+	counter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCrashedCounterName)
+	require.NoError(t, err)
+
+	s := &Server{sandboxCrashedCounter: counter}
+
+	require.NotPanics(t, func() {
+		s.recordCrash(t.Context(), &sandbox.Sandbox{Metadata: &sandbox.Metadata{}}, nil)
+	})
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != string(telemetry.OrchestratorSandboxCrashedCounterName) {
+				continue
+			}
+
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+
+			for _, dp := range sum.DataPoints {
+				v, ok := dp.Attributes.Value(attribute.Key("cause"))
 				require.True(t, ok)
 				got[v.AsString()] += dp.Value
 			}
 		}
 	}
 
-	assert.Equal(t, int64(1), got["timeout"])
-	assert.Equal(t, int64(1), got[killReasonUnknown])
+	assert.Equal(t, map[string]int64{string(fc.CrashCauseUnknown): 1}, got)
+}
+
+// A crash the memory handler caused by failing to install a page carries the
+// kernel's errno, so a hugepage-exhausted node's ENOMEM crashes can be counted
+// apart from every other handler failure. The chain is the one the handler
+// returns through the uffd serve loop.
+func TestRecordCrashLabelsUffdCopyError(t *testing.T) {
+	t.Parallel()
+
+	copyFailure := func(errno error) error {
+		return fmt.Errorf("failed handling uffd: %w",
+			fmt.Errorf("failed to handle uffd: %w",
+				fmt.Errorf("%w: %w", userfaultfd.ErrCopyFailed, errors.Join(errno, nil))))
+	}
+
+	for _, tc := range []struct {
+		name    string
+		waitErr error
+		want    string
+	}{
+		{"copy ENOMEM", copyFailure(syscall.ENOMEM), "enomem"},
+		{"copy with another errno", copyFailure(syscall.EFAULT), "other"},
+		{"ENOMEM outside the copy", fmt.Errorf("failed handling uffd: %w", syscall.ENOMEM), "none"},
+		{"no error", nil, "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reader := sdkmetric.NewManualReader()
+			meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
+			counter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCrashedCounterName)
+			require.NoError(t, err)
+
+			s := &Server{sandboxCrashedCounter: counter}
+			s.recordCrash(t.Context(), &sandbox.Sandbox{Metadata: &sandbox.Metadata{}}, tc.waitErr)
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(t.Context(), &rm))
+
+			got := map[string]int64{}
+			for _, sm := range rm.ScopeMetrics {
+				for _, m := range sm.Metrics {
+					if m.Name != string(telemetry.OrchestratorSandboxCrashedCounterName) {
+						continue
+					}
+
+					sum, ok := m.Data.(metricdata.Sum[int64])
+					require.True(t, ok)
+
+					for _, dp := range sum.DataPoints {
+						v, ok := dp.Attributes.Value(attribute.Key("uffd_copy_error"))
+						require.True(t, ok)
+						got[v.AsString()] += dp.Value
+					}
+				}
+			}
+
+			assert.Equal(t, map[string]int64{tc.want: 1}, got)
+		})
+	}
+}
+
+// lifecycleFlagsOff turns reboot in place and power-off end off explicitly,
+// whatever their environment fallbacks say.
+func lifecycleFlagsOff(t *testing.T) *featureflags.Client {
+	t.Helper()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.GuestRebootInPlaceFlag.Key()).ValueForAll(ldvalue.Bool(false)))
+	td.Update(td.Flag(featureflags.GuestPowerOffEndFlag.Key()).ValueForAll(ldvalue.Bool(false)))
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	return ff
+}
+
+// A guest reset counts once as a crash cause and once by what was done about
+// it.
+func TestCountCrash(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
+	crashed, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCrashedCounterName)
+	require.NoError(t, err)
+	rebootsCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxGuestRebootsCounterName)
+	require.NoError(t, err)
+
+	s := &Server{sandboxCrashedCounter: crashed, guestRebootsCounter: rebootsCounter}
+	s.countCrash(t.Context(), fc.CrashCauseGuestReset, nil, "")
+	s.countCrash(t.Context(), fc.CrashCauseCleanExit, nil, "")
+	s.countGuestReboot(t.Context(), guest.DefaultLabel, guestRebootOutcomeFlagOff, guestRebootPathRunning)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+
+	points := map[string][]metricdata.DataPoint[int64]{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			points[m.Name] = append(points[m.Name], sum.DataPoints...)
+		}
+	}
+
+	crashedBy := map[string]int64{}
+	for _, dp := range points[string(telemetry.OrchestratorSandboxCrashedCounterName)] {
+		cause, ok := dp.Attributes.Value("cause")
+		require.True(t, ok)
+		crashedBy[cause.AsString()] += dp.Value
+	}
+	assert.Equal(t, map[string]int64{"guest_reset": 1, "clean_exit": 1}, crashedBy)
+
+	reboots := points[string(telemetry.OrchestratorSandboxGuestRebootsCounterName)]
+	require.Len(t, reboots, 1)
+	assert.Equal(t, int64(1), reboots[0].Value)
+	assert.Equal(t, attribute.NewSet(
+		attribute.String("outcome", "flag_off"),
+		attribute.String("guest_os", "linux"),
+		attribute.String("path", "running"),
+	), reboots[0].Attributes)
+}
+
+// A line names a guest event only when the host observed one: each event
+// gets its own line, naming what the guest did, and every end outside the
+// guest shares one.
+func TestCrashedSandboxLine(t *testing.T) {
+	t.Parallel()
+
+	failure := crashedSandboxLine(fc.GuestEventFailure, 0)
+	assert.Equal(t, failure, crashedSandboxLine(fc.GuestEventUnknown, 0))
+	seen := map[string]fc.GuestEvent{failure: fc.GuestEventFailure}
+	for event, names := range map[fc.GuestEvent]string{
+		fc.GuestEventPowerOff:         "powered off",
+		fc.GuestEventRebootOrCrash:    "restarted",
+		fc.GuestEventCrashWithRestart: "crashed and restarted",
+		fc.GuestEventCrashNoRestart:   "did not restart",
+	} {
+		line := crashedSandboxLine(event, 0)
+		assert.NotContains(t, seen, line, "%s shares its line with %s", event, seen[line])
+		assert.Contains(t, line, names, event)
+		seen[line] = event
+	}
+	assert.NotContains(t, crashedSandboxLine(fc.GuestEventRebootOrCrash, 0), "crashed", "a reset the host cannot tell from a reboot is not called a crash")
+}
+
+// The line names what the guest did only when the exit waited for the
+// counters that say so; otherwise a clean Firecracker exit, which is how a
+// guest reboot ends on the default path, keeps the plain line main wrote.
+func TestStoppedSandboxLine(t *testing.T) {
+	t.Parallel()
+
+	unawaited := &fc.ExitInfo{Exited: true, ExitCode: 0}
+	assert.Equal(t, "Sandbox stopped", stoppedSandboxLine(unawaited, fc.ClassifyExit(unawaited), 0))
+	reset := &fc.ExitInfo{Exited: true, ExitCode: 0, GuestResets: 1}
+	assert.Equal(t, "Sandbox stopped", stoppedSandboxLine(reset, fc.ClassifyExit(reset), 0), "a counter read by chance does not name the event")
+	assert.Equal(t, "Sandbox stopped", stoppedLineFor(reset, fc.GuestEventRebootOrCrash, 0), "the flag-off reboot return keeps the plain line too")
+	assert.Equal(t, "Sandbox stopped", stoppedLineFor(reset, fc.GuestEventPowerOff, 0), "and the flag-off power-off return")
+
+	awaited := &fc.ExitInfo{Exited: true, ExitCode: 0, GuestResets: 1, MetricsAwaited: true, MetricsRead: true}
+	assert.Equal(t, crashedSandboxLine(fc.GuestEventRebootOrCrash, 0), stoppedSandboxLine(awaited, fc.ClassifyExit(awaited), 0))
+
+	failed := &fc.ExitInfo{Exited: true, ExitCode: 1}
+	assert.Equal(t, crashedSandboxLine(fc.GuestEventFailure, 0), stoppedSandboxLine(failed, fc.ClassifyExit(failed), 0), "an exit the host classified without the counters keeps its line")
+	assert.Equal(t, crashedSandboxLine(fc.GuestEventUnknown, 0), stoppedSandboxLine(nil, fc.ClassifyExit(nil), 0))
+}
+
+// A crash code the guest reported reaches every line that names the crash.
+func TestSandboxLinesCarryTheCrashCode(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "The guest crashed (code 0xef) and restarted. The sandbox stopped.",
+		crashedSandboxLine(fc.GuestEventCrashWithRestart, 0xef))
+	assert.Contains(t, guestRebootLine(sandbox.GuestRebootRebooted, fc.GuestEventCrashWithRestart, 0xef), "(code 0xef)")
+	assert.Contains(t, guestRebootLine(sandbox.GuestRebootFailed, fc.GuestEventCrashWithRestart, 0xef), "(code 0xef)")
+}
+
+// A powered-off sandbox's line tells the timeout action that ended it apart
+// from a power-off that stopped it.
+func TestPoweredOffLine(t *testing.T) {
+	t.Parallel()
+
+	stopped := crashedSandboxLine(fc.GuestEventPowerOff, 0)
+	assert.Equal(t, stopped, poweredOffLine(sandbox.StopReasonCrashed))
+	paused, killed := poweredOffLine(sandbox.StopReasonPaused), poweredOffLine(sandbox.StopReasonKilled)
+	assert.Contains(t, paused, "paused")
+	assert.NotContains(t, paused, "killed")
+	assert.Contains(t, killed, "killed")
+	assert.NotContains(t, killed, "paused")
+	assert.NotContains(t, []string{paused, killed}, stopped)
+}
+
+// Only a power-off with nothing else failing keeps the sandbox.
+func TestKeepsOnPowerOff(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, keepsOnPowerOff(fc.CrashCauseGuestPowerOff, nil))
+	assert.False(t, keepsOnPowerOff(fc.CrashCauseGuestPowerOff, errors.New("uffd exited")))
+	for _, cause := range []fc.CrashCause{
+		fc.CrashCauseGuestReset, fc.CrashCauseCleanExit, fc.CrashCauseExitError, fc.CrashCauseExternalSignal,
+		fc.CrashCauseFault, fc.CrashCauseMemoryHandlerFailed, fc.CrashCauseRequestedSignal, fc.CrashCauseUnknown,
+	} {
+		assert.False(t, keepsOnPowerOff(cause, nil), cause)
+	}
+}
+
+// Each reboot outcome gets its own line, naming what happened, and only the
+// rebooted one does not say the sandbox stopped.
+func TestGuestRebootLine(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]sandbox.GuestRebootOutcome{}
+	for outcome, names := range map[sandbox.GuestRebootOutcome]string{
+		sandbox.GuestRebootRebooted:       "booted again",
+		sandbox.GuestRebootRefusedLoop:    "kept restarting",
+		sandbox.GuestRebootRefusedTimeout: "timeout",
+		sandbox.GuestRebootFailed:         "failed",
+	} {
+		line := guestRebootLine(outcome, fc.GuestEventRebootOrCrash, 0)
+		assert.NotContains(t, seen, line, "%s shares its line with %s", outcome, seen[line])
+		assert.Contains(t, line, names, outcome)
+		seen[line] = outcome
+		assert.Equal(t, outcome != sandbox.GuestRebootRebooted, strings.HasSuffix(line, "The sandbox stopped."), outcome)
+	}
+}
+
+// With reboot in place off, a reset stops the sandbox with the line of what
+// the guest reported, counted as flag_off.
+func TestRebootGuestWithTheFlagOffStopsTheSandbox(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
+	reboots, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxGuestRebootsCounterName)
+	require.NoError(t, err)
+	s := &Server{featureFlags: lifecycleFlagsOff(t), guestRebootsCounter: reboots}
+	sbx := admissionTestSandbox(t, "sbx-reset-flag-off", 71, utils.NewSetOnce[*header.Header]())
+
+	next, line := s.rebootGuest(t.Context(), sbx, fc.GuestEventCrashWithRestart, 0xef, time.Now())
+	assert.Nil(t, next)
+	assert.Equal(t, crashedSandboxLine(fc.GuestEventCrashWithRestart, 0xef), line)
+
+	name := telemetry.OrchestratorSandboxGuestRebootsCounterName
+	assert.Equal(t, map[string]int64{guestRebootOutcomeFlagOff: 1}, counterPoints(t, reader, name, "outcome"))
+	assert.Equal(t, map[string]int64{guest.DefaultLabel: 1}, counterPoints(t, reader, name, "guest_os"))
+	assert.Equal(t, map[string]int64{guestRebootPathRunning: 1}, counterPoints(t, reader, name, "path"))
+}
+
+// With guest-poweroff-end off and no device declared, a power-off is not held:
+// the sandbox stops with the power-off line at once.
+func TestHoldPoweredOffWithTheFlagOffStopsTheSandbox(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{featureFlags: lifecycleFlagsOff(t)}
+	sbx := admissionTestSandbox(t, "sbx-poweroff-flag-off", 72, utils.NewSetOnce[*header.Header]())
+
+	line := make(chan string, 1)
+	go func() { line <- s.holdPoweredOff(t.Context(), sbx) }()
+	select {
+	case got := <-line:
+		assert.Equal(t, crashedSandboxLine(fc.GuestEventPowerOff, 0), got)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a power-off with the flag off was held")
+	}
+	assert.False(t, sbx.GuestPoweredOff())
+}
+
+// Only a reset with nothing else failing boots the sandbox again; a guest
+// that ended without a reset and every failure outside the guest stop it.
+func TestRebootsOnReset(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, rebootsOnReset(fc.CrashCauseGuestReset, nil))
+	assert.True(t, rebootsOnReset(fc.CrashCauseGuestCrash, nil))
+	assert.False(t, rebootsOnReset(fc.CrashCauseGuestCrash, errors.New("uffd exited")))
+	assert.False(t, rebootsOnReset(fc.CrashCauseGuestReset, errors.New("uffd exited")))
+	for _, cause := range []fc.CrashCause{
+		fc.CrashCauseGuestPowerOff, fc.CrashCauseCleanExit, fc.CrashCauseExitError, fc.CrashCauseExternalSignal, fc.CrashCauseFault,
+		fc.CrashCauseMemoryHandlerFailed, fc.CrashCauseRequestedSignal, fc.CrashCauseUnknown,
+	} {
+		assert.False(t, rebootsOnReset(cause, nil), cause)
+	}
+}
+
+func TestIsCleanFirecrackerExit(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, isCleanFirecrackerExit(fc.CrashCauseCleanExit, nil))
+	assert.True(t, isCleanFirecrackerExit(fc.CrashCauseGuestReset, nil))
+	assert.True(t, isCleanFirecrackerExit(fc.CrashCauseGuestCrash, nil))
+	assert.True(t, isCleanFirecrackerExit(fc.CrashCauseGuestPowerOff, nil))
+	assert.False(t, isCleanFirecrackerExit(fc.CrashCauseCleanExit, errors.New("uffd exited")),
+		"a clean exit that came with a wait error is still a crash")
+	assert.False(t, isCleanFirecrackerExit(fc.CrashCauseExternalSignal, nil))
+}
+
+func TestCrashCause(t *testing.T) {
+	t.Parallel()
+
+	handlerErr := errors.New("uffdio copy: cannot allocate memory")
+	ourSigterm := &fc.ExitInfo{Signaled: true, Signal: syscall.SIGTERM, SentByStop: true}
+	foreignSigkill := &fc.ExitInfo{Signaled: true, Signal: syscall.SIGKILL}
+
+	assert.Equal(t, fc.CrashCauseMemoryHandlerFailed, crashCause(ourSigterm, handlerErr),
+		"teardown stopping Firecracker after the memory handler failed is that failure")
+	assert.Equal(t, fc.CrashCauseRequestedSignal, crashCause(ourSigterm, nil),
+		"without a handler failure our signal points at a missing stop reason")
+	assert.Equal(t, fc.CrashCauseExternalSignal, crashCause(foreignSigkill, handlerErr),
+		"a foreign kill can take the handler down with it and stays external")
 }
 
 func TestRecordExecutionDuration(t *testing.T) {

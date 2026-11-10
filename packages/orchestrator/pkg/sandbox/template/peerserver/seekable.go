@@ -5,10 +5,12 @@ package peerserver
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 )
 
@@ -35,25 +37,43 @@ func (f *seekableSource) Stream(ctx context.Context, offset, length int64, sende
 	))
 	defer span.End()
 
-	// P2P always serves uncompressed bytes — pass nil FrameTable.
-	data, err := f.diff.Slice(ctx, offset, length, nil)
-	if err != nil {
-		span.RecordError(err)
-
-		return fmt.Errorf("slice diff at offset %d: %w", offset, err)
+	if length <= 0 {
+		return nil
 	}
 
-	blockSize := int(f.diff.BlockSize())
+	blockSize := f.diff.BlockSize()
+	if blockSize <= 0 {
+		return fmt.Errorf("invalid diff block size %d", blockSize)
+	}
+	for sent := int64(0); sent < length; {
+		take := min(blockSize, length-sent)
+		// Send may retain the bytes for lazy consumers after returning. Each
+		// message owns its buffer; later reads must not overwrite earlier sends.
+		buf := make([]byte, take)
+		// P2P always serves uncompressed bytes — pass nil FrameTable.
+		var n int
+		err := block.RunFaultSafe(ctx, func() error {
+			var err error
+			n, err = f.diff.ReadAt(ctx, buf[:take], offset+sent, nil)
 
-	for len(data) > 0 {
-		take := min(len(data), blockSize)
-		if err := sender.Send(data[:take]); err != nil {
+			return err
+		})
+		if err != nil {
+			span.RecordError(err)
+
+			return fmt.Errorf("read diff at offset %d: %w", offset+sent, err)
+		}
+		if int64(n) != take {
+			span.RecordError(io.ErrUnexpectedEOF)
+
+			return fmt.Errorf("read diff at offset %d: %w", offset+sent, io.ErrUnexpectedEOF)
+		}
+		if err := sender.Send(buf[:n]); err != nil {
 			span.RecordError(err)
 
 			return fmt.Errorf("send diff chunk: %w", err)
 		}
-
-		data = data[take:]
+		sent += int64(n)
 	}
 
 	return nil

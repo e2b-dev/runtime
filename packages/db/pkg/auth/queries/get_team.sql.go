@@ -7,250 +7,389 @@ package authqueries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-const getAutoJoinTeamsBySSOOrganizationID = `-- name: GetAutoJoinTeamsBySSOOrganizationID :many
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.slug
-FROM "public"."teams" t
-WHERE t.sso_organization_id = $1::uuid
-  AND t.sso_auto_join = true
-  AND t.is_blocked = false
-  AND t.is_banned = false
-ORDER BY t.created_at ASC
-`
-
-type GetAutoJoinTeamsBySSOOrganizationIDRow struct {
-	Team Team
-}
-
-func (q *Queries) GetAutoJoinTeamsBySSOOrganizationID(ctx context.Context, ssoOrganizationID uuid.UUID) ([]GetAutoJoinTeamsBySSOOrganizationIDRow, error) {
-	rows, err := q.db.Query(ctx, getAutoJoinTeamsBySSOOrganizationID, ssoOrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAutoJoinTeamsBySSOOrganizationIDRow
-	for rows.Next() {
-		var i GetAutoJoinTeamsBySSOOrganizationIDRow
-		if err := rows.Scan(
-			&i.Team.ID,
-			&i.Team.CreatedAt,
-			&i.Team.IsBlocked,
-			&i.Team.Name,
-			&i.Team.Tier,
-			&i.Team.Email,
-			&i.Team.IsBanned,
-			&i.Team.BlockedReason,
-			&i.Team.ClusterID,
-			&i.Team.SandboxSchedulingLabels,
-			&i.Team.SsoOrganizationID,
-			&i.Team.SsoAutoJoin,
-			&i.Team.Slug,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getTeamWithTierByAPIKey = `-- name: GetTeamWithTierByAPIKey :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.slug, tl.id, tl.max_length_hours, tl.concurrent_sandboxes, tl.concurrent_template_builds, tl.max_vcpu, tl.max_ram_mb, tl.disk_mb, tl.events_ttl_days, tl.default_free_disk_size_mb, tl.max_disk_size_mb, tl.max_free_disk_size_mb, tl.api_team_rps_list FROM "public"."team_api_keys" tak
+const getTeamByAPIKey = `-- name: GetTeamByAPIKey :one
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ps.sandbox_default_allow_public_traffic,
+    COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
+    COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
+    COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
+    COALESCE(pl.max_vcpu, d.max_vcpu) AS max_vcpu,
+    COALESCE(pl.max_ram_mb, d.max_ram_mb) AS max_ram_mb,
+    COALESCE(pl.disk_mb, d.disk_mb) AS disk_mb,
+    COALESCE(pl.events_ttl_days, d.events_ttl_days) AS events_ttl_days,
+    COALESCE(pl.default_free_disk_size_mb, d.default_free_disk_size_mb) AS default_free_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_free_disk_size_mb,
+    COALESCE(pl.api_team_rps_list, d.api_team_rps_list) AS api_team_rps_list,
+    COALESCE(pl.api_team_rps_delete, d.api_team_rps_delete) AS api_team_rps_delete,
+    COALESCE(pl.max_secrets, d.max_secrets) AS max_secrets
+FROM "public"."team_api_keys" tak
 JOIN "public"."teams" t ON tak.team_id = t.id
-JOIN "public"."team_limits" tl on tl.id = t.id
-WHERE tak.team_id = t.id
-  AND tak.api_key_hash = $1
+CROSS JOIN "public"."default_limits" d
+LEFT JOIN "public"."project_limits" pl ON pl.team_id = t.id
+LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
+WHERE tak.api_key_hash = $1
 `
 
-type GetTeamWithTierByAPIKeyRow struct {
-	Team      Team
-	TeamLimit TeamLimit
+type GetTeamByAPIKeyRow struct {
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
+	SandboxDefaultAllowPublicTraffic *bool
+	MaxLengthHours                   int64
+	ConcurrentSandboxes              int64
+	ConcurrentTemplateBuilds         int64
+	MaxVcpu                          int64
+	MaxRamMb                         int64
+	DiskMb                           int64
+	EventsTtlDays                    int64
+	DefaultFreeDiskSizeMb            int64
+	MaxDiskSizeMb                    int64
+	MaxFreeDiskSizeMb                int64
+	ApiTeamRpsList                   int64
+	ApiTeamRpsDelete                 int64
+	MaxSecrets                       int64
 }
 
-func (q *Queries) GetTeamWithTierByAPIKey(ctx context.Context, apiKeyHash string) (GetTeamWithTierByAPIKeyRow, error) {
-	row := q.db.QueryRow(ctx, getTeamWithTierByAPIKey, apiKeyHash)
-	var i GetTeamWithTierByAPIKeyRow
+// Each lookup resolves the team and its limits in one statement: the pushed
+// project_limits row, else default_limits, which always holds one row. The
+// limit columns repeat across these queries on purpose, so a new limit needs no
+// migration recreating a view or function; TestTeamLookupsReturnEveryDefaultLimit
+// in pkg/tests fails when a lookup misses one.
+func (q *Queries) GetTeamByAPIKey(ctx context.Context, apiKeyHash string) (GetTeamByAPIKeyRow, error) {
+	row := q.db.QueryRow(ctx, getTeamByAPIKey, apiKeyHash)
+	var i GetTeamByAPIKeyRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.Slug,
-		&i.TeamLimit.ID,
-		&i.TeamLimit.MaxLengthHours,
-		&i.TeamLimit.ConcurrentSandboxes,
-		&i.TeamLimit.ConcurrentTemplateBuilds,
-		&i.TeamLimit.MaxVcpu,
-		&i.TeamLimit.MaxRamMb,
-		&i.TeamLimit.DiskMb,
-		&i.TeamLimit.EventsTtlDays,
-		&i.TeamLimit.DefaultFreeDiskSizeMb,
-		&i.TeamLimit.MaxDiskSizeMb,
-		&i.TeamLimit.MaxFreeDiskSizeMb,
-		&i.TeamLimit.ApiTeamRpsList,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
+		&i.SandboxDefaultAllowPublicTraffic,
+		&i.MaxLengthHours,
+		&i.ConcurrentSandboxes,
+		&i.ConcurrentTemplateBuilds,
+		&i.MaxVcpu,
+		&i.MaxRamMb,
+		&i.DiskMb,
+		&i.EventsTtlDays,
+		&i.DefaultFreeDiskSizeMb,
+		&i.MaxDiskSizeMb,
+		&i.MaxFreeDiskSizeMb,
+		&i.ApiTeamRpsList,
+		&i.ApiTeamRpsDelete,
+		&i.MaxSecrets,
 	)
 	return i, err
 }
 
-const getTeamWithTierByTeamAndUser = `-- name: GetTeamWithTierByTeamAndUser :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.slug, tl.id, tl.max_length_hours, tl.concurrent_sandboxes, tl.concurrent_template_builds, tl.max_vcpu, tl.max_ram_mb, tl.disk_mb, tl.events_ttl_days, tl.default_free_disk_size_mb, tl.max_disk_size_mb, tl.max_free_disk_size_mb, tl.api_team_rps_list
+const getTeamByTeamAndUser = `-- name: GetTeamByTeamAndUser :one
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ps.sandbox_default_allow_public_traffic,
+    COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
+    COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
+    COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
+    COALESCE(pl.max_vcpu, d.max_vcpu) AS max_vcpu,
+    COALESCE(pl.max_ram_mb, d.max_ram_mb) AS max_ram_mb,
+    COALESCE(pl.disk_mb, d.disk_mb) AS disk_mb,
+    COALESCE(pl.events_ttl_days, d.events_ttl_days) AS events_ttl_days,
+    COALESCE(pl.default_free_disk_size_mb, d.default_free_disk_size_mb) AS default_free_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_free_disk_size_mb,
+    COALESCE(pl.api_team_rps_list, d.api_team_rps_list) AS api_team_rps_list,
+    COALESCE(pl.api_team_rps_delete, d.api_team_rps_delete) AS api_team_rps_delete,
+    COALESCE(pl.max_secrets, d.max_secrets) AS max_secrets
 FROM "public"."teams" t
-         JOIN "public"."users_teams" ut ON ut.team_id = t.id
-         JOIN "public"."team_limits" tl on tl.id = t.id
+JOIN "public"."users_teams" ut ON ut.team_id = t.id
+CROSS JOIN "public"."default_limits" d
+LEFT JOIN "public"."project_limits" pl ON pl.team_id = t.id
+LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE ut.user_id = $1 AND t.id = $2
 `
 
-type GetTeamWithTierByTeamAndUserParams struct {
+type GetTeamByTeamAndUserParams struct {
 	UserID uuid.UUID
 	ID     uuid.UUID
 }
 
-type GetTeamWithTierByTeamAndUserRow struct {
-	Team      Team
-	TeamLimit TeamLimit
+type GetTeamByTeamAndUserRow struct {
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
+	SandboxDefaultAllowPublicTraffic *bool
+	MaxLengthHours                   int64
+	ConcurrentSandboxes              int64
+	ConcurrentTemplateBuilds         int64
+	MaxVcpu                          int64
+	MaxRamMb                         int64
+	DiskMb                           int64
+	EventsTtlDays                    int64
+	DefaultFreeDiskSizeMb            int64
+	MaxDiskSizeMb                    int64
+	MaxFreeDiskSizeMb                int64
+	ApiTeamRpsList                   int64
+	ApiTeamRpsDelete                 int64
+	MaxSecrets                       int64
 }
 
-func (q *Queries) GetTeamWithTierByTeamAndUser(ctx context.Context, arg GetTeamWithTierByTeamAndUserParams) (GetTeamWithTierByTeamAndUserRow, error) {
-	row := q.db.QueryRow(ctx, getTeamWithTierByTeamAndUser, arg.UserID, arg.ID)
-	var i GetTeamWithTierByTeamAndUserRow
+func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAndUserParams) (GetTeamByTeamAndUserRow, error) {
+	row := q.db.QueryRow(ctx, getTeamByTeamAndUser, arg.UserID, arg.ID)
+	var i GetTeamByTeamAndUserRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.Slug,
-		&i.TeamLimit.ID,
-		&i.TeamLimit.MaxLengthHours,
-		&i.TeamLimit.ConcurrentSandboxes,
-		&i.TeamLimit.ConcurrentTemplateBuilds,
-		&i.TeamLimit.MaxVcpu,
-		&i.TeamLimit.MaxRamMb,
-		&i.TeamLimit.DiskMb,
-		&i.TeamLimit.EventsTtlDays,
-		&i.TeamLimit.DefaultFreeDiskSizeMb,
-		&i.TeamLimit.MaxDiskSizeMb,
-		&i.TeamLimit.MaxFreeDiskSizeMb,
-		&i.TeamLimit.ApiTeamRpsList,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
+		&i.SandboxDefaultAllowPublicTraffic,
+		&i.MaxLengthHours,
+		&i.ConcurrentSandboxes,
+		&i.ConcurrentTemplateBuilds,
+		&i.MaxVcpu,
+		&i.MaxRamMb,
+		&i.DiskMb,
+		&i.EventsTtlDays,
+		&i.DefaultFreeDiskSizeMb,
+		&i.MaxDiskSizeMb,
+		&i.MaxFreeDiskSizeMb,
+		&i.ApiTeamRpsList,
+		&i.ApiTeamRpsDelete,
+		&i.MaxSecrets,
 	)
 	return i, err
 }
 
-const getTeamWithTierByTeamID = `-- name: GetTeamWithTierByTeamID :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.slug, tl.id, tl.max_length_hours, tl.concurrent_sandboxes, tl.concurrent_template_builds, tl.max_vcpu, tl.max_ram_mb, tl.disk_mb, tl.events_ttl_days, tl.default_free_disk_size_mb, tl.max_disk_size_mb, tl.max_free_disk_size_mb, tl.api_team_rps_list
+const getTeamByTeamID = `-- name: GetTeamByTeamID :one
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ps.sandbox_default_allow_public_traffic,
+    COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
+    COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
+    COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
+    COALESCE(pl.max_vcpu, d.max_vcpu) AS max_vcpu,
+    COALESCE(pl.max_ram_mb, d.max_ram_mb) AS max_ram_mb,
+    COALESCE(pl.disk_mb, d.disk_mb) AS disk_mb,
+    COALESCE(pl.events_ttl_days, d.events_ttl_days) AS events_ttl_days,
+    COALESCE(pl.default_free_disk_size_mb, d.default_free_disk_size_mb) AS default_free_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_free_disk_size_mb,
+    COALESCE(pl.api_team_rps_list, d.api_team_rps_list) AS api_team_rps_list,
+    COALESCE(pl.api_team_rps_delete, d.api_team_rps_delete) AS api_team_rps_delete,
+    COALESCE(pl.max_secrets, d.max_secrets) AS max_secrets
 FROM "public"."teams" t
-         JOIN "public"."team_limits" tl on tl.id = t.id
+CROSS JOIN "public"."default_limits" d
+LEFT JOIN "public"."project_limits" pl ON pl.team_id = t.id
+LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE t.id = $1
 `
 
-type GetTeamWithTierByTeamIDRow struct {
-	Team      Team
-	TeamLimit TeamLimit
+type GetTeamByTeamIDRow struct {
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
+	SandboxDefaultAllowPublicTraffic *bool
+	MaxLengthHours                   int64
+	ConcurrentSandboxes              int64
+	ConcurrentTemplateBuilds         int64
+	MaxVcpu                          int64
+	MaxRamMb                         int64
+	DiskMb                           int64
+	EventsTtlDays                    int64
+	DefaultFreeDiskSizeMb            int64
+	MaxDiskSizeMb                    int64
+	MaxFreeDiskSizeMb                int64
+	ApiTeamRpsList                   int64
+	ApiTeamRpsDelete                 int64
+	MaxSecrets                       int64
 }
 
-func (q *Queries) GetTeamWithTierByTeamID(ctx context.Context, id uuid.UUID) (GetTeamWithTierByTeamIDRow, error) {
-	row := q.db.QueryRow(ctx, getTeamWithTierByTeamID, id)
-	var i GetTeamWithTierByTeamIDRow
+func (q *Queries) GetTeamByTeamID(ctx context.Context, id uuid.UUID) (GetTeamByTeamIDRow, error) {
+	row := q.db.QueryRow(ctx, getTeamByTeamID, id)
+	var i GetTeamByTeamIDRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.Slug,
-		&i.TeamLimit.ID,
-		&i.TeamLimit.MaxLengthHours,
-		&i.TeamLimit.ConcurrentSandboxes,
-		&i.TeamLimit.ConcurrentTemplateBuilds,
-		&i.TeamLimit.MaxVcpu,
-		&i.TeamLimit.MaxRamMb,
-		&i.TeamLimit.DiskMb,
-		&i.TeamLimit.EventsTtlDays,
-		&i.TeamLimit.DefaultFreeDiskSizeMb,
-		&i.TeamLimit.MaxDiskSizeMb,
-		&i.TeamLimit.MaxFreeDiskSizeMb,
-		&i.TeamLimit.ApiTeamRpsList,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
+		&i.SandboxDefaultAllowPublicTraffic,
+		&i.MaxLengthHours,
+		&i.ConcurrentSandboxes,
+		&i.ConcurrentTemplateBuilds,
+		&i.MaxVcpu,
+		&i.MaxRamMb,
+		&i.DiskMb,
+		&i.EventsTtlDays,
+		&i.DefaultFreeDiskSizeMb,
+		&i.MaxDiskSizeMb,
+		&i.MaxFreeDiskSizeMb,
+		&i.ApiTeamRpsList,
+		&i.ApiTeamRpsDelete,
+		&i.MaxSecrets,
 	)
 	return i, err
 }
 
-const getTeamsWithUsersTeamsWithTier = `-- name: GetTeamsWithUsersTeamsWithTier :many
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.slug, ut.is_default, tl.id, tl.max_length_hours, tl.concurrent_sandboxes, tl.concurrent_template_builds, tl.max_vcpu, tl.max_ram_mb, tl.disk_mb, tl.events_ttl_days, tl.default_free_disk_size_mb, tl.max_disk_size_mb, tl.max_free_disk_size_mb, tl.api_team_rps_list
+const getUserTeamsWithLimits = `-- name: GetUserTeamsWithLimits :many
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ut.is_default,
+    ps.sandbox_default_allow_public_traffic,
+    COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
+    COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
+    COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
+    COALESCE(pl.max_vcpu, d.max_vcpu) AS max_vcpu,
+    COALESCE(pl.max_ram_mb, d.max_ram_mb) AS max_ram_mb,
+    COALESCE(pl.disk_mb, d.disk_mb) AS disk_mb,
+    COALESCE(pl.events_ttl_days, d.events_ttl_days) AS events_ttl_days,
+    COALESCE(pl.default_free_disk_size_mb, d.default_free_disk_size_mb) AS default_free_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_disk_size_mb,
+    COALESCE(pl.max_disk_size_mb, d.max_disk_size_mb) AS max_free_disk_size_mb,
+    COALESCE(pl.api_team_rps_list, d.api_team_rps_list) AS api_team_rps_list,
+    COALESCE(pl.api_team_rps_delete, d.api_team_rps_delete) AS api_team_rps_delete,
+    COALESCE(pl.max_secrets, d.max_secrets) AS max_secrets
 FROM "public"."teams" t
-         JOIN "public"."users_teams" ut ON ut.team_id = t.id
-         JOIN "public"."team_limits" tl on tl.id = t.id
+JOIN "public"."users_teams" ut ON ut.team_id = t.id
+CROSS JOIN "public"."default_limits" d
+LEFT JOIN "public"."project_limits" pl ON pl.team_id = t.id
+LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE ut.user_id = $1
 `
 
-type GetTeamsWithUsersTeamsWithTierRow struct {
-	Team      Team
-	IsDefault bool
-	TeamLimit TeamLimit
+type GetUserTeamsWithLimitsRow struct {
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
+	IsDefault                        bool
+	SandboxDefaultAllowPublicTraffic *bool
+	MaxLengthHours                   int64
+	ConcurrentSandboxes              int64
+	ConcurrentTemplateBuilds         int64
+	MaxVcpu                          int64
+	MaxRamMb                         int64
+	DiskMb                           int64
+	EventsTtlDays                    int64
+	DefaultFreeDiskSizeMb            int64
+	MaxDiskSizeMb                    int64
+	MaxFreeDiskSizeMb                int64
+	ApiTeamRpsList                   int64
+	ApiTeamRpsDelete                 int64
+	MaxSecrets                       int64
 }
 
-func (q *Queries) GetTeamsWithUsersTeamsWithTier(ctx context.Context, userID uuid.UUID) ([]GetTeamsWithUsersTeamsWithTierRow, error) {
-	rows, err := q.db.Query(ctx, getTeamsWithUsersTeamsWithTier, userID)
+func (q *Queries) GetUserTeamsWithLimits(ctx context.Context, userID uuid.UUID) ([]GetUserTeamsWithLimitsRow, error) {
+	rows, err := q.db.Query(ctx, getUserTeamsWithLimits, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetTeamsWithUsersTeamsWithTierRow
+	var items []GetUserTeamsWithLimitsRow
 	for rows.Next() {
-		var i GetTeamsWithUsersTeamsWithTierRow
+		var i GetUserTeamsWithLimitsRow
 		if err := rows.Scan(
-			&i.Team.ID,
-			&i.Team.CreatedAt,
-			&i.Team.IsBlocked,
-			&i.Team.Name,
-			&i.Team.Tier,
-			&i.Team.Email,
-			&i.Team.IsBanned,
-			&i.Team.BlockedReason,
-			&i.Team.ClusterID,
-			&i.Team.SandboxSchedulingLabels,
-			&i.Team.SsoOrganizationID,
-			&i.Team.SsoAutoJoin,
-			&i.Team.Slug,
+			&i.ID,
+			&i.CreatedAt,
+			&i.IsBlocked,
+			&i.Name,
+			&i.Email,
+			&i.IsBanned,
+			&i.BlockedReason,
+			&i.ClusterID,
+			&i.SandboxSchedulingLabels,
+			&i.SsoOrganizationID,
+			&i.SsoAutoJoin,
+			&i.DeletedAt,
+			&i.Slug,
 			&i.IsDefault,
-			&i.TeamLimit.ID,
-			&i.TeamLimit.MaxLengthHours,
-			&i.TeamLimit.ConcurrentSandboxes,
-			&i.TeamLimit.ConcurrentTemplateBuilds,
-			&i.TeamLimit.MaxVcpu,
-			&i.TeamLimit.MaxRamMb,
-			&i.TeamLimit.DiskMb,
-			&i.TeamLimit.EventsTtlDays,
-			&i.TeamLimit.DefaultFreeDiskSizeMb,
-			&i.TeamLimit.MaxDiskSizeMb,
-			&i.TeamLimit.MaxFreeDiskSizeMb,
-			&i.TeamLimit.ApiTeamRpsList,
+			&i.SandboxDefaultAllowPublicTraffic,
+			&i.MaxLengthHours,
+			&i.ConcurrentSandboxes,
+			&i.ConcurrentTemplateBuilds,
+			&i.MaxVcpu,
+			&i.MaxRamMb,
+			&i.DiskMb,
+			&i.EventsTtlDays,
+			&i.DefaultFreeDiskSizeMb,
+			&i.MaxDiskSizeMb,
+			&i.MaxFreeDiskSizeMb,
+			&i.ApiTeamRpsList,
+			&i.ApiTeamRpsDelete,
+			&i.MaxSecrets,
 		); err != nil {
 			return nil, err
 		}

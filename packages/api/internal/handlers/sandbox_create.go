@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/fcgate"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	apiorch "github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -48,22 +50,109 @@ const (
 	InstanceIDPrefix            = "i"
 	metricTemplateAlias         = metrics.MetricPrefix + "template.alias"
 	metricMemoryOverride        = metrics.MetricPrefix + "memory_override"
+	metricPauseMode             = metrics.MetricPrefix + "pause.mode"
+	metricResumeGate            = metrics.MetricPrefix + "resume.gate"
 	minEnvdVersionForSecureFlag = "0.2.0" // Minimum version of envd that supports secure flag
 
 	// Network validation error messages
 	ErrMsgDomainsRequireBlockAll = "When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic."
 
-	maxHTTPSPorts                     = 128
+	maxHTTPSPorts = 128
+	// maxDNSServers caps dnsServers. Resolvers only use the first few anyway.
+	maxDNSServers                     = 10
 	maxNetworkRuleTransformsPerDomain = 1
 	maxNetworkRuleDomainLen           = 128
 	maxNetworkRuleHeaderNameLen       = 64
-	maxNetworkRuleHeaderValueLen      = 2048
 	maxNetworkRuleHeadersPerRule      = 20
 
 	maxIamTokens = 5
 )
 
+// PostSandboxes creates a sandbox with secured envd access; the body's secure field is ignored.
 func (a *APIStore) PostSandboxes(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	body, err := ginutils.ParseBody[api.PostSandboxesJSONRequestBody](ctx, c)
+	if err != nil {
+		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
+
+		telemetry.ReportCriticalError(ctx, "error when parsing request", err)
+
+		return
+	}
+
+	body.Secure = new(true)
+	sbx, apiErr := a.createSandbox(c, body, sandbox.SandboxTimeoutDefault)
+	if apiErr != nil {
+		// Only POST /v2/sandboxes exposes Should-Retry.
+		apiErr.Retryable = apierrors.UndefinedRetry
+		apierrors.SendAPIError(c, apiErr)
+
+		return
+	}
+	c.JSON(http.StatusCreated, sbx)
+}
+
+// PostV2Sandboxes creates a sandbox with secured envd access; the request has no secure field to opt out.
+func (a *APIStore) PostV2Sandboxes(c *gin.Context, _ api.PostV2SandboxesParams) {
+	ctx := c.Request.Context()
+
+	var body api.PostV2SandboxesJSONRequestBody
+	// ShouldBind, unlike Bind, leaves the response uncommitted so Should-Retry can still be set.
+	if err := c.ShouldBind(&body); err != nil {
+		apierrors.SendAPIError(c, &apierrors.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: fmt.Sprintf("Error when parsing request: %s", err),
+			Retryable: apierrors.NoRetry,
+		})
+
+		telemetry.ReportCriticalError(ctx, "error when parsing request", err)
+
+		return
+	}
+
+	fingerprintBody := body
+	// Keep pre-upgrade idempotency keys valid for projects without a saved default.
+	if n := body.Network; n != nil && n.AllowPublicTraffic == nil && auth.MustGetTeamInfo(c).ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic == nil {
+		network := *n
+		network.AllowPublicTraffic = new(true)
+		fingerprintBody.Network = &network
+	}
+
+	idempotency.Execute(c, fingerprintBody, func() *apierrors.APIError {
+		sbx, apiErr := a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+		if apiErr != nil {
+			return apiErr
+		}
+		c.JSON(http.StatusCreated, sbx)
+
+		return nil
+	})
+}
+
+func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
+	secure := true
+
+	return api.NewSandbox{
+		TemplateID:          body.TemplateID,
+		Timeout:             body.Timeout,
+		CpuCount:            body.CpuCount,
+		AutoPause:           body.AutoPause,
+		AutoPauseMemory:     body.AutoPauseMemory,
+		AutoResume:          body.AutoResume,
+		Secure:              &secure,
+		AllowInternetAccess: body.AllowInternetAccess,
+		Network:             body.Network,
+		Metadata:            body.Metadata,
+		EnvVars:             body.EnvVars,
+		Mcp:                 body.Mcp,
+		Iam:                 body.Iam,
+		VolumeMounts:        body.VolumeMounts,
+	}
+}
+
+// createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
+func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) (*api.Sandbox, *api.APIError) {
 	ctx := c.Request.Context()
 
 	// Get team from context, use TeamContextKey
@@ -75,23 +164,17 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	traceID := span.SpanContext().TraceID().String()
 	c.Set("traceID", traceID)
 
-	body, err := ginutils.ParseBody[api.PostSandboxesJSONRequestBody](ctx, c)
-	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
-
-		telemetry.ReportCriticalError(ctx, "error when parsing request", err)
-
-		return
-	}
-
 	telemetry.ReportEvent(ctx, "Parsed body")
 
 	identifier, tag, err := id.ParseName(body.TemplateID)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid template reference: %s", err))
 		telemetry.ReportError(ctx, "invalid template reference", err)
 
-		return
+		return nil, &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: fmt.Sprintf("Invalid template reference: %s", err),
+			Retryable: apierrors.NoRetry,
+		}
 	}
 
 	clusterID := clusters.WithClusterFallback(teamInfo.Team.ClusterID)
@@ -99,9 +182,12 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	if err != nil {
 		apiErr := templatecache.ErrorToAPIError(err, identifier)
 		telemetry.ReportErrorByCode(ctx, apiErr.Code, "error when resolving template alias", apiErr.Err, attribute.String("identifier", identifier))
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+		apiErr.Retryable = apierrors.NoRetry
+		if apiErr.Code == http.StatusInternalServerError {
+			apiErr.Retryable = apierrors.CanRetry
+		}
 
-		return
+		return nil, apiErr
 	}
 
 	env, build, err := a.templateCache.Get(ctx, aliasInfo.TemplateID, tag, teamInfo.Team.ID, clusterID)
@@ -118,9 +204,12 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 
 		apiErr := ref.APIError(err)
 		telemetry.ReportErrorByCode(ctx, apiErr.Code, "error when getting template", apiErr.Err, telemetry.WithTemplateID(aliasInfo.TemplateID))
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+		apiErr.Retryable = apierrors.NoRetry
+		if apiErr.Code == http.StatusInternalServerError {
+			apiErr.Retryable = apierrors.CanRetry
+		}
 
-		return
+		return nil, apiErr
 	}
 
 	telemetry.ReportEvent(ctx, "Checked team access")
@@ -157,11 +246,11 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	metadata := sharedUtils.DerefOrDefault(body.Metadata, nil)
 	apiVolumeMounts := sharedUtils.DerefOrDefault(body.VolumeMounts, nil)
 
-	timeout, apiErr := validateAndParseTimeout(body.Timeout, teamInfo.Limits.MaxLengthHours)
+	timeout, apiErr := validateAndParseTimeoutWithDefault(body.Timeout, teamInfo.Limits.MaxLengthHours, defaultTimeout)
 	if apiErr != nil {
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+		apiErr.Retryable = apierrors.NoRetry
 
-		return
+		return nil, apiErr
 	}
 
 	autoResume := buildAutoResumeConfig(body.AutoResume)
@@ -174,17 +263,21 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	// it is meaningless without autoPause; reject it rather than silently storing
 	// a no-op policy.
 	if autoPauseFilesystemOnly && !autoPause {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "autoPauseMemory=false only applies when autoPause is true.")
-
-		return
+		return nil, &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: "autoPauseMemory=false only applies when autoPause is true.",
+			Retryable: apierrors.NoRetry,
+		}
 	}
 
 	// A filesystem-only auto-pause produces a snapshot that traffic cannot
 	// auto-resume (it must be resumed explicitly), so the two are incompatible.
 	if autoPauseFilesystemOnly && autoResume != nil && autoResume.Policy == types.SandboxAutoResumeAny {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "autoPauseMemory=false (filesystem-only auto-pause) cannot be combined with autoResume: a filesystem-only snapshot cannot be auto-resumed by traffic and must be resumed explicitly.")
-
-		return
+		return nil, &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: "autoPauseMemory=false (filesystem-only auto-pause) cannot be combined with autoResume: a filesystem-only snapshot cannot be auto-resumed by traffic and must be resumed explicitly.",
+			Retryable: apierrors.NoRetry,
+		}
 	}
 
 	// A filesystem-only auto-pause also needs the sandbox's Firecracker
@@ -195,9 +288,11 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	// (The evictor still degrades gracefully if resolution shifts between
 	// create and timeout.)
 	if autoPauseFilesystemOnly && !fcgate.SupportsFilesystemSnapshotsDeclared(ctx, a.featureFlags, build.FirecrackerVersion) {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("autoPauseMemory=false requires a Firecracker release with filesystem-only snapshot support; this template's version is %q. Rebuild the template on a current release or omit autoPauseMemory.", build.FirecrackerVersion))
-
-		return
+		return nil, &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: fmt.Sprintf("autoPauseMemory=false requires a Firecracker release with filesystem-only snapshot support; this template's version is %q. Rebuild the template on a current release or omit autoPauseMemory.", build.FirecrackerVersion),
+			Retryable: apierrors.NoRetry,
+		}
 	}
 
 	var envdAccessToken *string = nil
@@ -205,9 +300,8 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 		accessToken, tokenErr := a.getEnvdAccessToken(build.EnvdVersion, sandboxID)
 		if tokenErr != nil {
 			telemetry.ReportError(ctx, "secure envd access token error", tokenErr.Err, telemetry.WithSandboxID(sandboxID), telemetry.WithBuildID(build.ID.String()))
-			a.sendAPIStoreError(c, tokenErr.Code, tokenErr.ClientMsg)
 
-			return
+			return nil, tokenErr
 		}
 
 		envdAccessToken = &accessToken
@@ -216,75 +310,59 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	iamCfg, iamErr := buildSandboxIam(body.Iam)
 	if iamErr != nil {
 		telemetry.ReportError(ctx, "invalid iam config", iamErr.Err, telemetry.WithSandboxID(sandboxID))
-		a.sendAPIStoreError(c, iamErr.Code, iamErr.ClientMsg)
+		iamErr.Retryable = apierrors.NoRetry
 
-		return
+		return nil, iamErr
 	}
 
 	if iamCfg != nil && !a.featureFlags.BoolFlag(ctx, featureflags.SandboxIamTokensFlag, featureflags.TeamContext(teamInfo.Team.ID.String())) {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "Sandbox IAM workload tokens are not available for your team.")
-
-		return
+		return nil, &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: "Sandbox IAM workload tokens are not available for your team.",
+			Retryable: apierrors.NoRetry,
+		}
 	}
 
 	allowInternetAccess := body.AllowInternetAccess
 
 	var network *types.SandboxNetworkConfig
 	if n := body.Network; n != nil {
-		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamInfo.Team.ID.String()))
-		if err := validateNetworkConfig(ctx, a.featureFlags, teamInfo.Team.ID, sharedUtils.DerefOrDefault(build.EnvdVersion, ""), maxDomains, n); err != nil {
+		limits := a.networkRuleLimits(ctx, teamInfo.Team.ID)
+		if err := validateNetworkConfig(ctx, a.featureFlags, teamInfo.Team.ID, sharedUtils.DerefOrDefault(build.EnvdVersion, ""), limits, n); err != nil {
 			telemetry.ReportError(ctx, "invalid network config", err.Err, telemetry.WithSandboxID(sandboxID))
-			a.sendAPIStoreError(c, err.Code, err.ClientMsg)
+			err.Retryable = apierrors.NoRetry
 
-			return
+			return nil, err
 		}
 
-		network = &types.SandboxNetworkConfig{
-			Ingress: &types.SandboxNetworkIngressConfig{
-				AllowPublicAccess: n.AllowPublicTraffic,
-				MaskRequestHost:   n.MaskRequestHost,
-				HTTPSPorts:        sharedUtils.DerefOrDefault(n.HttpsPorts, nil),
-			},
-			Egress: &types.SandboxNetworkEgressConfig{
-				AllowedAddresses: sharedUtils.DerefOrDefault(n.AllowOut, nil),
-				DeniedAddresses:  sharedUtils.DerefOrDefault(n.DenyOut, nil),
-				Rules:            apiRulesToDBRules(n.Rules),
-			},
-		}
+		network = sandboxNetworkConfig(n, teamInfo.ProjectSettings.SandboxSettings)
 
 		if ep := n.EgressProxy; ep != nil {
 			if !a.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
 				telemetry.ReportEvent(ctx, "egressProxy rejected by BYOPProxyEnabledFlag")
-				a.sendAPIStoreError(c, http.StatusForbidden,
-					"Egress proxy (network.egressProxy) is not enabled for this team.")
 
-				return
+				return nil, &api.APIError{
+					Code:      http.StatusForbidden,
+					ClientMsg: "Egress proxy (network.egressProxy) is not enabled for this team.",
+					Retryable: apierrors.NoRetry,
+				}
 			}
 
-			canonical, err := sandbox_network.ValidateEgressProxy(ctx, &sandbox_network.EgressProxyConfig{
-				Address:  ep.Address,
-				Username: sharedUtils.DerefOrDefault(ep.Username, ""),
-				Password: sharedUtils.DerefOrDefault(ep.Password, ""),
-			}, nil)
+			canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
 			if err != nil {
 				telemetry.ReportError(ctx, "invalid egress proxy config", err, telemetry.WithSandboxID(sandboxID))
-				a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))
 
-				return
+				return nil, &api.APIError{
+					Code:      http.StatusBadRequest,
+					ClientMsg: fmt.Sprintf("Invalid egress proxy config: %s", err),
+					Retryable: apierrors.NoRetry,
+				}
 			}
 
-			network.Egress.EgressProxyAddress = canonical.Address
-			network.Egress.EgressProxyUsername = canonical.Username
-			network.Egress.EgressProxyPassword = canonical.Password
+			apiorch.ApplyValidatedEgressProxy(network.Egress, canonical)
 		}
-
-		// Make sure envd seucre access is enforced when public access is disabled,
-		// This requirement forces users using newer features to secure sandboxes properly.
-		if !sharedUtils.DerefOrDefault(network.Ingress.AllowPublicAccess, types.AllowPublicAccessDefault) && envdAccessToken == nil {
-			a.sendAPIStoreError(c, http.StatusBadRequest, "You cannot create a sandbox without public access unless you enable secure envd access via 'secure' flag.")
-
-			return
-		}
+	} else {
+		network = sandboxNetworkConfig(nil, teamInfo.ProjectSettings.SandboxSettings)
 	}
 
 	sbxVolumeMounts, err := convertAPIVolumesToOrchestratorVolumes(
@@ -292,27 +370,20 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	)
 	if err != nil {
 		if errors.Is(err, errVolumesNotSupported) || errors.Is(err, errNoEnvdVersion) {
-			a.sendAPIStoreError(c, http.StatusBadRequest, err.Error())
-
-			return
+			return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: err.Error(), Retryable: apierrors.NoRetry}
 		}
 
 		if errors.Is(err, ErrVolumeMountsDisabled) {
-			a.sendAPIStoreError(c, http.StatusBadRequest, "Volume mounts are not enabled.")
-
-			return
+			return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: "Volume mounts are not enabled.", Retryable: apierrors.NoRetry}
 		}
 
 		if vne, ok := errors.AsType[InvalidVolumeMountsError](err); ok {
-			a.sendAPIStoreError(c, http.StatusBadRequest, vne.Error())
-
-			return
+			return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: vne.Error(), Retryable: apierrors.NoRetry}
 		}
 
 		telemetry.ReportError(ctx, "failed to convert volume mounts", err, telemetry.WithSandboxID(sandboxID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "failed to convert volume mounts")
 
-		return
+		return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "failed to convert volume mounts", Retryable: apierrors.CanRetry}
 	}
 
 	getSandboxData := func(_ context.Context) (apiorch.SandboxMetadata, *api.APIError) {
@@ -346,11 +417,10 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 		false,
 		false,
 		mcp,
+		apiorch.WithCPUCount(body.CpuCount),
 	)
 	if createErr != nil {
-		apierrors.SendAPIError(c, createErr)
-
-		return
+		return nil, createErr
 	}
 
 	if n := body.Network; n != nil && n.Rules != nil && len(*n.Rules) > 0 {
@@ -359,14 +429,43 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 			domains = append(domains, domain)
 		}
 
-		a.posthog.CreateAnalyticsTeamEvent(ctx, teamInfo.Team.ID.String(), "sandbox with network transform rules created",
+		a.posthog.CreateAnalyticsSandboxEvent(ctx, teamInfo.Team.ID.String(), sandboxID, "sandbox with network transform rules created",
 			a.posthog.GetPackageToPosthogProperties(&c.Request.Header).
 				Set("sandbox_id", sandboxID).
 				Set("domains", domains),
 		)
 	}
 
-	c.JSON(http.StatusCreated, &sbx)
+	return sbx, nil
+}
+
+// Preserve the legacy nil network for public creates without network options.
+// Persist private ingress so pause and resume retain it.
+func sandboxNetworkConfig(n *api.SandboxNetworkConfig, settings types.SandboxSettings) *types.SandboxNetworkConfig {
+	projectAllowsPublicTraffic := sharedUtils.DerefOrDefault(settings.DefaultAllowPublicTraffic, types.AllowPublicAccessDefault)
+	if n == nil {
+		if projectAllowsPublicTraffic {
+			return nil
+		}
+
+		return &types.SandboxNetworkConfig{
+			Ingress: &types.SandboxNetworkIngressConfig{AllowPublicAccess: new(false)},
+		}
+	}
+
+	return &types.SandboxNetworkConfig{
+		Ingress: &types.SandboxNetworkIngressConfig{
+			AllowPublicAccess: new(sharedUtils.DerefOrDefault(n.AllowPublicTraffic, projectAllowsPublicTraffic)),
+			MaskRequestHost:   n.MaskRequestHost,
+			HTTPSPorts:        sharedUtils.DerefOrDefault(n.HttpsPorts, nil),
+		},
+		Egress: &types.SandboxNetworkEgressConfig{
+			AllowedAddresses: sharedUtils.DerefOrDefault(n.AllowOut, nil),
+			DeniedAddresses:  sharedUtils.DerefOrDefault(n.DenyOut, nil),
+			Rules:            apiRulesToDBRules(n.Rules),
+			DnsServers:       n.DnsServers,
+		},
+	}
 }
 
 // iamTokenTypeJWTSVID is the only workload token type accepted in this version.
@@ -601,6 +700,7 @@ func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (st
 			Code:      http.StatusBadRequest,
 			ClientMsg: "You need to re-build template to allow using secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.",
 			Err:       errors.New("envd version is required during envd access token creation"),
+			Retryable: apierrors.NoRetry,
 		}
 	}
 
@@ -611,6 +711,7 @@ func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (st
 			Code:      http.StatusInternalServerError,
 			ClientMsg: "error during envd version check",
 			Err:       err,
+			Retryable: apierrors.NoRetry,
 		}
 	}
 	if !ok {
@@ -618,6 +719,7 @@ func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (st
 			Code:      http.StatusBadRequest,
 			ClientMsg: "Template is not compatible with secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.",
 			Err:       errors.New("envd version is not supported for secure flag"),
+			Retryable: apierrors.NoRetry,
 		}
 	}
 
@@ -627,6 +729,7 @@ func (a *APIStore) getEnvdAccessToken(envdVersion *string, sandboxID string) (st
 			Code:      http.StatusInternalServerError,
 			ClientMsg: "error during sandbox access token generation",
 			Err:       err,
+			Retryable: apierrors.CanRetry,
 		}
 	}
 
@@ -703,7 +806,31 @@ func apiRulesToDBRules(apiRules *map[string][]api.SandboxNetworkRule) map[string
 	return dbRules
 }
 
-func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, maxDomains int, network *api.SandboxNetworkConfig) *api.APIError {
+// apiEgressProxyToConfig maps the API egress proxy object onto the validation
+// input. It does no checking of its own; ValidateEgressProxy owns that.
+func apiEgressProxyToConfig(ep *api.SandboxEgressProxyConfig) *sandbox_network.EgressProxyConfig {
+	if ep == nil {
+		return nil
+	}
+
+	cfg := &sandbox_network.EgressProxyConfig{
+		Address:  ep.Address,
+		Username: sharedUtils.DerefOrDefault(ep.Username, ""),
+		Password: sharedUtils.DerefOrDefault(ep.Password, ""),
+	}
+
+	if t := ep.Tls; t != nil {
+		cfg.TLS = &sandbox_network.EgressProxyTLSConfig{
+			Enabled:    t.Enabled,
+			ServerName: sharedUtils.DerefOrDefault(t.ServerName, ""),
+			CACert:     sharedUtils.DerefOrDefault(t.CaCert, ""),
+		}
+	}
+
+	return cfg
+}
+
+func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, limits networkRuleLimits, network *api.SandboxNetworkConfig) *api.APIError {
 	if network == nil {
 		return nil
 	}
@@ -780,7 +907,11 @@ func validateNetworkConfig(ctx context.Context, featureFlags featureFlagsClient,
 		return err
 	}
 
-	return validateNetworkRules(ctx, featureFlags, teamID, envdVersion, maxDomains, network.Rules)
+	if err := validateDNSServers(network.DnsServers); err != nil {
+		return err
+	}
+
+	return validateNetworkRules(ctx, featureFlags, teamID, envdVersion, limits, network.Rules)
 }
 
 // validateEgressRules validates egress allow/deny rules:
@@ -824,7 +955,47 @@ func validateEgressRules(allowOut, denyOut []string) *api.APIError {
 	return nil
 }
 
-func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, maxDomains int, rules *map[string][]api.SandboxNetworkRule) *api.APIError {
+// validateDNSServers checks that every DNS server is a plain IPv4 address.
+func validateDNSServers(dnsServers *[]string) *api.APIError {
+	servers := sharedUtils.DerefOrDefault(dnsServers, nil)
+	if len(servers) > maxDNSServers {
+		return &api.APIError{
+			Code:      http.StatusBadRequest,
+			Err:       fmt.Errorf("too many DNS servers: %d (max %d)", len(servers), maxDNSServers),
+			ClientMsg: fmt.Sprintf("DNS servers can have at most %d entries.", maxDNSServers),
+		}
+	}
+
+	for _, server := range servers {
+		addr, err := netip.ParseAddr(server)
+		if err != nil || !addr.Is4() || addr.IsUnspecified() {
+			return &api.APIError{
+				Code:      http.StatusBadRequest,
+				Err:       fmt.Errorf("invalid DNS server %q", server),
+				ClientMsg: fmt.Sprintf("invalid DNS server %s: must be an IPv4 address", server),
+			}
+		}
+	}
+
+	return nil
+}
+
+// networkRuleLimits holds the per-team network rule limits read from feature flags.
+type networkRuleLimits struct {
+	MaxDomains        int
+	MaxHeaderValueLen int
+}
+
+func (a *APIStore) networkRuleLimits(ctx context.Context, teamID uuid.UUID) networkRuleLimits {
+	teamCtx := featureflags.TeamContext(teamID.String())
+
+	return networkRuleLimits{
+		MaxDomains:        a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, teamCtx),
+		MaxHeaderValueLen: a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleHeaderValueLen, teamCtx),
+	}
+}
+
+func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, teamID uuid.UUID, envdVersion string, limits networkRuleLimits, rules *map[string][]api.SandboxNetworkRule) *api.APIError {
 	if rules == nil {
 		return nil
 	}
@@ -853,11 +1024,11 @@ func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, 
 		}
 	}
 
-	if len(*rules) > maxDomains {
+	if len(*rules) > limits.MaxDomains {
 		return &api.APIError{
 			Code:      http.StatusBadRequest,
-			Err:       fmt.Errorf("too many rule domains: %d (max %d)", len(*rules), maxDomains),
-			ClientMsg: fmt.Sprintf("Network rules can have at most %d domains.", maxDomains),
+			Err:       fmt.Errorf("too many rule domains: %d (max %d)", len(*rules), limits.MaxDomains),
+			ClientMsg: fmt.Sprintf("Network rules can have at most %d domains.", limits.MaxDomains),
 		}
 	}
 
@@ -958,11 +1129,11 @@ func validateNetworkRules(ctx context.Context, featureFlags featureFlagsClient, 
 					}
 				}
 
-				if len(value) > maxNetworkRuleHeaderValueLen {
+				if len(value) > limits.MaxHeaderValueLen {
 					return &api.APIError{
 						Code:      http.StatusBadRequest,
-						Err:       fmt.Errorf("value for header %q in rule for domain %q exceeds max length %d", name, domain, maxNetworkRuleHeaderValueLen),
-						ClientMsg: fmt.Sprintf("Value for header %q in rule for domain %q exceeds maximum length of %d characters.", name, domain, maxNetworkRuleHeaderValueLen),
+						Err:       fmt.Errorf("value for header %q in rule for domain %q exceeds max length %d", name, domain, limits.MaxHeaderValueLen),
+						ClientMsg: fmt.Sprintf("Value for header %q in rule for domain %q exceeds maximum length of %d characters.", name, domain, limits.MaxHeaderValueLen),
 					}
 				}
 

@@ -3,10 +3,13 @@ package envdbin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -117,10 +120,17 @@ func NewResolver(cache *Cache, op Op) *Resolver {
 // Version reports the version baked into the binary at path, matching the
 // signature the upgrade resolver injects.
 func (r *Resolver) Version(ctx context.Context, path string) (string, error) {
-	entry, fi, err := r.cache.lookupSource(path)
+	ctx, span := tracer.Start(ctx, "envd-binary-cache-lookup", trace.WithAttributes(
+		attribute.String("envd.binary_cache.op", string(r.op)),
+		attribute.String("envd.binary_cache.path", path),
+	))
+	defer span.End()
+
+	entry, fi, err := r.cache.lookupSource(ctx, path)
 	if err == nil && entry != nil {
 		r.entry, r.outcome = entry, OutcomeHit
-		r.count(ctx, OutcomeHit)
+		r.count(ctx, OutcomeHit, "")
+		span.SetAttributes(attribute.String("envd.binary_cache.outcome", string(OutcomeHit)))
 
 		return entry.Version, nil
 	}
@@ -135,25 +145,92 @@ func (r *Resolver) Version(ctx context.Context, path string) (string, error) {
 	// would open by taking the same stat, and with no identity in hand its slot
 	// could only be claimed after that -- one goroutine per resume against a mount
 	// that has already answered no.
+	retErr, cause := ErrNotCached, missNotWarmed
 	switch {
-	case err != nil && !errors.Is(err, errNoCache):
+	case err != nil && (ctx.Err() != nil || errors.Is(err, errSourceStatStalled)):
+		// A mount that has not answered yet, or a caller that stopped waiting for
+		// it. No warm from here, with no identity to key it on -- the stat starts
+		// one when it lands -- and no schedule, since the source has not failed.
+		// The cause is wrapped so the upgrade resolver reports source_stalled, not
+		// a cold cache.
+		cause = missStalled
+		if ctx.Err() != nil {
+			cause = missCancelled
+		} else {
+			r.cache.noteSourceStalled(ctx, path, err)
+		}
+		retErr = fmt.Errorf("%w: %w", ErrNotCached, err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	case errors.Is(err, errNoCache):
+		cause = missNoCache
+	case err != nil:
+		cause = missUnreadable
 		r.cache.noteSourceUnreadable(ctx, path, err)
 		r.sourceUnreadable = true
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 	default:
 		r.cache.warmAsyncFor(ctx, path, fi)
 	}
 	r.entry, r.outcome = nil, OutcomeMiss
-	r.count(ctx, OutcomeMiss)
+	r.count(ctx, OutcomeMiss, cause)
+	span.SetAttributes(
+		attribute.String("envd.binary_cache.outcome", string(OutcomeMiss)),
+		attribute.String("envd.binary_cache.miss_cause", cause),
+	)
 
-	return "", ErrNotCached
+	return "", retErr
 }
 
-// count records what a lookup found: exactly one per resolution.
-func (r *Resolver) count(ctx context.Context, outcome Outcome) {
-	binaryCacheReads.Add(ctx, 1, metric.WithAttributes(
+// Stat checks an upgrade candidate through the cache's shared, bounded stat, for
+// the upgrade resolver's existence checks, which run before Version. A stat that
+// lands after this caller gave up starts the warm, as one behind Version does.
+//
+// A stall here is where a stalled mount almost always surfaces: the check stats
+// the path Version would look up next, and the resolver returns source_stalled
+// without calling Version. So the stall is counted as this resolution's one read
+// here, or the reads counter would never see it.
+func (r *Resolver) Stat(ctx context.Context, path string) (os.FileInfo, error) {
+	if r == nil || r.cache == nil {
+		return (*Cache)(nil).BoundedStat(ctx, path)
+	}
+
+	fi, err := r.cache.statSourceForLookup(ctx, path, true)
+	if err != nil && (ctx.Err() != nil || errors.Is(err, errSourceStatStalled)) {
+		cause := missStalled
+		if ctx.Err() != nil {
+			cause = missCancelled
+		} else {
+			r.cache.noteSourceStalled(ctx, path, err)
+		}
+		r.entry, r.outcome = nil, OutcomeMiss
+		r.count(ctx, OutcomeMiss, cause)
+	}
+
+	return fi, err
+}
+
+// The causes a miss is counted with on the reads counter.
+const (
+	missNotWarmed  = "not_warmed"
+	missStalled    = "stalled"
+	missCancelled  = "cancelled"
+	missUnreadable = "unreadable"
+	missNoCache    = "no_cache"
+)
+
+// count records what a lookup found: exactly one per resolution. cause is set on
+// a miss only, so the hit/total ratio reads the same with or without it.
+func (r *Resolver) count(ctx context.Context, outcome Outcome, cause string) {
+	attrs := []attribute.KeyValue{
 		attribute.String("outcome", string(outcome)),
 		attribute.String("op", string(r.op)),
-	))
+	}
+	if cause != "" {
+		attrs = append(attrs, attribute.String("cause", cause))
+	}
+	binaryCacheReads.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
 // countDelivery records what a caller actually read. Its own series, because its

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -31,8 +34,12 @@ type TemplateConfig struct {
 	// Command to run when building the template.
 	StartCmd string
 
-	// The number of vCPUs to allocate to the VM.
+	// The number of vCPUs online during the build and in the final template.
 	VCpuCount int64
+
+	// Capacity of the final template VM, of which VCpuCount are online. Provisioning
+	// and step VMs boot with VCpuCount; 0 means the final VM also uses VCpuCount.
+	MaxVCpuCount int64
 
 	// The amount of RAM memory to allocate to the VM, in MiB.
 	MemoryMB int64
@@ -82,6 +89,48 @@ type TemplateConfig struct {
 	// flag once, at the start of the build, so every boot in the build agrees and the
 	// stored snapshot is self-describing.
 	CmdlineArgs map[string]string
+
+	// CPUTemplate is the CPU template every boot in this build applies, resolved once from
+	// the per-team flag at build start. Nil is none.
+	CPUTemplate *cputemplate.Template
+
+	// Guest is the guest profile of the build, the parent template's when the build
+	// starts FROM one; nil is the default profile.
+	Guest guest.Profile
+
+	// RootfsDriveID, NetIfaceID and RootfsFile are the device names the parent's memory
+	// image bakes, which every layer of a build that resumes its parent addresses;
+	// empty is the runtime's own name for each.
+	RootfsDriveID string
+	NetIfaceID    string
+	RootfsFile    string
+}
+
+// GuestProfile is the guest profile of the build.
+func (e TemplateConfig) GuestProfile() guest.Profile {
+	if e.Guest == nil {
+		return guest.Default()
+	}
+
+	return e.Guest
+}
+
+// GuestTemplate is the template build behaviour of the build's guest.
+func (e TemplateConfig) GuestTemplate() guest.TemplateBuild {
+	return e.GuestProfile().Template()
+}
+
+// FirecrackerConfig is how every VM of this build is driven: the kernel, the
+// Firecracker binary, the guest profile and the device names its memory image bakes.
+func (e TemplateConfig) FirecrackerConfig() fc.Config {
+	return fc.Config{
+		KernelVersion:      e.KernelVersion,
+		FirecrackerVersion: e.FirecrackerVersion,
+		Guest:              e.Guest,
+		RootfsDriveID:      e.RootfsDriveID,
+		NetIfaceID:         e.NetIfaceID,
+		RootfsFile:         e.RootfsFile,
+	}
 }
 
 // ObjectMetadata is the provenance stamped on a build's uploaded objects.
@@ -105,4 +154,17 @@ func MemfilePageSize(hugePages bool) int64 {
 
 func (e TemplateConfig) RootfsBlockSize() int64 {
 	return header.RootfsBlockSize
+}
+
+// VcpuSizing labels the final VM size a build requests: absent (maxVCpus 0),
+// equal, or resizable (more vCPUs than are online).
+func VcpuSizing(vcpus, maxVCpus int64) string {
+	switch {
+	case maxVCpus == 0:
+		return "absent"
+	case maxVCpus > vcpus:
+		return "resizable"
+	default:
+		return "equal"
+	}
 }

@@ -148,6 +148,46 @@ func TestConvertTeamIDToProjectID(t *testing.T) {
 	}
 }
 
+func TestParseTeamIDAcceptsUUIDAndProjectID(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+
+	for _, input := range []string{teamID.String(), "prj_2n1t201rmv87aae5j4csam8000"} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseTeamID(input)
+			if err != nil {
+				t.Fatalf("ParseTeamID(%q): %v", input, err)
+			}
+			if got != teamID {
+				t.Errorf("ParseTeamID(%q) = %v, want %v", input, got, teamID)
+			}
+		})
+	}
+}
+
+func TestParseTeamIDRejectsOtherInput(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"",
+		"team",
+		"wrk_2n1t201rmv87aae5j4csam8000",
+		"PRJ_2N1T201RMV87AAE5J4CSAM8000",
+		"prj_2n1t201rmv87aae5j4csam800",
+	} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			if got, err := ParseTeamID(input); err == nil {
+				t.Errorf("ParseTeamID(%q) = %v, want an error", input, got)
+			}
+		})
+	}
+}
+
 // The legacy and TypeID suffix alphabets overlap, so parsing always uses the
 // new TypeID interpretation rather than attempting an ambiguous fallback.
 func TestLegacyBodyUsesTypeIDInterpretation(t *testing.T) {

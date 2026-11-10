@@ -3,6 +3,7 @@ package machineinfo
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"go.uber.org/zap"
@@ -22,6 +23,7 @@ type MachineInfo struct {
 const (
 	IceLakeModel       = "106"
 	EmeraldRapidsModel = "207"
+	GraniteRapidsModel = "173"
 )
 
 // compatibleNodeModels maps a build's CPU model (same architecture and family)
@@ -57,6 +59,20 @@ func (m MachineInfo) IsCompatibleWith(nodeCPU MachineInfo) bool {
 	_, ok := compatibleNodeModels[buildCPU.CPUModel][nodeCPU.CPUModel]
 
 	return ok
+}
+
+// IsCompatibleWithExtra is IsCompatibleWith plus the one-way build model to
+// node models pairs in extra. Architecture and family must still match.
+func (m MachineInfo) IsCompatibleWithExtra(nodeCPU MachineInfo, extra map[string][]string) bool {
+	if m.IsCompatibleWith(nodeCPU) {
+		return true
+	}
+
+	if m.CPUArchitecture != nodeCPU.CPUArchitecture || m.CPUFamily != nodeCPU.CPUFamily {
+		return false
+	}
+
+	return slices.Contains(extra[m.CPUModel], nodeCPU.CPUModel)
 }
 
 // IsExactMatch reports whether m and other describe the same CPU

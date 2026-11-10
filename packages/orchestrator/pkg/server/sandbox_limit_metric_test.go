@@ -50,7 +50,7 @@ func TestSandboxLimitMetric(t *testing.T) {
 			require.Equal(t, want, server.info.MaxSandboxes.Load())
 			assertSandboxLimitMetric(t, ctx, reader, want)
 			_, err := server.Create(ctx, &orchestrator.SandboxCreateRequest{
-				Sandbox: &orchestrator.SandboxConfig{SandboxId: "limit-sandbox", TeamId: "limit-team"},
+				Sandbox: &orchestrator.SandboxConfig{SandboxId: "limit-sandbox", TeamId: "limit-team", Vcpu: 1},
 			})
 			require.Equal(t, codes.ResourceExhausted, status.Code(err))
 			if want > 0 {

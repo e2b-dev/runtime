@@ -125,7 +125,7 @@ func NewDiffStore(
 type DiffStoreKey string
 
 func GetDiffStoreKey(buildID string, diffType DiffType) DiffStoreKey {
-	return DiffStoreKey(fmt.Sprintf("%s/%s", buildID, diffType))
+	return DiffStoreKey(buildID + "/" + string(diffType))
 }
 
 func (s *DiffStore) Start(ctx context.Context) {

@@ -9,6 +9,11 @@ receivers:
 processors:
   batch:
 
+  # The API and orchestrator export synchronous counters and histograms as
+  # deltas; Mimir stores cumulative series.
+  deltatocumulative:
+    max_stale: 10m
+
   batch/clickhouse:
     timeout: 5s
     send_batch_size: 50000
@@ -59,7 +64,7 @@ service:
       exporters: [otlp/tempo]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [deltatocumulative, batch]
       exporters: [otlp_http/mimir]
     metrics/clickhouse:
       receivers: [otlp]

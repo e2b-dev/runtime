@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/connlimit"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/proxy/pool"
 )
@@ -288,7 +291,7 @@ func TestProxyResumePermissionDeniedErrorTemplate(t *testing.T) {
 	t.Parallel()
 
 	getDestination := func(*http.Request) (*pool.Destination, error) {
-		return nil, NewErrSandboxResumePermissionDenied("test-sandbox")
+		return nil, NewErrSandboxResumePermissionDenied("test-sandbox", nil)
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
@@ -339,7 +342,7 @@ func TestProxyResumePermissionDeniedErrorTemplate(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Unable to Resume Sandbox")
+		assert.Contains(t, string(body), "Unable to resume sandbox")
 		assert.Contains(t, string(body), "test-sandbox")
 	})
 }
@@ -367,6 +370,8 @@ func TestProxySandboxStillTransitioningErrorTemplate(t *testing.T) {
 		})
 
 		require.Equal(t, http.StatusConflict, resp.StatusCode)
+		require.Equal(t, "2", resp.Header.Get("Retry-After"))
+		require.Equal(t, "Retry-After", resp.Header.Get("Access-Control-Expose-Headers"))
 		require.Equal(t, "application/json; charset=utf-8", resp.Header.Get("Content-Type"))
 
 		var response struct {
@@ -395,13 +400,277 @@ func TestProxySandboxStillTransitioningErrorTemplate(t *testing.T) {
 		})
 
 		require.Equal(t, http.StatusConflict, resp.StatusCode)
+		require.Equal(t, "2", resp.Header.Get("Retry-After"))
+		require.Equal(t, "Retry-After", resp.Header.Get("Access-Control-Expose-Headers"))
 		require.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Sandbox Still Transitioning")
+		assert.Contains(t, string(body), "Sandbox still transitioning")
 		assert.Contains(t, string(body), "test-sandbox")
 	})
+}
+
+func TestProxySandboxCapacityErrorTemplate(t *testing.T) {
+	t.Parallel()
+
+	getDestination := func(r *http.Request) (*pool.Destination, error) {
+		return nil, NewErrSandboxCapacity("test-sandbox", PresenceUnknown, r.URL.Query().Get("reason"))
+	}
+
+	proxy, port, err := newTestProxy(t, getDestination)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		proxy.Close()
+	})
+
+	t.Run("json for non-browser", func(t *testing.T) {
+		t.Parallel()
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d/hello", port)
+		resp, err := httpGet(t, proxyURL)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.Equal(t, "2", resp.Header.Get("Retry-After"))
+		require.Equal(t, "Retry-After", resp.Header.Get("Access-Control-Expose-Headers"))
+		require.Equal(t, "application/json; charset=utf-8", resp.Header.Get("Content-Type"))
+
+		var response struct {
+			SandboxID string `json:"sandboxId"`
+			Message   string `json:"message"`
+			Code      int    `json:"code"`
+			ErrorCode string `json:"error_code"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		require.NoError(t, err)
+		require.Equal(t, "test-sandbox", response.SandboxID)
+		require.Equal(t, "The sandbox cannot be resumed right now. Try again in a moment.", response.Message)
+		require.Equal(t, http.StatusServiceUnavailable, response.Code)
+		require.Empty(t, response.ErrorCode)
+	})
+
+	t.Run("json never carries the reason", func(t *testing.T) {
+		t.Parallel()
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d/hello?reason=transport%%3A+dial+tcp+10.1.2.3%%3A5008", port)
+		resp, err := httpGet(t, proxyURL)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.Equal(t, "2", resp.Header.Get("Retry-After"))
+		require.Equal(t, "Retry-After", resp.Header.Get("Access-Control-Expose-Headers"))
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NotContains(t, string(body), "dial tcp")
+		require.Contains(t, string(body), `"message":"The sandbox cannot be resumed right now. Try again in a moment."`)
+	})
+
+	t.Run("html never carries the reason", func(t *testing.T) {
+		t.Parallel()
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d/hello?reason=transport%%3A+dial+tcp+10.1.2.3%%3A5008", port)
+		headers := http.Header{
+			"User-Agent": {"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+		}
+
+		resp, err := httpGetWithHeaders(t, proxyURL, headers)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NotContains(t, string(body), "dial tcp")
+		require.NotContains(t, string(body), "10.1.2.3")
+	})
+
+	t.Run("html for browser", func(t *testing.T) {
+		t.Parallel()
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d/hello", port)
+		headers := http.Header{
+			"User-Agent": {"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+		}
+
+		resp, err := httpGetWithHeaders(t, proxyURL, headers)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.Equal(t, "2", resp.Header.Get("Retry-After"))
+		require.Equal(t, "Retry-After", resp.Header.Get("Access-Control-Expose-Headers"))
+		require.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "Sandbox cannot be resumed")
+		assert.Contains(t, string(body), "cannot be resumed right now")
+		assert.Contains(t, string(body), "test-sandbox")
+	})
+}
+
+// A request shed for lack of room to wait renders the capacity page without
+// Retry-After, so clients that honour the header do not return in one wave,
+// and with an error_code, so a client or an ingress that strips the header
+// still tells it from the capacity answer a retry can help, which keeps the
+// header and carries no code (TestProxySandboxCapacityErrorTemplate).
+func TestProxySandboxShedErrorTemplate(t *testing.T) {
+	t.Parallel()
+
+	getDestination := func(_ *http.Request) (*pool.Destination, error) {
+		return nil, NewErrSandboxShed("test-sandbox", "parking lot full")
+	}
+
+	proxy, port, err := newTestProxy(t, getDestination)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		proxy.Close()
+	})
+
+	resp, err := httpGet(t, fmt.Sprintf("http://127.0.0.1:%d/hello", port))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = resp.Body.Close()
+	})
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("Retry-After"))
+	require.Empty(t, resp.Header.Get("Access-Control-Expose-Headers"))
+
+	var response struct {
+		SandboxID string `json:"sandboxId"`
+		Message   string `json:"message"`
+		Code      int    `json:"code"`
+		ErrorCode string `json:"error_code"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	require.Equal(t, "test-sandbox", response.SandboxID)
+	require.Equal(t, "The sandbox cannot be resumed right now. Try again in a moment.", response.Message)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.Equal(t, "proxy_parking_lot_full", response.ErrorCode)
+	require.NotContains(t, response.Message, "parking lot")
+}
+
+// A placement refusal no retry helps renders the same 503 page family with
+// its own wording and no Retry-After.
+func TestProxySandboxPlacementRefusedErrorTemplate(t *testing.T) {
+	t.Parallel()
+
+	getDestination := func(_ *http.Request) (*pool.Destination, error) {
+		return nil, NewErrSandboxPlacementRefused("test-sandbox", "Failed to place sandbox: no available orchestrator at version 0.3 or above", "sandbox_feature_unsupported", 0)
+	}
+
+	proxy, port, err := newTestProxy(t, getDestination)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		proxy.Close()
+	})
+
+	t.Run("json for non-browser", func(t *testing.T) {
+		t.Parallel()
+		resp, err := httpGet(t, fmt.Sprintf("http://127.0.0.1:%d/hello", port))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.Empty(t, resp.Header.Get("Retry-After"))
+
+		var response struct {
+			SandboxID string `json:"sandboxId"`
+			Message   string `json:"message"`
+			Code      int    `json:"code"`
+			ErrorCode string `json:"error_code"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+		require.Equal(t, "test-sandbox", response.SandboxID)
+		require.Equal(t, "The sandbox cannot be resumed: no node in this cluster can run it.", response.Message)
+		require.Equal(t, http.StatusServiceUnavailable, response.Code)
+		require.Equal(t, "sandbox_feature_unsupported", response.ErrorCode)
+	})
+
+	t.Run("html for browser", func(t *testing.T) {
+		t.Parallel()
+		resp, err := httpGetWithHeaders(t, fmt.Sprintf("http://127.0.0.1:%d/hello", port), http.Header{
+			"User-Agent": {"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = resp.Body.Close()
+		})
+
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		require.Empty(t, resp.Header.Get("Retry-After"))
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "no node in this cluster can run it")
+		assert.NotContains(t, string(body), "no available orchestrator at version")
+		assert.NotContains(t, string(body), "Try again", "a page for a refusal no retry helps offers a retry")
+	})
+}
+
+// A request whose own context ended before it was routed is answered with
+// 408 and no page: a client that half-closed its connection is still
+// reading, and an unwritten answer would reach it as an empty 200.
+func TestProxyAnswersRequestTimeoutWhenTheRequestEndedBeforeRouting(t *testing.T) {
+	t.Parallel()
+
+	proxy := New(0, SandboxProxyRetries, time.Second, func(r *http.Request) (*pool.Destination, error) {
+		return nil, fmt.Errorf("resolving: %w", r.Context().Err())
+	}, nil, false)
+	t.Cleanup(func() { _ = proxy.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://sandbox.e2b.app/", nil)
+	rr := httptest.NewRecorder()
+	proxy.Handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusRequestTimeout, rr.Code)
+	require.NotContains(t, rr.Body.String(), "sandbox", "an error page was rendered for a request that had ended")
+}
+
+// The same over a real connection: the client sends its request and closes
+// its write side while routing waits, the server's EOF cancels the request
+// context, and the client reads 408 rather than an empty 200.
+func TestProxyHalfClosedClientReadsRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	proxy, port, err := newTestProxy(t, func(r *http.Request) (*pool.Destination, error) {
+		<-r.Context().Done()
+
+		return nil, fmt.Errorf("resolving: %w", r.Context().Err())
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { proxy.Close() })
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(t.Context(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	_, err = fmt.Fprint(conn, "GET /hello HTTP/1.1\r\nHost: sandbox.e2b.app\r\n\r\n")
+	require.NoError(t, err)
+	tcpConn, ok := conn.(*net.TCPConn)
+	require.True(t, ok)
+	require.NoError(t, tcpConn.CloseWrite())
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusRequestTimeout, resp.StatusCode)
 }
 
 func TestProxyInternalRouteErrorTemplate(t *testing.T) {
@@ -461,7 +730,7 @@ func TestProxyInternalRouteErrorTemplate(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Endpoint Not Available")
+		assert.Contains(t, string(body), "Endpoint not available")
 		assert.Contains(t, string(body), "/init")
 		assert.NotContains(t, string(body), "test-sandbox")
 	})
@@ -520,7 +789,7 @@ func TestProxyTeamSandboxLimitError(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, string(body), "Sandbox Limit Reached")
+		assert.Contains(t, string(body), "Sandbox limit reached")
 		assert.Contains(t, string(body), "rate limit hit")
 	})
 }
@@ -676,18 +945,21 @@ func TestProxyCloseIdleConnectionsFromPool(t *testing.T) {
 	require.NoError(t, err)
 	defer backend.Close()
 
+	var owner atomic.Pointer[pool.Owner]
 	getDestination := func(*http.Request) (*pool.Destination, error) {
 		return &pool.Destination{
 			Url:           backend.url,
 			SandboxId:     "test-sandbox",
 			RequestLogger: logger.NewNopLogger(),
 			ConnectionKey: backend.id,
+			Owner:         owner.Load(),
 		}, nil
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
 	require.NoError(t, err)
 	defer proxy.Close()
+	owner.Store(proxy.NewOwner())
 
 	// Make a request to the proxy
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d/hello", port)
@@ -701,9 +973,7 @@ func TestProxyCloseIdleConnectionsFromPool(t *testing.T) {
 	assert.Equal(t, int64(1), proxy.CurrentPoolConnections(), "proxy should have established one connection that is still alive")
 	assert.Equal(t, uint64(1), backend.RequestCount(), "backend should have been called once")
 
-	// Remove the connection from the pool
-	err = proxy.RemoveFromPool(backend.id)
-	require.NoError(t, err)
+	require.NoError(t, owner.Load().Close(t.Context()))
 
 	assert.Equal(t, uint64(1), proxy.TotalPoolConnections(), "proxy should have still one connection in the pool")
 	assert.Equal(t, int64(0), proxy.CurrentPoolConnections(), "proxy should have removed the connection from the pool that is still alive")
@@ -722,18 +992,21 @@ func TestProxyResetAliveConnectionsFromPool(t *testing.T) {
 	require.NoError(t, err)
 	defer backend.Close()
 
+	var owner atomic.Pointer[pool.Owner]
 	getDestination := func(*http.Request) (*pool.Destination, error) {
 		return &pool.Destination{
 			Url:           backend.url,
 			SandboxId:     "test-sandbox",
 			RequestLogger: logger.NewNopLogger(),
 			ConnectionKey: backend.id,
+			Owner:         owner.Load(),
 		}, nil
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
 	require.NoError(t, err)
 	defer proxy.Close()
+	owner.Store(proxy.NewOwner())
 
 	requestEnded := make(chan struct{}, 1)
 
@@ -756,9 +1029,7 @@ func TestProxyResetAliveConnectionsFromPool(t *testing.T) {
 	assert.Equal(t, int64(1), proxy.CurrentPoolConnections(), "proxy should have established one connection that is still alive")
 	assert.Equal(t, uint64(1), backend.RequestCount(), "backend should have been called once")
 
-	// Remove the connection from the pool
-	err = proxy.RemoveFromPool(backend.id)
-	require.NoError(t, err)
+	require.NoError(t, owner.Load().Close(t.Context()))
 
 	assert.Equal(t, uint64(1), proxy.TotalPoolConnections(), "proxy should have still one connection in the pool")
 	assert.Equal(t, int64(0), proxy.CurrentPoolConnections(), "proxy should have removed the connection from the pool that is still alive")
@@ -1298,4 +1569,438 @@ func TestConnectionLimitBlocksExcessConnections(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assertBackendOutput(t, backend, resp)
+}
+
+func TestProxyRejectsInvalidSandboxPort(t *testing.T) {
+	t.Parallel()
+
+	getTargetFromRequest := GetTargetFromRequest()
+	getDestination := func(r *http.Request) (*pool.Destination, error) {
+		if _, _, err := getTargetFromRequest(r); err != nil {
+			return nil, err
+		}
+
+		return nil, errors.New("request was routed")
+	}
+
+	proxy, port, err := newTestProxy(t, getDestination)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		proxy.Close()
+	})
+
+	for _, sandboxPort := range []string{"abc", "0", "65536"} {
+		t.Run(sandboxPort, func(t *testing.T) {
+			t.Parallel()
+
+			resp, err := httpGetWithHeaders(t, fmt.Sprintf("http://127.0.0.1:%d/", port), http.Header{
+				headerSandboxID:   {"isv6ril5xadwn1k9t2jye"},
+				headerSandboxPort: {sandboxPort},
+			})
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Contains(t, string(body), "Invalid sandbox port")
+		})
+	}
+}
+
+func TestSharedIngressPolicy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, token, path string
+		port              uint64
+		success           bool
+	}{
+		{name: "missing token", port: 8443},
+		{name: "wrong token", token: "wrong", port: 8443},
+		{name: "authorized", token: "secret", port: 8443, success: true},
+		{name: "envd exemption", port: 49983, success: true},
+		{name: "internal before lookup", port: 49983, path: "/init"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mask, token := "localhost:${PORT}", "secret"
+			config := &orchestrator.SandboxNetworkIngressConfig{TrafficAccessToken: &token, MaskRequestHost: &mask, HttpsPorts: []uint32{8443, 49983}}
+			lookedUp := false
+			resolver := func(r *http.Request) (*pool.Destination, error) {
+				return ResolveIngress(r, func(string, uint64) (IngressTarget, error) {
+					lookedUp = true
+
+					return IngressTarget{Config: config, Destination: pool.Destination{Url: &url.URL{Host: "127.0.0.1"}, RequestLogger: logger.NewNopLogger()}}, nil
+				})
+			}
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example"+tc.path, nil)
+			r.Host = fmt.Sprintf("%d-im9r2ycjiy2534qsdy1oo.e2b.app", tc.port)
+			r.Header.Set(trafficAccessTokenHeader, tc.token)
+			d, err := resolver(r)
+			if tc.success {
+				require.NoError(t, err)
+				if tc.port == 49983 {
+					assert.Equal(t, "http", d.Url.Scheme)
+					assert.Nil(t, d.MaskRequestHost)
+				} else {
+					assert.Equal(t, "https", d.Url.Scheme)
+					require.NotNil(t, d.MaskRequestHost)
+					assert.Equal(t, "localhost:8443", *d.MaskRequestHost)
+				}
+				assert.True(t, d.InsecureSkipTLSVerify)
+			} else {
+				require.Error(t, err)
+				switch tc.name {
+				case "missing token":
+					var e *TrafficAccessTokenError
+					require.ErrorAs(t, err, &e)
+					assert.True(t, e.Missing)
+				case "wrong token":
+					var e *TrafficAccessTokenError
+					require.ErrorAs(t, err, &e)
+					assert.False(t, e.Missing)
+				case "internal before lookup":
+					var e *InternalRouteError
+					require.ErrorAs(t, err, &e)
+					assert.False(t, lookedUp)
+				}
+				// A preflight cannot carry the token, so it fails the policy;
+				// the browser still needs the CORS answer, from the error path.
+				r.Method = http.MethodOptions
+				r.Header.Set("Origin", "https://caller.example")
+				r.Header.Set("Access-Control-Request-Method", "POST")
+				recorder := httptest.NewRecorder()
+				p := pool.New(4, 1, time.Second, false)
+				handler(p, resolver, nil, options{}).ServeHTTP(recorder, r)
+				assert.GreaterOrEqual(t, recorder.Code, 200)
+				assert.Less(t, recorder.Code, 300)
+				assert.NotEmpty(t, recorder.Header().Get("Access-Control-Allow-Origin"))
+			}
+		})
+	}
+}
+
+func TestRetiredConnectStreamPreservesFrontendReuse(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/next" {
+			w.WriteHeader(http.StatusNoContent)
+
+			return
+		}
+		w.Header().Set("Content-Type", "application/connect+json")
+		_, _ = w.Write(dataEnvelope(`{}`))
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "retired")
+	proxy, port, _, _ := startProxyWithIdleTimeout(t, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, time.Minute)
+	owner.Store(proxy.NewOwner())
+	conn, reader := dialProxy(t, port)
+	_, err := fmt.Fprintf(conn, "GET /stream HTTP/1.1\r\nHost: example\r\n\r\n")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	first := make([]byte, len(dataEnvelope(`{}`)))
+	_, err = io.ReadFull(response.Body, first)
+	require.NoError(t, err)
+	require.NoError(t, owner.Load().Close(t.Context()))
+	// The retired owner's successor, as a reset lifecycle gets one.
+	owner.Store(proxy.NewOwner())
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.False(t, response.Close, "completed Connect response should retain frontend keepalive")
+	// Past the retired write deadline: the server clears it after each
+	// response, so the kept frontend serves the next request.
+	time.Sleep(2 * retiredWriteTimeout)
+	_, err = fmt.Fprintf(conn, "GET /next HTTP/1.1\r\nHost: example\r\nConnection: close\r\n\r\n")
+	require.NoError(t, err)
+	next, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	defer next.Body.Close()
+	require.Equal(t, http.StatusNoContent, next.StatusCode)
+}
+
+// TestRetiredStreamWithATakenBodyPreservesFrontendReuse: a request whose
+// body the sandbox has taken in full, as a process start's has, keeps its
+// frontend reusable when the sandbox is retired mid-stream: closing it after
+// the response cannot be announced, and a client reusing it meanwhile would
+// lose its next request. The handler is held until the retirement has
+// cancelled its owner, the order production reaches when the stream's end
+// outlasts Stop.
+func TestRetiredStreamWithATakenBodyPreservesFrontendReuse(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/next" {
+			w.WriteHeader(http.StatusNoContent)
+
+			return
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/connect+json")
+		_, _ = w.Write(dataEnvelope(`{}`))
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "retired-upload")
+	retired := make(chan struct{})
+	limits := &ConnectionLimitConfig{
+		Limiter:     connlimit.NewConnectionLimiter(),
+		GetMaxLimit: func(context.Context) int { return -1 },
+		OnConnectionReleased: func(context.Context, int64) {
+			select {
+			case <-retired:
+			case <-time.After(5 * time.Second):
+			}
+		},
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxy := New(0, 1, time.Minute, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, limits, false)
+	go func() { _ = proxy.Serve(listener) }()
+	t.Cleanup(func() { _ = proxy.Close() })
+	owner.Store(proxy.NewOwner())
+	conn, reader := dialProxy(t, listener.Addr().(*net.TCPAddr).Port)
+	_, err = fmt.Fprintf(conn, "POST /stream HTTP/1.1\r\nHost: example\r\nContent-Type: application/connect+json\r\nContent-Length: 2\r\n\r\n{}")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	first := make([]byte, len(dataEnvelope(`{}`)))
+	_, err = io.ReadFull(response.Body, first)
+	require.NoError(t, err)
+	retiring := owner.Load()
+	owner.Store(proxy.NewOwner())
+	retiring.Stop()
+	close(retired)
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.False(t, response.Close, "the response announced no close")
+	time.Sleep(2 * retiredWriteTimeout)
+	_, err = fmt.Fprintf(conn, "GET /next HTTP/1.1\r\nHost: example\r\nConnection: close\r\n\r\n")
+	require.NoError(t, err)
+	next, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err, "the frontend was not closed under the client")
+	defer next.Body.Close()
+	require.Equal(t, http.StatusNoContent, next.StatusCode)
+}
+
+func TestRetiredOwnerSettlesStalledUpload(t *testing.T) {
+	t.Parallel()
+	for _, framing := range []struct {
+		name    string
+		request string
+	}{
+		{"content length", "Content-Length: 1000\r\n\r\npartial-body"},
+		{"chunked", "Transfer-Encoding: chunked\r\n\r\nc\r\npartial-body\r\n"},
+	} {
+		t.Run(framing.name, func(t *testing.T) {
+			t.Parallel()
+			arrived := make(chan struct{})
+			closed := make(chan error, 1)
+			backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, err := io.ReadFull(r.Body, make([]byte, 4))
+				assert.NoError(t, err)
+				close(arrived)
+				_, err = io.Copy(io.Discard, r.Body)
+				closed <- err
+			}))
+			defer backend.Close()
+			target, err := url.Parse(backend.URL)
+			require.NoError(t, err)
+			var owner *pool.Owner
+			proxy, port, _, _ := startProxyWithIdleTimeout(t, func(*http.Request) (*pool.Destination, error) {
+				return &pool.Destination{Url: target, SandboxId: "upload", RequestLogger: logger.NewNopLogger(), ConnectionKey: "upload", Owner: owner}, nil
+			}, time.Minute)
+			owner = proxy.NewOwner()
+			conn, reader := dialProxy(t, port)
+			defer conn.Close()
+			_, err = fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: example\r\n%s", framing.request)
+			require.NoError(t, err)
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("backend did not receive upload")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, owner.Close(ctx))
+			select {
+			case err := <-closed:
+				require.Error(t, err, "retirement must interrupt the backend upload")
+			case <-ctx.Done():
+				t.Fatal("backend socket remained open")
+			}
+			response, err := http.ReadResponse(reader, nil)
+			require.NoError(t, err)
+			defer response.Body.Close()
+			require.True(t, response.Close, "interrupted uploads cannot reuse their frontend connection")
+			_, err = io.ReadAll(response.Body)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestIngressSchemeForPort(t *testing.T) {
+	t.Parallel()
+	envdPort := uint64(consts.DefaultEnvdServerPort)
+	for _, tt := range []struct {
+		name    string
+		ingress *orchestrator.SandboxNetworkIngressConfig
+		port    uint64
+		want    string
+	}{
+		{name: "nil ingress defaults to http", port: 8080, want: "http"},
+		{name: "no HTTPS ports defaults to http", ingress: &orchestrator.SandboxNetworkIngressConfig{}, port: 8080, want: "http"},
+		{name: "port in HTTPS ports uses https", ingress: &orchestrator.SandboxNetworkIngressConfig{HttpsPorts: []uint32{443, 8443}}, port: 8443, want: "https"},
+		{name: "port not in HTTPS ports uses http", ingress: &orchestrator.SandboxNetworkIngressConfig{HttpsPorts: []uint32{443, 8443}}, port: 8080, want: "http"},
+		{name: "envd port stays http even when listed", ingress: &orchestrator.SandboxNetworkIngressConfig{HttpsPorts: []uint32{uint32(envdPort)}}, port: envdPort, want: "http"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example/", nil)
+			r.Host = fmt.Sprintf("%d-im9r2ycjiy2534qsdy1oo.e2b.app", tt.port)
+			d, err := ResolveIngress(r, func(string, uint64) (IngressTarget, error) {
+				return IngressTarget{Config: tt.ingress, Destination: pool.Destination{Url: &url.URL{Host: "127.0.0.1"}, RequestLogger: logger.NewNopLogger()}}, nil
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, d.Url.Scheme)
+		})
+	}
+}
+
+// A stalled upload refused at admission must not be drained by the server
+// before its refusal, nor leave its body on a kept frontend.
+func TestRefusedUploadClosesFrontend(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "refused")
+	proxy, port, _, _ := startProxyWithIdleTimeout(t, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, time.Minute)
+	owner.Store(proxy.NewOwner())
+	require.NoError(t, owner.Load().Close(t.Context()))
+	conn, reader := dialProxy(t, port)
+	defer conn.Close()
+	_, err := fmt.Fprintf(conn, "POST /upload HTTP/1.1\r\nHost: example\r\nContent-Length: 1000\r\n\r\npartial")
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err, "the refusal must not wait for the rest of the upload")
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusBadGateway, response.StatusCode)
+	assert.True(t, response.Close, "a frontend with an unread body cannot be kept")
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	_, err = reader.ReadByte()
+	require.ErrorIs(t, err, io.EOF, "the server must close the frontend after the refusal")
+}
+
+// A retired stream whose request body the server had already taken, every
+// Connect RPC's shape, must not poison the kept frontend: the read deadline
+// that cuts a transport read reaches the server's background read and cancels
+// the connection's context, so the frontend is closed instead of reused.
+func TestRetiredRequestWithTakenBodyDoesNotPoisonFrontend(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/next" {
+			w.WriteHeader(http.StatusNoContent)
+
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/connect+json")
+		_, _ = w.Write(dataEnvelope(`{}`))
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "taken")
+	proxy, port, _, _ := startProxyWithIdleTimeout(t, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, time.Minute)
+	owner.Store(proxy.NewOwner())
+	conn, reader := dialProxy(t, port)
+	defer conn.Close()
+	_, err := fmt.Fprintf(conn, "POST /stream HTTP/1.1\r\nHost: example\r\nContent-Length: 2\r\n\r\n{}")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	_, err = io.ReadFull(response.Body, make([]byte, len(dataEnvelope(`{}`))))
+	require.NoError(t, err)
+	require.NoError(t, owner.Load().Close(t.Context()))
+	owner.Store(proxy.NewOwner())
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = fmt.Fprintf(conn, "GET /next HTTP/1.1\r\nHost: example\r\n\r\n")
+	require.NoError(t, err)
+	next, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		require.True(t, errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF), "a closed frontend is fine; a poisoned one is not: %v", err)
+
+		return
+	}
+	defer next.Body.Close()
+	require.Equal(t, http.StatusNoContent, next.StatusCode, "the next request on the kept frontend must be served, not refused")
+}
+
+// A client that stops reading a download holds the handler in its frontend
+// write; retirement must still settle, on the write deadline, well inside a
+// release budget.
+func TestRetiredOwnerSettlesStalledDownload(t *testing.T) {
+	t.Parallel()
+	backend := fullDuplexSandbox(t, func(w http.ResponseWriter, _ *http.Request) {
+		buf := make([]byte, 64<<10)
+		for {
+			if _, err := w.Write(buf); err != nil {
+				return
+			}
+		}
+	})
+	var owner atomic.Pointer[pool.Owner]
+	target := destinationFor(backend, "download")
+	proxy, port, _, _ := startProxyWithIdleTimeout(t, func(r *http.Request) (*pool.Destination, error) {
+		d, err := target(r)
+		d.Owner = owner.Load()
+
+		return d, err
+	}, time.Minute)
+	owner.Store(proxy.NewOwner())
+	conn, reader := dialProxy(t, port)
+	defer conn.Close()
+	_, err := fmt.Fprintf(conn, "GET /big HTTP/1.1\r\nHost: example\r\n\r\n")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	// Read nothing more: the windows fill and the handler blocks writing.
+	require.Eventually(t, func() bool { return proxy.CurrentPoolConnections() == 1 }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	require.NoError(t, owner.Load().Close(ctx))
+	require.Less(t, time.Since(started), 3*retiredWriteTimeout, "a stalled reader must be cut at the write deadline, not waited for")
 }

@@ -108,12 +108,6 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - OpenAPI code generation: `internal/api/*.gen.go`
 - Port: 80
 
-**Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
-- Entry point: `main.go`
-- Spec: `spec/openapi-dashboard.yml`; legacy team management, template tags, builds, admin bootstrap, `/v1/management`
-- Talks to Postgres and ClickHouse; never to orchestrators (see `docs/ARCHITECTURE.md`)
-- Port: 3010
-
 **Orchestrator (`packages/orchestrator/`)** - Firecracker microVM orchestration
 - Entry point: `main.go`
 - VM management: `pkg/sandbox/`
@@ -123,14 +117,14 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - Template caching: `pkg/sandbox/template/`
 - Template building: `pkg/template/`
 - gRPC server: `pkg/server/`
-- Utilities: `cmd/clean-nfs-cache/`, `cmd/inspect-build/`, `cmd/dummy-orchestrator/`
+- Utilities: `cmd/clean-nfs-cache/`, `cmd/dummy-orchestrator/`
 
 **Envd (`packages/envd/`)** - In-VM daemon using Connect RPC
 - Runs inside each Firecracker VM
 - Process management API: `packages/envd/spec/process/process.proto`
 - Filesystem API: `packages/envd/spec/filesystem/filesystem.proto`
 - Port: 49983
-- **Version in `pkg/version.go` must be bumped on every behavioral change** (not comments/docs-only changes)
+- **`pkg/version.go` is release-please's**: it is set from the Conventional Commits merged since the last envd release, so do not bump it by hand. A behavioral change ships under a `feat` or `fix` type so a version exists for the orchestrator to gate on; comment or docs-only changes use `docs`, which the changelog hides, and cut no release (`chore` and `refactor` are visible and cut one)
 
 **Client Proxy (`packages/client-proxy/`)** - Edge routing layer
 - Service discovery via `packages/shared/pkg/servicediscovery`
@@ -149,11 +143,11 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 **Database (`packages/db/`)** - PostgreSQL layer
 - Migrations: `migrations/*.sql` (goose)
 - Queries: `queries/*.sql` (sqlc)
-- Generated code: `queries/` (plus `pkg/auth/queries/`, `pkg/dashboard/queries/`)
+- Generated code: `queries/` (plus `pkg/auth/queries/`)
 
 ### Key Technologies
 
-- **go 1.26.8** with workspaces (`go.work`)
+- **go 1.27.3** with workspaces (`go.work`)
 - **Firecracker** for microVM virtualization
 - **PostgreSQL** for primary data (sqlc for queries)
 - **ClickHouse** for analytics
@@ -187,7 +181,7 @@ The codebase uses several code generators:
 ### Testing Patterns
 
 - **Unit tests**: Use `testify/assert` and `testify/require`
-- **Database tests**: Use `testcontainers-go` for real PostgreSQL
+- **Database tests**: `packages/db/pkg/testutils.SetupDatabase` gives each test its own database on the PostgreSQL server `PG_TEST_DATABASE_URL` names (see [DEV-LOCAL.md](DEV-LOCAL.md#unit-tests-that-need-postgresql))
 - **Integration tests**: `tests/integration/` with shared test utilities
 - **Mocking**: Generated mocks in `mocks/` directories
 - **Race detection**: Tests run with `-race` flag

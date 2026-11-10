@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,6 +38,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/events"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/gcpercent"
 	e2bhealthcheck "github.com/e2b-dev/infra/packages/orchestrator/pkg/healthcheck"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/hyperloopserver"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/localupload"
@@ -48,6 +51,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	networkv2 "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network/v2"
@@ -71,6 +75,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	sandboxcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -86,7 +91,12 @@ type Deps struct {
 	Logger              logger.Logger
 	Sandboxes           *sandbox.Map
 	FeatureFlags        *featureflags.Client
+	MTLS                *mtls.Process // for an edition's own client hops
 	ClickhouseEndpoints []ClickhouseEndpoint
+	// NodeID and ServiceInstanceID name this node and process as ServiceInfo
+	// reports them.
+	NodeID            string
+	ServiceInstanceID string
 }
 
 type ClickhouseEndpoint struct {
@@ -245,11 +255,28 @@ type EgressSetup struct {
 	// Proxy is the network egress proxy for slot creation/deletion.
 	Proxy network.EgressProxy
 	// NetworkAssignHook runs right after the sandbox's network is assigned
-	// and strictly before its guest can run (or resume running).
+	// and strictly before its guest can run (or resume running). Its error
+	// fails the start; see sandbox.NetworkAssignHook.
 	NetworkAssignHook sandbox.NetworkAssignHook
+	// Ready reports whether the edition can serve new sandboxes (optional).
+	// The node reports NotReady from startup until Ready first answers true,
+	// and Healthy from then on. It is polled every second, so it reads
+	// memory only.
+	Ready func() bool
 
-	// Start is called as a managed service (optional).
-	// If nil, no service is started for the egress proxy.
+	// StartupReclaim removes network state the edition's previous process
+	// left (optional). It runs only where the sandbox runtime's startup
+	// reclaim runs, right after it, while no other orchestrator process runs
+	// on the host and before the network pool exists. It is best-effort like
+	// that reclaim: an error is logged, and what it left is for the edition's
+	// later use of that state to refuse or clear.
+	StartupReclaim func(ctx context.Context) error
+
+	// Start is called as a managed service (optional): it blocks for as long
+	// as the service runs. It starts once the sandbox runtime's startup
+	// reclaim ran and the network pool exists, so what it brings up is not
+	// reclaimed and no sandbox has started yet. If nil, no service is
+	// started for the egress proxy.
 	Start func(ctx context.Context) error
 
 	// Close is called during shutdown in reverse order (optional).
@@ -265,11 +292,37 @@ type Options struct {
 	Version       string
 	CommitSHA     string
 	EgressFactory EgressFactory
+	// GuestProfiles are the guest profiles beside the default one; a build
+	// whose guest OS none of them claims is refused.
+	GuestProfiles []guest.Profile
+	// Runtime receives the sandbox runtime once it exists and before the
+	// orchestrator serves (optional), and returns what shutdown closes
+	// after the orchestrator's gRPC listeners stopped taking requests and
+	// before Server.Close and the pools, nil for nothing. An error fails
+	// the start.
+	Runtime func(ctx context.Context, rt Runtime) (func(context.Context) error, error)
+}
+
+// Runtime is the sandbox runtime an edition's own services act on.
+type Runtime struct {
+	Server  *server.Server
+	Factory *sandbox.Factory
+	// Routes publishes the sandbox routing records, nil without Redis.
+	Routes *routing.Publisher
 }
 
 type closer struct {
 	name  string
 	close func(ctx context.Context) error
+}
+
+func networkPoolCloser(pool network.PoolInterface) closer {
+	return closer{"network pool", func(ctx context.Context) error {
+		// FORCE_STOP cancels the shared shutdown context before invoking closers.
+		// The pool must still publish closed and stop its Populate service before
+		// run joins that service; direct pool callers retain their cancel contract.
+		return pool.Close(context.WithoutCancel(ctx))
+	}}
 }
 
 type serviceDoneError struct {
@@ -278,6 +331,49 @@ type serviceDoneError struct {
 
 func (e serviceDoneError) Error() string {
 	return fmt.Sprintf("service %s finished", e.name)
+}
+
+// runService runs one service to its end. A service that returns an error is
+// recorded in failed, and every end is reported on serviceError, where only
+// the first one before the shutdown signal is read; to the group every end
+// is serviceDoneError.
+func runService(ctx context.Context, l logger.Logger, name string, f func() error, failed *atomic.Bool, serviceError chan<- error) error {
+	l.Info(ctx, "starting service")
+
+	err := f()
+	if err != nil {
+		l.Error(ctx, "service returned an error", zap.Error(err))
+		failed.Store(true)
+	}
+
+	reportServiceError(serviceError, err)
+
+	return serviceDoneError{name: name}
+}
+
+// shutdownFailed reports whether the service group ended in a failure: every
+// service returns serviceDoneError when it stops.
+func shutdownFailed(err error) bool {
+	var sde serviceDoneError
+
+	return err != nil && !errors.As(err, &sde)
+}
+
+// syncFailed reports whether a logger's Sync failed. Sync returns EINVAL when
+// the output is a pipe, as a container's stdout is.
+func syncFailed(err error) bool {
+	return err != nil && !errors.Is(err, syscall.EINVAL)
+}
+
+func newServiceErrorChannel() chan error {
+	return make(chan error, 1)
+}
+
+func reportServiceError(serviceError chan<- error, err error) {
+	select {
+	case serviceError <- err:
+	default:
+	}
 }
 
 // Run starts the orchestrator, blocking until shutdown.
@@ -294,6 +390,14 @@ func Run(opts Options) bool {
 
 	if opts.EgressFactory == nil {
 		log.Fatalf("EgressFactory must be set in Options")
+	}
+
+	guests, err := guest.NewRegistry(opts.GuestProfiles...)
+	if err != nil {
+		log.Fatalf("failed to register guest profiles: %v", err)
+	}
+	if err = guest.Install(guests); err != nil {
+		log.Fatalf("failed to install guest profiles: %v", err)
 	}
 
 	success := run(config, opts)
@@ -329,6 +433,44 @@ func ensureDirs(c cfg.Config) error {
 	return nil
 }
 
+// startupReclaimKeepPaths lists what the startup cache sweep must never remove.
+// DefaultCacheDir is among them because the template cache has already emptied
+// and reopened it by the time reclaim runs. Local template and build-cache
+// storage hold the only copies of their artifacts and may sit at a cache path,
+// as TEMPLATE_STORAGE_URL=file:///orchestrator/template does.
+func startupReclaimKeepPaths(c cfg.Config, templateStorage storage.Spec) ([]string, error) {
+	storages := []storage.Spec{templateStorage}
+	// Nodes that never build leave the build-cache bucket unset, so its
+	// resolution fails; only a local build cache can hold a path here.
+	buildCacheStorage, err := cfg.BuildCacheStorage()
+	switch {
+	case err == nil:
+		storages = append(storages, buildCacheStorage)
+	case cfg.BuildCacheStorageIsLocal():
+		return nil, fmt.Errorf("resolve local build cache storage: %w", err)
+	}
+
+	keep := []string{
+		c.OrchestratorBaseDir,
+		c.OrchestratorLockPath,
+		c.DefaultCacheDir,
+		c.SharedChunkCacheDir,
+		c.SandboxDir,
+		c.FirecrackerVersionsDir,
+		c.HostKernelsDir,
+		c.HostBusyboxDir,
+		c.HostEnvdPath,
+	}
+
+	for _, spec := range storages {
+		if spec.Provider == storage.LocalStorageProvider {
+			keep = append(keep, spec.BasePath)
+		}
+	}
+
+	return slices.AppendSeq(keep, maps.Values(c.PersistentVolumeMounts)), nil
+}
+
 func acquireOrchestratorLock(path string) (*flock.Flock, error) {
 	fileLock := flock.New(path, flock.SetPermissions(0o644))
 	locked, err := fileLock.TryLock()
@@ -346,22 +488,37 @@ func acquireOrchestratorLock(path string) (*flock.Flock, error) {
 	}
 
 	// Record our PID so a future conflicting instance can report it. We hold the
-	// exclusive advisory lock, so no other process writes this file concurrently.
-	if err := writeLockHolderPID(path); err != nil {
-		_ = fileLock.Unlock()
-
-		return nil, fmt.Errorf("write lock holder pid: %w", err)
+	// exclusive advisory lock, but its pathname may have been replaced while
+	// TryLock was opening it. Bind the metadata writer to the held inode.
+	lockedInfo, err := fileLock.Stat()
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("stat held lock file: %w", err), fileLock.Unlock())
+	}
+	if err := writeLockHolderPID(path, lockedInfo); err != nil {
+		return nil, errors.Join(fmt.Errorf("write lock holder pid: %w", err), fileLock.Unlock())
 	}
 
 	return fileLock, nil
 }
 
-func writeLockHolderPID(path string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o644)
+func writeLockHolderPID(path string, lockedInfo os.FileInfo) error {
+	// Do not truncate through the pathname before confirming this descriptor
+	// refers to the inode that we actually locked.
+	f, err := os.OpenFile(path, os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open lock file: %w", err)
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat lock metadata file: %w", err)
+	}
+	if !os.SameFile(lockedInfo, info) {
+		return errors.New("lock file path changed during acquisition")
+	}
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("truncate lock file: %w", err)
+	}
 
 	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
 		return fmt.Errorf("write pid: %w", err)
@@ -402,17 +559,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 			log.Fatalf("Failed to acquire orchestrator lock %s: %v", config.OrchestratorLockPath, err)
 		}
 		defer func() {
-			fileErr := f.Close()
-			if fileErr != nil {
-				log.Printf("Failed to close lock file %s: %v", config.OrchestratorLockPath, fileErr)
-			}
-			// Remove the lock file on clean shutdown so a rollback to the older
-			// stat-based release can start: that guard exits whenever the lock
-			// file exists and cannot tell that this process is already gone.
-			// TODO: Remove this os.Remove once all hosts run a flock-based
-			// release and rollback to the stat-based guard is no longer possible.
-			if rmErr := os.Remove(config.OrchestratorLockPath); rmErr != nil && !os.IsNotExist(rmErr) {
-				log.Printf("Failed to remove lock file %s: %v", config.OrchestratorLockPath, rmErr)
+			if err := releaseOrchestratorLock(config.OrchestratorLockPath, f.Close); err != nil {
+				log.Printf("Failed to release lock file %s: %v", config.OrchestratorLockPath, err)
 			}
 		}()
 	}
@@ -435,31 +583,38 @@ func run(config cfg.Config, opts Options) (success bool) {
 		return false
 	}
 
-	serviceInfo := service.NewInfoContainer(nodeID, version, commitSHA, serviceInstanceID, machineInfo, config)
-
-	serviceError := make(chan error)
-	defer close(serviceError)
+	// Never closed: a service can outlive the bounded wait and still report.
+	serviceError := newServiceErrorChannel()
+	// A service failure is recorded whenever it happens: the channel reports
+	// only the first service to end, and only before the shutdown signal.
+	var servicesFailed atomic.Bool
 
 	var g errgroup.Group
 	// defer waiting on the group so that this runs even when
 	// there's a panic.
+	waited := false
 	defer func(g *errgroup.Group) {
-		err := g.Wait()
-		if err != nil {
+		// The bounded wait at the end of run already joined the services;
+		// joining again would block on the ones the deadline cut.
+		if waited {
+			return
+		}
+		if err := g.Wait(); shutdownFailed(err) || servicesFailed.Load() {
 			log.Printf("error while shutting down: %v", err)
 			success = false
 		}
 	}(&g)
 
 	// Setup telemetry
-	tel, err := telemetry.New(
+	tel, err := telemetry.NewWithOptions(
 		ctx,
 		nodeID,
 		serviceName,
 		commitSHA,
 		version,
 		serviceInstanceID,
-		attribute.Key("host.labels").StringSlice(config.NodeLabels),
+		telemetry.WithResourceAttributes(attribute.Key("host.labels").StringSlice(config.NodeLabels)),
+		telemetry.WithDeltaTemporality(),
 	)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to init telemetry", zap.Error(err))
@@ -486,7 +641,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}))
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down logger: %v", err)
 			success = false
 		}
@@ -504,7 +659,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -515,27 +670,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 		zap.String("version", version),
 		zap.String("commit", commitSHA),
 		zap.Strings("labels", config.NodeLabels),
+		zap.String("host_kernel", telemetry.HostKernelVersion()),
 		logger.WithServiceInstanceID(serviceInstanceID),
 	)
 
+	serviceInfo := service.NewInfoContainer(ctx, nodeID, version, commitSHA, serviceInstanceID, machineInfo, config)
+
 	startService := func(name string, f func() error) {
 		g.Go(func() error {
-			l := globalLogger.With(zap.String("service", name))
-			l.Info(ctx, "starting service")
-
-			err := f()
-			if err != nil {
-				l.Error(ctx, "service returned an error", zap.Error(err))
-			}
-
-			select {
-			case serviceError <- err:
-			default:
-				// Don't block if the serviceError channel is already closed
-				// or if the error is already sent
-			}
-
-			return serviceDoneError{name: name}
+			return runService(ctx, globalLogger.With(zap.String("service", name)), name, f, &servicesFailed, serviceError)
 		})
 	}
 
@@ -559,15 +702,39 @@ func run(config cfg.Config, opts Options) (success bool) {
 	sandboxes := sandbox.NewSandboxesMap()
 
 	// feature flags
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, version)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
 	closers = append(closers, closer{"feature flags", featureFlags.Close})
 
-	featureFlags.SetDeploymentName(config.DomainName)
 	featureFlags.RegisterContextProvider(orchestratorContextProvider(nodeID, commitSHA))
 	featureFlags.RegisterContextProvider(instanceGroupContextProvider(config.InstanceGroupName))
+
+	tlsProcess, err := mtls.NewProcess(ctx, tel.MeterProvider, featureFlags.StringReader(), globalLogger)
+	if err != nil {
+		logger.L().Fatal(ctx, "failed to set up mutual TLS", zap.Error(err))
+	}
+	sharedPortTLS, err := newPortTLS(tlsProcess, config.TLS)
+	if err != nil {
+		logger.L().Fatal(ctx, "invalid mutual TLS configuration for the shared port", zap.Error(err))
+	}
+	peersHop, err := tlsProcess.Hop("peers", peersHopFlag, config.TLS.Peers)
+	if err != nil {
+		logger.L().Fatal(ctx, "invalid mutual TLS configuration for the peer hop", zap.Error(err))
+	}
+	peersCreds := mtls.NewClientCredentials(peersHop)
+
+	// Not a service and no closer: pacing stays in force through the sandbox
+	// drain and ends with the process.
+	if usesSandboxRuntime {
+		gcController, err := gcpercent.New(tel.MeterProvider, featureFlags)
+		if err != nil {
+			logger.L().Error(ctx, "failed to create GC percent controller", zap.Error(err))
+		} else {
+			go gcController.Run(context.WithoutCancel(ctx))
+		}
+	}
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),
 	// falling back to the fixed collector address. Created here so it can use the
@@ -584,7 +751,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	)
 	defer func(l logger.Logger) {
 		err := l.Sync()
-		if err != nil {
+		if syncFailed(err) {
 			log.Printf("error while shutting down sandbox logger: %v", err)
 			success = false
 		}
@@ -614,7 +781,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 
 	// redis (initialized before template cache so the peer registry can be passed to NewCache)
-	redisClient, err := sharedFactories.NewRedisClient(ctx, sharedFactories.RedisConfig{
+	redisClient, err := sharedFactories.NewRedisClient(sig, sharedFactories.RedisConfig{
 		RedisURL:         config.RedisURL,
 		RedisClusterURL:  config.RedisClusterURL,
 		RedisTLSCABase64: config.RedisTLSCABase64,
@@ -635,7 +802,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	peerResolver := peerclient.NopResolver()
 	if nodeAddress := config.NodeAddress(); redisClient != nil && nodeAddress != nil {
 		peerRegistry = peerclient.NewRedisRegistry(redisClient, *nodeAddress)
-		peerResolver = peerclient.NewResolver(peerRegistry, *nodeAddress)
+		peerResolver = peerclient.NewResolver(peerRegistry, *nodeAddress, peersCreds)
 	}
 
 	templateCache, err := template.NewCache(config, featureFlags, persistence, blockMetrics, peerResolver)
@@ -686,12 +853,12 @@ func run(config cfg.Config, opts Options) (success bool) {
 		sbxEventsDeliveryTargets = append(sbxEventsDeliveryTargets, sbxEventsDeliveryRedis)
 	}
 
-	// Orchestrator-owned sandbox routing record (sandbox:routing:{id}), flag-gated inside the publisher.
+	// Orchestrator-owned sandbox routing record (sandbox:routing:{id}).
+	var routingPublisher *routing.Publisher
 	if redisClient != nil {
-		routingPublisher, err := routing.New(
+		routingPublisher, err = routing.New(
 			tel.MeterProvider,
-			sandboxcatalog.NewRedisSandboxRoutingCatalog(redisClient),
-			featureFlags,
+			sandboxcatalog.NewRedisSandboxCatalog(redisClient),
 			serviceInstanceID,
 			config.NodeIP,
 		)
@@ -723,6 +890,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 	})
 	closers = append(closers, closer{"host metrics poller", hostMetrics.Close})
 
+	// host kernel counters (PSI, vmstat); observability only, so warn and run on
+	if kernelCounters, err := metrics.NewKernelCounters(tel.MeterProvider); err != nil {
+		logger.L().Warn(ctx, "failed to register host kernel counters", zap.Error(err))
+	} else {
+		closers = append(closers, closer{"host kernel counters", kernelCounters.Close})
+	}
+
 	// sandbox proxy
 	sandboxProxy, err := proxy.NewSandboxProxy(tel.MeterProvider, config.ProxyPort, sandboxes, featureFlags)
 	if err != nil {
@@ -741,11 +915,14 @@ func run(config cfg.Config, opts Options) (success bool) {
 	// egress proxy — built by the edition-specific factory
 	deps := &Deps{
 		Config:              config,
+		NodeID:              nodeID,
+		ServiceInstanceID:   serviceInstanceID,
 		Tel:                 tel,
 		MeterProvider:       tel.MeterProvider,
 		Logger:              globalLogger,
 		Sandboxes:           sandboxes,
 		FeatureFlags:        featureFlags,
+		MTLS:                tlsProcess,
 		ClickhouseEndpoints: clickhouseEndpoints,
 	}
 
@@ -756,13 +933,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 	if egressSetup == nil {
 		logger.L().Fatal(ctx, "EgressFactory returned nil EgressSetup without error")
 	}
-	if egressSetup.Start != nil {
-		startService("egress proxy", func() error {
-			return egressSetup.Start(ctx)
-		})
-	}
 	if egressSetup.Close != nil {
 		closers = append(closers, closer{"egress proxy", egressSetup.Close})
+	}
+	// Before the gRPC and HTTP servers start, so no one sees the node
+	// Healthy first.
+	if egressSetup.Ready != nil {
+		serviceInfo.HoldUntilReady(ctx, egressSetup.Ready)
 	}
 
 	// Sandbox-runtime reclaim must run before NewStorageLocal below: reclaim
@@ -774,13 +951,28 @@ func run(config cfg.Config, opts Options) (success bool) {
 	reclaimRan := false
 	if usesSandboxRuntime && !config.DisableStartupReclaim {
 		reclaimRan = true
+		cacheDirs := []string{config.StorageConfig.SandboxCacheDir, config.StorageConfig.TemplateCacheDir, config.TemplatesDir}
+		keepPaths, err := startupReclaimKeepPaths(config, templateSpec)
+		if err != nil {
+			// Without every protected path the sweep could take one; skip it.
+			logger.L().Error(ctx, "startup reclaim: not resetting cache dirs", zap.Error(err))
+			cacheDirs = nil
+		}
 		summary := startupreclaim.Run(ctx, startupreclaim.Config{
 			NetworkConfig: config.NetworkConfig,
 			EgressProxy:   egressSetup.Proxy,
 			CgroupManager: cgroupManager,
 			StorageConfig: config.StorageConfig,
+			CacheDirs:     cacheDirs,
+			KeepPaths:     keepPaths,
 		})
-		reclaimClean = !summary.HasFailures()
+		// A cache dir the sweep left alone keeps only files, never slot state.
+		reclaimClean = !summary.HasRuntimeFailures()
+		if egressSetup.StartupReclaim != nil {
+			if err := egressSetup.StartupReclaim(ctx); err != nil {
+				logger.L().Error(ctx, "failed to reclaim edition network state", zap.Error(err))
+			}
+		}
 	}
 
 	if usesSandboxRuntime {
@@ -843,7 +1035,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 			logger.L().Fatal(ctx, "failed to create v2 veth observer", zap.Error(obsErr))
 		}
 
-		v2Pool := networkv2.NewV2Pool(slotStorage, config.NetworkConfig, hostFw, observer, networkv2.WithPoolMetrics(v2Metrics))
+		v2Pool := networkv2.NewV2Pool(slotStorage, config.NetworkConfig, hostFw, observer, networkv2.WithPoolMetrics(v2Metrics), networkv2.WithNonDNSUDPFlag(featureFlags))
 		startService("network pool", func() error {
 			v2Pool.Populate(ctx)
 
@@ -857,7 +1049,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 				logger.L().Fatal(ctx, "refusing to start v1: stale v2 host firewall table could hijack v1 sandbox egress", zap.Error(err))
 			}
 		}
-		v1Pool := network.NewPool(network.NewSlotsPoolSize, network.ReusedSlotsPoolSize, slotStorage, config.NetworkConfig)
+		v1Pool := network.NewPool(network.NewSlotsPoolSize, network.ReusedSlotsPoolSize, slotStorage, config.NetworkConfig, network.WithNonDNSUDPFlag(featureFlags))
 		startService("network pool", func() error {
 			v1Pool.Populate(ctx)
 
@@ -870,7 +1062,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 		// defense so future parsing and selection logic cannot silently diverge.
 		logger.L().Fatal(ctx, "unsupported NETWORK_VERSION after validated config", zap.Int("network_version", config.NetworkConfig.NetworkVersion))
 	}
-	closers = append(closers, closer{"network pool", networkPool.Close})
+	closers = append(closers, networkPoolCloser(networkPool))
+	// After the reclaim and the pool, so the edition's service can bring up
+	// state the reclaim would have removed; its closer was registered above,
+	// before the pool's, so it closes after the pool.
+	if egressSetup.Start != nil {
+		startService("egress proxy", func() error {
+			return egressSetup.Start(ctx)
+		})
+	}
 
 	datapathRegistration, err := network.RegisterDatapathMetric(tel.MeterProvider, selectedNetworkVersion)
 	if err != nil {
@@ -894,7 +1094,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	builder := chrooted.NewBuilder(config)
 	volumeService := volumes.New(config, builder)
 
-	uploads := sandbox.NewUploads(templateCache, persistence, peerResolver, redisClient)
+	uploads := sandbox.NewUploads(templateCache, persistence, peerResolver, redisClient, featureFlags)
 	closers = append(closers, closer{"pending uploads", func(context.Context) error {
 		uploads.Stop()
 
@@ -909,12 +1109,13 @@ func run(config cfg.Config, opts Options) (success bool) {
 		DevicePool:       devicePool,
 		TemplateCache:    templateCache,
 		Info:             serviceInfo,
-		Proxy:            sandboxProxy,
 		Persistence:      persistence,
+		TemplateStorage:  templateSpec,
 		FeatureFlags:     featureFlags,
 		SbxEventsService: eventsService,
 		PeerRegistry:     peerRegistry,
 		Uploads:          uploads,
+		HostMetrics:      hostMetrics,
 	})
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create orchestrator server", zap.Error(err))
@@ -969,7 +1170,15 @@ func run(config cfg.Config, opts Options) (success bool) {
 	})
 	closers = append(closers, closer{"hyperloop server", hyperloopSrv.Shutdown})
 
-	grpcServer := e2bgrpc.NewGRPCServer(tel, e2bgrpc.WithSandboxResumeMetrics())
+	// No connection age: ChunkService and VolumeService streams may outlive the
+	// shared default's age plus grace, and how their clients behave on the
+	// GOAWAY has not been measured.
+	grpcServer := e2bgrpc.NewGRPCServer(tel, append([]e2bgrpc.ServerOption{
+		e2bgrpc.WithSandboxMetricAttributes(), e2bgrpc.WithMaxConnectionAge(0, 0),
+		// A forced stop returns only once the handlers have, so the closers
+		// after it do not tear down what a handler still uses.
+		e2bgrpc.WithWaitForHandlers(),
+	}, sharedPortTLS.grpcOptions()...)...)
 	orchestrator.RegisterSandboxServiceServer(grpcServer, orchestratorService)
 	orchestrator.RegisterVolumeServiceServer(grpcServer, volumeService)
 	orchestrator.RegisterChunkServiceServer(grpcServer, orchestratorService)
@@ -1009,14 +1218,25 @@ func run(config cfg.Config, opts Options) (success bool) {
 		closers = append(closers, closer{"template server", tmpl.Close})
 	}
 
-	infoService := service.NewInfoService(serviceInfo, sandboxes, hostMetrics)
-	orchestratorinfo.RegisterInfoServiceServer(grpcServer, infoService)
+	if opts.Runtime != nil {
+		closeEdition, err := opts.Runtime(ctx, Runtime{Server: orchestratorService, Factory: sandboxFactory, Routes: routingPublisher})
+		if err != nil {
+			logger.L().Fatal(ctx, "failed to hand the runtime to the edition", zap.Error(err))
+		}
+		if closeEdition != nil {
+			closers = append(closers, closer{"edition services", closeEdition})
+		}
+	}
+
+	infoMeter := tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/factories")
+	refused := utils.Must(telemetry.GetCounter(infoMeter, telemetry.OrchestratorStatusOverrideRefusedCounterName))
+	orchestratorinfo.RegisterInfoServiceServer(grpcServer, service.NewInfoService(serviceInfo, sandboxes, hostMetrics, refused))
 
 	grpcHealth := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, grpcHealth)
 
 	// cmux server, allows us to reuse the same TCP port between grpc and HTTP requests
-	cmuxServer, err := NewCMUXServer(ctx, config.GRPCPort, tel.MeterProvider)
+	cmuxServer, err := NewCMUXServer(ctx, config.GRPCPort, tel.MeterProvider, sharedPortTLS.wrap)
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create cmux server", zap.Error(err))
 	}
@@ -1048,15 +1268,8 @@ func run(config cfg.Config, opts Options) (success bool) {
 		logger.L().Fatal(ctx, "failed to create healthcheck", zap.Error(err))
 	}
 
-	httpMux := http.NewServeMux()
-	httpMux.Handle("/health", healthcheck.CreateHandler())
-
-	if localUploadHandler != nil {
-		httpMux.Handle("/upload", localUploadHandler)
-	}
-
 	httpServer := NewHTTPServer()
-	httpServer.Handler = httpMux
+	httpServer.Handler = sharedPortTLS.guard(newHTTPHandler(healthcheck.CreateHandler(), localUploadHandler))
 
 	startService("http server", func() error {
 		err := httpServer.Serve(httpListener)
@@ -1075,9 +1288,20 @@ func run(config cfg.Config, opts Options) (success bool) {
 	startService("grpc server", func() error {
 		return grpcServer.Serve(grpcListener)
 	})
-	closers = append(closers, closer{"grpc server", func(context.Context) error {
+	closers = append(closers, closer{"grpc server", func(ctx context.Context) error {
 		logger.L().Info(ctx, "Shutting down grpc server")
-		grpcServer.GracefulStop()
+		// Detached checkpoints hold handlers open for minutes; end them first.
+		orchestratorService.BeginShutdown()
+		// A third of the shared budget, so a slow drain leaves the later
+		// closers their turn.
+		remaining := closersDeadline / 3
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining = min(remaining, time.Until(deadline))
+		}
+		if !e2bgrpc.GracefulStopWithTimeout(grpcServer, remaining) {
+			// Reported as a failing closer, so a forced stop makes the run not clean.
+			return errors.New("grpc server stop forced")
+		}
 
 		return nil
 	}})
@@ -1087,7 +1311,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	case <-sig.Done():
 		logger.L().Info(ctx, "Shutdown signal received")
 	case serviceErr := <-serviceError:
+		// A service that stops before the signal is a failure, even with no error.
 		logger.L().Error(ctx, "Service error", zap.Error(serviceErr))
+		success = false
 	}
 
 	closeCtx, cancelCloseCtx := context.WithCancel(context.Background())
@@ -1123,20 +1349,16 @@ func run(config cfg.Config, opts Options) (success bool) {
 		}
 	}
 
-	slices.Reverse(closers)
-	for _, closer := range closers {
-		clog := globalLogger.With(zap.String("service", closer.name), zap.Bool("forced", config.ForceStop))
-		clog.Info(ctx, "closing")
-		if err := closer.close(closeCtx); err != nil {
-			clog.Error(ctx, "error during shutdown", zap.Error(err))
-			success = false
-		}
-	}
+	success = runClosers(closeCtx, closers, config.ForceStop, closersDeadline) && success
 
 	logger.L().Info(ctx, "Waiting for services to finish")
-	var sde serviceDoneError
-	if err := g.Wait(); err != nil && !errors.As(err, &sde) {
-		logger.L().Error(ctx, "service group error", zap.Error(err))
+	completed, err := waitBounded(g.Wait, closersDeadline)
+	waited = true
+	if !completed {
+		logger.L().Error(ctx, "services did not finish within the shutdown deadline", zap.Bool("forced", true))
+		success = false
+	} else if shutdownFailed(err) || servicesFailed.Load() {
+		logger.L().Error(ctx, "service group error", zap.Error(err), zap.Bool("service_failed", servicesFailed.Load()))
 		success = false
 	}
 
@@ -1182,6 +1404,8 @@ func startNFSProxy(
 		RecordHandleCalls: config.NFSProxyRecordHandleCalls,
 		RecordStatCalls:   config.NFSProxyRecordStatCalls,
 		NFSLogLevel:       config.NFSProxyLogLevel,
+		HandleCacheLimit:  config.NFSProxyHandleCacheLimit,
+		DirVerifierLimit:  config.NFSProxyDirVerifierLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create nfs proxy: %w", err)

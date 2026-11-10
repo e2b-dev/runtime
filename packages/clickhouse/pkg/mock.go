@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -39,4 +40,8 @@ func (m *NoopClient) QueryMaxStartRateTeamMetrics(context.Context, string, time.
 
 func (m *NoopClient) QueryMaxConcurrentTeamMetrics(context.Context, string, time.Time, time.Time) (MaxTeamMetric, error) {
 	return MaxTeamMetric{}, nil
+}
+
+func (m *NoopClient) QuerySandboxLifecycle(_ context.Context, sandboxID string) (SandboxLifecycle, error) {
+	return SandboxLifecycle{}, fmt.Errorf("sandbox %q: %w", sandboxID, ErrSandboxNotFound)
 }

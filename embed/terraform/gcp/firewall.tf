@@ -1,9 +1,10 @@
 # The dedicated VPC denies ingress by default; these three rules are the
-# whole policy. The stack binds eleven ports on every interface (api 3000,
-# 5009, 5109; client-proxy 3002, 3003; orchestrator 5007, 5008 and the sandbox
-# egress proxies 5010, 5016, 5017, 5018); 5008 is an unauthenticated control
-# API and the egress proxies expect no external client, so only 3000 and 3002
-# are opened, and only to the operator's CIDRs.
+# whole policy. The stack binds twelve ports on every interface (api 3000,
+# 5009, 5109; dashboard 3001; client-proxy 3002, 3003; orchestrator 5007, 5008
+# and the sandbox egress proxies 5010, 5016, 5017, 5018); 5008 is an
+# unauthenticated control API and the egress proxies expect no external
+# client, so only 3000, 3001 and 3002 are opened, and only to the operator's
+# CIDRs.
 resource "google_compute_firewall" "clients" {
   project                 = var.project_id
   name                    = "${var.name}-clients"
@@ -14,7 +15,7 @@ resource "google_compute_firewall" "clients" {
 
   allow {
     protocol = "tcp"
-    ports    = ["3000", "3002"]
+    ports    = ["3000", "3001", "3002"]
   }
 }
 

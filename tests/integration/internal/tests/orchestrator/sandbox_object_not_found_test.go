@@ -38,7 +38,7 @@ func TestSandboxObjectNotFound(t *testing.T) {
 				Metadata:            nil,
 				Alias:               nil,
 				EnvdVersion:         "",
-				Vcpu:                0,
+				Vcpu:                1,
 				RamMb:               0,
 				TeamId:              "",
 				MaxSandboxLength:    0,

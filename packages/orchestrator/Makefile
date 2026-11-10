@@ -12,6 +12,8 @@ CLEAN_NFS_CACHE_IMAGE_REGISTRY := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)
 # Published to by the release-please workflow on tagging a release;
 # public-read, so downloads need no credentials.
 E2B_ARTIFACT_BINARIES_URL ?= https://storage.googleapis.com/e2b-artifact-binaries/orchestrator
+# Released images, tagged <version> like the binaries.
+E2B_ARTIFACT_IMAGES ?= us-docker.pkg.dev/e2b-artifacts/orchestrator
 
 # Optional version "hook" for the released-artifact flow.
 # When empty (default), the build-and-upload/* targets build from source and
@@ -66,10 +68,19 @@ init:
 generate:
 	go generate ./...
 
+# The bake context is the parent directory, which bake reads only with
+# --allow. COMMIT_SHA is set by each target before this expands.
+BAKE = COMMIT_SHA="$(COMMIT_SHA)" VERSION="$(VERSION)" PLATFORM="$(BUILD_PLATFORM)" docker buildx bake --allow=fs.read=..
+
 .PHONY: build
 build:
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
-	@docker build --platform $(BUILD_PLATFORM) --output=bin --build-arg COMMIT_SHA="$(COMMIT_SHA)" --build-arg VERSION="$(VERSION)" -f ./Dockerfile ..
+	@$(BAKE) binaries
+
+.PHONY: build-image
+build-image:
+	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
+	$(BAKE) --load orchestrator
 
 # Download busybox from GCS public builds bucket.
 # Skips if binary exists and version/arch match the stamp file.
@@ -82,7 +93,9 @@ build-local:
 	# Allow for passing commit sha directly for docker builds
 	$(eval COMMIT_SHA ?= $(shell git rev-parse --short HEAD))
 	CGO_ENABLED=1 GOOS=linux GOARCH=$(BUILD_ARCH) go build $(BUILD_TAGS) -o bin/orchestrator -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS) $(STATIC_LDFLAGS)" .
-	CGO_ENABLED=1 GOOS=linux GOARCH=$(BUILD_ARCH) go build $(BUILD_TAGS) -o bin/clean-nfs-cache -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS) $(STATIC_LDFLAGS)" ./cmd/clean-nfs-cache
+	# Without cgo, clean-nfs-cache is static: its distroless/static image has no
+	# libc, and the GCS binary runs on any host glibc.
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILD_ARCH) go build -o bin/clean-nfs-cache -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS)" ./cmd/clean-nfs-cache
 
 # Compiler flags for debug builds. The default disables optimizations and
 # inlining so binaries are debugger-friendly. CI overrides this with an empty
@@ -111,18 +124,19 @@ run-dummy: build-dummy
 	NODE_ID=$(HOSTNAME) GRPC_PORT=5008 HEALTH_PORT=5018 ./bin/dummy-orchestrator
 
 .PHONY: run-debug
+# The service reads its configuration from the environment (the
+# start-services step sets it); sudo-rs on Ubuntu 25.10 and later images
+# ignores a bare -E, so the variables go over as an explicit list.
 run-debug:
 	make build-debug
-	sudo -E GOTRACEBACK=crash \
+	sudo --preserve-env="$$(printenv | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | paste -sd,)" GOTRACEBACK=crash \
 	GODEBUG=madvdontneed=1 \
 	NODE_ID="testclient" \
 	TEMPLATE_BUCKET_NAME=$(TEMPLATE_BUCKET_NAME) \
 	ENVD_TIMEOUT=$(ENVD_TIMEOUT) \
 	ORCHESTRATOR_SERVICES=$(ORCHESTRATOR_SERVICES) \
-	GCP_DOCKER_REPOSITORY_NAME=$(GCP_DOCKER_REPOSITORY_NAME) \
 	GOOGLE_SERVICE_ACCOUNT_BASE64=$(GOOGLE_SERVICE_ACCOUNT_BASE64) \
 	OTEL_COLLECTOR_GRPC_ENDPOINT=$(OTEL_COLLECTOR_GRPC_ENDPOINT) \
-	MAX_PARALLEL_MEMFILE_SNAPSHOTTING=$(MAX_PARALLEL_MEMFILE_SNAPSHOTTING) \
 	./bin/orchestrator
 
 define setup_local_env
@@ -203,9 +217,13 @@ endif
 build-and-upload/clean-nfs-cache: $(BIN_SOURCE) upload/clean-nfs-cache
 
 .PHONY: build-and-upload/clean-nfs-cache-image
-build-and-upload/clean-nfs-cache-image: $(BIN_SOURCE)
+build-and-upload/clean-nfs-cache-image:
+ifeq ($(strip $(ORCHESTRATOR_VERSION)),)
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
-	@docker buildx build --platform $(BUILD_PLATFORM) --tag $(CLEAN_NFS_CACHE_IMAGE_REGISTRY) --push --build-arg COMMIT_SHA="$(COMMIT_SHA)" -f ./Dockerfile.clean-nfs-cache .
+	@$(BAKE) --set clean-nfs-cache.tags=$(CLEAN_NFS_CACHE_IMAGE_REGISTRY) --push clean-nfs-cache
+else
+	docker buildx imagetools create --tag $(CLEAN_NFS_CACHE_IMAGE_REGISTRY) "$(E2B_ARTIFACT_IMAGES)/clean-nfs-cache:$(ORCHESTRATOR_VERSION)"
+endif
 
 .PHONY: build-and-upload/orchestrator
 build-and-upload/orchestrator: $(BIN_SOURCE) upload/orchestrator
@@ -218,15 +236,42 @@ build-and-upload/template-manager: $(BIN_SOURCE) upload/template-manager
 test:
 	go test -race -v ./...
 
+.PHONY: test-image test-orchestrator-image
+test-image:
+	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
+	@set -eu; \
+	image="orchestrator:test-$(COMMIT_SHA)-$$$$"; \
+	trap 'docker image rm --force "$$image" >/dev/null 2>&1 || true' EXIT; \
+	$(BAKE) --load --set orchestrator.tags="$$image" orchestrator; \
+		docker run --rm --entrypoint /bin/bash "$$image" -eu -c '\
+		test -s /etc/ssl/certs/ca-certificates.crt && \
+		ldd_output="$$(ldd /usr/local/bin/orchestrator 2>&1)" && \
+		printf "%s\n" "$$ldd_output" | grep -q "libc.so.6 =>" && \
+		! printf "%s\n" "$$ldd_output" | grep -Eq "not found|version .* not found" && \
+		command -v bash >/dev/null && \
+		command -v nsenter >/dev/null && \
+		command -v systemd-run >/dev/null && \
+		command -v systemctl >/dev/null && \
+		command -v ip >/dev/null && \
+		command -v iptables >/dev/null && \
+		command -v rsync >/dev/null && \
+		command -v mkfs.ext4 >/dev/null && \
+		test -x /usr/local/bin/orchestrator'
+
+test-orchestrator-image: test-image
+
 .PHONY: test-clean-nfs-cache-image
-test-clean-nfs-cache-image: build
+# The image has no shell, so the CA bundle is checked from outside it.
+test-clean-nfs-cache-image:
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
 	@set -eu; \
 	image="clean-nfs-cache:test-$(COMMIT_SHA)-$$$$"; \
-	trap 'docker image rm --force "$$image" >/dev/null 2>&1 || true' EXIT; \
-	docker build --load --platform $(BUILD_PLATFORM) --tag "$$image" --build-arg COMMIT_SHA="$(COMMIT_SHA)" -f ./Dockerfile.clean-nfs-cache .; \
+	cid=""; \
+	trap 'test -z "$$cid" || docker rm --force "$$cid" >/dev/null 2>&1; docker image rm --force "$$image" >/dev/null 2>&1 || true' EXIT; \
+	$(BAKE) --load --set clean-nfs-cache.tags="$$image" clean-nfs-cache; \
 	docker run --rm "$$image" --help >/dev/null; \
-	docker run --rm --entrypoint /bin/sh "$$image" -eu -c 'test -s /etc/ssl/certs/ca-certificates.crt'
+	cid="$$(docker create "$$image")"; \
+	docker cp "$$cid:/etc/ssl/certs/ca-certificates.crt" - | tar -xO | grep -q 'BEGIN CERTIFICATE'
 
 .PHONY: test-docker
 test-docker:
@@ -254,14 +299,13 @@ build-template: fetch-busybox
 	GOOGLE_SERVICE_ACCOUNT_BASE64=$(GOOGLE_SERVICE_ACCOUNT_BASE64) \
 	DOCKER_AUTH_BASE64=$(DOCKER_AUTH_BASE64) \
 	GCP_PROJECT_ID=$(GCP_PROJECT_ID) \
-	GCP_DOCKER_REPOSITORY_NAME=$(GCP_DOCKER_REPOSITORY_NAME) \
 	GCP_REGION=$(GCP_REGION) \
 	COMPRESS_ENABLED=$(COMPRESS_ENABLED) \
 	COMPRESS_TYPE=$(COMPRESS_TYPE) \
 	COMPRESS_LEVEL=$(COMPRESS_LEVEL) \
 	COMPRESS_FRAME_ENCODE_WORKERS=$(COMPRESS_FRAME_ENCODE_WORKERS) \
 	ENVIRONMENT=local \
-	go run cmd/create-build/main.go \
+	go run ./cmd/create-build \
 	-template $(TEMPLATE_ID) \
 	-to-build $(BUILD_ID) \
 	-kernel $(KERNEL_VERSION) \

@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -159,11 +160,15 @@ func newMemoryTestSandbox(t *testing.T, url string) (*Sandbox, string) {
 	require.NoError(t, err)
 	id := hex.EncodeToString(b)
 
-	s := &Sandbox{Metadata: &Metadata{
-		internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second, envdServerURLOverride: url},
-		Config:         NewConfig(Config{Envd: EnvdMetadata{Version: "test-" + id}, RamMB: testSandboxRamMB}),
-		Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + id},
-	}}
+	s := &Sandbox{
+		Metadata: &Metadata{
+			internalConfig: internalConfig{EnvdInitRequestTimeout: 5 * time.Second, envdServerURLOverride: url},
+			Config:         NewConfig(Config{Envd: EnvdMetadata{Version: "test-" + id}, RamMB: testSandboxRamMB}),
+			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + id},
+		},
+		egressProxy: network.NewNoopEgressProxy(),
+		networkHook: NoopNetworkAssignHook{},
+	}
 
 	return s, id
 }
@@ -319,7 +324,7 @@ func TestInitEnvdRecordsMemoryProtection(t *testing.T) { //nolint:paralleltest
 		s, id := newMemoryTestSandbox(t, srv.URL)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		require.NoError(t, s.initEnvd(ctx, startType, recordMetrics))
+		require.NoError(t, s.initEnvd(ctx, startType, recordMetrics, envdInitOptions{}))
 
 		return s, id
 	}
@@ -335,8 +340,10 @@ func TestInitEnvdRecordsMemoryProtection(t *testing.T) { //nolint:paralleltest
 			assert.Equal(t, uint64(1), dp.Count, "%s: one sample per start", kind)
 			assert.Equal(t, want, dp.Sum, "%s in MiB", kind)
 			// Exactly the enumerated attributes: nothing per sandbox, team or template.
-			assert.Equal(t, 3, dp.Attributes.Len(), "%s attributes: %v", kind, dp.Attributes.ToSlice())
+			assert.Equal(t, 4, dp.Attributes.Len(), "%s attributes: %v", kind, dp.Attributes.ToSlice())
 			assert.True(t, hasAttr(dp.Attributes, "start_type", "resume"))
+			// The double reports no X-Envd-Version.
+			assert.True(t, hasAttr(dp.Attributes, envdRunningVersionKey, envdRunningVersionUnknown))
 			assert.True(t, hasAttr(dp.Attributes, versionKey, version))
 		}
 
@@ -426,7 +433,7 @@ func TestInitEnvdRecordsMemoryProtection(t *testing.T) { //nolint:paralleltest
 		s, id := newMemoryTestSandbox(t, srv.URL)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		err := s.initEnvd(ctx, StartTypeResume, true)
+		err := s.initEnvd(ctx, StartTypeResume, true, envdInitOptions{})
 		require.ErrorContains(t, err, "unexpected status code")
 		version := "test-" + id
 
@@ -435,14 +442,14 @@ func TestInitEnvdRecordsMemoryProtection(t *testing.T) { //nolint:paralleltest
 		assert.Contains(t, s.waitForEnvdDurationAttrs(StartTypeResume, err), attribute.String("protection", "protected"),
 			"the failed start's duration carries its cohort")
 
-		// init.calls counts one per start that answered, whatever it answered with, so
-		// this start is a success there while its duration says exit_type=other. The
-		// two disagree by design and the disagreement is pinned here rather than left
-		// to be rediscovered from a dashboard.
+		// The start failed on its status, and init.calls says so as the duration does: one
+		// terminal exit, in the response phase. The protection histogram above still has its
+		// sample, so its count exceeds calls{exit_type="success"} by the non-204 starts.
 		calls := initCallsPoints(t, version)
 		require.Len(t, calls, 1, "one point: the 503 was not retried")
-		assert.True(t, hasAttr(calls[0].Attributes, "exit_type", "success"),
-			"init.calls counts a responded start: %v", calls[0].Attributes.ToSlice())
+		assert.True(t, hasAttr(calls[0].Attributes, "exit_type", "other"),
+			"init.calls counts a non-204 as a failed start: %v", calls[0].Attributes.ToSlice())
+		assert.True(t, hasAttr(calls[0].Attributes, "phase", "response"))
 		assert.True(t, hasAttr(calls[0].Attributes, "protection", "protected"))
 		assert.True(t, hasAttr(
 			attribute.NewSet(s.waitForEnvdDurationAttrs(StartTypeResume, err)...), "exit_type", "other"),

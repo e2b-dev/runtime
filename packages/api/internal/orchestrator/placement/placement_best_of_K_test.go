@@ -3,6 +3,7 @@ package placement
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,12 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 )
 
+// emptyHugePool is a reported pool large enough that a typical sandbox
+// request scores well below CPU load, so CPU-ranking tests still rank on CPU.
+func emptyHugePool() nodemanager.TestOptions {
+	return nodemanager.WithHugePages(100_000, 0, 0, uint64(units.MBToBytes(2)))
+}
+
 func TestBestOfK_Score(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
@@ -21,7 +28,7 @@ func TestBestOfK_Score(t *testing.T) {
 
 	// Create a test node with known metrics
 	// The node's CpuUsage is set to 50 via the constructor
-	node := nodemanager.NewTestNode("test-node", api.NodeStatusReady, 2, 4)
+	node := nodemanager.NewTestNode("test-node", api.NodeStatusReady, 2, 4, emptyHugePool())
 
 	resources := nodemanager.SandboxResources{
 		CPUs:      1,
@@ -34,7 +41,7 @@ func TestBestOfK_Score(t *testing.T) {
 	assert.GreaterOrEqual(t, score, 0.0)
 
 	// Test with different CPU usage
-	node2 := nodemanager.NewTestNode("test-node2", api.NodeStatusReady, 10, 4)
+	node2 := nodemanager.NewTestNode("test-node2", api.NodeStatusReady, 10, 4, emptyHugePool())
 	score2 := algo.Score(node2, resources, config)
 
 	// Higher CPU usage should result in higher score (worse)
@@ -48,7 +55,7 @@ func TestBestOfK_Score_PreferBiggerNode(t *testing.T) {
 
 	// Create a test node with known metrics
 	// The node's CpuUsage is set to 50 via the constructor
-	node := nodemanager.NewTestNode("test-node", api.NodeStatusReady, 5, 4)
+	node := nodemanager.NewTestNode("test-node", api.NodeStatusReady, 5, 4, emptyHugePool())
 
 	resources := nodemanager.SandboxResources{
 		CPUs:      1,
@@ -61,7 +68,7 @@ func TestBestOfK_Score_PreferBiggerNode(t *testing.T) {
 	assert.GreaterOrEqual(t, score, 0.0)
 
 	// Test with different CPU usage
-	node2 := nodemanager.NewTestNode("test-node2", api.NodeStatusReady, 1, 8)
+	node2 := nodemanager.NewTestNode("test-node2", api.NodeStatusReady, 1, 8, emptyHugePool())
 	score2 := algo.Score(node2, resources, config)
 
 	// Lower CPU count should result in higher score (worse) as the expected load is higher
@@ -74,16 +81,16 @@ func TestBestOfK_Score_WithPendingResources(t *testing.T) {
 	algo := NewBestOfK(config).(*BestOfK)
 
 	// Create two nodes with identical base loads
-	nodeNormal := nodemanager.NewTestNode("node-normal", api.NodeStatusReady, 0, 4)
-	nodeWithPending := nodemanager.NewTestNode("node-pending", api.NodeStatusReady, 0, 4)
+	nodeNormal := nodemanager.NewTestNode("node-normal", api.NodeStatusReady, 0, 4, emptyHugePool())
+	nodeWithPending := nodemanager.NewTestNode("node-pending", api.NodeStatusReady, 0, 4, emptyHugePool())
 
-	// Inject InProgress resources into nodeWithPending using StartPlacing
+	// Inject InProgress resources into nodeWithPending using StartPlacingIf
 	// This simulates a Sandbox that is currently being placed but hasn't fully started
 	pendingRes := nodemanager.SandboxResources{
 		CPUs:      2,
 		MiBMemory: 1024,
 	}
-	nodeWithPending.PlacementMetrics.StartPlacing("pending-sbx-1", pendingRes)
+	nodeWithPending.PlacementMetrics.StartPlacingIf("pending-sbx-1", pendingRes, func() bool { return true })
 
 	reqResources := nodemanager.SandboxResources{
 		CPUs:      1,
@@ -102,7 +109,6 @@ func TestBestOfK_Score_WithPendingResources(t *testing.T) {
 func TestBestOfK_Score_NoHugePagesIsHalf(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
-	config.ScoreHugepages = true
 	algo := NewBestOfK(config).(*BestOfK)
 
 	node := nodemanager.NewTestNode("no-pool", api.NodeStatusReady, 2, 4, nodemanager.WithAllocatedMemoryBytes(uint64(units.MBToBytes(64*1024))))
@@ -117,7 +123,6 @@ func TestBestOfK_Score_NoHugePagesIsHalf(t *testing.T) {
 func TestBestOfK_Score_OrdinaryRAMDoesNotFillPool(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
-	config.ScoreHugepages = true
 	algo := NewBestOfK(config).(*BestOfK)
 
 	pageBytes := uint64(units.MBToBytes(2))
@@ -138,7 +143,6 @@ func TestBestOfK_Score_OrdinaryRAMDoesNotFillPool(t *testing.T) {
 func TestBestOfK_Score_HugePageMemoryDominates(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
-	config.ScoreHugepages = true
 	algo := NewBestOfK(config).(*BestOfK)
 
 	pageBytes := uint64(units.MBToBytes(2))
@@ -165,17 +169,117 @@ func TestBestOfK_Score_HugePageMemoryDominates(t *testing.T) {
 	assert.Greater(t, tightScore, roomyScore)
 }
 
+// Surplus pages are borrowed only once the base pool runs out, so HugePages_Total
+// tracks commitment above the base pool. Scored against Total, a node deep in
+// surplus reads about full, no fuller than one just under its base pool, and the
+// Alpha term can even rank it lower. Scored against the base pool, it is fuller.
+func TestBestOfK_Score_NodeInSurplusScoresFuller(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	algo := NewBestOfK(config).(*BestOfK)
+
+	pageBytes := uint64(units.MBToBytes(2))
+	// Both: an 800-page base pool under a 1000-page ceiling, every committed page faulted in.
+	// nearBase: 790 committed, nothing borrowed, so Total reads the base pool.
+	nearBase := nodemanager.NewTestNode("near-base", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(800, 790, 0, pageBytes),
+		nodemanager.WithHugePagesBase(800),
+		nodemanager.WithHugePagesCapacity(1000),
+	)
+	// inSurplus: 950 committed, 150 of them borrowed, so Total reads 950.
+	inSurplus := nodemanager.NewTestNode("in-surplus", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(950, 950, 0, pageBytes),
+		nodemanager.WithHugePagesBase(800),
+		nodemanager.WithHugePagesCapacity(1000),
+	)
+
+	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512, HugePages: true}
+
+	// (256 requested + 790 committed + 0.5 * 790 used) / 800
+	assert.InDelta(t, 1441.0/800.0, algo.Score(nearBase, resources, config), 1e-9)
+	// (256 + 950 + 0.5 * 950) / 800; against Total it would be 1681/950, below nearBase.
+	assert.InDelta(t, 1681.0/800.0, algo.Score(inSurplus, resources, config), 1e-9)
+	assert.Greater(t, algo.Score(inSurplus, resources, config), algo.Score(nearBase, resources, config))
+}
+
+// Below its base pool a node scores as it always has: Total equals the base.
+// Guards the scale: dividing by the ceiling instead would fail it.
+func TestBestOfK_Score_BelowTheBasePoolTheScaleIsUnchanged(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	algo := NewBestOfK(config).(*BestOfK)
+
+	pageBytes := uint64(units.MBToBytes(2))
+	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512, HugePages: true}
+
+	reporting := nodemanager.NewTestNode("reporting", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(800, 300, 100, pageBytes),
+		nodemanager.WithHugePagesBase(800),
+		nodemanager.WithHugePagesCapacity(1000),
+	)
+	legacy := nodemanager.NewTestNode("legacy", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(800, 300, 100, pageBytes),
+	)
+
+	assert.InDelta(t, algo.Score(legacy, resources, config), algo.Score(reporting, resources, config), 1e-9)
+}
+
+// The pool scored against: a reported base pool; the ceiling for a pool
+// reported as all overcommit; HugePages_Total whenever the base is not reported.
+func TestScoredPoolPages(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		metrics nodemanager.Metrics
+		want    uint64
+	}{
+		{"reported base", nodemanager.Metrics{HugePagesTotal: 950, HugePagesBase: 800, HugePagesBaseSet: true, HugePagesCapacity: 1000}, 800},
+		{"reported base, ceiling unknown", nodemanager.Metrics{HugePagesTotal: 950, HugePagesBase: 800, HugePagesBaseSet: true}, 800},
+		{"all overcommit", nodemanager.Metrics{HugePagesTotal: 300, HugePagesBaseSet: true, HugePagesCapacity: 54097}, 54097},
+		{"all overcommit, ceiling unknown", nodemanager.Metrics{HugePagesTotal: 300, HugePagesBaseSet: true}, 300},
+		{"ceiling only, from a build that predates the base", nodemanager.Metrics{HugePagesTotal: 800, HugePagesCapacity: 1000}, 800},
+		{"nothing reported", nodemanager.Metrics{HugePagesTotal: 950}, 950},
+		{"no pool", nodemanager.Metrics{}, 0},
+	} {
+		assert.Equal(t, tc.want, scoredPoolPages(tc.metrics), tc.name)
+	}
+}
+
+// During a rollout, a node on the build before this one reports the ceiling
+// but not the base. It must score like an upgraded peer with the same load, not
+// look emptier because it was divided by the ceiling.
+func TestBestOfK_Score_NodeWithoutTheBaseIsNotScoredAgainstTheCeiling(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	algo := NewBestOfK(config).(*BestOfK)
+
+	pageBytes := uint64(units.MBToBytes(2))
+	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512, HugePages: true}
+
+	upgraded := nodemanager.NewTestNode("upgraded", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(800, 790, 0, pageBytes),
+		nodemanager.WithHugePagesBase(800),
+		nodemanager.WithHugePagesCapacity(1000),
+	)
+	previous := nodemanager.NewTestNode("previous", api.NodeStatusReady, 0, 8,
+		nodemanager.WithHugePages(800, 790, 0, pageBytes),
+		nodemanager.WithHugePagesCapacity(1000),
+	)
+
+	assert.InDelta(t, algo.Score(upgraded, resources, config), algo.Score(previous, resources, config), 1e-9)
+}
+
 // Memory of an in-flight placement is committed before the node reports it.
 func TestBestOfK_Score_PendingMemoryCounts(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
-	config.ScoreHugepages = true
 	algo := NewBestOfK(config).(*BestOfK)
 
 	pageBytes := uint64(units.MBToBytes(2))
 	idle := nodemanager.NewTestNode("idle", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
 	pending := nodemanager.NewTestNode("pending", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
-	pending.PlacementMetrics.StartPlacing("in-flight", nodemanager.SandboxResources{CPUs: 0, MiBMemory: 1024})
+	pending.PlacementMetrics.StartPlacingIf("in-flight", nodemanager.SandboxResources{CPUs: 0, MiBMemory: 1024, HugePages: true}, func() bool { return true })
 
 	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512}
 
@@ -186,19 +290,34 @@ func TestBestOfK_Score_PendingMemoryCounts(t *testing.T) {
 	assert.InDelta(t, 1024.0/2000.0, pendingScore-idleScore, 1e-9)
 }
 
-// A heartbeat after place moves the sandbox into Used and clears Reserved.
-// Remove must still drop commitment so the next score matches an empty node.
-func TestBestOfK_Score_RemoveAfterSyncDropsCommitment(t *testing.T) {
+// An in-flight sandbox on ordinary pages never takes from the hugepage pool.
+func TestBestOfK_Score_PendingOrdinaryPagesLeaveThePoolAlone(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
-	config.ScoreHugepages = true
+	algo := NewBestOfK(config).(*BestOfK)
+
+	pageBytes := uint64(units.MBToBytes(2))
+	idle := nodemanager.NewTestNode("idle", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
+	pending := nodemanager.NewTestNode("pending", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
+	pending.PlacementMetrics.StartPlacingIf("in-flight", nodemanager.SandboxResources{CPUs: 0, MiBMemory: 1024}, func() bool { return true })
+
+	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512, HugePages: true}
+
+	assert.InDelta(t, algo.Score(idle, resources, config), algo.Score(pending, resources, config), 1e-9)
+}
+
+// A heartbeat after place moves the sandbox into Used and clears Reserved.
+// Remove leaves the pages to the next sync, which then scores like an empty node.
+func TestBestOfK_Score_RemoveAfterSyncKeepsPagesUntilTheNextSync(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
 	algo := NewBestOfK(config).(*BestOfK)
 
 	pageBytes := uint64(units.MBToBytes(2))
 	empty := nodemanager.NewTestNode("empty", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
 	live := nodemanager.NewTestNode("live", api.NodeStatusReady, 0, 8, nodemanager.WithHugePages(1000, 0, 0, pageBytes))
 
-	placed := nodemanager.SandboxResources{CPUs: 2, MiBMemory: 1024}
+	placed := nodemanager.SandboxResources{CPUs: 2, MiBMemory: 1024, HugePages: true}
 	live.OptimisticAdd(placed)
 	live.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{
 		MetricCpuAllocated:         2,
@@ -217,6 +336,14 @@ func TestBestOfK_Score_RemoveAfterSyncDropsCommitment(t *testing.T) {
 	assert.Greater(t, afterSync, algo.Score(empty, next, config))
 
 	live.OptimisticRemove(t.Context(), placed)
+
+	assert.Greater(t, algo.Score(live, next, config), algo.Score(empty, next, config))
+
+	live.UpdateMetricsFromSync(&orchestratorinfo.ServiceInfoResponse{
+		MetricCpuCount:          8,
+		MetricHugepagesTotal:    1000,
+		MetricHugepageSizeBytes: pageBytes,
+	}, time.Now())
 
 	assert.InDelta(t, algo.Score(empty, next, config), algo.Score(live, next, config), 1e-9)
 }
@@ -240,7 +367,7 @@ func TestBestOfK_ChooseNode_AvoidsFullHugePages(t *testing.T) {
 
 	// K covers both nodes, so the choice is the score alone.
 	for range 20 {
-		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{memFull, memFree}, nil, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{memFull, memFree}, nil, resources, Requirements{}, false, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "cpu-heavy-mem-free", selected.ID)
 	}
@@ -261,7 +388,7 @@ func TestBestOfK_ChooseNode_UnknownPoolLosesToReporter(t *testing.T) {
 	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512}
 
 	for range 20 {
-		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{silent, reporting}, nil, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{silent, reporting}, nil, resources, Requirements{}, false, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "reporting", selected.ID)
 	}
@@ -271,6 +398,7 @@ func TestBestOfK_ChooseNode_UnknownPoolLosesToReporter(t *testing.T) {
 func TestBestOfK_Score_HugepageFlagOffIgnoresPool(t *testing.T) {
 	t.Parallel()
 	config := DefaultBestOfKConfig()
+	config.ScoreHugepages = false
 	algo := NewBestOfK(config).(*BestOfK)
 
 	pageBytes := uint64(units.MBToBytes(2))
@@ -286,6 +414,43 @@ func TestBestOfK_Score_HugepageFlagOffIgnoresPool(t *testing.T) {
 	// (1 requested + 4 allocated) / (R=4 * 8 cores)
 	assert.InDelta(t, 5.0/32.0, algo.Score(tight, resources, config), 1e-9)
 	assert.InDelta(t, 5.0/32.0, algo.Score(roomy, resources, config), 1e-9)
+}
+
+func TestBestOfK_Score_BusyCores(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	config.ScoreHugepages = false
+	algo := NewBestOfK(config).(*BestOfK)
+
+	// 96% of 80 cores is 76.8 busy cores: (2 + 215 + 0.5*76.8) / (4*80).
+	node := cpuTestNode("busy", 215, 80, 96)
+	assert.InDelta(t, 0.798125, algo.Score(node, nodemanager.SandboxResources{CPUs: 2}, config), 1e-9)
+}
+
+func TestBestOfK_ChooseNode_BusyHostLosesToIdleHost(t *testing.T) {
+	t.Parallel()
+	config := DefaultBestOfKConfig()
+	config.ScoreHugepages = false
+	algo := NewBestOfK(config).(*BestOfK)
+
+	// One more allocated vCPU must not outweigh a nearly saturated host.
+	busy := cpuTestNode("busy", 215, 80, 96)
+	idle := cpuTestNode("idle", 216, 80, 0)
+
+	selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{busy, idle}, nil, nodemanager.SandboxResources{CPUs: 2}, Requirements{}, false, nil)
+	require.NoError(t, err)
+	assert.Same(t, idle, selected)
+}
+
+func cpuTestNode(id string, allocated, count, percent uint32) *nodemanager.Node {
+	node := nodemanager.NewTestNode(id, api.NodeStatusReady, int64(allocated), count)
+	node.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{
+		MetricCpuAllocated: allocated,
+		MetricCpuCount:     count,
+		MetricCpuPercent:   percent,
+	})
+
+	return node
 }
 
 func TestBestOfK_ChooseNode_HugepageFlagOffPrefersCPU(t *testing.T) {
@@ -304,7 +469,7 @@ func TestBestOfK_ChooseNode_HugepageFlagOffPrefersCPU(t *testing.T) {
 	resources := nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512}
 
 	for range 20 {
-		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{memFull, memFree}, nil, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+		selected, err := algo.chooseNode(t.Context(), []*nodemanager.Node{memFull, memFree}, nil, resources, Requirements{}, false, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "cpu-light-mem-full", selected.ID)
 	}
@@ -321,9 +486,9 @@ func TestBestOfK_ChooseNode(t *testing.T) {
 	algo := NewBestOfK(config).(*BestOfK)
 
 	// Create test nodes with different loads
-	node1 := nodemanager.NewTestNode("node1", api.NodeStatusReady, 8, 4)
-	node2 := nodemanager.NewTestNode("node2", api.NodeStatusReady, 2, 4)
-	node3 := nodemanager.NewTestNode("node3", api.NodeStatusReady, 5, 4)
+	node1 := nodemanager.NewTestNode("node1", api.NodeStatusReady, 8, 4, emptyHugePool())
+	node2 := nodemanager.NewTestNode("node2", api.NodeStatusReady, 2, 4, emptyHugePool())
+	node3 := nodemanager.NewTestNode("node3", api.NodeStatusReady, 5, 4, emptyHugePool())
 
 	nodes := []*nodemanager.Node{node1, node2, node3}
 	excludedNodes := make(map[string]struct{})
@@ -333,7 +498,7 @@ func TestBestOfK_ChooseNode(t *testing.T) {
 	}
 
 	// Test selection - should work with proper config
-	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, Requirements{}, false, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, selected)
 	assert.Contains(t, []string{"node1", "node2", "node3"}, selected.ID)
@@ -350,9 +515,9 @@ func TestBestOfK_ChooseNode_WithExclusions(t *testing.T) {
 	algo := NewBestOfK(config).(*BestOfK)
 
 	// Create test nodes
-	node1 := nodemanager.NewTestNode("node1", api.NodeStatusReady, 8, 4)
-	node2 := nodemanager.NewTestNode("node2", api.NodeStatusReady, 2, 4)
-	node3 := nodemanager.NewTestNode("node3", api.NodeStatusReady, 5, 4)
+	node1 := nodemanager.NewTestNode("node1", api.NodeStatusReady, 8, 4, emptyHugePool())
+	node2 := nodemanager.NewTestNode("node2", api.NodeStatusReady, 2, 4, emptyHugePool())
+	node3 := nodemanager.NewTestNode("node3", api.NodeStatusReady, 5, 4, emptyHugePool())
 
 	nodes := []*nodemanager.Node{node1, node2, node3}
 
@@ -366,7 +531,7 @@ func TestBestOfK_ChooseNode_WithExclusions(t *testing.T) {
 		MiBMemory: 512,
 	}
 
-	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, Requirements{}, false, nil)
 	require.NoError(t, err)
 	// Should not select excluded node
 	assert.NotEqual(t, "node2", selected.ID)
@@ -390,10 +555,46 @@ func TestBestOfK_ChooseNode_NoAvailableNodes(t *testing.T) {
 		MiBMemory: 1024,
 	}
 
-	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
-	require.Error(t, err)
+	selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, Requirements{}, false, nil)
 	assert.Nil(t, selected)
-	assert.Contains(t, err.Error(), "no node available")
+	var noNodes NoNodesAvailableError
+	require.ErrorAs(t, err, &noNodes)
+}
+
+// An unavailable node that would fit is a capacity shortage; one that would not
+// fit is still an incompatibility.
+func TestBestOfK_ChooseNode_UnavailableNodeIsCapacity(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		status       api.NodeStatus
+		labels       []string
+		wantCapacity bool
+	}{
+		"draining node that fits":              {status: api.NodeStatusDraining, labels: []string{"gpu"}, wantCapacity: true},
+		"unhealthy node that fits":             {status: api.NodeStatusUnhealthy, labels: []string{"gpu"}, wantCapacity: true},
+		"draining node without required label": {status: api.NodeStatusDraining, wantCapacity: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			algo := NewBestOfK(DefaultBestOfKConfig()).(*BestOfK)
+			node := nodemanager.NewTestNode("node1", tt.status, 0, 8, nodemanager.WithLabels(tt.labels))
+
+			_, err := algo.chooseNode(t.Context(), []*nodemanager.Node{node}, nil,
+				nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512}, Requirements{}, true, []string{"gpu"})
+
+			if tt.wantCapacity {
+				var noNodes NoNodesAvailableError
+				require.ErrorAs(t, err, &noNodes)
+
+				return
+			}
+
+			var placeErr FailedToPlaceSandboxError
+			require.ErrorAs(t, err, &placeErr)
+		})
+	}
 }
 
 func TestFailedToPlaceSandboxError_Error(t *testing.T) {
@@ -525,7 +726,7 @@ func TestBestOfK_ChooseNode_ReturnsPlacementError(t *testing.T) {
 	machine := machineinfo.MachineInfo{CPUModelName: "Intel Ice Lake"}
 	requiredLabels := []string{"gpu"}
 
-	selected, err := algo.chooseNode(ctx, nodes, make(map[string]struct{}), resources, CPURequirement{Build: machine}, FeatureRequirement{}, true, requiredLabels)
+	selected, err := algo.chooseNode(ctx, nodes, make(map[string]struct{}), resources, Requirements{CPU: CPURequirement{Build: machine}}, true, requiredLabels)
 	require.Error(t, err)
 	assert.Nil(t, selected)
 
@@ -553,7 +754,7 @@ func TestBestOfK_Sample(t *testing.T) {
 	excludedNodes := make(map[string]struct{})
 
 	// Test sampling fewer nodes than available
-	sampled := algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
+	sampled, _ := algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
 	assert.LessOrEqual(t, len(sampled), 3)
 
 	// Check all sampled nodes are unique
@@ -566,7 +767,7 @@ func TestBestOfK_Sample(t *testing.T) {
 	// Test sampling with exclusions
 	excludedNodes["a"] = struct{}{}
 	excludedNodes["b"] = struct{}{}
-	sampled = algo.sample(nodes, config, excludedNodes, CPURequirement{}, FeatureRequirement{}, false, nil)
+	sampled, _ = algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
 
 	for _, n := range sampled {
 		assert.NotEqual(t, "a", n.ID)
@@ -587,7 +788,7 @@ func TestBestOfK_PowerOfKChoices(t *testing.T) {
 	// Create many nodes with varying loads
 	var nodes []*nodemanager.Node
 	for i := range 20 {
-		node := nodemanager.NewTestNode(string(rune('A'+i)), api.NodeStatusReady, int64(float64(i)*0.5), 4)
+		node := nodemanager.NewTestNode(string(rune('A'+i)), api.NodeStatusReady, int64(float64(i)*0.5), 4, emptyHugePool())
 		nodes = append(nodes, node)
 	}
 
@@ -601,7 +802,7 @@ func TestBestOfK_PowerOfKChoices(t *testing.T) {
 	selectedCounts := make(map[string]int)
 	successCount := 0
 	for range 100 {
-		selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, CPURequirement{}, FeatureRequirement{}, false, nil)
+		selected, err := algo.chooseNode(ctx, nodes, excludedNodes, resources, Requirements{}, false, nil)
 		if err == nil && selected != nil {
 			selectedCounts[selected.ID]++
 			successCount++

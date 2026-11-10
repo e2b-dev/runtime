@@ -26,9 +26,10 @@ type BestOfKConfig struct {
 // DefaultBestOfKConfig returns the default placement configuration
 func DefaultBestOfKConfig() BestOfKConfig {
 	return BestOfKConfig{
-		R:     4,
-		K:     3,
-		Alpha: 0.5,
+		R:              4,
+		K:              3,
+		Alpha:          0.5,
+		ScoreHugepages: true,
 	}
 }
 
@@ -43,7 +44,9 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 	pendingMiB := int64(0)
 	for _, res := range node.PlacementMetrics.InProgress() {
 		pendingCPUs += res.CPUs
-		pendingMiB += res.MiBMemory
+		if res.HugePages {
+			pendingMiB += res.MiBMemory
+		}
 	}
 
 	// to avoid division by zero
@@ -55,14 +58,14 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 	// Combine allocated resources with in-progress allocations
 	reserved := metrics.CpuAllocated + uint32(pendingCPUs)
 
-	// 1 CPU used = 100% CPU percept
-	usageAvg := float64(metrics.CpuPercent) / 100
+	// CpuPercent is whole-host utilization, so convert it to busy cores.
+	busyCPUs := float64(metrics.CpuPercent) / 100 * cpuCount
 
 	totalCapacity := config.R * cpuCount
 
 	cpuRequested := float64(resources.CPUs)
 
-	cpuScore := (cpuRequested + float64(reserved) + config.Alpha*usageAvg) / totalCapacity
+	cpuScore := (cpuRequested + float64(reserved) + config.Alpha*busyCPUs) / totalCapacity
 
 	if !config.ScoreHugepages {
 		return cpuScore
@@ -79,7 +82,7 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 // reporting no pool scores 0.5, so it does not look free next to a reporter.
 func memoryScore(metrics nodemanager.Metrics, resources nodemanager.SandboxResources, pendingMiB int64, config BestOfKConfig) float64 {
 	pageBytes := float64(metrics.HugePageSizeBytes)
-	poolBytes := float64(metrics.HugePagesTotal) * pageBytes
+	poolBytes := float64(scoredPoolPages(metrics)) * pageBytes
 	if poolBytes == 0 {
 		return 0.5
 	}
@@ -89,6 +92,26 @@ func memoryScore(metrics nodemanager.Metrics, resources nodemanager.SandboxResou
 	used := float64(metrics.HugePagesUsed) * pageBytes
 
 	return (requested + committed + config.Alpha*used) / poolBytes
+}
+
+// scoredPoolPages is the pool the memory score divides by: the base pool,
+// allocated at boot. HugePages_Total is the base pool plus the surplus pages
+// borrowed right now, so it grows with the load once a node passes its base
+// pool and every such node reads about full; a fixed base keeps the score
+// climbing past 1 as a node borrows. A pool reported as all overcommit (base
+// 0) is scored against its ceiling. An orchestrator that does not report the
+// base falls back to HugePages_Total, the old divisor, even when it reports
+// the ceiling: scoring it against the ceiling would make it look emptier than
+// its upgraded peers for the whole rollout.
+func scoredPoolPages(metrics nodemanager.Metrics) uint64 {
+	switch {
+	case metrics.HugePagesBaseSet && metrics.HugePagesBase > 0:
+		return metrics.HugePagesBase
+	case metrics.HugePagesBaseSet && metrics.HugePagesCapacity > 0:
+		return metrics.HugePagesCapacity
+	default:
+		return metrics.HugePagesTotal
+	}
 }
 
 // BestOfK implements the fit-score-place algorithm
@@ -121,12 +144,12 @@ func (b *BestOfK) UpdateConfig(config BestOfKConfig) {
 }
 
 // chooseNode selects the best node for placing a VM with the given quota
-func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, excludedNodes map[string]struct{}, resources nodemanager.SandboxResources, cpu CPURequirement, features FeatureRequirement, filterByLabels bool, requiredLabels []string) (bestNode *nodemanager.Node, err error) {
+func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, excludedNodes map[string]struct{}, resources nodemanager.SandboxResources, requirements Requirements, filterByLabels bool, requiredLabels []string) (bestNode *nodemanager.Node, err error) {
 	// Fix the config, we want to dynamically update it
 	config := b.getConfig()
 
 	// Filter eligible nodes
-	candidates := b.sample(nodes, config, excludedNodes, cpu, features, filterByLabels, requiredLabels)
+	candidates, poolsFull := b.sample(nodes, config, excludedNodes, resources, requirements, filterByLabels, requiredLabels)
 
 	// Find the best node among candidates
 	bestScore := math.MaxFloat64
@@ -142,11 +165,17 @@ func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, exclu
 	}
 
 	if bestNode == nil {
+		// Full pools, or an unavailable node that would fit, are a shortage that
+		// clears, not a mismatch.
+		if poolsFull || unavailableNodeWouldFit(nodes, excludedNodes, requirements, filterByLabels, requiredLabels) {
+			return nil, NoNodesAvailableError{}
+		}
+
 		return nil, FailedToPlaceSandboxError{
 			filterByLabels: filterByLabels,
 			requiredLabels: requiredLabels,
-			cpu:            cpu,
-			features:       features,
+			cpu:            requirements.CPU,
+			features:       requirements.Features,
 		}
 	}
 
@@ -180,10 +209,27 @@ func (e FailedToPlaceSandboxError) Error() string {
 	return message
 }
 
-// sample returns up to k items chosen uniformly from those passing ok.
-func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, excludedNodes map[string]struct{}, cpu CPURequirement, features FeatureRequirement, filterByLabels bool, requiredLabels []string) []*nodemanager.Node {
+// unavailableNodeWouldFit reports whether a node that cannot take new sandboxes
+// right now would otherwise satisfy the requirements.
+func unavailableNodeWouldFit(nodes []*nodemanager.Node, excludedNodes map[string]struct{}, requirements Requirements, filterByLabels bool, requiredLabels []string) bool {
+	for _, n := range nodes {
+		if _, ok := excludedNodes[n.ID]; ok || n.CanAcceptNewRequests() {
+			continue
+		}
+
+		if NodeSatisfiesCPU(n, requirements.CPU) && NodeSatisfiesFeatures(n, requirements.Features) && (!filterByLabels || isNodeLabelsCompatible(n, requiredLabels)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// sample returns up to k items chosen uniformly from those passing ok, and
+// whether any node passed every check but memory.
+func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, excludedNodes map[string]struct{}, resources nodemanager.SandboxResources, requirements Requirements, filterByLabels bool, requiredLabels []string) (candidates []*nodemanager.Node, poolsFull bool) {
 	if config.K <= 0 || len(items) == 0 {
-		return nil
+		return nil, false
 	}
 
 	indices := make([]int, len(items))
@@ -191,7 +237,7 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 		indices[i] = i
 	}
 
-	candidates := make([]*nodemanager.Node, 0, config.K)
+	candidates = make([]*nodemanager.Node, 0, config.K)
 	remaining := len(indices) // active pool is indices[:remaining]
 
 	for len(candidates) < config.K && remaining > 0 {
@@ -216,12 +262,12 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 		}
 
 		// Skip if node is not CPU compatible
-		if !NodeSatisfiesCPU(n, cpu) {
+		if !NodeSatisfiesCPU(n, requirements.CPU) {
 			continue
 		}
 
 		// Skip if the node's orchestrator predates a requested feature
-		if !NodeSatisfiesFeatures(n, features) {
+		if !NodeSatisfiesFeatures(n, requirements.Features) {
 			continue
 		}
 
@@ -230,8 +276,14 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 			continue
 		}
 
+		if !NodeSatisfiesMemory(n, resources, requirements.Memory) {
+			poolsFull = true
+
+			continue
+		}
+
 		candidates = append(candidates, n)
 	}
 
-	return candidates
+	return candidates, poolsFull
 }

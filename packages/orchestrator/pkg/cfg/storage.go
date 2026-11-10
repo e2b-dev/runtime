@@ -37,6 +37,10 @@ type storageEnv struct {
 	// Parsed strictly: a malformed value fails resolution loudly (even for
 	// URL-configured roles) instead of being silently treated as false.
 	S3PathStyle bool `env:"S3_USE_PATH_STYLE"`
+	// Server-side encryption requested on every S3 write (ssetype/kmskeyid
+	// in URL form); validated by storage.ParseStorageURL.
+	S3SSEType     string `env:"S3_SSE_TYPE"`
+	S3SSEKMSKeyID string `env:"S3_SSE_KMS_KEY_ID"`
 }
 
 // TemplateStorage resolves the template storage destination.
@@ -59,6 +63,24 @@ func BuildCacheStorage() (storage.Spec, error) {
 
 	return resolveStorage(e, e.BuildCacheURL, e.BuildCacheBucket, e.BuildCacheBasePath,
 		"build cache", "BUILD_CACHE_BUCKET_NAME", "/tmp/build-cache")
+}
+
+// BuildCacheStorageIsLocal reports whether the build-cache storage is configured
+// as local (file://) storage, without resolving it: a local role that fails to
+// resolve may still name a path on this disk, while a bucket role whose bucket
+// is unset, as on nodes that never build, names none. An environment it cannot
+// parse counts as local.
+func BuildCacheStorageIsLocal() bool {
+	e, err := env.ParseAs[storageEnv]()
+	if err != nil {
+		return true
+	}
+
+	if raw := strings.TrimSpace(e.BuildCacheURL); raw != "" {
+		return strings.HasPrefix(strings.ToLower(raw), "file:")
+	}
+
+	return e.Provider == storage.LocalStorageProvider
 }
 
 func resolveStorage(e storageEnv, rawURL, bucket, basePath, name, bucketEnv, defaultBasePath string) (storage.Spec, error) {
@@ -98,9 +120,17 @@ func legacyStorageURL(e storageEnv, bucket, basePath, name, bucketEnv, defaultBa
 		switch provider {
 		case storage.AWSStorageProvider:
 			u.Scheme = "s3"
+			query := url.Values{}
 			if e.S3PathStyle {
-				u.RawQuery = url.Values{"s3ForcePathStyle": []string{"true"}}.Encode()
+				query.Set("s3ForcePathStyle", "true")
 			}
+			if e.S3SSEType != "" {
+				query.Set("ssetype", e.S3SSEType)
+			}
+			if e.S3SSEKMSKeyID != "" {
+				query.Set("kmskeyid", e.S3SSEKMSKeyID)
+			}
+			u.RawQuery = query.Encode()
 		case storage.AzureStorageProvider:
 			u.Scheme = "azblob"
 		}

@@ -23,23 +23,99 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// What the host saw of a guest whose sandbox ended.
+type GuestEvent int32
+
+const (
+	GuestEvent_GUEST_EVENT_UNSPECIFIED GuestEvent = 0
+	// The guest powered itself off.
+	GuestEvent_GUEST_EVENT_POWER_OFF GuestEvent = 1
+	// The guest reset: a reboot or a kernel crash, which the host cannot tell
+	// apart.
+	GuestEvent_GUEST_EVENT_REBOOT_OR_CRASH GuestEvent = 2
+	// The guest ended without a reset.
+	GuestEvent_GUEST_EVENT_CRASH_NO_RESTART GuestEvent = 3
+	// An end the guest did not cause.
+	GuestEvent_GUEST_EVENT_FAILURE GuestEvent = 4
+	// An end the host could not observe.
+	GuestEvent_GUEST_EVENT_UNKNOWN GuestEvent = 5
+	// The guest reported a crash, then reset.
+	GuestEvent_GUEST_EVENT_CRASH_WITH_RESTART GuestEvent = 6
+)
+
+// Enum value maps for GuestEvent.
+var (
+	GuestEvent_name = map[int32]string{
+		0: "GUEST_EVENT_UNSPECIFIED",
+		1: "GUEST_EVENT_POWER_OFF",
+		2: "GUEST_EVENT_REBOOT_OR_CRASH",
+		3: "GUEST_EVENT_CRASH_NO_RESTART",
+		4: "GUEST_EVENT_FAILURE",
+		5: "GUEST_EVENT_UNKNOWN",
+		6: "GUEST_EVENT_CRASH_WITH_RESTART",
+	}
+	GuestEvent_value = map[string]int32{
+		"GUEST_EVENT_UNSPECIFIED":        0,
+		"GUEST_EVENT_POWER_OFF":          1,
+		"GUEST_EVENT_REBOOT_OR_CRASH":    2,
+		"GUEST_EVENT_CRASH_NO_RESTART":   3,
+		"GUEST_EVENT_FAILURE":            4,
+		"GUEST_EVENT_UNKNOWN":            5,
+		"GUEST_EVENT_CRASH_WITH_RESTART": 6,
+	}
+)
+
+func (x GuestEvent) Enum() *GuestEvent {
+	p := new(GuestEvent)
+	*p = x
+	return p
+}
+
+func (x GuestEvent) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GuestEvent) Descriptor() protoreflect.EnumDescriptor {
+	return file_orchestrator_proto_enumTypes[0].Descriptor()
+}
+
+func (GuestEvent) Type() protoreflect.EnumType {
+	return &file_orchestrator_proto_enumTypes[0]
+}
+
+func (x GuestEvent) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GuestEvent.Descriptor instead.
+func (GuestEvent) EnumDescriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{0}
+}
+
 type SandboxConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Data required for creating a new sandbox.
-	TemplateId         string            `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
-	BuildId            string            `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	KernelVersion      string            `protobuf:"bytes,3,opt,name=kernel_version,json=kernelVersion,proto3" json:"kernel_version,omitempty"`
-	FirecrackerVersion string            `protobuf:"bytes,4,opt,name=firecracker_version,json=firecrackerVersion,proto3" json:"firecracker_version,omitempty"`
-	HugePages          bool              `protobuf:"varint,5,opt,name=huge_pages,json=hugePages,proto3" json:"huge_pages,omitempty"`
-	SandboxId          string            `protobuf:"bytes,6,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	EnvVars            map[string]string `protobuf:"bytes,7,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	TemplateId         string `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	BuildId            string `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	KernelVersion      string `protobuf:"bytes,3,opt,name=kernel_version,json=kernelVersion,proto3" json:"kernel_version,omitempty"`
+	FirecrackerVersion string `protobuf:"bytes,4,opt,name=firecracker_version,json=firecrackerVersion,proto3" json:"firecracker_version,omitempty"`
+	// Deprecated: every sandbox uses huge pages and the orchestrator ignores this
+	// field. Still sent as true for orchestrators that predate ignoring it.
+	//
+	// Deprecated: Marked as deprecated in orchestrator.proto.
+	HugePages bool              `protobuf:"varint,5,opt,name=huge_pages,json=hugePages,proto3" json:"huge_pages,omitempty"`
+	SandboxId string            `protobuf:"bytes,6,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	EnvVars   map[string]string `protobuf:"bytes,7,rep,name=env_vars,json=envVars,proto3" json:"env_vars,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Metadata about the sandbox.
 	Metadata    map[string]string `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Alias       *string           `protobuf:"bytes,9,opt,name=alias,proto3,oneof" json:"alias,omitempty"`
 	EnvdVersion string            `protobuf:"bytes,10,opt,name=envd_version,json=envdVersion,proto3" json:"envd_version,omitempty"`
 	Vcpu        int64             `protobuf:"varint,11,opt,name=vcpu,proto3" json:"vcpu,omitempty"`
 	RamMb       int64             `protobuf:"varint,12,opt,name=ram_mb,json=ramMb,proto3" json:"ram_mb,omitempty"`
-	TeamId      string            `protobuf:"bytes,13,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// VM capacity on cold boot; 0 defaults to max(vcpu, recorded snapshot capacity).
+	// Memory resumes use recorded capacity; legacy resizes must pass the original size.
+	MaxVcpus int64  `protobuf:"varint,28,opt,name=max_vcpus,json=maxVcpus,proto3" json:"max_vcpus,omitempty"`
+	TeamId   string `protobuf:"bytes,13,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
 	// Maximum length of the sandbox in Hours.
 	MaxSandboxLength int64   `protobuf:"varint,14,opt,name=max_sandbox_length,json=maxSandboxLength,proto3" json:"max_sandbox_length,omitempty"`
 	TotalDiskSizeMb  int64   `protobuf:"varint,15,opt,name=total_disk_size_mb,json=totalDiskSizeMb,proto3" json:"total_disk_size_mb,omitempty"`
@@ -59,8 +135,9 @@ type SandboxConfig struct {
 	// When true, a timeout auto-pause takes a filesystem-only snapshot (no
 	// memory) instead of a full memory snapshot. Only meaningful when auto_pause
 	// is set. Passed through so the policy survives an API re-sync from the
-	// orchestrator's sandbox list (mirrors auto_pause); the orchestrator itself
-	// does not act on it — the API evictor does.
+	// orchestrator's sandbox list (mirrors auto_pause); the API evictor acts on
+	// it, and the orchestrator refuses a create whose guest cannot take the
+	// filesystem-only snapshot.
 	AutoPauseFilesystemOnly bool `protobuf:"varint,25,opt,name=auto_pause_filesystem_only,json=autoPauseFilesystemOnly,proto3" json:"auto_pause_filesystem_only,omitempty"`
 	// Retention of sandbox events in days
 	EventsTtlDays int64 `protobuf:"varint,26,opt,name=events_ttl_days,json=eventsTtlDays,proto3" json:"events_ttl_days,omitempty"`
@@ -129,6 +206,7 @@ func (x *SandboxConfig) GetFirecrackerVersion() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in orchestrator.proto.
 func (x *SandboxConfig) GetHugePages() bool {
 	if x != nil {
 		return x.HugePages
@@ -181,6 +259,13 @@ func (x *SandboxConfig) GetVcpu() int64 {
 func (x *SandboxConfig) GetRamMb() int64 {
 	if x != nil {
 		return x.RamMb
+	}
+	return 0
+}
+
+func (x *SandboxConfig) GetMaxVcpus() int64 {
+	if x != nil {
+		return x.MaxVcpus
 	}
 	return 0
 }
@@ -706,9 +791,10 @@ type SandboxNetworkEgressConfig struct {
 	AllowedDomains []string                              `protobuf:"bytes,3,rep,name=allowed_domains,json=allowedDomains,proto3" json:"allowed_domains,omitempty"`
 	Rules          map[string]*SandboxNetworkDomainRules `protobuf:"bytes,4,rep,name=rules,proto3" json:"rules,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// BYOP SOCKS5 egress proxy.
-	EgressProxyAddress  string `protobuf:"bytes,5,opt,name=egress_proxy_address,json=egressProxyAddress,proto3" json:"egress_proxy_address,omitempty"`
-	EgressProxyUsername string `protobuf:"bytes,6,opt,name=egress_proxy_username,json=egressProxyUsername,proto3" json:"egress_proxy_username,omitempty"`
-	EgressProxyPassword string `protobuf:"bytes,7,opt,name=egress_proxy_password,json=egressProxyPassword,proto3" json:"egress_proxy_password,omitempty"`
+	EgressProxyAddress  string                        `protobuf:"bytes,5,opt,name=egress_proxy_address,json=egressProxyAddress,proto3" json:"egress_proxy_address,omitempty"`
+	EgressProxyUsername string                        `protobuf:"bytes,6,opt,name=egress_proxy_username,json=egressProxyUsername,proto3" json:"egress_proxy_username,omitempty"`
+	EgressProxyPassword string                        `protobuf:"bytes,7,opt,name=egress_proxy_password,json=egressProxyPassword,proto3" json:"egress_proxy_password,omitempty"`
+	EgressProxyTls      *SandboxNetworkEgressProxyTLS `protobuf:"bytes,8,opt,name=egress_proxy_tls,json=egressProxyTls,proto3,oneof" json:"egress_proxy_tls,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -792,6 +878,78 @@ func (x *SandboxNetworkEgressConfig) GetEgressProxyPassword() string {
 	return ""
 }
 
+func (x *SandboxNetworkEgressConfig) GetEgressProxyTls() *SandboxNetworkEgressProxyTLS {
+	if x != nil {
+		return x.EgressProxyTls
+	}
+	return nil
+}
+
+// TLS for the hop to the BYOP SOCKS5 proxy. The SOCKS5 negotiation and the
+// tunneled traffic both run inside the session.
+type SandboxNetworkEgressProxyTLS struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Enabled bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// Verified against the proxy certificate and sent as SNI. Empty means the
+	// host part of egress_proxy_address.
+	ServerName string `protobuf:"bytes,2,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	// PEM roots to verify the proxy against. Empty means the system trust store.
+	CaCert        []byte `protobuf:"bytes,3,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxNetworkEgressProxyTLS) Reset() {
+	*x = SandboxNetworkEgressProxyTLS{}
+	mi := &file_orchestrator_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxNetworkEgressProxyTLS) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxNetworkEgressProxyTLS) ProtoMessage() {}
+
+func (x *SandboxNetworkEgressProxyTLS) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxNetworkEgressProxyTLS.ProtoReflect.Descriptor instead.
+func (*SandboxNetworkEgressProxyTLS) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SandboxNetworkEgressProxyTLS) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *SandboxNetworkEgressProxyTLS) GetServerName() string {
+	if x != nil {
+		return x.ServerName
+	}
+	return ""
+}
+
+func (x *SandboxNetworkEgressProxyTLS) GetCaCert() []byte {
+	if x != nil {
+		return x.CaCert
+	}
+	return nil
+}
+
 type SandboxNetworkIngressConfig struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	TrafficAccessToken *string                `protobuf:"bytes,1,opt,name=traffic_access_token,json=trafficAccessToken,proto3,oneof" json:"traffic_access_token,omitempty"`
@@ -803,7 +961,7 @@ type SandboxNetworkIngressConfig struct {
 
 func (x *SandboxNetworkIngressConfig) Reset() {
 	*x = SandboxNetworkIngressConfig{}
-	mi := &file_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -815,7 +973,7 @@ func (x *SandboxNetworkIngressConfig) String() string {
 func (*SandboxNetworkIngressConfig) ProtoMessage() {}
 
 func (x *SandboxNetworkIngressConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +986,7 @@ func (x *SandboxNetworkIngressConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxNetworkIngressConfig.ProtoReflect.Descriptor instead.
 func (*SandboxNetworkIngressConfig) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{10}
+	return file_orchestrator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SandboxNetworkIngressConfig) GetTrafficAccessToken() string {
@@ -869,7 +1027,7 @@ type SandboxCreateRequest struct {
 
 func (x *SandboxCreateRequest) Reset() {
 	*x = SandboxCreateRequest{}
-	mi := &file_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -881,7 +1039,7 @@ func (x *SandboxCreateRequest) String() string {
 func (*SandboxCreateRequest) ProtoMessage() {}
 
 func (x *SandboxCreateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -894,7 +1052,7 @@ func (x *SandboxCreateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCreateRequest.ProtoReflect.Descriptor instead.
 func (*SandboxCreateRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{11}
+	return file_orchestrator_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SandboxCreateRequest) GetSandbox() *SandboxConfig {
@@ -942,13 +1100,18 @@ type SandboxCreateResponse struct {
 	// evaluation contexts differ. Empty from orchestrators that predate the
 	// field.
 	ResolvedFirecrackerVersion string `protobuf:"bytes,4,opt,name=resolved_firecracker_version,json=resolvedFirecrackerVersion,proto3" json:"resolved_firecracker_version,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// The network mode the orchestrator selected for this execution and where
+	// callers must send its ingress traffic. Absent from orchestrators that
+	// predate routed networking; callers then keep using the worker endpoint
+	// they already resolve today.
+	NetworkPlacement *SandboxNetworkPlacement `protobuf:"bytes,5,opt,name=network_placement,json=networkPlacement,proto3,oneof" json:"network_placement,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SandboxCreateResponse) Reset() {
 	*x = SandboxCreateResponse{}
-	mi := &file_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1123,7 @@ func (x *SandboxCreateResponse) String() string {
 func (*SandboxCreateResponse) ProtoMessage() {}
 
 func (x *SandboxCreateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +1136,7 @@ func (x *SandboxCreateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCreateResponse.ProtoReflect.Descriptor instead.
 func (*SandboxCreateResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{12}
+	return file_orchestrator_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SandboxCreateResponse) GetClientId() string {
@@ -1004,6 +1167,93 @@ func (x *SandboxCreateResponse) GetResolvedFirecrackerVersion() string {
 	return ""
 }
 
+func (x *SandboxCreateResponse) GetNetworkPlacement() *SandboxNetworkPlacement {
+	if x != nil {
+		return x.NetworkPlacement
+	}
+	return nil
+}
+
+// The network placement of one execution of a sandbox: its mode, the router
+// serving it and the ingress endpoint a caller must use. The execution_id pins
+// the placement to that execution, so a caller can reject a placement that
+// belongs to a predecessor.
+type SandboxNetworkPlacement struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ExecutionId    string                 `protobuf:"bytes,1,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	NetworkMode    string                 `protobuf:"bytes,2,opt,name=network_mode,json=networkMode,proto3" json:"network_mode,omitempty"`
+	RouterId       string                 `protobuf:"bytes,3,opt,name=router_id,json=routerId,proto3" json:"router_id,omitempty"`
+	IngressAddress string                 `protobuf:"bytes,4,opt,name=ingress_address,json=ingressAddress,proto3" json:"ingress_address,omitempty"`
+	IngressPort    uint32                 `protobuf:"varint,5,opt,name=ingress_port,json=ingressPort,proto3" json:"ingress_port,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SandboxNetworkPlacement) Reset() {
+	*x = SandboxNetworkPlacement{}
+	mi := &file_orchestrator_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxNetworkPlacement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxNetworkPlacement) ProtoMessage() {}
+
+func (x *SandboxNetworkPlacement) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxNetworkPlacement.ProtoReflect.Descriptor instead.
+func (*SandboxNetworkPlacement) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SandboxNetworkPlacement) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
+func (x *SandboxNetworkPlacement) GetNetworkMode() string {
+	if x != nil {
+		return x.NetworkMode
+	}
+	return ""
+}
+
+func (x *SandboxNetworkPlacement) GetRouterId() string {
+	if x != nil {
+		return x.RouterId
+	}
+	return ""
+}
+
+func (x *SandboxNetworkPlacement) GetIngressAddress() string {
+	if x != nil {
+		return x.IngressAddress
+	}
+	return ""
+}
+
+func (x *SandboxNetworkPlacement) GetIngressPort() uint32 {
+	if x != nil {
+		return x.IngressPort
+	}
+	return 0
+}
+
 type SandboxUpdateRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
@@ -1016,7 +1266,7 @@ type SandboxUpdateRequest struct {
 
 func (x *SandboxUpdateRequest) Reset() {
 	*x = SandboxUpdateRequest{}
-	mi := &file_orchestrator_proto_msgTypes[13]
+	mi := &file_orchestrator_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1028,7 +1278,7 @@ func (x *SandboxUpdateRequest) String() string {
 func (*SandboxUpdateRequest) ProtoMessage() {}
 
 func (x *SandboxUpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[13]
+	mi := &file_orchestrator_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1041,7 +1291,7 @@ func (x *SandboxUpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxUpdateRequest.ProtoReflect.Descriptor instead.
 func (*SandboxUpdateRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{13}
+	return file_orchestrator_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SandboxUpdateRequest) GetSandboxId() string {
@@ -1075,7 +1325,7 @@ type SandboxDeleteRequest struct {
 
 func (x *SandboxDeleteRequest) Reset() {
 	*x = SandboxDeleteRequest{}
-	mi := &file_orchestrator_proto_msgTypes[14]
+	mi := &file_orchestrator_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1087,7 +1337,7 @@ func (x *SandboxDeleteRequest) String() string {
 func (*SandboxDeleteRequest) ProtoMessage() {}
 
 func (x *SandboxDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[14]
+	mi := &file_orchestrator_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1100,7 +1350,7 @@ func (x *SandboxDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxDeleteRequest.ProtoReflect.Descriptor instead.
 func (*SandboxDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{14}
+	return file_orchestrator_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SandboxDeleteRequest) GetSandboxId() string {
@@ -1126,13 +1376,20 @@ type SandboxPauseRequest struct {
 	// a snapshot cold-boots (reboots) from the rootfs. Default false = full memory
 	// snapshot, so existing callers are unaffected.
 	FilesystemOnly bool `protobuf:"varint,4,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// When true, a memory pause proceeds past a guest agent that does not
+	// answer its health probe and reports it in envd_unresponsive, which the
+	// caller must persist. Absent or false refuses on a miss, as a caller that
+	// predates the field expects. A filesystem-only pause is always refused on
+	// a miss, whatever this says: its capture needs the agent to quiesce the
+	// rootfs.
+	AllowEnvdUnresponsive bool `protobuf:"varint,6,opt,name=allow_envd_unresponsive,json=allowEnvdUnresponsive,proto3" json:"allow_envd_unresponsive,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SandboxPauseRequest) Reset() {
 	*x = SandboxPauseRequest{}
-	mi := &file_orchestrator_proto_msgTypes[15]
+	mi := &file_orchestrator_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1144,7 +1401,7 @@ func (x *SandboxPauseRequest) String() string {
 func (*SandboxPauseRequest) ProtoMessage() {}
 
 func (x *SandboxPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[15]
+	mi := &file_orchestrator_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1157,7 +1414,7 @@ func (x *SandboxPauseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxPauseRequest.ProtoReflect.Descriptor instead.
 func (*SandboxPauseRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{15}
+	return file_orchestrator_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SandboxPauseRequest) GetSandboxId() string {
@@ -1188,6 +1445,13 @@ func (x *SandboxPauseRequest) GetFilesystemOnly() bool {
 	return false
 }
 
+func (x *SandboxPauseRequest) GetAllowEnvdUnresponsive() bool {
+	if x != nil {
+		return x.AllowEnvdUnresponsive
+	}
+	return false
+}
+
 type SchedulingMetadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// memfile_base_build_id / rootfs_base_build_id are each artifact's root layer
@@ -1214,7 +1478,7 @@ type SchedulingMetadata struct {
 
 func (x *SchedulingMetadata) Reset() {
 	*x = SchedulingMetadata{}
-	mi := &file_orchestrator_proto_msgTypes[16]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1490,7 @@ func (x *SchedulingMetadata) String() string {
 func (*SchedulingMetadata) ProtoMessage() {}
 
 func (x *SchedulingMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[16]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1503,7 @@ func (x *SchedulingMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingMetadata.ProtoReflect.Descriptor instead.
 func (*SchedulingMetadata) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{16}
+	return file_orchestrator_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SchedulingMetadata) GetMemfileBaseBuildId() string {
@@ -1308,13 +1572,20 @@ func (x *SchedulingMetadata) GetRootfsBaseBuildId() string {
 type SandboxPauseResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The memory snapshot was taken while the guest agent did not answer its
+	// health probe. A memory resume of it replays the unresponsive agent; the
+	// API refuses one and asks for a resume without memory.
+	EnvdUnresponsive bool `protobuf:"varint,2,opt,name=envd_unresponsive,json=envdUnresponsive,proto3" json:"envd_unresponsive,omitempty"`
+	// The snapshot is disk-only. True when the request asked for it, and also
+	// when the node took a full pause of a powered-off guest as disk-only.
+	FilesystemOnly bool `protobuf:"varint,3,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SandboxPauseResponse) Reset() {
 	*x = SandboxPauseResponse{}
-	mi := &file_orchestrator_proto_msgTypes[17]
+	mi := &file_orchestrator_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1326,7 +1597,7 @@ func (x *SandboxPauseResponse) String() string {
 func (*SandboxPauseResponse) ProtoMessage() {}
 
 func (x *SandboxPauseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[17]
+	mi := &file_orchestrator_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1339,7 +1610,7 @@ func (x *SandboxPauseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxPauseResponse.ProtoReflect.Descriptor instead.
 func (*SandboxPauseResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{17}
+	return file_orchestrator_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
@@ -1349,6 +1620,20 @@ func (x *SandboxPauseResponse) GetSchedulingMetadata() *SchedulingMetadata {
 	return nil
 }
 
+func (x *SandboxPauseResponse) GetEnvdUnresponsive() bool {
+	if x != nil {
+		return x.EnvdUnresponsive
+	}
+	return false
+}
+
+func (x *SandboxPauseResponse) GetFilesystemOnly() bool {
+	if x != nil {
+		return x.FilesystemOnly
+	}
+	return false
+}
+
 type SandboxCheckpointRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
@@ -1356,14 +1641,17 @@ type SandboxCheckpointRequest struct {
 	// Provenance stamped onto the snapshot's storage objects for the storage
 	// index (e.g. template_id). Opaque to the orchestrator, which just forwards
 	// it to object metadata.
-	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Metadata map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Persist only the filesystem: no memfile is exported and a sandbox created
+	// from the build cold-boots. The source sandbox keeps running.
+	FilesystemOnly bool `protobuf:"varint,5,opt,name=filesystem_only,json=filesystemOnly,proto3" json:"filesystem_only,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SandboxCheckpointRequest) Reset() {
 	*x = SandboxCheckpointRequest{}
-	mi := &file_orchestrator_proto_msgTypes[18]
+	mi := &file_orchestrator_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1375,7 +1663,7 @@ func (x *SandboxCheckpointRequest) String() string {
 func (*SandboxCheckpointRequest) ProtoMessage() {}
 
 func (x *SandboxCheckpointRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[18]
+	mi := &file_orchestrator_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1388,7 +1676,7 @@ func (x *SandboxCheckpointRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCheckpointRequest.ProtoReflect.Descriptor instead.
 func (*SandboxCheckpointRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{18}
+	return file_orchestrator_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SandboxCheckpointRequest) GetSandboxId() string {
@@ -1412,16 +1700,29 @@ func (x *SandboxCheckpointRequest) GetMetadata() map[string]string {
 	return nil
 }
 
+func (x *SandboxCheckpointRequest) GetFilesystemOnly() bool {
+	if x != nil {
+		return x.FilesystemOnly
+	}
+	return false
+}
+
 type SandboxCheckpointResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SchedulingMetadata *SchedulingMetadata    `protobuf:"bytes,1,opt,name=scheduling_metadata,json=schedulingMetadata,proto3" json:"scheduling_metadata,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The network of the execution the checkpoint left running. A checkpoint
+	// that resumes the sandbox in a new VM places that VM again, so its
+	// placement can differ from the one Create returned. Absent from
+	// orchestrators that predate the field: callers then keep the placement
+	// they recorded.
+	Network       *SandboxCheckpointNetwork `protobuf:"bytes,2,opt,name=network,proto3,oneof" json:"network,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxCheckpointResponse) Reset() {
 	*x = SandboxCheckpointResponse{}
-	mi := &file_orchestrator_proto_msgTypes[19]
+	mi := &file_orchestrator_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1734,7 @@ func (x *SandboxCheckpointResponse) String() string {
 func (*SandboxCheckpointResponse) ProtoMessage() {}
 
 func (x *SandboxCheckpointResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[19]
+	mi := &file_orchestrator_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1747,7 @@ func (x *SandboxCheckpointResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxCheckpointResponse.ProtoReflect.Descriptor instead.
 func (*SandboxCheckpointResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{19}
+	return file_orchestrator_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SandboxCheckpointResponse) GetSchedulingMetadata() *SchedulingMetadata {
@@ -1456,13 +1757,67 @@ func (x *SandboxCheckpointResponse) GetSchedulingMetadata() *SchedulingMetadata 
 	return nil
 }
 
+func (x *SandboxCheckpointResponse) GetNetwork() *SandboxCheckpointNetwork {
+	if x != nil {
+		return x.Network
+	}
+	return nil
+}
+
+// The network placement of a checkpoint's running execution.
+type SandboxCheckpointNetwork struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Absent when the execution uses the worker's own network, as an absent
+	// network_placement in SandboxCreateResponse means.
+	Placement     *SandboxNetworkPlacement `protobuf:"bytes,1,opt,name=placement,proto3,oneof" json:"placement,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxCheckpointNetwork) Reset() {
+	*x = SandboxCheckpointNetwork{}
+	mi := &file_orchestrator_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxCheckpointNetwork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxCheckpointNetwork) ProtoMessage() {}
+
+func (x *SandboxCheckpointNetwork) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxCheckpointNetwork.ProtoReflect.Descriptor instead.
+func (*SandboxCheckpointNetwork) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SandboxCheckpointNetwork) GetPlacement() *SandboxNetworkPlacement {
+	if x != nil {
+		return x.Placement
+	}
+	return nil
+}
+
 type RunningSandbox struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Deprecated: the API no longer rebuilds sandbox state from this list. Redis
 	// is the source of truth; List is only used to detect sandboxes running on a
 	// node that the store does not know about, so they can be killed. The fields
-	// below carry everything that decision needs. Still populated so API
-	// instances predating those fields keep working during a rollout.
+	// below carry everything that decision needs. No longer populated; the API
+	// still reads it from orchestrators that predate those fields.
 	//
 	// Deprecated: Marked as deprecated in orchestrator.proto.
 	Config    *SandboxConfig         `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
@@ -1473,18 +1828,28 @@ type RunningSandbox struct {
 	// sandbox_id + team_id form the store key. execution_id is carried in the
 	// edge sandbox-catalog delete event, so a cluster node's routing entry is
 	// evicted too. vcpu/ram_mb feed the node's optimistic resource accounting.
-	SandboxId     string `protobuf:"bytes,5,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	TeamId        string `protobuf:"bytes,6,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
-	ExecutionId   string `protobuf:"bytes,7,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
-	Vcpu          int64  `protobuf:"varint,8,opt,name=vcpu,proto3" json:"vcpu,omitempty"`
-	RamMb         int64  `protobuf:"varint,9,opt,name=ram_mb,json=ramMb,proto3" json:"ram_mb,omitempty"`
+	SandboxId   string `protobuf:"bytes,5,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	TeamId      string `protobuf:"bytes,6,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	ExecutionId string `protobuf:"bytes,7,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	Vcpu        int64  `protobuf:"varint,8,opt,name=vcpu,proto3" json:"vcpu,omitempty"`
+	RamMb       int64  `protobuf:"varint,9,opt,name=ram_mb,json=ramMb,proto3" json:"ram_mb,omitempty"`
+	// The sandbox ended on the node without being asked to; guest_event says
+	// what the host saw of the guest. Set only by nodes that report such ends;
+	// an API that does not act on it leaves the sandbox running in its store
+	// until its end time.
+	Ended      bool       `protobuf:"varint,10,opt,name=ended,proto3" json:"ended,omitempty"`
+	GuestEvent GuestEvent `protobuf:"varint,11,opt,name=guest_event,json=guestEvent,proto3,enum=GuestEvent" json:"guest_event,omitempty"`
+	// The node keeps the ended sandbox, disk included, until the API ends it
+	// with its own timeout action: a kill, or a pause, which the node makes
+	// filesystem-only. Set for a guest that powered itself off.
+	DiskKept      bool `protobuf:"varint,12,opt,name=disk_kept,json=diskKept,proto3" json:"disk_kept,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunningSandbox) Reset() {
 	*x = RunningSandbox{}
-	mi := &file_orchestrator_proto_msgTypes[20]
+	mi := &file_orchestrator_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1496,7 +1861,7 @@ func (x *RunningSandbox) String() string {
 func (*RunningSandbox) ProtoMessage() {}
 
 func (x *RunningSandbox) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[20]
+	mi := &file_orchestrator_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1509,7 +1874,7 @@ func (x *RunningSandbox) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunningSandbox.ProtoReflect.Descriptor instead.
 func (*RunningSandbox) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{20}
+	return file_orchestrator_proto_rawDescGZIP(), []int{23}
 }
 
 // Deprecated: Marked as deprecated in orchestrator.proto.
@@ -1576,6 +1941,27 @@ func (x *RunningSandbox) GetRamMb() int64 {
 	return 0
 }
 
+func (x *RunningSandbox) GetEnded() bool {
+	if x != nil {
+		return x.Ended
+	}
+	return false
+}
+
+func (x *RunningSandbox) GetGuestEvent() GuestEvent {
+	if x != nil {
+		return x.GuestEvent
+	}
+	return GuestEvent_GUEST_EVENT_UNSPECIFIED
+}
+
+func (x *RunningSandbox) GetDiskKept() bool {
+	if x != nil {
+		return x.DiskKept
+	}
+	return false
+}
+
 type SandboxListResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sandboxes     []*RunningSandbox      `protobuf:"bytes,1,rep,name=sandboxes,proto3" json:"sandboxes,omitempty"`
@@ -1585,7 +1971,7 @@ type SandboxListResponse struct {
 
 func (x *SandboxListResponse) Reset() {
 	*x = SandboxListResponse{}
-	mi := &file_orchestrator_proto_msgTypes[21]
+	mi := &file_orchestrator_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1597,7 +1983,7 @@ func (x *SandboxListResponse) String() string {
 func (*SandboxListResponse) ProtoMessage() {}
 
 func (x *SandboxListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[21]
+	mi := &file_orchestrator_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1610,7 +1996,7 @@ func (x *SandboxListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxListResponse.ProtoReflect.Descriptor instead.
 func (*SandboxListResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{21}
+	return file_orchestrator_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SandboxListResponse) GetSandboxes() []*RunningSandbox {
@@ -1624,16 +2010,16 @@ var File_orchestrator_proto protoreflect.FileDescriptor
 
 const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb1\n" +
+	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd2\n" +
 	"\n" +
 	"\rSandboxConfig\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12%\n" +
 	"\x0ekernel_version\x18\x03 \x01(\tR\rkernelVersion\x12/\n" +
-	"\x13firecracker_version\x18\x04 \x01(\tR\x12firecrackerVersion\x12\x1d\n" +
+	"\x13firecracker_version\x18\x04 \x01(\tR\x12firecrackerVersion\x12!\n" +
 	"\n" +
-	"huge_pages\x18\x05 \x01(\bR\thugePages\x12\x1d\n" +
+	"huge_pages\x18\x05 \x01(\bB\x02\x18\x01R\thugePages\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x06 \x01(\tR\tsandboxId\x126\n" +
 	"\benv_vars\x18\a \x03(\v2\x1b.SandboxConfig.EnvVarsEntryR\aenvVars\x128\n" +
@@ -1642,7 +2028,8 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\fenvd_version\x18\n" +
 	" \x01(\tR\venvdVersion\x12\x12\n" +
 	"\x04vcpu\x18\v \x01(\x03R\x04vcpu\x12\x15\n" +
-	"\x06ram_mb\x18\f \x01(\x03R\x05ramMb\x12\x17\n" +
+	"\x06ram_mb\x18\f \x01(\x03R\x05ramMb\x12\x1b\n" +
+	"\tmax_vcpus\x18\x1c \x01(\x03R\bmaxVcpus\x12\x17\n" +
 	"\ateam_id\x18\r \x01(\tR\x06teamId\x12,\n" +
 	"\x12max_sandbox_length\x18\x0e \x01(\x03R\x10maxSandboxLength\x12+\n" +
 	"\x12total_disk_size_mb\x18\x0f \x01(\x03R\x0ftotalDiskSizeMb\x12\x1a\n" +
@@ -1707,7 +2094,7 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
 	"_transform\"F\n" +
 	"\x19SandboxNetworkDomainRules\x12)\n" +
-	"\x05rules\x18\x01 \x03(\v2\x13.SandboxNetworkRuleR\x05rules\"\xbb\x03\n" +
+	"\x05rules\x18\x01 \x03(\v2\x13.SandboxNetworkRuleR\x05rules\"\x9e\x04\n" +
 	"\x1aSandboxNetworkEgressConfig\x12#\n" +
 	"\rallowed_cidrs\x18\x01 \x03(\tR\fallowedCidrs\x12!\n" +
 	"\fdenied_cidrs\x18\x02 \x03(\tR\vdeniedCidrs\x12'\n" +
@@ -1715,11 +2102,18 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x05rules\x18\x04 \x03(\v2&.SandboxNetworkEgressConfig.RulesEntryR\x05rules\x120\n" +
 	"\x14egress_proxy_address\x18\x05 \x01(\tR\x12egressProxyAddress\x122\n" +
 	"\x15egress_proxy_username\x18\x06 \x01(\tR\x13egressProxyUsername\x122\n" +
-	"\x15egress_proxy_password\x18\a \x01(\tR\x13egressProxyPassword\x1aT\n" +
+	"\x15egress_proxy_password\x18\a \x01(\tR\x13egressProxyPassword\x12L\n" +
+	"\x10egress_proxy_tls\x18\b \x01(\v2\x1d.SandboxNetworkEgressProxyTLSH\x00R\x0eegressProxyTls\x88\x01\x01\x1aT\n" +
 	"\n" +
 	"RulesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.SandboxNetworkDomainRulesR\x05value:\x028\x01\"\xd5\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x1a.SandboxNetworkDomainRulesR\x05value:\x028\x01B\x13\n" +
+	"\x11_egress_proxy_tls\"r\n" +
+	"\x1cSandboxNetworkEgressProxyTLS\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
+	"\vserver_name\x18\x02 \x01(\tR\n" +
+	"serverName\x12\x17\n" +
+	"\aca_cert\x18\x03 \x01(\fR\x06caCert\"\xd5\x01\n" +
 	"\x1bSandboxNetworkIngressConfig\x125\n" +
 	"\x14traffic_access_token\x18\x01 \x01(\tH\x00R\x12trafficAccessToken\x88\x01\x01\x12/\n" +
 	"\x11mask_request_host\x18\x02 \x01(\tH\x01R\x0fmaskRequestHost\x88\x01\x01\x12\x1f\n" +
@@ -1733,12 +2127,20 @@ const file_orchestrator_proto_rawDesc = "" +
 	"start_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x125\n" +
 	"\bend_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\aendTime\x12,\n" +
 	"\x0ffilesystem_boot\x18\x04 \x01(\bH\x00R\x0efilesystemBoot\x88\x01\x01B\x12\n" +
-	"\x10_filesystem_boot\"\xf4\x01\n" +
+	"\x10_filesystem_boot\"\xd6\x02\n" +
 	"\x15SandboxCreateResponse\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12D\n" +
 	"\x13scheduling_metadata\x18\x02 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x126\n" +
 	"\x17filesystem_boot_applied\x18\x03 \x01(\bR\x15filesystemBootApplied\x12@\n" +
-	"\x1cresolved_firecracker_version\x18\x04 \x01(\tR\x1aresolvedFirecrackerVersion\"\xc3\x01\n" +
+	"\x1cresolved_firecracker_version\x18\x04 \x01(\tR\x1aresolvedFirecrackerVersion\x12J\n" +
+	"\x11network_placement\x18\x05 \x01(\v2\x18.SandboxNetworkPlacementH\x00R\x10networkPlacement\x88\x01\x01B\x14\n" +
+	"\x12_network_placement\"\xc8\x01\n" +
+	"\x17SandboxNetworkPlacement\x12!\n" +
+	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12!\n" +
+	"\fnetwork_mode\x18\x02 \x01(\tR\vnetworkMode\x12\x1b\n" +
+	"\trouter_id\x18\x03 \x01(\tR\brouterId\x12'\n" +
+	"\x0fingress_address\x18\x04 \x01(\tR\x0eingressAddress\x12!\n" +
+	"\fingress_port\x18\x05 \x01(\rR\vingressPort\"\xc3\x01\n" +
 	"\x14SandboxUpdateRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12:\n" +
@@ -1751,14 +2153,15 @@ const file_orchestrator_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12$\n" +
 	"\vkill_reason\x18\x02 \x01(\tH\x00R\n" +
 	"killReason\x88\x01\x01B\x0e\n" +
-	"\f_kill_reason\"\x99\x01\n" +
+	"\f_kill_reason\"\xef\x01\n" +
 	"\x13SandboxPauseRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
 	"\vtemplate_id\x18\x02 \x01(\tR\n" +
 	"templateId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12'\n" +
-	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\"\xb1\x03\n" +
+	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x126\n" +
+	"\x17allow_envd_unresponsive\x18\x06 \x01(\bR\x15allowEnvdUnresponsiveJ\x04\b\x05\x10\x06R\x16skip_envd_health_probe\"\xb1\x03\n" +
 	"\x12SchedulingMetadata\x121\n" +
 	"\x15memfile_base_build_id\x18\x01 \x01(\tR\x12memfileBaseBuildId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12*\n" +
@@ -1768,19 +2171,29 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x15rootfs_dropped_builds\x18\x06 \x01(\rR\x13rootfsDroppedBuilds\x12.\n" +
 	"\x13memfile_build_bytes\x18\a \x03(\x04R\x11memfileBuildBytes\x12,\n" +
 	"\x12rootfs_build_bytes\x18\b \x03(\x04R\x10rootfsBuildBytes\x12/\n" +
-	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\\\n" +
+	"\x14rootfs_base_build_id\x18\t \x01(\tR\x11rootfsBaseBuildId\"\xb2\x01\n" +
 	"\x14SandboxPauseResponse\x12D\n" +
-	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\"\xd6\x01\n" +
+	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x12+\n" +
+	"\x11envd_unresponsive\x18\x02 \x01(\bR\x10envdUnresponsive\x12'\n" +
+	"\x0ffilesystem_only\x18\x03 \x01(\bR\x0efilesystemOnly\"\xff\x01\n" +
 	"\x18SandboxCheckpointRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x19\n" +
 	"\bbuild_id\x18\x03 \x01(\tR\abuildId\x12C\n" +
-	"\bmetadata\x18\x04 \x03(\v2'.SandboxCheckpointRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x04 \x03(\v2'.SandboxCheckpointRequest.MetadataEntryR\bmetadata\x12'\n" +
+	"\x0ffilesystem_only\x18\x05 \x01(\bR\x0efilesystemOnly\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"a\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa7\x01\n" +
 	"\x19SandboxCheckpointResponse\x12D\n" +
-	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\"\xd1\x02\n" +
+	"\x13scheduling_metadata\x18\x01 \x01(\v2\x13.SchedulingMetadataR\x12schedulingMetadata\x128\n" +
+	"\anetwork\x18\x02 \x01(\v2\x19.SandboxCheckpointNetworkH\x00R\anetwork\x88\x01\x01B\n" +
+	"\n" +
+	"\b_network\"e\n" +
+	"\x18SandboxCheckpointNetwork\x12;\n" +
+	"\tplacement\x18\x01 \x01(\v2\x18.SandboxNetworkPlacementH\x00R\tplacement\x88\x01\x01B\f\n" +
+	"\n" +
+	"_placement\"\xb2\x03\n" +
 	"\x0eRunningSandbox\x12*\n" +
 	"\x06config\x18\x01 \x01(\v2\x0e.SandboxConfigB\x02\x18\x01R\x06config\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x129\n" +
@@ -1792,9 +2205,23 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\ateam_id\x18\x06 \x01(\tR\x06teamId\x12!\n" +
 	"\fexecution_id\x18\a \x01(\tR\vexecutionId\x12\x12\n" +
 	"\x04vcpu\x18\b \x01(\x03R\x04vcpu\x12\x15\n" +
-	"\x06ram_mb\x18\t \x01(\x03R\x05ramMb\"D\n" +
+	"\x06ram_mb\x18\t \x01(\x03R\x05ramMb\x12\x14\n" +
+	"\x05ended\x18\n" +
+	" \x01(\bR\x05ended\x12,\n" +
+	"\vguest_event\x18\v \x01(\x0e2\v.GuestEventR\n" +
+	"guestEvent\x12\x1b\n" +
+	"\tdisk_kept\x18\f \x01(\bR\bdiskKept\"D\n" +
 	"\x13SandboxListResponse\x12-\n" +
-	"\tsandboxes\x18\x01 \x03(\v2\x0f.RunningSandboxR\tsandboxes2\xec\x02\n" +
+	"\tsandboxes\x18\x01 \x03(\v2\x0f.RunningSandboxR\tsandboxes*\xdd\x01\n" +
+	"\n" +
+	"GuestEvent\x12\x1b\n" +
+	"\x17GUEST_EVENT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15GUEST_EVENT_POWER_OFF\x10\x01\x12\x1f\n" +
+	"\x1bGUEST_EVENT_REBOOT_OR_CRASH\x10\x02\x12 \n" +
+	"\x1cGUEST_EVENT_CRASH_NO_RESTART\x10\x03\x12\x17\n" +
+	"\x13GUEST_EVENT_FAILURE\x10\x04\x12\x17\n" +
+	"\x13GUEST_EVENT_UNKNOWN\x10\x05\x12\"\n" +
+	"\x1eGUEST_EVENT_CRASH_WITH_RESTART\x10\x062\xec\x02\n" +
 	"\x0eSandboxService\x127\n" +
 	"\x06Create\x12\x15.SandboxCreateRequest\x1a\x16.SandboxCreateResponse\x127\n" +
 	"\x06Update\x12\x15.SandboxUpdateRequest\x1a\x16.google.protobuf.Empty\x124\n" +
@@ -1802,7 +2229,7 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x06Delete\x12\x15.SandboxDeleteRequest\x1a\x16.google.protobuf.Empty\x124\n" +
 	"\x05Pause\x12\x14.SandboxPauseRequest\x1a\x15.SandboxPauseResponse\x12C\n" +
 	"\n" +
-	"Checkpoint\x12\x19.SandboxCheckpointRequest\x1a\x1a.SandboxCheckpointResponseB/Z-https://github.com/e2b-dev/infra/orchestratorb\x06proto3"
+	"Checkpoint\x12\x19.SandboxCheckpointRequest\x1a\x1a.SandboxCheckpointResponseB@Z>github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestratorb\x06proto3"
 
 var (
 	file_orchestrator_proto_rawDescOnce sync.Once
@@ -1816,85 +2243,95 @@ func file_orchestrator_proto_rawDescGZIP() []byte {
 	return file_orchestrator_proto_rawDescData
 }
 
-var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_orchestrator_proto_goTypes = []any{
-	(*SandboxConfig)(nil),               // 0: SandboxConfig
-	(*SandboxIam)(nil),                  // 1: SandboxIam
-	(*SandboxIamToken)(nil),             // 2: SandboxIamToken
-	(*SandboxAutoResumeConfig)(nil),     // 3: SandboxAutoResumeConfig
-	(*SandboxVolumeMount)(nil),          // 4: SandboxVolumeMount
-	(*SandboxNetworkConfig)(nil),        // 5: SandboxNetworkConfig
-	(*SandboxNetworkTransform)(nil),     // 6: SandboxNetworkTransform
-	(*SandboxNetworkRule)(nil),          // 7: SandboxNetworkRule
-	(*SandboxNetworkDomainRules)(nil),   // 8: SandboxNetworkDomainRules
-	(*SandboxNetworkEgressConfig)(nil),  // 9: SandboxNetworkEgressConfig
-	(*SandboxNetworkIngressConfig)(nil), // 10: SandboxNetworkIngressConfig
-	(*SandboxCreateRequest)(nil),        // 11: SandboxCreateRequest
-	(*SandboxCreateResponse)(nil),       // 12: SandboxCreateResponse
-	(*SandboxUpdateRequest)(nil),        // 13: SandboxUpdateRequest
-	(*SandboxDeleteRequest)(nil),        // 14: SandboxDeleteRequest
-	(*SandboxPauseRequest)(nil),         // 15: SandboxPauseRequest
-	(*SchedulingMetadata)(nil),          // 16: SchedulingMetadata
-	(*SandboxPauseResponse)(nil),        // 17: SandboxPauseResponse
-	(*SandboxCheckpointRequest)(nil),    // 18: SandboxCheckpointRequest
-	(*SandboxCheckpointResponse)(nil),   // 19: SandboxCheckpointResponse
-	(*RunningSandbox)(nil),              // 20: RunningSandbox
-	(*SandboxListResponse)(nil),         // 21: SandboxListResponse
-	nil,                                 // 22: SandboxConfig.EnvVarsEntry
-	nil,                                 // 23: SandboxConfig.MetadataEntry
-	nil,                                 // 24: SandboxIam.TokensEntry
-	nil,                                 // 25: SandboxNetworkTransform.HeadersEntry
-	nil,                                 // 26: SandboxNetworkEgressConfig.RulesEntry
-	nil,                                 // 27: SandboxCheckpointRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),       // 28: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),               // 29: google.protobuf.Empty
+	(GuestEvent)(0),                      // 0: GuestEvent
+	(*SandboxConfig)(nil),                // 1: SandboxConfig
+	(*SandboxIam)(nil),                   // 2: SandboxIam
+	(*SandboxIamToken)(nil),              // 3: SandboxIamToken
+	(*SandboxAutoResumeConfig)(nil),      // 4: SandboxAutoResumeConfig
+	(*SandboxVolumeMount)(nil),           // 5: SandboxVolumeMount
+	(*SandboxNetworkConfig)(nil),         // 6: SandboxNetworkConfig
+	(*SandboxNetworkTransform)(nil),      // 7: SandboxNetworkTransform
+	(*SandboxNetworkRule)(nil),           // 8: SandboxNetworkRule
+	(*SandboxNetworkDomainRules)(nil),    // 9: SandboxNetworkDomainRules
+	(*SandboxNetworkEgressConfig)(nil),   // 10: SandboxNetworkEgressConfig
+	(*SandboxNetworkEgressProxyTLS)(nil), // 11: SandboxNetworkEgressProxyTLS
+	(*SandboxNetworkIngressConfig)(nil),  // 12: SandboxNetworkIngressConfig
+	(*SandboxCreateRequest)(nil),         // 13: SandboxCreateRequest
+	(*SandboxCreateResponse)(nil),        // 14: SandboxCreateResponse
+	(*SandboxNetworkPlacement)(nil),      // 15: SandboxNetworkPlacement
+	(*SandboxUpdateRequest)(nil),         // 16: SandboxUpdateRequest
+	(*SandboxDeleteRequest)(nil),         // 17: SandboxDeleteRequest
+	(*SandboxPauseRequest)(nil),          // 18: SandboxPauseRequest
+	(*SchedulingMetadata)(nil),           // 19: SchedulingMetadata
+	(*SandboxPauseResponse)(nil),         // 20: SandboxPauseResponse
+	(*SandboxCheckpointRequest)(nil),     // 21: SandboxCheckpointRequest
+	(*SandboxCheckpointResponse)(nil),    // 22: SandboxCheckpointResponse
+	(*SandboxCheckpointNetwork)(nil),     // 23: SandboxCheckpointNetwork
+	(*RunningSandbox)(nil),               // 24: RunningSandbox
+	(*SandboxListResponse)(nil),          // 25: SandboxListResponse
+	nil,                                  // 26: SandboxConfig.EnvVarsEntry
+	nil,                                  // 27: SandboxConfig.MetadataEntry
+	nil,                                  // 28: SandboxIam.TokensEntry
+	nil,                                  // 29: SandboxNetworkTransform.HeadersEntry
+	nil,                                  // 30: SandboxNetworkEgressConfig.RulesEntry
+	nil,                                  // 31: SandboxCheckpointRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),        // 32: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                // 33: google.protobuf.Empty
 }
 var file_orchestrator_proto_depIdxs = []int32{
-	22, // 0: SandboxConfig.env_vars:type_name -> SandboxConfig.EnvVarsEntry
-	23, // 1: SandboxConfig.metadata:type_name -> SandboxConfig.MetadataEntry
-	5,  // 2: SandboxConfig.network:type_name -> SandboxNetworkConfig
-	4,  // 3: SandboxConfig.volumeMounts:type_name -> SandboxVolumeMount
-	3,  // 4: SandboxConfig.auto_resume:type_name -> SandboxAutoResumeConfig
-	1,  // 5: SandboxConfig.iam:type_name -> SandboxIam
-	24, // 6: SandboxIam.tokens:type_name -> SandboxIam.TokensEntry
-	9,  // 7: SandboxNetworkConfig.egress:type_name -> SandboxNetworkEgressConfig
-	10, // 8: SandboxNetworkConfig.ingress:type_name -> SandboxNetworkIngressConfig
-	25, // 9: SandboxNetworkTransform.headers:type_name -> SandboxNetworkTransform.HeadersEntry
-	6,  // 10: SandboxNetworkRule.transform:type_name -> SandboxNetworkTransform
-	7,  // 11: SandboxNetworkDomainRules.rules:type_name -> SandboxNetworkRule
-	26, // 12: SandboxNetworkEgressConfig.rules:type_name -> SandboxNetworkEgressConfig.RulesEntry
-	0,  // 13: SandboxCreateRequest.sandbox:type_name -> SandboxConfig
-	28, // 14: SandboxCreateRequest.start_time:type_name -> google.protobuf.Timestamp
-	28, // 15: SandboxCreateRequest.end_time:type_name -> google.protobuf.Timestamp
-	16, // 16: SandboxCreateResponse.scheduling_metadata:type_name -> SchedulingMetadata
-	28, // 17: SandboxUpdateRequest.end_time:type_name -> google.protobuf.Timestamp
-	9,  // 18: SandboxUpdateRequest.egress:type_name -> SandboxNetworkEgressConfig
-	16, // 19: SandboxPauseResponse.scheduling_metadata:type_name -> SchedulingMetadata
-	27, // 20: SandboxCheckpointRequest.metadata:type_name -> SandboxCheckpointRequest.MetadataEntry
-	16, // 21: SandboxCheckpointResponse.scheduling_metadata:type_name -> SchedulingMetadata
-	0,  // 22: RunningSandbox.config:type_name -> SandboxConfig
-	28, // 23: RunningSandbox.start_time:type_name -> google.protobuf.Timestamp
-	28, // 24: RunningSandbox.end_time:type_name -> google.protobuf.Timestamp
-	20, // 25: SandboxListResponse.sandboxes:type_name -> RunningSandbox
-	2,  // 26: SandboxIam.TokensEntry.value:type_name -> SandboxIamToken
-	8,  // 27: SandboxNetworkEgressConfig.RulesEntry.value:type_name -> SandboxNetworkDomainRules
-	11, // 28: SandboxService.Create:input_type -> SandboxCreateRequest
-	13, // 29: SandboxService.Update:input_type -> SandboxUpdateRequest
-	29, // 30: SandboxService.List:input_type -> google.protobuf.Empty
-	14, // 31: SandboxService.Delete:input_type -> SandboxDeleteRequest
-	15, // 32: SandboxService.Pause:input_type -> SandboxPauseRequest
-	18, // 33: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
-	12, // 34: SandboxService.Create:output_type -> SandboxCreateResponse
-	29, // 35: SandboxService.Update:output_type -> google.protobuf.Empty
-	21, // 36: SandboxService.List:output_type -> SandboxListResponse
-	29, // 37: SandboxService.Delete:output_type -> google.protobuf.Empty
-	17, // 38: SandboxService.Pause:output_type -> SandboxPauseResponse
-	19, // 39: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
-	34, // [34:40] is the sub-list for method output_type
-	28, // [28:34] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	26, // 0: SandboxConfig.env_vars:type_name -> SandboxConfig.EnvVarsEntry
+	27, // 1: SandboxConfig.metadata:type_name -> SandboxConfig.MetadataEntry
+	6,  // 2: SandboxConfig.network:type_name -> SandboxNetworkConfig
+	5,  // 3: SandboxConfig.volumeMounts:type_name -> SandboxVolumeMount
+	4,  // 4: SandboxConfig.auto_resume:type_name -> SandboxAutoResumeConfig
+	2,  // 5: SandboxConfig.iam:type_name -> SandboxIam
+	28, // 6: SandboxIam.tokens:type_name -> SandboxIam.TokensEntry
+	10, // 7: SandboxNetworkConfig.egress:type_name -> SandboxNetworkEgressConfig
+	12, // 8: SandboxNetworkConfig.ingress:type_name -> SandboxNetworkIngressConfig
+	29, // 9: SandboxNetworkTransform.headers:type_name -> SandboxNetworkTransform.HeadersEntry
+	7,  // 10: SandboxNetworkRule.transform:type_name -> SandboxNetworkTransform
+	8,  // 11: SandboxNetworkDomainRules.rules:type_name -> SandboxNetworkRule
+	30, // 12: SandboxNetworkEgressConfig.rules:type_name -> SandboxNetworkEgressConfig.RulesEntry
+	11, // 13: SandboxNetworkEgressConfig.egress_proxy_tls:type_name -> SandboxNetworkEgressProxyTLS
+	1,  // 14: SandboxCreateRequest.sandbox:type_name -> SandboxConfig
+	32, // 15: SandboxCreateRequest.start_time:type_name -> google.protobuf.Timestamp
+	32, // 16: SandboxCreateRequest.end_time:type_name -> google.protobuf.Timestamp
+	19, // 17: SandboxCreateResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	15, // 18: SandboxCreateResponse.network_placement:type_name -> SandboxNetworkPlacement
+	32, // 19: SandboxUpdateRequest.end_time:type_name -> google.protobuf.Timestamp
+	10, // 20: SandboxUpdateRequest.egress:type_name -> SandboxNetworkEgressConfig
+	19, // 21: SandboxPauseResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	31, // 22: SandboxCheckpointRequest.metadata:type_name -> SandboxCheckpointRequest.MetadataEntry
+	19, // 23: SandboxCheckpointResponse.scheduling_metadata:type_name -> SchedulingMetadata
+	23, // 24: SandboxCheckpointResponse.network:type_name -> SandboxCheckpointNetwork
+	15, // 25: SandboxCheckpointNetwork.placement:type_name -> SandboxNetworkPlacement
+	1,  // 26: RunningSandbox.config:type_name -> SandboxConfig
+	32, // 27: RunningSandbox.start_time:type_name -> google.protobuf.Timestamp
+	32, // 28: RunningSandbox.end_time:type_name -> google.protobuf.Timestamp
+	0,  // 29: RunningSandbox.guest_event:type_name -> GuestEvent
+	24, // 30: SandboxListResponse.sandboxes:type_name -> RunningSandbox
+	3,  // 31: SandboxIam.TokensEntry.value:type_name -> SandboxIamToken
+	9,  // 32: SandboxNetworkEgressConfig.RulesEntry.value:type_name -> SandboxNetworkDomainRules
+	13, // 33: SandboxService.Create:input_type -> SandboxCreateRequest
+	16, // 34: SandboxService.Update:input_type -> SandboxUpdateRequest
+	33, // 35: SandboxService.List:input_type -> google.protobuf.Empty
+	17, // 36: SandboxService.Delete:input_type -> SandboxDeleteRequest
+	18, // 37: SandboxService.Pause:input_type -> SandboxPauseRequest
+	21, // 38: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
+	14, // 39: SandboxService.Create:output_type -> SandboxCreateResponse
+	33, // 40: SandboxService.Update:output_type -> google.protobuf.Empty
+	25, // 41: SandboxService.List:output_type -> SandboxListResponse
+	33, // 42: SandboxService.Delete:output_type -> google.protobuf.Empty
+	20, // 43: SandboxService.Pause:output_type -> SandboxPauseResponse
+	22, // 44: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
+	39, // [39:45] is the sub-list for method output_type
+	33, // [33:39] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_orchestrator_proto_init() }
@@ -1905,22 +2342,27 @@ func file_orchestrator_proto_init() {
 	file_orchestrator_proto_msgTypes[0].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[5].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[7].OneofWrappers = []any{}
-	file_orchestrator_proto_msgTypes[10].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[9].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[11].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[12].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[13].OneofWrappers = []any{}
-	file_orchestrator_proto_msgTypes[14].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[15].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[16].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[21].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[22].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   28,
+			NumEnums:      1,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_orchestrator_proto_goTypes,
 		DependencyIndexes: file_orchestrator_proto_depIdxs,
+		EnumInfos:         file_orchestrator_proto_enumTypes,
 		MessageInfos:      file_orchestrator_proto_msgTypes,
 	}.Build()
 	File_orchestrator_proto = out.File

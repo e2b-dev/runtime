@@ -16,12 +16,12 @@ import (
 )
 
 // MaxConcurrentSandboxes gates parallel sandbox creation in tests. The
-// integration test team is granted extra capacity in seed.go (base tier 20 +
-// addon 200 = 220), so this can stay well below that ceiling.
+// integration test team is granted extra capacity in seed.go (default 20 +
+// 200 = 220), so this can stay well below that ceiling.
 const MaxConcurrentSandboxes = 100
 
 // sandboxSemaphore gates sandbox creation so parallel tests don't exceed the
-// tier's concurrent instance limit. A slot is acquired before creation and
+// team's concurrent sandbox limit. A slot is acquired before creation and
 // released after teardown in t.Cleanup.
 var sandboxSemaphore = make(chan struct{}, MaxConcurrentSandboxes)
 
@@ -49,7 +49,6 @@ type SandboxConfig struct {
 	autoResume          *api.SandboxAutoResumeConfig
 	network             *api.SandboxNetworkConfig
 	allowInternetAccess *bool
-	secure              *bool
 }
 
 type SandboxOption func(config *SandboxConfig)
@@ -89,12 +88,6 @@ func WithAutoPauseMemory(memory bool) SandboxOption {
 func WithAutoResume(enabled bool) SandboxOption {
 	return func(config *SandboxConfig) {
 		config.autoResume = &api.SandboxAutoResumeConfig{Enabled: enabled}
-	}
-}
-
-func WithSecure(secure bool) SandboxOption {
-	return func(config *SandboxConfig) {
-		config.secure = &secure
 	}
 }
 
@@ -154,7 +147,6 @@ func SetupSandboxWithCleanup(t *testing.T, c *api.ClientWithResponses, options .
 			AutoResume:          config.autoResume,
 			Network:             config.network,
 			AllowInternetAccess: config.allowInternetAccess,
-			Secure:              config.secure,
 		}, setup.WithAPIKey())
 		require.NoError(t, err)
 

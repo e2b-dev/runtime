@@ -40,7 +40,19 @@ Project and workspace UUIDs are normally UUIDv4 and use `typeid.Random`.
 Secret UUIDs are UUIDv7 and use `typeid.Sortable`. SumUp renders Random IDs in
 uppercase, so the E2B wrapper normalizes them to the lowercase public contract.
 
-## Adding a resource ID
+## Team IDs
+
+Teams are projects: a team UUID is also its project UUID.
+`ConvertTeamIDToProjectID` renders a team UUID as its public `prj_` ID, and
+`ParseTeamID` accepts either spelling wherever an API takes a team ID.
+
+## Adding or changing a resource ID
+
+Keep this package and [`apiid`](../apiid/README.md) in sync in the same PR.
+Adding a resource kind here requires its matching API input type in `apiid`;
+adding a type in `apiid` requires a matching codec here. Changes to an existing
+kind's prefix, encoding, or validation must also update the affected API type
+and tests. Encoding rules belong here; `apiid` must reuse them, not duplicate them.
 
 To add another public resource ID:
 
@@ -53,6 +65,11 @@ To add another public resource ID:
 5. Keep UUID generation in the resource-owning application or database.
 6. Test the exact prefix, lowercase output, fixed length, invalid-prefix
    rejection, and UUID round trip.
+7. Add the matching `apiid` struct with `UUID` and `PublicID`, its constructor,
+   and its text, JSON, generated-query, and Gin binding methods.
+8. Test that UUID and public inputs produce identical API structs, wrong kinds
+   are rejected, and encoding agrees with this package's codec. Update both
+   READMEs and regenerate affected API contracts and clients.
 
 Do not add JSON, text, SQL, or UUID-generation behavior implicitly. Those
 interfaces should be introduced only when a concrete caller needs them.

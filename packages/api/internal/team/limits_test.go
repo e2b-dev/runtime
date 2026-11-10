@@ -170,3 +170,42 @@ func TestLimitResources(t *testing.T) {
 		}
 	})
 }
+
+func TestLimitMaxCPU(t *testing.T) {
+	t.Parallel()
+
+	limits := &types.TeamLimits{MaxVcpu: 8, MaxRamMb: 8192}
+	tests := []struct {
+		name     string
+		cpuCount int64
+		max      int32
+		want     int64
+		msg      string
+	}{
+		{name: "equal to cpu count", cpuCount: 2, max: 2, want: 2},
+		{name: "one", cpuCount: 1, max: 1, want: 1},
+		{name: "team cap", cpuCount: 2, max: 8, want: 8},
+		{name: "below minimum", cpuCount: 1, max: 0, msg: "Max CPU count must be at least 1"},
+		{name: "above firecracker max", cpuCount: 2, max: 34, msg: "Max CPU count must be at most 32"},
+		{name: "odd", cpuCount: 2, max: 3, msg: "Max CPU count must be 1 or an even number"},
+		{name: "above team limit", cpuCount: 2, max: 16, msg: "Max CPU count can't be higher than 8 (if you need to increase this limit, please contact support)"},
+		{name: "below cpu count", cpuCount: 4, max: 2, msg: "Max CPU count must be at least the CPU count (4)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, apiErr := LimitMaxCPU(limits, tt.cpuCount, tt.max)
+			if tt.msg == "" {
+				require.Nil(t, apiErr)
+				assert.Equal(t, tt.want, got)
+
+				return
+			}
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+			assert.Equal(t, tt.msg, apiErr.ClientMsg)
+			assert.Error(t, apiErr.Err)
+		})
+	}
+}

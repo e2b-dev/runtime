@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	templatemocks "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template/mocks"
@@ -24,9 +25,10 @@ func TestMetadataSource_Stream(t *testing.T) {
 	}, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MetadataName)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MetadataName)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}
@@ -47,9 +49,10 @@ func TestMetadataSource_Stream_ChunksOversizedMetadata(t *testing.T) {
 	tmplMock.EXPECT().Metadata().Return(oversizedMetadata(), nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MetadataName)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MetadataName)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}

@@ -200,3 +200,58 @@ func TestParseInstanceGroupName(t *testing.T) {
 		assert.Equal(t, "orch-client-pool-region-rig", config.InstanceGroupName)
 	})
 }
+
+func TestParseTLS(t *testing.T) {
+	t.Setenv("E2B_TLS_GRPC_MODE", "permissive")
+	t.Setenv("E2B_TLS_GRPC_HEALTH_PATHS", "/health")
+	t.Setenv("E2B_TLS_PEERS_CLIENT_MODE", "on")
+	t.Setenv("E2B_TLS_PEERS_EXPECT", "spiffe://td.example.internal/ns/nodes/sa/node")
+	t.Setenv("E2B_TLS_PEERS_SERVER_NAME", "node.td.example.internal")
+
+	config, err := Parse()
+	require.NoError(t, err)
+	assert.Equal(t, "permissive", config.TLS.GRPC.Mode)
+	assert.Equal(t, []string{"/health"}, config.TLS.GRPC.HealthPaths)
+	assert.Equal(t, "on", config.TLS.Peers.Mode)
+	assert.Equal(t, []string{"spiffe://td.example.internal/ns/nodes/sa/node"}, config.TLS.Peers.Expect)
+	assert.Equal(t, "node.td.example.internal", config.TLS.Peers.ServerName)
+}
+
+func TestFirecrackerLogLevel(t *testing.T) {
+	t.Run("a level is canonicalised", func(t *testing.T) {
+		t.Setenv("FIRECRACKER_LOG_LEVEL", "debug")
+
+		config, err := ParseBuilder()
+		require.NoError(t, err)
+		assert.Equal(t, "Debug", config.FirecrackerLogLevel)
+	})
+
+	t.Run("an unknown level is dropped", func(t *testing.T) {
+		t.Setenv("FIRECRACKER_LOG_LEVEL", "Verbose; touch /tmp/x")
+
+		config, err := ParseBuilder()
+		require.NoError(t, err)
+		assert.Empty(t, config.FirecrackerLogLevel)
+	})
+
+	t.Run("unset stays unset", func(t *testing.T) {
+		config, err := ParseBuilder()
+		require.NoError(t, err)
+		assert.Empty(t, config.FirecrackerLogLevel)
+	})
+}
+
+func TestNormalizeFirecrackerLogLevel(t *testing.T) {
+	for in, want := range map[string]string{"": "", "off": "Off", "ERROR": "Error", "warning": "Warning", "warn": "Warning", "WARN": "Warning", "info": "Info", "Trace": "Trace"} {
+		got, ok := normalizeFirecrackerLogLevel(in)
+		assert.True(t, ok, in)
+		assert.Equal(t, want, got, in)
+	}
+	got, ok := normalizeFirecrackerLogLevel(" Warning ")
+	assert.True(t, ok)
+	assert.Equal(t, "Warning", got, "surrounding whitespace is trimmed")
+	for _, in := range []string{"verbose", "Debug --no-seccomp", "Info;", "D"} {
+		_, ok := normalizeFirecrackerLogLevel(in)
+		assert.False(t, ok, in)
+	}
+}

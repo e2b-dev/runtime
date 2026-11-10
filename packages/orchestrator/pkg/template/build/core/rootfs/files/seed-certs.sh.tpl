@@ -12,9 +12,10 @@
 
 # The copies DEREFERENCE symlinks (-L; the build-time tar already packs with
 # -h): some images ship the /etc/ssl/certs bundle as symlinks into a read-only
-# store, and envd's egress-proxy CA install APPENDS to
-# /etc/ssl/certs/ca-certificates.crt — that only works if the tmpfs copy is a
-# real file, not a copied symlink to an immutable target.
+# store, and envd's egress-proxy CA install rewrites
+# /etc/ssl/certs/ca-certificates.crt by reading it and renaming a new copy over
+# it — the tmpfs copy must be the real bundle, not a copied symlink whose
+# target can be immutable or missing.
 if ! mountpoint -q /etc/ssl/certs; then
     mkdir -p /run/e2b/certs
     if [ -f /usr/local/share/e2b/ssl-certs.tar ]; then

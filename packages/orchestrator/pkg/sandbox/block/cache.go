@@ -14,17 +14,20 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/edsrzf/mmap-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 const (
@@ -59,13 +62,26 @@ type Cache struct {
 	closed    atomic.Bool
 }
 
-func NewCache(size, blockSize int64, filePath string, dirtyFile bool) (*Cache, error) {
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o644)
+func NewCache(size, blockSize int64, filePath string, dirtyFile bool) (_ *Cache, retErr error) {
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		// Existing paths may hold a completed diff. Ownership transfers only
+		// on success, so a failed constructor must leave them to their caller.
+		f, err = os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o644)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %w", err)
 	}
 
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+		if retErr != nil && created {
+			if err := os.Remove(filePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				retErr = errors.Join(retErr, fmt.Errorf("remove failed cache file: %w", err))
+			}
+		}
+	}()
 
 	if size == 0 {
 		return &Cache{
@@ -411,6 +427,51 @@ func (c *Cache) Dedup(
 	}, nil
 }
 
+// DedupOrRaw is Dedup that keeps c and returns nil metadata on a dedup error:
+// c already holds every dirty block. A memory fault inside c's mapping still
+// fails, since c may be unreadable, and so does a pause whose ctx is done.
+func (c *Cache) DedupOrRaw(
+	ctx context.Context,
+	base ReadonlyDevice,
+	dirty *roaring.Bitmap,
+	blockSize int64,
+	outPath string,
+	bestEffort bool,
+	directIO bool,
+	budget DedupBudget,
+) (*Cache, *header.DiffMetadata, error) {
+	deduped, meta, err := c.Dedup(ctx, base, dirty, blockSize, outPath, bestEffort, directIO, budget)
+	if err == nil || !c.keepRawOnDedupError(ctx, err) {
+		return deduped, meta, err
+	}
+	logger.L().Warn(ctx, "memfile dedup failed, keeping the raw diff", zap.Error(err), zap.String("cache_path", c.filePath))
+
+	return c, nil, nil
+}
+
+// keepRawOnDedupError reports whether c can stand as the diff after the dedup
+// failed with err. A parent fetch can time out on its own detached deadline, so
+// the pause's ctx decides, not the error. A fault reading the parent leaves c
+// whole; one in c's mapping, or at an unknown address, may not.
+func (c *Cache) keepRawOnDedupError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	fault, ok := errors.AsType[*MemoryFaultError](err)
+
+	return !ok || (fault.Addr != 0 && !c.maps(fault.Addr))
+}
+
+// maps reports whether addr is inside c's memory mapping.
+func (c *Cache) maps(addr uintptr) bool {
+	if c.mmap == nil || len(*c.mmap) == 0 {
+		return false
+	}
+	start := uintptr(unsafe.Pointer(unsafe.SliceData(*c.mmap)))
+
+	return addr >= start && addr < start+uintptr(len(*c.mmap))
+}
+
 func (c *Cache) ReadAt(b []byte, off int64) (int, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -443,31 +504,38 @@ func (c *Cache) WriteAt(b []byte, off int64) (int, error) {
 		return 0, NewErrCacheClosed(c.filePath)
 	}
 
-	return c.WriteAtWithoutLock(b, off)
+	return c.writeAt(b, off, punchZeroRun)
 }
 
+// Close records each step it takes: unmap only when there is a mapping, and
+// the file removal on every path, size-zero caches included.
 func (c *Cache) Close() (e error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.mmap == nil {
-		return os.RemoveAll(c.filePath)
+	if c.mmap != nil {
+		succ := c.closed.CompareAndSwap(false, true)
+		if !succ {
+			return NewErrCacheClosed(c.filePath)
+		}
+
+		start := time.Now()
+		err := c.mmap.Unmap()
+		recordClose(start, closeUnmap, err)
+		if err != nil {
+			e = fmt.Errorf("error unmapping mmap: %w", err)
+		}
 	}
 
-	succ := c.closed.CompareAndSwap(false, true)
-	if !succ {
-		return NewErrCacheClosed(c.filePath)
+	// TODO: Move to the scope of the caller
+	start := time.Now()
+	err := os.RemoveAll(c.filePath)
+	recordClose(start, closeRemove, err)
+	if e == nil {
+		return err
 	}
 
-	err := c.mmap.Unmap()
-	if err != nil {
-		e = errors.Join(e, fmt.Errorf("error unmapping mmap: %w", err))
-	}
-
-	// TODO: Move to to the scope of the caller
-	e = errors.Join(e, os.RemoveAll(c.filePath))
-
-	return e
+	return errors.Join(e, err)
 }
 
 func (c *Cache) Size() (int64, error) {
@@ -533,19 +601,115 @@ func (c *Cache) setIsCached(off, length int64) {
 	c.tracker.SetRange(start, end, Dirty)
 }
 
-// punchHole frees backing pages; clear() fallback if MADV_REMOVE is unsupported.
-func (c *Cache) punchHole(off, length int64) {
-	if err := unix.Madvise((*c.mmap)[off:off+length], unix.MADV_REMOVE); err != nil {
-		clear((*c.mmap)[off : off+length])
+var (
+	punchDuration = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.OrchestratorBlockCachePunchDuration))
+	punchBytes    = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorBlockCachePunchBytes))
+
+	punchZeroRun       = newPunchSource("zero_run")
+	punchZeroesRequest = newPunchSource("zeroes_request")
+	punchFold          = newPunchSource("fold")
+	punchExport        = newPunchSource("export")
+	punchGrow          = newPunchSource("grow")
+
+	closeDuration = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.OrchestratorBlockCacheCloseDuration))
+	closeUnmap    = newCloseOp("unmap")
+	closeRemove   = newCloseOp("remove")
+
+	punchesInFlight atomic.Int64
+	_               = utils.Must(telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorBlockCachePunchInflight, observePunchesInFlight))
+
+	// punchOps are the punch's clock, MADV_REMOVE and zeroing fallback,
+	// variables so tests can time and refuse a punch deterministically.
+	punchOps = struct {
+		now    func() time.Time
+		remove func(b []byte) error
+		zero   func(b []byte)
+	}{
+		now:    time.Now,
+		remove: func(b []byte) error { return unix.Madvise(b, unix.MADV_REMOVE) },
+		zero:   func(b []byte) { clear(b) },
 	}
+)
+
+func observePunchesInFlight(_ context.Context, observer metric.Int64Observer) error {
+	observer.Observe(punchesInFlight.Load())
+
+	return nil
+}
+
+// punchSource is the source label of a punch, with the option slices for
+// each result built once so recording a punch allocates nothing.
+type punchSource struct {
+	removed, zeroed punchOptions
+}
+
+type punchOptions struct {
+	record []metric.RecordOption
+	add    []metric.AddOption
+}
+
+func newPunchSource(name string) punchSource {
+	return punchSource{removed: newPunchOptions(name, "removed"), zeroed: newPunchOptions(name, "zeroed")}
+}
+
+func newPunchOptions(source, result string) punchOptions {
+	opt := metric.WithAttributeSet(attribute.NewSet(attribute.String("source", source), attribute.String("result", result)))
+
+	return punchOptions{record: []metric.RecordOption{opt}, add: []metric.AddOption{opt}}
+}
+
+// punchHole frees backing pages. When MADV_REMOVE refuses the range it zeroes
+// the range instead, which is the slowest punch there is, so that is recorded
+// too (result=zeroed) and stays in flight until the zeroing ends. The
+// decrement is deferred because the zeroing can fault like a write, and
+// RunFaultSafe callers recover from that.
+func (c *Cache) punchHole(off, length int64, source punchSource) {
+	punchesInFlight.Add(1)
+	defer punchesInFlight.Add(-1)
+	start := punchOps.now()
+	opts := source.removed
+	if err := punchOps.remove((*c.mmap)[off : off+length]); err != nil {
+		punchOps.zero((*c.mmap)[off : off+length])
+		opts = source.zeroed
+	}
+	recordPunch(punchOps.now().Sub(start), length, opts)
+}
+
+//nolint:contextcheck // metric recording only; Close has no caller context to pass
+func recordClose(start time.Time, op closeOp, err error) {
+	opts := op.ok
+	if err != nil {
+		opts = op.failed
+	}
+	closeDuration.Record(context.Background(), float64(time.Since(start))/float64(time.Millisecond), opts...)
+}
+
+// closeOp holds one close step's attribute sets, built once, for both results.
+type closeOp struct {
+	ok, failed []metric.RecordOption
+}
+
+func newCloseOp(name string) closeOp {
+	opts := func(result string) []metric.RecordOption {
+		return []metric.RecordOption{metric.WithAttributeSet(attribute.NewSet(attribute.String("op", name), attribute.String("result", result)))}
+	}
+
+	return closeOp{ok: opts("ok"), failed: opts("error")}
+}
+
+//nolint:contextcheck // metric recording only; the punch path has no caller context to pass
+func recordPunch(elapsed time.Duration, length int64, opts punchOptions) {
+	ctx := context.Background()
+	punchDuration.Record(ctx, float64(elapsed)/float64(time.Millisecond), opts.record...)
+	punchBytes.Add(ctx, length, opts.add...)
 }
 
 // WriteAtShared is WriteAt under the read (shared) lock: callers that
 // already guarantee exactly one writer per block — the CoW window's claim
 // map — proceed in parallel with each other, while Close, which takes the
 // write lock before unmapping, is structurally excluded. The exclusion is
-// load-bearing: Close unmaps without nil'ing c.mmap, so WriteAtWithoutLock's
-// guards cannot detect a closed cache, and a write racing the unmap is a
+// load-bearing: Close unmaps without nil'ing c.mmap, so writeAt's guards
+// cannot detect a closed cache, and a write racing the unmap is a
 // SIGBUS that kills the whole process, not a failed write.
 func (c *Cache) WriteAtShared(b []byte, off int64) (int, error) {
 	c.mu.RLock()
@@ -559,16 +723,15 @@ func (c *Cache) WriteAtShared(b []byte, off int64) (int, error) {
 		return 0, NewErrCacheClosed(c.filePath)
 	}
 
-	return c.WriteAtWithoutLock(b, off)
+	return c.writeAt(b, off, punchExport)
 }
 
-// When using WriteAtWithoutLock you must ensure thread safety, ideally by only
-// writing to the same block once and then exposing the slice. The caller must
-// also exclude a concurrent Close for the write's whole duration (hold c.mu in
-// some mode, as WriteAt/WriteAtShared do): Close unmaps without nil'ing
-// c.mmap, so the guards below cannot detect it, and a write landing after the
-// unmap is a process-fatal SIGBUS.
-func (c *Cache) WriteAtWithoutLock(b []byte, off int64) (int, error) {
+// writeAt does not lock. The caller must hold c.mu in some mode for the
+// write's whole duration, as WriteAt and WriteAtShared do: Close unmaps
+// without nil'ing c.mmap, so the guards below cannot detect it, and a write
+// landing after the unmap is a process-fatal SIGBUS. Under the shared lock
+// the caller must also write each block only once.
+func (c *Cache) writeAt(b []byte, off int64, zeroRunSource punchSource) (int, error) {
 	if c.isClosed() {
 		return 0, NewErrCacheClosed(c.filePath)
 	}
@@ -592,7 +755,7 @@ func (c *Cache) WriteAtWithoutLock(b []byte, off int64) (int, error) {
 		startIdx := uint32(header.BlockIdx(runStart, c.blockSize))
 		endIdx := uint32(header.BlockCeilIdx(runEnd, c.blockSize))
 		if runZero {
-			c.punchHole(runStart, runEnd-runStart)
+			c.punchHole(runStart, runEnd-runStart, zeroRunSource)
 			c.tracker.SetRange(startIdx, endIdx, Zero)
 		} else {
 			copy((*c.mmap)[runStart:runEnd], b[runStart-off:runEnd-off])
@@ -619,6 +782,18 @@ func (c *Cache) WriteAtWithoutLock(b []byte, off int64) (int, error) {
 // WriteZeroesAt punches the range and marks all touched blocks Zero.
 // Caller must pass a block-aligned offset/length (NBD invariant).
 func (c *Cache) WriteZeroesAt(off, length int64) (int, error) {
+	return c.writeZeroesAt(off, length, punchZeroesRequest)
+}
+
+// ZeroGrownTail is WriteZeroesAt for the tail a template build grows a disk
+// by; only the punch's source label differs, so that one whole-tail punch
+// doesn't land among guest discards. The filesystem tools the build then runs
+// over the overlay still punch as zero_run and zeroes_request.
+func (c *Cache) ZeroGrownTail(off, length int64) (int, error) {
+	return c.writeZeroesAt(off, length, punchGrow)
+}
+
+func (c *Cache) writeZeroesAt(off, length int64, source punchSource) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -635,7 +810,7 @@ func (c *Cache) WriteZeroesAt(off, length int64) (int, error) {
 		return 0, nil
 	}
 
-	c.punchHole(off, end-off)
+	c.punchHole(off, end-off, source)
 	c.tracker.SetRange(
 		uint32(header.BlockIdx(off, c.blockSize)),
 		uint32(header.BlockCeilIdx(end, c.blockSize)),
@@ -664,7 +839,7 @@ func (c *Cache) writeAtIfAbsent(b []byte, off int64) error {
 		return nil
 	}
 
-	_, err := c.WriteAtWithoutLock(b, off)
+	_, err := c.writeAt(b, off, punchFold)
 
 	return err
 }

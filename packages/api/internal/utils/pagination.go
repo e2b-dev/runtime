@@ -159,6 +159,19 @@ func (p *Pagination[T]) ProcessResultsWithHeader(c *gin.Context, results []T, ge
 	return trimmed
 }
 
+// ProcessResultsWithHeaderContinuing is ProcessResultsWithHeader for results whose source
+// stopped early at continueAfter: when they do not fill the page, the next token still
+// continues after that position, so the short page does not end pagination.
+func (p *Pagination[T]) ProcessResultsWithHeaderContinuing(c *gin.Context, results []T, getTimestampAndID func(T) (time.Time, string), continueAfter *Cursor) []T {
+	trimmed := p.processResults(results, getTimestampAndID)
+	if p.nextToken == nil && continueAfter != nil {
+		p.setNextToken(continueAfter.Time, continueAfter.ID)
+	}
+	p.setHeader(c)
+
+	return trimmed
+}
+
 // setHeader sets the X-Next-Token header if there are more results
 func (p *Pagination[T]) setHeader(c *gin.Context) {
 	if p.nextToken != nil {

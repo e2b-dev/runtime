@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 870" width="960" height="870" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1062 870" width="1062" height="870" role="img" aria-labelledby="title desc">
   <title id="title">E2B Embed layer map</title>
-  <desc id="desc">Four bands, top to bottom: source files in the repo, the Dockerfiles that copy them, the eleven images (three built here, eight pulled), and the eighteen compose services with the depends_on gates drawn (the seed → base-template and preflight → api-secrets gates are omitted for space). The stripe on each service names its image.</desc>
+  <desc id="desc">Four bands, top to bottom: source files in the repo, the Dockerfiles that copy them, the twelve images (three built here, nine pulled), and the nineteen compose services with the depends_on gates drawn (the seed → base-template, preflight → api-secrets and dashboard → ready gates are omitted for space). The stripe on each service names its image.</desc>
   <style>
     svg {
       --bg: #F7F8FA; --surface: #FFFFFF; --ink: #151A21; --mid: #5B6470; --rule: #C9CED6;
@@ -44,7 +44,7 @@
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="960" height="870" class="canvas"/>
+  <rect x="0" y="0" width="1062" height="870" class="canvas"/>
 
   <!-- band 1: source files -->
   <text x="16" y="22" class="band">1 · Source files in the repo</text>
@@ -85,7 +85,7 @@
   <text x="885" y="70" class="sub" text-anchor="middle">shared, db, local-dev</text>
   <text x="885" y="82" class="sub sub-xs" text-anchor="middle">external, pinned commit</text>
 
-  <line x1="16" y1="108" x2="944" y2="108" class="sep"/>
+  <line x1="16" y1="108" x2="1046" y2="108" class="sep"/>
 
   <!-- band 2: build definitions -->
   <text x="16" y="124" class="band">2 · Build definitions</text>
@@ -115,7 +115,7 @@
   <line x1="769" y1="88" x2="732" y2="136" class="edge" marker-end="url(#arr)"/>
   <line x1="885" y1="88" x2="876" y2="136" class="edge" marker-end="url(#arr)"/>
 
-  <line x1="16" y1="210" x2="944" y2="210" class="sep"/>
+  <line x1="16" y1="210" x2="1046" y2="210" class="sep"/>
 
   <!-- band 3: images -->
   <text x="16" y="224" class="band">3 · Images, pinned in .env</text>
@@ -166,12 +166,16 @@
   <text x="862" y="257" class="name name-sm" text-anchor="middle">seed</text>
   <text x="862" y="279" class="sub sub-xs" text-anchor="middle">built here</text>
 
+  <rect x="902" y="238" width="68" height="50" class="node"/><rect x="902" y="238" width="4" height="50" class="st-e2b"/>
+  <text x="936" y="257" class="name name-sm" text-anchor="middle">dashboard</text>
+  <text x="936" y="279" class="sub sub-xs" text-anchor="middle">own release line</text>
+
   <!-- band 2 -> band 3 edges -->
   <line x1="305" y1="178" x2="330" y2="236" class="edge" marker-end="url(#arr)"/>
   <line x1="711" y1="178" x2="634" y2="236" class="edge" marker-end="url(#arr)"/>
   <line x1="876" y1="178" x2="862" y2="236" class="edge" marker-end="url(#arr)"/>
 
-  <line x1="16" y1="318" x2="944" y2="318" class="sep"/>
+  <line x1="16" y1="318" x2="1046" y2="318" class="sep"/>
 
   <!-- band 4: services -->
   <text x="16" y="332" class="band">4 · Services in compose.yaml · arrows are depends_on gates · the stripe says which image</text>
@@ -217,6 +221,8 @@
   <text x="28" y="722" class="name name-lg">client-proxy</text><text x="28" y="736" class="sub">:3002 → orchestrator :5007</text>
   <rect x="200" y="706" width="168" height="40" class="node"/><rect x="200" y="706" width="4" height="40" class="st-node"/>
   <text x="212" y="722" class="name name-lg">base-template</text><text x="212" y="736" class="sub">builds “base” · one-shot</text>
+  <rect x="384" y="706" width="168" height="40" class="node"/><rect x="384" y="706" width="4" height="40" class="st-e2b"/>
+  <text x="396" y="722" class="name name-lg">dashboard</text><text x="396" y="736" class="sub">:3001 · signs in with the team key</text>
 
   <!-- row G -->
   <rect x="16" y="796" width="168" height="40" class="node"/><rect x="16" y="796" width="4" height="40" class="st-tools"/>
@@ -247,6 +253,7 @@
 
   <line x1="284" y1="602" x2="284" y2="632" class="edge" marker-end="url(#arr)"/><text x="290" y="621" class="lbl">healthy</text>
   <path d="M468,602 V616 H340 V632" class="edge" marker-end="url(#arr)"/><text x="474" y="614" class="lbl">done</text>
+  <path d="M340,674 V686 H452 V704" class="edge" marker-end="url(#arr)"/><text x="458" y="698" class="lbl">healthy</text>
 
 
   <line x1="100" y1="674" x2="100" y2="704" class="edge" marker-end="url(#arr)"/><text x="106" y="693" class="lbl">healthy</text>
@@ -257,13 +264,13 @@
   <line x1="284" y1="746" x2="284" y2="794" class="edge" marker-end="url(#arr)"/><text x="290" y="772" class="lbl">done</text>
   <line x1="140" y1="746" x2="244" y2="794" class="edge" marker-end="url(#arr)"/>
   <line x1="244" y1="746" x2="140" y2="794" class="edge" marker-end="url(#arr)"/>
-  <text x="16" y="858" class="note">ready and smoke wait on the same two gates, client-proxy healthy and base-template done; the crossing arrows are those gates, not a link between the two services</text>
+  <text x="16" y="858" class="note">ready and smoke wait on the same two gates, client-proxy healthy and base-template done (ready also waits for the dashboard); the crossing arrows are those gates, not a link between the two services</text>
 
   <!-- legend -->
   <text x="568" y="718" class="band">Stripe = image</text>
   <rect x="568" y="727" width="10" height="10" class="st-tools"/><text x="584" y="736" class="legend">embed/tools · 7 services</text>
   <rect x="568" y="743" width="10" height="10" class="st-node"/><text x="584" y="752" class="legend">embed/node-e2b · 2</text>
   <rect x="568" y="759" width="10" height="10" class="st-seed"/><text x="584" y="768" class="legend">embed/seed · 1</text>
-  <rect x="568" y="775" width="10" height="10" class="st-e2b"/><text x="584" y="784" class="legend">e2b-artifacts release image · 4</text>
+  <rect x="568" y="775" width="10" height="10" class="st-e2b"/><text x="584" y="784" class="legend">e2b-artifacts release image · 5</text>
   <rect x="568" y="791" width="10" height="10" class="st-hub"/><text x="584" y="800" class="legend">Docker Hub image · 4</text>
 </svg>

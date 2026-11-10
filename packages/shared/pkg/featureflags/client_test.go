@@ -3,8 +3,13 @@ package featureflags
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	ldclient "github.com/launchdarkly/go-server-sdk/v7"
+	"github.com/launchdarkly/go-server-sdk/v7/interfaces"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,10 +18,13 @@ const (
 	flagName = "demo-feature-flag"
 )
 
+// Not parallel: it updates launchDarklyOfflineStore, which parallel tests read
+// through NewClient and NewClientWithDatasource.
+//
+//nolint:paralleltest
 func TestOfflineDatastore(t *testing.T) {
-	t.Parallel()
 	clientCtx := ldcontext.NewBuilder(flagName).Build()
-	client, err := NewClient()
+	client, err := NewClient("", "", "")
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -46,9 +54,7 @@ func TestOfflineDatastore(t *testing.T) {
 func TestAllContextsIncludesServiceAndDeployment(t *testing.T) {
 	t.Parallel()
 
-	client := &Client{}
-	client.SetDeploymentName("dev")
-	client.SetServiceName("orchestration-api")
+	client := newClient(nil, true, "staging", "orchestration-api")
 
 	merged := mergeContexts(t.Context(), client.allContexts(t.Context(), nil))
 	contexts := merged.GetAllIndividualContexts(nil)
@@ -58,8 +64,87 @@ func TestAllContextsIncludesServiceAndDeployment(t *testing.T) {
 		seen[item.Kind()] = item.Key()
 	}
 
-	require.Equal(t, "dev", seen[deploymentKind])
+	require.Equal(t, "staging", seen[DeploymentEnvironmentKind])
 	require.Equal(t, "orchestration-api", seen[ServiceKind])
+}
+
+// A combined orchestrator host evaluates some flags once per service it runs,
+// so the service a caller names must win over the process-wide one.
+func TestAllContextsCallerServiceOverridesProcessService(t *testing.T) {
+	t.Parallel()
+
+	client := newClient(nil, true, "staging", "orchestrator_template-manager")
+
+	merged := mergeContexts(t.Context(), client.allContexts(t.Context(), []ldcontext.Context{ServiceContext("orchestrator")}))
+
+	seen := map[ldcontext.Kind]string{}
+	for _, item := range merged.GetAllIndividualContexts(nil) {
+		seen[item.Kind()] = item.Key()
+	}
+
+	require.Equal(t, "orchestrator", seen[ServiceKind])
+	require.Equal(t, "staging", seen[DeploymentEnvironmentKind])
+}
+
+// newClient is exercised directly: a real client on launchDarklyOfflineStore
+// would race with the updates in TestOfflineDatastore.
+func TestNewClientPlaceKey(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "set", value: "staging", want: "staging"},
+		{name: "empty is undefined", value: "", want: undefinedDeploymentEnvironment},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := newClient(nil, true, tc.value, "")
+
+			merged := mergeContexts(t.Context(), client.allContexts(t.Context(), nil))
+			seen := map[ldcontext.Kind]string{}
+			for _, item := range merged.GetAllIndividualContexts(nil) {
+				seen[item.Kind()] = item.Key()
+			}
+
+			require.Equal(t, tc.want, seen[DeploymentEnvironmentKind])
+			require.NotContains(t, seen, ServiceKind)
+		})
+	}
+}
+
+func TestApplicationInfo(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		environment string
+		service     string
+		version     string
+		want        interfaces.ApplicationInfo
+	}{
+		{
+			name: "service and environment", environment: "e2b-staging", service: "orchestration-api", version: "0.14.1",
+			want: interfaces.ApplicationInfo{ApplicationID: "orchestration-api-e2b-staging", ApplicationVersion: "0.14.1"},
+		},
+		{
+			name: "empty environment is undefined", environment: "", service: "orchestration-api", version: "0.14.1",
+			want: interfaces.ApplicationInfo{ApplicationID: "orchestration-api-" + undefinedDeploymentEnvironment, ApplicationVersion: "0.14.1"},
+		},
+		{
+			name: "empty service sends nothing", environment: "e2b-staging", service: "", version: "0.14.1",
+			want: interfaces.ApplicationInfo{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tc.want, applicationInfo(tc.environment, tc.service, tc.version))
+		})
+	}
 }
 
 func TestAllContextsIncludesRegisteredProviders(t *testing.T) {
@@ -81,6 +166,36 @@ func TestAllContextsIncludesRegisteredProviders(t *testing.T) {
 	require.Equal(t, "node-1", seen["node"])
 }
 
+// A watch delivers on a change of its flag and on none of another's, and
+// its channel closes once the watch is stopped.
+func TestWatchFlag_DeliversChangesOfTheFlagOnly(t *testing.T) {
+	t.Parallel()
+
+	source := ldtestdata.DataSource()
+	client, err := NewClientWithDatasource(source)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+
+	changes, stop := client.WatchFlag("watched")
+
+	source.Update(source.Flag("other").ValueForAll(ldvalue.String("a")))
+	source.Update(source.Flag("watched").ValueForAll(ldvalue.String("a")))
+	select {
+	case _, ok := <-changes:
+		require.True(t, ok, "the change of the watched flag must be delivered")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the change of the watched flag was not delivered")
+	}
+
+	// Every event is handled in order, so these are seen before the stop
+	// closes the channel: a delivery for them would arrive before the close.
+	source.Update(source.Flag("other").ValueForAll(ldvalue.String("b")))
+	source.Update(source.Flag("other").ValueForAll(ldvalue.String("c")))
+	stop()
+	_, ok := <-changes
+	require.False(t, ok, "a change of another flag must not be delivered, and the stop closes the channel")
+}
+
 func TestClickhouseAsyncOfflineFallback(t *testing.T) {
 	t.Parallel()
 	client, err := NewClientWithDatasource(launchDarklyOfflineStore)
@@ -90,4 +205,138 @@ func TestClickhouseAsyncOfflineFallback(t *testing.T) {
 	require.False(t, ok, "offline defaults must not override writer-specific async behavior")
 	require.True(t, client.BoolFlag(t.Context(), ClickhouseAsyncInsertFlag))
 	require.True(t, client.BoolFlag(t.Context(), ClickhouseWaitForAsyncInsertFlag))
+}
+
+func TestIntFlagOverride(t *testing.T) {
+	t.Parallel()
+
+	const fallback = -1
+
+	tests := []struct {
+		name       string
+		serve      *ldvalue.Value
+		wantValue  int
+		wantServed bool
+	}{
+		{name: "served value", serve: new(ldvalue.Int(25)), wantValue: 25, wantServed: true},
+		{name: "served value equal to the fallback", serve: new(ldvalue.Int(fallback)), wantValue: fallback, wantServed: true},
+		{name: "key the environment does not define", serve: nil, wantValue: fallback, wantServed: true},
+		{name: "wrong type", serve: new(ldvalue.String("25")), wantValue: fallback, wantServed: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := ldtestdata.DataSource()
+			flag := IntFlag{name: "int-flag-override-test", fallback: fallback}
+			if tt.serve != nil {
+				source.Update(source.Flag(flag.Key()).ValueForAll(*tt.serve))
+			}
+
+			client, err := NewClientWithDatasource(source)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+
+			value, served := client.IntFlagOverride(t.Context(), flag)
+			assert.Equal(t, tt.wantValue, value)
+			assert.Equal(t, tt.wantServed, served)
+		})
+	}
+}
+
+func TestIntFlagOverrideNilClient(t *testing.T) {
+	t.Parallel()
+
+	value, served := (&Client{}).IntFlagOverride(t.Context(), IntFlag{name: "int-flag-override-test", fallback: 7})
+	assert.Equal(t, 7, value)
+	assert.False(t, served)
+}
+
+func TestIntFlagWithError(t *testing.T) {
+	t.Parallel()
+	flag := IntFlag{name: "checked-int-flag", fallback: -1}
+	for _, tc := range []struct {
+		name    string
+		value   *ldvalue.Value
+		want    int
+		wantErr bool
+	}{
+		{"missing flag", nil, -1, false},
+		{"configured value", new(ldvalue.Int(25)), 25, false},
+		{"configured fallback", new(ldvalue.Int(-1)), -1, false},
+		{"zero is a served value", new(ldvalue.Int(0)), 0, false},
+		{"large integer", new(ldvalue.Int(1 << 34)), 1 << 34, false},
+		{"whole number", new(ldvalue.Float64(2.0)), 2, false},
+		{"fraction", new(ldvalue.Float64(1.5)), 0, true},
+		{"wrong type", new(ldvalue.String("25")), 0, true},
+		{"null", new(ldvalue.Null()), 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			source := ldtestdata.DataSource()
+			if tc.value != nil {
+				source.Update(source.Flag(flag.Key()).ValueForAll(*tc.value))
+			}
+			client, err := NewClientWithDatasource(source)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+			value, err := client.IntFlagWithError(t.Context(), flag)
+			if tc.wantErr {
+				require.ErrorContains(t, err, flag.Key())
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, value)
+		})
+	}
+}
+
+func TestIntFlagWithErrorUnavailableClient(t *testing.T) {
+	t.Parallel()
+	flag := IntFlag{name: "checked-int-flag", fallback: 7}
+	value, err := (&Client{}).IntFlagWithError(t.Context(), flag)
+	require.NoError(t, err)
+	require.Equal(t, 7, value)
+
+	ld, err := ldclient.MakeCustomClient("", ldclient.Config{Offline: true}, 0)
+	require.NoError(t, err)
+	client := &Client{ld: ld}
+	t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+	value, err = client.IntFlagWithError(t.Context(), flag)
+	require.NoError(t, err)
+	require.Equal(t, 7, value)
+}
+
+func TestStringFlagOverride(t *testing.T) {
+	t.Parallel()
+	flag := StringFlag{name: "string-flag-override-test", fallback: "default"}
+	for _, tt := range []struct {
+		name   string
+		serve  *ldvalue.Value
+		want   string
+		served bool
+	}{
+		{name: "configured value", serve: new(ldvalue.String("configured")), want: "configured", served: true},
+		{name: "configured fallback", serve: new(ldvalue.String("default")), want: "default", served: true},
+		{name: "missing flag", want: "default"},
+		{name: "wrong type", serve: new(ldvalue.Bool(true)), want: "default"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			source := ldtestdata.DataSource()
+			if tt.serve != nil {
+				source.Update(source.Flag(flag.Key()).ValueForAll(*tt.serve))
+			}
+			client, err := NewClientWithDatasource(source)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+			value, served := client.StringFlagOverride(t.Context(), flag)
+			assert.Equal(t, tt.want, value)
+			assert.Equal(t, tt.served, served)
+		})
+	}
+	value, served := (&Client{}).StringFlagOverride(t.Context(), flag)
+	assert.Equal(t, "default", value)
+	assert.False(t, served)
 }

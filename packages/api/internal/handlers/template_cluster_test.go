@@ -22,7 +22,6 @@ import (
 	templatemanager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -66,7 +65,7 @@ func templateClusterTeam(t *testing.T, db *testutils.Database, clusterID *uuid.U
 	t.Helper()
 	teamID := testutils.CreateTestTeam(t, db)
 	team := &types.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
+		Team:   &dbtypes.Team{ID: teamID, Slug: testutils.GetTeamSlug(t, t.Context(), db, teamID)},
 		Limits: &types.TeamLimits{BuildConcurrency: 32, MaxVcpu: 8, MaxRamMb: 8192, DefaultFreeDiskSizeMb: 10240, MaxFreeDiskSizeMb: 25600},
 	}
 	assignTemplateClusterTeam(t, db, team, clusterID)
@@ -92,7 +91,7 @@ func requestClusterTemplate(t *testing.T, store *APIStore, team *types.Team) *ap
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v3/templates", strings.NewReader(`{"name":"base"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, c, team)
-	store.PostV3Templates(c)
+	store.PostV3Templates(c, api.PostV3TemplatesParams{})
 	response, err := api.ParsePostV3TemplatesResponse(w.Result())
 	require.NoError(t, err)
 
@@ -262,7 +261,7 @@ func TestTemplateClusterConcurrentAliasHandoff(t *testing.T) {
 		go func() {
 			templateID := id.Generate()
 			alias := "base"
-			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+			_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 				ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: templateID,
 				ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 			})
@@ -315,12 +314,12 @@ func TestTemplateClusterUsesCurrentAssignment(t *testing.T) {
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/templates/builds", strings.NewReader(`{"fromImage":"alpine"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, c, team)
-	store.PostV2TemplatesTemplateIDBuildsBuildID(c, rebuilt.JSON202.TemplateID, rebuilt.JSON202.BuildID)
+	store.PostV2TemplatesTemplateIDBuildsBuildID(c, rebuilt.JSON202.TemplateID, rebuilt.JSON202.BuildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "is not available in the requested cluster")
 	alias := "base"
 	uncommittedID := id.Generate()
-	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, templateregistration.RegisterBuildData{
+	_, apiErr := templateregistration.RegisterBuild(t.Context(), store.templateCache, db.SqlcClient, store.featureFlags, templateregistration.RegisterBuildData{
 		ReplacesTemplateID: initial.JSON202.TemplateID, TemplateID: uncommittedID,
 		ClusterID: clusterID, Team: team, Alias: &alias, Version: templates.TemplateV2LatestVersion,
 	})
@@ -364,7 +363,7 @@ func TestTemplateStartCluster(t *testing.T) {
 				fmt.Sprintf("/v2/templates/%s/builds/%s", build.TemplateID, build.BuildID), strings.NewReader(`{"fromImage":"alpine"}`))
 			c.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, c, team)
-			store.PostV2TemplatesTemplateIDBuildsBuildID(c, build.TemplateID, build.BuildID)
+			store.PostV2TemplatesTemplateIDBuildsBuildID(c, build.TemplateID, build.BuildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
 			require.Equal(t, tt.status, w.Code, w.Body.String())
 			if tt.status == http.StatusBadRequest {
 				require.Contains(t, w.Body.String(), "is not available in the requested cluster")

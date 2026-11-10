@@ -4,20 +4,26 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	buildenvd "github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/envd"
@@ -25,6 +31,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -58,6 +65,58 @@ var (
 // journalOnlyProbe fires the host e2fsck support probe once per process.
 var journalOnlyProbe sync.Once
 
+// checkRebootCPUTemplate reports whether the Firecracker version this reboot resolved to can
+// apply the stored template. It can differ from the build's, since firecracker-versions remaps it.
+func checkRebootCPUTemplate(tmpl *cputemplate.Template, fcVersion string) error {
+	if tmpl == nil || tmpl.IsEmpty() {
+		return nil
+	}
+
+	info, err := fcversion.New(fcVersion)
+	if err != nil {
+		return fmt.Errorf("parse firecracker version %q: %w", fcVersion, err)
+	}
+
+	if err := tmpl.Validate(info); err != nil {
+		return fmt.Errorf("firecracker %s: %w", fcVersion, err)
+	}
+
+	return nil
+}
+
+// rebootCPUTemplate picks the template a cold boot applies: the build's, not whatever the last
+// boot ran, unless override (the reboot-cpu-template-override flag) replaces it. An invalid
+// override is returned as an error alongside the build's template.
+func rebootCPUTemplate(meta metadata.Template, override ldvalue.Value) (*cputemplate.Template, bool, error) {
+	var o struct {
+		Template *json.RawMessage `json:"template"`
+	}
+	dec := json.NewDecoder(strings.NewReader(override.JSONString()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&o); err != nil {
+		return meta.BuildCPUTemplate, false, fmt.Errorf("invalid CPU template override: %w", err)
+	}
+	if o.Template == nil {
+		return meta.BuildCPUTemplate, false, nil
+	}
+
+	tmpl, err := cputemplate.Parse(*o.Template)
+	if err != nil {
+		return meta.BuildCPUTemplate, false, err
+	}
+
+	return tmpl, true, nil
+}
+
+// rebootMaxVcpus inherits recorded capacity only when no maximum was requested.
+func rebootMaxVcpus(requested, recorded int64) int64 {
+	if requested != 0 {
+		return requested
+	}
+
+	return recorded
+}
+
 // rebootAllowed reports whether a snapshot may be cold-booted: it is marked
 // filesystem-only, or the request explicitly demanded a filesystem boot of its
 // memory-inclusive snapshot, accepting crash-recovery semantics for the rootfs.
@@ -88,6 +147,56 @@ func (f *Factory) RebootSandbox(
 	recordRecovery func(rootfs.RecoverOutcome),
 	procOpts ...func(*fc.ProcessOptions),
 ) (*Sandbox, error) {
+	return f.rebootSandbox(ctx, t, config, runtime, endAt, apiConfigToStore, deferMarkRunning, requestFilesystemBoot, recordRecovery, "", 0, procOpts...)
+}
+
+// ErrGuestResetBeforeEnvd marks a cold boot that ended because the guest
+// restarted itself before envd ever answered, as its guest profile classifies
+// the Firecracker exit.
+var ErrGuestResetBeforeEnvd = errors.New("guest reset before envd answered")
+
+// RebootSandboxOnDisk cold-boots a template on the disk file at rootfsPath
+// instead of a throwaway overlay, so what the guest writes stays in that file:
+// the preparation of a base, not a served path. envdWait, when non-zero,
+// replaces the cold boot's envd wait. A guest that resets before envd answers
+// fails with ErrGuestResetBeforeEnvd, and only once its sandbox closed cleanly,
+// so the caller may boot the same disk again.
+// IMPORTANT: You must Close() the sandbox after you are done with it.
+func (f *Factory) RebootSandboxOnDisk(
+	ctx context.Context,
+	t template.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	endAt time.Time,
+	rootfsPath string,
+	envdWait time.Duration,
+	procOpts ...func(*fc.ProcessOptions),
+) (*Sandbox, error) {
+	if rootfsPath == "" {
+		return nil, errors.New("a cold boot on disk needs the disk file")
+	}
+
+	return f.rebootSandbox(ctx, t, config, runtime, endAt, nil, false, true, nil, rootfsPath, envdWait, procOpts...)
+}
+
+// rebootSandbox is RebootSandbox with the rootfs provider chosen by
+// rootfsCachePath: empty selects the NBD overlay (a served cold boot), a path
+// maps that file as the disk (a base's first boot). envdWait, when non-zero,
+// replaces the cold boot's envd wait.
+func (f *Factory) rebootSandbox(
+	ctx context.Context,
+	t template.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	endAt time.Time,
+	apiConfigToStore *orchestrator.SandboxConfig,
+	deferMarkRunning bool,
+	requestFilesystemBoot bool,
+	recordRecovery func(rootfs.RecoverOutcome),
+	rootfsCachePath string,
+	envdWait time.Duration,
+	procOpts ...func(*fc.ProcessOptions),
+) (*Sandbox, error) {
 	ctx, span := tracer.Start(ctx, "reboot sandbox")
 	defer span.End()
 
@@ -104,12 +213,147 @@ func (f *Factory) RebootSandbox(
 	// only in the guest page cache (restored on a memory resume), so cold-booting
 	// it serves a crash-consistent disk at best. Refuse unless the snapshot is
 	// marked fs-only or the request explicitly demanded the filesystem boot.
-	meta, err := t.Metadata()
+	meta, err := telemetry.Observe1(ctx, tracer, "get template metadata", func(context.Context) (metadata.Template, error) {
+		return t.Metadata()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get template metadata: %w", err)
 	}
 	if !rebootAllowed(meta, requestFilesystemBoot) {
 		return nil, fmt.Errorf("refusing to reboot build %s: not a filesystem-only snapshot and the request did not demand a filesystem boot", buildID)
+	}
+
+	boot, err := f.prepareColdBoot(ctx, t, meta, config, runtime)
+	if err != nil {
+		return nil, err
+	}
+	processOptions := boot.processOptions
+
+	timeout := time.Until(endAt)
+	if timeout <= 0 {
+		return nil, fmt.Errorf("sandbox end time %s is in the past", endAt)
+	}
+
+	span.SetAttributes(attribute.Bool("sandbox.filesystem_boot_requested", requestFilesystemBoot))
+	for _, opt := range procOpts {
+		opt(&processOptions)
+	}
+
+	// CreateSandbox runs the filesystem recovery, then the offline envd swap, whose version
+	// the sandbox carries from before its network is assigned; the guest profile can skip
+	// either step.
+	fsRecover, swap := f.rebootPreBoot(ctx, config, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery)
+
+	sbx, err := f.CreateSandbox(
+		ctx,
+		config,
+		runtime,
+		boot.template,
+		timeout,
+		// An empty rootfs cache path selects the NBD provider, same as a memory
+		// resume, so guest TRIM keeps working and a later pause exports the
+		// overlay diff exactly like a normal resume; a first boot passes the
+		// base's own disk file instead.
+		rootfsCachePath,
+		processOptions,
+		apiConfigToStore,
+		WithPreBoot(fsRecover, swap),
+		WithDeferredMarkRunning(),
+		withNetworkAssignReason(NetworkAssignReasonReboot),
+		withEndAt(endAt),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create sandbox from rootfs: %w", err)
+	}
+
+	if config.SkipEnvdWait {
+		// The guest runs no envd the caller wants to wait for (resume-build
+		// inspecting a bare boot); the caller drives the VM itself, as on the
+		// resume path.
+		telemetry.ReportEvent(ctx, "skipping envd wait")
+	} else if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdWait(config, envdWait)); err != nil {
+		reset := isGuestResetBeforeEnvd(config.GuestProfile(), err, sbx.FirecrackerExit())
+		closeErr := sbx.Close(context.WithoutCancel(ctx))
+
+		return nil, envdWaitError(err, reset, closeErr)
+	}
+
+	// deferMarkRunning: the caller promotes the sandbox to live itself after a
+	// post-resume step (the resume-time envd live-upgrade's post-/init), so it is
+	// not routable during the upgrade's pre-init auth window. Mirrors the resume
+	// path's WithDeferredLiveRegistration.
+	if !deferMarkRunning {
+		if err := f.Sandboxes.MarkRunning(ctx, sbx); err != nil {
+			closeErr := sbx.Close(context.WithoutCancel(ctx))
+
+			return nil, errors.Join(err, closeErr)
+		}
+
+		go sbx.Checks().Start(context.WithoutCancel(ctx))
+	}
+
+	return sbx, nil
+}
+
+// coldBoot is what a cold boot of a template's rootfs runs with.
+type coldBoot struct {
+	// template is the template with an empty memfile: guest RAM is
+	// Firecracker's own fresh memory, the memfile only sizes NoopMemory.
+	template       template.Template
+	processOptions fc.ProcessOptions
+}
+
+// prepareColdBoot resolves the kernel command line, CPU template, envd
+// defaults and access token a cold boot of t's rootfs uses. It fills in
+// config's envd defaults when they are unset.
+func (f *Factory) prepareColdBoot(
+	ctx context.Context,
+	t template.Template,
+	meta metadata.Template,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+) (coldBoot, error) {
+	span := trace.SpanFromContext(ctx)
+
+	buildID, err := uuid.Parse(t.Files().BuildID)
+	if err != nil {
+		return coldBoot{}, fmt.Errorf("parse build ID: %w", err)
+	}
+
+	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
+	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
+	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
+
+	// It becomes the running template, so the next pause stores what this boot applied.
+	override := f.featureFlags.JSONFlag(ctx, featureflags.RebootCPUTemplateOverride,
+		featureflags.SandboxContext(runtime.SandboxID),
+		featureflags.TemplateContext(runtime.TemplateID),
+		featureflags.TeamContext(runtime.TeamID))
+	boot := config.GuestProfile().Boot()
+	cpuTemplate, overridden, err := rebootCPUTemplateFor(boot, meta, override)
+	if boot.NoCPUTemplate {
+		logCPUTemplateSkipped(ctx, config.GuestProfile())
+	}
+	if err != nil {
+		logger.L().Error(ctx, "ignoring invalid reboot CPU template override",
+			zap.String("flag", featureflags.RebootCPUTemplateOverride.Key()), zap.Error(err),
+			logger.WithSandboxID(runtime.SandboxID))
+	}
+	if overridden {
+		logger.L().Info(ctx, "reboot CPU template overridden",
+			zap.String("build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
+			zap.String("cpu_template", cputemplate.AppliedDigest(cpuTemplate)))
+	}
+	meta.CPUTemplate = cpuTemplate
+	span.SetAttributes(
+		attribute.String("sandbox.build_cpu_template", cputemplate.AppliedDigest(meta.BuildCPUTemplate)),
+		attribute.Bool("sandbox.cpu_template_overridden", overridden),
+		attribute.Bool("sandbox.cpu_template_override_invalid", err != nil),
+	)
+
+	if err := checkRebootCPUTemplate(meta.CPUTemplate, config.FirecrackerConfig.FirecrackerVersion); err != nil {
+		return coldBoot{}, fmt.Errorf("reboot build %s: %w", buildID, err)
 	}
 
 	// A cold boot starts envd with no prior state, so unlike a memory resume it
@@ -144,14 +388,15 @@ func (f *Factory) RebootSandbox(
 	}
 	memfile, err := block.NewEmpty(units.MBToBytes(config.RamMB), pageSize, buildID)
 	if err != nil {
-		return nil, fmt.Errorf("create empty memfile: %w", err)
+		return coldBoot{}, fmt.Errorf("create empty memfile: %w", err)
 	}
 
-	maskedTemplate := template.NewMaskTemplate(t, template.WithMemfile(memfile))
+	// With the resolved CPU template, so the next pause stores what this boot applied.
+	maskedTemplate := template.NewMaskTemplate(t, template.WithMemfile(memfile), template.WithMetadata(meta))
 
 	kvmClock, err := utils.IsGTEVersion(config.Envd.Version, minEnvdVersionForKVMClock)
 	if err != nil {
-		return nil, fmt.Errorf("compare envd version: %w", err)
+		return coldBoot{}, fmt.Errorf("compare envd version: %w", err)
 	}
 
 	// Sync IO engine so no async writes are in flight if the sandbox is paused again.
@@ -165,11 +410,6 @@ func (f *Factory) RebootSandbox(
 		accessToken = *config.Envd.AccessToken
 	}
 
-	timeout := time.Until(endAt)
-	if timeout <= 0 {
-		return nil, fmt.Errorf("sandbox end time %s is in the past", endAt)
-	}
-
 	processOptions := fc.ProcessOptions{
 		InitScriptPath: constants.SystemdInitPath,
 		KvmClock:       kvmClock,
@@ -181,6 +421,8 @@ func (f *Factory) RebootSandbox(
 		// variant name means can change after the build, so re-resolving would boot a
 		// different guest than the one this lineage was created as.
 		CmdlineArgs: meta.CmdlineArgs,
+		// Same as CmdlineArgs: the stored template, not the build flag (see the override above).
+		CPUTemplate: meta.CPUTemplate,
 	}
 
 	// Recorded so a dropped variant is detectable after the fact: a cold boot carrying
@@ -197,64 +439,26 @@ func (f *Factory) RebootSandbox(
 		applied = fc.KernelArgs(meta.CmdlineArgs).String()
 	}
 
+	// A stored template is either applied or fails the boot, so it is what the guest got.
+	appliedCPUTemplate := cputemplate.AppliedDigest(meta.CPUTemplate)
+
 	span.SetAttributes(
 		attribute.String("sandbox.cmdline_args", applied),
-		attribute.Bool("sandbox.filesystem_boot_requested", requestFilesystemBoot),
-	)
-	for _, opt := range procOpts {
-		opt(&processOptions)
-	}
-
-	preBoot := chainPreBoot(
-		f.fsRecoverPreBoot(ctx, runtime, meta.IsFsQuiesced(), requestFilesystemBoot, recordRecovery),
-		f.envdOfflineUpgradePreBoot(ctx, config, runtime, meta.IsFsQuiesced()),
+		attribute.String("sandbox.cpu_template", appliedCPUTemplate),
 	)
 
-	sbx, err := f.CreateSandbox(
-		ctx,
-		config,
-		runtime,
-		maskedTemplate,
-		timeout,
-		// Empty rootfs cache path selects the NBD provider, same as a memory
-		// resume, so guest TRIM keeps working and a later pause exports the
-		// overlay diff exactly like a normal resume.
-		"",
-		processOptions,
-		apiConfigToStore,
-		preBoot,
-		WithDeferredMarkRunning(),
-		withNetworkAssignReason(NetworkAssignReasonReboot),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create sandbox from rootfs: %w", err)
+	return coldBoot{template: maskedTemplate, processOptions: processOptions}, nil
+}
+
+// fsRecoveryTrigger names the population a pre-boot recovery runs for, which
+// separates them on every emission: an explicit no-memory rescue, or a legacy
+// sync-fallback fs-only snapshot.
+func fsRecoveryTrigger(requestFilesystemBoot bool) string {
+	if requestFilesystemBoot {
+		return "rescue"
 	}
 
-	// CreateSandbox anchors the lifetime to now; honor the caller's absolute end
-	// time so queue delay can't extend the TTL.
-	sbx.SetEndAt(endAt)
-
-	if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeout); err != nil {
-		closeErr := sbx.Close(context.WithoutCancel(ctx))
-
-		return nil, errors.Join(fmt.Errorf("wait for envd after reboot: %w", err), closeErr)
-	}
-
-	// deferMarkRunning: the caller promotes the sandbox to live itself after a
-	// post-resume step (the resume-time envd live-upgrade's post-/init), so it is
-	// not routable during the upgrade's pre-init auth window. Mirrors the resume
-	// path's WithDeferredLiveRegistration.
-	if !deferMarkRunning {
-		if err := f.Sandboxes.MarkRunning(ctx, sbx); err != nil {
-			closeErr := sbx.Close(context.WithoutCancel(ctx))
-
-			return nil, errors.Join(err, closeErr)
-		}
-
-		go sbx.Checks.Start(context.WithoutCancel(ctx))
-	}
-
-	return sbx, nil
+	return "legacy_fs_only"
 }
 
 // offlineSwapDecision is the pure outcome of the offline-upgrade gate: whether to
@@ -312,6 +516,11 @@ func decideOfflineSwap(resolverPath, reason string, fsQuiesced bool) offlineSwap
 			// property of the snapshot and is still there to report on the next cold
 			// boot, once a warm has landed and a target has actually been resolved.
 			return offlineSwapDecision{countResult: reason}
+		case featureflags.ReasonSourceStalled:
+			// The mount did not answer in time. Counted so a stall is visible apart
+			// from warm-up, not logged per boot: the cache already warns once per
+			// path per window, and a stall recurs on every boot until it clears.
+			return offlineSwapDecision{countResult: reason}
 		default:
 			// not_staged / downgrade / invalid_target / getversion_failed, and anything
 			// the resolver's vocabulary grows: an operator error, so log each one.
@@ -325,38 +534,38 @@ func decideOfflineSwap(resolverPath, reason string, fsQuiesced bool) offlineSwap
 	return offlineSwapDecision{swap: true}
 }
 
-// chainPreBoot composes pre-boot steps in order, skipping nils; the first
-// failure stops the chain. Nil when every step is nil, preserving the
-// no-callback fast path.
-func chainPreBoot(fns ...PreBootFn) PreBootFn {
-	steps := make([]PreBootFn, 0, len(fns))
-	for _, fn := range fns {
-		if fn != nil {
-			steps = append(steps, fn)
-		}
+// rebootPreBoot is what a cold boot does to the rootfs before Firecracker
+// opens it: a journal replay of the ext4 filesystem and a swap of the envd
+// binary, in that order. A guest profile can skip either step, for a disk
+// that replays its own log at mount or keeps the envd its template carries;
+// a skipped step is nil.
+func (f *Factory) rebootPreBoot(
+	ctx context.Context,
+	config *Config,
+	runtime sandboxtypes.RuntimeMetadata,
+	fsQuiesced bool,
+	requestFilesystemBoot bool,
+	recordRecovery func(rootfs.RecoverOutcome),
+) (recovery, swap PreBootFn) {
+	boot := config.GuestProfile().Boot()
+
+	if !boot.NoFilesystemRecovery {
+		recovery = f.fsRecoverPreBoot(ctx, runtime, fsQuiesced, fsRecoveryTrigger(requestFilesystemBoot), recordRecovery)
 	}
-	if len(steps) == 0 {
-		return nil
+	if !boot.NoEnvdOfflineUpgrade {
+		swap = f.envdOfflineUpgradePreBoot(ctx, config, runtime, fsQuiesced)
 	}
 
-	return func(ctx context.Context, rootfsPath string) error {
-		for _, fn := range steps {
-			if err := fn(ctx, rootfsPath); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
+	return recovery, swap
 }
 
 // fsRecoverPreBoot returns a PreBootFn that repairs the rootfs filesystem
 // before the cold boot, or nil when there is nothing to do: a quiesced
 // snapshot was frozen at pause and is consistent by construction, and with
 // the flag off cold boots keep today's behavior (the guest kernel replays
-// the journal at mount time). It is one step of the reboot pre-boot chain,
-// mutually exclusive in practice with the offline envd swap (that swaps only
-// quiesced snapshots, this runs only on non-quiesced ones).
+// the journal at mount time). It runs before the reboot's offline envd swap,
+// and is mutually exclusive with it in practice (that swaps only quiesced
+// snapshots, this runs only on non-quiesced ones).
 //
 // A clean journal replay proceeds to boot; anything else fails the start with
 // rootfs.ErrRecoveryFailed (snapshot untouched) instead of booting a possibly
@@ -370,9 +579,14 @@ func (f *Factory) fsRecoverPreBoot(
 	ctx context.Context,
 	runtime sandboxtypes.RuntimeMetadata,
 	fsQuiesced bool,
-	requestFilesystemBoot bool,
+	trigger string,
 	record func(rootfs.RecoverOutcome),
 ) PreBootFn {
+	ctx, span := tracer.Start(ctx, "resolve fs recovery", trace.WithAttributes(
+		attribute.Bool("sandbox.fs_quiesced", fsQuiesced),
+	))
+	defer span.End()
+
 	// Flag gate first: with the flag off, behavior is exactly today's (no metric,
 	// no recovery) so nothing dilutes the ramp's result ratios. Every emission
 	// below is therefore within the flag-on population.
@@ -380,8 +594,11 @@ func (f *Factory) fsRecoverPreBoot(
 		featureflags.SandboxContext(runtime.SandboxID),
 		featureflags.TemplateContext(runtime.TemplateID),
 	) {
+		span.SetAttributes(attribute.Bool("fs_recovery.enabled", false))
+
 		return nil
 	}
+	span.SetAttributes(attribute.Bool("fs_recovery.enabled", true))
 
 	// Once per process: flag a host whose e2fsck rejects -E journal_only, so an
 	// unsupported image is visible on a dashboard. Boots are unaffected either way
@@ -395,13 +612,6 @@ func (f *Factory) fsRecoverPreBoot(
 		}
 	})
 
-	// trigger separates the two admitted populations on every emission: an
-	// explicit no-memory rescue vs a legacy sync-fallback fs-only snapshot.
-	trigger := "legacy_fs_only"
-	if requestFilesystemBoot {
-		trigger = "rescue"
-	}
-
 	if fsQuiesced {
 		record(rootfs.RecoverOutcomeSkippedQuiesced)
 		fsRecoveryRuns.Add(ctx, 1, metric.WithAttributes(
@@ -413,9 +623,13 @@ func (f *Factory) fsRecoverPreBoot(
 		return nil
 	}
 
-	return func(ctx context.Context, rootfsPath string) error {
+	recoverFS := func(ctx context.Context, rootfsPath string) error {
 		start := time.Now()
 		outcome, reason, err := rootfs.RecoverFilesystem(ctx, rootfsPath)
+		telemetry.SetAttributes(ctx,
+			attribute.String("fs_recovery.outcome", string(outcome)),
+			attribute.String("fs_recovery.reason", string(reason)),
+		)
 		record(outcome)
 		attrs := metric.WithAttributes(
 			attribute.String("result", string(outcome)),
@@ -450,6 +664,12 @@ func (f *Factory) fsRecoverPreBoot(
 
 		return nil
 	}
+
+	return func(ctx context.Context, rootfsPath string) (string, error) {
+		return "", telemetry.Observe0(ctx, tracer, "fs-recover", func(ctx context.Context) error {
+			return recoverFS(ctx, rootfsPath)
+		}, trace.WithAttributes(attribute.String("fs_recovery.trigger", trigger)))
+	}
 }
 
 // resolveOfflineTarget resolves the offline upgrade target and returns the
@@ -465,19 +685,34 @@ func (f *Factory) resolveOfflineTarget(
 	from string,
 	sbCtx, tmplCtx ldcontext.Context,
 ) (path, toVersion, reason string, binCache *envdbin.Resolver) {
+	ctx, span := tracer.Start(ctx, "resolve offline envd upgrade", trace.WithAttributes(
+		attribute.String("envd.from_version", from),
+	))
+	defer span.End()
+
 	getVersion := buildenvd.GetEnvdVersion
+	// The candidate checks stat the mount before any version probe, so they are
+	// bounded whether or not the cache is engaged.
+	stat := f.envdBinCache.BoundedStat
 	// The nil check is not redundant with the flag: a Factory built as a struct
 	// literal (as tests do) has no cache.
 	if f.envdBinCache != nil && f.featureFlags.BoolFlag(ctx, featureflags.EnvdBinaryCacheFlag, sbCtx, tmplCtx) {
 		binCache = envdbin.NewResolver(f.envdBinCache, envdbin.OpOffline)
 		getVersion = binCache.Version
+		stat = binCache.Stat
 	}
 
 	path, toVersion, reason = featureflags.ResolveEnvdOfflineUpgrade(
-		ctx, f.featureFlags, from, f.config.HostEnvdPath, getVersion, sbCtx, tmplCtx,
+		ctx, f.featureFlags, from, f.config.HostEnvdPath, f.envdTargets.recording(getVersion), stat, sbCtx, tmplCtx,
+	)
+	reason = envdbin.GatedReason(reason, binCache.DeferralOutcome())
+	span.SetAttributes(
+		attribute.String("envd.to_version", toVersion),
+		attribute.String("envd.upgrade_reason", reason),
+		attribute.Bool("envd.binary_cache", binCache != nil),
 	)
 
-	return path, toVersion, envdbin.GatedReason(reason, binCache.DeferralOutcome()), binCache
+	return path, toVersion, reason, binCache
 }
 
 // envdOfflineUpgradePreBoot returns a PreBootFn that rewrites the rootfs envd
@@ -495,6 +730,8 @@ func (f *Factory) resolveOfflineTarget(
 // envd (rootfs.ErrOfflineSwapUnrecoverable) fails the boot, so CreateSandbox tears
 // down and the dirty overlay is discarded. Every other failure boots the ORIGINAL
 // envd.
+//
+// The swap returns the version it put on the rootfs, "" when it put none.
 func (f *Factory) envdOfflineUpgradePreBoot(
 	ctx context.Context,
 	config *Config,
@@ -542,7 +779,7 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 		return nil
 	}
 
-	return func(ctx context.Context, rootfsPath string) error {
+	return func(ctx context.Context, rootfsPath string) (string, error) {
 		start := time.Now()
 		// The swap stages its source into a directory bound into the jail, a copy
 		// that is read off the gcsfuse mount unless the cache holds it. Resolved
@@ -556,7 +793,8 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 			// The copy that carried the resolved version is gone, so nothing on local
 			// disk holds the bytes that version describes. Boot the original, which is
 			// this path's best-effort default anyway, and let a later resume retry
-			// once a warm has republished the copy.
+			// once a warm has republished the copy. A rootfs an earlier reboot already
+			// swapped still boots that envd while this start expects the template's version.
 			runtime.Logger().Warn(ctx, "skipping offline envd upgrade: cached binary went away after its version was resolved",
 				zap.String("target", path),
 				zap.String("built_with", from),
@@ -573,7 +811,7 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 				attribute.String("to_version", toVersion),
 			))
 
-			return nil
+			return "", nil
 		}
 
 		// Cancel-free but time-bounded: a request cancellation must not kill
@@ -687,11 +925,63 @@ func (f *Factory) envdOfflineUpgradePreBoot(
 			metric.WithAttributes(attribute.String("result", result)))
 
 		if unrecoverable {
-			return fmt.Errorf("offline envd upgrade left rootfs unbootable: %w", err)
+			return "", fmt.Errorf("offline envd upgrade left rootfs unbootable: %w", err)
 		}
 
 		// Best-effort: swallow a recoverable failure so the cold boot proceeds on
-		// the original envd rather than failing the whole resume.
-		return nil
+		// the original envd rather than failing the whole resume. Only a swap that
+		// succeeded reports its version.
+		swappedTo := ""
+		if err == nil {
+			swappedTo = toVersion
+		}
+
+		return swappedTo, nil
 	}
+}
+
+// isGuestResetBeforeEnvd reports whether a cold boot's envd wait ended because
+// the guest restarted itself: the Firecracker process is gone with a counted
+// reset, or with a clean exit that the guest profile classifies as a reset.
+func isGuestResetBeforeEnvd(profile guest.Profile, err error, exit *fc.ExitInfo) bool {
+	if !errors.Is(err, ErrFcProcessExited) {
+		return false
+	}
+
+	cause := fc.ClassifyExit(exit)
+	switch {
+	case cause.GuestEvent().Restarts():
+		return true
+	case !profile.Reset().CleanExitBeforeEnvdIsReset:
+		return false
+	case cause == fc.CrashCauseCleanExit:
+		return true
+	case cause == fc.CrashCauseUnknown:
+		// A binary without the reset counters reports an unread exit.
+		return exit != nil && exit.Exited && exit.ExitCode == 0
+	default:
+		return false
+	}
+}
+
+// envdWaitError is a cold boot's error once its envd wait failed and its
+// sandbox was closed. It marks a guest reset (ErrGuestResetBeforeEnvd) only when
+// the close succeeded: a caller booting the same disk again (RebootSandboxOnDisk)
+// reopens it, which a failed close may have left unflushed.
+func envdWaitError(waitErr error, reset bool, closeErr error) error {
+	if reset && closeErr == nil {
+		waitErr = errors.Join(ErrGuestResetBeforeEnvd, waitErr)
+	}
+
+	return errors.Join(fmt.Errorf("wait for envd after reboot: %w", waitErr), closeErr)
+}
+
+// rebootEnvdWait is the envd wait of one cold boot: the caller's budget when
+// it gave one, else the guest's cold-boot budget.
+func rebootEnvdWait(config *Config, override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+
+	return rebootEnvdTimeoutFor(config)
 }

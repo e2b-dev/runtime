@@ -1,274 +1,666 @@
+//go:build unix
+
 package host
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/envd/internal/cabundle"
 )
 
-const (
-	certA = `-----BEGIN CERTIFICATE-----
-MIIBcTCCARegAwIBAgIUTestCertA==
------END CERTIFICATE-----
-`
-	certB = `-----BEGIN CERTIFICATE-----
-MIIBcTCCARegAwIBAgIUTestCertB==
------END CERTIFICATE-----
-`
-	baseBundle = "# System CA bundle\n"
-)
-
-func newTestInstaller(t *testing.T) *CACertInstaller {
+// newTestCA returns a PEM self-signed CA certificate with a fresh key, so two
+// calls with the same subject give distinct certificates.
+func newTestCA(t *testing.T, cn string) string {
 	t.Helper()
 
-	logger := zerolog.Nop()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
 
-	return NewCACertInstaller(&logger)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
-// testPaths returns bundle and state paths inside a fresh temp dir, with the
-// bundle pre-populated with baseBundle.
-func testPaths(t *testing.T) (bundlePath, extraPath string) {
+type testTrust struct {
+	bundlePath string
+	certDir    string
+	system     []string // certificates envd did not install
+	userFile   string   // a user's own certificate in certDir
+}
+
+// newTestTrust lays out a system bundle holding two unrelated roots and a
+// local certificate directory with one user root.
+func newTestTrust(t *testing.T) testTrust {
 	t.Helper()
 
 	dir := t.TempDir()
-	bundlePath = filepath.Join(dir, "ca-certificates.crt")
-	extraPath = filepath.Join(dir, "extra", "e2b-ca.crt")
-
-	require.NoError(t, os.WriteFile(bundlePath, []byte(baseBundle), 0o644))
-
-	return bundlePath, extraPath
-}
-
-// waitForFile polls until path exists or the deadline is exceeded.
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-
-		time.Sleep(5 * time.Millisecond)
+	tr := testTrust{
+		bundlePath: filepath.Join(dir, "certs", "ca-certificates.crt"),
+		certDir:    filepath.Join(dir, "local"),
+		system:     []string{newTestCA(t, "system root"), newTestCA(t, "user root")},
 	}
+	tr.userFile = filepath.Join(tr.certDir, "user.crt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(tr.bundlePath), 0o755))
+	require.NoError(t, os.MkdirAll(tr.certDir, 0o755))
+	require.NoError(t, os.WriteFile(tr.bundlePath, []byte("# comment kept\n"+strings.Join(tr.system, "")), 0o644))
+	require.NoError(t, os.WriteFile(tr.userFile, []byte(tr.system[1]), 0o644))
 
-	t.Fatalf("timed out waiting for %s to appear", path)
+	return tr
 }
 
-// waitForBundleChange polls until the bundle no longer contains removedPEM
-// and does contain keptPEM. Using only the absence check is racy against the
-// atomic rename in removeCertFromBundle: the file briefly disappears between
-// unlink and rename, satisfying the absence condition prematurely.
-func waitForBundleChange(t *testing.T, bundlePath, removedPEM, keptPEM string) {
+// installer starts an installer, as a freshly started envd would.
+func (tr testTrust) installer() *CACertInstaller {
+	logger := zerolog.Nop()
+
+	c := NewCACertInstaller(&logger)
+	c.statePath = filepath.Join(filepath.Dir(tr.bundlePath), "state.json")
+
+	return c
+}
+
+// update runs the part of Install that completes before /init returns.
+func (tr testTrust) update(t *testing.T, c *CACertInstaller, certs ...string) {
 	t.Helper()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		bundle, err := os.ReadFile(bundlePath)
+	parsed, err := cabundle.Parse(strings.Join(certs, ""))
+	require.NoError(t, err)
+	require.NoError(t, c.updateBundle(t.Context(), parsed, tr.bundlePath))
+}
+
+// install runs both halves of Install synchronously.
+func (tr testTrust) install(t *testing.T, c *CACertInstaller, certs ...string) {
+	t.Helper()
+
+	tr.update(t, c, certs...)
+	require.NoError(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+}
+
+// derCounts counts the certificates in data by DER, decoded with the standard
+// library and keyed by subject and fingerprint.
+func derCounts(t *testing.T, data []byte) map[string]int {
+	t.Helper()
+
+	counts := map[string]int{}
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			require.Empty(t, bytes.TrimSpace(data), "bundle has undecodable content")
+
+			return counts
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
 		require.NoError(t, err)
+		sum := sha256.Sum256(cert.Raw)
+		counts[fmt.Sprintf("%s %x", cert.Subject.CommonName, sum[:6])]++
+	}
+}
 
-		content := string(bundle)
-		if !strings.Contains(content, removedPEM) && strings.Contains(content, keptPEM) {
-			return
-		}
+// ders returns each distinct certificate in certs once, keyed as derCounts.
+func ders(t *testing.T, certs ...string) map[string]int {
+	t.Helper()
 
-		time.Sleep(5 * time.Millisecond)
+	counts := derCounts(t, []byte(strings.Join(certs, "")))
+	for key := range counts {
+		counts[key] = 1
 	}
 
-	t.Fatalf("timed out waiting for cert rotation in bundle")
+	return counts
 }
 
-func TestInstallCACert_FirstTime(t *testing.T) {
-	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+// requireBundle checks that the bundle holds the system roots and want once
+// each and nothing else, and that readers other than root can load it.
+func (tr testTrust) requireBundle(t *testing.T, want ...string) {
+	t.Helper()
 
-	c.install(t.Context(), certA, bundlePath, extraPath)
-	waitForFile(t, extraPath)
-
-	bundle, err := os.ReadFile(bundlePath)
+	bundle, err := os.ReadFile(tr.bundlePath)
 	require.NoError(t, err)
-	assert.Contains(t, string(bundle), strings.TrimRight(certA, "\n"))
 
-	extra, err := os.ReadFile(extraPath)
+	assert.Equal(t, ders(t, append(want, tr.system...)...), derCounts(t, bundle))
+	roots := x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(bundle))
+	for _, certPEM := range want {
+		block, _ := pem.Decode([]byte(certPEM))
+		cert, err := x509.ParseCertificate(block.Bytes)
+		require.NoError(t, err)
+		_, err = cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+		require.NoError(t, err)
+	}
+	info, err := os.Stat(tr.bundlePath)
 	require.NoError(t, err)
-	assert.Equal(t, strings.TrimRight(certA, "\n")+"\n", string(extra))
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
 }
 
-func TestInstallCACert_SameCert(t *testing.T) {
-	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+// requireTrust checks the bundle and that certDir persists exactly want, one
+// certificate per file, beside the user's untouched file.
+func (tr testTrust) requireTrust(t *testing.T, want ...string) {
+	t.Helper()
 
-	c.install(t.Context(), certA, bundlePath, extraPath)
-	waitForFile(t, extraPath) // drain the background goroutine before the hot-path call
+	tr.requireBundle(t, want...)
 
-	c.install(t.Context(), certA, bundlePath, extraPath) // resume — hot path hit
-	waitForFile(t, extraPath)                            // file already written by first goroutine; guards TempDir cleanup
-
-	bundle, err := os.ReadFile(bundlePath)
+	var persisted []byte
+	entries, err := os.ReadDir(tr.certDir)
 	require.NoError(t, err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") || entry.Name() == "user.crt" {
+			continue
+		}
+		info, err := entry.Info()
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(), entry.Name())
+		require.True(t, strings.HasPrefix(entry.Name(), "e2b-") && strings.HasSuffix(entry.Name(), ".crt"), entry.Name())
+		data, err := os.ReadFile(filepath.Join(tr.certDir, entry.Name()))
+		require.NoError(t, err)
+		require.Len(t, derCounts(t, data), 1, "one certificate per file")
+		persisted = append(persisted, data...)
+	}
+	assert.Equal(t, ders(t, want...), derCounts(t, persisted))
 
-	normalized := strings.TrimRight(certA, "\n") + "\n"
-	assert.Equal(t, 1, strings.Count(string(bundle), normalized), "cert should appear exactly once")
+	user, err := os.ReadFile(tr.userFile)
+	require.NoError(t, err)
+	assert.Equal(t, tr.system[1], string(user))
 }
 
-func TestInstallCACert_DifferentCert(t *testing.T) {
-	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+// reformat gives a certificate CRLF line endings, short lines and surrounding
+// blank lines without changing its DER.
+func reformat(cert string) string {
+	block, _ := pem.Decode([]byte(cert))
+	block.Headers = map[string]string{"Comment": "test certificate"}
+	lines := strings.Split(strings.TrimSpace(string(pem.EncodeToMemory(block))), "\n")
+	var out []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "-----") || len(line) < 32 {
+			out = append(out, line)
 
-	c.install(t.Context(), certA, bundlePath, extraPath)
+			continue
+		}
+		out = append(out, line[:32], line[32:])
+	}
 
-	c.install(t.Context(), certB, bundlePath, extraPath)
-
-	normalizedA := strings.TrimRight(certA, "\n") + "\n"
-	normalizedB := strings.TrimRight(certB, "\n") + "\n"
-
-	waitForBundleChange(t, bundlePath, normalizedA, normalizedB)
-
-	bundle, err := os.ReadFile(bundlePath)
-	require.NoError(t, err)
-	assert.NotContains(t, string(bundle), normalizedA, "old cert should be removed")
-	assert.Contains(t, string(bundle), normalizedB, "new cert should be present")
+	return "\r\n\r\n" + strings.Join(out, "\r\n") + "\r\n\r\n"
 }
 
-func TestInstallCACert_EmptyCert(t *testing.T) {
+func TestInstallCACerts_OverlappingSets(t *testing.T) {
 	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+	tr := newTestTrust(t)
+	c := tr.installer()
+	w, w2 := newTestCA(t, "worker"), newTestCA(t, "worker")
+	r0, r1 := newTestCA(t, "added root 0"), newTestCA(t, "added root 1")
 
-	c.install(t.Context(), "", bundlePath, extraPath)
-
-	bundle, err := os.ReadFile(bundlePath)
-	require.NoError(t, err)
-	assert.Equal(t, baseBundle, string(bundle), "bundle should be untouched")
-
-	_, err = os.Stat(extraPath)
-	assert.True(t, os.IsNotExist(err), "extra cert file should not be created for empty cert")
+	for _, step := range []struct {
+		name  string
+		certs []string
+	}{
+		{"worker only", []string{reformat(w)}},
+		{"add first root", []string{w, r0}},
+		{"add second root", []string{w, r0, r1}},
+		{"retire first root", []string{w, r1}},
+		{"replace worker CA with the same subject", []string{w2, r1}},
+		{"same set reordered, reformatted and repeated", []string{reformat(r1), w2, r1}},
+	} {
+		t.Log(step.name)
+		tr.update(t, c, step.certs...)
+		// Final identity assertions apply after deferred cleanup.
+		require.NoError(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+		tr.requireTrust(t, step.certs...)
+	}
 }
 
-func TestInstallCACert_RestartSameCert(t *testing.T) {
+// The unchanged path must not rewrite the bundle once an install completed.
+func TestInstallCACerts_UnchangedSkipsIO(t *testing.T) {
 	t.Parallel()
-	// Simulate envd restarting under OOM and receiving the same cert again.
-	// lastCACert is empty after restart so the cert is appended again; the
-	// goroutine skips removal (prevPEM == "") leaving a temporary duplicate.
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+	tr := newTestTrust(t)
+	c := tr.installer()
+	w := newTestCA(t, "worker")
 
-	normalizedA := strings.TrimRight(certA, "\n") + "\n"
-
-	// State of the VM after a previous envd run.
-	require.NoError(t, os.WriteFile(bundlePath, []byte(baseBundle+normalizedA), 0o644))
-
-	c.install(t.Context(), certA, bundlePath, extraPath)
-	waitForFile(t, extraPath)
-
-	bundle, err := os.ReadFile(bundlePath)
+	tr.install(t, c, w)
+	before, err := os.Stat(tr.bundlePath)
 	require.NoError(t, err)
 
-	assert.GreaterOrEqual(t, strings.Count(string(bundle), normalizedA), 1)
+	require.NoError(t, c.install(t.Context(), reformat(w), tr.bundlePath))
+
+	after, err := os.Stat(tr.bundlePath)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "bundle was replaced")
 }
 
-func TestInstallCACert_RestartDifferentCert(t *testing.T) {
+func TestInstallCACerts_PreexistingSuppliedRootIsOwned(t *testing.T) {
 	t.Parallel()
-	// Simulate envd restarting and receiving a new cert. Without a state file,
-	// prevPEM is "" so the old cert is NOT removed from the bundle immediately —
-	// it stays until update-ca-certificates rebuilds from extraPath (which holds
-	// only the new cert).
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
-
-	normalizedA := strings.TrimRight(certA, "\n") + "\n"
-	normalizedB := strings.TrimRight(certB, "\n") + "\n"
-
-	// State of the VM after a previous envd run that installed certA.
-	require.NoError(t, os.WriteFile(bundlePath, []byte(baseBundle+normalizedA), 0o644))
-
-	c.install(t.Context(), certB, bundlePath, extraPath)
-	waitForFile(t, extraPath)
-
-	bundle, err := os.ReadFile(bundlePath)
+	tr := newTestTrust(t)
+	c := tr.installer()
+	a, b := newTestCA(t, "preexisting E2B root"), newTestCA(t, "replacement root")
+	require.NoError(t, os.WriteFile(tr.bundlePath, []byte(strings.TrimSuffix(strings.Join(tr.system, "")+reformat(a)+a, "\n")), 0o644))
+	customerSource := filepath.Join(tr.certDir, "customer-copy.crt")
+	require.NoError(t, os.WriteFile(customerSource, []byte(a), 0o644))
+	tr.install(t, c, a)
+	tr.requireBundle(t, a)
+	// Ownership survives restart, even when the certificate predated this process.
+	tr.install(t, tr.installer(), b)
+	tr.requireBundle(t, b)
+	source, err := os.ReadFile(customerSource)
 	require.NoError(t, err)
-	assert.Contains(t, string(bundle), normalizedB, "new cert should be appended")
-
-	extra, err := os.ReadFile(extraPath)
-	require.NoError(t, err)
-	assert.Equal(t, normalizedB, string(extra), "extra dir should hold only the new cert")
+	require.Equal(t, a, string(source), "customer source files are not managed by envd")
 }
 
-func TestInstallCACert_ConcurrentResume(t *testing.T) {
+func TestInstallCACerts_PersistenceFailureDoesNotBlockTrust(t *testing.T) {
 	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+	tr := newTestTrust(t)
+	c := tr.installer()
+	w, r0 := newTestCA(t, "retired root"), newTestCA(t, "replacement root")
+	tr.install(t, c, w)
+	require.NoError(t, os.Rename(tr.certDir, tr.certDir+".away"))
+	require.NoError(t, os.Symlink(tr.certDir+".missing", tr.certDir))
+	tr.update(t, c, r0)
+	pending, err := os.ReadFile(c.statePath)
+	require.NoError(t, err)
+	require.Error(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+	tr.requireBundle(t, r0)
+	after, err := os.ReadFile(c.statePath)
+	require.NoError(t, err)
+	require.Equal(t, pending, after, "retain ownership until source cleanup succeeds")
+	require.NoError(t, os.Remove(tr.certDir))
+	require.NoError(t, os.Rename(tr.certDir+".away", tr.certDir))
+	// A restart must retry the source cleanup using the retained ownership.
+	require.NoError(t, tr.installer().persist(t.Context(), tr.bundlePath, tr.certDir))
+	tr.requireTrust(t, r0)
+}
 
-	c.install(t.Context(), certA, bundlePath, extraPath)
+func TestInstallCACerts_PublishesReplacement(t *testing.T) {
+	t.Parallel()
+	for _, symlink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("symlink=%t", symlink), func(t *testing.T) {
+			t.Parallel()
+			tr := newTestTrust(t)
+			before, err := os.ReadFile(tr.bundlePath)
+			require.NoError(t, err)
+			target := tr.bundlePath + ".target"
+			if symlink {
+				require.NoError(t, os.Rename(tr.bundlePath, target))
+				require.NoError(t, os.Symlink(target, tr.bundlePath))
+			}
+			reader, err := os.Open(tr.bundlePath)
+			require.NoError(t, err)
+			defer reader.Close()
+			a := newTestCA(t, "A")
+			c := tr.installer()
+			tr.update(t, c, a)
+			tr.requireBundle(t, a)
+			old, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			require.Equal(t, before, old, "an existing reader must retain the complete old bundle")
+			if symlink {
+				tr.install(t, c, newTestCA(t, "B"))
+				original, err := os.ReadFile(target)
+				require.NoError(t, err)
+				require.Equal(t, before, original, "never modify the original symlink target")
+			}
+		})
+	}
+}
 
-	var wg sync.WaitGroup
+func TestInstallCACerts_RepairsInterruptedAppendBeforeInitReturns(t *testing.T) {
+	t.Parallel()
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restart=%t", restart), func(t *testing.T) {
+			t.Parallel()
+			tr := newTestTrust(t)
+			c := tr.installer()
+			a, b := newTestCA(t, "A"), newTestCA(t, "B")
+			tr.install(t, c, a)
+			before, err := os.ReadFile(tr.bundlePath)
+			require.NoError(t, err)
+			require.NoError(t, os.Remove(tr.bundlePath))
+			require.Error(t, c.install(t.Context(), b, tr.bundlePath))
+			// An older installer could leave a partial append after recording intent.
+			require.NoError(t, os.WriteFile(tr.bundlePath, append(before, b[:len(b)/2]...), 0o644))
+			if restart {
+				c = tr.installer()
+			}
+			require.NoError(t, c.install(t.Context(), b, tr.bundlePath))
+			tr.requireBundle(t, b) // No background cleanup is needed to make init's trust usable.
+		})
+	}
+}
 
-	for range 10 {
-		wg.Go(func() {
-			c.install(t.Context(), certA, bundlePath, extraPath)
+func TestInstallCACerts_ReplacesPersistedFiles(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	w, r := newTestCA(t, "worker"), newTestCA(t, "root")
+	require.NoError(t, os.WriteFile(filepath.Join(tr.certDir, legacyCACertFile), []byte(w), 0o644))
+	userPath := filepath.Join(tr.certDir, "e2b-user.crt")
+	require.NoError(t, os.WriteFile(userPath, []byte(tr.system[1]), 0o644))
+	c := tr.installer()
+	tr.install(t, c, r)
+	require.NoFileExists(t, filepath.Join(tr.certDir, legacyCACertFile))
+	data, err := os.ReadFile(userPath)
+	require.NoError(t, err)
+	assert.Equal(t, tr.system[1], string(data))
+}
+
+func TestInstallCACerts_RejectsInvalidBundle(t *testing.T) {
+	t.Parallel()
+	w := newTestCA(t, "worker")
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	malformed := "-----BEGIN CERTIFICATE-----\n!!! invalid !!!\n-----END CERTIFICATE-----\n"
+
+	for name, bundle := range map[string]string{
+		"not a certificate":       "-----BEGIN CERTIFICATE-----\nMIIBcTCCARegAwIBAgIUTestCertA==\n-----END CERTIFICATE-----\n",
+		"malformed block first":   malformed + w,
+		"malformed block between": w + malformed + w,
+		"unterminated block":      "-----BEGIN CERTIFICATE-----\nMIIB\n" + w,
+		"text between blocks":     w + "junk\n" + w,
+		"truncated":               w + w[:len(w)/2],
+		"private key":             w + string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
+		"no certificates":         "\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := newTestTrust(t)
+			before, err := os.ReadFile(tr.bundlePath)
+			require.NoError(t, err)
+
+			require.Error(t, tr.installer().install(t.Context(), bundle, tr.bundlePath))
+
+			after, err := os.ReadFile(tr.bundlePath)
+			require.NoError(t, err)
+			assert.Equal(t, string(before), string(after))
+		})
+	}
+}
+
+// Install through its background goroutine while readers load the bundle and
+// resumes repeat the same set.
+func TestInstallCACerts_ConcurrentInstallAndReaders(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	c := tr.installer()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); c.run(ctx, tr.bundlePath, tr.certDir) }()
+	t.Cleanup(func() { cancel(); <-done })
+	w, r0, r1 := newTestCA(t, "worker"), newTestCA(t, "added root 0"), newTestCA(t, "added root 1")
+
+	var stop atomic.Bool
+	var readers sync.WaitGroup
+	t.Cleanup(func() { stop.Store(true); readers.Wait() })
+	for range 4 {
+		readers.Go(func() {
+			for !stop.Load() {
+				data, err := os.ReadFile(tr.bundlePath)
+				if err != nil {
+					t.Error(err)
+
+					return
+				}
+				_, after, found := bytes.CutLast(data, []byte("-----END CERTIFICATE-----\n"))
+				if !assert.True(t, found, "bundle without a certificate") || !assert.Empty(t, bytes.TrimSpace(after), "partial bundle observed") {
+					return
+				}
+			}
 		})
 	}
 
-	wg.Wait()
+	require.NoError(t, c.install(t.Context(), w+r0, tr.bundlePath))
+	var resumes sync.WaitGroup
+	for range 10 {
+		resumes.Go(func() {
+			assert.NoError(t, c.install(t.Context(), w+r1, tr.bundlePath))
+		})
+	}
+	resumes.Wait()
 
-	// Wait for the background goroutine spawned by the first install to finish
-	// its I/O. The mu.Lock/Unlock drain is unreliable: if the goroutine has not
-	// yet been scheduled, no one holds mu and the lock succeeds immediately —
-	// leaving the goroutine to run against the already-cleaning TempDir.
-	waitForFile(t, extraPath)
+	block, _ := pem.Decode([]byte(r1))
+	require.Eventually(t, func() bool {
+		if !c.mu.TryAcquire(1) {
+			return false
+		}
+		defer c.mu.Release(1)
 
-	bundle, err := os.ReadFile(bundlePath)
-	require.NoError(t, err)
+		data, err := os.ReadFile(filepath.Join(tr.certDir, fmt.Sprintf("e2b-%x.crt", sha256.Sum256(block.Bytes))))
 
-	normalized := strings.TrimRight(certA, "\n") + "\n"
-	assert.Equal(t, 1, strings.Count(string(bundle), normalized), "cert should appear exactly once")
+		return !c.pending && err == nil && string(data) == r1
+	}, 5*time.Second, time.Millisecond)
+	stop.Store(true)
+	readers.Wait()
+	tr.requireTrust(t, w, r1)
 }
 
 // A canceled acquire while a previous install's cleanup still holds mu must
 // return ErrCAInstallInProgress, not a raw context error.
-func TestInstallCACert_CanceledCtxUnderContention(t *testing.T) {
+func TestInstallCACerts_CanceledCtxUnderContention(t *testing.T) {
 	t.Parallel()
-	bundlePath, extraPath := testPaths(t)
-	c := newTestInstaller(t)
+	tr := newTestTrust(t)
+	c := tr.installer()
 
-	// Simulate the background cleanup goroutine still holding mu.
+	// Simulate the background persist still holding mu.
 	require.NoError(t, c.mu.Acquire(t.Context(), 1))
 	defer c.mu.Release(1)
 
 	canceledCtx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	err := c.install(canceledCtx, certA, bundlePath, extraPath)
+	err := c.install(canceledCtx, newTestCA(t, "worker"), tr.bundlePath)
 	require.ErrorIs(t, err, ErrCAInstallInProgress)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestRemoveCertFromBundle(t *testing.T) {
+func TestInstallCACerts_RetainsLegacyDirectoryTrust(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	bundlePath := filepath.Join(dir, "bundle.crt")
-
-	normalizedA := strings.TrimRight(certA, "\n") + "\n"
-	normalizedB := strings.TrimRight(certB, "\n") + "\n"
-
-	require.NoError(t, os.WriteFile(bundlePath, []byte(baseBundle+normalizedA+normalizedB), 0o644))
-	require.NoError(t, removeCertFromBundle(bundlePath, normalizedA))
-
-	result, err := os.ReadFile(bundlePath)
+	tr := newTestTrust(t)
+	w, r := newTestCA(t, "legacy CA"), newTestCA(t, "additional CA")
+	legacy := filepath.Join(tr.certDir, legacyCACertFile)
+	require.NoError(t, os.WriteFile(legacy, []byte(w), 0o644))
+	pemLink := filepath.Join(filepath.Dir(tr.bundlePath), "e2b-ca.pem")
+	require.NoError(t, os.Symlink(legacy, pemLink))
+	hashLink := filepath.Join(filepath.Dir(tr.bundlePath), "subject-hash.0")
+	require.NoError(t, os.Symlink("e2b-ca.pem", hashLink))
+	c := tr.installer()
+	tr.install(t, c, w, r)
+	data, err := os.ReadFile(hashLink)
 	require.NoError(t, err)
-	assert.NotContains(t, string(result), normalizedA)
-	assert.Contains(t, string(result), normalizedB)
-	assert.Contains(t, string(result), baseBundle)
+	assert.Equal(t, w, string(data))
+	tr.requireBundle(t, w, r)
+	tr.install(t, c, r)
+	require.NoFileExists(t, legacy)
+	tr.requireTrust(t, r)
+}
+
+func TestInstallCACerts_NormalizesPreexistingRequestedRoot(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	c := tr.installer()
+	a, b := newTestCA(t, "preexisting E2B root"), newTestCA(t, "injected root")
+	// The supplied root is normalized; the unrelated customer root keeps its headers.
+	initial := strings.TrimRight(reformat(a)+tr.system[0]+reformat(tr.system[1]), "\r\n")
+	require.NoError(t, os.WriteFile(tr.bundlePath, []byte(initial), 0o644))
+	block, _ := pem.Decode([]byte(a))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	verify := func(trusted bool) {
+		t.Helper()
+		content, err := os.ReadFile(tr.bundlePath)
+		require.NoError(t, err)
+		roots := x509.NewCertPool()
+		require.True(t, roots.AppendCertsFromPEM(content))
+		_, err = cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+		if trusted {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
+	}
+	tr.update(t, c, a, b)
+	verify(true) // The foreground append is already usable by Go clients.
+	require.NoError(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+	verify(true)
+	tr.requireTrust(t, a, b)
+	content, err := os.ReadFile(tr.bundlePath)
+	require.NoError(t, err)
+	for len(content) > 0 {
+		current, rest := pem.Decode(content)
+		require.NotNil(t, current)
+		if bytes.Equal(current.Bytes, block.Bytes) {
+			require.Empty(t, current.Headers)
+		} else {
+			unrelated, _ := pem.Decode([]byte(tr.system[1]))
+			if bytes.Equal(current.Bytes, unrelated.Bytes) {
+				require.Equal(t, map[string]string{"Comment": "test certificate"}, current.Headers)
+			}
+		}
+		content = rest
+	}
+	tr.install(t, c, b)
+	verify(false) // Supplying A makes it E2B-owned, even when it already existed.
+	tr.requireTrust(t, b)
+}
+
+func TestInstallCACerts_RestartRetiresOwnedRoots(t *testing.T) {
+	t.Parallel()
+	for _, persisted := range []bool{false, true} {
+		for _, reinitialize := range []bool{false, true} {
+			t.Run(fmt.Sprintf("persisted=%t/reinitialize=%t", persisted, reinitialize), func(t *testing.T) {
+				t.Parallel()
+				tr := newTestTrust(t)
+				a, b := newTestCA(t, "A"), newTestCA(t, "B")
+				c := tr.installer()
+				if persisted {
+					tr.install(t, c, a)
+				} else {
+					tr.update(t, c, a)
+				}
+
+				c = tr.installer()
+				if reinitialize {
+					tr.install(t, c, a)
+				}
+				tr.install(t, c, b)
+				tr.requireTrust(t, b) // A retires, and unrelated system/customer roots survive.
+			})
+		}
+	}
+}
+
+func TestInstallCACerts_RestartBetweenOwnershipAndBundleWrites(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	a, b := newTestCA(t, "A"), newTestCA(t, "B")
+	before, err := os.ReadFile(tr.bundlePath)
+	require.NoError(t, err)
+	c := tr.installer()
+	tr.update(t, c, a)
+	// Reproduce a crash after recording ownership but before publishing the bundle.
+	require.NoError(t, os.WriteFile(tr.bundlePath, before, 0o644))
+	c = tr.installer()
+	tr.install(t, c, a)
+	tr.install(t, c, b)
+	tr.requireTrust(t, b)
+
+	tr.update(t, c, a)
+	owned, err := os.ReadFile(c.statePath)
+	require.NoError(t, err)
+	require.NoError(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+	// Reproduce a crash after cleanup but before retiring the ownership record.
+	require.NoError(t, os.WriteFile(c.statePath, owned, 0o644))
+	tr.install(t, tr.installer(), b)
+	tr.requireTrust(t, b)
+}
+
+func TestInstallCACerts_OwnershipFailureDoesNotPublish(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	c := tr.installer()
+	before, err := os.ReadFile(tr.bundlePath)
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(c.statePath, 0o755))
+	certs, err := cabundle.Parse(newTestCA(t, "A"))
+	require.NoError(t, err)
+	err = c.updateBundle(t.Context(), certs, tr.bundlePath)
+	require.ErrorContains(t, err, "read CA state")
+	after, err := os.ReadFile(tr.bundlePath)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+// A new process must finish persisted intent without receiving another init.
+func TestInstallCACerts_StartupRecovery(t *testing.T) {
+	t.Parallel()
+	for _, boundary := range []string{"before-append", "partial-append", "after-append", "after-cleanup"} {
+		t.Run(boundary, func(t *testing.T) {
+			t.Parallel()
+			tr := newTestTrust(t)
+			a, b := newTestCA(t, "A"), newTestCA(t, "B")
+			c := tr.installer()
+			tr.install(t, c, a)
+			before, err := os.ReadFile(tr.bundlePath)
+			require.NoError(t, err)
+			tr.update(t, c, b)
+			state, err := os.ReadFile(c.statePath)
+			require.NoError(t, err)
+			switch boundary {
+			case "before-append":
+				require.NoError(t, os.WriteFile(tr.bundlePath, before, 0o644))
+			case "partial-append":
+				require.NoError(t, os.WriteFile(tr.bundlePath, append(before, b[:len(b)/2]...), 0o644))
+			case "after-cleanup":
+				require.NoError(t, c.persist(t.Context(), tr.bundlePath, tr.certDir))
+				require.NoError(t, os.WriteFile(c.statePath, state, 0o600))
+			}
+			restarted := tr.installer()
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			go func() { defer close(done); restarted.run(ctx, tr.bundlePath, tr.certDir) }()
+			t.Cleanup(func() { cancel(); <-done })
+			require.Eventually(t, func() bool {
+				if !restarted.mu.TryAcquire(1) {
+					return false
+				}
+				defer restarted.mu.Release(1)
+
+				return restarted.loaded && !restarted.pending
+			}, time.Second, time.Millisecond)
+			tr.requireTrust(t, b)
+			saved, err := os.ReadFile(c.statePath)
+			require.NoError(t, err)
+			var final caState
+			require.NoError(t, json.Unmarshal(saved, &final))
+			parsed, err := cabundle.Parse(b)
+			require.NoError(t, err)
+			require.Equal(t, []string{parsed[0].Fingerprint}, final.Owned)
+		})
+	}
 }

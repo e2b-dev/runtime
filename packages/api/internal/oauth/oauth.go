@@ -99,7 +99,7 @@ func bearerToken(md metadata.MD) (string, bool) {
 func requireBearerToken(md metadata.MD) (string, error) {
 	rawToken, found := bearerToken(md)
 	if !found {
-		return "", denyPermission()
+		return "", denyCaller()
 	}
 
 	return rawToken, nil
@@ -117,7 +117,7 @@ func RequireClaims(ctx context.Context, md metadata.MD, verifier Verifier) (Clai
 
 	claims, err := verifier.VerifyClaims(ctx, rawToken)
 	if err != nil {
-		return Claims{}, denyPermission()
+		return Claims{}, denyCaller()
 	}
 
 	return claims, nil
@@ -138,10 +138,10 @@ func RequireOrgClaims(claims Claims, expectedOrgID string) error {
 func RequireScopeClaims(claims Claims, requiredScope string) error {
 	requiredScope = strings.TrimSpace(requiredScope)
 	if requiredScope == "" {
-		return denyPermission()
+		return denyCaller()
 	}
 	if !slices.Contains(claims.Scopes, requiredScope) {
-		return denyPermission()
+		return denyCaller()
 	}
 
 	return nil
@@ -149,4 +149,8 @@ func RequireScopeClaims(claims Claims, requiredScope string) error {
 
 func denyPermission() error {
 	return status.Error(codes.PermissionDenied, "permission denied")
+}
+
+func denyCaller() error {
+	return status.Error(codes.Unauthenticated, "unauthenticated")
 }

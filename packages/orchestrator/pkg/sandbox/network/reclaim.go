@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -12,7 +13,7 @@ import (
 // created before any host-side networking in CreateNetwork and removed last in
 // RemoveNetwork (which preserves it as a rediscovery anchor if host-side
 // teardown fails). It returns the number of slots removed and any failures.
-func ReclaimLeakedSlots(netnsDir string, config Config, egressProxy EgressProxy) (int, []error) {
+func ReclaimLeakedSlots(ctx context.Context, netnsDir string, config Config, egressProxy EgressProxy) (int, []error) {
 	var failures []error
 
 	slots, err := ListSlotNamespaces(netnsDir)
@@ -29,7 +30,7 @@ func ReclaimLeakedSlots(netnsDir string, config Config, egressProxy EgressProxy)
 			continue
 		}
 
-		if err := slot.RemoveNetwork(); err != nil {
+		if err := slot.RemoveNetwork(ctx); err != nil {
 			failures = append(failures, fmt.Errorf("failed to remove network slot %d: %w", idx, err))
 
 			continue

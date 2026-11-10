@@ -218,7 +218,7 @@ func TestV2Pool_GetStampsAndRecycleRestoresDSCP(t *testing.T) { //nolint:paralle
 	require.Equal(t, slot.Idx, got.Idx)
 	requireDSCPByte(t, got, 16<<2)
 
-	require.NoError(t, pool.returnSlot(ctx, got, func(context.Context, string) {}, 0))
+	require.NoError(t, pool.returnSlot(ctx, got, func(context.Context, string) error { return nil }, 0))
 	requireDSCPByte(t, got, 8<<2)
 
 	select {

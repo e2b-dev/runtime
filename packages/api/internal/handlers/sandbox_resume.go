@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -178,7 +179,18 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 
 	// Pre-flight of the fetcher's authoritative gate so a disabled flag answers
 	// 400 even when the start would otherwise join an in-flight one (409).
-	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, body.Memory, lastSnapshot.Snapshot); apiErr != nil {
+	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, body.Memory, lastSnapshot.Snapshot, lastSnapshot.EnvBuild); apiErr != nil {
+		setMemoryOverrideOutcome(c, body.Memory, apiErr)
+		setResumeGateOutcome(c, body.Memory, lastSnapshot.EnvBuild, apiErr)
+		apierrors.SendAPIError(c, apiErr)
+
+		return
+	}
+
+	// Refuse a cpuCount the snapshot or the team cannot honour before the start
+	// is reserved, so the 400 reaches only this request and never a connect or
+	// auto-resume joined to the same start.
+	if apiErr := orchestrator.CheckSandboxCPUCount(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.CpuCount); apiErr != nil {
 		setMemoryOverrideOutcome(c, body.Memory, apiErr)
 		apierrors.SendAPIError(c, apiErr)
 
@@ -201,10 +213,14 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		true,
 		demandsFilesystemBoot(body.Memory, lastSnapshot.Snapshot),
 		nil, // mcp
+		orchestrator.WithCPUCount(body.CpuCount),
 	)
 	setMemoryOverrideOutcome(c, body.Memory, createErr)
+	setResumeGateOutcome(c, body.Memory, lastSnapshot.EnvBuild, createErr)
 	if createErr != nil {
-		apierrors.SendAPIError(c, createErr)
+		responseErr := *createErr
+		responseErr.Retryable = apierrors.UndefinedRetry
+		apierrors.SendAPIError(c, &responseErr)
 
 		return
 	}
@@ -234,7 +250,13 @@ func (a *APIStore) buildResumeSandboxData(sandboxID string, autoPauseOverride, m
 	return a.buildResumeSandboxDataFromSnapshot(sandboxID, sandboxID, autoPauseOverride, memory)
 }
 
-const errCodeMemoryOverrideDisabled = "sandbox_memory_override_disabled"
+const (
+	errCodeMemoryOverrideDisabled = "sandbox_memory_override_disabled"
+	// errCodeSnapshotGuestAgentUnresponsive refuses a memory resume of a
+	// snapshot the node took while the sandbox's guest agent did not answer;
+	// the proxy's copy, so auto-resume renders it as the refusal it is.
+	errCodeSnapshotGuestAgentUnresponsive = proxygrpc.SnapshotGuestAgentUnresponsive
+)
 
 // setMemoryOverrideOutcome labels the request metric with the fate of an
 // explicit memory:false so the ramp is measurable on http.server.duration:
@@ -266,6 +288,50 @@ func snapshotIsFilesystemOnly(snap queries.Snapshot) bool {
 	return snap.Config != nil && snap.Config.FilesystemOnly
 }
 
+// setResumeGateOutcome labels the request metric with the fate of a resume
+// of a snapshot taken over an unresponsive guest agent, so the refusals and
+// the memory-less recoveries are countable on http.server.duration: refused
+// (a plain resume answered the conflict) or served without memory. Any other
+// resume is unlabeled; metricMemoryOverride keeps labeling memory:false.
+func setResumeGateOutcome(c *gin.Context, memory *bool, build queries.EnvBuild, createErr *api.APIError) {
+	switch {
+	case createErr != nil && createErr.ErrorCode == errCodeSnapshotGuestAgentUnresponsive:
+		c.Set(metricResumeGate, "refused_guest_agent_unresponsive")
+	case createErr == nil && memory != nil && !*memory && snapshotEnvdUnresponsive(build):
+		c.Set(metricResumeGate, "served_without_memory")
+	}
+}
+
+// snapshotGuestAgentUnresponsiveError is the refusal of a memory resume of a
+// snapshot taken over an unresponsive guest agent: a conflict with its own
+// code, so the explicit resume paths and the auto-resume answer alike.
+func snapshotGuestAgentUnresponsiveError(sandboxID string) *api.APIError {
+	return &api.APIError{
+		Code:      http.StatusConflict,
+		ErrorCode: errCodeSnapshotGuestAgentUnresponsive,
+		ClientMsg: fmt.Sprintf("Sandbox '%s' cannot be resumed with its memory: its snapshot was taken while the sandbox guest agent was not responding, and resuming the memory would bring that back. Resume it without memory (memory: false) to cold-boot it from its disk", sandboxID),
+		Err:       fmt.Errorf("memory resume of snapshot '%s' taken over an unresponsive guest agent refused", sandboxID),
+	}
+}
+
+// snapshotEnvdUnresponsive reports whether the build a sandbox would resume
+// from was taken while its guest agent did not answer the pause's health
+// probe. Builds from before the mark, and builds whose agent answered, carry
+// no value and are memory snapshots like any other.
+func snapshotEnvdUnresponsive(build queries.EnvBuild) bool {
+	return build.EnvdUnresponsive != nil && *build.EnvdUnresponsive
+}
+
+// envdUnresponsiveAtPause is the API's optional field for the mark: set only
+// when it is true, so a running sandbox and an ordinary snapshot omit it.
+func envdUnresponsiveAtPause(mark *bool) *api.EnvdUnresponsiveAtPause {
+	if mark == nil || !*mark {
+		return nil
+	}
+
+	return new(true)
+}
+
 // demandsFilesystemBoot reports whether the request explicitly demands a cold
 // boot that an in-flight start might not honor: memory:false on a snapshot not
 // already filesystem-only (an fs-only snapshot cold-boots on any start, so a
@@ -281,14 +347,25 @@ func demandsFilesystemBoot(memory *bool, snap queries.Snapshot) bool {
 // resolveFilesystemBoot maps the request's optional memory field (default
 // true) to the create RPC's filesystem-boot demand. Flag off rejects rather
 // than silently memory-restoring; a filesystem-only snapshot already
-// cold-boots from its own metadata, so the RPC stays unchanged for it.
-func resolveFilesystemBoot(ctx context.Context, flags featureFlagsClient, memory *bool, snap queries.Snapshot) (bool, *api.APIError) {
-	if memory == nil || *memory {
+// cold-boots from its own metadata, so the RPC stays unchanged for it. A
+// snapshot taken while the guest agent did not answer is refused a memory
+// resume, since that memory holds the unresponsive agent, and is cold-booted
+// on memory:false for every team: the flag gates a choice, not a rescue.
+func resolveFilesystemBoot(ctx context.Context, flags featureFlagsClient, memory *bool, snap queries.Snapshot, build queries.EnvBuild) (bool, *api.APIError) {
+	if snapshotIsFilesystemOnly(snap) {
 		return false, nil
 	}
 
-	if snapshotIsFilesystemOnly(snap) {
+	if memory == nil || *memory {
+		if snapshotEnvdUnresponsive(build) {
+			return false, snapshotGuestAgentUnresponsiveError(snap.SandboxID)
+		}
+
 		return false, nil
+	}
+
+	if snapshotEnvdUnresponsive(build) {
+		return true, nil
 	}
 
 	if !flags.BoolFlag(ctx, featureflags.FsOnlyResumeAPIFlag,
@@ -327,7 +404,7 @@ func (a *APIStore) buildResumeSandboxDataFromSnapshot(snapshotSandboxID, sandbox
 
 		// Resolved here rather than in the handler so the decision reads the
 		// same locked snapshot fetch the create request is built from.
-		filesystemBoot, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, memory, snap)
+		filesystemBoot, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, memory, snap, build)
 		if apiErr != nil {
 			return orchestrator.SandboxMetadata{}, apiErr
 		}

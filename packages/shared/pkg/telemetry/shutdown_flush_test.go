@@ -2,14 +2,18 @@ package telemetry
 
 import (
 	"context"
+	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	"google.golang.org/grpc"
 )
 
 // recordingExporter captures the metric names handed to it so a test can assert
@@ -74,12 +78,73 @@ func TestShutdownFlushesPendingMetrics(t *testing.T) {
 	client := &Client{
 		MetricExporter: exporter,
 		MeterProvider:  meterProvider,
-		forceFlush:     meterProvider.ForceFlush,
+		shutdownMeters: meterProvider.Shutdown,
 	}
 
 	assert.Empty(t, exporter.names(), "nothing should be exported before shutdown")
 	require.NoError(t, client.Shutdown(ctx))
 	assert.Contains(t, exporter.names(), "test.batch.runs")
+}
+
+type stalledCollector struct {
+	collectormetrics.UnimplementedMetricsServiceServer
+
+	received chan struct{}
+}
+
+func (c *stalledCollector) Export(ctx context.Context, _ *collectormetrics.ExportMetricsServiceRequest) (*collectormetrics.ExportMetricsServiceResponse, error) {
+	select {
+	case c.received <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+
+	return nil, ctx.Err()
+}
+
+// The periodic reader exports on its own context, and the OTLP exporter's
+// Shutdown waits for that export to finish, so an export stuck on a collector
+// that never answers must be cancelled for Shutdown to keep to its context.
+func TestShutdownCancelsAnExportInFlight(t *testing.T) {
+	t.Parallel()
+
+	var listen net.ListenConfig
+	listener, err := listen.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	collector := &stalledCollector{received: make(chan struct{}, 1)}
+	server := grpc.NewServer()
+	collectormetrics.RegisterMetricsServiceServer(server, collector)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	exporter, err := NewMeterExporter(t.Context(), otlpmetricgrpc.WithEndpoint(listener.Addr().String()))
+	require.NoError(t, err)
+	meterProvider, err := NewMeterProvider(exporter, time.Hour, nil)
+	require.NoError(t, err)
+	counter, err := meterProvider.Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry").Int64Counter("test.stalled.runs")
+	require.NoError(t, err)
+	counter.Add(t.Context(), 1)
+
+	flushing, stopFlushing := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer stopFlushing()
+	_ = meterProvider.ForceFlush(flushing)
+	select {
+	case <-collector.received:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no export reached the collector")
+	}
+
+	client := &Client{
+		MetricExporter: exporter,
+		MeterProvider:  meterProvider,
+		shutdownMeters: meterProvider.Shutdown,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	started := time.Now()
+	_ = client.Shutdown(ctx)
+	assert.Less(t, time.Since(started), 3*time.Second, "an export in flight held shutdown past its context")
 }
 
 // The noop client is what New returns on local setups and whenever the collector

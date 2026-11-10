@@ -1,8 +1,8 @@
 SHELL := /bin/bash
-.PHONY: lint config test images stores-check vector-validate sync-configs kubernetes-render terraform-validate
+.PHONY: lint config test images stores-check vector-validate otel-validate sync-configs kubernetes-render terraform-validate
 
 # Every compose invocation runs against compose/, where compose.yaml and .env
-# live; the other two install shapes have their own directories beside it.
+# live; the other three install shapes have their own directories beside it.
 COMPOSE := docker compose --project-directory compose
 
 SHELL_FILES := $(strip $(wildcard compose/scripts/*.sh))
@@ -14,23 +14,36 @@ BATS_FILES := $(strip $(wildcard tests/*.bats))
 config:
 	$(COMPOSE) config -q
 
-lint: config vector-validate kubernetes-render terraform-validate
+lint: config vector-validate otel-validate kubernetes-render terraform-validate
 	@if [ -n "$(strip $(SHELL_FILES))" ]; then shellcheck -x $(SHELL_FILES); fi
 	@if [ -n "$(strip $(BATS_FILES))" ]; then shellcheck -x -s bash $(BATS_FILES); fi
 
 kubernetes-render:
 	kubectl kustomize kubernetes >/dev/null
 
-# Both roots share one plugin cache, so the providers are downloaded once. The
-# example is validated too: a renamed input or output is exactly how a
-# copy-paste example goes stale.
+# All six roots share one plugin cache, so each provider is downloaded once.
+# Terraform reads that cache only for providers a lock file already lists
+# unless told otherwise, and none of these roots tracks a lock file
+# (.gitignore), so there is none to keep. The examples are validated too: a
+# renamed input or output is exactly how a copy-paste example goes stale.
+TF_CACHE := TF_PLUGIN_CACHE_DIR=$(CURDIR)/.terraform-cache TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
 terraform-validate:
 	mkdir -p .terraform-cache
-	TF_PLUGIN_CACHE_DIR=$(CURDIR)/.terraform-cache terraform -chdir=terraform/gcp init -backend=false -input=false >/dev/null
+	$(TF_CACHE) terraform -chdir=terraform/gcp init -backend=false -input=false >/dev/null
 	terraform -chdir=terraform/gcp fmt -check -recursive
 	terraform -chdir=terraform/gcp validate
-	TF_PLUGIN_CACHE_DIR=$(CURDIR)/.terraform-cache terraform -chdir=terraform/gcp/examples/basic init -backend=false -input=false >/dev/null
+	$(TF_CACHE) terraform -chdir=terraform/gcp/examples/basic init -backend=false -input=false >/dev/null
 	terraform -chdir=terraform/gcp/examples/basic validate
+	$(TF_CACHE) terraform -chdir=terraform/aws init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/aws fmt -check -recursive
+	terraform -chdir=terraform/aws validate
+	$(TF_CACHE) terraform -chdir=terraform/aws/examples/basic init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/aws/examples/basic validate
+	$(TF_CACHE) terraform -chdir=terraform/azure init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/azure fmt -check -recursive
+	terraform -chdir=terraform/azure validate
+	$(TF_CACHE) terraform -chdir=terraform/azure/examples/basic init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform/azure/examples/basic validate
 
 # Vector parses the config and compiles its VRL without connecting to sinks.
 # Catches a broken remap or a misspelled sink option before a host does.
@@ -38,9 +51,20 @@ vector-validate:
 	docker run --rm -v "$(CURDIR)/compose/config/vector/vector.toml:/etc/vector/vector.toml:ro" \
 	  timberio/vector:0.51.1-alpine validate --no-environment /etc/vector/vector.toml
 
-# After editing compose/config/clickhouse/config.xml or
-# compose/config/vector/vector.toml: rewrite the inline copies in
-# compose/compose.yaml and their SHA-256 stamps.
+# The collector parses the config and builds every pipeline without starting
+# them, so a pipeline naming a component the config does not define fails
+# here rather than on a host. The image is the one compose.yaml pins, and the
+# Kubernetes copy of the config is this file as is.
+OTEL_IMAGE := $(shell sed -n 's/^    image: \(otel\/opentelemetry-collector-contrib:[^ ]*\)$$/\1/p' compose/compose.yaml)
+otel-validate:
+	@test -n "$(OTEL_IMAGE)" || { echo "otel-validate: compose/compose.yaml pins no otel/opentelemetry-collector-contrib image" >&2; exit 1; }
+	docker run --rm -v "$(CURDIR)/compose/config/otel/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+	  $(OTEL_IMAGE) validate --config=/etc/otelcol-contrib/config.yaml
+
+# After editing compose/config/clickhouse/config.xml,
+# compose/config/vector/vector.toml or compose/config/otel/otel-collector.yaml:
+# rewrite the inline copies in compose/compose.yaml, their SHA-256 stamps and
+# the Kubernetes copies under kubernetes/config/.
 sync-configs:
 	python3 compose/scripts/dev/sync-configs.py
 

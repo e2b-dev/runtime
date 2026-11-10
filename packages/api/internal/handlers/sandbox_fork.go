@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -19,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -28,10 +30,28 @@ import (
 // bounding the parallel boots (and the result allocation) per request.
 const maxForkCount = 100
 
+// forkOrchestrator is the slice of the orchestrator the fork handler uses up
+// to the checkpoint, so the handler's answers to a refusal are testable
+// without a real orchestrator.
+type forkOrchestrator interface {
+	GetSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandbox.Sandbox, error)
+	CheckpointSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+}
+
+func (a *APIStore) forkBackend() forkOrchestrator {
+	if a.forkBackendOverride != nil {
+		return a.forkBackendOverride
+	}
+
+	return a.orchestrator
+}
+
 // PostSandboxesSandboxIDFork forks a running sandbox: it checkpoints the
 // sandbox in place (snapshot it and resume it on its node, so the original
 // keeps running with its ID and expiration untouched) and creates count new
-// sandboxes from that snapshot under fresh IDs. Each fork succeeds or fails
+// sandboxes from that snapshot under fresh IDs. A fork starts as a new sandbox,
+// not a resume, so placement spreads the forks across the cluster instead of
+// pinning every one to the original's node. Each fork succeeds or fails
 // independently: the response carries one result per requested fork, holding
 // either the created sandbox or the error that prevented it from starting.
 func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.SandboxID) {
@@ -92,7 +112,7 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		return
 	}
 
-	original, err := a.orchestrator.GetSandbox(ctx, teamID, sandboxID)
+	original, err := a.forkBackend().GetSandbox(ctx, teamID, sandboxID)
 	if err != nil {
 		if errors.Is(err, sandbox.ErrNotFound) {
 			apiErr := forkHandleNotRunningSandbox(ctx, a, sandboxID, teamID)
@@ -116,7 +136,7 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 	// Checkpoint the sandbox in place: it is briefly paused on its node,
 	// snapshotted, and resumed under the same execution ID, so the original
 	// keeps its ID, expiration, and concurrency slot.
-	err = a.orchestrator.CheckpointSandbox(ctx, teamID, sandboxID)
+	err = a.forkBackend().CheckpointSandbox(ctx, teamID, sandboxID)
 	var transErr *sandbox.InvalidStateTransitionError
 
 	switch {
@@ -130,8 +150,34 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be forked while in '%s' state", sandboxID, transErr.CurrentState))
 
 		return
+	case errors.Is(err, sandbox.ErrLifecycleHeld), errors.Is(err, sandbox.ErrLockLost):
+		a.sendAPIStoreError(c, http.StatusConflict, utils.SandboxLifecycleHeldMsg(sandboxID))
+
+		return
+	// The sandbox is back in Running; the checkpoint that refused this one
+	// ends on its own, so a plain retry succeeds.
+	case errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because it is being snapshotted, please retry", sandboxID))
+
+		return
+	// The node left the VM running, so a retry can succeed once the guest
+	// agent answers again.
+	case errors.Is(err, orchestrator.PauseRefusedEnvdUnresponsiveError{}):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because the sandbox guest agent is not responding, please retry", sandboxID))
+
+		return
+	// The sandbox is back to Running; the node refused the checkpoint for this guest.
+	case errors.Is(err, orchestrator.PauseUnsupportedError{}):
+		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be forked: its guest does not support the checkpoint", sandboxID))
+
+		return
 	case errors.Is(err, orchestrator.PauseQueueExhaustedError{}):
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now because its node is busy, please retry", sandboxID))
+
+		return
+	// The sandbox is untouched: another replica, or a retry here, can fork it.
+	case errors.Is(err, orchestrator.ErrDraining):
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be forked right now, please retry", sandboxID))
 
 		return
 	default:
@@ -150,20 +196,21 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 	// All forks boot in parallel from the same immutable snapshot, each
 	// succeeding or failing independently.
 	results := make([]api.SandboxForkResult, forkCount)
+	forkNodeIDs := make([]string, forkCount)
 
 	wg := errgroup.Group{}
 	for i := range forkCount {
 		wg.Go(func() error {
 			forkedSandboxID := InstanceIDPrefix + id.Generate()
 
-			forkedSbx, createErr := a.startSandbox(
+			forkedSbx, createErr := a.startSandboxInternal(
 				ctx,
 				forkedSandboxID,
 				forkTimeout,
 				teamInfo,
 				a.buildResumeSandboxDataFromSnapshot(sandboxID, forkedSandboxID, nil, nil),
 				&c.Request.Header,
-				true,
+				false, // isResume
 				false,
 				nil, // mcp
 			)
@@ -175,14 +222,48 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 				return nil
 			}
 
-			results[i] = api.SandboxForkResult{Sandbox: forkedSbx}
+			results[i] = api.SandboxForkResult{Sandbox: forkedSbx.ToAPISandbox()}
+			forkNodeIDs[i] = forkedSbx.NodeID
 
 			return nil
 		})
 	}
 	_ = wg.Wait()
 
+	started, nodes := forkOutcome(results, forkNodeIDs)
+	telemetry.SetAttributes(ctx,
+		attribute.Int("fork.count", forkCount),
+		attribute.Int("fork.started", started),
+		attribute.Int("fork.failed", forkCount-started),
+		attribute.Int("fork.nodes", nodes),
+	)
+	logger.L().Info(ctx, "Forked sandbox",
+		logger.WithSandboxID(sandboxID),
+		logger.WithTeamID(teamID.String()),
+		logger.WithTemplateID(original.TemplateID),
+		zap.Int("fork_count", forkCount),
+		zap.Int("fork_started", started),
+		zap.Int("fork_failed", forkCount-started),
+		zap.Int("fork_nodes", nodes),
+	)
+
 	c.JSON(http.StatusCreated, results)
+}
+
+// forkOutcome counts the forks that started and the distinct nodes they started
+// on; nodeIDs is indexed like results.
+func forkOutcome(results []api.SandboxForkResult, nodeIDs []string) (started, nodes int) {
+	seen := make(map[string]struct{}, len(nodeIDs))
+	for i, result := range results {
+		if result.Sandbox == nil {
+			continue
+		}
+
+		started++
+		seen[nodeIDs[i]] = struct{}{}
+	}
+
+	return started, len(seen)
 }
 
 // forkHandleNotRunningSandbox classifies a fork request for a sandbox that is

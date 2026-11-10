@@ -2,6 +2,7 @@ package testutils
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 )
 
 // CreateTestTeam creates a test team in the database.
-// Uses the default tier 'base_v1' that is created in migrations.
 func CreateTestTeam(t *testing.T, db *Database) uuid.UUID {
 	t.Helper()
 	teamID := uuid.New()
@@ -26,7 +26,6 @@ func CreateTestTeam(t *testing.T, db *Database) uuid.UUID {
 	err := db.TestQueries.InsertTestTeam(t.Context(), testqueries.InsertTestTeamParams{
 		ID:    teamID,
 		Name:  "Test Team " + teamID.String(),
-		Tier:  "base_v1",
 		Email: "test-" + teamID.String() + "@example.com",
 		Slug:  slug,
 	})
@@ -128,8 +127,8 @@ func CreateTestBuild(t *testing.T, ctx context.Context, db *Database, templateID
 
 	err := db.SqlcClient.TestsRawSQL(ctx,
 		`INSERT INTO public.env_builds 
-		(id, env_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
-		VALUES ($1, $2, $3, 2, 2048, 512, '6.1.0', '1.4.0', 'test-node', NOW(), NOW())`,
+		(id, env_id, team_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
+		VALUES ($1, $2, (SELECT team_id FROM public.envs WHERE id = $2), $3, 2, 2048, 512, '6.1.0', '1.4.0', 'test-node', NOW(), NOW())`,
 		buildID, templateID, status,
 	)
 	require.NoError(t, err, "Failed to create test build")
@@ -353,4 +352,45 @@ func GetEnvBuildByID(t *testing.T, ctx context.Context, db *Database, buildID uu
 	require.NoError(t, err, "Failed to check if env_build exists")
 
 	return exists
+}
+
+// SoftDeleteEnvUnstamped marks an env deleted without stamping its snapshots,
+// the way envs deleted before snapshots.env_deleted_at existed were left.
+func SoftDeleteEnvUnstamped(t *testing.T, ctx context.Context, db *Database, envID string) {
+	t.Helper()
+
+	err := db.SqlcClient.TestsRawSQL(ctx,
+		"UPDATE public.envs SET deleted_at = NOW() - interval '1 day' WHERE id = $1", envID)
+	require.NoError(t, err, "Failed to soft-delete env")
+}
+
+// SnapshotEnvStamp reports how a snapshot's env_deleted_at relates to its own
+// env's deleted_at: "live" (both NULL), "stamped" (equal), "unstamped" (only
+// the env is deleted) or "mismatch".
+func SnapshotEnvStamp(t *testing.T, ctx context.Context, db *Database, sandboxID string) string {
+	t.Helper()
+	var stamp string
+
+	err := db.SqlcClient.TestsRawSQLQuery(ctx, `
+		SELECT CASE
+			WHEN e.deleted_at IS NULL AND s.env_deleted_at IS NULL THEN 'live'
+			WHEN s.env_deleted_at = e.deleted_at THEN 'stamped'
+			WHEN s.env_deleted_at IS NULL THEN 'unstamped'
+			ELSE 'mismatch'
+		END
+		FROM public.snapshots s
+		JOIN public.envs e ON e.id = s.env_id
+		WHERE s.sandbox_id = $1`,
+		func(rows pgx.Rows) error {
+			if !rows.Next() {
+				return errors.New("snapshot not found")
+			}
+
+			return rows.Scan(&stamp)
+		},
+		sandboxID,
+	)
+	require.NoError(t, err, "Failed to read snapshot env stamp")
+
+	return stamp
 }

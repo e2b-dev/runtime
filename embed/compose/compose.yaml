@@ -5,13 +5,15 @@
 # variable. Without it Compose renders a blank image name or a blank kernel
 # version and only warns, and the operator meets either a confusing "neither
 # an image nor a build context" error or a fetch-artifacts failure after the
-# host has already been mutated. The seven knobs that are genuinely optional
-# and are absent from .env (TEAM_API_KEY only as a commented line) keep the
-# ${VAR:-...} form: HUGEPAGES, NBDS_MAX, PF_MIN_FREE_GIB and FORCE_REBUILD
-# carry a working default, while TEAM_API_KEY, ADMIN_TOKEN and
-# SANDBOX_ACCESS_TOKEN_HASH_SEED carry none — the stack generates all three
-# per install (seed for the key, api-secrets for the api's two), and a value
-# set in .env or the shell overrides the generated one.
+# host has already been mutated. The nine knobs that are genuinely optional and
+# are absent from .env (TEAM_API_KEY, ADMIN_TOKEN, SANDBOX_ACCESS_TOKEN_HASH_SEED,
+# E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT only as commented
+# lines) keep the ${VAR:-...} form: HUGEPAGES, NBDS_MAX, PF_MIN_FREE_GIB,
+# FORCE_REBUILD, E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT carry a
+# working default (the last an empty one, which exports no telemetry), while
+# TEAM_API_KEY, ADMIN_TOKEN and SANDBOX_ACCESS_TOKEN_HASH_SEED carry none — the
+# stack generates all three per install (seed for the key, api-secrets for the
+# api's two), and a value set in .env or the shell overrides the generated one.
 name: e2b
 
 x-tools: &tools
@@ -20,8 +22,22 @@ x-tools: &tools
 x-node-e2b: &node-e2b
   image: ${E2B_NODE_E2B_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
 
+# Docker's json-file driver keeps a container's log forever by default. On a
+# full disk a service that fails on every write, ClickHouse above all, writes
+# error output faster than anything frees space, and the disk stays full until
+# someone steps in. Every service aliases this cap: five files of 50 MiB,
+# 250 MiB a service, and `docker compose logs` reads the rotated files as
+# before. The driver is named so the options are valid on a daemon whose
+# default driver is another one.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *logging
     image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
@@ -40,6 +56,7 @@ services:
       retries: 20
 
   redis:
+    logging: *logging
     image: redis:7.4.6
     restart: unless-stopped
     ports:
@@ -53,10 +70,13 @@ services:
       retries: 20
 
   clickhouse:
+    logging: *logging
     image: clickhouse/clickhouse-server:25.8.30.16
     restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: default
+      # No CLICKHOUSE_DB: for it the image first runs a loopback-only server to
+      # create the database, which a probe cannot tell from the real server,
+      # and the server creates `default` itself.
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
@@ -78,6 +98,7 @@ services:
       retries: 30
 
   vector:
+    logging: *logging
     image: timberio/vector:0.51.1-alpine
     restart: unless-stopped
     depends_on:
@@ -102,7 +123,33 @@ services:
       timeout: 2s
       retries: 12
 
+  # The built-in OpenTelemetry collector, run only with the otel profile:
+  # COMPOSE_PROFILES=otel in .env, which Compose reads itself. It receives
+  # OTLP/gRPC on 127.0.0.1:4317, the address to give
+  # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and writes the e2b.* metrics into
+  # ClickHouse (config/otel/otel-collector.yaml says what it keeps). The image
+  # has no shell, so there is no healthcheck; `curl -s 127.0.0.1:13133` on the
+  # host is the check. No service depends on it, `ready` included.
+  otel-collector:
+    logging: *logging
+    image: otel/opentelemetry-collector-contrib:0.163.2
+    profiles: [otel]
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      clickhouse-migrator:
+        condition: service_completed_successfully
+    environment:
+      # sha256 of config/otel/otel-collector.yaml, same purpose as
+      # VECTOR_CONFIG_SHA256 on the vector service.
+      OTEL_CONFIG_SHA256: 96621f22e4e8ab2b420a6bc659c0b47239535f90627951aba449a309f614ce5f
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: otel-collector-config
+        target: /etc/otelcol-contrib/config.yaml
+
   db-migrator:
+    logging: *logging
     image: ${E2B_DB_MIGRATOR_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
     restart: "no"
     depends_on:
@@ -112,6 +159,7 @@ services:
       POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
 
   clickhouse-migrator:
+    logging: *logging
     image: ${E2B_CLICKHOUSE_MIGRATOR_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
     restart: "no"
     depends_on:
@@ -121,6 +169,7 @@ services:
       GOOSE_DBSTRING: clickhouse://clickhouse:clickhouse@clickhouse:9000/default
 
   seed:
+    logging: *logging
     image: ${E2B_SEED_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
     restart: "no"
     depends_on:
@@ -146,6 +195,7 @@ services:
 
   preflight:
     <<: *tools
+    logging: *logging
     restart: "no"
     network_mode: host
     pid: host
@@ -156,6 +206,7 @@ services:
 
   host-setup:
     <<: *tools
+    logging: *logging
     restart: "no"
     network_mode: host
     pid: host
@@ -170,6 +221,7 @@ services:
 
   fetch-artifacts:
     <<: *tools
+    logging: *logging
     restart: "no"
     network_mode: host
     depends_on:
@@ -198,6 +250,7 @@ services:
   # written long before the api needs it — and the values are never printed.
   api-secrets:
     <<: *tools
+    logging: *logging
     restart: "no"
     depends_on:
       preflight:
@@ -224,6 +277,7 @@ services:
 
   orchestrator:
     <<: *tools
+    logging: *logging
     restart: unless-stopped
     network_mode: host
     pid: host
@@ -240,7 +294,24 @@ services:
       REDIS_URL: 127.0.0.1:6379
       CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
       LOGS_COLLECTOR_ADDRESS: http://127.0.0.1:30006
+      # Where this service, api and client-proxy export their metrics, traces
+      # and logs over OTLP/gRPC. Empty unless .env sets
+      # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and empty exports nothing.
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
       TEMPLATE_STORAGE_URL: file:///var/lib/e2b/storage/templates
+      # A pause the disk cannot hold is refused before it starts, keeping this
+      # many MiB free, instead of failing midway: snapshots and their uploads
+      # both live on this host's filesystem. This is the orchestrator's
+      # pause-admission-disk-headroom-mib flag, which has no LaunchDarkly to
+      # come from here; orchestrator releases that predate the knob ignore it.
+      PAUSE_ADMISSION_DISK_HEADROOM_MIB: "1024"
+      # A create that arrives while a killed sandbox is still returning its
+      # hugepages is refused for the api to retry on this host, instead of
+      # failing; with the pool sized for the sandboxes you run at once, that
+      # can be any create sent right after a kill. This is the orchestrator's
+      # create-memory-refusal flag, which has no LaunchDarkly to come from
+      # here; orchestrator releases that predate the knob ignore it.
+      CREATE_MEMORY_REFUSAL: "true"
       BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
       ARTIFACTS_REGISTRY_PROVIDER: Local
       LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008
@@ -280,6 +351,7 @@ services:
       start_period: 30s
 
   api:
+    logging: *logging
     image: ${E2B_API_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
     restart: unless-stopped
     network_mode: host
@@ -303,7 +375,15 @@ services:
       # Both arrived with api v0.11.0; v0.8.0 exits on the missing
       # LOKI_URL, and tests/pins.bats refuses that pin.
       LOGS_READ_CONFIG: "true"
+      # A pause the node refuses — it is still persisting the sandbox's parent
+      # — keeps the sandbox running and answers 503 to retry, instead of
+      # killing it. This is the api's
+      # pause-refusal-restore flag, which has no LaunchDarkly to come from
+      # here; api releases that predate the knob ignore it, so this takes
+      # effect with the first api pin that reads it.
+      PAUSE_REFUSAL_RESTORE: "true"
       LOGS_COLLECTOR_ADDRESS: http://127.0.0.1:30006
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
       API_INTERNAL_GRPC_PORT: "5009"
       API_EDGE_GRPC_PORT: "5109"
       PPROF_PORT: "6060"
@@ -371,7 +451,40 @@ services:
       retries: 30
       start_period: 20s
 
+  # The web UI. A browser signs in with this install's team API key, which
+  # lands in an httpOnly cookie; DASHBOARD_COOKIE_SECURE=false keeps that
+  # cookie over plain http. The server reaches the api on loopback; the
+  # browser reaches sandboxes at PUBLIC_SANDBOX_URL, so that address has to be
+  # one the browser can open, which is what the E2B_DASHBOARD_HOST knob sets.
+  # PUBLIC_E2B_DOMAIN is required by the image and only feeds SDK domain
+  # routing, which PUBLIC_SANDBOX_URL overrides here. The image refuses to
+  # start on E2B_SANDBOX_URL or any NEXT_PUBLIC_* variable, so none is set.
+  # /api/health is the healthcheck `ready` waits on; the image has node but no
+  # wget or curl.
+  dashboard:
+    logging: *logging
+    image: ${E2B_DASHBOARD_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: "3001"
+      HOSTNAME: 0.0.0.0
+      PUBLIC_E2B_DOMAIN: localhost
+      E2B_INFRA_API_URL: http://127.0.0.1:3000
+      PUBLIC_SANDBOX_URL: http://${E2B_DASHBOARD_HOST:-localhost}:3002
+      DASHBOARD_COOKIE_SECURE: "false"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   client-proxy:
+    logging: *logging
     image: ${E2B_CLIENT_PROXY_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
     restart: unless-stopped
     network_mode: host
@@ -382,6 +495,7 @@ services:
       API_INTERNAL_GRPC_ADDRESS: 127.0.0.1:5009
       PROXY_PORT: "3002"
       HEALTH_PORT: "3003"
+      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
     depends_on:
       api:
         condition: service_healthy
@@ -400,6 +514,7 @@ services:
   # and the one service whose presence means "the stack is usable".
   ready:
     <<: *tools
+    logging: *logging
     restart: unless-stopped
     network_mode: host
     depends_on:
@@ -407,9 +522,11 @@ services:
         condition: service_completed_successfully
       client-proxy:
         condition: service_healthy
+      dashboard:
+        condition: service_healthy
     volumes:
       - seed-state:/run/e2b
-    # /run/e2b/sdk.env holds the three exports for this install, so a shell
+    # /run/e2b/sdk.env holds the four exports for this install, so a shell
     # can take them with: eval "$(docker compose exec ready cat /run/e2b/sdk.env)"
     # It is re-rendered whenever the seed rotates the key (TEAM_API_KEY changed
     # or the key file removed, then `up`): `up` re-runs the seed but does not
@@ -437,9 +554,9 @@ services:
         while :; do
           key="$$(cat /run/e2b/team-api-key 2>/dev/null)"
           if [ -n "$$key" ] && [ "$$key" != "$$last" ]; then
-            printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\n' "$$key" "$$E2B_HOST" "$$E2B_HOST" > /run/e2b/sdk.env
+            printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\nexport E2B_DASHBOARD_URL=http://%s:3001\n' "$$key" "$$E2B_HOST" "$$E2B_HOST" "$$E2B_HOST" > /run/e2b/sdk.env
             if [ -z "$$last" ]; then
-              echo "E2B stack is up. Point the SDK at it (this install's own key):"
+              echo "E2B stack is up. Point the SDK at it (this install's own key). Open E2B_DASHBOARD_URL in a browser and paste E2B_API_KEY into its key form."
             else
               echo "Team API key rotated; the earlier key stops working within five minutes. The SDK variables are now:"
             fi
@@ -454,6 +571,7 @@ services:
 
   base-template:
     <<: *node-e2b
+    logging: *logging
     restart: "no"
     network_mode: host
     environment:
@@ -482,6 +600,7 @@ services:
 
   smoke:
     <<: *node-e2b
+    logging: *logging
     profiles: [test]
     restart: "no"
     network_mode: host
@@ -508,6 +627,7 @@ services:
 
   host-teardown:
     <<: *tools
+    logging: *logging
     profiles: [purge]
     restart: "no"
     network_mode: host
@@ -761,3 +881,93 @@ configs:
       skip_unknown_fields = false
       compression = "gzip"
       batch.timeout_secs = 1
+  otel-collector-config:
+    content: |
+      # The built-in OpenTelemetry collector. The services export to it once their
+      # collector endpoint is 127.0.0.1:4317. It keeps the e2b.* metrics and writes
+      # them into the stack's own ClickHouse, into the metrics_gauge and metrics_sum
+      # tables the clickhouse-migrator creates; the api's metrics endpoints read
+      # what those two feed. Traces, logs and the other metrics are dropped; the
+      # commented otlp/upstream exporter below forwards traces and logs instead.
+      # Every listener binds loopback: the collector shares the machine's network
+      # with the services, and nothing off the machine has a reason to reach it.
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 127.0.0.1:4317
+              max_recv_msg_size_mib: 100
+
+      processors:
+        # Batches traces and logs on their way to nop, or to otlp/upstream once
+        # that forwards them.
+        batch:
+          timeout: 5s
+
+        batch/clickhouse:
+          timeout: 5s
+          send_batch_size: 50000
+
+        filter/external_metrics:
+          metrics:
+            include:
+              match_type: regexp
+              metric_names:
+                - "e2b.*"
+
+      extensions:
+        # `curl -s 127.0.0.1:13133` on the machine answers while the collector runs.
+        # The image has no shell, so there is nothing to check from inside it.
+        health_check:
+          endpoint: 127.0.0.1:13133
+
+      exporters:
+        clickhouse:
+          endpoint: tcp://127.0.0.1:9000
+          database: default
+          username: clickhouse
+          password: clickhouse
+          async_insert: true
+          create_schema: false
+          metrics_tables:
+            gauge:
+              name: metrics_gauge
+            sum:
+              name: metrics_sum
+
+        # Accepts traces and logs and discards them. Without a pipeline for them the
+        # receiver would answer Unimplemented, and every service would log each
+        # batch it refused.
+        nop:
+
+        # To forward traces and logs to a collector of your own, uncomment this
+        # exporter, put that collector's OTLP/gRPC address in its endpoint, and
+        # name it in place of nop in the traces and logs pipelines at the end.
+        # otlp/upstream:
+        #   endpoint: collector.example.com:4317
+        #   tls:
+        #     insecure: true
+
+      service:
+        telemetry:
+          logs:
+            level: warn
+          # No internal metrics: by default the collector serves its own on
+          # 127.0.0.1:8888, one more listener on the machine, and refuses to start
+          # when something else holds that port.
+          metrics:
+            level: none
+        extensions: [health_check]
+        pipelines:
+          metrics/external:
+            receivers: [otlp]
+            processors: [filter/external_metrics, batch/clickhouse]
+            exporters: [clickhouse]
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [nop]
+          logs:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [nop]

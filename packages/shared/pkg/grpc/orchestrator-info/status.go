@@ -7,7 +7,7 @@ package orchestrator
 
 // CanAcceptNewRequests reports whether a service reporting this status may be
 // sent new requests. Only healthy services may. Draining is on its way out, and
-// standby is parked by the autoscaler so it can be reaped or recalled, so both
+// standby is parked by a sizer so it can be reaped or recalled, so both
 // stay unroutable even though their process is still alive and answering
 // requests it already accepted.
 //

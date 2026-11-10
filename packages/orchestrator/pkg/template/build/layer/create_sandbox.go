@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -35,6 +36,7 @@ type CreateSandbox struct {
 	rootfsCachePath string
 	ioEngine        *string
 	preBootFn       sandbox.PreBootFn
+	inspectFstab    fstabInspector
 }
 
 const (
@@ -48,6 +50,7 @@ type createSandboxOptions struct {
 	rootfsCachePath string
 	ioEngine        *string
 	preBootFn       sandbox.PreBootFn
+	inspectFstab    fstabInspector
 }
 
 type CreateSandboxOption func(*createSandboxOptions)
@@ -83,8 +86,8 @@ func ReservedBlocksOptions(ctx context.Context, featureFlags *featureflags.Clien
 	}
 
 	return []CreateSandboxOption{
-		WithPreBootFn(func(ctx context.Context, rootfsPath string) error {
-			return filesystem.SetReservedBlocksOnHost(ctx, rootfsPath, reservedDiskSpaceMB, blockSize)
+		WithPreBootFn(func(ctx context.Context, rootfsPath string) (string, error) {
+			return "", filesystem.SetReservedBlocksOnHost(ctx, rootfsPath, reservedDiskSpaceMB, blockSize)
 		}),
 	}
 }
@@ -105,6 +108,7 @@ func NewCreateSandbox(config *sandbox.Config, sandboxFactory *sandbox.Factory, t
 		sandboxFactory:  sandboxFactory,
 		ioEngine:        opts.ioEngine,
 		preBootFn:       opts.preBootFn,
+		inspectFstab:    opts.inspectFstab,
 	}
 }
 
@@ -130,6 +134,8 @@ func (cs *CreateSandbox) Sandbox(
 	if err != nil {
 		return nil, fmt.Errorf("error comparing envd version: %w", err)
 	}
+
+	preBootFn, diag := cs.preBootHook()
 
 	// In case of a new sandbox, base template ID is now used as the potentially exported template base ID.
 	sbx, err := cs.sandboxFactory.CreateSandbox(
@@ -159,9 +165,11 @@ func (cs *CreateSandbox) Sandbox(
 			// are part of the layer cache key. Only the BusyBox provisioning boot is
 			// left on the default, because its VM is discarded.
 			CmdlineArgs: layerExecutor.Config.CmdlineArgs,
+			// Same reasoning as CmdlineArgs above, but for the CPU template.
+			CPUTemplate: layerExecutor.Config.CPUTemplate,
 		},
 		nil,
-		cs.preBootFn,
+		sandbox.WithPreBoot(preBootFn),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox: %w", err)
@@ -179,6 +187,15 @@ func (cs *CreateSandbox) Sandbox(
 		waitEnvdTimeout,
 	)
 	if err != nil {
+		if diag != nil {
+			diag.annotate(ctx, layerExecutor.logger, err,
+				logger.WithTemplateID(layerExecutor.Config.TemplateID),
+				logger.WithBuildID(layerExecutor.Template.BuildID),
+				logger.WithTeamID(layerExecutor.Config.TeamID),
+				logger.WithSandboxID(sbx.Runtime.SandboxID),
+			)
+		}
+
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 

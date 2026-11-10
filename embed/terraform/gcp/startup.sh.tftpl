@@ -41,12 +41,15 @@ if [ ! -f .env ]; then
   else
     curl -fsS -H 'Metadata-Flavor: Google' "$MD/e2b-dot-env" -o .env
   fi
-  sed -i -E '/^#?(ADMIN_TOKEN|SANDBOX_ACCESS_TOKEN_HASH_SEED|TEAM_API_KEY|HUGEPAGES)=/d' .env
+  sed -i -E '/^#?(ADMIN_TOKEN|SANDBOX_ACCESS_TOKEN_HASH_SEED|TEAM_API_KEY|HUGEPAGES|E2B_DASHBOARD_HOST|E2B_OTEL_COLLECTOR_GRPC_ENDPOINT|COMPOSE_PROFILES)=/d' .env
   cat >> .env <<EOF
 ADMIN_TOKEN=${admin_token}
 SANDBOX_ACCESS_TOKEN_HASH_SEED=${sandbox_access_token_hash_seed}
 TEAM_API_KEY=${team_api_key}
 HUGEPAGES=${hugepages}
+E2B_DASHBOARD_HOST=${dashboard_host}
+E2B_OTEL_COLLECTOR_GRPC_ENDPOINT=${otel_endpoint}
+COMPOSE_PROFILES=${compose_profiles}
 EOF
   chmod 0600 .env
 fi

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -26,6 +27,14 @@ import (
 func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
 	ctx, span := tracer.Start(ctx, "checkpoint-sandbox")
 	defer span.End()
+
+	// Tracked from the start, like a pause: a checkpoint's work can outlive
+	// the request, and a drain that already stopped waiting must not admit one.
+	releaseWork, ok := o.TrackWork()
+	if !ok {
+		return ErrDraining
+	}
+	defer releaseWork()
 
 	transition, alreadyDone, finishSnapshotting, err := o.sandboxStore.StartRemoving(ctx, teamID, sandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionSnapshot})
 	sbx := transition.Sandbox
@@ -62,17 +71,21 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("node '%s' not found", sbx.NodeID)
 	}
 
-	upsertResult, err := o.throttledUpsertSnapshot(ctx, buildUpsertSnapshotParams(sbx, node, false))
+	// A fork checkpoint is always a memory snapshot, but the source may hold a
+	// filesystem-only build from an earlier memory:false snapshot: that kind
+	// must survive until this build is ready, or a refused checkpoint would
+	// leave the row claiming memory for a build that has none.
+	currentKind, upsertResult, err := o.upsertSnapshotKeepingKind(ctx, sbx, node, false)
 	if err != nil {
-		return fmt.Errorf("error upserting snapshot: %w", err)
+		return err
 	}
 
 	// Checkpoint pauses the sandbox, snapshots it, and resumes it on the
 	// orchestrator with the same ExecutionID. Once the pause has started, the
 	// orchestrator stops the old sandbox itself on error; RemoveSandbox is
 	// still needed to clean up API-side state (store, routing, analytics).
-	client, childCtx := node.GetClient(ctx)
-	_, err = client.Sandbox.Checkpoint(childCtx, &orchestrator.SandboxCheckpointRequest{
+	client, childCtx := node.GetSandboxClient(ctx, sbx.TeamID.String())
+	checkpointed, err := client.Sandbox.Checkpoint(childCtx, &orchestrator.SandboxCheckpointRequest{
 		SandboxId: sbx.SandboxID,
 		BuildId:   upsertResult.BuildID.String(),
 		Metadata:  map[string]string{storageopts.ObjectMetadataTemplateID: upsertResult.TemplateID},
@@ -91,11 +104,20 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 			switch st.Code() {
 			case codes.FailedPrecondition:
 				finish(nil)
+				if isCheckpointInProgress(err) {
+					return PauseRefusedCheckpointInProgressError{}
+				}
+				if refusal := pauseRefusal(err); errors.Is(refusal, PauseUnsupportedError{}) {
+					return refusal
+				}
 
 				return fmt.Errorf("checkpoint rejected: %w", err)
 			case codes.ResourceExhausted:
 				logger.L().Warn(ctx, "Checkpoint refused by the node", logger.WithSandboxID(sandboxID), zap.String("node_message", st.Message()))
 				finish(nil)
+				if isEnvdUnresponsive(err) {
+					return PauseRefusedEnvdUnresponsiveError{}
+				}
 
 				return PauseQueueExhaustedError{}
 			case codes.Canceled, codes.DeadlineExceeded:
@@ -129,13 +151,51 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuild(ctx, upsertResult.BuildID, types.BuildStatusSuccess); err != nil {
-		return fmt.Errorf("error updating build status: %w", err)
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, types.BuildStatusSuccess, false); err != nil {
+		return errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 
 	o.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
+	if err := o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish); err != nil {
+		return err
+	}
 
 	telemetry.ReportEvent(ctx, "Checkpointed sandbox")
 
 	return nil
+}
+
+// restoreCheckpointed ends the transition of a checkpoint the node completed.
+// The record goes back to Running together with the network the node
+// reported for the execution it left running, an absent placement included,
+// in one write that refuses a record another execution replaced or that left
+// Snapshotting. A node that predates the report, or reports another
+// execution's placement, leaves the recorded placement. A superseded record
+// is left as it is. A record whose write fails stays Snapshotting, as a
+// failed restore leaves it, instead of serving with a placement its VM no
+// longer has, and the error is returned. The healthy VM keeps running.
+func (o *Orchestrator) restoreCheckpointed(ctx context.Context, transition sandbox.StateTransition, network *orchestrator.SandboxCheckpointNetwork, finish func(error)) error {
+	ctx = context.WithoutCancel(ctx)
+	defer finish(sandbox.ErrSkipRestore)
+	sbx := transition.Sandbox
+	var err error
+	if placement := network.GetPlacement(); network != nil && (placement == nil || placement.GetExecutionId() == sbx.ExecutionID) {
+		_, err = o.sandboxStore.RestoreCheckpointed(ctx, transition, placement)
+	} else {
+		if network != nil {
+			logger.L().Warn(ctx, "Checkpoint reported another execution's network placement", logger.WithSandboxID(sbx.SandboxID))
+		}
+		_, err = o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{})
+	}
+	var stateChanged *sandbox.InvalidStateTransitionError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sandbox.ErrExecutionMismatch), errors.As(err, &stateChanged), errors.Is(err, sandbox.ErrNotFound):
+		logger.L().Warn(ctx, "Checkpointed sandbox record was superseded", zap.Error(err), logger.WithSandboxID(sbx.SandboxID))
+
+		return nil
+	default:
+		return fmt.Errorf("restore the checkpointed sandbox: %w", err)
+	}
 }

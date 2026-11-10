@@ -15,24 +15,12 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-type restoreCommandHook func(context.Context, redis.Cmder, redis.ProcessHook) error
-
-func (h restoreCommandHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-
-func (h restoreCommandHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
-
-func (h restoreCommandHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return func(ctx context.Context, cmd redis.Cmder) error { return h(ctx, cmd, next) }
-}
-
 func TestRestoreRunning_ReplayedWriteSucceeds(t *testing.T) {
 	t.Parallel()
 
-	client := redis_utils.SetupInstance(t)
+	client := redis_utils.SetupContainerInstance(t)
 	var replayed atomic.Bool
-	client.AddHook(restoreCommandHook(func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+	client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
 		args := cmd.Args()
 		if cmd.Name() == "evalsha" && args[1] == restoreSandboxScript.Hash() && replayed.CompareAndSwap(false, true) {
 			// Apply the write without delivering its reply, then replay the identical command.
@@ -42,7 +30,7 @@ func TestRestoreRunning_ReplayedWriteSucceeds(t *testing.T) {
 		}
 
 		return next(ctx, cmd)
-	}))
+	}})
 	storage := newTestStorage(t, client)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
@@ -53,7 +41,7 @@ func TestRestoreRunning_ReplayedWriteSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	defer finish(t.Context(), sandboxtypes.ErrTransitionRestored)
 
-	restored, err := storage.RestoreRunning(t.Context(), transition, 10*time.Second)
+	restored, err := storage.RestoreRunning(t.Context(), transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	require.True(t, replayed.Load())
 	assert.Equal(t, sandboxtypes.StateRunning, restored.State)
@@ -68,15 +56,15 @@ func TestRestoreRunning_ReplayedWriteSucceeds(t *testing.T) {
 func TestRestoreRunning_RetryIndexFailureKeepsRestoredSandbox(t *testing.T) {
 	t.Parallel()
 
-	client := redis_utils.SetupInstance(t)
+	client := redis_utils.SetupContainerInstance(t)
 	var failIndexWrite atomic.Bool
-	client.AddHook(restoreCommandHook(func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+	client.AddHook(cmdHook{process: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
 		if cmd.Name() == "zadd" && cmd.Args()[1] == globalExpirationSet && failIndexWrite.CompareAndSwap(true, false) {
 			return errors.New("retry index unavailable")
 		}
 
 		return next(ctx, cmd)
-	}))
+	}})
 	storage := newTestStorage(t, client)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
@@ -89,7 +77,7 @@ func TestRestoreRunning_RetryIndexFailureKeepsRestoredSandbox(t *testing.T) {
 	defer finish(t.Context(), sandboxtypes.ErrTransitionRestored)
 
 	failIndexWrite.Store(true)
-	restored, err := storage.RestoreRunning(t.Context(), transition, 10*time.Second)
+	restored, err := storage.RestoreRunning(t.Context(), transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	require.False(t, failIndexWrite.Load())
 	stored, err := storage.Get(t.Context(), sbx.TeamID, sbx.SandboxID)

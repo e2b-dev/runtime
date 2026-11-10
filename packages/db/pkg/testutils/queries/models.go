@@ -51,6 +51,8 @@ type Addon struct {
 	ExtraMaxDiskSizeMb            pgtype.Int8
 	ExtraMaxFreeDiskSizeMb        pgtype.Int8
 	ExtraApiTeamRpsList           int64
+	ExtraApiTeamRpsDelete         int64
+	ExtraMaxSecrets               int32
 }
 
 type AuthUser struct {
@@ -74,13 +76,31 @@ type BillingSandboxLog struct {
 }
 
 type Cluster struct {
-	ID                 uuid.UUID
-	Endpoint           string
-	EndpointTls        bool
-	Token              string
-	SandboxProxyDomain pgtype.Text
-	AuthOrgID          pgtype.Text
-	Name               string
+	ID                  uuid.UUID
+	Endpoint            string
+	EndpointTls         bool
+	Token               string
+	SandboxProxyDomain  pgtype.Text
+	AuthOrgID           pgtype.Text
+	Name                string
+	DeletionProtection  bool
+	DeletionRequestedAt *time.Time
+}
+
+type DefaultLimit struct {
+	ID                       bool
+	MaxLengthHours           int64
+	ConcurrentSandboxes      int64
+	ConcurrentTemplateBuilds int64
+	MaxVcpu                  int64
+	MaxRamMb                 int64
+	DiskMb                   int64
+	EventsTtlDays            int64
+	DefaultFreeDiskSizeMb    int64
+	MaxDiskSizeMb            int64
+	ApiTeamRpsList           int64
+	ApiTeamRpsDelete         int64
+	MaxSecrets               int64
 }
 
 type Env struct {
@@ -135,6 +155,9 @@ type EnvBuild struct {
 	CpuFlags           []string
 	StatusGroup        string
 	TeamID             *uuid.UUID
+	FilesystemOnly     bool
+	EnvdUnresponsive   pgtype.Bool
+	MaxVcpu            pgtype.Int8
 }
 
 type EnvBuildAssignment struct {
@@ -164,6 +187,25 @@ type ProjectLimit struct {
 	MaxDiskSizeMb            int64
 	UpdatedAt                time.Time
 	MaxFreeDiskSizeMb        pgtype.Int8
+	ApiTeamRpsList           int64
+	MaxSecrets               int64
+	ApiTeamRpsDelete         int64
+}
+
+type ProjectionProjectBan struct {
+	ProjectID uuid.UUID
+	Revision  int64
+	DecidedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type ProjectionProjectBlock struct {
+	ProjectID uuid.UUID
+	Revision  int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DecidedAt *time.Time
 }
 
 type ProjectionProjectLimit struct {
@@ -171,6 +213,7 @@ type ProjectionProjectLimit struct {
 	Revision  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	DecidedAt *time.Time
 }
 
 type ProjectionProjectMember struct {
@@ -180,6 +223,14 @@ type ProjectionProjectMember struct {
 	Present   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type ProjectionProjectSetting struct {
+	ProjectID                        uuid.UUID
+	Revision                         int64
+	SandboxDefaultAllowPublicTraffic pgtype.Bool
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
 }
 
 type Snapshot struct {
@@ -196,6 +247,7 @@ type Snapshot struct {
 	AutoPause           bool
 	TeamID              uuid.UUID
 	Config              []byte
+	EnvDeletedAt        *time.Time
 }
 
 type SnapshotTemplate struct {
@@ -211,7 +263,7 @@ type Team struct {
 	CreatedAt               time.Time
 	IsBlocked               bool
 	Name                    string
-	Tier                    string
+	Tier                    pgtype.Text
 	Email                   string
 	IsBanned                bool
 	BlockedReason           pgtype.Text
@@ -219,6 +271,7 @@ type Team struct {
 	SandboxSchedulingLabels []string
 	SsoOrganizationID       *uuid.UUID
 	SsoAutoJoin             bool
+	DeletedAt               *time.Time
 	Slug                    string
 }
 
@@ -238,21 +291,6 @@ type TeamApiKey struct {
 	ApiKeyMaskSuffix string
 }
 
-type TeamLimit struct {
-	ID                       uuid.UUID
-	MaxLengthHours           int64
-	ConcurrentSandboxes      int64
-	ConcurrentTemplateBuilds int64
-	MaxVcpu                  int64
-	MaxRamMb                 int64
-	DiskMb                   int64
-	EventsTtlDays            int64
-	DefaultFreeDiskSizeMb    int64
-	MaxDiskSizeMb            int64
-	MaxFreeDiskSizeMb        int64
-	ApiTeamRpsList           int64
-}
-
 type Tier struct {
 	ID     string
 	Name   string
@@ -269,6 +307,8 @@ type Tier struct {
 	MaxDiskSizeMb            int64
 	MaxFreeDiskSizeMb        pgtype.Int8
 	ApiTeamRpsList           int64
+	ApiTeamRpsDelete         int64
+	MaxSecrets               int32
 }
 
 type User struct {

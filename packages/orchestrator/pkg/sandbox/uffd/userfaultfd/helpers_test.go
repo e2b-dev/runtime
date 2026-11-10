@@ -80,6 +80,10 @@ type testConfig struct {
 	// sourcePatcher mutates the random source bytes before the child reads
 	// them so race tests can plant a deterministic sentinel.
 	sourcePatcher func([]byte)
+	// sourceDelay slows every source read in the serving child.
+	sourceDelay time.Duration
+	// installDedupOff disables the one-installer-per-page claim in the child.
+	installDedupOff bool
 }
 
 type operationMode uint32

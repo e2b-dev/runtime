@@ -81,3 +81,19 @@ func isRetriablePgError(pgErr *pgconn.PgError) bool {
 
 	return false
 }
+
+func isRecoveryConflict(err error) bool {
+	const recoveryConflictMessage = "conflict with recovery"
+
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok {
+		return false
+	}
+
+	switch pgErr.Code {
+	case pgerrcode.SerializationFailure, pgerrcode.DeadlockDetected:
+		return strings.Contains(pgErr.Message, recoveryConflictMessage)
+	}
+
+	return false
+}

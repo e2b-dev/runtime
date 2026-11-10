@@ -126,9 +126,11 @@ func TestBatcherPushMaxBatchSize(t *testing.T) {
 
 func TestBatcherPushMaxDelay(t *testing.T) {
 	t.Parallel()
-	testBatcherPushMaxDelay(t, 100, time.Millisecond)
-	testBatcherPushMaxDelay(t, 205, 10*time.Millisecond)
-	testBatcherPushMaxDelay(t, 313, 100*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		testBatcherPushMaxDelay(t, 100, time.Millisecond)
+		testBatcherPushMaxDelay(t, 205, 10*time.Millisecond)
+		testBatcherPushMaxDelay(t, 313, 100*time.Millisecond)
+	})
 }
 
 func TestBatcherConcurrentPush(t *testing.T) {
@@ -232,15 +234,20 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 	t.Helper()
 
 	startedAt := time.Now()
-	lastTime := startedAt
+	pushedAt := make([]time.Time, itemsCount)
 	n := 0
 	nn := 0
 	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
-		if time.Since(lastTime) > maxDelay+10*time.Millisecond {
-			t.Fatalf("Unexpected delay between batches: %s. Expected no more than %s. itemsCount=%d",
-				time.Since(lastTime), maxDelay, itemsCount)
+		// Func runs on the batcher goroutine, where t.Fatalf would exit it and leave Stop blocked.
+		if len(batch) == 0 {
+			t.Errorf("Empty batch. itemsCount=%d", itemsCount)
+
+			return nil
 		}
-		lastTime = time.Now()
+		if age := time.Since(pushedAt[batch[0]]); age > maxDelay {
+			t.Errorf("Batch flushed %s after its first item. Expected no more than %s. itemsCount=%d",
+				age, maxDelay, itemsCount)
+		}
 		nn += len(batch)
 		n++
 
@@ -255,7 +262,9 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 	if err := b.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	defer b.Stop()
 	for i := range itemsCount {
+		pushedAt[i] = time.Now()
 		if err := b.Push(i); err != nil {
 			t.Fatalf("cannot add item %d to batch: %v", i, err)
 		}
@@ -282,10 +291,10 @@ func testBatcherPushMaxBatchSize(t *testing.T, itemsCount, batchSize int) {
 	nn := 0
 	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
 		if len(batch) > batchSize {
-			t.Fatalf("Unexpected batch size=%d. Must not exceed %d. itemsCount=%d", len(batch), batchSize, itemsCount)
+			t.Errorf("Unexpected batch size=%d. Must not exceed %d. itemsCount=%d", len(batch), batchSize, itemsCount)
 		}
 		if len(batch) == 0 {
-			t.Fatalf("Empty batch. itemsCount=%d, batchSize=%d", itemsCount, batchSize)
+			t.Errorf("Empty batch. itemsCount=%d, batchSize=%d", itemsCount, batchSize)
 		}
 		nn += len(batch)
 		n++

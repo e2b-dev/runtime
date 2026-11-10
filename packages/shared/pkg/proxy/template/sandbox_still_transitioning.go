@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_sandbox_still_transitioning.html
 var sandboxStillTransitioningHTML string
-var sandboxStillTransitioningHTMLTemplate = template.Must(template.New("sandboxStillTransitioningHTML").Parse(sandboxStillTransitioningHTML))
+var sandboxStillTransitioningHTMLTemplate = newBrowserPage("sandboxStillTransitioningHTML", sandboxStillTransitioningHTML)
 
 type sandboxStillTransitioningData struct {
 	SandboxId string `json:"sandboxId"`
@@ -22,13 +21,23 @@ func (e sandboxStillTransitioningData) StatusCode() int {
 }
 
 func NewSandboxStillTransitioningError(sandboxId, host string) *TemplatedError[sandboxStillTransitioningData] {
+	return newSandboxStillTransitioningPage(sandboxId, host, http.StatusConflict)
+}
+
+// NewSandboxStillTransitioningUnavailableError is the same page as 503, for
+// envd traffic, where the SDK reads a 409 as "already exists".
+func NewSandboxStillTransitioningUnavailableError(sandboxId, host string) *TemplatedError[sandboxStillTransitioningData] {
+	return newSandboxStillTransitioningPage(sandboxId, host, http.StatusServiceUnavailable)
+}
+
+func newSandboxStillTransitioningPage(sandboxId, host string, code int) *TemplatedError[sandboxStillTransitioningData] {
 	return &TemplatedError[sandboxStillTransitioningData]{
 		template: sandboxStillTransitioningHTMLTemplate,
 		vars: sandboxStillTransitioningData{
 			SandboxId: sandboxId,
 			Message:   "The sandbox is still transitioning. Try again in a moment.",
 			Host:      host,
-			Code:      http.StatusConflict,
+			Code:      code,
 		},
 	}
 }

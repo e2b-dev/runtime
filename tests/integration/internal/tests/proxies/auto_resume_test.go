@@ -27,10 +27,11 @@ func startHTTPServerInSandbox(t *testing.T, ctx context.Context, sbx *api.Sandbo
 			Args: []string{"-m", "http.server", fmt.Sprintf("%d", port)},
 		},
 	})
-	setup.SetSandboxHeader(t, serverReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, serverReq.Header(), sbx)
 	setup.SetUserHeader(t, serverReq.Header(), "user")
 	serverStream, err := envdClient.ProcessClient.Start(serverCtx, serverReq)
 	require.NoError(t, err)
+	utils.RequireProcessStarted(t, serverStream)
 
 	t.Cleanup(func() {
 		serverCancel()
@@ -123,6 +124,76 @@ func TestSandboxAutoResumeViaProxy(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res.JSON200, "expected 200 response, got status %d", res.StatusCode())
 	require.Equal(t, api.Running, res.JSON200.State, "sandbox should be running after auto-resume")
+}
+
+func TestSandboxAutoResumeViaProxyConcurrent(t *testing.T) {
+	t.Parallel()
+
+	c := setup.GetAPIClient()
+	ctx := t.Context()
+
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(true), utils.WithAutoResume(true))
+	envdClient := setup.GetEnvdClient(t, ctx)
+
+	port := 8000
+	startHTTPServerInSandbox(t, ctx, sbx, envdClient, port)
+
+	proxyURL, err := url.Parse(setup.EnvdProxy)
+	require.NoError(t, err)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp := utils.WaitForStatus(t, client, sbx, proxyURL, port, nil, http.StatusOK)
+	require.NotNil(t, resp)
+	require.NoError(t, resp.Body.Close())
+
+	pauseResp, err := c.PostSandboxesSandboxIDPauseWithResponse(ctx, sbx.SandboxID, api.PostSandboxesSandboxIDPauseJSONRequestBody{}, setup.WithAPIKey())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, pauseResp.StatusCode())
+
+	res, err := c.GetSandboxesSandboxIDWithResponse(ctx, sbx.SandboxID, setup.WithAPIKey())
+	require.NoError(t, err)
+	require.NotNil(t, res.JSON200, "expected 200 response, got status %d", res.StatusCode())
+	require.Equal(t, api.Paused, res.JSON200.State)
+
+	// Every request is released at once behind a barrier, so all of them
+	// arrive while the sandbox is paused, and every one must be served. The
+	// control plane's reservation collapses the placement, so this proves
+	// nothing about how many resume calls the proxy made; the one-flight
+	// property is TestResumeFlights_ConcurrentCallersShareOneResume in the
+	// proxy package.
+	const concurrentRequests = 10
+	resumeClient := &http.Client{Timeout: 60 * time.Second}
+	start := make(chan struct{})
+	results := make(chan error, concurrentRequests)
+	for i := range concurrentRequests {
+		go func() {
+			<-start
+			req := utils.NewRequest(sbx, proxyURL, port, nil)
+			resp, err := resumeClient.Do(req)
+			if err != nil {
+				results <- fmt.Errorf("request-%d: %w", i, err)
+
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				results <- fmt.Errorf("request-%d: expected server response after auto-resume, got %d", i, resp.StatusCode)
+
+				return
+			}
+			results <- nil
+		}()
+	}
+	close(start)
+	// Every goroutine is joined before any assertion, so none outlives the
+	// sandbox's cleanup and no later failure is hidden.
+	var failures []error
+	for range concurrentRequests {
+		if err := <-results; err != nil {
+			failures = append(failures, err)
+		}
+	}
+	require.Empty(t, failures)
 }
 
 func TestSandboxNoAutoResumeViaProxyWithoutFlag(t *testing.T) {

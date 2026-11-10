@@ -33,12 +33,15 @@ func (h *Healthcheck) CreateHandler() http.Handler {
 	// Start /health HTTP server
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("/health", h.healthHandler)
+	// Liveness only witnesses that this process can answer HTTP. Startup and
+	// draining state remain on /health for existing discovery consumers.
+	routeMux.HandleFunc("/live", h.livenessHandler)
 
 	return routeMux
 }
 
 func (h *Healthcheck) getStatus() e2bHealth.Status {
-	switch h.info.GetStatus().Status {
+	switch h.info.Snapshot().Status {
 	case e2borchestratorinfo.ServiceInfoStatus_Healthy:
 		return e2bHealth.Healthy
 	case e2borchestratorinfo.ServiceInfoStatus_Draining, e2borchestratorinfo.ServiceInfoStatus_Standby, e2borchestratorinfo.ServiceInfoStatus_ShuttingDown:
@@ -53,6 +56,14 @@ func (h *Healthcheck) healthHandler(w http.ResponseWriter, _ *http.Request) {
 	defer h.mu.RUnlock()
 
 	status := h.getStatus()
+	h.writeStatus(w, status)
+}
+
+func (h *Healthcheck) livenessHandler(w http.ResponseWriter, _ *http.Request) {
+	h.writeStatus(w, e2bHealth.Healthy)
+}
+
+func (h *Healthcheck) writeStatus(w http.ResponseWriter, status e2bHealth.Status) {
 	response := e2bHealth.Response{Status: status, Version: h.info.SourceCommit}
 
 	w.Header().Set("Content-Type", "application/json")

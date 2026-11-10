@@ -47,8 +47,10 @@ ENVD_VERSION := $(strip $(subst ",,$(ENVD_VERSION)))
 # uploads are named envd.$(UPLOAD_VERSION) with the same vMAJOR.MINOR…
 # schema as image tags, so the object name matches the envd-upgrade-target
 # flag grammar and the central bucket's envd/<version>/ release dirs.
-# Rebuilds of an unchanged version overwrite the same object; that is safe
-# because pkg/version.go must be bumped on any envd behavior change. Legacy
+# Rebuilds of an unchanged version overwrite the same object. pkg/version.go
+# moves only on an envd release (release-please owns it), so a from-source
+# upload of an unreleased commit replaces the released binary of that name;
+# set ENVD_VERSION to upload a released one instead. Legacy
 # envd.<sha> objects stay in the buckets untouched and age out on their own.
 VERSION := v$(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' pkg/version.go)
 # The version this run operates on: the released version when ENVD_VERSION is
@@ -65,6 +67,8 @@ UPLOAD_VERSION = $(or $(ENVD_VERSION),$(VERSION))
 # Architecture for builds. Defaults to amd64; override for ARM64 builds.
 # (e.g., BUILD_ARCH=arm64 make build-local)
 BUILD_ARCH ?= amd64
+# Target OS for build. The output stays bin/envd whatever the OS.
+BUILD_OS ?= linux
 # Docker platform string. Override for cross-platform builds:
 #   BUILD_PLATFORM=linux/arm64 make start-docker
 BUILD_PLATFORM ?= linux/$(BUILD_ARCH)
@@ -96,7 +100,7 @@ endif
 endif
 
 build:
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILD_ARCH) go build -trimpath -buildvcs=false -a -o bin/envd ${PROD_LDFLAGS}
+	CGO_ENABLED=0 GOOS=$(BUILD_OS) GOARCH=$(BUILD_ARCH) go build -trimpath -buildvcs=false -a -o bin/envd ${PROD_LDFLAGS}
 
 # This binary is injected into every sandbox guest, including musl ones, so it
 # must not need a dynamic loader; -race requires cgo, hence the static external

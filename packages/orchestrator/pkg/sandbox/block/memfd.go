@@ -31,6 +31,14 @@ type Memfd struct {
 	mmap []byte
 }
 
+// GuestMemoryError is the guest-memory mmap failing with ENOMEM: the hugepage
+// pool could not back the whole guest, because sandboxes still hold the pages
+// or the pool is smaller than the guest. It keeps the errno's text.
+type GuestMemoryError struct{ Err error }
+
+func (e GuestMemoryError) Error() string { return e.Err.Error() }
+func (e GuestMemoryError) Unwrap() error { return e.Err }
+
 func NewFromFd(fd int) (*Memfd, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
@@ -41,6 +49,9 @@ func NewFromFd(fd int) (*Memfd, error) {
 	b, err := unix.Mmap(fd, 0, int(st.Size), unix.PROT_READ, unix.MAP_SHARED)
 	if err != nil {
 		_ = unix.Close(fd)
+		if errors.Is(err, unix.ENOMEM) {
+			err = GuestMemoryError{Err: err}
+		}
 
 		return nil, fmt.Errorf("mmap memfd: %w", err)
 	}
@@ -149,24 +160,28 @@ func newCacheFromMemfd(
 	return cache, nil
 }
 
+// copyFromMemfd copies the dirty ranges into cache's mapping. The cache file is
+// sparse, so a page the filesystem cannot back (a full disk) faults the write.
 func copyFromMemfd(ctx context.Context, cache *Cache, memfd *Memfd, dirty *roaring.Bitmap, blockSize int64) error {
-	var cacheOff int64
-	for r := range BitsetRanges(dirty, blockSize) {
-		if err := ctx.Err(); err != nil {
-			return err
+	return RunFaultSafe(ctx, func() error {
+		var cacheOff int64
+		for r := range BitsetRanges(dirty, blockSize) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			src, err := memfd.Slice(r.Start, r.Size)
+			if err != nil {
+				return fmt.Errorf("memfd slice [%d,%d): %w", r.Start, r.Start+r.Size, err)
+			}
+
+			copy((*cache.mmap)[cacheOff:cacheOff+r.Size], src)
+			cache.setIsCached(cacheOff, r.Size)
+			cacheOff += r.Size
 		}
 
-		src, err := memfd.Slice(r.Start, r.Size)
-		if err != nil {
-			return fmt.Errorf("memfd slice [%d,%d): %w", r.Start, r.Start+r.Size, err)
-		}
-
-		copy((*cache.mmap)[cacheOff:cacheOff+r.Size], src)
-		cache.setIsCached(cacheOff, r.Size)
-		cacheOff += r.Size
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // MemfdCache wraps a Cache populated from a memfd on a background
@@ -286,11 +301,14 @@ func (m *MemfdCache) Size() (int64, error) { return m.cache.Size() }
 // still-mapped memfd during the drain window instead of blocking on done, so a
 // resume overlapping the pause is not delayed by the dedup drain.
 type DedupedMemfdCache struct {
-	outPath string
-	cancel  context.CancelFunc
-	done    *utils.SetOnce[*Cache]
+	outPath  string
+	cancel   context.CancelFunc
+	done     *utils.SetOnce[*Cache]
+	finished chan struct{}
 
 	inflight bool
+	// freeIndex frees the packed index with the memfd when it is released.
+	freeIndex bool
 	// swapped is resolved by MarkSwapped once the local template has swapped
 	// off the provisional header onto the deduped one. runDedup waits on it
 	// (bounded) before releasing the memfd, so a provisional read can't hit a
@@ -334,6 +352,31 @@ var inflightServePagesCounter = utils.Must(otel.Meter("github.com/e2b-dev/infra/
 	Int64Counter("orchestrator.memfd.inflight_serve_pages",
 		metric.WithDescription("Guest pages served from the still-mapped memfd during dedup (in-flight memfd serving)")))
 
+// deadStructureOutcomeCounter records what every memfd release did with the
+// packed index, and deadStructureBytesCounter the index's size wherever there
+// was one to free. They are the free-index flag's engagement and size signals.
+var (
+	deadStructureOutcomeCounter = utils.Must(telemetry.GetCounter(
+		otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"),
+		telemetry.OrchestratorDeadStructureOutcomeCounterName))
+	deadStructureBytesCounter = utils.Must(telemetry.GetCounter(
+		otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"),
+		telemetry.OrchestratorDeadStructureBytesCounterName))
+)
+
+var (
+	dedupIndexDroppedAttr = dedupIndexOutcomeAttr("dropped")
+	dedupIndexFlagOffAttr = dedupIndexOutcomeAttr("flag_off")
+	dedupIndexNoneAttr    = dedupIndexOutcomeAttr("none")
+)
+
+func dedupIndexOutcomeAttr(outcome string) metric.MeasurementOption {
+	return metric.WithAttributeSet(attribute.NewSet(
+		attribute.String("structure", "dedup_index"),
+		attribute.String("outcome", outcome),
+	))
+}
+
 // inflightServe{Provisional,Drain}Attr tag which serving path recorded a page:
 // the provisional compare window (ServeMemfd, identity offsets) or the in-flight
 // drain window (tryInflightRead, packed offsets). Precomputed as attribute-set
@@ -356,24 +399,30 @@ func NewCacheFromMemfdDeduped(
 	inputEmpty *roaring.Bitmap,
 	metaOut *utils.SetOnce[*header.DiffMetadata],
 	inflightServe bool,
+	freeIndex bool,
 ) (*DedupedMemfdCache, error) {
 	if blockSize%header.PageSize != 0 {
 		return nil, fmt.Errorf("diff block size %d not a multiple of dedup page size %d", blockSize, header.PageSize)
 	}
 	drainCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d := &DedupedMemfdCache{
-		outPath:  outPath,
-		cancel:   cancel,
-		done:     utils.NewSetOnce[*Cache](),
-		swapped:  utils.NewSetOnce[struct{}](),
-		inflight: inflightServe,
+		outPath:   outPath,
+		cancel:    cancel,
+		done:      utils.NewSetOnce[*Cache](),
+		finished:  make(chan struct{}),
+		swapped:   utils.NewSetOnce[struct{}](),
+		inflight:  inflightServe,
+		freeIndex: freeIndex,
 		// Publish the memfd up front (guarded by mu) so a provisional-header
 		// resume can serve dirty pages via ServeMemfd during the compare window,
 		// before metaOut/the deduped header resolves. runDedup frees it under mu
 		// after the drain.
 		memfd: memfd,
 	}
-	go d.runDedup(drainCtx, base, blockSize, memfd, dirty, bestEffort, directIO, budget, inputEmpty, metaOut)
+	go func() {
+		defer close(d.finished)
+		d.runDedup(drainCtx, base, blockSize, memfd, dirty, bestEffort, directIO, budget, inputEmpty, metaOut)
+	}()
 
 	return d, nil
 }
@@ -456,7 +505,7 @@ func (d *DedupedMemfdCache) runDedup(
 	compareDur := time.Since(compareStart)
 	if err != nil {
 		logSetOnceErr(ctx, "dedup metaOut", metaOut.SetError(err))
-		logSetOnceErr(ctx, "dedup done", d.done.SetError(errors.Join(err, d.releaseMemfd())))
+		logSetOnceErr(ctx, "dedup done", d.done.SetError(errors.Join(err, d.releaseMemfd(ctx))))
 
 		return
 	}
@@ -514,7 +563,7 @@ func (d *DedupedMemfdCache) runDedup(
 			logger.L().Warn(ctx, "memfd swap grace elapsed; releasing memfd without a swap signal")
 		}
 	}
-	if closeErr := d.releaseMemfd(); closeErr != nil {
+	if closeErr := d.releaseMemfd(ctx); closeErr != nil {
 		logger.L().Warn(ctx, "close memfd after dedup drain", zap.Error(closeErr))
 	}
 }
@@ -603,8 +652,10 @@ func (d *DedupedMemfdCache) Slice(off, length int64) ([]byte, error) {
 }
 
 // releaseMemfd closes the memfd exactly once, under the write lock so it can't
-// be unmapped beneath an in-flight ServeMemfd/tryInflightRead reader.
-func (d *DedupedMemfdCache) releaseMemfd() error {
+// be unmapped beneath an in-flight ServeMemfd/tryInflightRead reader. With
+// freeIndex set, the packed index goes with it: tryInflightRead is its only
+// reader and needs the memfd too, so no read can use it afterwards.
+func (d *DedupedMemfdCache) releaseMemfd(ctx context.Context) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.memfd == nil {
@@ -613,7 +664,35 @@ func (d *DedupedMemfdCache) releaseMemfd() error {
 	err := d.memfd.Close()
 	d.memfd = nil
 
+	d.releaseIndex(ctx)
+
 	return err
+}
+
+// packedSegBytes is the size of one packedSeg: three int64 fields.
+const packedSegBytes = 24
+
+// releaseIndex frees the packed index if freeIndex allows it, and records the
+// outcome. Called with d.mu held for writing.
+func (d *DedupedMemfdCache) releaseIndex(ctx context.Context) {
+	if d.index == nil {
+		deadStructureOutcomeCounter.Add(ctx, 1, dedupIndexNoneAttr)
+
+		return
+	}
+
+	// The whole backing array goes, so its capacity is what is freed.
+	size := int64(cap(d.index)) * packedSegBytes
+	if !d.freeIndex {
+		deadStructureOutcomeCounter.Add(ctx, 1, dedupIndexFlagOffAttr)
+		deadStructureBytesCounter.Add(ctx, size, dedupIndexFlagOffAttr)
+
+		return
+	}
+
+	d.index = nil
+	deadStructureOutcomeCounter.Add(ctx, 1, dedupIndexDroppedAttr)
+	deadStructureBytesCounter.Add(ctx, size, dedupIndexDroppedAttr)
 }
 
 // ServeMemfd copies [off, off+len(b)) from the still-mapped memfd using
@@ -640,6 +719,7 @@ func (d *DedupedMemfdCache) ServeMemfd(b []byte, off int64) (int, error) {
 func (d *DedupedMemfdCache) Close() error {
 	d.cancel()
 	c, _ := d.done.Wait()
+	<-d.finished
 	if c != nil {
 		return c.Close()
 	}

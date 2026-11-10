@@ -124,7 +124,7 @@ func TestVolumeRoundTrip(t *testing.T) {
 		readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 			ctx,
 			&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-			setup.WithSandbox(t, sbx.SandboxID),
+			setup.WithSandbox(t, sbx),
 		)
 		require.NoError(t, readErr)
 		require.Equal(t, http.StatusOK, readRes.StatusCode(), string(readRes.Body))
@@ -180,7 +180,7 @@ func TestVolumeRoundTrip(t *testing.T) {
 		readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 			ctx,
 			&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-			setup.WithSandbox(t, sbx2.SandboxID),
+			setup.WithSandbox(t, sbx2),
 		)
 		require.NoError(t, readErr)
 		require.Equal(t, http.StatusOK, readRes.StatusCode(), string(readRes.Body))
@@ -192,7 +192,7 @@ func TestVolumeRoundTrip(t *testing.T) {
 		ctx := t.Context()
 		envdClient := setup.GetEnvdClient(t, ctx)
 		req := connect.NewRequest(&sharedfs.RemoveRequest{Path: filePath})
-		setup.SetSandboxHeader(t, req.Header(), sbx2.SandboxID)
+		setup.SetSandboxHeader(t, req.Header(), sbx2)
 		setup.SetUserHeader(t, req.Header(), "user")
 		_, remErr := envdClient.FilesystemClient.Remove(ctx, req)
 		require.NoError(t, remErr)
@@ -201,7 +201,7 @@ func TestVolumeRoundTrip(t *testing.T) {
 		readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 			ctx,
 			&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-			setup.WithSandbox(t, sbx2.SandboxID),
+			setup.WithSandbox(t, sbx2),
 		)
 		require.NoError(t, readErr)
 		assert.Equal(t, http.StatusNotFound, readRes.StatusCode(), string(readRes.Body))

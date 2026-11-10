@@ -29,7 +29,7 @@ func TestWatcher(t *testing.T) {
 		Path:      watchDir,
 		Recursive: false,
 	})
-	setup.SetSandboxHeader(t, createReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, createReq.Header(), sbx)
 	setup.SetUserHeader(t, createReq.Header(), "user")
 
 	createResp, err := envdClient.FilesystemClient.CreateWatcher(t.Context(), createReq)
@@ -42,7 +42,7 @@ func TestWatcher(t *testing.T) {
 	getReq := connect.NewRequest(&filesystem.GetWatcherEventsRequest{
 		WatcherId: watcherId,
 	})
-	setup.SetSandboxHeader(t, getReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, getReq.Header(), sbx)
 	setup.SetUserHeader(t, getReq.Header(), "user")
 
 	getResp, err := envdClient.FilesystemClient.GetWatcherEvents(t.Context(), getReq)
@@ -68,7 +68,7 @@ func TestWatcher(t *testing.T) {
 	removeReq := connect.NewRequest(&filesystem.RemoveWatcherRequest{
 		WatcherId: watcherId,
 	})
-	setup.SetSandboxHeader(t, removeReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, removeReq.Header(), sbx)
 	setup.SetUserHeader(t, removeReq.Header(), "user")
 
 	removeResp, err := envdClient.FilesystemClient.RemoveWatcher(t.Context(), removeReq)

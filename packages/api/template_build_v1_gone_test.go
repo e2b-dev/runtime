@@ -28,7 +28,7 @@ func TestTemplateBuildV1RoutesAreGone(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
 
-	server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, ff, swagger, 0)
+	server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, ff, swagger)
 
 	for _, path := range []string{
 		"/templates",

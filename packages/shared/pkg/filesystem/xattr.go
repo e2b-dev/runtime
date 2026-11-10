@@ -34,6 +34,20 @@ const MaxMetadataKeyLen = 255 - len(MetadataXattrPrefix)
 // per-entry header overhead), so it stays a little under the true ceiling.
 const MaxMetadataTotalLen = 4096
 
+// ErrMetadataUnsupported reports metadata on a platform whose extended
+// attribute backend stores nothing (and reports success). IsXattrUnsupported
+// matches it, as it matches a filesystem without extended attributes.
+var ErrMetadataUnsupported = fmt.Errorf("file metadata is not supported on this platform: %w", syscall.ENOTSUP)
+
+// CheckMetadataStorable refuses non-empty metadata where nothing would store it.
+func CheckMetadataStorable(metadata map[string]string) error {
+	if len(metadata) > 0 && !xattr.XATTR_SUPPORTED {
+		return ErrMetadataUnsupported
+	}
+
+	return nil
+}
+
 // ValidateMetadata returns an error if the metadata set would be rejected by
 // WriteMetadata. Validation is filesystem-agnostic and catches obvious client
 // mistakes before we issue any syscalls.
@@ -135,6 +149,9 @@ func ReadMetadata(path string) (map[string]string, error) {
 // It addresses the file through an already-open descriptor, avoiding path races
 // with concurrent renames.
 func WriteMetadata(file *os.File, metadata map[string]string) error {
+	if err := CheckMetadataStorable(metadata); err != nil {
+		return err
+	}
 	if err := ValidateMetadata(metadata); err != nil {
 		return err
 	}

@@ -310,6 +310,179 @@ class TestCheckCIStatus:
             assert "failed" in message
 
 
+def _check_run(name, conclusion, status="completed", app="github-actions", suite=1):
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "app": {"slug": app},
+        "check_suite": {"id": suite},
+    }
+
+
+def _suite_runs(event):
+    return {"total_count": 1, "workflow_runs": [{"event": event}]}
+
+
+NO_STATUSES = {"state": "unknown", "total_count": 0}
+
+
+class TestCheckCIStatusPushOnly:
+    """Actions check-runs not triggered by a push do not gate a release."""
+
+    @pytest.mark.parametrize("event", ["schedule", "workflow_dispatch", "dynamic"])
+    @pytest.mark.parametrize("status,conclusion", [("in_progress", None), ("completed", "failure")])
+    def test_non_push_run_does_not_block_green_push_ci(self, event, status, conclusion):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [
+                    _check_run("codeql", "success", suite=1),
+                    _check_run("codeql", conclusion, status=status, suite=2),
+                ]},
+                _suite_runs("push"),
+                _suite_runs(event),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is True
+        assert "passed" in message
+
+    def test_failed_push_run_blocks(self):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [
+                    _check_run("codeql", "failure", suite=1),
+                    _check_run("monitor", "success", suite=2),
+                ]},
+                _suite_runs("push"),
+                _suite_runs("schedule"),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is False
+        assert "failed" in message
+
+    def test_check_run_from_another_app_is_not_filtered(self):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [
+                    _check_run("codeql", "success", suite=1),
+                    _check_run("bugbot", "failure", app="cursor", suite=2),
+                ]},
+                _suite_runs("push"),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is False
+        assert "failed" in message
+        assert mock_api.call_count == 3
+
+    @pytest.mark.parametrize("lookup", [None, {"total_count": 0, "workflow_runs": []}])
+    def test_unresolved_suite_keeps_its_check_runs(self, lookup):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [
+                    _check_run("codeql", "success", suite=1),
+                    _check_run("scan", "failure", suite=2),
+                ]},
+                _suite_runs("push"),
+                lookup,
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is False
+        assert "failed" in message
+
+    def test_each_suite_is_resolved_once(self):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [
+                    _check_run("codeql (rust)", "success", suite=7),
+                    _check_run("codeql (go)", "success", suite=7),
+                    _check_run("osv", "success", suite=7),
+                ]},
+                _suite_runs("push"),
+            ]
+            success, _ = check_ci_status(SAMPLE_COMMIT_SHA, repo="owner/repo")
+        assert success is True
+        endpoints = [c.args[0] for c in mock_api.call_args_list]
+        assert endpoints[1] == f"/repos/owner/repo/commits/{SAMPLE_COMMIT_SHA}/check-runs?per_page=100&page=1"
+        assert endpoints[2:] == ["/repos/owner/repo/actions/runs?check_suite_id=7"]
+
+    @pytest.mark.parametrize("lookup", [None, {"total_count": 0, "workflow_runs": []}])
+    def test_unresolved_suite_is_reported(self, lookup, capsys):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [_check_run("scan", "success", suite=9)]},
+                lookup,
+            ]
+            check_ci_status(SAMPLE_COMMIT_SHA)
+        assert "::warning::Could not resolve the workflow event of check suite 9" in capsys.readouterr().err
+
+    def test_push_failure_on_a_later_page_blocks(self):
+        page_one = [_check_run(f"monitor-{i}", "success", suite=2) for i in range(100)]
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"total_count": 101, "check_runs": page_one},
+                {"total_count": 101, "check_runs": [_check_run("codeql", "failure", suite=1)]},
+                _suite_runs("schedule"),
+                _suite_runs("push"),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA, repo="owner/repo")
+        assert success is False
+        assert "failed" in message
+        assert mock_api.call_args_list[2].args[0] == (
+            f"/repos/owner/repo/commits/{SAMPLE_COMMIT_SHA}/check-runs?per_page=100&page=2"
+        )
+
+    def test_unreadable_later_page_refuses(self):
+        page_one = [_check_run(f"monitor-{i}", "success", suite=2) for i in range(100)]
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"total_count": 101, "check_runs": page_one},
+                None,
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is False
+        assert "Could not list every check-run" in message
+
+    def test_full_page_is_followed_without_a_reported_total(self):
+        newest = [_check_run(f"monitor-{i}", "success", suite=2) for i in range(100)]
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": newest},
+                {"check_runs": [_check_run("codeql", "failure", suite=1)]},
+                _suite_runs("schedule"),
+                _suite_runs("push"),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is False
+        assert "failed" in message
+
+    def test_unreadable_first_page_reads_as_no_check_runs(self):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [{"state": "success", "total_count": 1}, None]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is True
+        assert "passed" in message
+
+    def test_only_non_push_runs_falls_back_to_no_checks_found(self):
+        with patch("validate.gh_api") as mock_api:
+            mock_api.side_effect = [
+                NO_STATUSES,
+                {"check_runs": [_check_run("monitor", "failure", suite=3)]},
+                _suite_runs("schedule"),
+            ]
+            success, message = check_ci_status(SAMPLE_COMMIT_SHA)
+        assert success is True
+        assert "No CI checks found" in message
+
+
 class TestGenerateBuildMatrix:
     """Tests for generate_build_matrix function."""
 

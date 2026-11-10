@@ -14,7 +14,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
@@ -128,7 +127,8 @@ func (pb *OptimizeBuilder) Build(
 
 	// Get the template from the finalize phase
 	// isSnapshot=false, isBuilding=true since we're in a build phase
-	localTemplate, err := pb.templateCache.GetTemplate(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	localTemplate, releaseTemplate, err := pb.templateCache.GetTemplatePinned(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	defer releaseTemplate()
 	if err != nil {
 		return phases.LayerResult{}, fmt.Errorf("failed to get template from cache: %w", err)
 	}
@@ -151,6 +151,7 @@ func (pb *OptimizeBuilder) Build(
 	// Update metadata with prefetch mapping
 	updatedMetadata := sourceLayer.Metadata.WithPrefetch(&metadata.Prefetch{
 		Memory: memoryPrefetchMapping,
+		Origin: metadata.PrefetchOriginBuild,
 	})
 
 	// Upload the updated metadata
@@ -181,6 +182,23 @@ func (pb *OptimizeBuilder) Build(
 	}, nil
 }
 
+// sandboxConfig is the configuration the prefetch collection resumes the final
+// snapshot with: the build's machine, guest profile and device names included.
+func (pb *OptimizeBuilder) sandboxConfig() *sandbox.Config {
+	return sandbox.NewConfig(sandbox.Config{
+		Vcpu:              pb.Config.VCpuCount,
+		ConfiguredVmVcpus: pb.Config.MaxVCpuCount,
+		RamMB:             pb.Config.MemoryMB,
+		HugePages:         pb.Config.HugePages,
+
+		Envd: sandbox.EnvdMetadata{
+			Version: pb.EnvdVersion,
+		},
+
+		FirecrackerConfig: pb.Config.FirecrackerConfig(),
+	})
+}
+
 func (pb *OptimizeBuilder) collectMemoryPrefetchMapping(
 	ctx context.Context,
 	localTemplate sbxtemplate.Template,
@@ -188,24 +206,8 @@ func (pb *OptimizeBuilder) collectMemoryPrefetchMapping(
 	ctx, span := tracer.Start(ctx, "collect prefetch-mapping")
 	defer span.End()
 
-	// Configure sandbox for prefetch collection
-	sbxConfig := sandbox.NewConfig(sandbox.Config{
-		Vcpu:      pb.Config.VCpuCount,
-		RamMB:     pb.Config.MemoryMB,
-		HugePages: pb.Config.HugePages,
-
-		Envd: sandbox.EnvdMetadata{
-			Version: pb.EnvdVersion,
-		},
-
-		FirecrackerConfig: fc.Config{
-			KernelVersion:      pb.Config.KernelVersion,
-			FirecrackerVersion: pb.Config.FirecrackerVersion,
-		},
-	})
-
 	// Create sandbox creator for resuming
-	sandboxCreator := layer.NewResumeSandbox(sbxConfig, pb.sandboxFactory, prefetchTimeout)
+	sandboxCreator := layer.NewResumeSandbox(pb.sandboxConfig(), pb.sandboxFactory, prefetchTimeout)
 
 	// Run sandbox multiple times and collect prefetch data
 	var allPrefetchData []block.PrefetchData

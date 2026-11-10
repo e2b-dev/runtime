@@ -9,10 +9,10 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	grpcshared "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -30,12 +30,22 @@ func (a instanceAuthorization) RequireTransportSecurity() bool {
 	return a.tls
 }
 
-func createClient(tel *telemetry.Client, auth *instanceAuthorization, endpoint string, endpointTLS bool) (*GRPCClient, error) {
+func createClient(tel *telemetry.Client, endpoint string, endpointTLS bool, plaintext credentials.TransportCredentials) (*GRPCClient, error) {
+	conn, err := grpc.NewClient(endpoint, dialOptions(tel, endpoint, endpointTLS, plaintext)...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client client: %w", err)
+	}
+
+	return NewGRPCClient(conn, "cluster-orchestrator"), nil
+}
+
+func dialOptions(tel *telemetry.Client, endpoint string, endpointTLS bool, plaintext credentials.TransportCredentials) []grpc.DialOption {
 	grpcOptions := []grpc.DialOption{
 		grpc.WithStatsHandler(
 			otelgrpc.NewClientHandler(
 				otelgrpc.WithTracerProvider(tel.TracerProvider),
 				otelgrpc.WithMeterProvider(tel.MeterProvider),
+				grpcshared.WithSandboxClientMetricAttributes(),
 			),
 		),
 		grpc.WithKeepaliveParams(
@@ -47,22 +57,13 @@ func createClient(tel *telemetry.Client, auth *instanceAuthorization, endpoint s
 		),
 	}
 
-	if auth != nil {
-		grpcOptions = append(grpcOptions, grpc.WithPerRPCCredentials(auth))
-	}
-
 	if endpointTLS {
 		// (2025-06) AWS ALB with TLS termination is using TLS 1.2 as default so this is why we are not using TLS 1.3+ here
 		cred := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 		grpcOptions = append(grpcOptions, grpc.WithAuthority(endpoint), grpc.WithTransportCredentials(cred))
 	} else {
-		grpcOptions = append(grpcOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpcOptions = append(grpcOptions, grpc.WithTransportCredentials(plaintext))
 	}
 
-	conn, err := grpc.NewClient(endpoint, grpcOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create client client: %w", err)
-	}
-
-	return NewGRPCClient(conn, "cluster-orchestrator"), nil
+	return grpcOptions
 }

@@ -12,7 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	nomadapi "github.com/hashicorp/nomad/api"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
+	"github.com/riverqueue/river"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -25,9 +27,12 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
+	"github.com/e2b-dev/infra/packages/api/internal/outbox"
+	"github.com/e2b-dev/infra/packages/api/internal/pauselimit"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	managementv1 "github.com/e2b-dev/infra/packages/api/internal/secretsstore/management/v1"
+	"github.com/e2b-dev/infra/packages/api/internal/team"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -42,10 +47,13 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
+	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/kube"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
@@ -191,8 +199,12 @@ type teamRunningSandboxCounter interface {
 	TeamRunningSandboxCounts(ctx context.Context) (map[uuid.UUID]int64, error)
 }
 
+type sandboxLifecycleReader interface {
+	QuerySandboxLifecycle(ctx context.Context, sandboxID string) (clickhouse.SandboxLifecycle, error)
+}
+
 type APIStore struct {
-	Healthy      atomic.Bool
+	startupState atomic.Uint32
 	config       cfg.Config
 	posthog      *analyticscollector.PosthogClient
 	Telemetry    *telemetry.Client
@@ -201,26 +213,40 @@ type APIStore struct {
 	// pause handler's two calls — tests use it to assert the gate's wiring
 	// (refusal before RemoveSandbox) without a real orchestrator.
 	pauseBackendOverride   pauseOrchestrator
+	forkBackendOverride    forkOrchestrator
+	pauseLimiter           *pauselimit.Limiter
 	resumeBackendOverride  resumeWaitOrchestrator
 	connectBackendOverride connectOrchestrator
-	teamSandboxCounter     teamRunningSandboxCounter
-	templateManager        *template_manager.TemplateManager
-	sqlcDB                 *sqlcdb.Client
-	authDB                 *authdb.Client
-	redisClient            redis.UniversalClient
-	templateCache          *templatecache.TemplateCache
-	templateBuildsCache    *templatecache.TemplatesBuildCache
-	snapshotCache          *snapshotcache.SnapshotCache
-	authService            sharedauth.Service
-	templateSpawnCounter   *utils.TemplateSpawnCounter
-	clickhouseStore        clickhouse.Clickhouse
-	sandboxLogsReader      *sandboxlogs.Reader
-	accessTokenGenerator   *sandbox.AccessTokenGenerator
-	featureFlags           *featureflags.Client
-	clusters               *clusters.Pool
-	snapshotUpsertSem      *sharedutils.AdjustableSemaphore
-	sandboxListSem         *sharedutils.AdjustableSemaphore
-	snapshotBuildQuerySem  *sharedutils.AdjustableSemaphore
+	// snapshotBackendOverride does the same for the snapshot-template
+	// handler: the memory:false refusals must land before the sandbox leaves
+	// Running.
+	snapshotBackendOverride snapshotOrchestrator
+	// autoResumeBackendOverride does the same for the client-proxy auto-resume
+	// RPC: a running sandbox is routed before its snapshot kind is consulted.
+	autoResumeBackendOverride autoResumeOrchestrator
+	teamSandboxCounter        teamRunningSandboxCounter
+	sandboxLifecycles         sandboxLifecycleReader
+	templateManager           *template_manager.TemplateManager
+	sqlcDB                    *sqlcdb.Client
+	sqlcReadDB                *sqlcdb.Client
+	authDB                    *authdb.Client
+	redisClient               redis.UniversalClient
+	templateCache             *templatecache.TemplateCache
+	templateBuildsCache       *templatecache.TemplatesBuildCache
+	snapshotCache             *snapshotcache.SnapshotCache
+	authService               sharedauth.Service
+	managementService         *management.Service
+	teamService               *team.Service
+	riverClient               *river.Client[pgx.Tx] // set by NewOutbox
+	templateSpawnCounter      *utils.TemplateSpawnCounter
+	clickhouseStore           clickhouse.Clickhouse
+	sandboxLogsReader         *sandboxlogs.Reader
+	accessTokenGenerator      *sandbox.AccessTokenGenerator
+	featureFlags              *featureflags.Client
+	clusters                  *clusters.Pool
+	snapshotUpsertSem         *sharedutils.AdjustableSemaphore
+	sandboxListSem            *sharedutils.AdjustableSemaphore
+	snapshotBuildQuerySem     *sharedutils.AdjustableSemaphore
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer
@@ -235,12 +261,42 @@ type APIStore struct {
 	sandboxEvents     webhookevents.SandboxEventsServiceClient
 }
 
-func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config) *APIStore {
+const (
+	startupStateStarting uint32 = iota
+	startupStateReady
+	startupStateDraining
+)
+
+func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config, hops Hops) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
 
-	sqlcDB, err := sqlcdb.NewClient(ctx, config.PostgresConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+	sqlcDB, err := sqlcdb.NewClient(
+		ctx,
+		config.PostgresConnectionString,
+		pool.WithMaxConnections(config.DBMaxOpenConnections),
+		pool.WithMinIdle(config.DBMinIdleConnections),
+		pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+		pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+	)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing SQLC client", zap.Error(err))
+	}
+
+	// Read-only queries that tolerate replica lag go to sqlcReadDB: the read
+	// replica when one is configured, otherwise the primary.
+	sqlcReadDB := sqlcDB
+	if config.PostgresReadReplicaConnectionString != "" {
+		sqlcReadDB, err = sqlcdb.NewReadClient(
+			ctx,
+			config.PostgresReadReplicaConnectionString,
+			pool.WithMaxConnections(config.DBMaxOpenConnections),
+			pool.WithMinIdle(config.DBMinIdleConnections),
+			pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+			pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+		)
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing read SQLC client", zap.Error(err))
+		}
 	}
 
 	authDB, err := authdb.NewClient(
@@ -314,7 +370,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		}
 	}
 
-	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config)
+	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "initializing edge clusters pool failed", zap.Error(err))
 	}
@@ -341,9 +397,13 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		logger.L().Fatal(ctx, "failed to create snapshot build query semaphore", zap.Error(err))
 	}
 
-	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem)
+	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
+	}
+	pauseLimiter, err := pauselimit.New(redisClient, featureFlags, tel.MeterProvider)
+	if err != nil {
+		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
 	}
 
 	authClient := &http.Client{
@@ -372,7 +432,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		secretsManagement managementv1.SecretManagementServiceClient
 	)
 	if config.SecretsStoreBackendGrpcAddress != "" {
-		secretsConn, err = newSecretsManagementClient(config.SecretsStoreBackendGrpcAddress)
+		secretsConn, err = newSecretsManagementClient(config.SecretsStoreBackendGrpcAddress, hops.SecretsStore)
 		if err != nil {
 			logger.L().Fatal(ctx, "Initializing secrets store management client", zap.Error(err))
 		}
@@ -386,7 +446,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		sandboxEvents     webhookevents.SandboxEventsServiceClient
 	)
 	if config.WebhooksBackendGrpcAddress != "" {
-		webhooksConn, err = newWebhooksClient(config.WebhooksBackendGrpcAddress)
+		webhooksConn, err = newWebhooksClient(config.WebhooksBackendGrpcAddress, hops.Webhooks)
 		if err != nil {
 			logger.L().Fatal(ctx, "Initializing webhooks backend client", zap.Error(err))
 		}
@@ -398,9 +458,12 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	a := &APIStore{
 		config:                config,
 		orchestrator:          orch,
+		pauseLimiter:          pauseLimiter,
 		teamSandboxCounter:    sandboxcountscache.NewCountsCache(orch, redisClient),
+		sandboxLifecycles:     clickhouseStore,
 		templateManager:       templateManager,
 		sqlcDB:                sqlcDB,
+		sqlcReadDB:            sqlcReadDB,
 		authDB:                authDB,
 		Telemetry:             tel,
 		posthog:               posthogClient,
@@ -408,6 +471,8 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		templateBuildsCache:   templateBuildsCache,
 		snapshotCache:         snapshotCache,
 		authService:           authService,
+		managementService:     management.NewService(authDB, sqlcDB, authService, tel.MeterProvider),
+		teamService:           team.NewService(sqlcDB, authService, orch, templateManager, banRequestBudget),
 		templateSpawnCounter:  templateSpawnCounter,
 		clickhouseStore:       clickhouseStore,
 		sandboxLogsReader:     sandboxLogsReader,
@@ -427,25 +492,44 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 
 	go a.updateDBThrottleLimits(ctx)
 
-	// Wait till there's at least one, otherwise we can't create sandboxes yet
+	// Health stays blocked until the orchestrator has completed both startup
+	// gates and projected its initial cluster snapshots into placement.
 	go func() {
-		ticker := time.NewTicker(5 * time.Millisecond)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if orch.NodeCount() != 0 {
-					logger.L().Info(ctx, "Nodes are ready, setting API as healthy")
-					a.Healthy.Store(true)
-
-					return
-				}
-			}
+		select {
+		case <-ctx.Done():
+			return
+		case <-orch.StartupReady():
+			logger.L().Info(ctx, "Startup readiness completed, setting API as healthy")
+			a.markStartupReady()
 		}
 	}()
 
 	return a
+}
+
+// NewOutbox builds the River client that works the API's outbox jobs on the
+// store's clients. Project deletion enqueues its teardown through the same
+// client. Stop it before Close.
+func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
+	riverOutbox, err := outbox.New(outbox.Dependencies{
+		Pool:        a.sqlcDB.Pool(),
+		Sandboxes:   a.orchestrator,
+		Containment: a.teamService,
+		TeamCache:   a.authService,
+		Teams:       a.authDB,
+		Logger:      l,
+		Telemetry:   a.Telemetry,
+		Config: outbox.Config{
+			MaxWorkers:      a.config.OutboxMaxWorkers,
+			BacklogInterval: a.config.OutboxBacklogInterval,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	a.riverClient = riverOutbox.Client()
+
+	return riverOutbox, nil
 }
 
 // Drain stops admitting sandbox work that outlives its request and waits for
@@ -487,6 +571,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 
 	if err := a.authDB.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing auth database client: %w", err))
+	}
+
+	if a.sqlcReadDB != a.sqlcDB {
+		if err := a.sqlcReadDB.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing read sqlc database client: %w", err))
+		}
 	}
 
 	if err := a.sqlcDB.Close(); err != nil {
@@ -562,13 +652,23 @@ func (a *APIStore) sendAPIStoreError(c *gin.Context, code int, message string) {
 }
 
 func (a *APIStore) GetHealth(c *gin.Context) {
-	if a.Healthy.Load() {
+	if a.startupState.Load() == startupStateReady {
 		c.String(http.StatusOK, "Health check successful")
 
 		return
 	}
 
 	c.String(http.StatusServiceUnavailable, "Service is unavailable")
+}
+
+func (a *APIStore) markStartupReady() {
+	a.startupState.CompareAndSwap(startupStateStarting, startupStateReady)
+}
+
+// BeginDrain permanently marks this API instance unhealthy. Startup completion
+// racing with shutdown cannot restore readiness after the drain begins.
+func (a *APIStore) BeginDrain() {
+	a.startupState.Store(startupStateDraining)
 }
 
 func (a *APIStore) GetTeamFromAPIKey(ctx context.Context, ginCtx *gin.Context, apiKey string) (*types.Team, *api.APIError) {
@@ -638,4 +738,8 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 	}
 
 	return team, nil
+}
+
+func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
 }

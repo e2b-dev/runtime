@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/attribute"
@@ -12,16 +10,15 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
 )
-
-var templateFilesHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func (a *APIStore) GetTemplatesTemplateIDFilesHash(c *gin.Context, templateID api.TemplateID, hash string) {
 	ctx := c.Request.Context()
 
-	if !templateFilesHashPattern.MatchString(hash) {
+	if err := templates.ValidateFilesHash(hash); err != nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, "Invalid files hash")
-		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "invalid files hash", errors.New("invalid files hash"), telemetry.WithTemplateID(templateID), attribute.String("hash", hash))
+		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "invalid files hash", err, telemetry.WithTemplateID(templateID), attribute.String("hash", hash))
 
 		return
 	}
@@ -52,7 +49,7 @@ func (a *APIStore) GetTemplatesTemplateIDFilesHash(c *gin.Context, templateID ap
 		return
 	}
 
-	node, err := a.templateManager.GetAvailableBuildClient(ctx, clusters.WithClusterFallback(templateDB.ClusterID))
+	node, err := a.templateManager.GetAvailableBuildClient(ctx, clusters.WithClusterFallback(templateDB.ClusterID), nil)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error when getting available build client", err, telemetry.WithTemplateID(templateID))
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Error when getting available build client")

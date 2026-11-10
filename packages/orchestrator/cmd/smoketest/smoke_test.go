@@ -56,7 +56,7 @@ const (
 )
 
 // TestSmokeAllFCVersions builds a template and resumes from it for every
-// Firecracker version in FirecrackerVersionMap. It requires root, Docker,
+// Firecracker version the fallback map serves, env overrides included. It requires root, Docker,
 // the envd binary, KVM, NBD, and hugepages.
 func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests share infra and must run sequentially
 	checkPrerequisites(t)
@@ -68,7 +68,9 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 	setupEnvVars(t, dataDir, envdPath)
 
 	downloadKernel(t, dataDir)
-	for _, fcVersion := range featureflags.FirecrackerVersionMap {
+	fcVersions, err := featureflags.FirecrackerVersionsFallback(featureflags.FirecrackerVersionMap, os.Getenv(featureflags.FirecrackerVersionsEnv))
+	require.NoError(t, err)
+	for _, fcVersion := range fcVersions {
 		downloadFC(t, dataDir, fcVersion)
 	}
 
@@ -78,7 +80,7 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 	infra := newTestInfra(t, ctx)
 	defer infra.close(ctx)
 
-	for fcMajor, fcVersion := range featureflags.FirecrackerVersionMap { //nolint:paralleltest // sequential by design
+	for fcMajor, fcVersion := range fcVersions { //nolint:paralleltest // sequential by design
 		t.Run("fc-"+fcMajor, func(t *testing.T) {
 			buildID := uuid.New().String()
 
@@ -108,8 +110,9 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 
 			// Phase 2: resume from the build
 			t.Logf("resuming build %s", buildID)
-			tmpl, err := infra.templateCache.GetTemplate(ctx, buildID, false, false)
+			tmpl, releaseTmpl, err := infra.templateCache.GetTemplatePinned(ctx, buildID, false, false)
 			require.NoError(t, err, "load template for FC %s", fcVersion)
+			t.Cleanup(releaseTmpl)
 
 			meta, err := tmpl.Metadata()
 			require.NoError(t, err)
@@ -181,7 +184,7 @@ func newTestInfra(t *testing.T, ctx context.Context) *testInfra {
 	sbxlogger.SetSandboxLoggerInternal(l)
 	sbxlogger.SetSandboxLoggerExternal(l)
 
-	flags, _ := featureflags.NewClientWithLogLevel(ldlog.Error)
+	flags, _ := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 
 	builderConfig, err := cfg.ParseBuilder()
 	require.NoError(t, err)
@@ -270,6 +273,12 @@ func checkPrerequisites(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Skip("/dev/kvm not available")
 	}
+
+	// Without forwarding the guest has no route out, and every build fails late
+	// in apt's DNS lookups instead of here.
+	forward, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	require.NoError(t, err)
+	require.Equal(t, "1", strings.TrimSpace(string(forward)), "net.ipv4.ip_forward must be 1 for sandbox NAT")
 
 	// Firecracker host assets, shipped with the orchestrator host image.
 	builderConfig, err := cfg.ParseBuilder()
@@ -367,7 +376,6 @@ func setupEnvVars(t *testing.T, dataDir, envdPath string) {
 	}
 
 	vars := map[string]string{
-		"ARTIFACTS_REGISTRY_PROVIDER":         "Local",
 		"FIRECRACKER_VERSIONS_DIR":            abs(filepath.Join(dataDir, "fc-versions")),
 		"HOST_ENVD_PATH":                      envdPath,
 		"HOST_KERNELS_DIR":                    abs(filepath.Join(dataDir, "kernels")),

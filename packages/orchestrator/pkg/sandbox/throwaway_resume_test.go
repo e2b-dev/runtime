@@ -23,6 +23,7 @@ func TestThrowawayResumeOptions(t *testing.T) {
 
 	require.True(t, o.denyEgress, "throwaway must deny egress")
 	require.True(t, o.skipLiveRegistration, "throwaway must stay out of the live registry")
+	require.True(t, o.skipThaw, "throwaway must ask envd to skip the thaw")
 	require.False(t, o.describesCustomerStart(),
 		"a throwaway resume must not be counted in the fleet's startup numbers")
 }

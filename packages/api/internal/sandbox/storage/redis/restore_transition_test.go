@@ -20,7 +20,7 @@ func TestPauseCallbackPreservesSuccessorTransition(t *testing.T) {
 	_, _, finishOld, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 
-	key := getTransitionKey(sbx.TeamID.String(), sbx.SandboxID)
+	key := transitionKeyFor(sbx.SandboxID)
 	oldID, err := client.Get(ctx, key).Result()
 	require.NoError(t, err)
 	// Simulate the transition TTL expiring while its caller is still in flight.
@@ -34,7 +34,7 @@ func TestPauseCallbackPreservesSuccessorTransition(t *testing.T) {
 	require.NoError(t, err)
 
 	finishOld(ctx, sandboxtypes.ErrTransitionRestored)
-	result, err := client.Get(ctx, getTransitionResultKey(sbx.TeamID.String(), sbx.SandboxID, oldID)).Result()
+	result, err := client.Get(ctx, transitionResultKeyFor(sbx.SandboxID, oldID)).Result()
 	require.NoError(t, err)
 	require.Equal(t, sandboxtypes.ErrTransitionRestored.Error(), result)
 	currentID, err := client.Get(ctx, key).Result()

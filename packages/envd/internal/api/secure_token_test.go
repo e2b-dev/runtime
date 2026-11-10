@@ -396,6 +396,9 @@ func TestSecureTokenEqualsSecure(t *testing.T) {
 			}()
 
 			wg.Wait()
+			// Every live token holds locked memory, so each pair is freed before the next.
+			a.Destroy()
+			b.Destroy()
 		}
 	})
 

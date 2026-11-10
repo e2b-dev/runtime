@@ -87,3 +87,24 @@ packages:
           filename: mockfeatureflagsclient.go
           pkgname: handlersmocks
           structname: MockFeatureFlagsClient
+
+  github.com/e2b-dev/infra/packages/api/internal/team:
+    interfaces:
+      teamCache:
+        config:
+          dir: packages/api/internal/team/mocks
+          filename: mockteamcache.go
+          pkgname: teammocks
+          structname: MockTeamCache
+      sandboxKiller:
+        config:
+          dir: packages/api/internal/team/mocks
+          filename: mocksandboxkiller.go
+          pkgname: teammocks
+          structname: MockSandboxKiller
+      buildCanceller:
+        config:
+          dir: packages/api/internal/team/mocks
+          filename: mockbuildcanceller.go
+          pkgname: teammocks
+          structname: MockBuildCanceller

@@ -133,6 +133,10 @@ func (r *Rootfs) CreateExt4Filesystem(
 
 	img, err := oci.GetPublicImage(childCtx, r.dockerhubRepository, template.FromImage, template.RegistryAuthProvider)
 	if err != nil {
+		if errors.Is(err, dockerhub.ErrRepositoryAccessDenied) {
+			return containerregistry.Config{}, err
+		}
+
 		return containerregistry.Config{}, phases.NewPhaseBuildError(phaseMetadata, err)
 	}
 

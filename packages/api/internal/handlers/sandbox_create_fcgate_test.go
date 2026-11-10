@@ -16,8 +16,8 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -40,7 +40,7 @@ func TestPostSandboxes_FsOnlyAutoPauseVersionGate(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, db)
 	teamSlug := testutils.GetTeamSlug(t, ctx, db, teamID)
 
-	flags, err := featureflags.NewClientWithLogLevel(ldlog.Error)
+	flags, err := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
 	require.NoError(t, err)
 
 	store := &APIStore{
@@ -72,7 +72,7 @@ func TestPostSandboxes_FsOnlyAutoPauseVersionGate(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   teamID,
 			Slug: teamSlug,
 		},

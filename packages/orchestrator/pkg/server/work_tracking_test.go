@@ -48,7 +48,7 @@ func TestCreateTracksWorkUntilCanceled(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			_, err := s.Create(ctx, &orchestrator.SandboxCreateRequest{
-				Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-create", Snapshot: true},
+				Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-create", Snapshot: true, Vcpu: 1},
 			})
 			done <- err
 		}()
@@ -106,7 +106,7 @@ func TestUploadSnapshotAsyncTracksWorkThroughCompletion(t *testing.T) {
 						return nil
 					})
 
-				uploads := sandbox.NewUploads(nil, store, nil, nil)
+				uploads := sandbox.NewUploads(nil, store, nil, nil, nil)
 				defer uploads.Stop()
 				upload, err := sandbox.NewUpload(ctx, uploads, &sandbox.Snapshot{
 					BuildID:            buildID,
@@ -118,7 +118,7 @@ func TestUploadSnapshotAsyncTracksWorkThroughCompletion(t *testing.T) {
 					RootfsDiff:       &build.NoDiff{},
 					RootfsDiffHeader: sandbox.NewResolvedDiffHeader(nil),
 					Metafile:         template.NewLocalFileLink(metaPath),
-				}, store, storage.CompressConfig{}, nil, storage.UseCasePause, nil)
+				}, store, storage.CompressConfig{}, nil, storage.UseCasePause, nil, nil)
 				require.NoError(t, err)
 
 				completeStarted := make(chan struct{})
@@ -213,7 +213,7 @@ func TestHarvestResumePrefetchAsyncTracksWorkThroughSealWait(t *testing.T) {
 				defer cancel()
 
 				releaseParent := s.info.TrackWork()
-				s.harvestResumePrefetchAsync(ctx, testHarvestSandbox(), res, "build-1", nil)
+				s.harvestResumePrefetchAsync(ctx, testHarvestSandbox(), res, "build-1", nil, harvestSourcePause)
 				require.Equal(t, int64(2), s.info.OutstandingWork())
 				releaseParent()
 				cancel()
@@ -235,6 +235,6 @@ func TestHarvestResumePrefetchAsyncDisabledTracksNoWork(t *testing.T) {
 	t.Parallel()
 
 	s := &Server{info: &service.ServiceInfo{}, featureFlags: admissionFlagClient(t, nil)}
-	s.harvestResumePrefetchAsync(t.Context(), nil, nil, "build-1", nil)
+	s.harvestResumePrefetchAsync(t.Context(), nil, nil, "build-1", nil, harvestSourcePause)
 	require.Zero(t, s.info.OutstandingWork())
 }

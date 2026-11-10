@@ -25,6 +25,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/fdexit"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/memory"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
@@ -76,6 +77,14 @@ var ErrUnexpectedEventType = errors.New("unexpected event type")
 // ErrClosed reports that the userfaultfd was already closed (sandbox
 // teardown) and the requested operation was skipped.
 var ErrClosed = errors.New("userfaultfd is closed")
+
+// ErrCopyFailed marks a faulted page UFFDIO_COPY could not install, which
+// ends the handler. The kernel's errno stays in the chain.
+var ErrCopyFailed = errors.New("failed uffdio copy")
+
+// errZeroPageFailed is the same for UFFDIO_ZEROPAGE, kept apart because it
+// never allocates a hugepage.
+var errZeroPageFailed = errors.New("failed uffdio zeropage")
 
 func hasEvent(revents, event int16) bool {
 	return revents&event != 0
@@ -149,11 +158,28 @@ type Userfaultfd struct {
 	// Cumulative demand-fault serve counters, read via ServeStats(). They
 	// mirror the orchestrator.sandbox.uffd.serve metric but as a per-handler
 	// snapshot, so a caller can sample "how many pages did this guest need so
-	// far" at a point in time (e.g. the moment envd init returns). Prefaults
+	// far" at a point in time (e.g. when envd answers /init). Prefaults
 	// bypass the serve loop and are not counted here. See recordServeStats.
-	servedPages       atomic.Int64 // faults resolved (installed or already-present)
-	servedSourcePages atomic.Int64 // subset installed from the source (page_class=new)
-	servedBytes       atomic.Int64 // bytes installed into the guest (new + zero)
+	servedPages    atomic.Int64 // faults resolved (installed or already-present)
+	servedBytes    atomic.Int64 // bytes installed into the guest (new + zero)
+	servedDeferred atomic.Int64 // serve attempts deferred on EAGAIN
+	servedDeduped  atomic.Int64 // MISSING faults dropped: a worker was already installing the page
+	servedNanos    atomic.Int64 // time spent serving resolved faults
+	servedMaxNanos atomic.Int64 // longest single resolved serve
+	wpDeferred     atomic.Int64 // write-protect resolves deferred on EAGAIN
+	// Installed new-page faults and their serve time by backend, reported by
+	// the read path through each serve's context. ServeStats sums these for
+	// SourcePages and SourceServeTime.
+	servedBySource      [storage.NumSources]atomic.Int64
+	servedNanosBySource [storage.NumSources]atomic.Int64
+
+	// installDedup gates the serve loop's one-installer-per-page claim
+	// (UffdInstallDedupFlag). Off dispatches a worker per fault message, as
+	// before the dedup; no page is ever marked Installing then.
+	installDedup atomic.Bool
+
+	// mode is the BalloonMode the serve metrics carry; unknown until set.
+	mode atomic.Uint32
 
 	// genBucket tags this sandbox's serve/prefault metrics with its snapshot
 	// generation range, so fault latency can be cut by chain depth.
@@ -206,6 +232,14 @@ const (
 	// Prefault here, call Close() concurrently, and verify the closed flag is
 	// checked after the RLock is acquired.
 	faultPhaseBeforePrefaultRLock
+	// faultPhaseBeforeSettleLock fires in the serve loop once a REMOVE batch
+	// has been read, before settleRequests.Lock; addr is the batch's first
+	// start. A test parks the loop here to keep later events unread.
+	faultPhaseBeforeSettleLock
+	// faultPhaseAfterDeferral fires in a worker right after it re-queued its
+	// fault on EAGAIN, before it returns; a test checks the claim is already
+	// released at that point.
+	faultPhaseAfterDeferral
 )
 
 // faultOutcome is the terminal classification of a faultPage call.
@@ -258,6 +292,7 @@ func NewUserfaultfdFromFd(fd uintptr, src PageReader, m *memory.Mapping, generat
 		genBucket:       bucketForGeneration(generation),
 		logger:          logger,
 	}
+	u.installDedup.Store(true)
 	u.wg.SetLimit(maxRequestsInProgress)
 	u.wgWP.SetLimit(maxWPResolvesInProgress)
 
@@ -457,6 +492,11 @@ func (u *Userfaultfd) Serve(
 			}
 
 			if len(removes) > 0 {
+				// Test hook (nil in production): parks the loop here so a
+				// later event stays unread while a worker is mid-install.
+				if h := u.testFaultHook.Load(); h != nil {
+					(*h)(uintptr(removes[0].start), faultPhaseBeforeSettleLock)
+				}
 				u.settleRequests.Lock()
 				for _, rm := range removes {
 					// rm.start (inclusive) and rm.end (exclusive) are page-aligned
@@ -568,6 +608,39 @@ func (u *Userfaultfd) Serve(
 				continue
 			}
 
+			idx := uint32(header.BlockIdx(offset, int64(u.pageSize)))
+
+			// One installer per page. The claim is taken here, before a
+			// worker or scratch buffer exists, under the tracker's own mutex
+			// only: settleRequests would stall the loop behind a REMOVE
+			// batch and stop it draining the kernel queue.
+			if u.installDedup.Load() {
+				if prev, claimed := u.pageTracker.BeginInstall(idx); !claimed {
+					switch prev {
+					case block.Installing:
+						// Another worker owns the install; its UFFDIO_COPY
+						// wakes every thread blocked on the page.
+						u.recordDropped(ctx, pageClassNew, faultResultDeduped)
+
+						continue
+					case block.Dirty, block.Clean:
+						// Stale message: only a REMOVE moves a page out of
+						// Dirty/Clean, and the batch above already recorded
+						// it. The worker's short-circuit, without the worker.
+						u.recordDropped(ctx, pageClassResident, faultResultPresent)
+
+						continue
+					default:
+						// Zero or Removed: not deduped. A zero-fill reads no
+						// source and takes no scratch buffer, so a duplicate
+						// costs one worker and an EEXIST; deduping it would
+						// need a second claim state so the worker still knows
+						// to zero-fill, and Zero should not MISSING-fault at
+						// all.
+					}
+				}
+			}
+
 			u.wg.Go(func() error {
 				// Record serve latency / installed bytes / fault count once
 				// per serve attempt, tagged by page class and outcome. Begun
@@ -577,12 +650,24 @@ func (u *Userfaultfd) Serve(
 				// including the deferred-queue wait — can exceed any single
 				// recorded serve.
 				sw := serveTimer.Begin()
+				begun := time.Now()
 				pclass := pageClassUnknown
 				result := faultResultInstalled
 				var servedBytes int64
+				// serveCtx tells a new page's read where to report its
+				// backend; the loop's ctx is shared by every worker.
+				serveCtx := ctx
+				var sourceSink *storage.SourceSink
 				defer func() {
-					sw.RecordRaw(ctx, servedBytes, serveAttrs[u.genBucket][pclass][result])
-					u.recordServeStats(pclass, result, servedBytes)
+					// Taken before RecordRaw, which can wait on the metric's
+					// aggregation lock after the guest was already woken.
+					took := time.Since(begun)
+					src := storage.UnknownSource
+					if sourceSink != nil {
+						src = sourceSink.Source()
+					}
+					sw.RecordRaw(ctx, servedBytes, u.serveOption(pclass, result, src))
+					u.recordServeStats(pclass, result, servedBytes, took, src)
 				}()
 
 				if h := u.testFaultHook.Load(); h != nil {
@@ -597,8 +682,11 @@ func (u *Userfaultfd) Serve(
 
 				var source PageReader
 
-				idx := uint32(header.BlockIdx(offset, int64(u.pageSize)))
-
+				// Re-read under the lock: a REMOVE batch may have landed
+				// between the loop's claim and this RLock, replacing
+				// Installing with Removed; the page is then zero-filled
+				// like any other removed page. Only the claim's owner is
+				// ever dispatched for an Installing page.
 				state := u.pageTracker.Get(idx)
 				switch state {
 				case block.Dirty, block.Clean:
@@ -617,14 +705,21 @@ func (u *Userfaultfd) Serve(
 					// an ack for the original MISSING fault or the faulting
 					// thread stays blocked.
 					pclass = pageClassZero
-				case block.NotPresent:
+				case block.NotPresent, block.Installing:
 					pclass = pageClassNew
 					source = u.src
+					sourceSink = &storage.SourceSink{}
+					serveCtx = storage.ReadSourceInto(ctx, sourceSink)
 				default:
 					result = faultResultError
 
 					return fmt.Errorf("unexpected block.State: %#v", state)
 				}
+				// The claim is released explicitly on every exit that leaves
+				// the page absent (not deferred: on EAGAIN the release must
+				// come before the retry is published, see below); the install
+				// paths replace it through MarkInstalled / SetRange(Dirty).
+				owner := state == block.Installing
 
 				var accessType block.AccessType
 				if pf.flags&UFFD_PAGEFAULT_FLAG_WRITE == 0 {
@@ -638,7 +733,7 @@ func (u *Userfaultfd) Serve(
 				}
 
 				outcome, err := u.faultPage(
-					ctx,
+					serveCtx,
 					addr,
 					offset,
 					accessType,
@@ -647,6 +742,9 @@ func (u *Userfaultfd) Serve(
 				)
 				if err != nil {
 					result = faultResultError
+					if owner {
+						u.pageTracker.AbortInstall(idx)
+					}
 
 					return err
 				}
@@ -688,13 +786,29 @@ func (u *Userfaultfd) Serve(
 					u.prefetchTracker.Add(offset, accessType)
 				case faultDeferred:
 					result = faultResultDeferred
+					// Release before the retry is published: the loop may
+					// drain and re-serve it before this worker returns, and
+					// that re-serve must be able to claim the page, or it is
+					// dropped as a duplicate and the fault is lost.
+					if owner {
+						u.pageTracker.AbortInstall(idx)
+					}
 					deferred.push(pf)
 					u.signalWakeup()
+					if h := u.testFaultHook.Load(); h != nil {
+						(*h)(addr, faultPhaseAfterDeferral)
+					}
 				case faultDiscarded:
 					// No install happened (ESRCH); retry would be pointless.
 					result = faultResultDiscarded
+					if owner {
+						u.pageTracker.AbortInstall(idx)
+					}
 				default:
 					result = faultResultError
+					if owner {
+						u.pageTracker.AbortInstall(idx)
+					}
 
 					return fmt.Errorf("unexpected faultOutcome: %#v", outcome)
 				}
@@ -735,7 +849,10 @@ func (u *Userfaultfd) Serve(
 func (u *Userfaultfd) resolveWriteProtect(ctx context.Context, addr uintptr, offset int64, onFailure func() error, start time.Time) error {
 	outcome := wpResolveOK
 	defer func() {
-		attrs := wpResolveAttrs[u.genBucket][outcome]
+		if outcome == wpResolveDeferred {
+			u.wpDeferred.Add(1)
+		}
+		attrs := wpResolveAttrs[u.balloonMode()][u.genBucket][outcome]
 		wpResolveDuration.Record(ctx, time.Since(start).Microseconds(), attrs)
 		wpResolveCount.Add(ctx, 1, attrs)
 	}()
@@ -946,11 +1063,14 @@ func (u *Userfaultfd) faultPage(
 		if r := recover(); r != nil {
 			u.logger.Error(ctx, "UFFD serve panic", zap.Any("pagesize", u.pageSize), zap.Any("panic", r))
 			outcome = faultDiscarded
-			err = fmt.Errorf("uffd serve panic: %v", r)
+			// Fatal like a failed read: the faults deduplicated onto this
+			// install are blocked on this page and only the exit wakes them.
+			err = errors.Join(fmt.Errorf("uffd serve panic: %v", r), safeInvoke(onFailure))
 		}
 	}()
 
 	var writeErr error
+	failedOp := ErrCopyFailed
 
 	mode := u.defaultCopyMode
 	if accessType == block.Read {
@@ -964,6 +1084,7 @@ func (u *Userfaultfd) faultPage(
 		// write that faulted lands immediately and the page is recorded
 		// Dirty.
 		writeErr = u.fd.zero(addr, u.pageSize, 0)
+		failedOp = errZeroPageFailed
 	case source == nil:
 		// Zero-fill via COPY of a zero buffer instead of UFFDIO_ZEROPAGE,
 		// so read faults get install+write-protect in ONE atomic ioctl
@@ -1039,6 +1160,9 @@ func (u *Userfaultfd) faultPage(
 			joinedErr := errors.Join(dataErr, signalErr)
 
 			span.RecordError(joinedErr)
+			if ctx.Err() == nil {
+				memfileLegFaults.Add(ctx, 1, memfileLegFaultAttrs)
+			}
 			u.logger.Error(ctx, "UFFD serve data fetch error after retries",
 				zap.Int("attempts", attempt+1),
 				zap.Error(joinedErr),
@@ -1084,10 +1208,16 @@ func (u *Userfaultfd) faultPage(
 		span.RecordError(joinedErr)
 		u.logger.Error(ctx, "UFFD serve uffdio copy error", zap.Error(joinedErr))
 
-		return faultDiscarded, fmt.Errorf("failed uffdio copy: %w", joinedErr)
+		return faultDiscarded, fmt.Errorf("%w: %w", failedOp, joinedErr)
 	}
 
 	return faultInstalled, nil
+}
+
+// SetInstallDedup turns the serve loop's one-installer-per-page claim on or
+// off; see UffdInstallDedupFlag. Read once per fault, so it costs a load.
+func (u *Userfaultfd) SetInstallDedup(on bool) {
+	u.installDedup.Store(on)
 }
 
 func (u *Userfaultfd) PrefetchData() block.PrefetchData {
@@ -1116,6 +1246,23 @@ func (u *Userfaultfd) drainWakeupPipe() {
 // PageSize returns the FC region page size driving this UFFD.
 func (u *Userfaultfd) PageSize() int64 {
 	return int64(u.pageSize)
+}
+
+// PageStateBytes returns the registered guest memory in each page-tracker
+// state, in bytes. NotPresent is what no other state covers: memory the guest
+// has not faulted in.
+func (u *Userfaultfd) PageStateBytes() (bytes [block.NumStates]int64) {
+	var guest, tracked int64
+	for _, r := range u.ma.Regions {
+		guest += int64(r.Size)
+	}
+	for state, pages := range u.pageTracker.Counts() {
+		bytes[state] = int64(pages) * int64(u.pageSize)
+		tracked += bytes[state]
+	}
+	bytes[block.NotPresent] = max(0, guest-tracked)
+
+	return bytes
 }
 
 func (u *Userfaultfd) Close() error {

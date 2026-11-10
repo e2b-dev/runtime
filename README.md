@@ -10,7 +10,7 @@
 **The open-source runtime behind [E2B](https://e2b.dev/?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime), the AI agent cloud. Firecracker microVMs that resume from a snapshot, run untrusted agent code, and pause when the agent stops.**
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![Go](https://img.shields.io/badge/go-1.26-00ADD8.svg?logo=go&logoColor=white)](./go.work)
+[![Go](https://img.shields.io/badge/go-1.27-00ADD8.svg?logo=go&logoColor=white)](./go.work)
 [![GitHub stars](https://img.shields.io/github/stars/e2b-dev/runtime?style=flat&logo=github)](https://github.com/e2b-dev/runtime/stargazers)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/e2b)
 [![X](https://img.shields.io/badge/follow-%40e2b-000000.svg?logo=x&logoColor=white)](https://x.com/e2b)
@@ -71,7 +71,7 @@ curl -fsSL --remote-name-all "https://raw.githubusercontent.com/e2b-dev/runtime/
 docker compose up -d --wait
 ```
 
-The same package ships as Terraform for GCP and as a Kubernetes manifest. It is an evaluation package, not a production deployment pattern.
+The same package ships as Terraform for GCP, AWS, and Azure and as a Kubernetes manifest. Embed is one machine by design; when one node is not enough, see below.
 
 **In your own cloud, for production.** E2B runs the runtime as a dedicated deployment inside your account, with your data staying there. See [e2b.dev/enterprise](https://e2b.dev/enterprise?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=runtime).
 
@@ -94,7 +94,6 @@ browser ──https://<port>-<sandbox>.<domain>──▶ client-proxy ──▶ 
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images and build steps |
 | Client proxy | `packages/client-proxy` | control plane | Edge router: sandbox URL to the right node, auto-resume on traffic |
 | Envd | `packages/envd` | inside every VM | Process, filesystem, and port API the SDKs use |
-| Dashboard API | `packages/dashboard-api` | control plane | Backend for the web dashboard |
 
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) has the full picture: sequence diagrams for creation, traffic, pause and resume, and template builds, plus the data stores and the deployment topology. Read it first.
 

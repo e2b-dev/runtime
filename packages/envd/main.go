@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,7 +25,10 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/logs/exporter"
 	"github.com/e2b-dev/infra/packages/envd/internal/permissions"
 	publicport "github.com/e2b-dev/infra/packages/envd/internal/port"
+	"github.com/e2b-dev/infra/packages/envd/internal/reaper"
+	"github.com/e2b-dev/infra/packages/envd/internal/reexec"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	filesystemRpc "github.com/e2b-dev/infra/packages/envd/internal/services/filesystem"
 	processRpc "github.com/e2b-dev/infra/packages/envd/internal/services/process"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
@@ -153,6 +157,7 @@ func withCORS(h http.Handler) http.Handler {
 }
 
 func main() {
+	reexec.Main()
 	parseFlags()
 
 	if versionFlag {
@@ -167,12 +172,13 @@ func main() {
 		return
 	}
 
-	if err := run(); err != nil {
+	if err := serve(run); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
 
-func run() error {
+// run serves until the listener fails or stop is closed (a service stop).
+func run(stop <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -274,7 +280,23 @@ func run() error {
 		}()
 	}
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, logFlusher)
+	var helpers reaper.Registry
+	for _, pid := range handover.Helpers {
+		helpers.Adopt(int(pid))
+	}
+
+	var oomWatcher *host.OOMWatcher
+	cpuManager := cpus.NewNoopManager()
+	if !isNotFC {
+		oomWatcher = host.NewOOMWatcher(&envLogger)
+		go oomWatcher.Watch(ctx)
+
+		cpuManager = newCPUManager(envLogger, &helpers)
+		cpuManager.Start(ctx)
+	}
+
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, cpuManager, logFlusher)
+	go service.RunCACertCleanup(ctx)
 	if resumeHandover {
 		// Restore the NFS mount ledger carried across the upgrade before the
 		// post-upgrade /init runs setupNFS, so it recognizes a still-live mount
@@ -318,12 +340,13 @@ func run() error {
 		IdleTimeout:  idleTimeout,
 	}
 
+	portLogger := l.With().Str("logger", "port-forwarder").Logger()
+
 	// Bind all open ports on 127.0.0.1 and localhost to the eth0 interface
-	portScanner := publicport.NewScanner(portScannerInterval)
+	portScanner := publicport.NewScanner(&portLogger, portScannerInterval)
 	defer portScanner.Destroy()
 
-	portLogger := l.With().Str("logger", "port-forwarder").Logger()
-	portForwarder := publicport.NewForwarder(&portLogger, portScanner, cgroupManager)
+	portForwarder := publicport.NewForwarder(&portLogger, portScanner, workloadFreezer)
 	if resumeHandover {
 		// Re-adopt the socats carried across the upgrade before the forwarder's
 		// first scan, so it recognizes already-forwarded ports instead of spawning
@@ -332,9 +355,11 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "envd: re-adopted %d forwarded port(s) after handover\n", readopted)
 		}
 	}
-	go portForwarder.StartForwarding(ctx)
+	if portForwarder.Forwards() {
+		go portForwarder.StartForwarding(ctx)
 
-	go portScanner.ScanAndBroadcast()
+		go portScanner.ScanAndBroadcast()
+	}
 
 	// Live-upgrade outgoing trigger. doUpgrade performs the outgoing
 	// choreography: freeze the workload, then re-exec into newBin (empty
@@ -386,12 +411,14 @@ func run() error {
 		mounts := service.ExportMounts()
 		forwards, releaseForwards := portForwarder.ExportForwardsHold()
 		defer releaseForwards()
+		helperPids, releaseHelpers := helpers.ExportHold()
+		defer releaseHelpers()
 
 		// Upgrade only returns on failure — a successful execve replaces this
 		// process (and drops the held freeze/watcher/forward locks with it). On
 		// failure the OLD envd is still running; the deferred releases + thaw keep
 		// the old version serving rather than leaving the sandbox hung.
-		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards)
+		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards, helperPids)
 	}
 
 	// Orchestrator-driven trigger: authenticated POST /upgrade with the target
@@ -449,7 +476,25 @@ func run() error {
 		}
 	})
 
+	// A stop request closes the listener, which makes ListenAndServe return.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-stop:
+			_ = s.Close()
+		case <-stopped:
+		}
+	}()
+
 	err := s.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		select {
+		case <-stop:
+			err = nil
+		default:
+		}
+	}
 	// Signal goroutines to stop before deferred cleanup closes their resources.
 	// TODO: shutdown synchronization needs to be revisited.
 	cancel()

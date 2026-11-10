@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/user"
 	"testing"
 	"time"
@@ -24,11 +23,7 @@ import (
 func newTestService(t *testing.T, middleware ...func(http.Handler) http.Handler) (spec.ProcessClient, func()) {
 	t.Helper()
 
-	// handler.New sets SysProcAttr.Credential to switch uid/gid,
-	// which requires root.
-	if os.Geteuid() != 0 {
-		t.Skip("skipping: requires root (handler.New sets SysProcAttr.Credential)")
-	}
+	skipUnlessCredentialSwitchAllowed(t)
 
 	u, err := user.Current()
 	require.NoError(t, err)
@@ -69,10 +64,7 @@ func TestStart_ShortCommand(t *testing.T) {
 	defer cancel()
 
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd:  "echo",
-			Args: []string{"hello"},
-		},
+		Process: echoCommand(),
 	}))
 	require.NoError(t, err)
 
@@ -117,10 +109,7 @@ func TestStart_CancelBeforeStartEvent(t *testing.T) {
 	defer cancel()
 
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd:  "echo",
-			Args: []string{"hello"},
-		},
+		Process: echoCommand(),
 	}))
 	if err == nil {
 		for stream.Receive() {
@@ -162,9 +151,7 @@ func TestStart_ClientDisconnectMidStream(t *testing.T) {
 
 	// Use a long-running command so there's data flowing when we cancel.
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd: "yes",
-		},
+		Process: endlessOutputCommand(),
 	}))
 	require.NoError(t, err)
 
@@ -186,4 +173,102 @@ func TestStart_ClientDisconnectMidStream(t *testing.T) {
 	for stream.Receive() {
 	}
 	_ = stream.Close()
+}
+
+// TestStart_StdinRoundTrip covers the stdin pipe end to end: input written through the RPC
+// reaches the process, closing stdin delivers EOF, and the process then exits. The handler
+// owns its stdio pipes rather than taking them from exec.Cmd, so it -- not exec.Cmd.Wait --
+// is what closes them, and a pipe it failed to hand over or close would keep the stream
+// open until the test's 10 s deadline fails it.
+func TestStart_StdinRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	client, cleanup := newTestService(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
+		Process: stdinEchoCommand(),
+	}))
+	require.NoError(t, err)
+	defer stream.Close()
+
+	require.True(t, stream.Receive(), "expected a start event: %v", stream.Err())
+	pid := stream.Msg().GetEvent().GetStart().GetPid()
+	require.NotZero(t, pid)
+
+	selector := &rpc.ProcessSelector{Selector: &rpc.ProcessSelector_Pid{Pid: pid}}
+	_, err = client.SendInput(ctx, connect.NewRequest(&rpc.SendInputRequest{
+		Process: selector,
+		Input:   &rpc.ProcessInput{Input: &rpc.ProcessInput_Stdin{Stdin: []byte("hello\n")}},
+	}))
+	require.NoError(t, err)
+	_, err = client.CloseStdin(ctx, connect.NewRequest(&rpc.CloseStdinRequest{Process: selector}))
+	require.NoError(t, err)
+
+	var stdout []byte
+	var end *rpc.ProcessEvent_EndEvent
+	for stream.Receive() {
+		ev := stream.Msg().GetEvent()
+		stdout = append(stdout, ev.GetData().GetStdout()...)
+		if e := ev.GetEnd(); e != nil {
+			end = e
+		}
+	}
+	require.NoError(t, stream.Err())
+
+	assert.Equal(t, "hello\n", string(stdout))
+	require.NotNil(t, end, "cat must exit once stdin is closed")
+	assert.Zero(t, end.GetExitCode())
+}
+
+// TestStart_KilledProcessEndsItsStreamWhileAGrandchildHoldsStdout pins that the Start stream
+// ends once the process is killed, even though a grandchild it left behind still holds the
+// stdout and stderr write ends. The readers never see EOF in that state, so the stream ends
+// only because Wait closes the read ends after reaping the process, as exec.Cmd does for the
+// pipes it creates itself.
+func TestStart_KilledProcessEndsItsStreamWhileAGrandchildHoldsStdout(t *testing.T) {
+	t.Parallel()
+
+	client, cleanup := newTestService(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+
+	// The grandchild outlives the test's own deadline, so only the read ends being closed
+	// can end the stream in time.
+	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
+		Process: grandchildHoldsStdoutCommand(),
+	}))
+	require.NoError(t, err)
+
+	var pid uint32
+	for pid == 0 && stream.Receive() {
+		pid = stream.Msg().GetEvent().GetStart().GetPid()
+	}
+	require.NotZero(t, pid, "no start event")
+
+	var sawOutput bool
+	for !sawOutput && stream.Receive() {
+		sawOutput = len(stream.Msg().GetEvent().GetData().GetStdout()) > 0
+	}
+	require.True(t, sawOutput, "the shell never printed, so the grandchild may not be running yet")
+
+	_, err = client.SendSignal(ctx, connect.NewRequest(&rpc.SendSignalRequest{
+		Process: &rpc.ProcessSelector{Selector: &rpc.ProcessSelector_Pid{Pid: pid}},
+		Signal:  rpc.Signal_SIGNAL_SIGKILL,
+	}))
+	require.NoError(t, err)
+
+	var ended bool
+	for stream.Receive() {
+		if stream.Msg().GetEvent().GetEnd() != nil {
+			ended = true
+		}
+	}
+	require.NoError(t, ctx.Err(), "the stream stayed open until the deadline: the grandchild held it")
+	assert.True(t, ended, "the stream closed without an end event")
 }

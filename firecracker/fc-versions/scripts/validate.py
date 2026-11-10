@@ -104,6 +104,85 @@ IGNORED_STATUS_CONTEXTS = frozenset({"verification/cla-signed"})
 # if a check-run-based bot ever ends up in the same situation.
 IGNORED_CHECK_NAMES = frozenset()
 
+# The gate asks whether the CI that ran when the commit landed passed. A GitHub
+# Actions check-run counts only when its workflow run was triggered by a push.
+# Scheduled and Dependabot runs also attach check-runs to the head of the default
+# branch, which is often the commit a release tag points at, and a dispatched
+# run attaches them to the head of the ref it ran on. A re-scan that is still
+# running or that broke for an infrastructure reason must not block an unchanged
+# commit. Check-runs from other apps are kept as they are.
+ACTIONS_APP_SLUG = "github-actions"
+GATING_ACTIONS_EVENT = "push"
+
+
+def _actions_suite_event(suite_id, repo: str) -> Optional[str]:
+    """Return the event that triggered the workflow run behind a check suite,
+    or None when it cannot be resolved."""
+    response = gh_api(f"/repos/{repo}/actions/runs?check_suite_id={suite_id}")
+    runs = (response or {}).get("workflow_runs") or []
+    if not runs:
+        return None
+    return runs[0].get("event")
+
+
+def _drop_non_push_actions_runs(check_runs: list[dict], repo: str) -> tuple[list[dict], list[str]]:
+    """Drop Actions check-runs whose workflow run was not triggered by a push.
+
+    Each check suite is resolved once. A suite whose event cannot be resolved
+    keeps its check-runs, so a failed lookup never loosens the gate.
+
+    Returns (kept_check_runs, dropped_names).
+    """
+    events: dict = {}
+    kept, dropped = [], []
+    for cr in check_runs:
+        suite_id = (cr.get("check_suite") or {}).get("id")
+        if (cr.get("app") or {}).get("slug") != ACTIONS_APP_SLUG or suite_id is None:
+            kept.append(cr)
+            continue
+        if suite_id not in events:
+            events[suite_id] = _actions_suite_event(suite_id, repo)
+            if events[suite_id] is None:
+                print(
+                    f"::warning::Could not resolve the workflow event of check suite "
+                    f"{suite_id}; counting its check-runs",
+                    file=sys.stderr,
+                )
+        event = events[suite_id]
+        if event is None or event == GATING_ACTIONS_EVENT:
+            kept.append(cr)
+        else:
+            dropped.append(f"{cr.get('name')} ({event})")
+    return kept, dropped
+
+
+# The Checks API's maximum page size.
+CHECK_RUNS_PER_PAGE = 100
+
+
+def _list_check_runs(commit_hash: str, repo: str) -> Optional[list[dict]]:
+    """Return every check-run the API lists for the commit, reading all pages.
+
+    The API lists the newest check-runs first, and scheduled workflows keep
+    adding them to an unchanged commit, so the first page alone can miss the
+    push-triggered ones. Paging stops at the first short page, which needs no
+    trust in the reported total. A failed first page yields no
+    check-runs, as a single call always did; a failed later page returns None.
+    """
+    check_runs: list[dict] = []
+    page = 1
+    while True:
+        response = gh_api(
+            f"/repos/{repo}/commits/{commit_hash}/check-runs?per_page={CHECK_RUNS_PER_PAGE}&page={page}"
+        )
+        if not response:
+            return check_runs if page == 1 else None
+        batch = response.get("check_runs") or []
+        check_runs.extend(batch)
+        if len(batch) < CHECK_RUNS_PER_PAGE:
+            return check_runs
+        page += 1
+
 
 def _rollup_status(statuses: list[dict]) -> tuple[str, int]:
     """Compute (state, count) over the statuses list, mirroring how GitHub's
@@ -156,12 +235,11 @@ def check_ci_status(commit_hash: str, repo: str = FIRECRACKER_REPO) -> tuple[boo
         status_count = status_response.get("total_count", 0)
         print(f"Status API: state={status}, count={status_count}", file=sys.stderr)
 
-    # Check check-runs API. Same filter for IGNORED_CHECK_NAMES.
-    check_response = gh_api(f"/repos/{repo}/commits/{commit_hash}/check-runs")
-    if not check_response:
-        check_response = {"total_count": 0, "check_runs": []}
-
-    raw_check_runs = check_response.get("check_runs", []) or []
+    # Check check-runs API. Same filter for IGNORED_CHECK_NAMES, then drop
+    # Actions check-runs not triggered by a push.
+    raw_check_runs = _list_check_runs(commit_hash, repo)
+    if raw_check_runs is None:
+        return False, f"Could not list every check-run for commit {commit_hash} - refusing to build"
     ignored_check_names = [
         cr.get("name") for cr in raw_check_runs
         if cr.get("name") in IGNORED_CHECK_NAMES
@@ -170,6 +248,13 @@ def check_ci_status(commit_hash: str, repo: str = FIRECRACKER_REPO) -> tuple[boo
         cr for cr in raw_check_runs
         if cr.get("name") not in IGNORED_CHECK_NAMES
     ]
+    check_runs, non_push_check_names = _drop_non_push_actions_runs(check_runs, repo)
+    if non_push_check_names:
+        print(
+            f"Check-runs API: ignoring Actions runs not triggered by a push "
+            f"{sorted(set(non_push_check_names))}",
+            file=sys.stderr,
+        )
     check_count = len(check_runs)
 
     # Determine check conclusion

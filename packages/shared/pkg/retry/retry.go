@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"time"
 )
 
@@ -28,6 +30,63 @@ type Policy struct {
 	Multiplier int
 }
 
+// Backoff is the wait schedule between attempts: exponential from Initial
+// up to Max, with optional jitter. The zero value waits nothing; Reset
+// restarts the schedule after a success.
+type Backoff struct {
+	// Initial is the first nominal wait. Initial <= 0 waits zero.
+	Initial time.Duration
+	// Max caps every nominal wait, including the first. Max <= 0 is uncapped.
+	Max time.Duration
+	// Multiplier grows the nominal wait after each call (< 1 is treated as 1).
+	// Growth saturates at Max or the largest Duration instead of overflowing.
+	Multiplier int
+	// Jitter spreads each wait uniformly over [wait×(1−Jitter), wait×(1+Jitter)],
+	// limited to nonnegative Durations. It applies after the Max cap, so a
+	// jittered wait can exceed Max. Values above 1 are treated as 1, and
+	// negative values or NaN disable jitter.
+	Jitter float64
+
+	next time.Duration
+}
+
+// Next returns the wait before the next attempt and advances the schedule.
+func (b *Backoff) Next() time.Duration {
+	if b.next == 0 {
+		b.next = b.Initial
+	}
+	limit := time.Duration(math.MaxInt64)
+	if b.Max > 0 {
+		limit = b.Max
+	}
+	wait := min(max(b.next, 0), limit)
+	growth := max(b.Multiplier, 1)
+	if wait > limit/time.Duration(growth) {
+		b.next = limit
+	} else {
+		b.next = wait * time.Duration(growth)
+	}
+
+	if b.Jitter > 0 && wait > 0 {
+		// Keeping spread at most wait treats Jitter above 1 as 1. Comparing as
+		// float also avoids converting float64(wait) rounded up to 2^63.
+		spread := wait
+		if f := float64(wait) * b.Jitter; f < float64(wait) {
+			spread = time.Duration(f)
+		}
+		low := wait - spread
+		high := wait + min(spread, math.MaxInt64-wait)
+		wait = low + time.Duration(rand.N(uint64(high-low)+1))
+	}
+
+	return wait
+}
+
+// Reset restarts the schedule from Initial.
+func (b *Backoff) Reset() {
+	b.next = 0
+}
+
 // Do runs fn with retries until it returns nil, retryable reports the error as
 // non-retryable, the budget is exhausted, or ctx is cancelled.
 //
@@ -49,7 +108,7 @@ func Do(
 	budgetCtx, cancel := context.WithTimeoutCause(ctx, policy.TotalBudget, ErrBudgetExhausted)
 	defer cancel()
 
-	backoff := policy.InitialBackoff
+	schedule := Backoff{Initial: policy.InitialBackoff, Max: policy.MaxBackoff, Multiplier: policy.Multiplier}
 
 	for attempt := 1; ; attempt++ {
 		err := runAttempt(budgetCtx, policy.AttemptTimeout, fn)
@@ -68,17 +127,16 @@ func Do(
 			return fmt.Errorf("non-retryable error after %d attempts: %w", attempt, err)
 		}
 
+		wait := schedule.Next()
 		if onRetry != nil {
-			onRetry(attempt, backoff, err)
+			onRetry(attempt, wait, err)
 		}
 
 		select {
 		case <-budgetCtx.Done():
 			return stopError(budgetCtx, attempt, err)
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
-
-		backoff = nextBackoff(backoff, policy.MaxBackoff, policy.Multiplier)
 	}
 }
 
@@ -94,19 +152,6 @@ func runAttempt(ctx context.Context, attemptTimeout time.Duration, fn func(conte
 	defer cancel()
 
 	return fn(attemptCtx)
-}
-
-func nextBackoff(cur, maxBackoff time.Duration, multiplier int) time.Duration {
-	if multiplier < 1 {
-		multiplier = 1
-	}
-
-	next := cur * time.Duration(multiplier)
-	if maxBackoff > 0 && next > maxBackoff {
-		return maxBackoff
-	}
-
-	return next
 }
 
 // stopError maps a stopped budget context to a terminal error: budget

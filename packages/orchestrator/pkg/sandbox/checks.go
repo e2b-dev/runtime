@@ -33,6 +33,9 @@ type Checks struct {
 	// cancelCtx is still nil and Stop has nothing to cancel. Without this flag
 	// Start would then enter an uncancellable health-check loop that leaks.
 	stopped bool
+	// started records that Start ran. A second Start returns, so Stop
+	// cancels the only set of loops.
+	started bool
 
 	healthy atomic.Bool
 }
@@ -61,9 +64,17 @@ func (c *Checks) Start(ctx context.Context) {
 
 		return
 	}
+	if c.started {
+		c.mu.Unlock()
+
+		return
+	}
+	c.started = true
 	ctx, c.cancelCtx = context.WithCancelCause(ctx)
 	c.mu.Unlock()
 
+	go c.sandbox.labelBalloonMode(ctx)
+	go c.sandbox.runPeriodicHinting(ctx)
 	c.logHealth(ctx)
 }
 
@@ -86,6 +97,7 @@ func (c *Checks) logHealth(ctx context.Context) {
 
 	// Get metrics and health status on sandbox startup
 	go c.Healthcheck(ctx, false)
+	go c.seedOOMWatermark(ctx)
 
 	for {
 		select {

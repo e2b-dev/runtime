@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,15 +25,38 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
-// hostageWriteDevice is the write-lane slowDevice: it sits on every WriteAt,
-// standing in for a stalled GCS/NFS backend holding a writeback hostage.
+// hostageParkLimit bounds how long a hostage write waits for its release, so
+// a hostage the test never releases still answers through the live data
+// path. It sits well above everything the test waits for before Close (the
+// udev settle and the foreign-holder poll, 10 s each at most), because a park
+// that ends on the limit instead of the release puts the stall back before
+// Close; the test asserts which one ended it. With the hostage delay it stays
+// under the mount's ioTimeout.
+const hostageParkLimit = 60 * time.Second
+
+// hostageWriteDevice is the write-lane slowDevice: it parks every WriteAt
+// until the test releases it, then sits on it for writeDelay, standing in for
+// a stalled GCS/NFS backend holding a writeback hostage. The park pins the
+// stall to Close: the kernel writes a dirtied page back whenever it chooses,
+// and a delay served before Close begins leaves Close nothing to wait for.
 type hostageWriteDevice struct {
 	block.Device
 
+	release    <-chan struct{}
 	writeDelay time.Duration
+
+	// parkTimedOut records a write that left its park on the limit, not on
+	// the release: the stall then ran before Close and the test must say so.
+	parkTimedOut atomic.Bool
 }
 
 func (h *hostageWriteDevice) WriteAt(p []byte, off int64) (int, error) {
+	select {
+	case <-h.release:
+	case <-time.After(hostageParkLimit):
+		h.parkTimedOut.Store(true)
+	}
+
 	time.Sleep(h.writeDelay)
 
 	return h.Device.WriteAt(p, off)
@@ -68,29 +93,40 @@ func TestPathDirect_CloseReturnsWhileTheBackendStalls(t *testing.T) {
 	ctx, parent := otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd").Start(t.Context(), "test-parent")
 	traceID := parent.SpanContext().TraceID().String()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = featureFlags.Close(context.WithoutCancel(t.Context())) })
 
 	overlay := setupOverlay(t, 16*1024*1024)
-	hostage := &hostageWriteDevice{Device: overlay, writeDelay: hostageDelay}
 
-	// deadconn is the deadline a regression stalls on; 30s keeps it far from
+	// Released right before Close, so the hostage delay runs inside Close
+	// whether the kernel issues the write on its own first or at Close's
+	// sync.
+	release := make(chan struct{})
+	releaseHostage := sync.OnceFunc(func() { close(release) })
+	hostage := &hostageWriteDevice{Device: overlay, release: release, writeDelay: hostageDelay}
+
+	// deadconn is the deadline a regression stalls on; 120s keeps it far from
 	// both the close budget asserted below and the hostage delay. ioTimeout
-	// only has to clear the hostage delay so the live-path writeback is never
-	// timed out.
+	// only has to clear the park limit plus the hostage delay so the
+	// live-path writeback is never timed out.
 	mnt, devicePath := setupNBDMount(t, featureFlags, hostage,
-		WithIOTimeout(20*time.Second),
-		WithDeadconnTimeout(30*time.Second),
+		WithIOTimeout(90*time.Second),
+		WithDeadconnTimeout(120*time.Second),
 	)
+
+	// Registered after the mount's cleanup, so it runs first: a failure
+	// before Close must not hand the cleanup's close a parked write.
+	t.Cleanup(releaseHostage)
 
 	idx64, err := strconv.ParseUint(strings.TrimPrefix(devicePath, "/dev/nbd"), 10, 32)
 	require.NoError(t, err)
 	deviceIndex := uint32(idx64)
 
 	// A buffered write acknowledged from the page cache; its writeback is the
-	// hostage. The writer descriptor closes again so the mount's descriptor
-	// stays the device's last opener.
+	// hostage, and the kernel may issue it any time from here on -- its
+	// flusher, memory pressure, a sync elsewhere. The writer descriptor
+	// closes again so the mount's descriptor stays the device's last opener.
 	writer, err := os.OpenFile(devicePath, os.O_RDWR, 0)
 	require.NoError(t, err)
 
@@ -102,7 +138,10 @@ func TestPathDirect_CloseReturnsWhileTheBackendStalls(t *testing.T) {
 	// closes, and a probe descriptor still open across Close would absorb
 	// the kernel-side last-close work this test also exercises. Settle
 	// drains the probe event, the poll waits out its descriptor; without
-	// udev both return at once.
+	// udev both return at once. A parked write does not hold the probe up:
+	// the dispatcher serves each command in its own goroutine, and the
+	// dirtied pages stay readable from the page cache while their writeback
+	// is in flight.
 	_ = exec.CommandContext(t.Context(), "udevadm", "settle", "--timeout=10").Run()
 	waitForForeignHolders(t, devicePath)
 
@@ -110,6 +149,7 @@ func TestPathDirect_CloseReturnsWhileTheBackendStalls(t *testing.T) {
 	// close, filtered on the stage the hostage stalls: the writeback sync.
 	slowClosesBefore := slowCloseCount(t, "sync")
 
+	releaseHostage()
 	closeStart := time.Now()
 	require.NoError(t, mnt.Close(ctx))
 	elapsed := time.Since(closeStart)
@@ -117,6 +157,8 @@ func TestPathDirect_CloseReturnsWhileTheBackendStalls(t *testing.T) {
 
 	require.Lessf(t, elapsed, 10*time.Second,
 		"Close took %s: it flushed writeback into a torn-down data path and waited for the kernel to abandon it", elapsed)
+	require.False(t, hostage.parkTimedOut.Load(),
+		"the hostage write left its park on the limit before Close released it, so the stall ran outside Close")
 
 	assertCloseWatchdogFired(t, traceID, deviceIndex)
 	require.GreaterOrEqual(t, slowCloseCount(t, "sync")-slowClosesBefore, int64(1),
@@ -200,7 +242,7 @@ func TestPathDirect_CloseReturnsTheWritebackError(t *testing.T) {
 	ctx, parent := otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd").Start(t.Context(), "test-parent")
 	traceID := parent.SpanContext().TraceID()
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = featureFlags.Close(context.WithoutCancel(t.Context())) })
 

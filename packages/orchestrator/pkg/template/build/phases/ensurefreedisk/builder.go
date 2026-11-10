@@ -87,6 +87,9 @@ func (b *EnsureFreeDiskBuilder) Layer(
 	hash string,
 ) (phases.LayerResult, error) {
 	finalMetadata := sourceLayer.Metadata
+	// This disk-only layer is an intermediate build artifact. Its default cold
+	// boot size is the build's online count; finalize chooses the final VM size.
+	finalMetadata.VcpuCount = b.Config.VCpuCount
 	finalMetadata.Template = metadata.TemplateMetadata{
 		BuildID:            uuid.NewString(),
 		KernelVersion:      b.Config.KernelVersion,
@@ -144,7 +147,8 @@ func (b *EnsureFreeDiskBuilder) Build(
 	defer cancel()
 
 	// Load the last user-step rootfs as the immutable parent of the resized layer.
-	sourceTemplate, err := b.templateCache.GetTemplate(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	sourceTemplate, releaseTemplate, err := b.templateCache.GetTemplatePinned(ctx, sourceLayer.Metadata.Template.BuildID, false, true)
+	defer releaseTemplate()
 	if err != nil {
 		return phases.LayerResult{}, fmt.Errorf("get source template: %w", err)
 	}

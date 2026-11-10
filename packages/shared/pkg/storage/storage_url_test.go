@@ -52,6 +52,41 @@ func TestParseStorageURL(t *testing.T) {
 			want: Spec{Provider: AWSStorageProvider, Bucket: "my-bucket"},
 		},
 		{
+			name: "s3 with sse-s3",
+			url:  "s3://my-bucket?ssetype=AES256",
+			want: Spec{Provider: AWSStorageProvider, Bucket: "my-bucket", ServerSideEncryption: SSEAES256},
+		},
+		{
+			name: "s3 with sse-kms and key",
+			url:  "s3://my-bucket?ssetype=aws:kms&kmskeyid=arn:aws:kms:us-east-1:111111111111:key/test",
+			want: Spec{
+				Provider:             AWSStorageProvider,
+				Bucket:               "my-bucket",
+				ServerSideEncryption: SSEAWSKMS,
+				SSEKMSKeyID:          "arn:aws:kms:us-east-1:111111111111:key/test",
+			},
+		},
+		{
+			name: "s3 with sse-kms and aws managed key",
+			url:  "s3://my-bucket?ssetype=aws:kms",
+			want: Spec{Provider: AWSStorageProvider, Bucket: "my-bucket", ServerSideEncryption: SSEAWSKMS},
+		},
+		{
+			name:    "s3 with unknown ssetype",
+			url:     "s3://my-bucket?ssetype=aes256",
+			wantErr: `invalid ssetype "aes256"`,
+		},
+		{
+			name:    "s3 kms key without aws:kms",
+			url:     "s3://my-bucket?ssetype=AES256&kmskeyid=arn:aws:kms:us-east-1:111111111111:key/test",
+			wantErr: "kmskeyid requires ssetype=aws:kms",
+		},
+		{
+			name:    "gcs rejects ssetype",
+			url:     "gs://my-bucket?ssetype=AES256",
+			wantErr: "does not accept query parameters",
+		},
+		{
 			name: "azure blob container",
 			url:  "azblob://my-container",
 			want: Spec{Provider: AzureStorageProvider, Bucket: "my-container"},

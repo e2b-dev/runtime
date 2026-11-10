@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -17,10 +20,12 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/builds"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
@@ -74,7 +79,9 @@ type SandboxMetadata struct {
 	FilesystemBoot bool
 	// FilesystemOnlySnapshot marks a resume whose snapshot persists only the
 	// rootfs. Unlike FilesystemBoot it describes the stored artifact rather than
-	// the request, so every path that resumes such a snapshot sets it.
+	// the request, so every path that resumes such a snapshot sets it. It is read
+	// from the snapshot row, which also covers builds older than
+	// Build.FilesystemOnly.
 	FilesystemOnlySnapshot bool
 }
 
@@ -98,14 +105,20 @@ func iamToProto(iam *types.SandboxIam) *orchestrator.SandboxIam {
 }
 
 // buildEgressConfig constructs the orchestrator egress configuration from
-// allow/deny entry lists. It splits allowed entries into CIDRs and domains,
-// and adds the default nameserver when domains are present so the sandbox can
-// resolve them.
-func buildEgressConfig(allowedEntries, deniedEntries []string, rules map[string][]types.SandboxNetworkRule) *orchestrator.SandboxNetworkEgressConfig {
+// allow/deny entry lists. It splits allowed entries into CIDRs and domains.
+// If there are domains, it also allows the DNS servers so the sandbox can
+// resolve them: the default nameserver when dnsServers is nil, otherwise the
+// listed servers.
+func buildEgressConfig(allowedEntries, deniedEntries []string, rules map[string][]types.SandboxNetworkRule, dnsServers *[]string) *orchestrator.SandboxNetworkEgressConfig {
 	allowedAddresses, allowedDomains := sandbox_network.ParseAddressesAndDomains(allowedEntries)
 
+	allowedCidrs := sandbox_network.AddressStringsToCIDRs(allowedAddresses)
 	if len(allowedDomains) > 0 {
-		allowedAddresses = append(allowedAddresses, sandbox_network.DefaultNameserver)
+		servers := []string{sandbox_network.DefaultNameserver}
+		if dnsServers != nil {
+			servers = *dnsServers
+		}
+		allowedCidrs = append(allowedCidrs, dnsServerCIDRs(servers, allowedCidrs)...)
 	}
 
 	var orchRules map[string]*orchestrator.SandboxNetworkDomainRules
@@ -127,11 +140,45 @@ func buildEgressConfig(allowedEntries, deniedEntries []string, rules map[string]
 	}
 
 	return &orchestrator.SandboxNetworkEgressConfig{
-		AllowedCidrs:   sandbox_network.AddressStringsToCIDRs(allowedAddresses),
+		AllowedCidrs:   allowedCidrs,
 		DeniedCidrs:    sandbox_network.AddressStringsToCIDRs(deniedEntries),
 		AllowedDomains: allowedDomains,
 		Rules:          orchRules,
 	}
+}
+
+// dnsServerCIDRs turns DNS server IPs into /32 CIDRs. It skips servers that
+// an allowed CIDR already covers, and repeated servers, because the firewall
+// rejects overlapping ranges. The API validates the entries, so anything that
+// is not an IPv4 address is skipped.
+func dnsServerCIDRs(servers []string, allowedCidrs []string) []string {
+	covered := make([]netip.Prefix, 0, len(allowedCidrs))
+	for _, cidr := range allowedCidrs {
+		if prefix, err := netip.ParsePrefix(cidr); err == nil {
+			covered = append(covered, prefix)
+		}
+	}
+
+	added := make(map[netip.Addr]struct{}, len(servers))
+	cidrs := make([]string, 0, len(servers))
+	for _, server := range servers {
+		addr, err := netip.ParseAddr(server)
+		if err != nil {
+			continue
+		}
+
+		if _, ok := added[addr]; ok || !addr.Is4() {
+			continue
+		}
+		if slices.ContainsFunc(covered, func(p netip.Prefix) bool { return p.Contains(addr) }) {
+			continue
+		}
+
+		added[addr] = struct{}{}
+		cidrs = append(cidrs, netip.PrefixFrom(addr, 32).String())
+	}
+
+	return cidrs
 }
 
 // applyEgressProxy copies BYOP SOCKS5 fields from src to dst. No-op on nil.
@@ -142,6 +189,35 @@ func applyEgressProxy(dst *orchestrator.SandboxNetworkEgressConfig, src *types.S
 	dst.EgressProxyAddress = src.EgressProxyAddress
 	dst.EgressProxyUsername = src.EgressProxyUsername
 	dst.EgressProxyPassword = src.EgressProxyPassword
+
+	if t := src.EgressProxyTLS; t != nil && t.Enabled {
+		dst.EgressProxyTls = &orchestrator.SandboxNetworkEgressProxyTLS{
+			Enabled:    true,
+			ServerName: t.ServerName,
+			CaCert:     []byte(t.CACert),
+		}
+	}
+}
+
+// ApplyValidatedEgressProxy copies a validated BYOP config onto its stored
+// form. A nil src leaves dst untouched; on the PUT path that clears a proxy,
+// dst is already a fresh config carrying none.
+func ApplyValidatedEgressProxy(dst *types.SandboxNetworkEgressConfig, src *sandbox_network.EgressProxyConfig) {
+	if dst == nil || src == nil {
+		return
+	}
+
+	dst.EgressProxyAddress = src.Address
+	dst.EgressProxyUsername = src.Username
+	dst.EgressProxyPassword = src.Password
+
+	if t := src.TLS; t != nil && t.Enabled {
+		dst.EgressProxyTLS = &types.SandboxEgressProxyTLSConfig{
+			Enabled:    true,
+			ServerName: t.ServerName,
+			CACert:     t.CACert,
+		}
+	}
 }
 
 // buildNetworkConfig constructs the orchestrator network configuration from the input parameters
@@ -154,7 +230,12 @@ func buildNetworkConfig(network *types.SandboxNetworkConfig, allowInternetAccess
 	}
 
 	if network != nil && network.Egress != nil {
-		egress := buildEgressConfig(network.Egress.AllowedAddresses, network.Egress.DeniedAddresses, network.Egress.Rules)
+		egress := buildEgressConfig(
+			network.Egress.AllowedAddresses,
+			network.Egress.DeniedAddresses,
+			network.Egress.Rules,
+			network.Egress.DnsServers,
+		)
 		applyEgressProxy(egress, network.Egress)
 		orchNetwork.Egress = egress
 	}
@@ -174,6 +255,37 @@ func buildNetworkConfig(network *types.SandboxNetworkConfig, allowInternetAccess
 	return orchNetwork
 }
 
+// A resume create that runs on past its caller ends before the reservation
+// can be reaped, leaving resumeBookkeepingBound for the store write and then
+// resumePublishMargin for the result publish and for clock skew between API
+// instances.
+const (
+	resumeBookkeepingBound = 5 * time.Second
+	resumePublishMargin    = 5 * time.Second
+)
+
+// CreateOption adjusts one CreateSandbox call.
+type CreateOption func(*createOptions)
+
+type createOptions struct {
+	completeStartedCreate bool
+	cpuCount              *int32
+}
+
+func WithCPUCount(cpuCount *int32) CreateOption {
+	return func(o *createOptions) { o.cpuCount = cpuCount }
+}
+
+// CompleteStartedCreate lets a resume create under way, and the bookkeeping
+// that registers the sandbox, run on past a caller that left, until the
+// reservation can be reaped: for a caller that comes back for the sandbox
+// rather than for this answer, such as client-proxy's resume flight, which
+// never demands a filesystem boot. Without it the create is cut with the
+// caller, which a REST request's write timeout assumes.
+func CompleteStartedCreate() CreateOption {
+	return func(o *createOptions) { o.completeStartedCreate = true }
+}
+
 func (o *Orchestrator) CreateSandbox(
 	ctx context.Context,
 	sandboxID,
@@ -186,14 +298,27 @@ func (o *Orchestrator) CreateSandbox(
 	isResume bool,
 	demandFilesystemBoot bool,
 	creationMeta sandbox.CreationMetadata,
+	options ...CreateOption,
 ) (sbx sandbox.Sandbox, apiErr *api.APIError) {
 	ctx, childSpan := tracer.Start(ctx, "create-sandbox")
 	defer childSpan.End()
+
+	var opts createOptions
+	for _, option := range options {
+		option(&opts)
+	}
+
+	if opts.cpuCount != nil {
+		if apiErr := cpuCountDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			return sandbox.Sandbox{}, apiErr
+		}
+	}
 
 	// Calculate total concurrent instances including addons
 	totalConcurrentInstances := team.Limits.SandboxConcurrency
 
 	// Check if team has reached max instances
+	reservedAt := time.Now()
 	finishStart, waitForStart, err := o.sandboxStore.Reserve(ctx, team.Team.ID, sandboxID, int(totalConcurrentInstances))
 	if err != nil {
 		var limitErr *sandbox.LimitExceededError
@@ -205,7 +330,14 @@ func (o *Orchestrator) CreateSandbox(
 				ClientMsg: fmt.Sprintf(
 					"you have reached the maximum number of concurrent E2B sandboxes (%d). If you need more, "+
 						"please visit 'https://e2b.dev/docs/billing'", totalConcurrentInstances),
-				Err: fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
+				Err:       fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
+				Retryable: apierrors.CanRetry,
+			}
+		case errors.Is(err, sandbox.ErrSandboxKilled):
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusNotFound,
+				ClientMsg: fmt.Sprintf("Sandbox '%s' was deleted", sandboxID),
+				Err:       fmt.Errorf("resume of '%s' refused: %w", sandboxID, err),
 			}
 		default:
 			logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(err))
@@ -214,6 +346,7 @@ func (o *Orchestrator) CreateSandbox(
 				Code:      http.StatusInternalServerError,
 				ClientMsg: fmt.Sprintf("Failed to create sandbox: %s", err),
 				Err:       err,
+				Retryable: apierrors.CanRetry,
 			}
 		}
 	}
@@ -228,6 +361,16 @@ func (o *Orchestrator) CreateSandbox(
 				ErrorCode: ErrCodeStartInFlight,
 				ClientMsg: "Sandbox is already starting; memory: false cannot be applied to a start already in flight — retry once it is running or paused",
 				Err:       fmt.Errorf("filesystem-boot resume of '%s' cannot join an in-flight start", sandboxID),
+			}
+		}
+
+		if opts.cpuCount != nil {
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusConflict,
+				ErrorCode: ErrCodeStartInFlight,
+				ClientMsg: "Sandbox is already starting; cpuCount cannot be applied to a start already in flight",
+				Err:       fmt.Errorf("CPU override for sandbox %q cannot join an in-flight start", sandboxID),
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -248,6 +391,7 @@ func (o *Orchestrator) CreateSandbox(
 				Code:      http.StatusInternalServerError,
 				ClientMsg: "Error waiting for sandbox to start",
 				Err:       err,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -255,6 +399,23 @@ func (o *Orchestrator) CreateSandbox(
 	}
 
 	telemetry.ReportEvent(ctx, "Reserved sandbox for team")
+
+	// A resume create under way completes for the client that comes back:
+	// tracked, so a drain waits for it and for the result it publishes, and
+	// ended with margin before the reservation can be reaped, so the run-on
+	// never lets a fresh reservation start a second one. A caller that stays
+	// keeps its own context's end, as before; a resume admitted behind a
+	// drain keeps the caller's cut.
+	var completeStartedCreateUntil, bookkeepingUntil time.Time
+	if isResume && opts.completeStartedCreate {
+		if releaseWork, ok := o.TrackWork(); ok {
+			defer releaseWork()
+
+			bookkeepingUntil = redisreservations.ReapableAt(reservedAt).Add(-resumePublishMargin)
+			completeStartedCreateUntil = bookkeepingUntil.Add(-resumeBookkeepingBound)
+		}
+	}
+
 	defer func() {
 		// Don't change this handling
 		// https://go.dev/play/p/4oy02s7BDMc
@@ -270,18 +431,22 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, fetchErr
 	}
 
-	fcSemver, err := fcversion.New(sbxData.Build.FirecrackerVersion)
-	if err != nil {
+	vcpu, cpuErr := resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
+	if cpuErr != nil {
+		return sandbox.Sandbox{}, cpuErr
+	}
+
+	if _, err := fcversion.New(sbxData.Build.FirecrackerVersion); err != nil {
 		errMsg := fmt.Errorf("failed to get fcSemver for firecracker fcSemver '%s': %w", sbxData.Build.FirecrackerVersion, err)
 
 		return sandbox.Sandbox{}, &api.APIError{
 			Code:      http.StatusInternalServerError,
 			ClientMsg: "Failed to get build information for the template",
 			Err:       errMsg,
+			Retryable: apierrors.NoRetry,
 		}
 	}
 
-	hasHugePages := fcSemver.HasHugePages()
 	telemetry.ReportEvent(ctx, "Got FC info")
 
 	var sbxDomain *string
@@ -292,6 +457,7 @@ func (o *Orchestrator) CreateSandbox(
 				Code:      http.StatusInternalServerError,
 				ClientMsg: "Error while looking for sandbox cluster information",
 				Err:       fmt.Errorf("cannot access cluster %s associated with team id %s that spawned sandbox %s", *team.ClusterID, team.ID, sandboxID),
+				Retryable: apierrors.CanRetry,
 			}
 		}
 
@@ -307,6 +473,7 @@ func (o *Orchestrator) CreateSandbox(
 				Code:      http.StatusInternalServerError,
 				ClientMsg: "Failed to create traffic access token",
 				Err:       fmt.Errorf("failed to create traffic access token for sandbox %s: %w", sandboxID, err),
+				Retryable: apierrors.CanRetry,
 			}
 		}
 
@@ -340,9 +507,10 @@ func (o *Orchestrator) CreateSandbox(
 			EnvdAccessToken:         sbxData.EnvdAccessToken,
 			MaxSandboxLength:        team.Limits.MaxLengthHours,
 			EventsTtlDays:           team.Limits.EventsTTLDays,
-			HugePages:               hasHugePages,
+			HugePages:               true, // orchestrators that predate ignoring the field still read it
 			RamMb:                   sbxData.Build.RamMb,
-			Vcpu:                    sbxData.Build.Vcpu,
+			Vcpu:                    vcpu,
+			MaxVcpus:                ut.FromPtr(sbxData.Build.MaxVcpu),
 			Snapshot:                isResume,
 			AutoPause:               sbxData.AutoPause,
 			AutoPauseFilesystemOnly: sbxData.AutoPauseFilesystemOnly,
@@ -371,7 +539,10 @@ func (o *Orchestrator) CreateSandbox(
 
 	var node *nodemanager.Node
 
-	if isResume && sbxData.NodeID != nil {
+	// Only a resume is pinned to the node its snapshot was taken on; any other
+	// start from a snapshot (a fork) is placed like a new sandbox.
+	affinityRequested := isResume && sbxData.NodeID != nil
+	if affinityRequested {
 		telemetry.ReportEvent(ctx, "Placing sandbox on the node where the snapshot was taken")
 
 		clusterID := clusters.WithClusterFallback(team.ClusterID)
@@ -406,7 +577,12 @@ func (o *Orchestrator) CreateSandbox(
 
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
-	placed, err := placement.PlaceSandbox(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, cpuRequirement, labelFilteringEnabled, allLabels)
+	requirements := placement.Requirements{
+		CPU:    cpuRequirement,
+		Memory: placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
+	}
+
+	placed, err := placement.PlaceSandboxCompletingStartedCreate(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, requirements, labelFilteringEnabled, allLabels, completeStartedCreateUntil)
 	if err != nil {
 		if isResume && placed.TimedOut {
 			// Remap by the snapshot's own sandbox ID: when forking, the started
@@ -435,18 +611,49 @@ func (o *Orchestrator) CreateSandbox(
 			)
 		}
 
+		if unsupportedErr, ok := errors.AsType[placement.UnsupportedFeatureError](err); ok {
+			o.featureUnsupportedCounter.Add(ctx, 1, metric.WithAttributes(
+				telemetry.WithTeamID(team.TeamID()),
+				attribute.String("feature", strings.Join(unsupportedErr.Features, ",")),
+			))
+			logger.L().Warn(ctx, "No orchestrator in the cluster supports a feature the sandbox needs",
+				logger.WithTeamID(team.TeamID()),
+				logger.WithTemplateID(sbxData.TemplateID),
+				logger.WithBuildID(sbxData.Build.ID.String()),
+				logger.WithSandboxID(sandboxID),
+				zap.Strings("features", unsupportedErr.Features),
+				zap.String("required_version", unsupportedErr.MinVersion),
+			)
+		}
+
 		return sandbox.Sandbox{}, placementAPIError(err)
 	}
 
 	node = placed.Node
 
+	if !bookkeepingUntil.IsZero() {
+		// The create completed; its bookkeeping must too, for the joiners of
+		// the reservation, even if this caller has left meanwhile.
+		var cancel context.CancelFunc
+		ctx, cancel = ut.ContextExtendedTo(ctx, bookkeepingUntil)
+		defer cancel()
+	}
+
 	// The sandbox was created successfully
 	attributes := []attribute.KeyValue{
 		attribute.Bool("is_resume", isResume),
-		attribute.Bool("node_affinity_requested", sbxData.NodeID != nil),
-		attribute.Bool("node_affinity_success", sbxData.NodeID != nil && node.ID == *sbxData.NodeID),
+		attribute.Bool("node_affinity_requested", affinityRequested),
+		attribute.Bool("node_affinity_success", affinityRequested && node.ID == *sbxData.NodeID),
+		telemetry.WithTeamID(team.TeamID()),
 	}
 	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
+
+	if placed.MissingHugepageCeiling != "" {
+		o.noCeilingPlacementsCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("node.id", node.ID),
+			attribute.String("reason", placed.MissingHugepageCeiling),
+		))
+	}
 
 	telemetry.SetAttributes(ctx, attribute.String("node.id", node.ID))
 	telemetry.ReportEvent(ctx, "Created sandbox")
@@ -480,7 +687,7 @@ func (o *Orchestrator) CreateSandbox(
 		time.Duration(team.Limits.MaxLengthHours)*time.Hour,
 		startTime,
 		endTime,
-		sbxData.Build.Vcpu,
+		vcpu,
 		*sbxData.Build.TotalDiskSizeMb,
 		sbxData.Build.RamMb,
 		sbxData.Build.KernelVersion,
@@ -501,6 +708,7 @@ func (o *Orchestrator) CreateSandbox(
 		sbxData.Iam,
 	)
 	sbx.FirecrackerVersionResolved = resolvedFCVersion
+	sbx.NetworkPlacement = placed.Response.GetNetworkPlacement()
 
 	// An orchestrator that predates the filesystem_boot field ignores it and
 	// memory-restores; only the echo proves the demand was honored. Kill the
@@ -512,10 +720,7 @@ func (o *Orchestrator) CreateSandbox(
 		killErr := o.removeSandboxFromNode(
 			context.WithoutCancel(ctx),
 			sbx,
-			sandbox.StateActionKill,
-			sandbox.KillReasonUnknown,
-			false, // kill: no snapshot
-			false,
+			sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 		)
 		if killErr != nil {
 			logger.L().Error(ctx, "Error removing memory-restored sandbox after unhonored filesystem-boot demand",
@@ -543,10 +748,7 @@ func (o *Orchestrator) CreateSandbox(
 			killErr := o.removeSandboxFromNode(
 				context.WithoutCancel(ctx),
 				sbxToRemove,
-				sandbox.StateActionKill,
-				sandbox.KillReasonUnknown,
-				false, // kill: no snapshot
-				false,
+				sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 			)
 			if killErr != nil {
 				logger.L().Error(ctx, "Error removing sandbox",
@@ -561,6 +763,7 @@ func (o *Orchestrator) CreateSandbox(
 			Code:      http.StatusInternalServerError,
 			ClientMsg: "Failed to create sandbox",
 			Err:       fmt.Errorf("failed to add sandbox to store: %w", err),
+			Retryable: apierrors.NoRetry,
 		}
 	}
 
@@ -610,7 +813,7 @@ func (o *Orchestrator) maybeRemapResumeOriginNode(ctx context.Context, sandboxID
 
 	// Drop the cached snapshot so the next resume reads the new origin node.
 	o.snapshotCache.Invalidate(wctx, sandboxID)
-	o.resumeOriginNodeRemapCounter.Add(wctx, 1)
+	o.resumeOriginNodeRemapCounter.Add(wctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.TeamID())))
 
 	oldNodeID := ""
 	if originNodeID != nil {
@@ -627,14 +830,26 @@ func (o *Orchestrator) maybeRemapResumeOriginNode(ctx context.Context, sandboxID
 // resolveCPURequirement builds the CPU constraint placement filters nodes with.
 //
 // A memory restore may move to the newer models IsCompatibleWith treats as
-// supersets. A filesystem-only snapshot is instead confined to one CPU model,
-// keeping the cold-boot resume on a single generation while that path is
-// unproven across them. FsOnlyResumeCPUModelFlag names the model, and empty
-// returns filesystem-only resumes to the shared rule.
+// supersets. A cold boot (any start from a filesystem-only build, including a
+// sandbox created from a memory:false snapshot template, or a memory:false
+// resume) is instead confined to one CPU model, keeping it on a single
+// generation while that path is unproven across them. FsOnlyResumeCPUModelFlag
+// names the model, and empty returns cold boots to the shared rule.
+//
+// ExtraCompatibleNodeModelsFlag adds model pairs to the shared rule for every
+// placement; the pin still narrows on top of them.
 func (o *Orchestrator) resolveCPURequirement(ctx context.Context, sandboxID string, team *teamtypes.Team, sbxData SandboxMetadata) placement.CPURequirement {
-	requirement := placement.CPURequirement{Build: builds.ToMachineInfo(sbxData.Build)}
+	requirement := placement.CPURequirement{
+		Build: builds.ToMachineInfo(sbxData.Build),
+		ExtraNodeModels: featureflags.GetExtraCompatibleNodeModels(ctx, o.featureFlagsClient,
+			featureflags.TeamContext(team.ID.String()),
+			featureflags.SandboxContext(sandboxID),
+			featureflags.ClusterContext(clusters.WithClusterFallback(team.ClusterID)),
+		),
+	}
 
-	if !sbxData.FilesystemOnlySnapshot {
+	coldBoot := sbxData.FilesystemOnlySnapshot || sbxData.Build.FilesystemOnly || sbxData.FilesystemBoot
+	if !coldBoot {
 		return requirement
 	}
 

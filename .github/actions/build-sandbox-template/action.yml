@@ -22,19 +22,66 @@ inputs:
     description: "Base template rootfs disk size in MB. Larger than the create-build default to leave headroom for disk-heavy build steps after the build-reserved-disk-space-mb reservation."
     required: false
     default: "2048"
+  base-template:
+    description: |
+      build (default): build from this checkout, restoring the exact-key
+      entry when one exists. reuse: when the exact key misses, start from
+      the base template the default branch published under the recipe key
+      for this host's CPU model, and build only if that is missing too.
+      lookup: compute the keys and report whether a published entry exists
+      (output "published"); build nothing. publish: restore the published
+      entry when one exists, else build, and leave the result staged for
+      the caller to save under the "recipe-key" output once a sandbox has
+      run from it; this action never writes the recipe key itself, and in
+      this mode not the exact key either. Every mode but build needs the
+      Blacksmith cache backend: on any other runner lookup and publish
+      fail, and reuse builds like build (the keys are not computed).
+    required: false
+    default: "build"
+
+outputs:
+  published:
+    description: "true when a base template is published under the recipe key for this host's CPU model"
+    value: ${{ steps.restore-base.outputs.cache-hit }}
+  recipe-key:
+    description: "The recipe key for this host (every mode but build): in publish mode, the key the caller saves the staged template under"
+    value: ${{ steps.keys.outputs.recipe }}
+  stage:
+    description: "The directory holding the staged base template: in publish mode, the path the caller saves under recipe-key"
+    value: /tmp/base-template-stage
 
 runs:
   using: "composite"
   steps:
-    # The built template is a pure function of the source that builds it and
-    # runs inside it, the pins and sizes in this action file, the Go
+    # Two cache keys, both Blacksmith-only (see the backend probe below):
+    #
+    #   exact  - this checkout's template: every source tree, this action
+    #            and the two that feed it (build-packages, host-init), the
+    #            toolchain, the base image digest, the shape (race and gc
+    #            flags, compression, disk size) and the host CPU. A hit is
+    #            what this checkout would build. Read and written in build
+    #            and reuse mode.
+    #   recipe - the same shape, host CPU and base image digest, but only
+    #            the paths a template is a function of (the step computing
+    #            it lists them). The default branch publishes under it:
+    #            publish mode builds and stages, and the caller saves the
+    #            stage under the recipe-key output once a sandbox has run
+    #            from it. A job that only runs sandboxes may start from
+    #            that entry when its exact key misses (reuse mode) instead
+    #            of building one, and never re-saves it under its own exact
+    #            key. lookup mode only reports whether an entry exists.
+    #
+    # The exact key is a function of the source that builds the template
+    # and runs inside it, the pins and sizes in this action file, the two
+    # actions that compile the envd binary and stage it, the kernel and
+    # Firecracker for create-build (build-packages, host-init), the Go
     # toolchain (go.work), and the compression configuration and race flag
     # (the embedded envd binary is built with the job's RACE_FLAG, so
     # instrumented and uninstrumented jobs produce different templates and
     # must never share a key). Git tree hashes stand in for the source: they
-    # are exact, instant, and — unlike hashFiles over the package trees —
-    # computed once here rather than re-evaluated in the cache post step,
-    # where root-owned build litter under packages/ made hashing fail. A
+    # are exact, instant, and - unlike hashFiles over the package trees -
+    # computed once here and not re-evaluated in the save step, where
+    # root-owned build litter under packages/ made hashing fail. A
     # caller whose checkout layout differs from this repository may
     # precompute the digest into TEMPLATE_SRC_HASH; otherwise it derives
     # from HEAD here.
@@ -43,36 +90,53 @@ runs:
       shell: bash
       run: |
         if [ -z "${TEMPLATE_SRC_HASH:-}" ]; then
-          TEMPLATE_SRC_HASH="$(git rev-parse HEAD:packages)-$(git rev-parse HEAD:.github/actions/build-sandbox-template)-$(git rev-parse HEAD:go.work)"
+          TEMPLATE_SRC_HASH="$(git rev-parse \
+            HEAD:packages \
+            HEAD:.github/actions/build-sandbox-template \
+            HEAD:.github/actions/build-packages \
+            HEAD:.github/actions/host-init \
+            HEAD:go.work | paste -sd-)"
         fi
 
         # The base image tag is mutable: a republish must invalidate the
-        # cache even with identical sources. The manifest text is hashed to
-        # one token rather than --format'ed (buildx versions differ on
-        # format support and multi-line values break GITHUB_OUTPUT); any
-        # stable text per manifest works as a key segment. A failed lookup
-        # falls back to the tag string, i.e. possibly-stale reuse rather
-        # than a broken build.
+        # cache even with identical sources. The segment is the digest of
+        # the image index, read from the Digest line of the inspect output
+        # and checked to be one. The recipe key needs it to be the same in
+        # every job, and neither the whole inspect text nor --format gives
+        # that: the text lists attestation annotations in map order, which
+        # changes from run to run, and buildx 0.23 prints that same text
+        # for a template starting with {{.Manifest instead of executing it.
+        # A failed lookup (three attempts) falls back to the tag string,
+        # i.e. possibly-stale reuse rather than a broken build.
         base_image=$(grep -oE 'baseImage = "[^"]+"' packages/orchestrator/cmd/create-build/main.go | cut -d'"' -f2 || true)
-        base_digest=$( (docker buildx imagetools inspect "${base_image:-e2bdev/base:latest}" 2>/dev/null || echo "${base_image:-unresolved}") | sha256sum | cut -c1-16)
+        base_ref="${base_image:-e2bdev/base:latest}"
+        base_digest=""
+        for _ in 1 2 3; do
+          base_digest=$(docker buildx imagetools inspect "$base_ref" 2>/dev/null | sed -n 's/^Digest:[[:space:]]*//p') || true
+          if [[ "$base_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            break
+          fi
+          base_digest=""
+          sleep 2
+        done
+        if [ -z "$base_digest" ]; then
+          echo "::warning::could not resolve ${base_ref}; keying the template on the tag"
+          base_digest="$base_ref"
+        fi
+        base_token=$(printf '%s' "$base_digest" | sha256sum | cut -c1-16)
+        echo "Base image: ${base_ref} ${base_digest} (${base_token})"
 
-        echo "hash=${TEMPLATE_SRC_HASH}-${base_digest}" >> "$GITHUB_OUTPUT"
+        echo "hash=${TEMPLATE_SRC_HASH}-${base_token}" >> "$GITHUB_OUTPUT"
+        echo "base_digest=${base_token}" >> "$GITHUB_OUTPUT"
 
-    # The stage directory holds only the base build. The template storage
-    # root itself cannot be the cache path: by the time the post step saves
-    # it, the suite's own pauses, snapshots and test builds have written
-    # gigabytes there. Exact key only: a restored template always matches
-    # what this checkout would build, and any relevant change rebuilds. On a
-    # hit the build step below reuses the restored build ID; concurrent
-    # first runs on one commit all build and the first save wins, which is
-    # only the cold cost once.
-# Blacksmith runners only: a staged template is 2.7-3.7 GiB (its
+    # Blacksmith runners only: a staged template is 2.7-3.7 GiB (its
     # artifacts are already compressed, so the cache cannot shrink them),
     # and on GitHub's cache backend the restore barely beats the ~40s
     # rebuild while a handful of source digests exhausts the repository's
     # cache budget. Blacksmith's colocated cache is both faster and a
     # separate quota. The runner is detected by process env, which the env
-    # context cannot see, hence the probe step.
+    # context cannot see, hence the probe step. Every key and cache step
+    # below is gated on it, so another runner runs the plain build.
     - name: Detect the runner's cache backend
       id: cache-backend
       shell: bash
@@ -83,23 +147,172 @@ runs:
           echo "blacksmith=false" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Cache the built template
+    # lookup and publish exist only to read and write the recipe key, which
+    # lives in that backend: on another runner they would build and publish
+    # nothing, silently. reuse degrades to build there.
+    - name: Require the Blacksmith cache backend for lookup and publish
+      if: steps.cache-backend.outputs.blacksmith != 'true' && (inputs.base-template == 'lookup' || inputs.base-template == 'publish')
+      shell: bash
+      env:
+        MODE: ${{ inputs.base-template }}
+      run: |
+        echo "::error::base-template: ${MODE} needs the Blacksmith cache backend, which this runner does not provide"
+        exit 1
+
+    # A template snapshot carries the vCPU state of the host it was taken
+    # on, and Firecracker restores it only on the same CPU model: on another
+    # one the load fails with "Failed to set all KVM MSRs for this vCPU".
+    # One runner label can front hosts of several models (Intel and AMD
+    # both seen behind the same label), and the cache is shared across them,
+    # so the key carries the host's vendor, family, model and stepping and a
+    # staged template is reused only where it can boot.
+    - name: Identify the host CPU
+      id: host-cpu
+      shell: bash
+      run: |
+        cpu=$(awk -F':' '
+          $1 ~ /^vendor_id/ { v = $2 }
+          $1 ~ /^cpu family/ { f = $2 }
+          $1 ~ /^model[[:space:]]*$/ { m = $2 }
+          $1 ~ /^stepping/ { s = $2 }
+          $1 ~ /^model name/ { n = $2 }
+          END { gsub(/[[:space:]]/, "", v); gsub(/[[:space:]]/, "", f); gsub(/[[:space:]]/, "", m); gsub(/[[:space:]]/, "", s)
+                sub(/^[[:space:]]+/, "", n); print v "-" f "-" m "-" s "\t" n }' /proc/cpuinfo)
+        tab=$'\t'
+        echo "Host CPU: ${cpu#*"$tab"} (${cpu%%"$tab"*})"
+        echo "cpu=${cpu%%"$tab"*}" >> "$GITHUB_OUTPUT"
+
+    # The recipe hash names what the template's bytes and their reading are
+    # a function of, not the whole tree: the guest binary (packages/envd,
+    # whose go.mod and go.sum it contains, the shared packages it imports
+    # and the shared module's go.mod and go.sum, which its replace pulls
+    # into dependency resolution), the build pipeline and the storage
+    # format it writes and reads (the orchestrator's sandbox, template and
+    # cfg packages, create-build, its Makefile, go.mod, go.sum and scripts
+    # - the busybox fetch lands in the rootfs - and the shared storage,
+    # templates, featureflags, fcversion, fc and consts packages, the
+    # registry client the base image is fetched through (dockerhub), the
+    # build config types create-build hands the builder
+    # (grpc/template-manager) and the nameserver the rootfs's
+    # resolv.conf is rendered with (sandbox-network)), the two
+    # actions that feed the build (build-packages compiles the envd binary;
+    # host-init stages it where create-build embeds it and pulls the kernel
+    # and Firecracker the snapshot is taken with), this action (pins,
+    # memory, staging) and the toolchain (go.work). A change anywhere else
+    # leaves the template unchanged, so a job that only runs sandboxes may
+    # start from the entry the default branch published under it. The list
+    # is the whole safety argument. It is not create-build's full
+    # dependency closure (logger, telemetry, utils, the proxy, ...), and
+    # the other workspace modules' go.mod files, whose requirements also
+    # join a workspace build, are not in it: a change there that still
+    # shapes a template is the residual a caller covers by building fresh
+    # somewhere, which is why the default mode is build. The steps that run
+    # once the template exists (start-services, the integration-tests
+    # wrapper) are left out on purpose: the publishing job never runs them,
+    # the bytes are not a function of them, and the compression settings
+    # they pass on are the key's shape segment. BASE_TEMPLATE_EPOCH forces
+    # a roll when a change outside the list is known to shape a template.
+    # A caller whose layout differs may precompute TEMPLATE_RECIPE_HASH as
+    # the tree hashes of the same paths in the same order. A missing path
+    # fails the step rather than shortening the key. Not computed in build
+    # mode: that mode never reads the key.
+    - name: Compute the template recipe hash
+      id: template-recipe
+      if: steps.cache-backend.outputs.blacksmith == 'true' && inputs.base-template != 'build'
+      shell: bash
+      env:
+        BASE_TEMPLATE_EPOCH: "1"
+      run: |
+        set -euo pipefail
+        if [ -z "${TEMPLATE_RECIPE_HASH:-}" ]; then
+          TEMPLATE_RECIPE_HASH="$(git rev-parse \
+            HEAD:packages/envd \
+            HEAD:packages/orchestrator/pkg/sandbox \
+            HEAD:packages/orchestrator/pkg/template \
+            HEAD:packages/orchestrator/pkg/cfg \
+            HEAD:packages/orchestrator/cmd/create-build \
+            HEAD:packages/orchestrator/Makefile \
+            HEAD:packages/orchestrator/go.mod \
+            HEAD:packages/orchestrator/go.sum \
+            HEAD:packages/orchestrator/scripts \
+            HEAD:packages/shared/pkg/storage \
+            HEAD:packages/shared/pkg/templates \
+            HEAD:packages/shared/pkg/featureflags \
+            HEAD:packages/shared/pkg/filesystem \
+            HEAD:packages/shared/pkg/id \
+            HEAD:packages/shared/pkg/keys \
+            HEAD:packages/shared/pkg/smap \
+            HEAD:packages/shared/pkg/fcversion \
+            HEAD:packages/shared/pkg/fc \
+            HEAD:packages/shared/pkg/consts \
+            HEAD:packages/shared/pkg/dockerhub \
+            HEAD:packages/shared/pkg/grpc/template-manager \
+            HEAD:packages/shared/pkg/sandbox-network \
+            HEAD:packages/shared/go.mod \
+            HEAD:packages/shared/go.sum \
+            HEAD:.github/actions/build-sandbox-template \
+            HEAD:.github/actions/build-packages \
+            HEAD:.github/actions/host-init \
+            HEAD:go.work | sha256sum | cut -c1-16)"
+        fi
+        echo "hash=${TEMPLATE_RECIPE_HASH}-e${BASE_TEMPLATE_EPOCH}" >> "$GITHUB_OUTPUT"
+
+    # gc dimension: DEBUG_GCFLAGS shapes the embedded envd binary the same
+    # way RACE_FLAG does (optimized vs -N -l debug builds). The recipe key
+    # exists only when its hash was computed (every mode but build).
+    - name: Compute the cache keys
+      id: keys
       if: steps.cache-backend.outputs.blacksmith == 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      shell: bash
+      env:
+        SHAPE: race${{ env.RACE_FLAG }}-gc${{ env.DEBUG_GCFLAGS != '' && 'debug' || 'opt' }}-${{ inputs.compress_enabled }}-${{ inputs.compress_type }}-${{ inputs.compress_level }}-${{ inputs.compress_workers }}-disk${{ inputs.disk_size_mb }}
+        SRC_HASH: ${{ steps.template-src.outputs.hash }}
+        BASE_DIGEST: ${{ steps.template-src.outputs.base_digest }}
+        RECIPE_HASH: ${{ steps.template-recipe.outputs.hash }}
+        CPU: ${{ steps.host-cpu.outputs.cpu }}
+      run: |
+        echo "exact=base-template-${SHAPE}-${SRC_HASH}-${CPU}" >> "$GITHUB_OUTPUT"
+        if [ -n "$RECIPE_HASH" ]; then
+          echo "recipe=base-template-recipe-${SHAPE}-${RECIPE_HASH}-${BASE_DIGEST}-${CPU}" >> "$GITHUB_OUTPUT"
+        fi
+
+    # The stage directory holds only the base build. The template storage
+    # root itself cannot be the cache path: by the time the suite has run,
+    # its own pauses, snapshots and test builds have written gigabytes
+    # there. Exact key only, no restore-keys: a restored template always
+    # matches what this checkout would build, and any relevant change
+    # rebuilds. On a hit the build step below reuses the restored build ID.
+    - name: Restore the template built from this checkout
+      id: restore-exact
+      if: steps.cache-backend.outputs.blacksmith == 'true' && (inputs.base-template == 'build' || inputs.base-template == 'reuse')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: /tmp/base-template-stage
-# gc dimension: DEBUG_GCFLAGS shapes the embedded envd binary the same
-        # way RACE_FLAG does (optimized vs -N -l debug builds).
-        key: base-template-race${{ env.RACE_FLAG }}-gc${{ env.DEBUG_GCFLAGS != '' && 'debug' || 'opt' }}-${{ inputs.compress_enabled }}-${{ inputs.compress_type }}-${{ inputs.compress_level }}-${{ inputs.compress_workers }}-disk${{ inputs.disk_size_mb }}-${{ steps.template-src.outputs.hash }}
+        key: ${{ steps.keys.outputs.exact }}
+
+    # The published entry is downloaded in reuse mode after the exact key
+    # missed, and in publish mode (a slot whose entry was published since
+    # its lookup runs on that entry and saves nothing); lookup only probes
+    # for it. cache-hit is true only on the exact key match, so the
+    # conditions below are exact.
+    - name: Restore the base template the default branch published
+      id: restore-base
+      if: steps.cache-backend.outputs.blacksmith == 'true' && (inputs.base-template == 'lookup' || inputs.base-template == 'publish' || (inputs.base-template == 'reuse' && steps.restore-exact.outputs.cache-hit != 'true'))
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /tmp/base-template-stage
+        key: ${{ steps.keys.outputs.recipe }}
+        lookup-only: ${{ inputs.base-template == 'lookup' }}
 
     # Note: this cannot run concurrently with a running orchestrator -
     # create-build manages its own sandbox network state (slot pools,
     # namespaces) and the two processes conflict, wedging the provisioning VM.
     - name: Build Sandbox Template
+      if: inputs.base-template != 'lookup'
       env:
         TEMPLATE_ID: "2j6ly824owf4awgai1xo"
         KERNEL_VERSION: "vmlinux-6.1.158-c1a568c"
-        FIRECRACKER_VERSION: "v1.14-0.2.0"
+        FIRECRACKER_VERSION: "v1.17-0.4.1"
         DISK_SIZE_MB: ${{ inputs.disk_size_mb }}
         # 256 MiB guest memory: the CI sandboxes run the kernel, envd and
         # light test commands, and a smaller memfile makes every pause,
@@ -111,19 +324,30 @@ runs:
         COMPRESS_TYPE: ${{ inputs.compress_type }}
         COMPRESS_LEVEL: ${{ inputs.compress_level }}
         COMPRESS_FRAME_ENCODE_WORKERS: ${{ inputs.compress_workers }}
+        BASE_TEMPLATE: ${{ inputs.base-template }}
+        RESTORED_PUBLISHED: ${{ steps.restore-base.outputs.cache-hit }}
+        RECIPE_HASH: ${{ steps.template-recipe.outputs.hash }}
+        HOST_CPU: ${{ steps.host-cpu.outputs.cpu }}
       run: |
         stage="/tmp/base-template-stage"
         marker="${stage}/build-id"
 
         if [ -s "$marker" ]; then
-          # Restored by the cache step above; the marker carries the build ID
+          # Restored by a cache step above; the marker carries the build ID
           # the staged files were written under, so the database seed and the
           # files agree without rebuilding anything.
           BUILD_ID=$(cat "$marker")
-          echo "Template restored from cache with build ID ${BUILD_ID}"
+          if [ "$RESTORED_PUBLISHED" = "true" ]; then
+            echo "Base template restored from the default-branch entry with build ID ${BUILD_ID}"
+          else
+            echo "Template restored from cache with build ID ${BUILD_ID}"
+          fi
           mkdir -p /tmp/templates
           cp -a "${stage}/files/." /tmp/templates/
         else
+          if [ -n "$RECIPE_HASH" ]; then
+            echo "No base template published for recipe ${RECIPE_HASH} on ${HOST_CPU} (mode ${BASE_TEMPLATE}); building"
+          fi
           BUILD_ID=$(uuidgen)
           echo "This build unique ID: ${BUILD_ID}"
         fi
@@ -141,22 +365,42 @@ runs:
         echo "COMPRESS_FRAME_ENCODE_WORKERS=${COMPRESS_FRAME_ENCODE_WORKERS}" >> .env.test
 
         if [ ! -s "$marker" ]; then
-          sudo -E make -C packages/orchestrator build-template \
-            ARTIFACTS_REGISTRY_PROVIDER=Local \
+          # The compression settings and the artifact directories reach
+          # create-build through the environment; sudo-rs on Ubuntu 25.10 and
+          # later images ignores a bare -E, so the variables are listed.
+          sudo --preserve-env="$(compgen -e | paste -sd,)" make -C packages/orchestrator build-template \
             STORAGE_PROVIDER=Local \
             TEMPLATE_ID=${TEMPLATE_ID} \
             BUILD_ID=${BUILD_ID} \
             KERNEL_VERSION=${KERNEL_VERSION} \
-            FC_VERSION=${FC_VERSION} \
+            FIRECRACKER_VERSION=${FIRECRACKER_VERSION} \
             DISK_SIZE_MB=${DISK_SIZE_MB} \
             MEMORY_MB=${MEMORY_MB}
 
           # Stage now, while the storage root holds exactly the base build;
-          # the services fill it with test artifacts later. The cache
-          # post-step reads the stage as the runner user.
+          # the services fill it with test artifacts later. The save steps
+          # read the stage as the runner user.
           sudo mkdir -p "${stage}/files"
           sudo cp -a /tmp/templates/. "${stage}/files/"
           echo "${BUILD_ID}" | sudo tee "$marker" >/dev/null
           sudo chmod -R a+rX "$stage"
         fi
       shell: bash
+
+    # Saved right after the build, under this checkout's key only. That
+    # entry reaches no job whose tree differs: the shard that built it runs
+    # the suite on it next, so a template that builds but cannot boot fails
+    # there, on this checkout, and the next push rolls the key. A template
+    # restored from the published entry is never re-saved under it (every
+    # push would otherwise write its own copy per job). The recipe key is
+    # never written here: an entry every later run starts from must have
+    # been seen to run, not only to build, so in publish mode the caller
+    # saves the stage under the recipe-key output once its sandboxes have
+    # run from it. Concurrent first runs on one commit all build and the
+    # first save wins; a lost reservation is logged, not failed.
+    - name: Save the template under this checkout's key
+      if: steps.cache-backend.outputs.blacksmith == 'true' && (inputs.base-template == 'build' || inputs.base-template == 'reuse') && steps.restore-exact.outputs.cache-hit != 'true' && steps.restore-base.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: /tmp/base-template-stage
+        key: ${{ steps.keys.outputs.exact }}

@@ -41,8 +41,15 @@ func TestToNodeSandbox_CopiesEveryField(t *testing.T) {
 	assert.Equal(t, sbx.VCpu, got.VCpu)
 	assert.Equal(t, sbx.RamMB, got.RamMB)
 
+	// Reported by the node only; a stored sandbox has no counterpart.
+	nodeOnly := map[string]bool{"Ended": true, "GuestEvent": true, "DiskKept": true}
+
 	value := reflect.ValueOf(got)
 	for i := range value.NumField() {
+		if nodeOnly[value.Type().Field(i).Name] {
+			continue
+		}
+
 		assert.Falsef(t, value.Field(i).IsZero(),
 			"NodeSandbox.%s was not copied from the stored sandbox", value.Type().Field(i).Name)
 	}

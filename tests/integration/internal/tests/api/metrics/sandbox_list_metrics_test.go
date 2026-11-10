@@ -47,7 +47,8 @@ func TestSandboxListMetrics(t *testing.T) {
 	for _, sbx := range metrics {
 		assert.NotEmpty(t, sbx.Timestamp, "Metric timestamp should not be empty")
 		assert.NotEmpty(t, sbx.TimestampUnix, "Metric timestamp unix should not be empty")
-		assert.NotEmpty(t, sbx.CpuUsedPct, "Cpu pct should not be empty")
+		assert.GreaterOrEqual(t, sbx.CpuUsedPct, float32(0), "CPU usage cannot be negative")
+		assert.LessOrEqual(t, sbx.CpuUsedPct, float32(100), "CPU usage cannot exceed 100 percent")
 		assert.NotEmpty(t, sbx.CpuCount, "Cpu count should not be empty")
 		assert.NotEmpty(t, sbx.MemUsed, "Memory used should not be empty")
 		assert.NotEmpty(t, sbx.MemTotal, "Memory total should not be empty")

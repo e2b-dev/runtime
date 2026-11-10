@@ -12,25 +12,28 @@ resources:
 images:
   - name: E2B_API_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/api
-    newTag: v0.14.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
   - name: E2B_DB_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/api/db-migrator
-    newTag: v0.14.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
   - name: E2B_CLIENT_PROXY_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy
-    newTag: v0.3.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
   - name: E2B_CLICKHOUSE_MIGRATOR_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator
-    newTag: v0.4.202609130627-59497eb9134 # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
+  - name: E2B_DASHBOARD_IMAGE
+    newName: us-docker.pkg.dev/e2b-artifacts/dashboard/dashboard
+    newTag: v0.5.1
   - name: E2B_TOOLS_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/tools
-    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
   - name: E2B_NODE_E2B_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/node-e2b
-    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
   - name: E2B_SEED_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/seed
-    newTag: v0.3.202609120109-ad1cddd091b # x-release-please-version
+    newTag: v0.30.0 # x-release-please-version
 
 # Content-hashed names: a changed literal or file renames the map and rolls the
 # pod. Older maps are left behind (kustomize does not prune); delete them by
@@ -38,11 +41,17 @@ images:
 configMapGenerator:
   - name: e2b-versions
     literals:
-      - E2B_ORCHESTRATOR_VERSION=v0.16.202609130627-59497eb9134 # x-release-please-version
-      - E2B_ENVD_VERSION=v0.9.202609130627-59497eb9134
+      - E2B_ORCHESTRATOR_VERSION=v0.30.0 # x-release-please-version
+      - E2B_ENVD_VERSION=v0.10.0
       - E2B_KERNEL_VERSION=vmlinux-6.1.177_5008931
       - E2B_FIRECRACKER_VERSION=v1.14-0.2.0
       - E2B_BUSYBOX_VERSION=1.36.1
+  - name: e2b-settings
+    literals:
+      # host:port of an OpenTelemetry collector the api, orchestrator and
+      # client-proxy export to over OTLP/gRPC, for example 127.0.0.1:4317.
+      # Empty exports nothing; set it and re-apply.
+      - OTEL_COLLECTOR_GRPC_ENDPOINT=
   - name: clickhouse-config
     files:
       - config.xml=config/clickhouse-config.xml
@@ -51,3 +60,11 @@ configMapGenerator:
   - name: vector-config
     files:
       - vector.toml=config/vector.toml
+  # Mounted only by patches/otel-collector.yaml. Generated either way, since an
+  # unused map is harmless and it keeps turning the collector on to one line.
+  - name: otel-config
+    files:
+      - config.yaml=config/otel-collector.yaml
+
+# Uncomment for the built-in collector, then set e2b-settings above to 127.0.0.1:4317.
+# patches: [{ path: patches/otel-collector.yaml, target: { kind: StatefulSet, name: e2b } }]

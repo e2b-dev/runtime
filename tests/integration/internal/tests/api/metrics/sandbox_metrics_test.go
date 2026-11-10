@@ -41,7 +41,8 @@ func TestSandboxMetrics(t *testing.T) {
 	require.NotEmpty(t, metrics, "Expected at least one metric in the response")
 	for _, metric := range metrics {
 		require.NotEmpty(t, metric.CpuCount)
-		require.NotEmpty(t, metric.CpuUsedPct)
+		require.GreaterOrEqual(t, metric.CpuUsedPct, float32(0))
+		require.LessOrEqual(t, metric.CpuUsedPct, float32(100))
 		require.NotEmpty(t, metric.MemUsed)
 		require.NotEmpty(t, metric.MemTotal)
 		require.NotEmpty(t, metric.DiskUsed)

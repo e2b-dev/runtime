@@ -1,6 +1,7 @@
 package featureflags
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,5 +36,21 @@ func TestEnvBoolOr(t *testing.T) {
 
 			require.Equal(t, tc.want, envBoolOr(key, tc.fallback))
 		})
+	}
+}
+
+func TestGuestResetFlagsFallbackOffWithoutTheirVariable(t *testing.T) {
+	t.Parallel()
+
+	for key, flag := range map[string]BoolFlag{
+		"GUEST_REBOOT_IN_PLACE":  GuestRebootInPlaceFlag,
+		"GUEST_POWEROFF_END":     GuestPowerOffEndFlag,
+		"SANDBOX_ENDED_ON_NODE":  SandboxEndedOnNodeFlag,
+		"GUEST_PROFILES_ENABLED": GuestProfilesFlag,
+	} {
+		if _, set := os.LookupEnv(key); set {
+			continue
+		}
+		require.False(t, flag.Fallback(), key)
 	}
 }

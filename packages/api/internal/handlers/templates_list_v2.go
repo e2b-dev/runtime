@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 const (
@@ -29,7 +30,7 @@ func (a *APIStore) GetV2Templates(c *gin.Context, params api.GetV2TemplatesParam
 		return
 	}
 
-	if params.TeamID != nil && team.ID.String() != *params.TeamID {
+	if params.TeamID != nil && !teamIDMatches(team.ID, *params.TeamID) {
 		a.sendAPIStoreError(c, http.StatusBadRequest, "Team ID param mismatch with the API key")
 		telemetry.ReportError(ctx, "team param mismatch with the API key", nil, telemetry.WithTeamID(team.ID.String()))
 
@@ -101,6 +102,7 @@ func (a *APIStore) GetV2Templates(c *gin.Context, params api.GetV2TemplatesParam
 			TemplateID:    item.TemplateID,
 			BuildID:       item.BuildID.String(),
 			CpuCount:      api.CPUCount(item.BuildVcpu),
+			MaxCpuCount:   sharedUtils.CastPtr(item.BuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
 			MemoryMB:      api.MemoryMB(item.BuildRamMb),
 			DiskSizeMB:    api.DiskSizeMB(diskMB),
 			Public:        item.Public,

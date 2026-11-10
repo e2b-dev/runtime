@@ -14,5 +14,8 @@ type TeamLimits struct {
 	DefaultFreeDiskSizeMb int64
 	MaxFreeDiskSizeMb     int64
 
-	APITeamRPSList int64
+	APITeamRPSList   int64
+	APITeamRPSDelete int64
+
+	MaxSecrets int64
 }

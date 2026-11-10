@@ -2,7 +2,8 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,8 +33,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
-	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -44,6 +45,8 @@ type pauseStubClient struct {
 	orchestrator.SandboxServiceClient
 
 	err error
+	// deleteErr is the answer to every Delete (nil = success).
+	deleteErr error
 	// gate, when set, holds the answer until closed.
 	gate <-chan struct{}
 	// onPause, when set, runs before the answer — a test's chance to change
@@ -58,6 +61,9 @@ func (c *pauseStubClient) Delete(context.Context, *orchestrator.SandboxDeleteReq
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.deletes++
+	if c.deleteErr != nil {
+		return nil, c.deleteErr
+	}
 
 	return &emptypb.Empty{}, nil
 }
@@ -109,6 +115,7 @@ func (r *recordingCollector) stoppedCount() int {
 
 type refusalFixture struct {
 	o        *Orchestrator
+	client   redis.UniversalClient
 	recorder *recordingCollector
 	sbx      sandbox.Sandbox
 	reader   *sdkmetric.ManualReader
@@ -150,6 +157,40 @@ func refusedPauseErr() error {
 	return status.Error(codes.ResourceExhausted, "node is busy persisting sandbox, please retry")
 }
 
+type transitionReadContextKey struct{}
+
+// transitionReadHook closes ready once a command whose context carries
+// transitionReadContextKey reads a transition marker that exists. From then
+// on the reader holds the transition's ID, and the wait it starts sees the
+// transition's result however soon the transition finishes.
+type transitionReadHook struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (h *transitionReadHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *transitionReadHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *transitionReadHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if err == nil && ctx.Value(transitionReadContextKey{}) == true && cmd.Name() == "get" && isTransitionMarker(fmt.Sprint(cmd.Args()[1])) {
+			h.once.Do(func() { close(h.ready) })
+		}
+
+		return err
+	}
+}
+
+// isTransitionMarker matches the transition marker key, which ends in
+// :transition; a result key carries the transition ID after it.
+func isTransitionMarker(key string) bool {
+	return strings.HasSuffix(key, ":transition")
+}
+
 func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error, hooks ...redis.Hook) refusalFixture {
 	t.Helper()
 
@@ -159,7 +200,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 		redisClient.AddHook(hook)
 	}
 
-	storage, err := sandboxredis.NewStorage(redisClient, noop.NewMeterProvider(), nil)
+	storage, err := sandboxredis.NewStorage(redisClient, noop.NewMeterProvider())
 	require.NoError(t, err)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
@@ -197,11 +238,9 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 			storage,
 			redisreservations.NewReservationStorage(redisClient, storage.Notifier()),
 			sandbox.Callbacks{
-				AddSandboxToRoutingTable: func(context.Context, sandbox.Sandbox) {},
 				AsyncNewlyCreatedSandbox: func(context.Context, sandbox.Sandbox, sandbox.CreationMetadata) {},
 			},
 		),
-		routingCatalog:     e2bcatalog.NewRedisSandboxCatalog(redisClient),
 		featureFlagsClient: ff,
 		posthogClient:      posthog,
 		analytics:          analyticscollector.NewAnalyticsWithClient(recorder),
@@ -228,7 +267,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 	}
 	require.NoError(t, o.sandboxStore.Add(t.Context(), sbx, nil))
 
-	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader}
+	return refusalFixture{o: o, client: redisClient, recorder: recorder, sbx: sbx, reader: reader}
 }
 
 func (f refusalFixture) removePause(t *testing.T) error {
@@ -239,7 +278,7 @@ func (f refusalFixture) removePause(t *testing.T) error {
 
 // A retryable refusal with the restore flag on leaves the sandbox in service
 // on a local-cluster node: record intact (Running, pre-pause expiry, not
-// expired), routing re-registered, and no stopped-analytics emission.
+// expired) and no stopped-analytics emission.
 func TestRemoveSandbox_RefusalRestoresLocalNode(t *testing.T) {
 	t.Parallel()
 
@@ -259,10 +298,6 @@ func TestRemoveSandbox_RefusalRestoresLocalNode(t *testing.T) {
 	for _, e := range expired {
 		assert.NotEqual(t, f.sbx.SandboxID, e.SandboxID, "a restored sandbox must not read as expired")
 	}
-
-	info, err := f.o.routingCatalog.GetSandbox(t.Context(), f.sbx.SandboxID)
-	require.NoError(t, err, "routing must be re-registered for a local-cluster node")
-	assert.Equal(t, f.sbx.ExecutionID, info.ExecutionID)
 
 	time.Sleep(300 * time.Millisecond)
 	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
@@ -303,26 +338,28 @@ func TestRemoveSandbox_RefusalRestoreCountsTheEvictionCaller(t *testing.T) {
 func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	t.Parallel()
 
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
+	ready := make(chan struct{})
+	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), &transitionReadHook{ready: ready})
+	ctx := t.Context()
+	waitCtx := context.WithValue(ctx, transitionReadContextKey{}, true)
 
-	started := make(chan struct{})
 	waiter := make(chan error, 1)
 	go func() {
 		for {
-			sbx, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+			sbx, err := f.o.sandboxStore.Get(ctx, f.sbx.TeamID, f.sbx.SandboxID)
 			if err == nil && sbx.State == sandbox.StatePausing {
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		close(started)
-		waiter <- f.o.sandboxStore.WaitForStateChange(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		waiter <- f.o.sandboxStore.WaitForStateChange(waitCtx, f.sbx.TeamID, f.sbx.SandboxID)
 	}()
 
-	// Hold the node's answer until the waiter is in place.
+	// Hold the node's answer until the waiter has read the transition marker:
+	// a wait that starts after the pause finished finds no transition to join.
 	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
 	require.True(t, ok)
-	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: started})
+	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: ready})
 
 	err := f.removePause(t)
 	require.ErrorIs(t, err, PauseQueueExhaustedError{})
@@ -340,39 +377,10 @@ func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	finish(t.Context(), nil)
 }
 
-// failingCatalog refuses every write: the route cannot come back.
-type failingCatalog struct {
-	e2bcatalog.SandboxesCatalog
-}
-
-func (failingCatalog) RestoreSandbox(context.Context, string, *e2bcatalog.SandboxInfo, time.Duration) error {
-	return errors.New("catalog unavailable")
-}
-
-// If the route cannot be re-registered, the restore fails closed: the record
-// is removed and the caller gets today's error, never a Running record with
-// no route behind it.
-func TestRemoveSandbox_RefusalRouteFailureFallsBackToRemoval(t *testing.T) {
-	t.Parallel()
-
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
-	f.o.routingCatalog = failingCatalog{SandboxesCatalog: f.o.routingCatalog}
-
-	err := f.removePause(t)
-	require.ErrorIs(t, err, ErrSandboxOperationFailed)
-	require.NotErrorIs(t, err, PauseQueueExhaustedError{})
-
-	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.ErrorIs(t, err, sandbox.ErrNotFound, "a sandbox whose route cannot be restored is removed as today")
-	require.Eventually(t, func() bool { return f.recorder.stoppedCount() == 1 },
-		3*time.Second, 10*time.Millisecond, "and its stopped event is emitted as today")
-	assert.Equal(t, map[string]int64{"route_restore_failed/request": 1}, f.restoreOutcomes(t))
-}
-
-// If the record cannot be restored after a refusal the API would have
-// asked the edge to restore, the sandbox is killed on the node right away:
-// the kill carries the catalog delete, so the route goes with the record
-// instead of outliving it until the orphan reconciler.
+// If the record cannot be restored after a refusal, the sandbox is killed on
+// the node right away: the node refused before it stopped the sandbox, so
+// its route is still live and would otherwise outlive the record until the
+// orphan reconciler.
 func TestRemoveSandbox_FailedRestoreKillsTheRefusedSandbox(t *testing.T) {
 	t.Parallel()
 
@@ -400,6 +408,23 @@ func TestRemoveSandbox_FailedRestoreKillsTheRefusedSandbox(t *testing.T) {
 	assert.Equal(t, map[string]int64{"restore_failed/request": 1}, f.restoreOutcomes(t))
 }
 
+// A request pause pinned to an execution a resume has since replaced leaves
+// the new execution's record alone and reports the change, so the caller can
+// check the new execution before pausing it.
+func TestRemoveSandbox_PinnedPauseOfReplacedExecution(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, nil)
+
+	err := f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause, ExpectExecutionID: uuid.NewString()})
+	require.ErrorIs(t, err, ErrExecutionChanged)
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, f.sbx.ExecutionID, stored.ExecutionID)
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+}
+
 // A refused pause whose record was removed and the ID reclaimed by a new
 // incarnation while the RPC was in flight must leave that incarnation alone:
 // its record is not rewritten with the stale one, not removed, and its VM is
@@ -418,7 +443,7 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 
 	stub := &pauseStubClient{err: refusedPauseErr()}
 	stub.onPause = func() {
-		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
 	}
 	node.SetSandboxClient(stub)
@@ -441,58 +466,18 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 	assert.Equal(t, map[string]int64{"superseded/request": 1}, f.restoreOutcomes(t))
 }
 
-// The edge answers Aborted when the node refused but the route could not be
-// put back: the sandbox cannot be kept, so the record goes, the VM is killed
-// now, and the outcome is counted as a failed route restore.
-func TestRemoveSandbox_RefusedRouteLostRemovesAndKills(t *testing.T) {
-	t.Parallel()
-
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
-	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
-	require.True(t, ok)
-	stub := &pauseStubClient{err: status.Error(codes.Aborted, "failed to restore sandbox in catalog after a refused request")}
-	node.SetSandboxClient(stub)
-
-	err := f.removePause(t)
-	require.ErrorIs(t, err, ErrSandboxOperationFailed)
-
-	assert.Equal(t, 1, stub.deleteCount(), "the node is asked to kill the sandbox now, not by the reconciler later")
-	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.ErrorIs(t, err, sandbox.ErrNotFound)
-	assert.Equal(t, map[string]int64{"route_restore_failed/request": 1}, f.restoreOutcomes(t))
-}
-
-// On a remote-cluster node the routing catalog is the edge's: the delete rode
-// as metadata on the RPC and the edge restores the entry itself on a refusal,
-// so the API must not write it — the cluster guard makes it a no-op. Driven at
-// the restore seam: the full pause chain persists a snapshot row whose cluster
-// foreign key the test vocabulary cannot satisfy.
-func TestRestoreRefusedPause_ClusterNodeSkipsCatalog(t *testing.T) {
-	t.Parallel()
-
-	f := newRefusalFixture(t, true, uuid.New(), refusedPauseErr())
-
-	transition, _, finish, err := f.o.sandboxStore.StartRemoving(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause})
-	require.NoError(t, err)
-
-	require.Equal(t, restoreOutcomeRestored, f.o.restoreRefusedPause(t.Context(), transition))
-	finish(t.Context(), PauseQueueExhaustedError{})
-
-	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
-	require.NoError(t, err)
-	assert.Equal(t, sandbox.StateRunning, stored.State)
-
-	_, err = f.o.routingCatalog.GetSandbox(t.Context(), f.sbx.SandboxID)
-	require.Error(t, err, "a cluster node's routing is the edge's to restore; the API's catalog must stay untouched")
-}
-
 // Flag off: a refusal still ends today's way — record removed, stopped
 // analytics emitted, today's generic error to the caller. No 503 may promise
-// a retry the record cannot honor.
+// a retry the record cannot honor. The refused VM is still live on the node,
+// so it is killed with the record.
 func TestRemoveSandbox_RefusalFlagOffRemovesToday(t *testing.T) {
 	t.Parallel()
 
 	f := newRefusalFixture(t, false, consts.LocalClusterID, refusedPauseErr())
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{err: refusedPauseErr()}
+	node.SetSandboxClient(stub)
 
 	err := f.removePause(t)
 	require.ErrorIs(t, err, ErrSandboxOperationFailed)
@@ -500,9 +485,120 @@ func TestRemoveSandbox_RefusalFlagOffRemovesToday(t *testing.T) {
 
 	_, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
 	require.ErrorIs(t, err, sandbox.ErrNotFound, "flag off keeps today's removal")
+	assert.Equal(t, 1, stub.deleteCount(), "the refused VM goes with its record, not with the reconciler later")
 
 	require.Eventually(t, func() bool { return f.recorder.stoppedCount() == 1 },
 		3*time.Second, 10*time.Millisecond, "flag off keeps today's stopped-analytics emission")
+}
+
+// checkpointInProgressPauseErr is the node refusing a pause while a
+// checkpoint of the sandbox is in flight: the busy-node code with the
+// CHECKPOINT_IN_PROGRESS detail.
+func checkpointInProgressPauseErr(t *testing.T) error {
+	t.Helper()
+
+	refusal, err := status.New(codes.ResourceExhausted, "sandbox is being checkpointed, please retry").WithDetails(
+		&orchestrator.UserError{Code: orchestrator.UserErrorCode_CHECKPOINT_IN_PROGRESS, HttpStatus: 503},
+	)
+	require.NoError(t, err)
+
+	return refusal.Err()
+}
+
+// A pause refused for a checkpoint in flight restores the record with the
+// restore flag off: the node has said the sandbox is alive and the refusal
+// ends with the checkpoint, so neither the record nor the VM goes.
+func TestRemoveSandbox_CheckpointInProgressRestoresWithFlagOff(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, checkpointInProgressPauseErr(t))
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{err: checkpointInProgressPauseErr(t)}
+	node.SetSandboxClient(stub)
+
+	err := f.removePause(t)
+	require.ErrorIs(t, err, PauseRefusedCheckpointInProgressError{})
+	require.ErrorIs(t, err, PauseQueueExhaustedError{})
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err, "the record must survive the refusal with the flag off")
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.Zero(t, stub.deleteCount(), "the sandbox stays on its node through the checkpoint")
+	assert.Equal(t, map[string]int64{"restored/request": 1}, f.restoreOutcomes(t))
+
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
+}
+
+// A node migrating the sandbox refuses its kill with the answer a pause gets.
+// The record goes back to Running instead of being removed under a running
+// VM, the node is not asked again, and the caller is told the sandbox is held.
+func TestRemoveSandbox_KillRefusedForAMigrationKeepsTheRecord(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{deleteErr: checkpointInProgressPauseErr(t)}
+	node.SetSandboxClient(stub)
+
+	err := f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonRequest})
+	require.ErrorIs(t, err, ErrSandboxLifecycleHeld)
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err, "the record of the running VM stays")
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.WithinDuration(t, f.sbx.EndTime, stored.EndTime, time.Second, "the restore reinstates the expiry the kill clamped")
+	assert.Equal(t, 1, stub.deleteCount(), "the refused sandbox is not killed again")
+	assert.Empty(t, f.restoreOutcomes(t), "a kill's restore is not counted as a pause's")
+
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "no stop is reported for a sandbox still running")
+}
+
+// envdUnresponsivePauseErr is the node refusing a memory pause because the
+// guest agent did not answer its probe: the busy-node code with the
+// ENVD_UNRESPONSIVE detail.
+func envdUnresponsivePauseErr(t *testing.T) error {
+	t.Helper()
+
+	refusal, err := status.New(codes.ResourceExhausted, "sandbox 'x' guest agent is not responding, please retry").WithDetails(
+		&orchestrator.UserError{Code: orchestrator.UserErrorCode_ENVD_UNRESPONSIVE, HttpStatus: 503},
+	)
+	require.NoError(t, err)
+
+	return refusal.Err()
+}
+
+// A pause refused for an unresponsive guest agent restores the record with
+// the restore flag off: the node left the VM running and untouched, so
+// neither the record nor the VM goes.
+func TestRemoveSandbox_EnvdUnresponsiveRestoresWithFlagOff(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, envdUnresponsivePauseErr(t))
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{err: envdUnresponsivePauseErr(t)}
+	node.SetSandboxClient(stub)
+
+	err := f.removePause(t)
+	require.ErrorIs(t, err, PauseRefusedEnvdUnresponsiveError{})
+	require.ErrorIs(t, err, PauseQueueExhaustedError{})
+	require.NotErrorIs(t, err, PauseRefusedCheckpointInProgressError{})
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err, "the record must survive the refusal with the flag off")
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.Zero(t, stub.deleteCount(), "the sandbox stays on its node, running")
+	assert.True(t, stored.RefusedSince.IsZero(), "a guest-agent refusal holds the sweep without opening an overstay episode")
+	assert.WithinDuration(t, time.Now(), stored.EnvdRefusedSince, time.Second, "it opens the guest agent's own episode, which the evictor's grace is measured against")
+	assert.WithinDuration(t, time.Now().Add(refusalRetryAfter), stored.RefusedUntil, time.Second, "the sweep is still held for the retry window")
+	assert.Equal(t, map[string]int64{"restored/request": 1}, f.restoreOutcomes(t))
+
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
 }
 
 // A successful pause removes and emits exactly as before, flag on or not.
@@ -544,4 +640,70 @@ func TestPausingTransitionsPinRestoreEdge(t *testing.T) {
 	assert.Equal(t,
 		map[sandbox.State]bool{sandbox.StateKilling: true, sandbox.StateRunning: true},
 		sandbox.AllowedTransitions[sandbox.StatePausing])
+}
+
+// Only an acknowledged delete frees the sandbox's CPU and memory in the API's
+// view of the node. On NotFound the node's last report may already leave the
+// sandbox out, so debiting it again would undercount the node until the next
+// sync and let the scheduler overfill it.
+func TestKillSandboxOnNode_ResourceAccounting(t *testing.T) {
+	t.Parallel()
+
+	const mib = uint64(1024 * 1024)
+
+	sbx := sandbox.NodeSandbox{SandboxID: "sandbox-to-delete", VCpu: 2, RamMB: 512}
+	cases := []struct {
+		name       string
+		deleteErr  error
+		wantErr    bool
+		wantCPU    uint32
+		wantMemory uint64
+	}{
+		{
+			name:       "acknowledged delete frees the sandbox",
+			wantCPU:    2,
+			wantMemory: 512 * mib,
+		},
+		{
+			name:       "not found leaves allocations unchanged",
+			deleteErr:  status.Error(codes.NotFound, "sandbox not found"),
+			wantCPU:    4,
+			wantMemory: 1024 * mib,
+		},
+		{
+			name:       "other delete error leaves allocations unchanged",
+			deleteErr:  status.Error(codes.Unavailable, "node unavailable"),
+			wantErr:    true,
+			wantCPU:    4,
+			wantMemory: 1024 * mib,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
+			stub := &pauseStubClient{deleteErr: tt.deleteErr}
+			node.SetSandboxClient(stub)
+			node.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{
+				MetricCpuAllocated:         4,
+				MetricCpuCount:             8,
+				MetricMemoryAllocatedBytes: 1024 * mib,
+				MetricMemoryTotalBytes:     2048 * mib,
+			})
+
+			err := (&Orchestrator{}).killSandboxOnNode(t.Context(), node, sbx, sandbox.KillReasonUnknown)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, 1, stub.deleteCount())
+			metrics := node.Metrics()
+			assert.Equal(t, tt.wantCPU, metrics.CpuAllocated)
+			assert.Equal(t, tt.wantMemory, metrics.MemoryAllocatedBytes)
+		})
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal"
@@ -150,6 +151,17 @@ func (a *APIStore) executeOnOrchestratorByClusterID(
 		nodes = append(nodes, otherNodes...)
 	}
 
+	return executeOnNodes(ctx, nodes, fn)
+}
+
+// executeOnNodes calls fn on each node in order until one succeeds. A node
+// that fails with a retryable or unknown-volume-type error moves on to the
+// next node; any other error, or the request context ending, stops the loop.
+func executeOnNodes(
+	ctx context.Context,
+	nodes []*nodemanager.Node,
+	fn func(context.Context, *clusters.GRPCClient) error,
+) error {
 	var (
 		receivedUnknownVolumeTypeErrors int
 		unknownVolumeType               string
@@ -254,5 +266,6 @@ func isRetryableError(err error) bool {
 		return true
 	}
 
-	return false
+	// The node is down or unreachable, so another node may still serve the call.
+	return status.Code(err) == codes.Unavailable
 }

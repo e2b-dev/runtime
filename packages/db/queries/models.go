@@ -27,13 +27,15 @@ type ActiveEnv struct {
 }
 
 type Cluster struct {
-	ID                 uuid.UUID
-	Endpoint           string
-	EndpointTls        bool
-	Token              string
-	SandboxProxyDomain *string
-	AuthOrgID          *string
-	Name               string
+	ID                  uuid.UUID
+	Endpoint            string
+	EndpointTls         bool
+	Token               string
+	SandboxProxyDomain  *string
+	AuthOrgID           *string
+	Name                string
+	DeletionProtection  bool
+	DeletionRequestedAt *time.Time
 }
 
 type EnvAlias struct {
@@ -71,6 +73,14 @@ type EnvBuild struct {
 	CpuFlags           []string
 	StatusGroup        types.BuildStatusGroup
 	TeamID             *uuid.UUID
+	FilesystemOnly     bool
+	EnvdUnresponsive   *bool
+	MaxVcpu            *int64
+}
+
+type EnvDefault struct {
+	EnvID       string
+	Description *string
 }
 
 type Snapshot struct {
@@ -87,16 +97,7 @@ type Snapshot struct {
 	AutoPause           bool
 	TeamID              uuid.UUID
 	Config              *types.PausedSandboxConfig
-}
-
-type UsersTeam struct {
-	ID        int64
-	UserID    uuid.UUID
-	TeamID    uuid.UUID
-	IsDefault bool
-	AddedBy   *uuid.UUID
-	CreatedAt pgtype.Timestamp
-	UuidID    uuid.UUID
+	EnvDeletedAt        *time.Time
 }
 
 type Volume struct {

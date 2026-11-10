@@ -135,6 +135,12 @@ func baseLayerKey(indexVersion, provisionVersion, baseSource string, buildContex
 		keys = append(keys, "cmdline:"+fc.KernelArgs(buildContext.Config.CmdlineArgs).String())
 	}
 
+	// Contributes only when set, so builds without a template keep their cached layers.
+	// Keyed on the parsed settings, so two spellings of the flag share a key.
+	if buildContext.Config.CPUTemplate != nil && !buildContext.Config.CPUTemplate.IsEmpty() {
+		keys = append(keys, "cpu-template:"+buildContext.Config.CPUTemplate.String())
+	}
+
 	// The rendered files differ between on and off while the template file set,
 	// and so FilesHash, does not, so the values themselves are the contribution.
 	// Made only when this build renders the files with the option on: a

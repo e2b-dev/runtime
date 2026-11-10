@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -28,7 +29,8 @@ import (
 )
 
 var (
-	buildMeter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build")
+	buildMeter            = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build")
+	residencyLookupOption = ttlcache.WithDisableTouchOnHit[DiffStoreKey, Diff]()
 
 	// frameTableRefreshTimer measures ancestor-header refresh events as the
 	// standard (duration, bytes, count) triple. A refresh is triggered when a
@@ -189,7 +191,11 @@ func (b *File) readAt(ctx context.Context, p []byte, off int64) (int, error) {
 	maxParallel := b.store.flags.IntFlag(ctx, featureflags.MaxParallelBuildReadSegments)
 
 	for {
-		segments, n, distinctBuilds, err := b.planRead(ctx, p, off)
+		// Keep one attempt on one header identity. A provisional header can be
+		// replaced by the durable header after planning but before its source is
+		// read; that released provisional source reports BytesNotAvailableError.
+		h := b.Header()
+		segments, n, distinctBuilds, err := b.planRead(ctx, h, p, off)
 		if err == nil {
 			err = b.readSegments(ctx, p, segments, maxParallel)
 		}
@@ -211,6 +217,14 @@ func (b *File) readAt(ctx context.Context, p []byte, off int64) (int, error) {
 		// the whole read; reads are idempotent, so re-filling already-written
 		// regions is safe and getBuild re-resolves the closed Diff.
 		if _, ok := errors.AsType[*block.CacheClosedError](err); ok {
+			continue
+		}
+		// BytesNotAvailableError is normally a real unavailable source and must
+		// remain visible. It is retryable only when the header changed after this
+		// attempt was planned: the replacement header selects the durable source
+		// that superseded the released provisional one.
+		var unavailable block.BytesNotAvailableError
+		if errors.As(err, &unavailable) && b.Header() != h {
 			continue
 		}
 
@@ -287,7 +301,7 @@ func (b *File) readSegment(ctx context.Context, p []byte, s readSegment) error {
 // distinctBuilds counts the distinct builds the segments reference; it
 // saturates at buildCacheSize when a single read crosses more builds than the
 // per-read cache holds (already deep in the "very fragmented" regime).
-func (b *File) planRead(ctx context.Context, p []byte, off int64) (segments []readSegment, n int, distinctBuilds int, err error) {
+func (b *File) planRead(ctx context.Context, h *header.Header, p []byte, off int64) (segments []readSegment, n int, distinctBuilds int, err error) {
 	// Per-read Diff cache: avoids the DiffStore TTL cache mutex on every mapping.
 	const buildCacheSize = 16
 	var (
@@ -298,7 +312,6 @@ func (b *File) planRead(ctx context.Context, p []byte, off int64) (segments []re
 	)
 
 	for n < len(p) {
-		h := b.Header()
 		mappedToBuild, err := h.GetShiftedMapping(ctx, off+int64(n))
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("failed to get mapping: %w", err)
@@ -313,6 +326,7 @@ func (b *File) planRead(ctx context.Context, p []byte, off int64) (segments []re
 		if mappedToBuild.BuildId == uuid.Nil {
 			clear(p[n : n+int(readLength)])
 			n += int(readLength)
+			storage.ReportSource(ctx, storage.SourceZero)
 
 			continue
 		}
@@ -361,6 +375,8 @@ func (b *File) Slice(ctx context.Context, off, length int64) ([]byte, error) {
 		m, err := h.GetShiftedMapping(ctx, off)
 		if err == nil && int64(m.Length) >= length {
 			if m.BuildId == uuid.Nil && length <= int64(len(header.EmptyHugePage)) {
+				storage.ReportSource(ctx, storage.SourceZero)
+
 				return header.EmptyHugePage[:length], nil
 			}
 			if m.BuildId != uuid.Nil {
@@ -421,6 +437,43 @@ func (b *File) IsCached(ctx context.Context, off, length int64) bool {
 	}
 
 	return true
+}
+
+// PageResident reports whether one aligned 4 KiB page needs no remote fetch,
+// using metadata only. Separate from IsCached, whose answer controls dedup.
+func (b *File) PageResident(ctx context.Context, off int64) (resident, known bool) {
+	h := b.Header()
+	if h == nil {
+		return false, false
+	}
+	m, err := h.GetShiftedMapping(ctx, off)
+	if err != nil || m.Length < header.PageSize {
+		return false, false
+	}
+	if m.BuildId == uuid.Nil {
+		return true, true
+	}
+
+	// Diagnostics must not extend the lifetime of cached diff data.
+	item := b.store.cache.Get(GetDiffStoreKey(m.BuildId.String(), b.fileType), residencyLookupOption)
+	if item == nil {
+		return false, true
+	}
+	diff := item.Value()
+	if d, ok := diff.(*deferredDiff); ok {
+		diff, err = d.inner.Result()
+		if err != nil {
+			return false, false
+		}
+	}
+	switch d := diff.(type) {
+	case *localDiff:
+		return true, true
+	case block.CachePeeker:
+		return d.IsCached(ctx, int64(m.Offset), header.PageSize), true
+	default:
+		return false, false
+	}
 }
 
 // waitTransitionBackoff honors the peer's RetryAfter hint before the caller

@@ -116,14 +116,8 @@ type Metrics struct {
 	// MemTotal Total virtual memory in bytes
 	MemTotal *int `json:"mem_total,omitempty"`
 
-	// MemTotalMib Total virtual memory in MiB
-	MemTotalMib *int `json:"mem_total_mib,omitempty"`
-
 	// MemUsed Used virtual memory in bytes
 	MemUsed *int `json:"mem_used,omitempty"`
-
-	// MemUsedMib Used virtual memory in MiB
-	MemUsedMib *int `json:"mem_used_mib,omitempty"`
 
 	// Ts Unix timestamp in UTC for current sandbox time
 	Ts *int64 `json:"ts,omitempty"`

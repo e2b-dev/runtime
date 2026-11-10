@@ -13,7 +13,8 @@ import (
 type MaskTemplate struct {
 	template Template
 
-	memfile *block.ReadonlyDevice
+	memfile  *block.ReadonlyDevice
+	metadata *metadata.Template
 }
 
 type MaskTemplateOption func(*MaskTemplate)
@@ -21,6 +22,13 @@ type MaskTemplateOption func(*MaskTemplate)
 func WithMemfile(memfile block.ReadonlyDevice) MaskTemplateOption {
 	return func(c *MaskTemplate) {
 		c.memfile = &memfile
+	}
+}
+
+// WithMetadata replaces the template's metadata, e.g. to record what a reboot applied.
+func WithMetadata(meta metadata.Template) MaskTemplateOption {
+	return func(c *MaskTemplate) {
+		c.metadata = &meta
 	}
 }
 
@@ -72,6 +80,10 @@ func (c *MaskTemplate) Snapfile() (File, error) {
 }
 
 func (c *MaskTemplate) Metadata() (metadata.Template, error) {
+	if c.metadata != nil {
+		return *c.metadata, nil
+	}
+
 	return c.template.Metadata()
 }
 

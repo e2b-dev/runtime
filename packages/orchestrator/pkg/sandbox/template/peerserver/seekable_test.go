@@ -3,6 +3,7 @@
 package peerserver
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,7 +39,9 @@ func TestSeekableSource_Stream(t *testing.T) {
 	data := []byte("diff bytes")
 
 	diff := buildmocks.NewMockDiff(t)
-	diff.EXPECT().Slice(mock.Anything, int64(0), int64(len(data)), (*storage.FrameTable)(nil)).Return(data, nil)
+	diff.EXPECT().ReadAt(mock.Anything, mock.Anything, int64(0), (*storage.FrameTable)(nil)).
+		Run(func(_ context.Context, p []byte, _ int64, _ *storage.FrameTable) { copy(p, data) }).
+		Return(len(data), nil)
 	diff.EXPECT().BlockSize().Return(int64(len(data)))
 
 	cache := peerservermocks.NewMockCache(t)

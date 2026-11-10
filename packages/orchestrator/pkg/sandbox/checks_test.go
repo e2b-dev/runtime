@@ -3,14 +3,17 @@
 package sandbox
 
 import (
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestChecks_StopBeforeStart_DoesNotStartHealthLoop is a regression test for
 // the Checks start/stop race.
 //
-// Checks.Start is launched in its own goroutine (go sbx.Checks.Start(execCtx)),
+// Checks.Start is launched in its own goroutine (go sbx.Checks().Start(execCtx)),
 // so the sandbox teardown path can run Checks.Stop before that goroutine is
 // scheduled. execCtx is derived via context.WithoutCancel and never
 // auto-cancels, so the logHealth ticker loop is only ever ended by Stop
@@ -45,5 +48,45 @@ func TestChecks_StopBeforeStart_DoesNotStartHealthLoop(t *testing.T) {
 	c.mu.Unlock()
 	if cancelCtx != nil {
 		t.Fatal("Checks.Start installed a health-loop context despite a prior Stop")
+	}
+}
+
+// A second Start, as a repeated promotion makes, starts no loops of its own:
+// one Stop ends what the first started.
+func TestChecks_SecondStartIsANoOp(t *testing.T) {
+	t.Parallel()
+
+	sbx := newHealthProbeSandbox(t)
+	envdAt(t, sbx, http.StatusNoContent)
+	c := sbx.Checks()
+
+	first := make(chan struct{})
+	go func() {
+		c.Start(t.Context())
+		close(first)
+	}()
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		return c.cancelCtx != nil
+	}, 2*time.Second, time.Millisecond, "the first Start did not begin its loops")
+
+	second := make(chan struct{})
+	go func() {
+		c.Start(t.Context())
+		close(second)
+	}()
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second Start entered the health loop")
+	}
+
+	c.Stop()
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not end the loops the first Start began")
 	}
 }

@@ -330,3 +330,42 @@ func TestMarkFsQuiesced_SurvivesRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, g3.IsFsQuiesced(), "a snapshot without fs_quiesced is not eligible (safe default)")
 }
+
+// The envd_unresponsive mark survives a metadata round-trip on a current
+// snapshot, is cleared by a later pause whose agent answered, and is absent
+// (false) on every snapshot from before the field. It never lifts the version:
+// a V1 memory lineage keeps its rootfs path and loses the mark on disk, which
+// the API's own copy of the mark covers.
+func TestMarkEnvdUnresponsive_RoundTripsWithoutLiftingTheVersion(t *testing.T) {
+	t.Parallel()
+
+	marked := Template{Version: CurrentVersion}.MarkEnvdUnresponsive(true)
+	assert.True(t, marked.IsEnvdUnresponsive())
+	assert.Equal(t, uint64(CurrentVersion), marked.Version)
+	r, err := serialize(marked)
+	require.NoError(t, err)
+	got, err := deserialize(r)
+	require.NoError(t, err)
+	assert.True(t, got.IsEnvdUnresponsive(), "the mark must survive a round-trip")
+	assert.False(t, got.IsFilesystemOnly(), "the mark rides on a memory snapshot")
+
+	cleared := marked.MarkEnvdUnresponsive(false)
+	assert.False(t, cleared.IsEnvdUnresponsive(), "a pause whose agent answered clears the mark")
+
+	legacy, err := deserialize(strings.NewReader(`{"version": 2, "template": {"build_id": "b"}}`))
+	require.NoError(t, err)
+	assert.False(t, legacy.IsEnvdUnresponsive(), "a snapshot without the field is not marked")
+
+	v1 := V1TemplateVersion().MarkEnvdUnresponsive(true)
+	assert.Equal(t, uint64(DeprecatedVersion), v1.Version, "the mark must not lift a V1 lineage's version")
+	r1, err := serialize(v1)
+	require.NoError(t, err)
+	g1, err := deserialize(r1)
+	require.NoError(t, err)
+	assert.False(t, g1.IsEnvdUnresponsive(), "a V1 lineage strips the mark, by design")
+
+	// The prefetch rewrite of the same snapshot's metadata keeps the mark; a
+	// new lineage derived from it does not inherit it.
+	assert.True(t, marked.WithPrefetch(nil).IsEnvdUnresponsive())
+	assert.False(t, marked.SameVersionTemplate(TemplateMetadata{BuildID: "next"}).IsEnvdUnresponsive())
+}

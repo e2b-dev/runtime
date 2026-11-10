@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
@@ -19,6 +18,12 @@ import (
 type Analytics struct {
 	client     AnalyticsCollectorClient
 	connection *grpc.ClientConn
+}
+
+// NewAnalyticsWithClient wraps an existing collector client — tests inject a
+// recording client through it.
+func NewAnalyticsWithClient(client AnalyticsCollectorClient) *Analytics {
+	return &Analytics{client: client}
 }
 
 // NewAnalytics creates a client for the analytics collector.
@@ -30,14 +35,9 @@ type Analytics struct {
 //
 // useTLS must be false for collectors that speak plaintext gRPC, such as the
 // one running in local development; the per-RPC API key is then sent over an
-// unencrypted connection, so only do that on loopback.
-// NewAnalyticsWithClient wraps an existing collector client — tests inject a
-// recording client through it.
-func NewAnalyticsWithClient(client AnalyticsCollectorClient) *Analytics {
-	return &Analytics{client: client}
-}
-
-func NewAnalytics(host, grpcAPIKey string, useTLS bool) (*Analytics, error) {
+// unencrypted connection, so only do that on loopback. plaintext is the
+// in-cluster hop's credentials, used when useTLS is false.
+func NewAnalytics(host, grpcAPIKey string, useTLS bool, plaintext credentials.TransportCredentials) (*Analytics, error) {
 	var client AnalyticsCollectorClient
 	var connection *grpc.ClientConn
 
@@ -63,7 +63,8 @@ func NewAnalytics(host, grpcAPIKey string, useTLS bool) (*Analytics, error) {
 				MinVersion: tls.VersionTLS13,
 			})
 		} else {
-			cred = insecure.NewCredentials()
+			// The in-cluster hop: plaintext while its mutual TLS mode is off.
+			cred = plaintext
 		}
 
 		conn, err := grpc.NewClient(

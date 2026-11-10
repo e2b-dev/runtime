@@ -4,6 +4,7 @@ package sandboxtools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -19,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -37,6 +39,11 @@ func CopyFile(
 	ctx, span := tracer.Start(ctx, "copy-file")
 	defer span.End()
 
+	return uploadFile(ctx, fmt.Sprintf("http://localhost%s", proxy.GetAddr()), sandboxID, user, sourcePath, targetPath)
+}
+
+// uploadFile posts sourcePath to the envd behind proxyHost.
+func uploadFile(ctx context.Context, proxyHost, sandboxID, user, sourcePath, targetPath string) error {
 	file, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -45,6 +52,8 @@ func CopyFile(
 
 	// Pipe to stream data
 	pr, pw := io.Pipe()
+	// Unblocks the writer goroutine when a return comes before Do takes pr.
+	defer pr.Close()
 	writer := multipart.NewWriter(pw)
 
 	errChan := make(chan error, 1)
@@ -75,7 +84,6 @@ func CopyFile(
 	}()
 
 	// Prepare query parameters
-	proxyHost := fmt.Sprintf("http://localhost%s", proxy.GetAddr())
 	params := url.Values{}
 	params.Add("path", targetPath)
 	params.Add("username", user)
@@ -89,7 +97,7 @@ func CopyFile(
 	uploadURL := fmt.Sprintf("%s/files?%s", proxyHost, params.Encode())
 
 	// Create HTTP request with streaming body
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, pr)
+	req, err := http.NewRequestWithContext(sandbox.WithEnvdSandbox(ctx, sbxlogger.SandboxMetadata{SandboxID: sandboxID}), http.MethodPost, uploadURL, pr)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -100,29 +108,25 @@ func CopyFile(
 	}
 	req.Host = req.Header.Get("Host")
 
-	client := http.Client{
-		Timeout:   fileCopyTimeout,
-		Transport: sandbox.SandboxHttpTransport,
-	}
-
 	// Send request
-	resp, err := client.Do(req)
+	resp, err := sandbox.NewEnvdHTTPClient(fileCopyTimeout).Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if uploadErr := <-errChan; uploadErr != nil {
-		io.Copy(io.Discard, resp.Body)
-
 		return fmt.Errorf("file upload failed: %w", uploadErr)
 	}
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := sandbox.ReadEnvdBody(resp.Body)
 	telemetry.ReportEvent(ctx, "file_upload",
 		attribute.Int("response.code", resp.StatusCode),
 		attribute.String("response.body", string(body)),
 	)
+	if errors.Is(err, sandbox.ErrEnvdBodyTooLarge) {
+		return fmt.Errorf("read upload response (%d): %w", resp.StatusCode, err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to upload file (%d): %s", resp.StatusCode, string(body))

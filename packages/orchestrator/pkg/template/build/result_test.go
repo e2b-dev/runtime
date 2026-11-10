@@ -6,8 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 
+	containerregistry "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,9 +18,14 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/builderrors"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/rootfs"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases"
+	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 func TestClassifyBuildResult(t *testing.T) {
@@ -58,6 +66,16 @@ func TestClassifyBuildResult(t *testing.T) {
 			assert.Equal(t, tt.want, ClassifyBuildResult(tt.r, tt.err))
 		})
 	}
+}
+
+func TestBuiltVcpuSizing(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "none", builtVcpuSizing(nil, errors.New("boom"), 2))
+	assert.Equal(t, "none", builtVcpuSizing(&Result{VcpuCount: 8}, errors.New("upload failed"), 2))
+	assert.Equal(t, "not_resizable", builtVcpuSizing(&Result{VcpuCount: 2}, nil, 2))
+	assert.Equal(t, "not_resizable", builtVcpuSizing(&Result{VcpuCount: 0}, nil, 2))
+	assert.Equal(t, "resizable", builtVcpuSizing(&Result{VcpuCount: 8}, nil, 2))
 }
 
 // TestBuildResultAttribute_MatchesMetricLabel pins the contract that the span
@@ -116,4 +134,32 @@ func findAttr(attrs []attribute.KeyValue, key attribute.Key) (attribute.Value, b
 	}
 
 	return attribute.Value{}, false
+}
+
+type deniedImageRepository struct{ err error }
+
+func (r deniedImageRepository) GetImage(context.Context, string, containerregistry.Platform) (containerregistry.Image, error) {
+	return nil, r.err
+}
+func (deniedImageRepository) Close() error { return nil }
+
+func TestImagePullFailureClassification(t *testing.T) {
+	t.Parallel()
+	denied := &transport.Error{StatusCode: http.StatusForbidden, Errors: []transport.Diagnostic{{Code: transport.DeniedErrorCode}}}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want metrics.BuildResultType
+	}{
+		{"platform proxy access", fmt.Errorf("%w: %w", dockerhub.ErrRepositoryAccessDenied, denied), metrics.BuildResultInternalError},
+		{"direct image access", denied, metrics.BuildResultUserError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			builder := rootfs.New(deniedImageRepository{err: tc.err}, buildcontext.BuildContext{Config: config.TemplateConfig{FromImage: "ubuntu:24.04"}}, nil)
+			_, err := builder.CreateExt4Filesystem(t.Context(), logger.NewNopLogger(), phases.PhaseMeta{}, "", "", "", "")
+			require.Error(t, err)
+			assert.Equal(t, tc.want, ClassifyBuildResult(nil, err))
+		})
+	}
 }

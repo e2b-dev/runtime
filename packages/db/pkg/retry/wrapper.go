@@ -45,6 +45,36 @@ func Wrap(db types.DBTX, config Config) types.DBTX {
 	}
 }
 
+// RetryOnRecoveryConflict replays complete autocommit reads. fn must consume and
+// close its rows before returning; recovery conflicts can surface from Rows.Err().
+func RetryOnRecoveryConflict[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
+	const maxRetries = 3
+	var zero T
+
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return zero, err
+		}
+
+		result, err := fn(ctx)
+		if err == nil {
+			return result, nil
+		}
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+		if !isRecoveryConflict(err) {
+			return zero, err
+		}
+		if attempt >= maxRetries {
+			return zero, fmt.Errorf("recovery conflict persisted after %d attempts: %w", attempt+1, err)
+		}
+
+		logger.L().Warn(ctx, "retrying query after recovery conflict",
+			zap.Int("attempt", attempt+1), zap.Error(err))
+	}
+}
+
 // Exec executes a query with retry logic.
 func (r *RetryableDBTX) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	var result pgconn.CommandTag

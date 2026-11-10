@@ -82,6 +82,9 @@ type DevicePool struct {
 	// We use the bitset to speedup the free device lookup.
 	usedSlots *bitset.BitSet
 	mu        sync.Mutex
+	// populateDone is non-nil only while the sole Populate owner is active.
+	// Close publishes done under mu, then joins this owner before snapshotting.
+	populateDone chan struct{}
 
 	slots chan DeviceSlot
 
@@ -115,6 +118,25 @@ func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
 }
 
 var ErrNBDModuleNotLoaded = errors.New("NBD module not loaded")
+
+// MaxDevices is the number of devices the module exposes, read once at construction.
+func (d *DevicePool) MaxDevices() uint {
+	return d.usedSlots.Len()
+}
+
+// Disown gives up a slot whose device turned out to be held by another owner
+// when it was handed out. The slot is cleared without the device check a
+// release makes, because the device is not this pool's to see freed; the
+// feeder checks the device against sysfs before it offers the slot again.
+// It counts as a release: the slot was counted as acquired when it was
+// handed out, and the dashboard reads acquired minus released as leaked.
+func (d *DevicePool) Disown(ctx context.Context, idx DeviceSlot) {
+	d.mu.Lock()
+	d.usedSlots.Clear(uint(idx))
+	d.mu.Unlock()
+
+	released.Add(ctx, 1)
+}
 
 func getMaxDevices() (uint, error) {
 	data, err := os.ReadFile("/sys/module/nbd/parameters/nbds_max")
@@ -169,6 +191,11 @@ func isDeviceConnectedIn(blockDir string, slot DeviceSlot) (bool, error) {
 }
 
 func (d *DevicePool) Populate(ctx context.Context) {
+	finish, ok := d.beginPopulate()
+	if !ok {
+		return
+	}
+	defer finish()
 	defer close(d.slots)
 
 	failedCount := 0
@@ -211,6 +238,22 @@ func (d *DevicePool) Populate(ctx context.Context) {
 	}
 }
 
+func (d *DevicePool) beginPopulate() (finish func(), ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return nil, false
+	default:
+	}
+	if d.populateDone != nil {
+		return nil, false
+	}
+	d.populateDone = make(chan struct{})
+
+	return func() { close(d.populateDone) }, true
+}
+
 // The following files and resources are useful for checking if the device is free:
 // /sys/devices/virtual/block/nbdX/pid
 // /sys/block/nbdX/pid
@@ -249,6 +292,11 @@ func (d *DevicePool) isDeviceFree(slot DeviceSlot) (bool, error) {
 func (d *DevicePool) getMaybeEmptySlot(start DeviceSlot) (DeviceSlot, func(), bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return 0, func() {}, false
+	default:
+	}
 
 	slot, ok := d.usedSlots.NextClear(uint(start))
 
@@ -314,11 +362,22 @@ func (d *DevicePool) GetDevice(ctx context.Context) (DeviceSlot, error) {
 			return 0, noSlotErr(ctx)
 		}
 
-		acquired.Add(ctx, 1)
-		slotCounter.Add(ctx, -1)
-
-		return slot, nil
+		return d.claimReceivedSlot(ctx, slot)
 	}
+}
+
+func (d *DevicePool) claimReceivedSlot(ctx context.Context, slot DeviceSlot) (DeviceSlot, error) {
+	slotCounter.Add(ctx, -1)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	select {
+	case <-d.done:
+		return 0, noSlotErr(ctx)
+	default:
+	}
+	acquired.Add(ctx, 1)
+
+	return slot, nil
 }
 
 // noSlotErr classifies a wakeup that carried no slot: a caller whose own
@@ -353,7 +412,7 @@ func (d *DevicePool) release(ctx context.Context, idx DeviceSlot) error {
 
 // ReleaseDevice will return an error if the device is not free and not release the slot — you can retry.
 func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...ReleaseOption) error {
-	opt := releaseOptions{}
+	opt := releaseOptions{logger: logger.L()}
 	for _, o := range opts {
 		o(&opt)
 	}
@@ -384,7 +443,11 @@ func (d *DevicePool) ReleaseDevice(ctx context.Context, idx DeviceSlot, opts ...
 		}
 
 		if attempt%100 == 0 {
-			logger.L().Error(ctx, "error releasing device", zap.Int("attempt", attempt), zap.Error(err))
+			opt.logger.Error(ctx, "error releasing device",
+				zap.Uint32("device_index", idx),
+				zap.Int("attempt", attempt),
+				zap.Error(err),
+			)
 		}
 
 		// Wait on the context too: Close bounds a stuck device with WithTimeout,
@@ -403,13 +466,18 @@ func GetDevicePath(slot DeviceSlot) DevicePath {
 }
 
 func (d *DevicePool) Close(ctx context.Context) error {
-	logger.L().Info(ctx, "Closing device pool", zap.Uint("used_slots", d.usedSlots.Count()))
-
+	d.mu.Lock()
 	d.doneOnce.Do(func() {
 		close(d.done)
 	})
+	populateDone := d.populateDone
+	d.mu.Unlock()
+	if populateDone != nil {
+		<-populateDone
+	}
 
 	d.mu.Lock()
+	usedCount := d.usedSlots.Count()
 
 	var slotsToRelease []DeviceSlot
 	for slotIdx, e := d.usedSlots.NextSet(0); e; slotIdx, e = d.usedSlots.NextSet(slotIdx + 1) {
@@ -417,6 +485,7 @@ func (d *DevicePool) Close(ctx context.Context) error {
 	}
 
 	d.mu.Unlock()
+	logger.L().Info(ctx, "Closing device pool", zap.Uint("used_slots", usedCount))
 
 	// Release concurrently so every device runs against its own fresh
 	// deadline. Done serially, one stuck device burns the whole budget and
@@ -449,6 +518,7 @@ func (d *DevicePool) Close(ctx context.Context) error {
 type releaseOptions struct {
 	timeout       time.Duration
 	infiniteRetry bool
+	logger        logger.Logger
 }
 
 type ReleaseOption func(*releaseOptions)
@@ -462,5 +532,17 @@ func WithTimeout(timeout time.Duration) ReleaseOption {
 func WithInfiniteRetry() ReleaseOption {
 	return func(opts *releaseOptions) {
 		opts.infiniteRetry = true
+	}
+}
+
+// WithLogger attributes the retry log to whoever owns the release; the pool's
+// own releases are host-scoped and carry no identity.
+func WithLogger(lg logger.Logger) ReleaseOption {
+	return func(opts *releaseOptions) {
+		if lg == nil {
+			return
+		}
+
+		opts.logger = lg
 	}
 }

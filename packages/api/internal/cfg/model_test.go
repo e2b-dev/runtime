@@ -94,6 +94,22 @@ func TestParse(t *testing.T) {
 		assert.Equal(t, "https://dns-endpoint.example", result.K8sAPIEndpoint)
 	})
 
+	t.Run("best of K hugepage memory defaults to true", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel
+		removeEnv(t, "BEST_OF_K_HUGEPAGE_MEMORY")
+
+		result, err := Parse()
+		require.NoError(t, err)
+		assert.True(t, result.BestOfKHugepageMemory)
+	})
+
+	t.Run("best of K hugepage memory can be disabled", func(t *testing.T) {
+		t.Setenv("BEST_OF_K_HUGEPAGE_MEMORY", "false")
+
+		result, err := Parse()
+		require.NoError(t, err)
+		assert.False(t, result.BestOfKHugepageMemory)
+	})
+
 	t.Run("invalid service discovery provider exposes failure condition", func(t *testing.T) {
 		t.Setenv("SERVICE_DISCOVERY_PROVIDER", "invalid")
 
@@ -103,6 +119,36 @@ func TestParse(t *testing.T) {
 		condition, ok := ParseFailureCondition(err)
 		require.True(t, ok)
 		assert.Equal(t, FailureConditionInvalidServiceDiscoveryProvider, condition)
+	})
+
+	t.Run("mutual TLS settings are read under the chart's names", func(t *testing.T) {
+		t.Setenv("E2B_TLS_HTTP_ALLOW", "spiffe://td.example.internal/ns/edge/sa/proxy")
+		t.Setenv("E2B_TLS_HTTP_HEALTH_PATHS", "/health")
+		t.Setenv("E2B_TLS_INTERNAL_GRPC_MODE", "permissive")
+		t.Setenv("E2B_TLS_PUBLIC_GRPC_ALLOW", "")
+		t.Setenv("E2B_TLS_SECRETS_STORE_EXPECT", "spiffe://td.example.internal/ns/store/sa/store")
+		t.Setenv("E2B_TLS_SECRETS_STORE_SERVER_NAME", "store.example.internal")
+		t.Setenv("E2B_TLS_WEBHOOKS_CLIENT_MODE", "on")
+		t.Setenv("E2B_TLS_ANALYTICS_EXPECT", "spiffe://td.example.internal/ns/events/sa/collector")
+		t.Setenv("E2B_TLS_ORCHESTRATOR_SERVER_NAME", "orchestrator.td.example.internal")
+
+		config, err := Parse()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"spiffe://td.example.internal/ns/edge/sa/proxy"}, config.TLS.HTTP.Allow)
+		assert.Equal(t, []string{"/health"}, config.TLS.HTTP.HealthPaths)
+		assert.Equal(t, "permissive", config.TLS.InternalGRPC.Mode)
+		assert.Empty(t, config.TLS.PublicGRPC.Allow)
+		assert.Equal(t, []string{"spiffe://td.example.internal/ns/store/sa/store"}, config.TLS.SecretsStore.Expect)
+		assert.Equal(t, "store.example.internal", config.TLS.SecretsStore.ServerName)
+		assert.Equal(t, "on", config.TLS.Webhooks.Mode)
+		assert.Equal(t, []string{"spiffe://td.example.internal/ns/events/sa/collector"}, config.TLS.Analytics.Expect)
+		assert.Equal(t, "orchestrator.td.example.internal", config.TLS.Orchestrator.ServerName)
+	})
+
+	t.Run("mutual TLS settings are empty when the chart renders none", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel
+		config, err := Parse()
+		require.NoError(t, err)
+		assert.Equal(t, TLSConfig{}, config.TLS)
 	})
 }
 

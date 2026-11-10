@@ -119,13 +119,17 @@ func admissionTestServer(t *testing.T, graceMs *int) *Server {
 		info:                       &service.ServiceInfo{},
 		sandboxFactory:             &sandbox.Factory{Sandboxes: sandbox.NewSandboxesMap()},
 		startingSandboxes:          utils.Must(utils.NewAdjustableSemaphore(1)),
+		startGateWaitDuration:      utils.Must(telemetry.GetHistogram(meter, telemetry.OrchestratorSandboxStartGateWaitDurationName)),
 		sandboxPauseDuration:       utils.Must(telemetry.GetHistogram(meter, telemetry.PauseDurationHistogramName)),
 		sandboxCheckpointCounter:   utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCheckpointCounterName)),
 		pauseAdmissionCounter:      utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorSandboxPauseAdmissionCounterName)),
 		pauseAdmissionWaitDuration: utils.Must(telemetry.GetHistogram(meter, telemetry.OrchestratorSandboxPauseAdmissionWaitDurationName)),
 		featureFlags:               admissionFlagClient(t, graceMs),
+		detachedCheckpoints:        map[string]*detachedCheckpoint{},
 	}
 }
+
+const admissionTestTeamID = "team-1"
 
 func admissionTestSandbox(t *testing.T, sandboxID string, slotIdx int, durable *utils.SetOnce[*header.Header]) *sandbox.Sandbox {
 	t.Helper()
@@ -140,7 +144,7 @@ func admissionTestSandbox(t *testing.T, sandboxID string, slotIdx int, durable *
 				Envd:              sandbox.EnvdMetadata{Version: "9.9.9"},
 				FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.14.1", KernelVersion: "vmlinux-6.1"},
 			}),
-			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID},
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID, TeamID: admissionTestTeamID},
 		},
 		Resources: &sandbox.Resources{Slot: slot},
 		Template:  admissionTestTemplate{memfile: &admissionRODevice{durable: durable, waiting: make(chan struct{})}},
@@ -207,6 +211,48 @@ func TestPause_AdmissionAdmitsWhenSwapResolvesMidGrace(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return sbx.GetStopReason() == sandbox.StopReasonPaused
 	}, 2*time.Second, time.Millisecond)
+}
+
+// A Pause that read the sandbox live and then lost the marking to a
+// checkpoint's reservation taken during its admission wait is refused
+// retryably, as a Pause whose read missed is: the API removes the record on
+// any other answer and the sandbox the checkpoint resumes is killed as an
+// orphan.
+func TestPause_LostTheMarkingToACheckpointIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	durable := utils.NewSetOnce[*header.Header]()
+	s := admissionTestServer(t, new(5000))
+	sbx := admissionTestSandbox(t, "sbx-admission-lost-marking", 16, durable)
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+
+	go func() {
+		<-admissionWaitBegun(sbx)
+		_, op, ok := s.registerDetachedCheckpoint(context.WithoutCancel(t.Context()), sbx)
+		if !ok {
+			return
+		}
+		reservation, err := s.sandboxFactory.Sandboxes.MarkStoppingReserved(context.WithoutCancel(t.Context()), sbx.Runtime.SandboxID, sbx.LifecycleID)
+		if err != nil {
+			op.release()
+
+			return
+		}
+		t.Cleanup(func() {
+			op.release()
+			reservation.Release()
+		})
+		hdr, err := header.NewHeader(&header.Metadata{Version: 3, BlockSize: 4096, Size: 4096}, nil)
+		if err == nil {
+			_ = durable.SetValue(hdr)
+		}
+	}()
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-admission-lost-marking"})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "please retry")
+	_, live := s.sandboxFactory.Sandboxes.Get("sbx-admission-lost-marking")
+	assert.False(t, live, "the checkpoint's reservation holds the sandbox out of the live map")
 }
 
 // Flag absent (and explicitly negative) means no pre-flight — with the
@@ -465,6 +511,7 @@ func admissionMetricsServer(t *testing.T, graceMs int) (*Server, *sdkmetric.Manu
 		pauseAdmissionCounter:      utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorSandboxPauseAdmissionCounterName)),
 		pauseAdmissionWaitDuration: utils.Must(telemetry.GetHistogram(meter, telemetry.OrchestratorSandboxPauseAdmissionWaitDurationName)),
 		featureFlags:               admissionFlagClient(t, &graceMs),
+		detachedCheckpoints:        map[string]*detachedCheckpoint{},
 	}, reader
 }
 
@@ -538,14 +585,14 @@ func TestPauseAdmissionMetrics_RefusedPause(t *testing.T) {
 		points := admissionCounterPoints(t, reader)
 		require.Len(t, points, 1)
 		assert.EqualValues(t, 1, points[0].Value)
-		assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes),
-			"counter attributes must be exactly outcome+rpc")
+		assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "pause", "team.id": admissionTestTeamID}, attrsAsMap(t, points[0].Attributes),
+			"counter attributes must be exactly outcome+rpc+team.id")
 
 		waits := admissionWaitPoints(t, reader)
 		require.Len(t, waits, 1)
 		require.EqualValues(t, 1, waits[0].Count)
-		assert.Equal(t, map[string]string{"outcome": "refused"}, attrsAsMap(t, waits[0].Attributes),
-			"wait histogram attribute must be exactly outcome")
+		assert.Equal(t, map[string]string{"outcome": "refused", "team.id": admissionTestTeamID}, attrsAsMap(t, waits[0].Attributes),
+			"wait histogram attributes must be exactly outcome+team.id")
 		assert.Equal(t, int64(30), waits[0].Sum)
 	})
 }
@@ -562,12 +609,12 @@ func TestPauseAdmissionMetrics_RefusedCheckpoint(t *testing.T) {
 
 	points := admissionCounterPoints(t, reader)
 	require.Len(t, points, 1)
-	assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "checkpoint"}, attrsAsMap(t, points[0].Attributes))
+	assert.Equal(t, map[string]string{"outcome": "refused", "rpc": "checkpoint", "team.id": admissionTestTeamID}, attrsAsMap(t, points[0].Attributes))
 
 	// An instant probe (grace 0) still entered the waiting outcome: recorded.
 	waits := admissionWaitPoints(t, reader)
 	require.Len(t, waits, 1)
-	assert.Equal(t, map[string]string{"outcome": "refused"}, attrsAsMap(t, waits[0].Attributes))
+	assert.Equal(t, map[string]string{"outcome": "refused", "team.id": admissionTestTeamID}, attrsAsMap(t, waits[0].Attributes))
 }
 
 // A latched checkpoint refusal records latched_error under the checkpoint
@@ -587,7 +634,7 @@ func TestPauseAdmissionMetrics_LatchedCheckpoint(t *testing.T) {
 
 	points := admissionCounterPoints(t, reader)
 	require.Len(t, points, 1)
-	assert.Equal(t, map[string]string{"outcome": "latched_error", "rpc": "checkpoint"}, attrsAsMap(t, points[0].Attributes))
+	assert.Equal(t, map[string]string{"outcome": "latched_error", "rpc": "checkpoint", "team.id": admissionTestTeamID}, attrsAsMap(t, points[0].Attributes))
 }
 
 // A swap resolving mid-grace records ready_after_wait on
@@ -624,11 +671,11 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 
 		points := admissionCounterPoints(t, reader)
 		require.Len(t, points, 1)
-		assert.Equal(t, map[string]string{"outcome": "ready_after_wait", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes))
+		assert.Equal(t, map[string]string{"outcome": "ready_after_wait", "rpc": "pause", "team.id": admissionTestTeamID}, attrsAsMap(t, points[0].Attributes))
 
 		waits := admissionWaitPoints(t, reader)
 		require.Len(t, waits, 1)
-		assert.Equal(t, map[string]string{"outcome": "ready_after_wait"}, attrsAsMap(t, waits[0].Attributes))
+		assert.Equal(t, map[string]string{"outcome": "ready_after_wait", "team.id": admissionTestTeamID}, attrsAsMap(t, waits[0].Attributes))
 		assert.Positive(t, waits[0].Sum)
 	})
 
@@ -654,7 +701,216 @@ func TestPauseAdmissionMetrics_ReadyOutcomes(t *testing.T) {
 
 		points := admissionCounterPoints(t, reader)
 		require.Len(t, points, 1)
-		assert.Equal(t, map[string]string{"outcome": "ready", "rpc": "pause"}, attrsAsMap(t, points[0].Attributes))
+		assert.Equal(t, map[string]string{"outcome": "ready", "rpc": "pause", "team.id": admissionTestTeamID}, attrsAsMap(t, points[0].Attributes))
 		assert.Empty(t, admissionWaitPoints(t, reader), "a no-wait admission must not sample the wait histogram")
+	})
+}
+
+// A filesystem-only checkpoint has no resume-fresh fallback: with its flag
+// off it is refused with FailedPrecondition before any destructive step, so
+// the API restores the sandbox to Running.
+func TestCheckpoint_FilesystemOnlyRefusedWithoutItsFlag(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	sbx := admissionTestSandbox(t, "sbx-ckpt-fs-only-off", 27, utils.NewSetOnce[*header.Header]())
+	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+
+	_, ckptErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-off", FilesystemOnly: true})
+
+	require.Error(t, ckptErr)
+	st, ok := status.FromError(ckptErr)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+
+	_, live := s.sandboxFactory.Sandboxes.Get("sbx-ckpt-fs-only-off")
+	assert.True(t, live, "a refused checkpoint must leave the sandbox live")
+	assert.Equal(t, sandbox.StopReasonCrashed, sbx.GetStopReason(), "no stop reason may be set by a refusal")
+	assert.True(t, s.sandboxFactory.Sandboxes.MarkStopping(t.Context(), "sbx-ckpt-fs-only-off", "lifecycle-1"),
+		"the sandbox must still be markable after a refusal")
+}
+
+// The admission pre-flight waits for the parent memfile header only when a
+// memory snapshot is taken. With the header still deduplicating past the
+// grace, a memory checkpoint refuses retryably while a filesystem-only one
+// passes admission and reaches its own flag instead; the status split is the
+// proof, no clock is measured.
+func TestCheckpoint_FilesystemOnlySkipsMemoryAdmission(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, new(40))
+	sbx := admissionTestSandbox(t, "sbx-ckpt-fs-only-admission", 28, utils.NewSetOnce[*header.Header]())
+	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+
+	_, memErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-admission"})
+	require.Error(t, memErr)
+	memSt, ok := status.FromError(memErr)
+	require.True(t, ok)
+	require.Equal(t, codes.ResourceExhausted, memSt.Code())
+
+	_, fsErr := s.Checkpoint(t.Context(), &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-ckpt-fs-only-admission", FilesystemOnly: true})
+
+	require.Error(t, fsErr)
+	fsSt, ok := status.FromError(fsErr)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, fsSt.Code(), "fs-only must pass admission and be refused by its own flag; the memory call's ResourceExhausted above shows the grace was live")
+}
+
+// A Pause that read the sandbox live and then lost the marking to a reboot in
+// place started during its admission wait is refused retryably: the API
+// removes the record on any other answer, and the reboot's successor is then
+// killed as an orphan.
+func TestPause_LostTheMarkingToARebootIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	durable := utils.NewSetOnce[*header.Header]()
+	s := admissionTestServer(t, new(5000))
+	sbx := admissionTestSandbox(t, "sbx-reboot-lost-marking", 41, durable)
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+
+	booted := make(chan func(*sandbox.Sandbox) (string, error), 1)
+	go func() {
+		defer close(booted)
+		<-admissionWaitBegun(sbx)
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(context.WithoutCancel(t.Context()), sbx)
+		if err == nil {
+			booted <- end
+		}
+		hdr, err := header.NewHeader(&header.Metadata{Version: 3, BlockSize: 4096, Size: 4096}, nil)
+		if err == nil {
+			_ = durable.SetValue(hdr)
+		}
+	}()
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-lost-marking"})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "rebooting, please retry")
+
+	end, ok := <-booted
+	require.True(t, ok, "the reboot took the sandbox")
+	_, err = end(nil)
+	require.NoError(t, err)
+}
+
+// A Pause that meets a reboot in place outlasting its wait is refused
+// retryably while the boot still holds the sandbox, instead of running into
+// the API's pause deadline.
+func TestPause_RebootOutlastingTheWaitIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	s.pauseReplyMargin = 980 * time.Millisecond
+	sbx := admissionTestSandbox(t, "sbx-reboot-long", 42, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+	end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), sbx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = end(nil) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	_, err = s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-long"})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "rebooting, please retry")
+	require.NoError(t, ctx.Err(), "answered before the caller's deadline")
+	assert.True(t, s.sandboxFactory.Sandboxes.Rebooting("sbx-reboot-long"), "the boot still holds the sandbox")
+}
+
+// A Pause that lost the marking to a reboot that already finished, its
+// successor live, is refused retryably so the API retries against the
+// successor instead of removing the record.
+func TestPause_LostTheMarkingToAFinishedRebootIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	durable := utils.NewSetOnce[*header.Header]()
+	s := admissionTestServer(t, new(5000))
+	sbx := admissionTestSandbox(t, "sbx-reboot-finished", 44, durable)
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+	next := admissionTestSandbox(t, "sbx-reboot-finished", 45, utils.NewSetOnce[*header.Header]())
+	next.LifecycleID = "lifecycle-2"
+
+	rebooted := make(chan error, 1)
+	go func() {
+		<-admissionWaitBegun(sbx)
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(context.WithoutCancel(t.Context()), sbx)
+		if err == nil {
+			_, err = end(next)
+		}
+		rebooted <- err
+		hdr, err := header.NewHeader(&header.Metadata{Version: 3, BlockSize: 4096, Size: 4096}, nil)
+		if err == nil {
+			_ = durable.SetValue(hdr)
+		}
+	}()
+
+	_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-finished"})
+	require.NoError(t, <-rebooted)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is live again, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries the detail the API restores the record on")
+	live, ok := s.sandboxFactory.Sandboxes.Get("sbx-reboot-finished")
+	require.True(t, ok)
+	assert.Equal(t, "lifecycle-2", live.LifecycleID, "the successor stays live")
+}
+
+// Every answer of pauseHeldElsewhere carries the checkpoint-in-progress
+// detail: without it the API reads the refusal as a busy node and, with its
+// restore flag off, kills the sandbox the reboot or checkpoint produced.
+func TestPauseHeldElsewhere_CarriesTheRetryableDetail(t *testing.T) {
+	t.Parallel()
+
+	s := admissionTestServer(t, nil)
+	require.NoError(t, s.pauseHeldElsewhere("sbx-held-gone"), "a sandbox that is gone is not held")
+
+	live := admissionTestSandbox(t, "sbx-held-live", 48, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), live))
+	err := s.pauseHeldElsewhere("sbx-held-live")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is live again, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err))
+
+	booting := admissionTestSandbox(t, "sbx-held-booting", 49, utils.NewSetOnce[*header.Header]())
+	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), booting))
+	end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), booting)
+	require.NoError(t, err)
+	err = s.pauseHeldElsewhere("sbx-held-booting")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.ErrorContains(t, err, "is rebooting, please retry")
+	require.NotNil(t, checkpointInProgressDetail(t, err))
+	_, err = end(nil)
+	require.NoError(t, err)
+}
+
+// A Pause whose wait for a reboot ended too close to its deadline for a
+// capture is refused retryably before it touches the successor. Fake time
+// keeps the boot's end and the deadline in a fixed order.
+func TestPause_RebootEndingNearTheCutoffIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		s := admissionTestServer(t, nil)
+		s.pauseReplyMargin = 100 * time.Millisecond
+		s.pauseCaptureBudget = 1500 * time.Millisecond
+		sbx := admissionTestSandbox(t, "sbx-reboot-late", 46, utils.NewSetOnce[*header.Header]())
+		require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
+		next := admissionTestSandbox(t, "sbx-reboot-late", 47, utils.NewSetOnce[*header.Header]())
+		next.LifecycleID = "lifecycle-2"
+		end, err := s.sandboxFactory.Sandboxes.BeginBootForTest(t.Context(), sbx)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		go func() {
+			time.Sleep(700 * time.Millisecond)
+			_, _ = end(next)
+		}()
+
+		_, err = s.Pause(ctx, &orchestrator.SandboxPauseRequest{SandboxId: "sbx-reboot-late"})
+		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+		require.ErrorContains(t, err, "just rebooted, please retry")
+		require.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries the detail the API restores the record on")
+		live, ok := s.sandboxFactory.Sandboxes.Get("sbx-reboot-late")
+		require.True(t, ok, "the successor stays live, unmarked")
+		assert.Equal(t, "lifecycle-2", live.LifecycleID)
 	})
 }

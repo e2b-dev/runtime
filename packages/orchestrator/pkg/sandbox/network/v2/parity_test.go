@@ -15,11 +15,15 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 // Resumed guests keep a cached ARP entry for the gateway, so the tap MAC must
@@ -225,7 +229,7 @@ func TestCreateNetworkV2_ReclaimsStaleNamespace(t *testing.T) { //nolint:paralle
 	require.NoError(t, CreateNetworkV2(ctx, slot, sv2, hf, nil))
 
 	// Leave the namespace and the set elements behind, as a crashed run would.
-	require.NoError(t, slot.CloseFirewall())
+	require.NoError(t, slot.CloseFirewall(ctx))
 
 	require.NoError(t, CreateNetworkV2(ctx, slot, sv2, hf, nil), "a stale anchor must be reclaimed, not fatal")
 	t.Cleanup(func() { _ = RemoveNetworkV2(context.WithoutCancel(t.Context()), slot, sv2, hf, nil) })
@@ -262,4 +266,99 @@ func sysctlValue(t *testing.T, path string) string {
 	require.NoError(t, err)
 
 	return strings.TrimSpace(string(raw))
+}
+
+// slotStorage hands out one prepared slot so a pool test can drive
+// createNetworkSlot without the local storage's namespace scan.
+type slotStorage struct{ slot *network.Slot }
+
+func (s *slotStorage) Acquire(context.Context) (*network.Slot, error) { return s.slot, nil }
+func (s *slotStorage) Release(*network.Slot) error                    { return nil }
+
+// nonDNSUDPFlagClient serves the flag at value from an offline data source the
+// test updates at will, through a client built like the orchestrator's.
+func nonDNSUDPFlagClient(t *testing.T, value network.NonDNSUDPMode) (*featureflags.Client, *ldtestdata.TestDataSource) {
+	t.Helper()
+
+	td := ldtestdata.DataSource()
+	setNonDNSUDPFlag(td, value)
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	return ff, td
+}
+
+func setNonDNSUDPFlag(td *ldtestdata.TestDataSource, value network.NonDNSUDPMode) {
+	td.Update(td.Flag(featureflags.SandboxFirewallNonDNSUDPFlag.Key()).ValueForAll(ldvalue.String(string(value))))
+}
+
+// slotFilterChainRules lists the slot firewall's filter chain from inside the
+// slot's namespace.
+func slotFilterChainRules(t *testing.T, slot *network.Slot) []*nftables.Rule {
+	t.Helper()
+
+	nsHandle, err := ns.GetNS(filepath.Join(network.NetNamespacesDir, slot.NamespaceID()))
+	require.NoError(t, err)
+	defer nsHandle.Close()
+
+	var rules []*nftables.Rule
+	require.NoError(t, nsHandle.Do(func(_ ns.NetNS) error {
+		conn, err := nftables.New()
+		if err != nil {
+			return err
+		}
+		table := &nftables.Table{Name: "slot-firewall", Family: nftables.TableFamilyINet}
+		rules, err = conn.GetRules(table, &nftables.Chain{Name: "PREROUTE_FILTER", Table: table})
+
+		return err
+	}))
+
+	return rules
+}
+
+// findNonDNSUDPRule reports whether the chain carries the counted UDP rule
+// and whether that rule drops.
+func findNonDNSUDPRule(rules []*nftables.Rule) (counted, dropped bool) {
+	for _, r := range rules {
+		var udp, counter, drop bool
+		for _, e := range r.Exprs {
+			switch x := e.(type) {
+			case *expr.Cmp:
+				udp = udp || x.Op == expr.CmpOpEq && bytes.Equal(x.Data, []byte{unix.IPPROTO_UDP})
+			case *expr.Objref:
+				counter = x.Type == int(nftables.ObjTypeCounter)
+			case *expr.Verdict:
+				drop = x.Kind == expr.VerdictDrop
+			}
+		}
+		if udp && counter {
+			return true, drop
+		}
+	}
+
+	return false, false
+}
+
+// The v2 datapath builds its in-namespace chain through the same firewall, so
+// a v2 slot carries the non-DNS UDP rule its pool's flag selects.
+func TestCreateNetworkV2_SlotFirewallHasNonDNSUDPRule(t *testing.T) { //nolint:paralleltest // mutates host netns state: singleton nftables table "v2-host-firewall", named netns, veth links
+	skipIfNotLinuxRoot(t)
+
+	ctx := t.Context()
+
+	hf := newTestHostFirewall(t, testConfig())
+
+	ff, _ := nonDNSUDPFlagClient(t, network.NonDNSUDPModeDrop)
+	slot := makeTestSlot(t, reserveNSTestIdx(t))
+	pool := NewV2Pool(&slotStorage{slot: slot}, testConfig(), hf, nil, WithNonDNSUDPFlag(ff))
+	got, err := pool.createNetworkSlot(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.cleanup(context.WithoutCancel(t.Context()), got) })
+
+	require.Equal(t, network.NonDNSUDPModeDrop, got.Firewall.NonDNSUDPMode())
+
+	rules := slotFilterChainRules(t, got)
+	counted, dropped := findNonDNSUDPRule(rules)
+	require.True(t, counted && dropped, "the v2 slot chain must carry the counted UDP drop rule, got %d rules", len(rules))
 }

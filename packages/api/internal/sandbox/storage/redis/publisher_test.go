@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +30,7 @@ func newTestPublisher(t *testing.T, client goredis.UniversalClient) *publisher {
 // newTestStorage wraps NewStorage with a noop meter provider for tests.
 func newTestStorage(t *testing.T, client goredis.UniversalClient) *Storage {
 	t.Helper()
-	s, err := NewStorage(client, noop.NewMeterProvider(), nil)
+	s, err := NewStorage(client, noop.NewMeterProvider())
 	require.NoError(t, err)
 
 	return s
@@ -42,7 +41,7 @@ func newTestStorage(t *testing.T, client goredis.UniversalClient) *Storage {
 func TestPublisher_PublishEnqueuesAndDrainsToRedis(t *testing.T) {
 	t.Parallel()
 
-	client := redis_utils.SetupInstance(t)
+	client := redis_utils.SetupContainerInstance(t)
 	pub := newTestPublisher(t, client)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -158,7 +157,7 @@ func TestPublisher_RunExitsOnContextCancel(t *testing.T) {
 func TestPublisher_CloseDrainsPending(t *testing.T) {
 	t.Parallel()
 
-	client := redis_utils.SetupInstance(t)
+	client := redis_utils.SetupContainerInstance(t)
 	pub := newTestPublisher(t, client)
 
 	pubsub := client.Subscribe(t.Context(), globalStorageNotifyChannel)
@@ -213,7 +212,7 @@ func TestStorageLock_ReleaseUsesNotifier(t *testing.T) {
 	subManager := newSubscriptionManager(client, globalStorageNotifyChannel)
 	locker := newStorageLocker(client, subManager, fakeNot)
 
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "fake-notifier"))
+	lockKey := redis_utils.GetLockKey(recordKey("fake-notifier"))
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
 	require.NoError(t, lock.Release(context.WithoutCancel(t.Context())))

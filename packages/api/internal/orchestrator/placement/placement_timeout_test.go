@@ -24,8 +24,7 @@ func (s stubAlgorithm) chooseNode(
 	_ []*nodemanager.Node,
 	nodesExcluded map[string]struct{},
 	_ nodemanager.SandboxResources,
-	_ CPURequirement,
-	_ FeatureRequirement,
+	_ Requirements,
 	_ bool,
 	_ []string,
 ) (*nodemanager.Node, error) {
@@ -88,7 +87,7 @@ func TestPlaceSandbox_TimeoutPinsFirstTriedNode(t *testing.T) {
 		[]*nodemanager.Node{node},
 		node,
 		testSbxRequest("sbx-1"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)
@@ -125,7 +124,7 @@ func TestPlaceSandbox_PinsFirstTriedNodeNotLater(t *testing.T) {
 		[]*nodemanager.Node{first, second},
 		first,
 		testSbxRequest("sbx-2"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)
@@ -151,7 +150,7 @@ func TestPlaceSandbox_HardFailureNotWrapped(t *testing.T) {
 		[]*nodemanager.Node{node},
 		node,
 		testSbxRequest("sbx-3"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)
@@ -177,7 +176,7 @@ func TestPlaceSandbox_ResourceExhaustedNotPinned(t *testing.T) {
 		[]*nodemanager.Node{node},
 		node,
 		testSbxRequest("sbx-4"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)
@@ -202,7 +201,7 @@ func TestPlaceSandbox_TimeoutBeforeAnyAttemptNotWrapped(t *testing.T) {
 		[]*nodemanager.Node{node},
 		node,
 		testSbxRequest("sbx-5"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)
@@ -222,7 +221,7 @@ func TestPlaceSandbox_SuccessReturnsNode(t *testing.T) {
 		[]*nodemanager.Node{node},
 		node,
 		testSbxRequest("sbx-6"),
-		CPURequirement{},
+		Requirements{},
 		false,
 		nil,
 	)

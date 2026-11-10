@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "GCP project that hosts the stack. Compute Engine API must be enabled."
+  description = "GCP project that hosts the stack. The Compute Engine and Cloud Resource Manager APIs must be enabled."
   type        = string
 }
 
@@ -48,7 +48,7 @@ variable "image" {
 }
 
 variable "client_cidrs" {
-  description = "CIDRs allowed to reach the API (3000) and sandbox proxy (3002). Nothing else is reachable from outside."
+  description = "CIDRs allowed to reach the API (3000), the dashboard (3001) and sandbox proxy (3002). Nothing else is reachable from outside."
   type        = list(string)
   validation {
     condition     = length(var.client_cidrs) > 0
@@ -85,6 +85,24 @@ variable "hugepages" {
   description = "2 MiB hugepages reserved for sandboxes (HUGEPAGES in .env). 2048 is 4 GiB."
   type        = number
   default     = 2048
+}
+
+variable "otel_collector_grpc_endpoint" {
+  description = "Optional host:port of an OTLP/gRPC collector the services export metrics, traces and logs to (E2B_OTEL_COLLECTOR_GRPC_ENDPOINT in .env). Empty disables export unless otel_collector is true, which implies 127.0.0.1:4317."
+  type        = string
+  default     = ""
+  # The services take host:port and nothing else, and the value lands in the
+  # instance's .env at first boot, where a typo would cost a replace to fix.
+  validation {
+    condition     = var.otel_collector_grpc_endpoint == "" || can(regex("^(\\[[0-9A-Fa-f:]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$", var.otel_collector_grpc_endpoint))
+    error_message = "otel_collector_grpc_endpoint must be empty or host:port, with no scheme."
+  }
+}
+
+variable "otel_collector" {
+  description = "Run the built-in OpenTelemetry collector on the instance, writing sandbox and team metrics into the stack's own ClickHouse. Implies the endpoint 127.0.0.1:4317 when otel_collector_grpc_endpoint is empty."
+  type        = bool
+  default     = false
 }
 
 variable "labels" {

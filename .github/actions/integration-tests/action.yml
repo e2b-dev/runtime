@@ -64,20 +64,49 @@ inputs:
       start-services action.
     required: false
     default: "packages/orchestrator"
+  base-template:
+    description: |
+      Passed to build-sandbox-template: "build" (default) builds the base
+      template from this checkout; "reuse" lets a shard that only runs
+      sandboxes start from the template the default branch published when
+      this checkout's own entry is missing; "publish" stages the template
+      for the caller to publish after the tests have run from it (the
+      template-* outputs name the key and the directory).
+    required: false
+    default: "build"
+
+outputs:
+  performance-config:
+    description: Effective runtime and build configuration for timing comparisons
+    value: ${{ steps.performance-config.outputs.configuration }}
+  template-published:
+    description: "build-sandbox-template's published output: true when a base template is already published under the recipe key for this host"
+    value: ${{ steps.build-template.outputs.published }}
+  template-recipe-key:
+    description: "build-sandbox-template's recipe-key output: in publish mode, the key to save the staged template under once this action has passed"
+    value: ${{ steps.build-template.outputs.recipe-key }}
+  template-stage:
+    description: "build-sandbox-template's stage output: the directory to save under template-recipe-key"
+    value: ${{ steps.build-template.outputs.stage }}
 
 runs:
   using: "composite"
   steps:
+    - name: Use the Docker Hub mirror
+      uses: ./.github/actions/docker-hub-mirror
+
     # Kick off the database containers first: their image pulls and boots
     # run in the background and overlap with the package builds below.
     - name: Start Databases
       uses: ./.github/actions/start-databases
 
     # The compressed configs only run what the allow-list names, so verify
-    # its stale-entry guard still bites before depending on it.
-    - name: Check Test Allow-list
+    # its stale-entry guard still bites before depending on it. The shard
+    # regexes in the same Makefile must still partition the suite; both
+    # checks read sources only, so they run before anything is built.
+    - name: Check Test Allow-list and Shard Partition
       shell: bash
-      run: make -C tests/integration check-tests-allowlist
+      run: make -C tests/integration check-tests-allowlist check-shard-partition
 
     - name: Build Packages
       uses: ./.github/actions/build-packages
@@ -97,12 +126,14 @@ runs:
     # orchestrator doing the same - overlapping them wedges the
     # provisioning VM until its deadline.
     - name: Build Template
+      id: build-template
       uses: ./.github/actions/build-sandbox-template
       with:
         compress_enabled: ${{ inputs.compress_enabled }}
         compress_type: ${{ inputs.compress_type }}
         compress_level: ${{ inputs.compress_level }}
         compress_workers: ${{ inputs.compress_workers }}
+        base-template: ${{ inputs.base-template }}
 
     - name: Start Services
       uses: ./.github/actions/start-services
@@ -115,27 +146,28 @@ runs:
         disable_memfd: ${{ inputs.disable_memfd }}
         orchestrator-make-path: ${{ inputs.orchestrator-make-path }}
 
-    # Unknown action inputs only produce a warning. If start-services does
-    # not support orchestrator-make-path yet, it silently starts the default
-    # orchestrator - catch that here instead of green-lighting wrong results.
-    - name: Verify the alternate orchestrator is running
-      if: inputs.orchestrator-make-path != 'packages/orchestrator'
+    - name: Record performance configuration
+      id: performance-config
+      continue-on-error: true
       shell: bash
+      env:
+        INTEGRATION_INPUTS: ${{ toJSON(inputs) }}
       run: |
-        if ! sudo pgrep -af "${{ inputs.orchestrator-make-path }}/bin/"; then
-          echo "::error::No orchestrator process from ${{ inputs.orchestrator-make-path }} is running."
-          echo "::error::The start-services action probably ignored orchestrator-make-path (version without this input)."
-          exit 1
-        fi
+        python3 - <<'PY'
+        import json, os
+        inputs = json.loads(os.environ["INTEGRATION_INPUTS"])
+        config = {k: v for k, v in inputs.items() if k != "base-template"}
+        config["build_flags"] = {k: os.environ.get(k, "") for k in ("RACE_FLAG", "DEBUG_GCFLAGS", "GOFLAGS")}
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write("configuration=" + json.dumps(config, sort_keys=True) + "\n")
+        PY
 
     - name: Run Integration Tests
       shell: bash
       env:
         TESTS_API_SERVER_URL: "http://localhost:3000"
-        TESTS_API_INTERNAL_GRPC_ADDRESS: "localhost:5009"
         TESTS_ORCHESTRATOR_HOST: "localhost:5008"
         TESTS_ENVD_PROXY: "http://localhost:3002"
-        TESTS_CLIENT_PROXY: "http://localhost:3002"
         TESTS_ONLY: ${{ inputs.tests-only }}
         TEST_PARALLELISM: ${{ inputs.test-parallelism }}
         TEST_SHARD: ${{ inputs.test-shard }}

@@ -1,0 +1,375 @@
+//go:build linux
+
+package server
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
+	"google.golang.org/grpc/codes"
+
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+)
+
+// uploadFinish stands in for the template cache's upload finisher: it counts
+// the pin and records the outcome it was returned with.
+type uploadFinish struct {
+	pins    atomic.Int64
+	outcome atomic.Uint32
+}
+
+func (f *uploadFinish) finish(o template.UploadOutcome) {
+	f.pins.Add(-1)
+	f.outcome.Store(uint32(o))
+}
+
+func (f *uploadFinish) returned(t *testing.T, want template.UploadOutcome) {
+	t.Helper()
+
+	assert.Zero(t, f.pins.Load(), "the pin is returned")
+	assert.Equal(t, want, template.UploadOutcome(f.outcome.Load()))
+}
+
+// checkpointUpload is a filesystem-only snapshot upload whose one storage
+// write returns putErr, holding a counted template cache pin, wired into a
+// snapshotResult the way snapshotAndCacheSandbox wires it.
+func checkpointUpload(t *testing.T, putErr error) (*snapshotResult, *uploadFinish) {
+	t.Helper()
+
+	metaPath := filepath.Join(t.TempDir(), "metadata.json")
+	require.NoError(t, os.WriteFile(metaPath, []byte("{}"), 0o600))
+
+	buildID := uuid.New()
+	store := storage.NewMockStorageProvider(t)
+	blob := storage.NewMockBlob(t)
+	store.EXPECT().OpenBlob(mock.Anything, storage.Paths{BuildID: buildID.String()}.Metadata()).Return(blob, nil).Maybe()
+	blob.EXPECT().Put(mock.Anything, []byte("{}"), mock.Anything).Return(putErr).Maybe()
+
+	uploads := sandbox.NewUploads(nil, store, nil, nil, nil)
+	t.Cleanup(uploads.Stop)
+
+	f := &uploadFinish{}
+	f.pins.Add(1)
+	upload, err := sandbox.NewUpload(t.Context(), uploads, &sandbox.Snapshot{
+		BuildID:            buildID,
+		FilesystemSnapshot: true,
+		MemorySnapshot: sandbox.MemorySnapshot{
+			Diff:       &build.NoDiff{},
+			DiffHeader: sandbox.NewResolvedDiffHeader(nil),
+		},
+		RootfsDiff:       &build.NoDiff{},
+		RootfsDiffHeader: sandbox.NewResolvedDiffHeader(nil),
+		Metafile:         template.NewLocalFileLink(metaPath),
+	}, store, storage.CompressConfig{}, nil, storage.UseCasePause, nil, f.finish)
+	require.NoError(t, err)
+
+	return &snapshotResult{
+		upload:         upload,
+		completeUpload: upload.Finish,
+		abandonUpload:  upload.Abandon,
+	}, f
+}
+
+func asyncCheckpointFlags(t *testing.T) *featureflags.Client {
+	t.Helper()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.PeerToPeerAsyncCheckpointFlag.Key()).VariationForAll(true))
+
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	return ff
+}
+
+// Every checkpoint upload returns its pin. One that fails is discarded, so it
+// ends abandoned, not failed: nothing will read it, and it must not count
+// among the layers that did not land. One that lands says so.
+func TestRunCheckpointUpload_ReturnsThePinWhenTheCheckpointIsDiscarded(t *testing.T) {
+	t.Parallel()
+
+	in := &orchestrator.SandboxCheckpointRequest{SandboxId: "sbx-1"}
+
+	t.Run("sync upload fails", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Server{info: &service.ServiceInfo{}, featureFlags: admissionFlagClient(t, nil)}
+		res, f := checkpointUpload(t, storage.ErrObjectNotExist)
+
+		failed := false
+		err := s.runCheckpointUpload(t.Context(), nil, res, in, codes.Internal, func() { failed = true })
+		require.Error(t, err)
+		assert.True(t, failed)
+		f.returned(t, template.UploadAbandoned)
+		require.Error(t, res.upload.Wait(t.Context()), "its waiters still see the failure")
+	})
+
+	t.Run("sync upload lands", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Server{info: &service.ServiceInfo{}, featureFlags: admissionFlagClient(t, nil)}
+		res, f := checkpointUpload(t, nil)
+
+		require.NoError(t, s.runCheckpointUpload(t.Context(), nil, res, in, codes.Internal, nil))
+		f.returned(t, template.UploadLanded)
+		require.NoError(t, res.upload.Wait(t.Context()))
+	})
+
+	t.Run("deferred memory seal fails", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Server{info: &service.ServiceInfo{}, featureFlags: asyncCheckpointFlags(t)}
+		res, f := checkpointUpload(t, nil)
+		res.memoryExportDeferred = true
+		res.waitMemorySealed = func(context.Context) error { return build.ErrDeferredSealFailed }
+
+		err := s.runCheckpointUpload(t.Context(), nil, res, in, codes.FailedPrecondition, nil)
+		require.Error(t, err)
+		f.returned(t, template.UploadAbandoned)
+		require.ErrorIs(t, res.upload.Wait(t.Context()), build.ErrDeferredSealFailed)
+	})
+}
+
+// A resume-fresh checkpoint that returns before handing its upload to
+// runCheckpointUpload — its template lookup, resume, envd upgrade or
+// registration failing — abandons the upload: its waiters fail with the
+// checkpoint's error instead of hanging, and its pin is returned. Once handed
+// off, the upload is left to runCheckpointUpload.
+func TestCheckpointHandoff(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returned before the handoff", func(t *testing.T) {
+		t.Parallel()
+
+		res, f := checkpointUpload(t, nil)
+		h := checkpointHandoff{res: res}
+		h.settle(t.Context(), errors.New("error getting template for resume"))
+
+		f.returned(t, template.UploadAbandoned)
+		require.ErrorContains(t, res.upload.Wait(t.Context()), "error getting template for resume")
+	})
+
+	t.Run("returned before the handoff without an error", func(t *testing.T) {
+		t.Parallel()
+
+		res, f := checkpointUpload(t, nil)
+		h := checkpointHandoff{res: res}
+		h.settle(t.Context(), nil)
+
+		f.returned(t, template.UploadAbandoned)
+		err := res.upload.Wait(t.Context())
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "%!")
+	})
+
+	t.Run("handed off", func(t *testing.T) {
+		t.Parallel()
+
+		res, f := checkpointUpload(t, nil)
+		h := checkpointHandoff{res: res}
+		h.handOff()
+		h.settle(t.Context(), errors.New("returned after the handoff"))
+
+		assert.Equal(t, int64(1), f.pins.Load(), "the upload still owns its pin")
+		res.completeUpload(t.Context(), nil)
+		f.returned(t, template.UploadLanded)
+	})
+}
+
+// peerTable is a peer registry kept in memory.
+type peerTable struct {
+	mu    sync.Mutex
+	nodes map[string]string
+}
+
+func (p *peerTable) Register(_ context.Context, buildID string, _ time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.nodes[buildID] = "this-node"
+
+	return nil
+}
+
+func (p *peerTable) Lookup(_ context.Context, buildID string) (string, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	addr, ok := p.nodes[buildID]
+
+	return addr, ok, nil
+}
+
+func (p *peerTable) Unregister(_ context.Context, buildID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.nodes, buildID)
+
+	return nil
+}
+
+// A snapshot is offered to peers from the moment it is cached, before its
+// upload ends. Only a landed upload marks it uploaded and sends peers to
+// storage. A retained capture whose upload failed stays offered from this
+// node, its only copy, while an ordinary pause withdraws it.
+func TestAdvertiseSnapshot(t *testing.T) {
+	t.Parallel()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.PeerToPeerChunkTransferFlag.Key()).VariationForAll(true))
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	for _, tc := range []struct {
+		name           string
+		retained       bool
+		putErr         error
+		abandon        bool
+		wantOutcome    template.UploadOutcome
+		wantAdvertised bool
+	}{
+		{name: "pause upload fails", putErr: storage.ErrObjectNotExist, wantOutcome: template.UploadFailed},
+		{name: "retained upload lands", retained: true, wantOutcome: template.UploadLanded},
+		{name: "retained upload fails", retained: true, putErr: storage.ErrObjectNotExist, wantOutcome: template.UploadFailed, wantAdvertised: true},
+		{name: "retained capture abandoned", retained: true, abandon: true, wantOutcome: template.UploadAbandoned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			const buildID = "build-1"
+			peers := &peerTable{nodes: map[string]string{}}
+			s := &Server{
+				info:                &service.ServiceInfo{},
+				featureFlags:        ff,
+				peerRegistry:        peers,
+				uploadedBuilds:      ttlcache.New[string, struct{}](),
+				uploadFailedCounter: noop.Int64Counter{},
+			}
+			res, f := checkpointUpload(t, tc.putErr)
+			var advertised bool
+			res.completeUpload, res.abandonUpload, advertised = s.advertiseSnapshot(t.Context(), res.upload, buildID, tc.retained)
+
+			_, offered, err := peers.Lookup(t.Context(), buildID)
+			require.NoError(t, err)
+			require.True(t, offered, "a target can read the snapshot before its upload ends")
+			require.True(t, advertised, "the caller learns the offer was registered")
+
+			if tc.abandon {
+				res.abandonUpload(t.Context(), errors.New("capture discarded"))
+			} else {
+				s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+				s.uploadsWG.Wait()
+			}
+
+			f.returned(t, tc.wantOutcome)
+			landed := tc.wantOutcome == template.UploadLanded
+			assert.Equal(t, landed, s.uploadedBuilds.Has(buildID), "only a landed build sends peers to storage")
+			_, offered, err = peers.Lookup(t.Context(), buildID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAdvertised, offered)
+		})
+	}
+}
+
+// A retained checkpoint whose upload landed is readable once Uploaded
+// returned, with no peer offer to fall back on, and has released its cache
+// pin. One whose upload failed keeps the pin until the owner releases it, and
+// a release before the upload ended takes effect when it ends.
+func TestRetainedCheckpointPin(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		putErr error
+	}{
+		{name: "upload lands"},
+		{name: "upload fails", putErr: storage.ErrObjectNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &Server{info: &service.ServiceInfo{}, uploadFailedCounter: noop.Int64Counter{}}
+			res, _ := checkpointUpload(t, tc.putErr)
+			var unpinned atomic.Int64
+			checkpoint := newRetainedCheckpoint("build-1", res, nil, func() { unpinned.Add(1) })
+
+			s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+			err := checkpoint.Uploaded(t.Context())
+			if tc.putErr == nil {
+				require.NoError(t, err)
+				assert.True(t, checkpoint.Readable(t.Context()), "a landed upload is readable once Uploaded returned")
+				assert.Equal(t, int64(1), unpinned.Load(), "a landed upload releases the pin")
+			} else {
+				require.Error(t, err)
+				assert.False(t, checkpoint.Readable(t.Context()))
+				s.uploadsWG.Wait()
+				assert.Zero(t, unpinned.Load(), "a failed upload keeps the pin")
+			}
+			s.uploadsWG.Wait()
+
+			checkpoint.Release()
+			checkpoint.Release()
+			assert.Equal(t, int64(1), unpinned.Load(), "the pin is released once")
+		})
+	}
+
+	t.Run("released before the upload ended", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Server{info: &service.ServiceInfo{}, uploadFailedCounter: noop.Int64Counter{}}
+		res, _ := checkpointUpload(t, storage.ErrObjectNotExist)
+		var unpinned atomic.Int64
+		checkpoint := newRetainedCheckpoint("build-1", res, nil, func() { unpinned.Add(1) })
+
+		checkpoint.Release()
+		assert.Zero(t, unpinned.Load(), "the upload still reads the snapshot")
+		s.uploadSnapshotAsync(t.Context(), testHarvestSandbox(), res)
+		require.Error(t, checkpoint.Uploaded(t.Context()))
+		s.uploadsWG.Wait()
+		assert.Equal(t, int64(1), unpinned.Load(), "the pin drops once the upload ended")
+	})
+}
+
+// fakePeerRegistry answers Lookup from a set of advertised builds.
+type fakePeerRegistry struct{ offered map[string]bool }
+
+func (r fakePeerRegistry) Register(context.Context, string, time.Duration) error { return nil }
+func (r fakePeerRegistry) Lookup(_ context.Context, buildID string) (string, bool, error) {
+	return "", r.offered[buildID], nil
+}
+func (r fakePeerRegistry) Unregister(context.Context, string) error { return nil }
+
+// A checkpoint not yet landed is readable while the peer offer this node
+// registered is still registered, and not once the offer is gone.
+func TestRetainedCheckpointReadableThroughThePeerOffer(t *testing.T) {
+	t.Parallel()
+
+	res, _ := checkpointUpload(t, nil)
+	res.advertised = true
+	registry := fakePeerRegistry{offered: map[string]bool{"build-1": true}}
+	checkpoint := newRetainedCheckpoint("build-1", res, registry, func() {})
+
+	assert.True(t, checkpoint.Readable(t.Context()), "offered by a peer before the upload landed")
+	delete(registry.offered, "build-1")
+	assert.False(t, checkpoint.Readable(t.Context()), "offer withdrawn, upload not landed")
+	assert.False(t, newRetainedCheckpoint("build-2", res, registry, func() {}).Readable(t.Context()), "never offered")
+}

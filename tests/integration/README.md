@@ -59,20 +59,27 @@ Each of them provides different methods for interacting with the sandbox; you ne
 
 #### HTTP
 
-In order to access correct sandbox URL, you need to pass `setup.WithSandbox(...)` with the required arguments.
+`setup.WithSandbox(...)` sets the sandbox URL and sends the envd access token when the sandbox has one. Pass the sandbox response to authenticate envd requests.
 
 ```go
 client := setup.GetEnvdClient(t, ctx)
 resp, err := client.HTTPClient.PostFilesWithBodyWithResponse(
     ctx,
     ...,
-    setup.WithSandbox(sbx.JSON201.SandboxID),
+    setup.WithSandbox(t, sbx.JSON201),
 )
+```
+
+To intentionally omit the envd access token, use the tokenless helper:
+
+```go
+setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID)
 ```
 
 #### GRPC
 
-In order to access correct sandbox URL, you need to call `setup.SetSandboxHeader(...)` with the required arguments.
+`setup.SetSandboxHeader(...)` sets the sandbox URL and sends the envd access token when the sandbox has one.
+For gRPC requests that intentionally omit the token, use `setup.SetInsecureSandboxHeader(...)`.
 
 All methods also expect a user (`user`/`root`) to be set in the header.
 You can achieve it using `setup.SetUserHeader(...)`.
@@ -82,7 +89,7 @@ client := setup.GetEnvdClient(t, ctx)
 req := connect.NewRequest(&filesystem.ListDirRequest{
     Path: "/",
 })
-setup.SetSandboxHeader(req.Header(), sbx.JSON201.SandboxID)
+setup.SetSandboxHeader(t, req.Header(), sbx.JSON201)
 setup.SetUserHeader(req.Header(), "user")
 resp, err := client.FilesystemClient.ListDir(ctx, req)
 ```

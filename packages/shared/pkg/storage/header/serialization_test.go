@@ -2,12 +2,15 @@ package header
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"io"
 	"testing"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
@@ -1175,4 +1178,98 @@ func TestFillMissingBuildsAsSentinels_NilBuilds(t *testing.T) {
 
 	require.NotNil(t, h.Builds)
 	require.Equal(t, BuildData{}, h.Builds[selfID])
+}
+
+// TestDeserialize_LegacyGapKeepsExplicitLengths reads V3 and V4 headers whose
+// mappings leave a gap, as headers predating NormalizeFixVersion may. The
+// record-per-entry formats round-trip them unchanged, so the compact form must
+// fall back to an explicit lengths column rather than derive them.
+func TestDeserialize_LegacyGapKeepsExplicitLengths(t *testing.T) {
+	t.Parallel()
+
+	bs := uint64(4096)
+	a, b := uuid.New(), uuid.New()
+	mappings := []BuildMap{
+		{Offset: 0, Length: bs, BuildId: a, BuildStorageOffset: 0},
+		{Offset: 2 * bs, Length: bs, BuildId: b, BuildStorageOffset: 0},
+		{Offset: 3 * bs, Length: bs, BuildId: a, BuildStorageOffset: bs},
+	}
+
+	versions := map[string]uint64{"v2": 2, "v4": MetadataVersionV4}
+	for name, version := range versions {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := &Metadata{Version: version, BlockSize: bs, Size: 4 * bs, BuildId: a, BaseBuildId: b}
+			h, err := NewHeader(meta, mappings)
+			require.NoError(t, err)
+			require.False(t, h.Mapping.Contiguous())
+			if version >= MetadataVersionV4 {
+				h.Builds = map[uuid.UUID]BuildData{a: {Size: int64(2 * bs)}, b: {Size: int64(bs)}}
+			}
+
+			data, err := SerializeHeader(h)
+			require.NoError(t, err)
+			got, err := DeserializeBytes(data)
+			require.NoError(t, err)
+
+			require.False(t, got.Mapping.Contiguous())
+			require.Equal(t, mappings, got.Mapping.Slice())
+			require.Error(t, got.Mapping.Validate(4*bs, PageSize))
+		})
+	}
+}
+
+// storedHeaderProvider serves data as the blob at path, for as many opens as
+// the test makes.
+func storedHeaderProvider(t *testing.T, path string, data []byte) storage.StorageProvider {
+	t.Helper()
+
+	provider := storage.NewMockStorageProvider(t)
+	provider.EXPECT().OpenBlob(mock.Anything, path).RunAndReturn(func(context.Context, string) (storage.Blob, error) {
+		blob := storage.NewMockBlob(t)
+		blob.EXPECT().WriteTo(mock.Anything, mock.Anything).RunAndReturn(func(_ context.Context, w io.Writer) (int64, error) {
+			return io.Copy(w, bytes.NewReader(data))
+		})
+
+		return blob, nil
+	})
+
+	return provider
+}
+
+// LoadStoredHeader returns the Builds map exactly as serialized; LoadHeader,
+// over the same bytes, still backfills the header's own missing entry. The
+// fixture is the shape runV3 writes under a V4 parent: a V4 header whose
+// mapping references its own build and whose Builds map has no entry for it.
+func TestLoadStoredHeader_SkipsOwnBuildBackfill(t *testing.T) {
+	t.Parallel()
+
+	selfID := uuid.New()
+	parentID := uuid.New()
+	parentBD := BuildData{Size: 4096}
+
+	h, err := NewHeader(&Metadata{
+		Version: MetadataVersionV4, BlockSize: 4096, Size: 8192,
+		BuildId: selfID, BaseBuildId: parentID,
+	}, []BuildMap{
+		{Offset: 0, Length: 4096, BuildId: selfID},
+		{Offset: 4096, Length: 4096, BuildId: parentID},
+	})
+	require.NoError(t, err)
+	h.Builds = map[uuid.UUID]BuildData{parentID: parentBD}
+	data, err := SerializeHeader(h)
+	require.NoError(t, err)
+
+	const path = "build/memfile.header"
+	provider := storedHeaderProvider(t, path, data)
+
+	stored, n, err := LoadStoredHeader(t.Context(), provider, path)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+	require.Equal(t, map[uuid.UUID]BuildData{parentID: parentBD}, stored.Builds)
+
+	backfilled, _, err := LoadHeader(t.Context(), provider, path)
+	require.NoError(t, err)
+	require.Equal(t, map[uuid.UUID]BuildData{parentID: parentBD, selfID: {}}, backfilled.Builds)
 }

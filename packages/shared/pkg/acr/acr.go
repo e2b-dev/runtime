@@ -1,7 +1,6 @@
-// Package acr implements Azure Container Registry (ACR) authentication shared
-// by the artifacts-registry and dockerhub backends. ACR does not accept AAD
-// access tokens directly for docker operations; they must first be exchanged
-// for an ACR refresh token via the registry's /oauth2/exchange endpoint.
+// Package acr implements Azure Container Registry (ACR) authentication.
+// ACR does not accept AAD access tokens directly for docker operations; they must
+// first be exchanged for an ACR refresh token via the registry's /oauth2/exchange endpoint.
 package acr
 
 import (

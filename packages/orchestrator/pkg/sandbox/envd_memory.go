@@ -113,15 +113,15 @@ func decodeEnvdMemoryProtection(header string) (EnvdMemoryProtection, error) {
 //
 // The span attributes are set on every /init whose header decodes, so a checkpoint
 // re-init's report stays visible in its own trace. The protection histogram is recorded
-// only under recordMetrics, the predicate that already gates envd.init.calls: the first
-// WaitForEnvd of a start, whatever that /init's status, the prefetch harvest's throwaway
-// resume included, so that the histogram has one sample per kind for every start that
-// init.calls counts under exit_type=success (one per responded start), less those whose
-// header did not decode (an envd predating it, a malformed one), and the two can be
-// divided. Recording on every /init would count an upgraded resume twice, once
-// from the old envd and once from the new; an upgraded resume therefore
-// contributes its new envd's report to the span alone until it is next paused
-// with that envd inside.
+// only under recordMetrics, which initEnvd passes as the predicate that gates
+// envd.init.calls: the first /init of a handle that describes a customer start, whatever
+// that /init's status, so throwaways record nothing on either. The histogram then has one
+// sample per kind for every start init.calls counts under exit_type=success, plus the
+// starts that answered a non-204 with the header set, less those whose header did not
+// decode (an envd predating it, a malformed one), and the two can be divided. Recording on
+// every /init would count an upgraded resume twice, once from the old envd and once from
+// the new; an upgraded resume therefore contributes its new envd's report to the span alone
+// until it is next paused with that envd inside.
 //
 // The decoded report is retained on the Sandbox so envdProtectionAttrs can label the
 // init instruments. A header that will not decode is logged, once per occurrence, and
@@ -155,6 +155,7 @@ func (s *Sandbox) recordEnvdMemoryProtection(ctx context.Context, header string,
 
 	attrs := []attribute.KeyValue{
 		telemetry.WithEnvdVersion(s.Config.Envd.Version),
+		s.envdRunningVersionAttr(),
 		attribute.String("start_type", string(startType)),
 	}
 	ramMB := s.Config.RamMB

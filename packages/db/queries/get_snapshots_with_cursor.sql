@@ -3,9 +3,11 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     sqlc.embed(s),
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -17,7 +19,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -29,8 +31,16 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    -- Lets the live-only partial indexes serve the walk; active_envs still drops
+    -- a deleted env's snapshot the backfill has not stamped yet.
+    AND s.env_deleted_at IS NULL
     -- The order here is important, we want started_at descending, but sandbox_id ascending
-    AND s.metadata @> @metadata
+    -- Short-circuit empty filters only for objects; legacy values still use containment.
+    AND CASE
+        WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+            THEN TRUE
+        ELSE s.metadata @> @metadata
+    END
     AND s.sandbox_started_at >= @started_after::timestamptz
     AND (s.sandbox_started_at, @cursor_id::text) < (@cursor_time, s.sandbox_id)
 ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
@@ -39,14 +49,16 @@ LIMIT $1;
 -- name: GetSnapshotsWithCursorAsc :many
 -- Ascending counterpart of GetSnapshotsWithCursor. It is the exact reverse order
 -- (started_at ASC, sandbox_id DESC) which maps onto a backward scan of the
--- idx_snapshots_team_time_id (team_id, sandbox_started_at DESC, sandbox_id) index.
+-- idx_snapshots_team_time_id_live (team_id, sandbox_started_at DESC, sandbox_id) index.
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
     sqlc.embed(s),
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -58,7 +70,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -70,7 +82,12 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
-    AND s.metadata @> @metadata
+    AND s.env_deleted_at IS NULL
+    AND CASE
+        WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+            THEN TRUE
+        ELSE s.metadata @> @metadata
+    END
     AND s.sandbox_started_at >= @started_after::timestamptz
     -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
     -- gives the planner an indexable starting point for the ascending scan.
@@ -84,9 +101,11 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     sqlc.embed(s),
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -98,7 +117,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -110,8 +129,13 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = @template_id
-    AND s.metadata @> @metadata
+    AND CASE
+        WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+            THEN TRUE
+        ELSE s.metadata @> @metadata
+    END
     AND s.sandbox_started_at >= @started_after::timestamptz
     AND (s.sandbox_started_at, @cursor_id::text) < (@cursor_time, s.sandbox_id)
 ORDER BY s.sandbox_started_at DESC, s.sandbox_id ASC
@@ -122,9 +146,11 @@ SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.nam
     sqlc.embed(s),
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -136,7 +162,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -148,8 +174,13 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = @team_id
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = @template_id
-    AND s.metadata @> @metadata
+    AND CASE
+        WHEN @metadata::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
+            THEN TRUE
+        ELSE s.metadata @> @metadata
+    END
     AND s.sandbox_started_at >= @started_after::timestamptz
     -- The lower bound supplies the timestamp constraint for the ID tie-breaker and
     -- gives the planner an indexable starting point for the ascending scan.

@@ -31,12 +31,12 @@ const (
 
 // benchProxy serves one sandbox's volume over NFS on the loopback interface
 // and returns a dialer for client connections to it. Every connection issues
-// its own MOUNT, so with n connections the handler holds n confined
-// filesystems, as it does for n sandboxes.
+// its own MOUNT of the same owner and volume, reusing one canonical confined
+// filesystem. This measures concurrent clients, not independent sandboxes.
 type benchProxy struct {
-	host       string
-	port       int
-	volumeName string
+	host      string
+	port      int
+	mountPath string
 }
 
 func startBenchProxy(b *testing.B) *benchProxy {
@@ -57,8 +57,10 @@ func startBenchProxy(b *testing.B) *benchProxy {
 	require.NoError(b, err)
 	require.NoError(b, os.MkdirAll(fullVolumePath, 0o755))
 
+	lifecycleID := uuid.NewString()
 	sandboxes := sandbox.NewSandboxesMap()
 	sandboxes.AssignNetwork(b.Context(), &sandbox.Sandbox{
+		LifecycleID: lifecycleID,
 		Metadata: &sandbox.Metadata{
 			Config: sandbox.NewConfig(sandbox.Config{
 				VolumeMounts: []sandbox.VolumeMountConfig{
@@ -93,7 +95,7 @@ func startBenchProxy(b *testing.B) *benchProxy {
 	port, err := strconv.Atoi(portText)
 	require.NoError(b, err)
 
-	return &benchProxy{host: host, port: port, volumeName: volumeName}
+	return &benchProxy{host: host, port: port, mountPath: "/" + lifecycleID + "/" + volumeName}
 }
 
 func (p *benchProxy) mount(b *testing.B) *nfs.Target {
@@ -108,7 +110,7 @@ func (p *benchProxy) mount(b *testing.B) *nfs.Target {
 	})
 
 	mount := &nfs.Mount{Client: client}
-	target, err := mount.Mount("/"+p.volumeName, rpc.NewAuthUnix("bench", 1000, 1000).Auth())
+	target, err := mount.Mount(p.mountPath, rpc.NewAuthUnix("bench", 1000, 1000).Auth())
 	require.NoError(b, err)
 
 	return target
@@ -169,7 +171,7 @@ func (w *nfsSmallFileWriter) writeFile(i int) error {
 // BenchmarkNFSProxy_SmallFiles drives the full server (go-nfs, the handler
 // middleware and the confined filesystem) from an in-process NFS client over
 // loopback TCP. The connections sub-benchmarks run that many clients at once,
-// each on its own connection and mount, as several sandboxes would.
+// each on its own connection and mount of the same logical volume.
 func BenchmarkNFSProxy_SmallFiles(b *testing.B) {
 	for _, connections := range []int{1, 4} {
 		b.Run(fmt.Sprintf("connections=%d", connections), func(b *testing.B) {

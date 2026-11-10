@@ -1,10 +1,16 @@
 package analyticscollector
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/servicetest"
 )
 
 func TestNewAnalyticsTarget(t *testing.T) {
@@ -29,7 +35,7 @@ func TestNewAnalyticsTarget(t *testing.T) {
 			wantTarget: "collector.example.com:8443",
 		},
 		{
-			// The local Belt collector: plaintext gRPC on loopback. Joining
+			// The local analytics collector: plaintext gRPC on loopback. Joining
 			// :443 onto this used to produce "[localhost:5051]:443", which the
 			// resolver could not resolve.
 			name:       "plaintext local collector",
@@ -43,7 +49,7 @@ func TestNewAnalyticsTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			analytics, err := NewAnalytics(tt.host, "api-token", tt.useTLS)
+			analytics, err := NewAnalytics(tt.host, "api-token", tt.useTLS, insecure.NewCredentials())
 			require.NoError(t, err)
 
 			t.Cleanup(func() { _ = analytics.Close() })
@@ -57,7 +63,7 @@ func TestNewAnalyticsTarget(t *testing.T) {
 func TestNewAnalyticsWithoutHostIsNoop(t *testing.T) {
 	t.Parallel()
 
-	analytics, err := NewAnalytics("", "", true)
+	analytics, err := NewAnalytics("", "", true, insecure.NewCredentials())
 	require.NoError(t, err)
 
 	assert.Nil(t, analytics.client)
@@ -68,4 +74,35 @@ func TestNewAnalyticsWithoutHostIsNoop(t *testing.T) {
 	assert.Nil(t, res)
 
 	assert.NoError(t, analytics.Close())
+}
+
+func TestNewAnalyticsPlaintextDialsWithTheHopCredentials(t *testing.T) {
+	t.Parallel()
+
+	creds := servicetest.NewCredentials()
+	analytics, err := NewAnalytics(servicetest.GRPCServer(t), "api-token", false, creds)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = analytics.Close() })
+
+	analytics.connection.Connect()
+	servicetest.AwaitHandshake(t, creds)
+}
+
+// The TLS switch keeps its own credentials: the in-cluster hop's are not used.
+func TestNewAnalyticsTLSKeepsItsOwnCredentials(t *testing.T) {
+	t.Parallel()
+
+	creds := servicetest.NewCredentials()
+	analytics, err := NewAnalytics(servicetest.GRPCServer(t), "api-token", true, creds)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = analytics.Close() })
+
+	// TLS against the plaintext server fails, which proves the dial happened.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	analytics.connection.Connect()
+	for state := analytics.connection.GetState(); state != connectivity.TransientFailure; state = analytics.connection.GetState() {
+		require.True(t, analytics.connection.WaitForStateChange(ctx, state), "still %s", state)
+	}
+	assert.Zero(t, creds.Handshakes())
 }

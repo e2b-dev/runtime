@@ -12,24 +12,26 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
-	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 const (
 	catalogRedisTimeout = time.Second * 1
 
-	// deleteIfSameExecution outcomes, distinguished for diagnostics.
+	// deleteIfSameOwner outcomes, distinguished for diagnostics.
 	catalogDeleteAbsent     = 0 // no entry
-	catalogDeleteDeleted    = 1 // entry deleted (execution matched)
-	catalogDeleteMismatch   = 2 // entry kept — a different execution owns it now
+	catalogDeleteDeleted    = 1 // entry deleted (execution and lifecycle matched)
+	catalogDeleteMismatch   = 2 // entry kept — another execution or lifecycle owns it now
 	catalogDeleteUnreadable = 3 // entry kept — value undecodable or missing execution_id
 )
 
-// deleteIfSameExecution deletes the catalog entry only if its stored execution_id
-// still matches the one passed in, as one atomic server-side script — so a stale
-// teardown can't remove an entry a concurrent StoreSandbox wrote for a newer execution.
-// Returns the catalogDelete* outcome.
-var deleteIfSameExecution = redis.NewScript(`
+// deleteIfSameOwner deletes the catalog entry only if its stored execution_id
+// still matches ARGV[1] and, when the entry names a lifecycle, its
+// lifecycle_id is ARGV[2], as one atomic server-side script: a stale teardown
+// can't remove an entry a concurrent StoreSandbox wrote for a newer
+// execution, or for the same execution moved to another lifecycle. An entry
+// without a lifecycle, which an older writer stored, is owned by its
+// execution alone. Returns the catalogDelete* outcome.
+var deleteIfSameOwner = redis.NewScript(`
 local v = redis.call('GET', KEYS[1])
 if not v then
   return 0
@@ -38,62 +40,28 @@ local ok, info = pcall(cjson.decode, v)
 if not (ok and type(info) == 'table' and type(info.execution_id) == 'string') then
   return 3
 end
-if info.execution_id == ARGV[1] then
-  redis.call('DEL', KEYS[1])
-  return 1
+if info.execution_id ~= ARGV[1] then
+  return 2
 end
-return 2
-`)
-
-// An existing route's owner and TTL must survive a delayed rollback.
-var restoreIfSameExecution = redis.NewScript(`
-local v = redis.call('GET', KEYS[1])
-if v then
-  local ok, info = pcall(cjson.decode, v)
-  if not (ok and type(info) == 'table' and type(info.execution_id) == 'string') then
-    return redis.error_reply('invalid sandbox route')
-  end
-  if info.execution_id ~= ARGV[1] then
-    return 0
-  end
-  return 1
+if type(info.lifecycle_id) == 'string' and info.lifecycle_id ~= '' and info.lifecycle_id ~= ARGV[2] then
+  return 2
 end
-if tonumber(ARGV[3]) > 0 then
-  redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
-else
-  redis.call('SET', KEYS[1], ARGV[2])
-end
+redis.call('DEL', KEYS[1])
 return 1
 `)
 
-const (
-	// catalogKeyPrefix is the API-owned routing record.
-	catalogKeyPrefix = "sandbox:catalog:"
-	// routingKeyPrefix is the orchestrator-owned routing record.
-	routingKeyPrefix = "sandbox:routing:"
-)
+// routingKeyPrefix is the orchestrator-owned routing record.
+const routingKeyPrefix = "sandbox:routing:"
 
 type RedisSandboxCatalog struct {
 	redisClient redis.UniversalClient
-	keyPrefix   string
 }
 
 var _ SandboxesCatalog = (*RedisSandboxCatalog)(nil)
 
-// NewRedisSandboxCatalog reads and writes the API-owned sandbox:catalog:{sandboxID} record.
+// NewRedisSandboxCatalog reads and writes the sandbox:routing:{sandboxID} record.
 func NewRedisSandboxCatalog(redisClient redis.UniversalClient) *RedisSandboxCatalog {
-	return &RedisSandboxCatalog{
-		redisClient: redisClient,
-		keyPrefix:   catalogKeyPrefix,
-	}
-}
-
-// NewRedisSandboxRoutingCatalog reads and writes the orchestrator-owned sandbox:routing:{sandboxID} record.
-func NewRedisSandboxRoutingCatalog(redisClient redis.UniversalClient) *RedisSandboxCatalog {
-	return &RedisSandboxCatalog{
-		redisClient: redisClient,
-		keyPrefix:   routingKeyPrefix,
-	}
+	return &RedisSandboxCatalog{redisClient: redisClient}
 }
 
 func (c *RedisSandboxCatalog) GetSandbox(ctx context.Context, sandboxID string) (*SandboxInfo, error) {
@@ -145,55 +113,17 @@ func (c *RedisSandboxCatalog) StoreSandbox(ctx context.Context, sandboxID string
 	return nil
 }
 
-// RestoreSandbox fills a missing route and refuses one owned by another execution.
-func (c *RedisSandboxCatalog) RestoreSandbox(ctx context.Context, sandboxID string, sandboxInfo *SandboxInfo, expiration time.Duration) error {
-	return telemetry.Observe0(ctx, tracer, "sandbox-catalog-restore", func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, catalogRedisTimeout)
-		defer cancel()
-
-		data, err := json.Marshal(sandboxInfo)
-		if err != nil {
-			return fmt.Errorf("failed to marshal sandbox info: %w", err)
-		}
-
-		ttlMillis := expiration.Milliseconds()
-		if expiration > 0 {
-			ttlMillis = max(1, ttlMillis)
-		}
-		written, err := restoreIfSameExecution.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)},
-			sandboxInfo.ExecutionID, data, ttlMillis).Int()
-		if err != nil {
-			return fmt.Errorf("failed to restore sandbox route: %w", err)
-		}
-		if written == 0 {
-			return ErrSandboxExecutionMismatch
-		}
-
-		return nil
-	})
-}
-
-// DeleteSandbox is best-effort: a Redis error is logged and swallowed, the entry then expires via TTL.
-// Callers that must know whether the delete reached Redis use DeleteSandboxStrict.
-func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error {
-	err := c.DeleteSandboxStrict(ctx, sandboxID, executionID)
-	if err != nil {
-		logger.L().Warn(ctx, "sandbox catalog delete did not complete; entry will expire via TTL", logger.WithSandboxID(sandboxID), zap.Error(err))
-	}
-
-	return nil
-}
-
-// DeleteSandboxStrict deletes the entry if its execution ID matches and returns the Redis error, if any.
-// A mismatch, an unreadable value or an absent key are not errors.
-func (c *RedisSandboxCatalog) DeleteSandboxStrict(ctx context.Context, sandboxID string, executionID string) error {
+// DeleteSandbox deletes the entry if its execution ID matches and, when the
+// entry names a lifecycle, it is lifecycleID, and returns the Redis error, if
+// any. A mismatch, an unreadable value or an absent key are not errors.
+func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID, executionID, lifecycleID string) error {
 	spanCtx, span := tracer.Start(ctx, "sandbox-catalog-delete")
 	defer span.End()
 
 	ctx, ctxCancel := context.WithTimeout(spanCtx, catalogRedisTimeout)
 	defer ctxCancel()
 
-	outcome, err := deleteIfSameExecution.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)}, executionID).Int()
+	outcome, err := deleteIfSameOwner.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)}, executionID, lifecycleID).Int()
 	if err != nil {
 		span.RecordError(err)
 
@@ -205,9 +135,9 @@ func (c *RedisSandboxCatalog) DeleteSandboxStrict(ctx context.Context, sandboxID
 		span.SetAttributes(attribute.String("delete.outcome", "deleted"))
 		logger.L().Debug(ctx, "deleted sandbox from redis catalog", logger.WithSandboxID(sandboxID))
 	case catalogDeleteMismatch:
-		// A newer execution owns the entry — the stale-teardown race the atomic delete guards against.
+		// A newer execution or lifecycle owns the entry — the stale-teardown race the atomic delete guards against.
 		span.SetAttributes(attribute.String("delete.outcome", "execution-mismatch"))
-		logger.L().Debug(ctx, "kept sandbox catalog entry owned by a different execution", logger.WithSandboxID(sandboxID))
+		logger.L().Debug(ctx, "kept sandbox catalog entry owned by a different execution or lifecycle", logger.WithSandboxID(sandboxID))
 	case catalogDeleteUnreadable:
 		span.SetAttributes(attribute.String("delete.outcome", "unreadable"))
 		logger.L().Warn(ctx, "sandbox catalog entry is unreadable; leaving it to expire via TTL", logger.WithSandboxID(sandboxID))
@@ -222,7 +152,7 @@ func (c *RedisSandboxCatalog) DeleteSandboxStrict(ctx context.Context, sandboxID
 }
 
 func (c *RedisSandboxCatalog) getCatalogKey(sandboxID string) string {
-	return c.keyPrefix + sandboxID
+	return routingKeyPrefix + sandboxID
 }
 
 func (c *RedisSandboxCatalog) Close(_ context.Context) error {

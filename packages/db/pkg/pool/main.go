@@ -45,11 +45,11 @@ type Client struct {
 // pool without statement-level retries, so callers can make retry decisions at
 // transaction boundaries where the outcome is unambiguous.
 func Connect(ctx context.Context, databaseURL string, poolName string, options ...Option) (*Client, error) {
-	tracer := otelpgx.NewTracer(otelpgx.WithDisableConnectionDetailsInAttributes())
-	config, _, err := newConfig(databaseURL, tracer, options...)
+	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse connection pool config: %w", err)
 	}
+	Configure(config, options...)
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -66,7 +66,19 @@ func Connect(ctx context.Context, databaseURL string, poolName string, options .
 		return nil, fmt.Errorf("failed to record stats: %w", err)
 	}
 
-	return &Client{pool: pool}, nil
+	return NewClient(pool), nil
+}
+
+// Configure applies the settings Connect gives its pool, for a pool created
+// elsewhere and wrapped by NewClient.
+func Configure(config *pgxpool.Config, options ...Option) {
+	configure(config, otelpgx.NewTracer(otelpgx.WithDisableConnectionDetailsInAttributes()), options...)
+}
+
+// NewClient wraps a pool configured by Configure. Closing the client closes
+// the pool.
+func NewClient(pool *pgxpool.Pool) *Client {
+	return &Client{pool: pool}
 }
 
 // Close closes every connection in the pool.
@@ -90,6 +102,10 @@ func newConfig(
 		return nil, retry.Config{}, fmt.Errorf("failed to parse connection pool config: %w", err)
 	}
 
+	return config, configure(config, tracer, options...), nil
+}
+
+func configure(config *pgxpool.Config, tracer pgx.QueryTracer, options ...Option) retry.Config {
 	retryConfig := retry.DefaultConfig()
 	for _, opt := range options {
 		opt(config, &retryConfig)
@@ -123,7 +139,7 @@ func newConfig(
 		return nil
 	}
 
-	return config, retryConfig, nil
+	return retryConfig
 }
 
 func recordStats(pool otelpgx.PoolStats, poolName attribute.KeyValue) error {

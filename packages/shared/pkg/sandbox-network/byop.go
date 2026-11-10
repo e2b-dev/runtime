@@ -2,6 +2,8 @@ package sandbox_network
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -74,17 +76,112 @@ func IsIPDevAllowedAsProxyEndpoint(ip net.IP) bool {
 }
 
 // EgressProxyConfig is a transport-agnostic view of a BYOP SOCKS5 proxy
-// configuration. Mirrors EgressProxy{Address,Username,Password} on
+// configuration. Mirrors EgressProxy{Address,Username,Password,TLS} on
 // db/pkg/types.SandboxNetworkEgressConfig.
 type EgressProxyConfig struct {
 	Address  string
 	Username string
 	Password string
+	TLS      *EgressProxyTLSConfig
+}
+
+// EgressProxyTLSConfig configures TLS on the hop to the proxy. CACert carries
+// PEM inline: a certificate is public material.
+type EgressProxyTLSConfig struct {
+	Enabled    bool
+	ServerName string
+	CACert     string
 }
 
 // maxSOCKS5CredentialLen is the maximum byte length of a SOCKS5
 // username or password, see RFC 1929.
 const maxSOCKS5CredentialLen = 255
+
+// maxServerNameLen is the maximum length of a DNS name (RFC 1035).
+const maxServerNameLen = 253
+
+// maxCACertLen bounds the inline PEM bundle, which rides on every sandbox
+// create and is stored with the paused sandbox. 8 KiB holds a chain several
+// certificates deep.
+const maxCACertLen = 8192
+
+// ErrInvalidCACertificates is returned when a CA bundle is not one or more PEM
+// certificates that all parse.
+var ErrInvalidCACertificates = errors.New("egress proxy caCert must be one or more PEM certificates")
+
+// ParseCACertPool builds a verification pool from a PEM bundle. Text outside
+// the blocks is allowed, as CA bundles carry comments between certificates.
+// Like x509.CertPool.AppendCertsFromPEM, it skips a block pem.Decode cannot
+// read, so a truncated or corrupted certificate fails at the handshake rather
+// than here. The admission check and the dialer share it, so a bundle
+// accepted at create time is one the dialer can use.
+func ParseCACertPool(caCert string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	certs := 0
+
+	for rest := []byte(caCert); ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("%w: found a %q block", ErrInvalidCACertificates, block.Type)
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("%w: certificate %d: %w", ErrInvalidCACertificates, certs+1, err)
+		}
+
+		pool.AddCert(cert)
+		certs++
+	}
+
+	if certs == 0 {
+		return nil, fmt.Errorf("%w: no certificate found", ErrInvalidCACertificates)
+	}
+
+	return pool, nil
+}
+
+// validateEgressProxyTLS checks the TLS block and returns a canonical copy.
+func validateEgressProxyTLS(cfg *EgressProxyTLSConfig) (*EgressProxyTLSConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+
+	serverName := strings.TrimSpace(strings.ToLower(cfg.ServerName))
+	caCert := strings.TrimSpace(cfg.CACert)
+
+	// A disabled block means the same thing as no block.
+	if !cfg.Enabled {
+		if serverName != "" || caCert != "" {
+			return nil, errors.New("egress proxy tls serverName and caCert must be empty when tls is not enabled")
+		}
+
+		return nil, nil
+	}
+
+	if len(serverName) > maxServerNameLen {
+		return nil, fmt.Errorf("egress proxy tls serverName must not exceed %d bytes", maxServerNameLen)
+	}
+	if len(caCert) > maxCACertLen {
+		return nil, fmt.Errorf("egress proxy tls caCert must not exceed %d bytes", maxCACertLen)
+	}
+	if caCert != "" {
+		if _, err := ParseCACertPool(caCert); err != nil {
+			return nil, err
+		}
+	}
+
+	return &EgressProxyTLSConfig{
+		Enabled:    true,
+		ServerName: serverName,
+		CACert:     caCert,
+	}, nil
+}
 
 // ErrEgressProxyInternalEndpoint is returned when a configured BYOP endpoint
 // resolves to an IP in DeniedSandboxCIDRs.
@@ -125,6 +222,8 @@ func DefaultHostResolver(ctx context.Context, host string) ([]net.IP, error) {
 //   - Every resolved A/AAAA record must NOT be in DeniedSandboxCIDRs.
 //   - If Username == "" then Password must also be "" (no orphan password).
 //   - Username and Password are each capped at 255 bytes (RFC 1929).
+//   - A TLS block that is not enabled carries no other field, and an enabled
+//     one has a parseable CA bundle within the size caps.
 func ValidateEgressProxy(ctx context.Context, cfg *EgressProxyConfig, resolve HostResolver) (*EgressProxyConfig, error) {
 	if cfg == nil {
 		return nil, nil
@@ -174,10 +273,16 @@ func ValidateEgressProxy(ctx context.Context, cfg *EgressProxyConfig, resolve Ho
 		return nil, fmt.Errorf("egress proxy password must not exceed %d bytes", maxSOCKS5CredentialLen)
 	}
 
+	tlsConfig, err := validateEgressProxyTLS(cfg.TLS)
+	if err != nil {
+		return nil, err
+	}
+
 	return &EgressProxyConfig{
 		Address:  net.JoinHostPort(host, strconv.Itoa(portNum)),
 		Username: username,
 		Password: password,
+		TLS:      tlsConfig,
 	}, nil
 }
 

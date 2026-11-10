@@ -129,12 +129,13 @@ func (n *StandardNode) GetNode() *nodemanager.Node {
 // report publishes the real state the way an orchestrator heartbeat does.
 func (n *StandardNode) report() {
 	total, used, reserved := hugepagePool(n.memCapacity, n.memAllocated, n.memUsed)
+	cpuCount := n.Metrics().CpuCount
 
 	n.UpdateMetricsFromServiceInfoResponse(&orchestrator.ServiceInfoResponse{
 		MetricSandboxesRunning:     uint32(len(n.sandboxes)),
-		MetricCpuPercent:           uint32(n.cpuUsed * 100),
+		MetricCpuPercent:           uint32(n.cpuUsed / float64(cpuCount) * 100),
 		MetricCpuAllocated:         n.cpuAllocated,
-		MetricCpuCount:             n.Metrics().CpuCount,
+		MetricCpuCount:             cpuCount,
 		MetricMemoryUsedBytes:      n.memUsed,
 		MetricMemoryAllocatedBytes: n.memAllocated,
 		MetricMemoryTotalBytes:     n.memCapacity,
@@ -206,10 +207,8 @@ func (n *StandardNode) GetUtilization() (float64, float64) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	metrics := n.Metrics()
-	var cpuUtil, memUtil float64
-	if metrics.CpuCount > 0 {
-		cpuUtil = ((float64(metrics.CpuPercent) / 100) / float64(metrics.CpuCount)) * 100
-	}
+	cpuUtil := float64(metrics.CpuPercent)
+	var memUtil float64
 	if metrics.MemoryTotalBytes > 0 {
 		memUtil = (float64(metrics.MemoryUsedBytes) / float64(metrics.MemoryTotalBytes)) * 100
 	}
@@ -430,7 +429,7 @@ func runBenchmark(b *testing.B, algorithm Algorithm, config BenchmarkConfig, nod
 							SandboxId: sbx.ID,
 							Vcpu:      sbx.RequestedCPU,
 							RamMb:     sbx.RequestedMemory,
-						}}, CPURequirement{}, false, nil)
+						}}, Requirements{}, false, nil)
 
 						placementTime := time.Since(placementStart)
 						sbx.PlacementLatency = placementTime
@@ -749,7 +748,7 @@ func BenchmarkPlacementDistribution(b *testing.B) {
 									Vcpu:      s.RequestedCPU,
 									RamMb:     s.RequestedMemory,
 								},
-							}, CPURequirement{}, false, nil)
+							}, Requirements{}, false, nil)
 
 							if err == nil && result.Node != nil {
 								if simNode, ok := nodeMap[result.Node.ID]; ok {

@@ -1,6 +1,7 @@
 package factories
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,12 +10,19 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
 // selfSignedCAPEM returns a base64-encoded PEM CA (ECDSA P-256: keygen is microseconds where RSA-2048 cost seconds per run).
@@ -157,6 +165,99 @@ func TestNewRedisClientRefusesPlaintextPassword(t *testing.T) {
 		t.Parallel()
 
 		require.NoError(t, refusePlaintextPassword("secret", &tls.Config{MinVersion: tls.VersionTLS12}))
+	})
+}
+
+func TestNewRedisClientWaitsForAnUnreachableRedis(t *testing.T) {
+	t.Parallel()
+
+	backendAddr := serverAddr(redis_utils.SetupInstance(t))
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	// Drop every connection for the first second, then proxy to the real Redis.
+	reachableAt := time.Now().Add(time.Second)
+	ctx := t.Context()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			if time.Now().Before(reachableAt) {
+				_ = conn.Close()
+
+				continue
+			}
+			go proxyTo(ctx, conn, backendAddr)
+		}
+	}()
+
+	client, err := NewRedisClient(ctx, RedisConfig{RedisURL: listener.Addr().String()})
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+}
+
+// serverAddr returns the address of the server client talks to, standalone or
+// cluster-mode.
+func serverAddr(client redis.UniversalClient) string {
+	if cluster, ok := client.(*redis.ClusterClient); ok {
+		return cluster.Options().Addrs[0]
+	}
+
+	return client.(*redis.Client).Options().Addr
+}
+
+func proxyTo(ctx context.Context, conn net.Conn, addr string) {
+	defer conn.Close()
+
+	backend, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return
+	}
+	defer backend.Close()
+
+	go func() { _, _ = io.Copy(backend, conn) }()
+	_, _ = io.Copy(conn, backend)
+}
+
+// Rejected credentials and an untrusted certificate do not heal, so creation fails without waiting.
+func TestNewRedisClientDoesNotRetryAPermanentError(t *testing.T) {
+	t.Parallel()
+
+	newClient := func(t *testing.T, config RedisConfig) error {
+		t.Helper()
+
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+
+		_, err := NewRedisClient(ctx, config)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, context.DeadlineExceeded)
+
+		return err
+	}
+
+	t.Run("rejected credentials", func(t *testing.T) {
+		t.Parallel()
+
+		backend := redis_utils.SetupContainerInstance(t)
+		require.NoError(t, backend.ConfigSet(t.Context(), "requirepass", "secret").Err())
+
+		err := newClient(t, RedisConfig{RedisURL: backend.(*redis.Client).Options().Addr})
+		assert.True(t, redis.IsAuthError(err), "%v", err)
+	})
+
+	t.Run("untrusted certificate", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewTLSServer(http.NotFoundHandler())
+		t.Cleanup(server.Close)
+
+		err := newClient(t, RedisConfig{RedisURL: server.Listener.Addr().String(), RedisTLSEnabled: true})
+		var certErr *tls.CertificateVerificationError
+		assert.ErrorAs(t, err, &certErr)
 	})
 }
 

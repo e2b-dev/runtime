@@ -117,75 +117,58 @@ func cidrOnlyHandler(ctx context.Context, c egressConn) {
 
 // proxy proxies the connection to the upstream address.
 func proxy(ctx context.Context, c egressConn, upstreamAddr string) {
-	tracker := c.metrics.TrackConnection(c.protocol)
-	defer tracker.Close(ctx)
-
-	dp := &tcpproxy.DialProxy{
-		Addr:        upstreamAddr,
-		DialTimeout: upstreamDialTimeout,
-		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-			dialer := &net.Dialer{
-				Timeout: upstreamDialTimeout,
-				Control: func(_, _ string, rawConn syscall.RawConn) error {
-					return markDSCP(rawConn, c.tos)
-				},
-			}
-
-			return dialer.DialContext(dialCtx, network, addr)
-		},
-	}
-	dp.HandleConn(c.conn)
+	proxyWithDial(ctx, c, upstreamAddr, upstreamDialer(ctx, c, upstreamAddr, false).DialContext)
 }
 
-// proxyWithIPVerification dials the upstream hostname using Go's net.Dialer (which provides
-// built-in Happy Eyeballs / RFC 8305 for multi-IP fallback), and verifies the resolved IP
-// is not internal/private BEFORE connecting. This prevents DNS rebinding attacks while
-// preserving multi-IP reliability.
-//
-// The ControlContext callback is called after DNS resolution but before the TCP connect()
-// syscall, so no TCP handshake occurs to internal IPs.
+// proxyWithIPVerification preserves Happy Eyeballs while rejecting resolved
+// internal addresses before any TCP handshake, independently of guest DNS.
 func proxyWithIPVerification(ctx context.Context, c egressConn, upstreamAddr string) {
+	proxyWithDial(ctx, c, upstreamAddr, upstreamDialer(ctx, c, upstreamAddr, true).DialContext)
+}
+
+func upstreamDialer(ctx context.Context, c egressConn, upstreamAddr string, verifyIP bool) *net.Dialer {
+	dialer := &net.Dialer{Timeout: upstreamDialTimeout}
+	if !verifyIP {
+		dialer.Control = func(_, _ string, rawConn syscall.RawConn) error {
+			return markDSCP(rawConn, c.tos)
+		}
+
+		return dialer
+	}
+	dialer.ControlContext = func(_ context.Context, _, address string, rawConn syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("failed to parse resolved address %q: %w", address, err)
+		}
+		resolvedIP := net.ParseIP(host)
+		if resolvedIP == nil {
+			return fmt.Errorf("failed to parse IP from resolved address %q", host)
+		}
+		if isIPInAlwaysDeniedCIDRs(resolvedIP) {
+			c.logger.Warn(ctx, "Blocked connection to internal IP via hostname",
+				zap.String("upstream_addr", upstreamAddr),
+				zap.String("resolved_ip", resolvedIP.String()))
+			c.metrics.RecordError(ctx, ErrorTypeResolvedIPBlocked, c.protocol)
+
+			return fmt.Errorf("hostname resolved to internal IP %s", resolvedIP)
+		}
+
+		return markDSCP(rawConn, c.tos)
+	}
+
+	return dialer
+}
+
+// proxyWithDial owns both copy directions for either raw-socket dial policy.
+// Policy and DSCP retain their raw-socket dial ordering.
+func proxyWithDial(ctx context.Context, c egressConn, upstreamAddr string, dial func(context.Context, string, string) (net.Conn, error)) {
 	tracker := c.metrics.TrackConnection(c.protocol)
 	defer tracker.Close(ctx)
 
-	// Use tcpproxy.DialProxy with a custom DialContext that verifies resolved IPs
 	dp := &tcpproxy.DialProxy{
 		Addr:        upstreamAddr,
 		DialTimeout: upstreamDialTimeout,
-		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-			// Use Go's net.Dialer which has built-in Happy Eyeballs (RFC 8305)
-			// This automatically tries multiple IPs with proper fallback
-			dialer := &net.Dialer{
-				Timeout: upstreamDialTimeout,
-				// ControlContext is called after DNS resolution but BEFORE the TCP connect() syscall.
-				// The 'address' parameter contains the resolved IP:port, allowing us to block
-				// connections to internal IPs before any TCP handshake occurs.
-				ControlContext: func(_ context.Context, _, address string, rawConn syscall.RawConn) error {
-					host, _, err := net.SplitHostPort(address)
-					if err != nil {
-						return fmt.Errorf("failed to parse resolved address %q: %w", address, err)
-					}
-
-					resolvedIP := net.ParseIP(host)
-					if resolvedIP == nil {
-						return fmt.Errorf("failed to parse IP from resolved address %q", host)
-					}
-
-					if isIPInAlwaysDeniedCIDRs(resolvedIP) {
-						c.logger.Warn(ctx, "Blocked connection to internal IP via hostname",
-							zap.String("upstream_addr", addr),
-							zap.String("resolved_ip", resolvedIP.String()))
-						c.metrics.RecordError(ctx, ErrorTypeResolvedIPBlocked, c.protocol)
-
-						return fmt.Errorf("hostname resolved to internal IP %s", resolvedIP)
-					}
-
-					return markDSCP(rawConn, c.tos)
-				},
-			}
-
-			return dialer.DialContext(dialCtx, network, addr)
-		},
+		DialContext: dial,
 	}
 	dp.HandleConn(c.conn)
 }

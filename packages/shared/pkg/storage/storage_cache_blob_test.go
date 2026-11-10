@@ -122,3 +122,49 @@ func generateData(t *testing.T, count int) []byte {
 
 	return data
 }
+
+// failSecondWrite accepts every write but the second, which it fails, so a
+// copy into it stops after some bytes have already arrived.
+type failSecondWrite struct {
+	writes int
+	got    []byte
+}
+
+var errSecondWrite = errors.New("second write failed")
+
+func (w *failSecondWrite) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == 2 {
+		return 0, errSecondWrite
+	}
+	w.got = append(w.got, p...)
+
+	return len(p), nil
+}
+
+func TestCachedObjectProvider_WriteToDoesNotRestartIntoAWrittenDestination(t *testing.T) {
+	t.Parallel()
+
+	c := cachedBlob{path: t.TempDir(), tracer: noopTracer}
+	// Larger than io.Copy's buffer, so the cache copy writes more than once.
+	data := generateData(t, 256*1024)
+	require.NoError(t, os.WriteFile(c.fullFilename(), data, 0o600))
+
+	inner := NewMockBlob(t)
+	inner.EXPECT().
+		WriteTo(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, dst io.Writer) (int64, error) {
+			n, err := dst.Write(data)
+
+			return int64(n), err
+		}).
+		Maybe()
+	c.inner = inner
+
+	dst := &failSecondWrite{}
+	n, err := c.WriteTo(t.Context(), dst)
+	require.ErrorIs(t, err, errSecondWrite)
+	assert.Equal(t, int64(len(dst.got)), n)
+	assert.Equal(t, data[:len(dst.got)], dst.got, "the backend's copy must not follow the bytes the cache already wrote")
+	inner.AssertNotCalled(t, "WriteTo", mock.Anything, mock.Anything)
+}

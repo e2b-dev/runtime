@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template/peerclient"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -52,7 +53,8 @@ const (
 )
 
 type templateLookup interface {
-	GetCachedTemplate(buildID string) (template.Template, bool)
+	LookupPinned(ctx context.Context, buildID string) (template.Template, func(), bool)
+	WasReleased(buildID string) bool
 }
 
 // Uploads is the in-flight upload table. Each entry's future fires when its
@@ -67,17 +69,18 @@ type Uploads struct {
 	persistence storage.StorageProvider
 	p2p         peerclient.Resolver
 	redis       redis.UniversalClient
+	ff          *featureflags.Client
 
 	futures *ttlcache.Cache[uuid.UUID, *utils.ErrorOnce]
 }
 
-func NewUploads(tc *template.Cache, persistence storage.StorageProvider, p2p peerclient.Resolver, redisClient redis.UniversalClient) *Uploads {
+func NewUploads(tc *template.Cache, persistence storage.StorageProvider, p2p peerclient.Resolver, redisClient redis.UniversalClient, ff *featureflags.Client) *Uploads {
 	futures := ttlcache.New(
 		ttlcache.WithTTL[uuid.UUID, *utils.ErrorOnce](futureTTL),
 	)
 	go futures.Start()
 
-	return &Uploads{tc: tc, persistence: persistence, p2p: p2p, redis: redisClient, futures: futures}
+	return &Uploads{tc: tc, persistence: persistence, p2p: p2p, redis: redisClient, ff: ff, futures: futures}
 }
 
 func (u *Uploads) Stop() {
@@ -102,18 +105,57 @@ func (u *Uploads) Start(buildID uuid.UUID) (*utils.ErrorOnce, error) {
 	return fut, nil
 }
 
-// Wait returns the parent's post-upload header, or (nil, nil) when the
-// ancestor was never opened locally and no peer is mid-upload — the caller
+// AncestorVerdict says which of Wait's paths resolved an ancestor.
+type AncestorVerdict string
+
+const (
+	// verdictEntry: the header came from the local cache entry, after any wait
+	// on the ancestor's upload future.
+	verdictEntry AncestorVerdict = "entry"
+	// verdictNoFuture: no local entry, no upload future and no peer mid-upload.
+	verdictNoFuture AncestorVerdict = "no_future"
+	// verdictFutureNoEntry: the upload future fired successfully but the local
+	// cache entry is gone. The caller keeps an entry the child already carries
+	// and otherwise heals from the stored header without LoadHeader's backfill.
+	verdictFutureNoEntry AncestorVerdict = "future_no_entry"
+	// verdictP2PPoll: the header was polled from remote storage while a peer,
+	// or a local entry still pending its upload, finished it.
+	verdictP2PPoll AncestorVerdict = "p2p_poll"
+	// verdictError: Wait failed, and so does the child's upload.
+	verdictError AncestorVerdict = "error"
+)
+
+// Wait returns the parent's post-upload header, or a nil header when the
+// ancestor is not in the local cache and no peer is mid-upload — the caller
 // usually carries its BuildData through srcHeader.Builds already, and
 // appendAncestorBuilds recovers it from the build's stored header otherwise.
-func (u *Uploads) Wait(ctx context.Context, buildID uuid.UUID, t build.DiffType) (*header.Header, error) {
+// The verdict names the path that produced the result. A future that fired
+// successfully for an entry that is gone fails the wait unless
+// SnapshotCacheAncestorStorageFallbackFlag is on, in which case it returns a
+// nil header with verdictFutureNoEntry. A build this node's template cache
+// released returns verdictFutureNoEntry there whatever the flag reads.
+func (u *Uploads) Wait(ctx context.Context, buildID uuid.UUID, t build.DiffType) (*header.Header, AncestorVerdict, error) {
+	h, verdict, _, err := u.wait(ctx, buildID, t)
+
+	return h, verdict, err
+}
+
+// wait is Wait, also reporting whether this node's template cache released
+// buildID. The release record is asked on every wait that misses the entry,
+// before any verdict is taken, so it lives as long as the entry it replaced:
+// that entry would have been touched by this lookup on whichever branch it
+// took.
+func (u *Uploads) wait(ctx context.Context, buildID uuid.UUID, t build.DiffType) (_ *header.Header, _ AncestorVerdict, released bool, _ error) {
 	ctx, span := tracer.Start(ctx, "wait-for-parent-upload", trace.WithAttributes(
 		telemetry.WithBuildID(buildID.String()),
 		attribute.String("file_type", string(t)),
 	))
 	defer span.End()
 
-	d, err := u.find(ctx, buildID, t)
+	// The ancestor's entry stays pinned for the whole wait: the device read
+	// below can come after a wait on the upload future or a remote poll.
+	d, release, err := u.find(ctx, buildID, t)
+	defer release()
 	if err != nil && !errors.Is(err, ErrBuildNotInCache) {
 		logger.L().Warn(ctx, "ancestor resolution failed from cached template",
 			logger.WithBuildID(buildID.String()),
@@ -121,26 +163,35 @@ func (u *Uploads) Wait(ctx context.Context, buildID uuid.UUID, t build.DiffType)
 			zap.Error(err),
 		)
 
-		return nil, err
+		return nil, verdictError, false, err
 	}
+
+	released = d == nil && u.releasedHere(buildID)
 
 	if item := u.futures.Get(buildID); item != nil {
 		if err := item.Value().WaitWithContext(ctx); err != nil {
-			return nil, fmt.Errorf("wait for upload %s: %w", buildID, err)
+			return nil, verdictError, released, fmt.Errorf("wait for upload %s: %w", buildID, err)
 		}
 		if d == nil {
-			return nil, fmt.Errorf("future fired but build %s not in template cache", buildID)
+			// A build this node released has no entry by design: it heals
+			// from storage whatever the fallback flag reads here, since the
+			// release was decided under the flags as they read then.
+			if released || u.ancestorStorageFallback(ctx) {
+				return nil, verdictFutureNoEntry, released, nil
+			}
+
+			return nil, verdictError, released, fmt.Errorf("future fired but build %s not in template cache", buildID)
 		}
 
-		return d.Header(), nil
+		return d.Header(), verdictEntry, released, nil
 	}
 
 	if d != nil && !d.Header().IncompletePendingUpload {
-		return d.Header(), nil
+		return d.Header(), verdictEntry, released, nil
 	}
 
 	if d == nil && !u.p2p.IsActive(buildID.String()) {
-		return nil, nil
+		return nil, verdictNoFuture, released, nil
 	}
 
 	// P2P mid-upload. Poll remote storage, then swap onto the local device.
@@ -149,29 +200,54 @@ func (u *Uploads) Wait(ctx context.Context, buildID uuid.UUID, t build.DiffType)
 
 	h, err := build.PollRemoteStorageForHeader(ctx, u.persistence, buildID, t, u.subscribe(ctx, buildID), refreshHeaderBudget)
 	if err != nil {
-		return nil, err
+		return nil, verdictError, released, err
 	}
 	if d != nil {
 		d.SwapHeader(h)
 	}
 
-	return h, nil
+	return h, verdictP2PPoll, released, nil
 }
 
-func (u *Uploads) find(ctx context.Context, buildID uuid.UUID, t build.DiffType) (block.ReadonlyDevice, error) {
-	tpl, ok := u.tc.GetCachedTemplate(buildID.String())
-	if !ok {
-		return nil, fmt.Errorf("build %s: %w", buildID, ErrBuildNotInCache)
+// releasedHere reports whether this node's template cache released buildID's
+// entry, and refreshes that record as the entry's own lookup would have.
+func (u *Uploads) releasedHere(buildID uuid.UUID) bool {
+	return u.tc != nil && u.tc.WasReleased(buildID.String())
+}
+
+// ancestorStorageFallback reads SnapshotCacheAncestorStorageFallbackFlag at
+// the wait it decides; a nil client resolves to the flag's fallback.
+func (u *Uploads) ancestorStorageFallback(ctx context.Context) bool {
+	if u.ff == nil {
+		return featureflags.SnapshotCacheAncestorStorageFallbackFlag.Fallback()
 	}
 
+	return u.ff.BoolFlag(ctx, featureflags.SnapshotCacheAncestorStorageFallbackFlag)
+}
+
+// find returns buildID's cached device of type t, with the release of the pin
+// held on its template. release is never nil and must be called on every
+// path, errors included, once the caller stops reading the device.
+func (u *Uploads) find(ctx context.Context, buildID uuid.UUID, t build.DiffType) (block.ReadonlyDevice, func(), error) {
+	tpl, release, ok := u.tc.LookupPinned(ctx, buildID.String())
+	if !ok {
+		return nil, release, fmt.Errorf("build %s: %w", buildID, ErrBuildNotInCache)
+	}
+
+	var (
+		dev block.ReadonlyDevice
+		err error
+	)
 	switch t {
 	case build.Memfile:
-		return tpl.Memfile(ctx)
+		dev, err = tpl.Memfile(ctx)
 	case build.Rootfs:
-		return tpl.Rootfs()
+		dev, err = tpl.Rootfs()
 	default:
-		return nil, fmt.Errorf("unsupported file type: %s", t)
+		err = fmt.Errorf("unsupported file type: %s", t)
 	}
+
+	return dev, release, err
 }
 
 // --- Cross-orch upload-done signaling (Redis pub/sub on per-build channels) ---

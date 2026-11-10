@@ -25,19 +25,12 @@ func (o *Orchestrator) HandleExistingSandboxAutoResume(
 	sandboxID string,
 	sbx apisandbox.Sandbox,
 	transitionWaitBudget time.Duration,
-) (string, bool, error) {
+) (*sharedproxygrpc.SandboxResumeResponse, bool, error) {
 	transitionCtx, cancel := context.WithTimeout(ctx, transitionWaitBudget)
 	defer cancel()
 
 	attempts := 0
 
-	// Existing sandbox auto-resume state handling:
-	// - running: return the current node IP immediately
-	// - pausing/snapshotting: wait for the transition, refresh state, and retry
-	// - killing: treat as not found
-	// - anything else: return internal error
-	// - internal transition wait timeout: treat as "still transitioning"
-	// - caller cancellation/deadline: propagate the context error
 	for {
 		switch sbx.State {
 		case apisandbox.StatePausing, apisandbox.StateSnapshotting:
@@ -50,7 +43,7 @@ func (o *Orchestrator) HandleExistingSandboxAutoResume(
 					zap.Int("attempts", attempts),
 				)
 
-				return "", false, ErrSandboxStillTransitioning
+				return nil, false, ErrSandboxStillTransitioning
 			}
 
 			attempts++
@@ -74,14 +67,14 @@ func (o *Orchestrator) HandleExistingSandboxAutoResume(
 						zap.Duration("budget", transitionWaitBudget),
 					)
 
-					return "", false, ErrSandboxStillTransitioning
+					return nil, false, ErrSandboxStillTransitioning
 				}
 
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return "", false, err
+					return nil, false, err
 				}
 
-				return "", false, errors.New(waitErrMsg)
+				return nil, false, errors.New(waitErrMsg)
 			}
 
 			updatedSandbox, getSandboxErr := o.GetSandbox(ctx, teamID, sandboxID)
@@ -91,39 +84,53 @@ func (o *Orchestrator) HandleExistingSandboxAutoResume(
 				continue
 			}
 			if errors.Is(getSandboxErr, apisandbox.ErrNotFound) {
-				return "", false, nil
+				return nil, false, nil
 			}
 
-			return "", false, fmt.Errorf("failed to refresh sandbox state: %w", getSandboxErr)
+			return nil, false, fmt.Errorf("failed to refresh sandbox state: %w", getSandboxErr)
 		case apisandbox.StateKilling:
 			logger.L().Debug(ctx, "Sandbox is being killed, cannot auto-resume", logger.WithSandboxID(sandboxID))
 
-			return "", false, apisandbox.ErrNotFound
+			return nil, false, apisandbox.ErrNotFound
 		case apisandbox.StateRunning:
-			node := o.getOrConnectNode(ctx, sbx.ClusterID, sbx.NodeID)
-			nodeIP := ""
-			if node != nil {
-				// For github actions in cicd, we don't have node ips and need to handle that specially
-				nodeIP = routeNodeIPAddress(node, env.IsLocal())
-			}
-			if nodeIP == "" {
-				logger.L().Error(
-					ctx,
-					"Sandbox is running but routing info is not available during auto-resume",
-					logger.WithSandboxID(sandboxID),
-					logger.WithTeamID(teamID.String()),
-					logger.WithNodeID(sbx.NodeID),
-					zap.Stringer("cluster_id", sbx.ClusterID),
-				)
-
-				return "", false, errors.New("sandbox is running but routing info is not available yet")
-			}
-
-			return nodeIP, true, nil
+			return o.runningSandboxResumeResponse(ctx, teamID, sandboxID, sbx)
 		default:
 			logger.L().Error(ctx, "Sandbox is in an unknown state during auto-resume", logger.WithSandboxID(sandboxID), zap.String("state", string(sbx.State)))
 
-			return "", false, errors.New("sandbox is in an unknown state")
+			return nil, false, errors.New("sandbox is in an unknown state")
 		}
 	}
+}
+
+// runningSandboxResumeResponse routes a running sandbox. An orchestrator
+// missing from the node cache is discovered on demand, which only modes
+// whose ingress ends on the orchestrator need.
+func (o *Orchestrator) runningSandboxResumeResponse(ctx context.Context, teamID uuid.UUID, sandboxID string, sbx apisandbox.Sandbox) (*sharedproxygrpc.SandboxResumeResponse, bool, error) {
+	resp, err := resumeResponse(sbx, func() (string, error) {
+		node := o.getOrConnectNode(ctx, sbx.ClusterID, sbx.NodeID)
+		nodeIP := ""
+		if node != nil {
+			// For github actions in cicd, we don't have node ips and need to handle that specially
+			nodeIP = routeNodeIPAddress(node, env.IsLocal())
+		}
+		if nodeIP == "" {
+			logger.L().Error(
+				ctx,
+				"Sandbox is running but routing info is not available during auto-resume",
+				logger.WithSandboxID(sandboxID),
+				logger.WithTeamID(teamID.String()),
+				logger.WithNodeID(sbx.NodeID),
+				logger.WithClusterID(sbx.ClusterID),
+			)
+
+			return "", errors.New("sandbox is running but routing info is not available yet")
+		}
+
+		return nodeIP, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	return resp, true, nil
 }

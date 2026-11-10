@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "https://github.com/e2b-dev/infra/orchestrator";
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator";
 
 // ChunkService allows orchestrators to serve snapshot files directly from their
 // local cache to peer orchestrators, bypassing remote storage during hot

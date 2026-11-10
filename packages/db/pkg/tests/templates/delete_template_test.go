@@ -51,7 +51,7 @@ func TestDeleteTemplate_SoftDeletesEnvAndPreservesStructure(t *testing.T) {
 	assert.True(t, testutils.GetEnvBuildByID(t, ctx, db, buildID), "build row must be preserved")
 	assert.NotEmpty(t, testutils.GetBuildAssignments(t, ctx, db, templateID), "build assignment must be preserved")
 
-	templates, err := db.SqlcClient.GetTeamTemplates(ctx, teamID)
+	templates, err := db.SqlcClient.GetTeamTemplates(ctx, queries.GetTeamTemplatesParams{TeamID: teamID})
 	require.NoError(t, err)
 	assert.Empty(t, templates, "soft-deleted template must not be listed")
 

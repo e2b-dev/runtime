@@ -166,3 +166,18 @@ func TestNodeSatisfiesCPU_PinNarrowsRatherThanReplaces(t *testing.T) {
 	assert.False(t, NodeSatisfiesCPU(node, CPURequirement{Build: newerBuild, PinnedModel: machineinfo.IceLakeModel}),
 		"A newer build must not reach an older node just because the pin names it")
 }
+
+func TestNodeSatisfiesCPU_ExtraNodeModels(t *testing.T) {
+	t.Parallel()
+
+	node := nodemanager.NewTestNode("node1", api.NodeStatusReady, 2, 4,
+		nodemanager.WithCPUInfo("x86_64", "6", machineinfo.GraniteRapidsModel))
+	build := machineinfo.MachineInfo{CPUArchitecture: "x86_64", CPUFamily: "6", CPUModel: machineinfo.IceLakeModel}
+
+	assert.False(t, NodeSatisfiesCPU(node, CPURequirement{Build: build}),
+		"Ice Lake build should not be accepted on a Granite Rapids node by default")
+	assert.True(t, NodeSatisfiesCPU(node, CPURequirement{
+		Build:           build,
+		ExtraNodeModels: map[string][]string{machineinfo.IceLakeModel: {machineinfo.GraniteRapidsModel}},
+	}), "Ice Lake build should be accepted on a Granite Rapids node when the extra pair is listed")
+}

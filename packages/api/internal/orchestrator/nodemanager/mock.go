@@ -94,6 +94,11 @@ func (n *mockSandboxClient) Create(_ context.Context, req *orchestrator.SandboxC
 	}, nil
 }
 
+// Update is a mock implementation that always accepts the new egress config.
+func (n *mockSandboxClient) Update(_ context.Context, _ *orchestrator.SandboxUpdateRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	return &emptypb.Empty{}, nil
+}
+
 // mockLegacySandboxClient mimics an orchestrator that predates the
 // filesystem_boot field: it succeeds but never echoes the applied boot path.
 type mockLegacySandboxClient struct {
@@ -173,6 +178,13 @@ func WithOrchestratorVersion(version string) TestOptions {
 	}
 }
 
+// WithServiceInstanceID sets the orchestrator process the test node reports.
+func WithServiceInstanceID(id string) TestOptions {
+	return func(node *TestNode) {
+		node.meta.ServiceInstanceID = id
+	}
+}
+
 func WithLabels(labels []string) TestOptions {
 	return func(node *TestNode) {
 		labelsSet := make(map[string]struct{}, len(labels))
@@ -211,6 +223,20 @@ func WithAllocatedMemoryBytes(bytes uint64) TestOptions {
 	}
 }
 
+// WithMemoryTotalBytes sets the total host memory the test node reports.
+func WithMemoryTotalBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryTotalBytes = bytes
+	}
+}
+
+// WithMemoryUsedBytes sets the used host memory the test node reports.
+func WithMemoryUsedBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryUsedBytes = bytes
+	}
+}
+
 // WithHugePages sets the hugepage pool the test node reports: page counts, as
 // the kernel exposes them (total / used / reserved), plus the page size.
 func WithHugePages(total, used, reserved, pageSizeBytes uint64) TestOptions {
@@ -219,6 +245,22 @@ func WithHugePages(total, used, reserved, pageSizeBytes uint64) TestOptions {
 		node.metrics.HugePagesUsed = used
 		node.metrics.HugePagesReserved = reserved
 		node.metrics.HugePageSizeBytes = pageSizeBytes
+	}
+}
+
+// WithHugePagesCapacity sets the reported pool ceiling (base pool plus
+// overcommit allowance).
+func WithHugePagesCapacity(capacity uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.HugePagesCapacity = capacity
+	}
+}
+
+// WithHugePagesBase sets the reported base pool, the pages allocated at boot.
+func WithHugePagesBase(base uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.HugePagesBase = base
+		node.metrics.HugePagesBaseSet = true
 	}
 }
 
@@ -272,4 +314,59 @@ func NewTestNode(id string, status api.NodeStatus, cpuAllocated int64, cpuCount 
 	}
 
 	return node
+}
+
+// WithStatusOwner sets the owner the test node records for its status.
+func WithStatusOwner(owner string) TestOptions {
+	return func(node *TestNode) {
+		node.status.Owner = owner
+	}
+}
+
+// WithCapabilities sets the capabilities the test node reports.
+func WithCapabilities(capabilities ...string) TestOptions {
+	return func(node *TestNode) {
+		node.capabilities = capabilities
+	}
+}
+
+// mockInfoClientResponse answers every ServiceInfo call with one response.
+type mockInfoClientResponse struct {
+	infogrpc.InfoServiceClient
+
+	response *infogrpc.ServiceInfoResponse
+}
+
+func (c *mockInfoClientResponse) ServiceInfo(_ context.Context, _ *emptypb.Empty, _ ...grpc.CallOption) (*infogrpc.ServiceInfoResponse, error) {
+	return c.response, nil
+}
+
+// WithServiceInfoResponse makes every ServiceInfo call answer response.
+func WithServiceInfoResponse(response *infogrpc.ServiceInfoResponse) TestOptions {
+	return func(node *TestNode) {
+		node.client.Info = &mockInfoClientResponse{response: response}
+	}
+}
+
+// RecordingInfoClient answers ServiceInfo as a healthy orchestrator and records
+// every status override it is sent, failing each with Err when set.
+type RecordingInfoClient struct {
+	mockInfoClient
+
+	Requests []*infogrpc.ServiceStatusChangeRequest
+	Err      error
+}
+
+func (c *RecordingInfoClient) ServiceStatusOverride(_ context.Context, req *infogrpc.ServiceStatusChangeRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	c.Requests = append(c.Requests, req)
+	if c.Err != nil {
+		return nil, c.Err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// SetInfoClient replaces the test node's info client.
+func (n *TestNode) SetInfoClient(client infogrpc.InfoServiceClient) {
+	n.client.Info = client
 }

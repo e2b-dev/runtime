@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
@@ -251,6 +252,7 @@ func (bb *BaseBuilder) buildLayerFromOCI(
 		layer.WithRootfsCachePath(rootfsPath),
 	}
 	sandboxOptions = append(sandboxOptions, layer.ReservedBlocksOptions(ctx, bb.featureFlags, bb.Config.RootfsBlockSize())...)
+	sandboxOptions = append(sandboxOptions, layer.BootDiagnosticsOptions(ctx, bb.featureFlags)...)
 
 	sandboxCreator := layer.NewCreateSandbox(
 		baseSbxConfig,
@@ -321,9 +323,14 @@ func (bb *BaseBuilder) Layer(
 			return phases.LayerResult{}, fmt.Errorf("error getting base template: %w", err)
 		}
 
+		// The build's phases were chosen for the parent's guest profile before this phase ran.
+		if name := bb.Config.GuestProfile().Name(); tm.GuestOS != name {
+			return phases.LayerResult{}, fmt.Errorf("the parent template's guest OS %q does not match the build's %q", tm.GuestOS, name)
+		}
+
 		// From template is always cached, never needs to be built
 		return phases.LayerResult{
-			Metadata: tm.BasedOn(sourceMeta),
+			Metadata: baseLayerFrom(tm, sourceMeta, bb.Config.GuestTemplate()),
 			Hash:     hash,
 			Cached:   true,
 		}, nil
@@ -345,6 +352,7 @@ func (bb *BaseBuilder) Layer(
 			FromImage:    &bb.Config.FromImage,
 			FromTemplate: nil,
 			Start:        nil,
+			VcpuCount:    bb.Config.VCpuCount,
 		}
 
 		notCachedResult := phases.LayerResult{
@@ -378,4 +386,25 @@ func (bb *BaseBuilder) Layer(
 			Hash:     hash,
 		}, nil
 	}
+}
+
+// baseLayerFrom is the base layer a build takes from its parent template. A
+// build whose guest profile resumes the parent keeps the lineage state of the
+// parent's memory image that BasedOn drops for a cold boot: the device names it
+// bakes and its envd's token state. A parent context without a user or a
+// working directory gets the profile's defaults.
+func baseLayerFrom(parent metadata.Template, src metadata.FromTemplate, tb guest.TemplateBuild) metadata.Template {
+	base := parent.BasedOn(src)
+	if tb.AlwaysResume {
+		base = base.WithDeviceNames(parent.RootfsDriveID, parent.NetIfaceID, parent.RootfsFile).
+			WithEnvdToken(parent.NoMmdsStore, parent.EnvdAccessTokenHash)
+	}
+	if base.Context.User == "" && tb.DefaultUser != "" {
+		base.Context.User = tb.DefaultUser
+	}
+	if base.Context.WorkDir == nil && tb.DefaultWorkDir != "" {
+		base.Context.WorkDir = new(tb.DefaultWorkDir)
+	}
+
+	return base
 }

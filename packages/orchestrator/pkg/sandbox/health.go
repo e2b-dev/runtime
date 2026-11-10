@@ -9,17 +9,15 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
 
 func (c *Checks) getHealth(ctx context.Context, timeout time.Duration) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	address := fmt.Sprintf("http://%s:%d/health", c.sandbox.Slot.HostIPString(), consts.DefaultEnvdServerPort)
+	address := c.sandbox.envdServerURL() + "/health"
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, c.sandbox), http.MethodGet, address, nil)
 	if err != nil {
 		return false, err
 	}

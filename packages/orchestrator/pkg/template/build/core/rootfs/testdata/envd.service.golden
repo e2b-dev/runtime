@@ -36,11 +36,11 @@ LimitCORE=infinity
 # including CAs added in user layers or start/ready, registered or not. Seeding
 # from it gives a complete ca-certificates.crt, so update-ca-certificates is
 # skipped on cold boot (its scattered rootfs reads are the cost we avoid). It
-# therefore does NOT re-merge a persisted egress-proxy CA
-# (/usr/local/share/ca-certificates/e2b-ca.crt) into the bundle at boot. That CA
-# is (re)installed by envd's POST /init for the current proxy, which runs before
-# the orchestrator marks the sandbox running/routable — so the egress CA is
-# guaranteed present for the sandbox's routable lifetime. The only gap is guest
+# therefore does NOT re-merge the CA files envd persists
+# (/usr/local/share/ca-certificates/e2b-<sha256>.crt) into the bundle at boot.
+# envd's POST /init installs the current egress CA set before the orchestrator
+# marks the sandbox running/routable. Previously injected roots in the tar can
+# survive until a trust-store rebuild. The only gap is guest
 # units that auto-start and egress over TLS before /init; that is accepted
 # (revisit if a template needs boot-time egress).
 # The seeding logic is shared with the OpenRC service (Alpine) and never fails

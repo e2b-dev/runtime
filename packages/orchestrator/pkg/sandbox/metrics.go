@@ -4,19 +4,25 @@ package sandbox
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
 
 type Metrics struct {
 	Timestamp int64 `json:"ts"` // Unix Timestamp in UTC
 
-	CPUCount       int64   `json:"cpu_count"`    // Total CPU cores
+	CPUCount       int64   `json:"cpu_count"`    // Online CPU cores
 	CPUUsedPercent float64 `json:"cpu_used_pct"` // Percent rounded to 2 decimal places
+
+	// Older envd omits these fields; CPUPossible can also be 0 if sysfs fails.
+	CPUPossible       int64 `json:"cpu_possible"`         // CPUs the guest can bring online
+	CPUTarget         int64 `json:"cpu_target"`           // Online count last requested, 0 when none was
+	CPUTargetAttempts int64 `json:"cpu_target_attempts"`  // Attempts at reaching CPUTarget since it was set
+	CPUWritePendingMs int64 `json:"cpu_write_pending_ms"` // How long a CPU online/offline write has been running; growing means stuck
 
 	MemTotal int64 `json:"mem_total"` // Total virtual memory in bytes
 	MemUsed  int64 `json:"mem_used"`  // Used virtual memory in bytes
@@ -25,11 +31,8 @@ type Metrics struct {
 	DiskUsed  int64 `json:"disk_used"`  // Used disk space in bytes
 	DiskTotal int64 `json:"disk_total"` // Total disk space in bytes
 
-	// Deprecated
-	MemTotalMiB int64 `json:"mem_total_mib"` // Total virtual memory in MiB
-
-	// Deprecated
-	MemUsedMiB int64 `json:"mem_used_mib"` // Used virtual memory in MiB
+	// Latest OOM kills, oldest first; nil when envd doesn't know them.
+	OomKills *[]envd.OOMKill `json:"oom_kills,omitempty"`
 }
 
 func (c *Checks) GetMetrics(ctx context.Context, timeout time.Duration) (*Metrics, error) {
@@ -38,7 +41,7 @@ func (c *Checks) GetMetrics(ctx context.Context, timeout time.Duration) (*Metric
 
 	address := fmt.Sprintf("http://%s:%d/metrics", c.sandbox.Slot.HostIPString(), consts.DefaultEnvdServerPort)
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, c.sandbox), http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +63,7 @@ func (c *Checks) GetMetrics(ctx context.Context, timeout time.Duration) (*Metric
 	}
 
 	var m Metrics
-	err = json.NewDecoder(response.Body).Decode(&m)
+	err = decodeEnvdResult(response.Body, &m)
 	if err != nil {
 		return nil, err
 	}

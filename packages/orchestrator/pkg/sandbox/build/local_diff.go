@@ -56,8 +56,8 @@ func (f *LocalDiffFile) CloseToDiff(
 ) (d Diff, e error) {
 	defer f.File.Close()
 
-	// On any failure to produce a usable Diff (e.g. an fsync/stat error after the
-	// bytes were written), remove the partial cache file. Nothing registers it in
+	// On any failure to produce a usable Diff (e.g. a stat error after the bytes
+	// were written), remove the partial cache file. Nothing registers it in
 	// the DiffStore, so otherwise it orphans in the cache dir until process restart
 	// — disk-pressure eviction can't reclaim a file it doesn't know about.
 	defer func() {
@@ -68,11 +68,7 @@ func (f *LocalDiffFile) CloseToDiff(
 		}
 	}()
 
-	err := f.File.Sync()
-	if err != nil {
-		return nil, fmt.Errorf("failed to sync file: %w", err)
-	}
-
+	// No sync: cache files are never read after a crash, and every reader goes through the page cache.
 	size, err := f.File.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file size: %w", err)
@@ -135,12 +131,24 @@ func (b *localDiff) Close() error {
 	return b.cache.Close()
 }
 
-func (b *localDiff) ReadAt(_ context.Context, p []byte, off int64, _ *storage.FrameTable) (int, error) {
-	return b.cache.ReadAt(p, off)
+// A local diff's bytes are on this node, in its cache file or its pause's
+// memfd, so a read is reported to the caller as served from the local cache.
+func (b *localDiff) ReadAt(ctx context.Context, p []byte, off int64, _ *storage.FrameTable) (int, error) {
+	n, err := b.cache.ReadAt(p, off)
+	if err == nil {
+		storage.ReportSource(ctx, storage.SourceMmap)
+	}
+
+	return n, err
 }
 
-func (b *localDiff) Slice(_ context.Context, off, length int64, _ *storage.FrameTable) ([]byte, error) {
-	return b.cache.Slice(off, length)
+func (b *localDiff) Slice(ctx context.Context, off, length int64, _ *storage.FrameTable) ([]byte, error) {
+	s, err := b.cache.Slice(off, length)
+	if err == nil {
+		storage.ReportSource(ctx, storage.SourceMmap)
+	}
+
+	return s, err
 }
 
 func (b *localDiff) Size(_ context.Context) (int64, error) {

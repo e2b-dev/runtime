@@ -4,9 +4,13 @@ import (
 	"errors"
 
 	"github.com/caarlos0/env/v11"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 type Config struct {
+	featureflags.Config
+
 	HealthPort            uint16 `env:"HEALTH_PORT"             envDefault:"3003"`
 	ProxyPort             uint16 `env:"PROXY_PORT"              envDefault:"3002"`
 	OrchestratorProxyPort uint16 `env:"ORCHESTRATOR_PROXY_PORT" envDefault:"5007"`
@@ -24,6 +28,13 @@ type Config struct {
 	APIEdgeGRPCOAuthClientID     string `env:"API_EDGE_GRPC_OAUTH_CLIENT_ID"`
 	APIEdgeGRPCOAuthClientSecret string `env:"API_EDGE_GRPC_OAUTH_CLIENT_SECRET"`
 	APIEdgeGRPCOAuthTokenURL     string `env:"API_EDGE_GRPC_OAUTH_TOKEN_URL"`
+
+	// ForwardedHostDomains are the domains under which a proxy in front may
+	// name the sandbox in X-Forwarded-Host; empty ignores the header.
+	ForwardedHostDomains []string `env:"FORWARDED_HOST_DOMAINS"`
+
+	// TLS is the mutual TLS settings of the client hops.
+	TLS TLSConfig
 }
 
 func Parse() (Config, error) {

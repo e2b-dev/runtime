@@ -42,7 +42,7 @@ func TestAdminTeamAuthenticatorSetsTeamContext(t *testing.T) {
 
 	ctx := t.Context()
 	teamID := uuid.New()
-	team := types.NewTeam(&authqueries.Team{ID: teamID}, &authqueries.TeamLimit{})
+	team := types.NewTeam(authqueries.GetTeamByTeamIDRow{ID: teamID})
 
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 	req.Header.Set(HeaderTeamID, teamID.String())
@@ -291,4 +291,50 @@ func TestNewAuthenticatorAllowsNoContextSetter(t *testing.T) {
 	require.NoError(t, authenticator.Authenticate(t.Context(), ginCtx, &openapi3filter.AuthenticationInput{
 		RequestValidationInput: &openapi3filter.RequestValidationInput{Request: req},
 	}))
+}
+
+// A 401 rejects the credential, so its message leads with the scheme's
+// rejection. A 5xx did not get that far, so it drops it and keeps its status.
+func TestNewAuthenticatorRejectsTheCredentialOnlyBelowServerErrors(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		validationError *APIError
+		wantMessage     string
+	}{
+		"unknown key keeps the rejection message": {
+			validationError: &APIError{ClientMsg: "no such key", Code: http.StatusUnauthorized},
+			wantMessage:     "Invalid custom token.\nno such key",
+		},
+		"failed lookup drops the rejection message": {
+			validationError: &APIError{ClientMsg: "try again", Code: http.StatusInternalServerError},
+			wantMessage:     "try again",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			authenticator := NewAuthenticator(AuthenticatorConfig[struct{}]{
+				SchemeName: "CustomBearerAuth",
+				Header:     HeaderAuthorization,
+				Validate: func(context.Context, *gin.Context, string) (struct{}, *APIError) {
+					return struct{}{}, tc.validationError
+				},
+				ErrorMessage: "Invalid custom token.",
+			})
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+			req.Header.Set(HeaderAuthorization, "token")
+			ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+			err := authenticator.Authenticate(t.Context(), ginCtx, &openapi3filter.AuthenticationInput{
+				RequestValidationInput: &openapi3filter.RequestValidationInput{Request: req},
+			})
+
+			require.EqualError(t, err, tc.wantMessage)
+			require.Equal(t, tc.validationError.Code, ginCtx.Writer.Status())
+		})
+	}
 }

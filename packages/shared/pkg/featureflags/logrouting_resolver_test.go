@@ -14,7 +14,7 @@ import (
 func TestLogWriteConfigResolverNilClient(t *testing.T) {
 	t.Parallel()
 
-	resolver := NewLogWriteConfigResolver(nil, fallbackCollector)
+	resolver := NewLogWriteConfigResolver(nil, collectorDefaults)
 	got := resolver.Resolve(t.Context())
 
 	assert.Equal(t, fallbackCollector, got.PrimaryURL)
@@ -40,7 +40,7 @@ func TestLogWriteConfigResolverCachesUntilTTL(t *testing.T) {
 	})))
 
 	// Long TTL so the change below is not observed until we force expiry.
-	resolver := newLogWriteConfigResolverWithTTL(client, fallbackCollector, time.Hour)
+	resolver := newLogWriteConfigResolverWithTTL(client, collectorDefaults, time.Hour)
 
 	first := resolver.Resolve(t.Context())
 	assert.Equal(t, "http://127.0.0.1:11111", first.PrimaryURL)
@@ -72,7 +72,7 @@ func TestLogWriteConfigResolverRefreshesAfterTTL(t *testing.T) {
 
 	// Zero TTL forces a refresh on every Resolve, so a flag change is observed
 	// deterministically without a real-time sleep.
-	resolver := newLogWriteConfigResolverWithTTL(client, fallbackCollector, 0)
+	resolver := newLogWriteConfigResolverWithTTL(client, collectorDefaults, 0)
 
 	first := resolver.Resolve(t.Context())
 	assert.Equal(t, "http://127.0.0.1:11111", first.PrimaryURL)
@@ -89,6 +89,6 @@ func TestLogWriteConfigResolverRefreshesAfterTTL(t *testing.T) {
 func TestLogWriteConfigResolverDefaultTTL(t *testing.T) {
 	t.Parallel()
 
-	resolver := NewLogWriteConfigResolver(nil, fallbackCollector)
+	resolver := NewLogWriteConfigResolver(nil, collectorDefaults)
 	assert.Equal(t, logWriteConfigCacheTTL, resolver.ttl)
 }

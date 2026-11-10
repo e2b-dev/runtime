@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,7 +16,7 @@ const sandboxSharedHostSubdomain = "sandbox."
 
 func GetTargetFromRequest() func(r *http.Request) (sandboxId string, port uint64, err error) {
 	return func(r *http.Request) (sandboxId string, port uint64, err error) {
-		if shouldParseHeaders(r.Host) && hasRoutingHeaders(r.Header) {
+		if hasRoutingHeaders(r.Header) && shouldParseHeaders(r.Host) {
 			var ok bool
 			sandboxId, port, ok, err = parseHeaders(r.Header)
 			if err != nil {
@@ -43,28 +44,54 @@ func GetTargetFromRequest() func(r *http.Request) (sandboxId string, port uint64
 }
 
 func shouldParseHeaders(host string) bool {
-	_, sharedHost := SandboxSharedHostDomain(host)
+	hostname := requestHostname(host)
+	_, sharedHost := sharedHostDomain(hostname)
 
-	return isLocalRequestHost(host) || sharedHost
+	return sharedHost || isLocalHostname(hostname)
 }
 
 func requestHostname(host string) string {
 	return (&url.URL{Host: host}).Hostname()
 }
 
-func isLocalRequestHost(host string) bool {
-	host = requestHostname(host)
-	ip := net.ParseIP(host)
-
+func isLocalHostname(hostname string) bool {
 	// An IP address cannot encode sandbox routing info (like {port}-{sandboxId}.{domain}),
 	// so header-based routing is the only mechanism that can work for IP hosts.
-	return host == "localhost" || ip != nil
+	return hostname == "localhost" || net.ParseIP(hostname) != nil
 }
 
 func SandboxSharedHostDomain(host string) (string, bool) {
-	domain, ok := strings.CutPrefix(requestHostname(host), sandboxSharedHostSubdomain)
+	return sharedHostDomain(requestHostname(host))
+}
+
+func sharedHostDomain(hostname string) (string, bool) {
+	domain, ok := strings.CutPrefix(hostname, sandboxSharedHostSubdomain)
 
 	return domain, ok && domain != ""
+}
+
+// MatchSandboxHost reports whether host addresses sandboxID and port, read as
+// GetTargetFromRequest reads it: <port>-<id>.<domain>, or sandbox.<domain>
+// with the routing headers in h. On a match it returns the host's domain, the
+// part after the sandbox label, as written; otherwise it returns "" and false.
+func MatchSandboxHost(host string, h http.Header, sandboxID string, port uint64) (domain string, ok bool) {
+	hostname := requestHostname(host)
+
+	var hostID string
+	var hostPort uint64
+	var err error
+	if domain, ok = sharedHostDomain(hostname); ok {
+		hostID, hostPort, ok, err = parseHeaders(h)
+	} else {
+		_, domain, ok = strings.Cut(hostname, ".")
+		hostID, hostPort, err = parseHost(host)
+	}
+
+	if !ok || err != nil || hostID != sandboxID || hostPort != port {
+		return "", false
+	}
+
+	return domain, true
 }
 
 func hasRoutingHeaders(h http.Header) bool {
@@ -82,17 +109,16 @@ func parseHost(host string) (sandboxID string, port uint64, err error) {
 	// Keep only the left-most subdomain part, i.e. everything before the
 	host = host[:dot]
 
-	hostParts := strings.Split(host, "-")
-	if len(hostParts) < 2 {
+	sandboxPortString, rest, found := strings.Cut(host, "-")
+	if !found {
 		return "", 0, ErrInvalidHost
 	}
 
-	sandboxPortString := hostParts[0]
-	sandboxID = hostParts[1]
+	sandboxID, _, _ = strings.Cut(rest, "-")
 
-	sandboxPort, err := strconv.ParseUint(sandboxPortString, 10, 64)
+	sandboxPort, err := parsePort(sandboxPortString)
 	if err != nil {
-		return "", 0, InvalidSandboxPortError{sandboxPortString, err}
+		return "", 0, err
 	}
 
 	return sandboxID, sandboxPort, nil
@@ -127,10 +153,23 @@ func parseHeaders(h http.Header) (sandboxID string, port uint64, ok bool, err er
 		return "", 0, false, MissingHeaderError{Header: headerSandboxPort}
 	}
 
-	port, err = strconv.ParseUint(portString, 10, 64)
+	port, err = parsePort(portString)
 	if err != nil {
-		return "", 0, false, InvalidSandboxPortError{portString, err}
+		return "", 0, false, err
 	}
 
 	return sandboxID, port, true, nil
+}
+
+func parsePort(s string) (uint64, error) {
+	port, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		return 0, InvalidSandboxPortError{s, err}
+	}
+
+	if port == 0 {
+		return 0, InvalidSandboxPortError{s, errors.New("port must not be zero")}
+	}
+
+	return port, nil
 }

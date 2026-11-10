@@ -4,12 +4,15 @@ package userfaultfd
 
 import (
 	"context"
+	"sync/atomic"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -19,6 +22,13 @@ var meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandb
 // serveMetricName is the metric under which per-fault serve latency / faulted
 // bytes / fault count are reported (a TimerFactory triplet).
 const serveMetricName = "orchestrator.sandbox.uffd.serve"
+
+// The UFFD handler serves a template's memfile leg; a data fetch that fails
+// after its retries is a fault on that leg.
+var (
+	memfileLegFaults     = utils.Must(telemetry.GetCounter(meter, telemetry.SandboxTemplateLegFaults))
+	memfileLegFaultAttrs = metric.WithAttributeSet(attribute.NewSet(attribute.String("leg", "memfile")))
+)
 
 // serveTimer records, per served UFFD demand fault, the serve latency (ms
 // histogram), bytes installed into the guest by this serve (counter) and the
@@ -31,12 +41,19 @@ const serveMetricName = "orchestrator.sandbox.uffd.serve"
 // the install race to a concurrent worker or prefault is recorded as
 // result="present" with zero bytes, so the bytes counter only ever counts
 // pages this serve actually copied.
+
 var serveTimer = utils.Must(telemetry.NewTimerFactory(
 	meter,
 	serveMetricName,
 	"Time to serve a UFFD demand page fault",
 	"Bytes installed into the guest by demand-fault serves",
 	"UFFD demand-fault serve attempts",
+))
+
+// Shares serveTimer's counter so dropped faults add no latency or byte samples.
+var serveCount = utils.Must(meter.Int64Counter(
+	serveMetricName,
+	metric.WithDescription("UFFD demand-fault serve attempts"),
 ))
 
 // pageClass classifies a fault by the page-tracker state at the time it was
@@ -62,6 +79,7 @@ const (
 	faultResultDiscarded                    // ESRCH: faulting thread gone, retry pointless
 	faultResultError                        // serving failed
 	faultResultSkipped                      // prefault only: tracker not NotPresent — prefetch arrived too late (or page was removed)
+	faultResultDeduped                      // serve loop only: a worker is already installing the page, whose install wakes this fault too
 	numFaultResult
 )
 
@@ -73,6 +91,7 @@ var resultNames = [numFaultResult]string{
 	faultResultDiscarded: "discarded",
 	faultResultError:     "error",
 	faultResultSkipped:   "skipped",
+	faultResultDeduped:   "deduped",
 }
 
 // generationBucket coarsens the snapshot's Metadata.Generation (its
@@ -116,13 +135,52 @@ func bucketForGeneration(generation uint64) generationBucket {
 	}
 }
 
+// BalloonMode is the free-page mechanism the sandbox's balloon runs. It is
+// baked into the template at build time and travels with the snapshot, so it
+// is read from Firecracker after start and is unknown until then. Serve and
+// write-protect metrics carry it so a REMOVE stall can be read per cohort.
+type BalloonMode uint8
+
+const (
+	BalloonModeUnknown BalloonMode = iota
+	BalloonModeNone
+	BalloonModeReporting
+	BalloonModeHinting
+	numBalloonMode
+)
+
+var balloonModeNames = [numBalloonMode]string{
+	BalloonModeUnknown:   "unknown",
+	BalloonModeNone:      "none",
+	BalloonModeReporting: "reporting",
+	BalloonModeHinting:   "hinting",
+}
+
+func (m BalloonMode) String() string {
+	if m >= numBalloonMode {
+		return balloonModeNames[BalloonModeUnknown]
+	}
+
+	return balloonModeNames[m]
+}
+
+// SetBalloonMode labels this handler's serve and write-protect metrics from
+// here on; faults served before the mode was read carry unknown.
+func (u *Userfaultfd) SetBalloonMode(m BalloonMode) {
+	u.mode.Store(uint32(m))
+}
+
+func (u *Userfaultfd) balloonMode() BalloonMode {
+	return BalloonMode(u.mode.Load())
+}
+
 // serveAttrs holds a precomputed metric.MeasurementOption per
-// (generationBucket, pageClass, faultResult) combination so the per-fault hot
-// path allocates no attributes (mirrors the precomputed attrs in
-// block/streaming_chunk.go).
+// (balloonMode, generationBucket, pageClass, faultResult) combination so the
+// per-fault hot path allocates no attributes (mirrors the precomputed attrs
+// in block/streaming_chunk.go).
 var serveAttrs = buildServeAttrs()
 
-func buildServeAttrs() [numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption {
+func buildServeAttrs() [numBalloonMode][numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption {
 	classNames := [numPageClass]string{
 		pageClassNew:      "new",
 		pageClassZero:     "zero",
@@ -130,20 +188,58 @@ func buildServeAttrs() [numGenerationBucket][numPageClass][numFaultResult]metric
 		pageClassUnknown:  "unknown",
 	}
 
-	var t [numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption
-	for g := range generationBucketNames {
-		for c := range classNames {
-			for r := range resultNames {
-				t[g][c][r] = telemetry.PrecomputeAttrs(
-					attribute.String("generation_bucket", generationBucketNames[g]),
-					attribute.String("page_class", classNames[c]),
-					attribute.String("result", resultNames[r]),
-				)
+	var t [numBalloonMode][numGenerationBucket][numPageClass][numFaultResult]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for c := range classNames {
+				for r := range resultNames {
+					t[m][g][c][r] = telemetry.PrecomputeAttrs(
+						attribute.String("balloon_mode", balloonModeNames[m]),
+						attribute.String("generation_bucket", generationBucketNames[g]),
+						attribute.String("page_class", classNames[c]),
+						attribute.String("result", resultNames[r]),
+					)
+				}
 			}
 		}
 	}
 
 	return t
+}
+
+// serveNewAttrs is serveAttrs for page_class=new with the selected backend as
+// a fifth label, so the serve histogram splits by storage tier where the tier
+// matters. Other classes read no source and keep the four-label set.
+var serveNewAttrs = buildServeNewAttrs()
+
+func buildServeNewAttrs() [numBalloonMode][numGenerationBucket][numFaultResult][storage.NumSources]metric.MeasurementOption {
+	var t [numBalloonMode][numGenerationBucket][numFaultResult][storage.NumSources]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for r := range resultNames {
+				for s := range storage.NumSources {
+					t[m][g][r][s] = telemetry.PrecomputeAttrs(
+						attribute.String("balloon_mode", balloonModeNames[m]),
+						attribute.String("generation_bucket", generationBucketNames[g]),
+						attribute.String("page_class", "new"),
+						attribute.String("result", resultNames[r]),
+						attribute.String("source", s.String()),
+					)
+				}
+			}
+		}
+	}
+
+	return t
+}
+
+// serveOption is the measurement option one serve attempt records under.
+func (u *Userfaultfd) serveOption(pclass pageClass, result faultResult, src storage.Source) metric.MeasurementOption {
+	if pclass == pageClassNew {
+		return serveNewAttrs[u.balloonMode()][u.genBucket][result][src]
+	}
+
+	return serveAttrs[u.balloonMode()][u.genBucket][pclass][result]
 }
 
 // prefaultMetricName is the metric under which per-page prefault latency /
@@ -215,11 +311,11 @@ const (
 )
 
 // wpResolveAttrs holds a precomputed metric.MeasurementOption per
-// (generationBucket, wpResolveOutcome) so the per-fault hot path allocates no
-// attributes.
+// (balloonMode, generationBucket, wpResolveOutcome) so the per-fault hot path
+// allocates no attributes.
 var wpResolveAttrs = buildWPResolveAttrs()
 
-func buildWPResolveAttrs() [numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption {
+func buildWPResolveAttrs() [numBalloonMode][numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption {
 	outcomeNames := [numWPResolveOutcome]string{
 		wpResolveOK:       "resolved",
 		wpResolveOKCoW:    "resolved_cow",
@@ -229,13 +325,16 @@ func buildWPResolveAttrs() [numGenerationBucket][numWPResolveOutcome]metric.Meas
 		wpResolveStale:    "stale_removed",
 	}
 
-	var t [numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption
-	for g := range generationBucketNames {
-		for o := range outcomeNames {
-			t[g][o] = telemetry.PrecomputeAttrs(
-				attribute.String("generation_bucket", generationBucketNames[g]),
-				attribute.String("result", outcomeNames[o]),
-			)
+	var t [numBalloonMode][numGenerationBucket][numWPResolveOutcome]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for o := range outcomeNames {
+				t[m][g][o] = telemetry.PrecomputeAttrs(
+					attribute.String("balloon_mode", balloonModeNames[m]),
+					attribute.String("generation_bucket", generationBucketNames[g]),
+					attribute.String("result", outcomeNames[o]),
+				)
+			}
 		}
 	}
 
@@ -312,8 +411,8 @@ func buildWPPromoteAttrs() [numGenerationBucket][block.NumStates]metric.Measurem
 // serve loop and are not counted. Sampling it at the envd-init boundary yields
 // the pages/bytes a guest needed to start.
 type ServeSnapshot struct {
-	// Pages is the number of demand faults resolved (installed or already
-	// present) — the count of distinct pages the guest needed.
+	// Pages is the number of resolved demand faults (installed or already
+	// present). A page can be counted again if it is removed and re-faulted.
 	Pages int64
 	// SourcePages is the subset of Pages installed from the source
 	// (page_class=new); the rest were zero-filled or already resident (a
@@ -328,32 +427,123 @@ type ServeSnapshot struct {
 	// (guest writes to protected pages). Zero under WP_ASYNC guests. Sampled
 	// per interval it approximates the dirty-set growth at 2 MiB granularity.
 	WPFaults int64
+	// Deferred is the number of serve attempts that hit EAGAIN and were
+	// re-served later; each is a REMOVE or a mapping change racing the
+	// install. WPDeferred is the same for write-protect resolves.
+	Deferred   int64
+	WPDeferred int64
+	// Deduped is the number of MISSING faults dropped by the serve loop
+	// because a worker was already installing their page; the owner's
+	// UFFDIO_COPY woke them. They are not in Pages.
+	Deduped int64
+	// ServeTime is the time spent serving the resolved faults in Pages,
+	// summed over faults. Faults are served concurrently, so it can exceed
+	// the wall time it covers. It is a lower bound on the guest's wait: a
+	// fault deferred on EAGAIN is timed only for the attempt that resolves
+	// it, so its time in the deferred queue is not included. SourceServeTime
+	// is the subset spent on SourcePages, the pages that had to be fetched.
+	ServeTime       time.Duration
+	SourceServeTime time.Duration
+	// MaxServe is the longest single resolved serve attempt so far. It excludes
+	// any time a deferred fault spent waiting for a later attempt. Cumulative;
+	// Sub cannot derive an interval max and leaves it zero.
+	MaxServe time.Duration
+	// BySource splits SourcePages by the selected backend. If a page spans
+	// several sources, the highest-ranked one is selected, not the slowest
+	// measured segment (storage.Source: zero, mmap, peer, NFS, GCS...).
+	BySource [storage.NumSources]int64
+	// ServeTimeBySource splits SourceServeTime the same way, so one trace can
+	// tell a few slow remote pages from many slow local ones.
+	ServeTimeBySource [storage.NumSources]time.Duration
+}
+
+// Sub returns the faults served between an earlier snapshot and this one.
+func (s ServeSnapshot) Sub(earlier ServeSnapshot) ServeSnapshot {
+	var bySource [storage.NumSources]int64
+	var timeBySource [storage.NumSources]time.Duration
+	for i := range bySource {
+		bySource[i] = s.BySource[i] - earlier.BySource[i]
+		timeBySource[i] = s.ServeTimeBySource[i] - earlier.ServeTimeBySource[i]
+	}
+
+	return ServeSnapshot{
+		BySource:          bySource,
+		ServeTimeBySource: timeBySource,
+		Pages:             s.Pages - earlier.Pages,
+		SourcePages:       s.SourcePages - earlier.SourcePages,
+		Bytes:             s.Bytes - earlier.Bytes,
+		WPFaults:          s.WPFaults - earlier.WPFaults,
+		Deferred:          s.Deferred - earlier.Deferred,
+		WPDeferred:        s.WPDeferred - earlier.WPDeferred,
+		Deduped:           s.Deduped - earlier.Deduped,
+		ServeTime:         s.ServeTime - earlier.ServeTime,
+		SourceServeTime:   s.SourceServeTime - earlier.SourceServeTime,
+	}
 }
 
 // ServeStats returns a cumulative snapshot of the demand faults served so far.
 func (u *Userfaultfd) ServeStats() ServeSnapshot {
+	var bySource [storage.NumSources]int64
+	var timeBySource [storage.NumSources]time.Duration
+	var sourcePages int64
+	var sourceTime time.Duration
+	for i := range bySource {
+		bySource[i] = u.servedBySource[i].Load()
+		timeBySource[i] = time.Duration(u.servedNanosBySource[i].Load())
+		sourcePages += bySource[i]
+		sourceTime += timeBySource[i]
+	}
+
 	return ServeSnapshot{
-		Pages:       u.servedPages.Load(),
-		SourcePages: u.servedSourcePages.Load(),
-		Bytes:       u.servedBytes.Load(),
-		WPFaults:    u.wpFaultsResolved.Load(),
+		MaxServe:          time.Duration(u.servedMaxNanos.Load()),
+		BySource:          bySource,
+		ServeTimeBySource: timeBySource,
+		Pages:             u.servedPages.Load(),
+		SourcePages:       sourcePages,
+		Bytes:             u.servedBytes.Load(),
+		WPFaults:          u.wpFaultsResolved.Load(),
+		Deferred:          u.servedDeferred.Load(),
+		Deduped:           u.servedDeduped.Load(),
+		WPDeferred:        u.wpDeferred.Load(),
+
+		ServeTime:       time.Duration(u.servedNanos.Load()),
+		SourceServeTime: sourceTime,
 	}
 }
 
-// recordServeStats folds one finished serve attempt into the cumulative
-// counters read by ServeStats. Only resolved faults (installed or already
-// present) count as a needed page; deferred faults are re-served and counted
-// when they finally resolve, so they are not double counted here.
-func (u *Userfaultfd) recordServeStats(pclass pageClass, result faultResult, servedBytes int64) {
+// recordDropped counts a MISSING fault handled without a worker or measured serve duration.
+func (u *Userfaultfd) recordDropped(ctx context.Context, pclass pageClass, result faultResult) {
+	serveCount.Add(ctx, 1, serveAttrs[u.balloonMode()][u.genBucket][pclass][result])
+	u.recordServeStats(pclass, result, 0, 0, storage.UnknownSource)
+}
+
+// recordServeStats folds one finished serve attempt, and how long it took, into
+// the cumulative counters read by ServeStats. Only resolved faults (installed or
+// already present) count as a needed page and as serve time; deferred faults
+// are re-served and counted when they finally resolve, so they are not double
+// counted here.
+// src is the backend the page's bytes came from, meaningful for an installed
+// page_class=new page only.
+func (u *Userfaultfd) recordServeStats(pclass pageClass, result faultResult, servedBytes int64, took time.Duration, src storage.Source) {
 	switch result {
 	case faultResultInstalled, faultResultPresent:
 		u.servedPages.Add(1)
+		u.servedNanos.Add(int64(took))
+		atomicMax(&u.servedMaxNanos, int64(took))
 		if servedBytes > 0 {
 			u.servedBytes.Add(servedBytes)
 			if pclass == pageClassNew {
-				u.servedSourcePages.Add(1)
+				if src < 0 || src >= storage.NumSources {
+					src = storage.UnknownSource
+				}
+				u.servedBySource[src].Add(1)
+				u.servedNanosBySource[src].Add(int64(took))
 			}
 		}
+	case faultResultDeferred:
+		u.servedDeferred.Add(1)
+	case faultResultDeduped:
+		u.servedDeduped.Add(1)
 	}
 }
 
@@ -375,4 +565,13 @@ func buildPrefaultAttrs() [numGenerationBucket][numFaultResult]metric.Measuremen
 	}
 
 	return t
+}
+
+func atomicMax(a *atomic.Int64, v int64) {
+	for {
+		cur := a.Load()
+		if v <= cur || a.CompareAndSwap(cur, v) {
+			return
+		}
+	}
 }

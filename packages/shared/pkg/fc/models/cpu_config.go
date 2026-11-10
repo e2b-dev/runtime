@@ -10,6 +10,7 @@ import (
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
+	"github.com/go-openapi/validate"
 )
 
 // CPUConfig The CPU configuration template defines a set of bit maps as modifiers of flags accessed by register to be disabled/enabled for the microvm.
@@ -18,19 +19,24 @@ import (
 type CPUConfig struct {
 
 	// A collection of CPUID leaf modifiers (x86_64 only)
-	CpuidModifiers []*CpuidLeafModifier `json:"cpuid_modifiers"`
+	CpuidModifiers []*CpuidLeafModifier `json:"cpuid_modifiers,omitempty"`
 
 	// A collection of KVM capabilities to be added or removed (both x86_64 and aarch64)
-	KvmCapabilities []string `json:"kvm_capabilities"`
+	KvmCapabilities []string `json:"kvm_capabilities,omitempty"`
 
 	// A collection of model specific register modifiers (x86_64 only)
-	MsrModifiers []*MsrModifier `json:"msr_modifiers"`
+	MsrModifiers []*MsrModifier `json:"msr_modifiers,omitempty"`
 
 	// A collection of register modifiers (aarch64 only)
-	RegModifiers []*ArmRegisterModifier `json:"reg_modifiers"`
+	RegModifiers []*ArmRegisterModifier `json:"reg_modifiers,omitempty"`
 
 	// A collection of vCPU features to be modified (aarch64 only)
-	VcpuFeatures []*VcpuFeatures `json:"vcpu_features"`
+	VcpuFeatures []*VcpuFeatures `json:"vcpu_features,omitempty"`
+
+	// Custom frequency at which the guest TSC should be scaled at (in kHz). Only for x86_64. When omitted, the guest runs at the host TSC frequency. Firecracker rejects values outside 100 MHz to 10 GHz, which also catches a value given in Hz or MHz by mistake.
+	// Maximum: 1e+07
+	// Minimum: 100000
+	X86TscKhz int64 `json:"x86_tsc_khz,omitempty"`
 }
 
 // Validate validates this Cpu config
@@ -50,6 +56,10 @@ func (m *CPUConfig) Validate(formats strfmt.Registry) error {
 	}
 
 	if err := m.validateVcpuFeatures(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateX86TscKhz(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -174,6 +184,22 @@ func (m *CPUConfig) validateVcpuFeatures(formats strfmt.Registry) error {
 			}
 		}
 
+	}
+
+	return nil
+}
+
+func (m *CPUConfig) validateX86TscKhz(formats strfmt.Registry) error {
+	if swag.IsZero(m.X86TscKhz) { // not required
+		return nil
+	}
+
+	if err := validate.MinimumInt("x86_tsc_khz", "body", m.X86TscKhz, 100000, false); err != nil {
+		return err
+	}
+
+	if err := validate.MaximumInt("x86_tsc_khz", "body", m.X86TscKhz, 1e+07, false); err != nil {
+		return err
 	}
 
 	return nil

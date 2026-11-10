@@ -14,7 +14,17 @@ type BootstrapArgs struct {
 	AlwaysWP  bool
 	// Barriers gates the test-only worker hooks (off by default).
 	Barriers bool
-	Content  []byte
+	// SourceDelayMs delays every source read in the child (0 = no delay),
+	// standing in for a slow remote chunk fetch.
+	SourceDelayMs int64
+	// InstallDedupOff runs the child's serve loop with one worker per fault
+	// message, the behaviour before UffdInstallDedupFlag. The environment
+	// variable UFFD_INSTALL_DEDUP=0 does the same for every harness, so the
+	// whole suite can be run in that mode.
+	InstallDedupOff bool
+	// ContentPath names a file holding the source pages. Inline hugepage
+	// content as JSON costs seconds per Bootstrap under -race.
+	ContentPath string
 }
 
 type BootstrapReply struct{}
@@ -42,6 +52,46 @@ type TokenArgs struct {
 	Token uint64
 }
 
+// SourceStatsReply counts the child's source reads. Each in-flight read
+// holds one page-sized scratch buffer.
+type SourceStatsReply struct {
+	Reads        int64
+	PeakInFlight int64
+}
+
+// ServeStatsReply is the subset of the handler's ServeSnapshot the tests
+// assert on.
+type ServeStatsReply struct {
+	Pages    int64
+	Deduped  int64
+	Deferred int64
+}
+
+// PrefaultArgs names the page to prefault from the child's own source bytes.
+type PrefaultArgs struct {
+	Offset int64
+}
+
+type PrefaultReply struct {
+	Installed bool
+}
+
+// PageStateArgs names one page; PageStateReply carries its tracker state
+// read under the tracker's own lock only, so it can be asked while workers
+// hold settleRequests.
+type PageStateArgs struct {
+	Offset int64
+}
+
+type PageStateReply struct {
+	State uint8
+}
+
+// EventPendingReply reports whether the child's uffd has an unread event.
+type EventPendingReply struct {
+	Pending bool
+}
+
 // FaultOffsetsReply carries the memfile offsets of dequeued fault events, in
 // dequeue order.
 type FaultOffsetsReply struct {
@@ -59,8 +109,8 @@ type CoWStateReply struct {
 	Canceled    bool
 	CancelCause string
 	// Sink is the identity-offset sink contents (pre-images captured so far;
-	// unwritten ranges are zero). Sized like the guest memory — fine at test
-	// scale, and consistent with Bootstrap shipping Content the same way.
+	// unwritten ranges are zero). Sized like the guest memory — fine at the
+	// 4k-page scale the CoW tests use.
 	Sink []byte
 }
 

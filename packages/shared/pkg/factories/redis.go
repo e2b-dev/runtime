@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/retry"
 )
 
 var ErrRedisDisabled = errors.New("redis is disabled")
@@ -35,6 +36,10 @@ type RedisConfig struct {
 	// (per cluster node for cluster clients).
 	// When non-positive, defaults to min(defaultMinIdleConns, PoolSize).
 	MinIdleConns int
+	// ContextTimeoutEnabled makes a command's context deadline bound its socket
+	// reads and writes too; otherwise only the read and write timeouts do, and a
+	// stalled reply outlives the deadline.
+	ContextTimeoutEnabled bool
 }
 
 const (
@@ -49,6 +54,22 @@ const (
 	// so connections expire between 20-40 minutes instead of all at exactly 30 minutes.
 	connMaxLifetimeJitter = 10 * time.Minute
 )
+
+// startupPingPolicy outlasts a Redis failover; most callers exit when no client is created.
+var startupPingPolicy = retry.Policy{
+	TotalBudget:    5 * time.Minute,
+	AttemptTimeout: 5 * time.Second,
+	InitialBackoff: 250 * time.Millisecond,
+	MaxBackoff:     5 * time.Second,
+	Multiplier:     2,
+}
+
+// pingRetryable gives up on failures a retry cannot fix: rejected credentials and an untrusted certificate.
+func pingRetryable(err error) bool {
+	var certErr *tls.CertificateVerificationError
+
+	return !redis.IsAuthError(err) && !redis.IsPermissionError(err) && !errors.As(err, &certErr)
+}
 
 // resolvePoolSize computes the effective pool size and minimum idle connections
 // from the given config, applying defaults and floors.
@@ -184,6 +205,7 @@ func newRedisOptions(ctx context.Context, config RedisConfig, poolSize, minIdleC
 	opts.ConnMaxIdleTime = -1
 	opts.ConnMaxLifetime = connMaxLifetime
 	opts.ConnMaxLifetimeJitter = connMaxLifetimeJitter
+	opts.ContextTimeoutEnabled = config.ContextTimeoutEnabled
 
 	return opts, nil
 }
@@ -211,6 +233,7 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 			ConnMaxIdleTime:       -1,
 			ConnMaxLifetime:       connMaxLifetime,
 			ConnMaxLifetimeJitter: connMaxLifetimeJitter,
+			ContextTimeoutEnabled: config.ContextTimeoutEnabled,
 		}
 
 		tlsConfig, err := resolveTLSConfig(ctx, config, config.RedisClusterURL)
@@ -252,7 +275,9 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 		return nil, errors.Join(fmt.Errorf("failed to enable redis metrics: %w", err), closeErr)
 	}
 
-	if _, err := redisClient.Ping(ctx).Result(); err != nil {
+	if err := retry.Do(ctx, startupPingPolicy, pingRetryable, func(ctx context.Context) error {
+		return redisClient.Ping(ctx).Err()
+	}, nil); err != nil {
 		closeErr := redisClient.Close()
 
 		return nil, errors.Join(fmt.Errorf("failed to ping redis: %w", err), closeErr)

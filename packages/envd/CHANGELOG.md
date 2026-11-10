@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.10.2 (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** update golang.org/x (63870e6)
+* **deps:** update module google.golang.org/api to v0.300.0 (51410da)
+* **deps:** update module google.golang.org/grpc to v1.84.0 (218ae4a)
+* **envd:** distinguish expected stdin lifecycle errors from CodeInternal (8174e70)
+* **envd:** preserve shared certificates when replacing CA bundles (daa352c)
+* **envd:** retain CA ownership across process restarts (6ce0039)
+
+
+### Miscellaneous Chores
+
+* **deps:** update module github.com/vektra/mockery/v3 to v3.8.1 (7e8181f)
+
+## 0.10.1 (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.26.10 toolchain (229e936)
+* **envd:** correct tag-based process lookup early abort (7d78e2b)
+* **envd:** drop the nil wrapped error from the watch non-directory message (864edc8)
+* **envd:** fail init when a requested volume is not usable (3d4b04b)
+* **envd:** keep forwarded ports when a port scan fails (2185385)
+
+## 0.10.0 (2026-10-12)
+
+
+### Features
+
+* **envd:** bring guest CPUs online to the count requested on /init (5fc4907)
+* **envd:** make the /init thaw freeze-aware and skippable, and correct its clock stamp (69da628)
+* **envd:** report whether a filesystem entry is a symlink (2d11e88)
+* **orchestrator:** warn in the sandbox's logs when it runs out of memory (c2608a7)
+
+
+### Bug Fixes
+
+* **envd:** bound NFS mount commands and log their progress (5da26bc)
+* **envd:** keep process starts out of the cgroup freeze window (0ee8c2d)
+* **envd:** validate keepalive intervals (17855b4)
+
+
+### Code Refactoring
+
+* **envd:** give the OOM watcher its logger when it's created (73a9182)
+* **envd:** remove the deprecated MiB memory fields from /metrics (8076631)
+* **envd:** start the OOM watcher in main and pass it to the API (6cc8efb)
+
 ## 0.9.0 (2026-09-10)
 
 

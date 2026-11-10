@@ -5,11 +5,14 @@ package server
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/storage/paths"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -39,6 +42,32 @@ func initLayerFileUploadRequest() *templatemanager.InitLayerFileUploadRequest {
 	return &templatemanager.InitLayerFileUploadRequest{
 		TemplateID: testTemplateID,
 		Hash:       testFilesHash,
+	}
+}
+
+// The hash becomes part of the signed storage key, so a malformed one must be
+// refused before storage is touched; the mock fails the test on any call.
+func TestInitLayerFileUploadRejectsInvalidHash(t *testing.T) {
+	t.Parallel()
+
+	for name, hash := range map[string]string{
+		"empty":                "",
+		"uppercase":            strings.ToUpper(testFilesHash),
+		"relative path":        "../" + testFilesHash,
+		"absolute":             "/" + testFilesHash,
+		"truncated":            testFilesHash[:63],
+		"trailing path suffix": testFilesHash + "/x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s := &ServerStore{buildStorage: storage.NewMockStorageProvider(t)}
+			req := initLayerFileUploadRequest()
+			req.Hash = hash
+
+			_, err := s.InitLayerFileUpload(t.Context(), req)
+			require.Equal(t, codes.InvalidArgument, status.Code(err), err)
+		})
 	}
 }
 

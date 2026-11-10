@@ -8,6 +8,8 @@ set -euo pipefail
 #   ./build.sh <kernel_version> [arch]    # build a single version
 #
 # arch is one of: x86_64 (default), arm64 (kernel-style names).
+# A version may carry a flavour, 6.1.158-android: the upstream tag and the patches
+# come from its stem (6.1.158), the config and the output from the full name.
 # Output: builds/vmlinux-<version>/<output_arch>/vmlinux.bin where
 # <output_arch> is the Go/OCI name (amd64/arm64) used by the orchestrator.
 #
@@ -50,6 +52,10 @@ install_dependencies() {
 # rather than by tag creation date also makes the choice a property of the tag
 # names alone, so anything that only has the tag list — an automated bump
 # deciding what to propose — resolves the same tag this build will check out.
+#
+# Only names that end on the distro field, the grammar the bump's resolver
+# reads. The glob's open end also matches withdrawn builds, which upstream
+# renames with a -dontuse suffix and which can carry the highest release.
 get_tag() {
   local kernel_version="$1" prefix tag
   for prefix in microvm-kernel kernel; do
@@ -57,13 +63,19 @@ get_tag() {
     # text there (microvm-kernel6.18-6.18.33-65.128.amzn2023). The glob is
     # anchored, so the 'kernel' pass still does not match microvm tags, and the
     # '-' after the version keeps 6.1.177 from matching 6.1.1770.
-    tag="$(git --no-pager tag -l "${prefix}*${kernel_version}-*.amzn2*" | sort -V | tail -n1)"
+    tag="$(git --no-pager tag -l "${prefix}*${kernel_version}-*.amzn2*" \
+      | sed -En '/\.amzn2[[:alnum:]_]*$/p' | sort -V | tail -n1)"
     if [ -n "$tag" ]; then
       echo "$tag"
       return 0
     fi
   done
   return 1
+}
+
+# The upstream version a pin is built from: 6.1.158 for 6.1.158-android.
+version_stem() {
+  echo "${1%%-*}"
 }
 
 # The salt Kconfig carries into the vmlinux as an ELF note, naming what the
@@ -82,10 +94,8 @@ build_salt() {
     arm64) rpm_arch="aarch64" ;;
     *)     rpm_arch="$target_arch" ;;
   esac
-  # The distro field get_tag matched on, found by name rather than by position:
-  # its glob ends open, so this field is not always the tag's last. A tag
-  # without one is not one get_tag returns, so fail rather than salt with
-  # whatever happens to sit there.
+  # The distro field get_tag matched on. A tag without one is not one get_tag
+  # returns, so fail rather than salt with whatever happens to sit there.
   [[ "$tag" =~ amzn2[0-9]* ]] || return 1
   echo "${version}-${BASH_REMATCH[0]}.${rpm_arch}"
 }
@@ -115,17 +125,22 @@ build_version() {
 
   cp "$SCRIPT_DIR/configs/${target_arch}/${version}.config" .config
 
-  local tag=""
+  local stem tag=""
+  stem="$(version_stem "$version")"
   # get_tag greps, so no match is a non-zero exit, not just empty output.
-  tag="$(get_tag "$version")" || true
+  tag="$(get_tag "$stem")" || true
   if [ -z "$tag" ]; then
     echo "No amzn tag for kernel version $version" >&2
     return 1
   fi
   echo "Checking out $tag for kernel version: $version"
   git checkout -f "$tag"
+  # A patch that adds files leaves them untracked; the next build's apply would refuse them.
+  git clean -fdq
 
-  apply_patches "$version"
+  apply_patches "$stem"
+  # A flavour may carry patches of its own, applied after its stem's.
+  [ "$version" = "$stem" ] || apply_patches "$version"
 
   local make_opts="" cross=""
   if [[ "$target_arch" == "arm64" ]]; then
@@ -192,7 +207,13 @@ build_version() {
 
 ensure_linux_repo() {
   cd "$SCRIPT_DIR"
-  [ -d linux ] || git clone --no-checkout --filter=tree:0 https://github.com/amazonlinux/linux
+  if [ -d linux ]; then
+    # A reused clone would keep the tag of a build upstream has since withdrawn,
+    # and miss every tag cut after it was cloned.
+    git -C linux fetch --quiet --force --prune --prune-tags origin
+  else
+    git clone --no-checkout --filter=tree:0 https://github.com/amazonlinux/linux
+  fi
   cd linux
   make distclean || true
 }

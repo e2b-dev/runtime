@@ -66,6 +66,7 @@ func (c *Cleaner) scanWorker(ctx context.Context, ids []string, out *[]build, do
 		rec, live := c.scanBuild(ctx, id, reqs)
 		if live {
 			c.metrics.recordScanBuild(ctx, time.Since(start), rec.size)
+			c.CacheBytes.Add(rec.size)
 			*out = append(*out, rec)
 		}
 	}
@@ -78,6 +79,11 @@ func (c *Cleaner) scanWorker(ctx context.Context, ids []string, out *[]build, do
 // samples their warmest atime; a build with no chunks sorts coldest (warmest 0)
 // so its leftover dir is reaped first. Returns (record, true), or (_, false)
 // when the build is filtered out.
+//
+// In byte-budget mode a Grace-protected build is still sized (readdir only, no
+// atime sampling) and charged to CacheBytes: it cannot be evicted, but it is on
+// the bill, and a budget that ignored it would let the cache overshoot by the
+// whole fresh set.
 func (c *Cleaner) scanBuild(ctx context.Context, buildID string, reqs chan<- *statReq) (build, bool) {
 	buildPath := filepath.Join(c.Path, buildID)
 
@@ -85,12 +91,38 @@ func (c *Cleaner) scanBuild(ctx context.Context, buildID string, reqs chan<- *st
 		c.metrics.recordStatx(ctx)
 		if c.buildAge(buildPath) < c.Grace {
 			c.metrics.recordGraced(ctx)
+			if c.MaxCacheBytes > 0 {
+				c.CacheBytes.Add(c.sizeChunks(ctx, buildPath))
+			}
 
 			return build{}, false
 		}
 	}
 
 	return c.sampleChunks(ctx, buildID, buildPath, reqs), true
+}
+
+// sizeChunks sums a build's on-disk bytes from its chunk filenames without
+// sampling atimes — the size half of sampleChunks, for builds that only need to
+// be counted, not ranked. Returns 0 for a chunkless build.
+func (c *Cleaner) sizeChunks(ctx context.Context, buildPath string) uint64 {
+	var size uint64
+	chunks := 0
+	for _, base := range baseNames {
+		df := c.openDataDir(ctx, buildPath, base)
+		if df == nil {
+			continue
+		}
+		n, sz := c.readDataDir(ctx, df, nil)
+		df.Close()
+		size += sz
+		chunks += n
+	}
+	if chunks == 0 {
+		return 0
+	}
+
+	return size + otherFilesBytesEstimate
 }
 
 // sampleChunks sizes a build and finds its warmest (most recent) chunk atime. It
@@ -137,13 +169,11 @@ func (c *Cleaner) sampleChunks(ctx context.Context, buildID, buildPath string, r
 	return build{uuid: buildID, timestamp: warmest, size: size}
 }
 
-// sampleDataDir reads one open data dir: it sums on-disk bytes from chunk
-// filenames, reservoir-samples up to SampleMax names (uniform over the dir, since
-// NFS readdir order is not atime order), statx's the sample via the stat pool,
-// and returns the warmest sampled atime, the chunk count, and the summed size.
-// All statx complete before it returns, so the caller may close df immediately.
-func (c *Cleaner) sampleDataDir(ctx context.Context, df *os.File, reqs chan<- *statReq) (warmest int64, chunks int, size uint64) {
-	reservoir := make([]string, 0, c.SampleMaxFiles)
+// readDataDir reads one open data dir page by page: it sums on-disk bytes from
+// chunk filenames and, when reservoir is non-nil, reservoir-samples up to
+// SampleMax names into it (uniform over the dir, since NFS readdir order is not
+// atime order). Returns the chunk count and the summed size.
+func (c *Cleaner) readDataDir(ctx context.Context, df *os.File, reservoir *[]string) (chunks int, size uint64) {
 	for {
 		entries, rerr := df.ReadDir(readdirPage)
 		c.ReadDirC.Add(1)
@@ -153,10 +183,12 @@ func (c *Cleaner) sampleDataDir(ctx context.Context, df *os.File, reqs chan<- *s
 				continue
 			}
 			size += chunkOnDiskBytes(e.Name())
-			if len(reservoir) < c.SampleMaxFiles {
-				reservoir = append(reservoir, e.Name())
-			} else if j := rand.Intn(chunks + 1); j < c.SampleMaxFiles {
-				reservoir[j] = e.Name()
+			if reservoir != nil {
+				if len(*reservoir) < c.SampleMaxFiles {
+					*reservoir = append(*reservoir, e.Name())
+				} else if j := rand.Intn(chunks + 1); j < c.SampleMaxFiles {
+					(*reservoir)[j] = e.Name()
+				}
 			}
 			chunks++
 		}
@@ -172,6 +204,18 @@ func (c *Cleaner) sampleDataDir(ctx context.Context, df *os.File, reqs chan<- *s
 
 		break
 	}
+
+	return chunks, size
+}
+
+// sampleDataDir reads one open data dir: it sums on-disk bytes from chunk
+// filenames, reservoir-samples up to SampleMax names (uniform over the dir, since
+// NFS readdir order is not atime order), statx's the sample via the stat pool,
+// and returns the warmest sampled atime, the chunk count, and the summed size.
+// All statx complete before it returns, so the caller may close df immediately.
+func (c *Cleaner) sampleDataDir(ctx context.Context, df *os.File, reqs chan<- *statReq) (warmest int64, chunks int, size uint64) {
+	reservoir := make([]string, 0, c.SampleMaxFiles)
+	chunks, size = c.readDataDir(ctx, df, &reservoir)
 	if chunks == 0 {
 		return 0, 0, size
 	}

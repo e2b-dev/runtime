@@ -9,17 +9,19 @@ import (
 
 const defaultKeepAliveInterval = 90 * time.Second
 
-func GetKeepAliveTicker[T any](req *connect.Request[T]) (*time.Ticker, func()) {
-	keepAliveIntervalHeader := req.Header().Get("Keepalive-Ping-Interval")
+const maxKeepAliveIntervalSeconds = (1<<63 - 1) / int64(time.Second)
 
-	var interval time.Duration
-
-	keepAliveIntervalInt, err := strconv.Atoi(keepAliveIntervalHeader)
-	if err != nil {
-		interval = defaultKeepAliveInterval
-	} else {
-		interval = time.Duration(keepAliveIntervalInt) * time.Second
+func parseKeepAliveInterval(value string) time.Duration {
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds <= 0 || seconds > maxKeepAliveIntervalSeconds {
+		return defaultKeepAliveInterval
 	}
+
+	return time.Duration(seconds) * time.Second
+}
+
+func GetKeepAliveTicker[T any](req *connect.Request[T]) (*time.Ticker, func()) {
+	interval := parseKeepAliveInterval(req.Header().Get("Keepalive-Ping-Interval"))
 
 	ticker := time.NewTicker(interval)
 

@@ -53,7 +53,7 @@ func TestCommandKillNextApp(t *testing.T) {
 			Cwd:  &cwd,
 		},
 	})
-	setup.SetSandboxHeader(t, runDevReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, runDevReq.Header(), sbx)
 	setup.SetUserHeader(t, runDevReq.Header(), "user")
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	runDevStream, err := envdClient.ProcessClient.Start(serverCtx, runDevReq)
@@ -85,7 +85,7 @@ func TestCommandKillNextApp(t *testing.T) {
 
 	// Wait for the next dev to show up in the process list
 	listReq := connect.NewRequest(&process.ListRequest{})
-	setup.SetSandboxHeader(t, listReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, listReq.Header(), sbx)
 	setup.SetUserHeader(t, listReq.Header(), "user")
 
 	var listResp *connect.Response[process.ListResponse]
@@ -99,7 +99,7 @@ func TestCommandKillNextApp(t *testing.T) {
 	// Kill all processes
 	for _, proc := range listResp.Msg.GetProcesses() {
 		t.Logf("killing process PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
-		killPid(t, ctx, envdClient, sbx.SandboxID, proc.GetPid())
+		killPid(t, ctx, envdClient, sbx, proc.GetPid())
 	}
 
 	// Final process list
@@ -129,7 +129,7 @@ func TestCommandKillWithAnd(t *testing.T) {
 			Args: []string{"-l", "-c", "sleep 30 && echo done"},
 		},
 	})
-	setup.SetSandboxHeader(t, runDevReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, runDevReq.Header(), sbx)
 	setup.SetUserHeader(t, runDevReq.Header(), "user")
 	serverCtx, serverCancel := context.WithCancel(ctx)
 	runDevStream, err := envdClient.ProcessClient.Start(serverCtx, runDevReq)
@@ -164,7 +164,7 @@ func TestCommandKillWithAnd(t *testing.T) {
 
 	// Step 2: Wait for the command to show up in the process list
 	listReq := connect.NewRequest(&process.ListRequest{})
-	setup.SetSandboxHeader(t, listReq.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(t, listReq.Header(), sbx)
 	setup.SetUserHeader(t, listReq.Header(), "user")
 
 	var listResp *connect.Response[process.ListResponse]
@@ -178,7 +178,7 @@ func TestCommandKillWithAnd(t *testing.T) {
 	// Kill all processes
 	for _, proc := range listResp.Msg.GetProcesses() {
 		t.Logf("killing process PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
-		killPid(t, ctx, envdClient, sbx.SandboxID, proc.GetPid())
+		killPid(t, ctx, envdClient, sbx, proc.GetPid())
 	}
 
 	// Final process list
@@ -196,7 +196,7 @@ func killPid(
 	t *testing.T,
 	ctx context.Context,
 	envdClient *setup.EnvdClient,
-	sandboxID string,
+	sbx *api.Sandbox,
 	pid uint32,
 ) {
 	t.Helper()
@@ -209,7 +209,7 @@ func killPid(
 			},
 		},
 	})
-	setup.SetSandboxHeader(t, connectReq.Header(), sandboxID)
+	setup.SetSandboxHeader(t, connectReq.Header(), sbx)
 	setup.SetUserHeader(t, connectReq.Header(), "user")
 	connectResp, err := envdClient.ProcessClient.Connect(ctx, connectReq)
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func killPid(
 			},
 		},
 	})
-	setup.SetSandboxHeader(t, killReq.Header(), sandboxID)
+	setup.SetSandboxHeader(t, killReq.Header(), sbx)
 	setup.SetUserHeader(t, killReq.Header(), "user")
 	_, err = envdClient.ProcessClient.SendSignal(ctx, killReq)
 	require.NoError(t, err)

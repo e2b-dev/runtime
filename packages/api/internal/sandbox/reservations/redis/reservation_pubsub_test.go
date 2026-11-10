@@ -69,8 +69,7 @@ func TestWaitForStart_WokenByFinishStartPublish(t *testing.T) {
 		close(waiterDone)
 	}()
 
-	// Let the waiter subscribe before we finish.
-	time.Sleep(50 * time.Millisecond)
+	waitForSubscribers(t, storage, 1)
 
 	start := time.Now()
 	finishStart(testSandbox(teamID, sbxID), nil)
@@ -107,7 +106,7 @@ func TestWaitForStart_WokenByReleasePublish(t *testing.T) {
 		_, err := waitForStart(t.Context())
 		waiterErr <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	waitForSubscribers(t, storage, 1)
 
 	start := time.Now()
 	require.NoError(t, storage.Release(t.Context(), teamID, sbxID))
@@ -265,8 +264,7 @@ func TestWaitForStart_MultipleWaitersOnePublish(t *testing.T) {
 		}(i, w)
 	}
 
-	// Let everyone subscribe.
-	time.Sleep(100 * time.Millisecond)
+	waitForSubscribers(t, storage, numWaiters)
 	finishStart(testSandbox(teamID, sbxID), nil)
 
 	done := make(chan struct{})
@@ -305,7 +303,7 @@ func TestWaitForStart_FailedStartPropagatesPromptly(t *testing.T) {
 		_, err := waitForStart(t.Context())
 		waiterErr <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	waitForSubscribers(t, storage, 1)
 
 	start := time.Now()
 	finishStart(sandboxtypes.Sandbox{}, errors.New("boom"))

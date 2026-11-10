@@ -48,6 +48,10 @@ func (f *fakeInPlaceRootfs) FoldSealed(context.Context) (*block.Cache, error) {
 	return f.overlay.FoldSealing()
 }
 
+func (f *fakeInPlaceRootfs) ExportDiffInPlace(ctx context.Context, out *os.File) (*header.DiffMetadata, error) {
+	return f.overlay.ExportDiffInPlace(ctx, out)
+}
+
 // inPlaceRODevice is a minimal block.ReadonlyDevice over a fixed byte buffer.
 type inPlaceRODevice struct{ data []byte }
 
@@ -68,6 +72,37 @@ func (d *inPlaceRODevice) Close() error                        { return nil }
 func (d *inPlaceRODevice) BlockSize() int64                    { return int64(header.PageSize) }
 func (d *inPlaceRODevice) Header() *header.Header              { return nil }
 func (d *inPlaceRODevice) SwapHeader(*header.Header)           {}
+
+func TestSynchronousInPlaceRootfsExportSurvivesSourceClose(t *testing.T) {
+	t.Parallel()
+
+	blockSize := int64(header.PageSize)
+	size := 2 * blockSize
+	base := &inPlaceRODevice{data: make([]byte, size)}
+	cache, err := block.NewCache(size, blockSize, t.TempDir()+"/source-cache", false)
+	require.NoError(t, err)
+	overlay := block.NewOverlay(base, cache)
+	content := make([]byte, blockSize)
+	for i := range content {
+		content[i] = 0xAB
+	}
+	_, err = overlay.WriteAt(content, 0)
+	require.NoError(t, err)
+
+	baseHeader, err := header.NewHeader(header.NewTemplateMetadata(uuid.New(), uint64(blockSize), uint64(size)), nil)
+	require.NoError(t, err)
+	provider := &fakeInPlaceRootfs{overlay: overlay}
+	diff, _, err := pauseProcessRootfs(t.Context(), uuid.New(), baseHeader, &RootfsDiffCreator{rootfs: provider}, t.TempDir(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = diff.Close() })
+
+	require.NoError(t, overlay.Close())
+	path, err := diff.CachePath(t.Context())
+	require.NoError(t, err)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, content, got)
+}
 
 // TestRunInPlaceRootfsExport verifies the in-place background lifecycle: the
 // frozen (swapped-out) cache is sealed into the deferred diff, the diff resolves
@@ -346,17 +381,64 @@ func TestWaitForRootfsSeal_SerializesNextSnapshot(t *testing.T) {
 	require.Error(t, s2.waitForRootfsSeal(t.Context()))
 }
 
-// TestBeginEndInPlaceCheckpoint pins the guard that keeps two Checkpoint RPCs
+// TestNewPauseOptions checks the combinations a retained pause rejects or
+// changes. A retained guest never resumes to drain a deferred export, so a
+// missed override would hold the source paused for the whole upload budget.
+func TestNewPauseOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		opts            []PauseOption
+		wantErr         bool
+		wantDeferRootfs bool
+		wantDeferMemory bool
+	}{
+		{
+			name:            "in-place checkpoint keeps deferral",
+			opts:            []PauseOption{WithMaintainSandbox(), WithDeferredRootfsExport()},
+			wantDeferRootfs: true,
+			wantDeferMemory: true,
+		},
+		{
+			name: "retained pause disables deferral",
+			opts: []PauseOption{WithRetainedPause(), WithDeferredRootfsExport()},
+		},
+		{
+			name:    "retained pause rejects a filesystem-only snapshot",
+			opts:    []PauseOption{WithRetainedPause(), WithFilesystemSnapshot()},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			o, err := newPauseOptions(tt.opts...)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantDeferRootfs, o.deferRootfsExport)
+			require.Equal(t, tt.wantDeferMemory, o.mayDeferMemoryExport())
+			require.True(t, o.maintainSandbox)
+		})
+	}
+}
+
+// TestBeginEndCheckpoint pins the guard that keeps two Checkpoint RPCs
 // from racing Pause/CreateSnapshot/ResumeInPlace on one FC process: Begin is a
 // CAS that admits exactly one in-flight checkpoint until End releases it.
-func TestBeginEndInPlaceCheckpoint(t *testing.T) {
+func TestBeginEndCheckpoint(t *testing.T) {
 	t.Parallel()
 
 	s := &Sandbox{}
-	require.True(t, s.BeginInPlaceCheckpoint(), "first Begin must win")
-	require.False(t, s.BeginInPlaceCheckpoint(), "second Begin must be refused while in flight")
-	s.EndInPlaceCheckpoint()
-	require.True(t, s.BeginInPlaceCheckpoint(), "Begin must win again after End")
+	require.True(t, s.BeginCheckpoint(), "first Begin must win")
+	require.False(t, s.BeginCheckpoint(), "second Begin must be refused while in flight")
+	s.EndCheckpoint()
+	require.True(t, s.BeginCheckpoint(), "Begin must win again after End")
 }
 
 // TestSetupInPlaceRootfsExport_AbortCleanupOrder is the in-place twin of
@@ -562,4 +644,14 @@ func TestFailSealSetup(t *testing.T) {
 		require.ErrorIs(t, latchErr, build.ErrDeferredSealFailed)
 		require.Error(t, s.EnsurePausable())
 	})
+}
+
+// ResumeVM sends no flip for a caller that already ended, so nothing reaches
+// the VM after the caller's authority did.
+func TestResumeVMSendsNothingForAnEndedCaller(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	require.ErrorIs(t, (&Factory{}).ResumeVM(ctx, &Sandbox{}), ErrResumeNotStarted, "nothing reaches the VM")
 }

@@ -19,6 +19,17 @@ const DefaultEventsTTLDays int64 = 7
 // clamps to this value, so readers must use the same bound.
 const MaxEventsTTLDays int64 = 365
 
+// RetentionDays is how many days the events writer keeps a team's events: a
+// non-positive TTL falls back to the default and a larger one is capped.
+// Readers judging whether events still exist must resolve it the same way.
+func RetentionDays(teamTTLDays int64) int64 {
+	if teamTTLDays <= 0 {
+		return DefaultEventsTTLDays
+	}
+
+	return min(teamTTLDays, MaxEventsTTLDays)
+}
+
 const (
 	SandboxCreatedEvent      = "sandbox.lifecycle.created"
 	SandboxKilledEvent       = "sandbox.lifecycle.killed"

@@ -12,7 +12,7 @@
 # Unlike the rest of tests/, this file needs a working Docker daemon with the
 # compose plugin (to render compose/compose.yaml) and `jq` on PATH. GitHub's ubuntu
 # runners ship both, which is why `make test` runs it there; a runner without
-# them fails these two tests in setup(). The same requirement is in the
+# them fails these tests in setup(). The same requirement is in the
 # README's developer section.
 
 setup() {
@@ -28,6 +28,15 @@ setup() {
 
 @test "vector-config inline content matches compose/config/vector/vector.toml byte for byte" {
   run bash -c 'diff <(echo "$1" | jq -j ".configs[\"vector-config\"].content") compose/config/vector/vector.toml' _ "$RENDERED_JSON"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# Rendered with the otel profile on: the collector that mounts this config is
+# behind it.
+@test "otel-collector-config inline content matches compose/config/otel/otel-collector.yaml byte for byte" {
+  rendered="$(docker compose --project-directory compose --profile otel config --format json)"
+  run bash -c 'diff <(echo "$1" | jq -j ".configs[\"otel-collector-config\"].content") compose/config/otel/otel-collector.yaml' _ "$rendered"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }

@@ -3,6 +3,7 @@ package synchronization
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,13 +25,8 @@ type testStore struct {
 	removes int
 }
 
-func newTestStore(source []string, preExistingPool []string) *testStore {
-	pool := make(map[string]string, len(preExistingPool))
-	for _, k := range preExistingPool {
-		pool[k] = k
-	}
-
-	return &testStore{source: source, pool: pool}
+func newTestStore(source []string) *testStore {
+	return &testStore{source: source, pool: map[string]string{}}
 }
 
 func (s *testStore) SourceList(context.Context) ([]string, error) {
@@ -123,7 +119,7 @@ func TestSynchronize_SyncRespectsContextCancellation(t *testing.T) {
 	ctx := t.Context()
 
 	slow := &slowTestStore{
-		testStore: newTestStore([]string{"a"}, nil),
+		testStore: newTestStore([]string{"a"}),
 		unblock:   make(chan struct{}),
 	}
 	syncer := newSynchronizer(ctx, slow)
@@ -155,7 +151,7 @@ func TestSynchronize_InsertAndRemove(t *testing.T) {
 	ctx := t.Context()
 
 	// Start with empty pool; source has a & b.
-	s := newTestStore([]string{"a", "b"}, nil)
+	s := newTestStore([]string{"a", "b"})
 	syncer := newSynchronizer(ctx, s)
 
 	require.NoError(t, syncer.Sync(ctx))
@@ -169,4 +165,101 @@ func TestSynchronize_InsertAndRemove(t *testing.T) {
 	assert.Equal(t, 1, s.removes)
 	assert.Len(t, s.pool, 1)
 	assert.True(t, s.PoolExists(ctx, "a"))
+}
+
+// versionedStore keys pool entries by the ID before '@' while SourceExists
+// compares the whole value, so "a@2" is the changed form of the pooled "a@1".
+type versionedStore struct {
+	*testStore
+}
+
+func (s *versionedStore) PoolList(context.Context) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]string, 0, len(s.pool))
+	for _, v := range s.pool {
+		out = append(out, v)
+	}
+
+	return out
+}
+
+func (s *versionedStore) PoolExists(_ context.Context, item string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, _, _ := strings.Cut(item, "@")
+	_, ok := s.pool[id]
+
+	return ok
+}
+
+func (s *versionedStore) PoolInsert(_ context.Context, item string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, _, _ := strings.Cut(item, "@")
+	s.pool[id] = item
+	s.inserts++
+}
+
+// An item that keeps its ID but changes is replaced within one Sync, never
+// left out of the pool until the next round.
+func TestSynchronize_ReplacesAChangedItemInOneRound(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	s := &versionedStore{testStore: newTestStore([]string{"a@1"})}
+	syncer := newSynchronizer(ctx, s)
+	require.NoError(t, syncer.Sync(ctx))
+
+	s.source = []string{"a@2"}
+	require.NoError(t, syncer.Sync(ctx))
+
+	assert.Equal(t, map[string]string{"a": "a@2"}, s.pool)
+	assert.Equal(t, 1, s.removes)
+	assert.Equal(t, 2, s.inserts)
+}
+
+// replacingStore swaps a changed item in place instead of removing it.
+type replacingStore struct {
+	*versionedStore
+
+	replaces int
+}
+
+func (s *replacingStore) PoolReplace(_ context.Context, source []string, old string) bool {
+	id, _, _ := strings.Cut(old, "@")
+	index := slices.IndexFunc(source, func(item string) bool {
+		itemID, _, _ := strings.Cut(item, "@")
+
+		return itemID == id
+	})
+	if index < 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pool[id] = source[index]
+	s.replaces++
+
+	return true
+}
+
+// A store that can replace a changed item does so without removing it, and an
+// item gone from the source is still removed.
+func TestSynchronize_ReplacerSwapsInPlace(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	s := &replacingStore{versionedStore: &versionedStore{testStore: newTestStore([]string{"a@1", "b@1"})}}
+	syncer := newSynchronizer(ctx, s)
+	require.NoError(t, syncer.Sync(ctx))
+
+	s.source = []string{"a@2"}
+	require.NoError(t, syncer.Sync(ctx))
+
+	assert.Equal(t, map[string]string{"a": "a@2"}, s.pool)
+	assert.Equal(t, 1, s.replaces)
+	assert.Equal(t, 1, s.removes, "only b, which left the source, is removed")
+	assert.Equal(t, 2, s.inserts, "the replacement is not inserted a second time")
 }

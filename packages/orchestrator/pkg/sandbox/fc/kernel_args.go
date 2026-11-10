@@ -7,6 +7,7 @@ import (
 	"maps"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -22,20 +23,26 @@ type KernelArgs map[string]string
 // sandbox that fails indistinguishably from an orchestrator bug: a guest that never boots, has
 // no network, writes its console where nobody reads it, or whose clock jumps after a resume.
 // selinux is reserved for the same reason: the default disables it, and a fragment that
-// re-arms it hangs a policy-shipping image before envd starts. Everything outside this set
-// is guest-kernel tuning the guest alone lives with.
+// re-arms it hangs a policy-shipping image before envd starts. maxcpus is how the
+// orchestrator keeps a VM's spare vCPUs offline, and nr_cpus, possible_cpus and nosmp would cap
+// them for good. Everything outside this set is guest-kernel tuning the guest alone lives
+// with.
 var reservedCmdlineParams = map[string]struct{}{
-	"init":        {},
-	"clocksource": {},
-	"root":        {},
-	"ip":          {},
-	"console":     {},
-	"rootflags":   {},
-	"panic":       {},
-	"reboot":      {},
-	"loglevel":    {},
-	"quiet":       {},
-	"selinux":     {},
+	"maxcpus":       {},
+	"nr_cpus":       {},
+	"possible_cpus": {},
+	"nosmp":         {},
+	"init":          {},
+	"clocksource":   {},
+	"root":          {},
+	"ip":            {},
+	"console":       {},
+	"rootflags":     {},
+	"panic":         {},
+	"reboot":        {},
+	"loglevel":      {},
+	"quiet":         {},
+	"selinux":       {},
 }
 
 // ParseCmdlineArgs parses a guest kernel command line fragment the way the kernel itself does:
@@ -137,6 +144,10 @@ func buildKernelArgsFor(arch string, ipv4 string, options ProcessOptions) Kernel
 
 	if options.SystemdToKernelLogs {
 		args["systemd.journald.forward_to_console"] = ""
+	}
+
+	if options.BootCpus > 0 {
+		args["maxcpus"] = strconv.FormatInt(options.BootCpus, 10)
 	}
 
 	if options.KernelLogs || options.SystemdToKernelLogs {

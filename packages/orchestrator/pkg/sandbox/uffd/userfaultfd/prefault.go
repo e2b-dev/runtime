@@ -77,11 +77,15 @@ func (u *Userfaultfd) Prefault(ctx context.Context, offset int64, data []byte) (
 
 	idx := uint32(header.BlockIdx(offset, int64(u.pageSize)))
 	state := u.pageTracker.Get(idx)
-	if state != block.NotPresent {
+	if state != block.NotPresent && state != block.Installing {
 		// Dirty/Zero: the page is already resident (or zero-installed) — a
 		// demand fault got there first, so this prefetch arrived too late.
 		// Removed: the guest freed the page (madvise); it must read back as
 		// zeros, so installing source content would resurrect stale data.
+		// Installing is not skipped: the bytes are in hand while the demand
+		// worker that claimed the page may still be reading them, so this
+		// install wakes the guest sooner; the race loser sees EEXIST and
+		// MarkInstalled turns the claim into Clean from either side.
 		result = faultResultSkipped
 
 		return false, nil

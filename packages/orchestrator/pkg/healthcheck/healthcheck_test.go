@@ -10,7 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service/machineinfo"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	e2bHealth "github.com/e2b-dev/infra/packages/shared/pkg/health"
 )
@@ -18,7 +20,7 @@ import (
 func TestShuttingDownHealthcheckRemainsDraining(t *testing.T) {
 	t.Parallel()
 
-	info := &service.ServiceInfo{SourceCommit: "test-commit"}
+	info := service.NewInfoContainer(t.Context(), "node", "version", "test-commit", "instance", machineinfo.MachineInfo{}, cfg.Config{BuilderConfig: cfg.BuilderConfig{OrchestratorBaseDir: t.TempDir()}})
 	info.SetStatus(t.Context(), orchestratorinfo.ServiceInfoStatus_ShuttingDown)
 	healthcheck, err := NewHealthcheck(info)
 	require.NoError(t, err)

@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_internal_route.html
 var internalRouteHtml string
-var internalRouteHtmlTemplate = template.Must(template.New("internalRouteHtml").Parse(internalRouteHtml))
+var internalRouteHtmlTemplate = newBrowserPage("internalRouteHtml", internalRouteHtml)
 
 type internalRouteData struct {
 	Message string `json:"message"`

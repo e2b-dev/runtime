@@ -8,6 +8,11 @@ locals {
     sandbox_access_token_hash_seed = random_bytes.sandbox_access_token_hash_seed.hex
     team_api_key                   = local.team_api_key
     hugepages                      = var.hugepages
+    dashboard_host                 = google_compute_address.this.address
+    # The built-in collector listens on 127.0.0.1:4317, so turning it on
+    # points the services there unless an endpoint of the operator's own wins.
+    otel_endpoint    = var.otel_collector_grpc_endpoint != "" ? var.otel_collector_grpc_endpoint : (var.otel_collector ? "127.0.0.1:4317" : "")
+    compose_profiles = var.otel_collector ? "otel" : ""
   })
 }
 

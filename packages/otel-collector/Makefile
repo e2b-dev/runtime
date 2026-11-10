@@ -20,5 +20,5 @@ run:
 		-p 4317:4317 \
 		-p 13133:13133 \
 		-v ./otel-collector.local.yaml:/etc/otel-collector-config.yaml \
-		otel/opentelemetry-collector-contrib:0.146.0 \
+		otel/opentelemetry-collector-contrib:0.163.2 \
 		--config /etc/otel-collector-config.yaml

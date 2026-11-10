@@ -20,9 +20,9 @@ const logWriteConfigCacheTTL = 1 * time.Second
 // callers on hot log-write paths avoid evaluating LaunchDarkly on every line.
 // It is safe for concurrent use.
 type LogWriteConfigResolver struct {
-	ff          *Client
-	fallbackURL string
-	ttl         time.Duration
+	ff       *Client
+	defaults LogWriteDefaults
+	ttl      time.Duration
 
 	mu     sync.RWMutex
 	cached LogWriteConfig
@@ -31,19 +31,19 @@ type LogWriteConfigResolver struct {
 }
 
 // NewLogWriteConfigResolver builds a resolver that caches LogsWriteConfigFlag
-// evaluations for a short TTL. A nil ff is supported: Resolve then always
-// returns the legacy fallback config (current behavior).
-func NewLogWriteConfigResolver(ff *Client, fallbackURL string) *LogWriteConfigResolver {
-	return newLogWriteConfigResolverWithTTL(ff, fallbackURL, logWriteConfigCacheTTL)
+// evaluations, merged over defaults, for a short TTL. A nil ff is supported:
+// Resolve then always returns the defaults alone.
+func NewLogWriteConfigResolver(ff *Client, defaults LogWriteDefaults) *LogWriteConfigResolver {
+	return newLogWriteConfigResolverWithTTL(ff, defaults, logWriteConfigCacheTTL)
 }
 
 // newLogWriteConfigResolverWithTTL is the test-friendly constructor allowing a
 // custom TTL so tests can exercise cache expiry without real-time sleeps.
-func newLogWriteConfigResolverWithTTL(ff *Client, fallbackURL string, ttl time.Duration) *LogWriteConfigResolver {
+func newLogWriteConfigResolverWithTTL(ff *Client, defaults LogWriteDefaults, ttl time.Duration) *LogWriteConfigResolver {
 	return &LogWriteConfigResolver{
-		ff:          ff,
-		fallbackURL: fallbackURL,
-		ttl:         ttl,
+		ff:       ff,
+		defaults: defaults,
+		ttl:      ttl,
 	}
 }
 
@@ -71,7 +71,7 @@ func (r *LogWriteConfigResolver) Resolve(ctx context.Context, contexts ...ldcont
 		return r.cached
 	}
 
-	cfg := ResolveLogWriteConfig(ctx, r.ff, r.fallbackURL, contexts...)
+	cfg := ResolveLogWriteConfig(ctx, r.ff, r.defaults, contexts...)
 	r.cached = cfg
 	r.expiry = now.Add(r.ttl)
 	r.loaded = true

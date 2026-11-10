@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/builderrors"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildlogger"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
@@ -39,6 +40,11 @@ var (
 	// feature-flag service but inert in the build shows up as the empty label rather
 	// than as silence.
 	buildCmdlineArgs = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildCmdlineArgs))
+
+	// buildCPUTemplate counts builds by the digest of the CPU template applied and by result,
+	// so a template the build rejected is not read as a team that has none.
+	buildCPUTemplate = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildCPUTemplate))
+	buildVcpuSizing  = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildVcpuSizing))
 )
 
 func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templatemanager.TemplateCreateRequest) (*emptypb.Empty, error) {
@@ -49,10 +55,36 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	defer childSpan.End()
 
 	cfg := templateRequest.GetTemplate()
+	childSpan.SetAttributes(telemetry.WithTemplateID(cfg.GetTemplateID()), telemetry.WithBuildID(cfg.GetBuildID()))
 
 	if cfg.GetFromImage() == "" && cfg.GetFromTemplate() == nil {
 		return nil, status.Error(codes.InvalidArgument, "template build requires either fromImage or fromTemplate")
 	}
+
+	if err := validateMaxVCpuCount(cfg); err != nil {
+		// Validation runs before a build sandbox exists, so the template and build
+		// IDs are the correlation keys for this rejected request.
+		buildVcpuSizing.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "rejected")))
+		s.logger.Warn(ctx, "rejected template build VM sizing",
+			zap.Error(err), logger.WithTemplateID(cfg.GetTemplateID()), logger.WithBuildID(cfg.GetBuildID()),
+			zap.Int32("vcpu_count", cfg.GetVCpuCount()), zap.Int32("max_vcpu_count", cfg.GetMaxVCpuCount()),
+		)
+
+		return nil, err
+	}
+	for _, step := range cfg.GetSteps() {
+		if step.FilesHash == nil { //nolint:protogetter // we need the nil check too
+			continue
+		}
+
+		if err := templates.ValidateFilesHash(step.GetFilesHash()); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+
+	// Validation rejected a present 0, so 0 here means absent.
+	vcpuSizing := config.VcpuSizing(int64(cfg.GetVCpuCount()), int64(cfg.GetMaxVCpuCount()))
+	buildVcpuSizing.Add(ctx, 1, metric.WithAttributes(attribute.String("result", vcpuSizing)))
 
 	metadata := storage.Paths{
 		BuildID: cfg.GetBuildID(),
@@ -110,7 +142,49 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	if err != nil {
 		return nil, fmt.Errorf("invalid resolved firecracker version %q: %w", firecrackerVersion, err)
 	}
-	hugePages := fcInfo.HasHugePages()
+
+	// Read once per build, so every layer boots with the same template.
+	cpuTemplateResult := cpuTemplateNone
+	var cpuTemplate *cputemplate.Template
+	cpuTemplate, err = cputemplate.Parse([]byte(s.featureFlags.JSONFlag(ctx, featureflags.BuildCPUTemplate).JSONString()))
+	if err != nil {
+		// A malformed flag fails the build: falling back would silently boot at host frequency.
+		// The flag and parse detail stay in the log and the counter, not the client's message.
+		s.logger.Error(ctx, "invalid build CPU template flag",
+			zap.String("flag", featureflags.BuildCPUTemplate.Key()),
+			zap.Error(err),
+			logger.WithTeamID(cfg.GetTeamID()),
+			logger.WithTemplateID(cfg.GetTemplateID()),
+			logger.WithBuildID(cfg.GetBuildID()),
+		)
+		childSpan.SetAttributes(attribute.String("env.cpu_template_result", cpuTemplateMalformed))
+		buildCPUTemplate.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("template", ""),
+			attribute.String("result", cpuTemplateMalformed),
+		))
+
+		return nil, status.Error(codes.Internal, "invalid build configuration, contact support")
+	}
+	if cpuTemplate != nil {
+		// A template this Firecracker version or host architecture cannot apply falls back to
+		// none, so one flag value can serve a mixed fleet during rollout. The span and counter
+		// mark the build rejected; this log carries the reason.
+		if err := cpuTemplate.Validate(fcInfo); err != nil {
+			cpuTemplateErr := fmt.Errorf("firecracker %s: %w", firecrackerVersion, err)
+			s.logger.Warn(ctx, "rejected build CPU template, using none",
+				zap.Error(cpuTemplateErr),
+				logger.WithTemplateID(cfg.GetTemplateID()),
+				logger.WithBuildID(cfg.GetBuildID()),
+			)
+
+			cpuTemplate = nil
+			cpuTemplateResult = cpuTemplateRejected
+		} else {
+			cpuTemplateResult = cpuTemplateApplied
+		}
+	}
+
+	hugePages := true
 	freePageReporting := fcInfo.HasFreePageReporting() && s.featureFlags.BoolFlag(ctx, featureflags.FreePageReportingFlag)
 	freePageHinting := fcInfo.HasFreePageHinting() && featureflags.IsFreePageHintingEnabled(ctx, s.featureFlags)
 
@@ -119,17 +193,23 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		telemetry.WithBuildID(cfg.GetBuildID()),
 		telemetry.WithKernelVersion(kernelVersion),
 		telemetry.WithFirecrackerVersion(firecrackerVersion),
-		attribute.String("env.start_cmd", cfg.GetStartCommand()),
 		attribute.Int64("env.memory_mb", int64(cfg.GetMemoryMB())),
 		attribute.Int64("env.vcpu_count", int64(cfg.GetVCpuCount())),
 		attribute.Bool("env.huge_pages", hugePages),
 		attribute.Bool("env.free_page_reporting", freePageReporting),
 		attribute.Bool("env.free_page_hinting", freePageHinting),
 		attribute.String("env.kernel_cmdline_args", fc.KernelArgs(cmdlineArgs).String()),
+		attribute.String("env.cpu_template", cputemplate.AppliedDigest(cpuTemplate)),
+		attribute.String("env.cpu_template_result", cpuTemplateResult),
 	)
 
 	buildCmdlineArgs.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("args", fc.KernelArgs(cmdlineArgs).String()),
+	))
+
+	buildCPUTemplate.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("template", cputemplate.AppliedDigest(cpuTemplate)),
+		attribute.String("result", cpuTemplateResult),
 	))
 
 	freeDiskSizeMB := resolveFreeDiskSizeMB(cfg)
@@ -140,6 +220,7 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		TemplateID:           cfg.GetTemplateID(),
 		CacheScope:           cacheScope,
 		VCpuCount:            int64(cfg.GetVCpuCount()),
+		MaxVCpuCount:         int64(cfg.GetMaxVCpuCount()),
 		MemoryMB:             int64(cfg.GetMemoryMB()),
 		StartCmd:             cfg.GetStartCommand(),
 		ReadyCmd:             cfg.GetReadyCommand(),
@@ -156,6 +237,7 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		KernelVersion:        kernelVersion,
 		FirecrackerVersion:   firecrackerVersion,
 		CmdlineArgs:          cmdlineArgs,
+		CPUTemplate:          cpuTemplate,
 	}
 
 	logs := buildlogger.NewLogEntryLogger()
@@ -245,6 +327,38 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	}(context.WithoutCancel(ctx))
 
 	return nil, nil
+}
+
+// Results of resolving the build CPU template flag, for the counter's result attribute.
+const (
+	cpuTemplateApplied  = "applied"
+	cpuTemplateRejected = "rejected"
+	cpuTemplateNone     = "none"
+	// cpuTemplateMalformed is a flag value that does not parse; the build fails.
+	cpuTemplateMalformed = "malformed"
+)
+
+// validateMaxVCpuCount rejects VM sizes the host cannot boot before any build VM starts.
+// Absent keeps the final VM at vCpuCount; an explicit 0 is rejected.
+func validateMaxVCpuCount(cfg *templatemanager.TemplateConfig) error {
+	if cfg.MaxVCpuCount == nil {
+		return nil
+	}
+	maxVCpus := int64(cfg.GetMaxVCpuCount())
+	if maxVCpus < 1 {
+		return status.Error(codes.InvalidArgument, "maxVCpuCount must be at least 1 when set")
+	}
+	if err := fc.ValidateVcpus(int64(cfg.GetVCpuCount()), maxVCpus, "vCpuCount", "maxVCpuCount"); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	if !fc.ValidMachineVcpus(int64(cfg.GetVCpuCount())) {
+		return status.Errorf(codes.InvalidArgument, "cannot boot an intermediate build VM with %d vcpus on this host", cfg.GetVCpuCount())
+	}
+	if !fc.ValidMachineVcpus(maxVCpus) {
+		return status.Errorf(codes.InvalidArgument, "cannot boot a VM with %d vcpus on this host", maxVCpus)
+	}
+
+	return nil
 }
 
 func resolveFreeDiskSizeMB(cfg *templatemanager.TemplateConfig) int64 {

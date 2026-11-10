@@ -21,6 +21,7 @@ import (
 const (
 	Draining     ClusterNodeStatus = "draining"
 	Healthy      ClusterNodeStatus = "healthy"
+	NotReady     ClusterNodeStatus = "not_ready"
 	ShuttingDown ClusterNodeStatus = "shutting_down"
 	Standby      ClusterNodeStatus = "standby"
 	Unhealthy    ClusterNodeStatus = "unhealthy"
@@ -32,6 +33,8 @@ func (e ClusterNodeStatus) Valid() bool {
 	case Draining:
 		return true
 	case Healthy:
+		return true
+	case NotReady:
 		return true
 	case ShuttingDown:
 		return true

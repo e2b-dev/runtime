@@ -109,7 +109,7 @@ func TestStaleSourceRaceMissingAndRemove(t *testing.T) {
 				err = h.executeRemove(operation{offset: pageOffset, mode: operationModeRemove})
 				require.NoError(t, err, "MADV_DONTNEED on page %d did not return — handler dispatch wedged", pageIdx)
 
-				require.NoError(t, waitForState(ctx, h, uint64(pageOffset), block.Removed, barrierArrivalDeadline),
+				require.NoError(t, waitForState(ctx, h, uint64(pageOffset), block.Removed),
 					"handler did not transition page %d to `removed` after MADV_DONTNEED", pageIdx)
 
 				require.NoError(t, h.releaseFault(ctx, token))
@@ -288,11 +288,11 @@ func TestFaultedShortCircuitOrdering(t *testing.T) {
 }
 
 // waitForState polls the child's PageStates RPC until the page at
-// `offset` reaches `want` or `deadline` elapses.
-func waitForState(ctx context.Context, h *testHandler, offset uint64, want block.State, deadline time.Duration) error {
+// `offset` reaches `want` or barrierArrivalDeadline elapses.
+func waitForState(ctx context.Context, h *testHandler, offset uint64, want block.State) error {
 	const pollInterval = 1 * time.Millisecond
 
-	end := time.Now().Add(deadline)
+	end := time.Now().Add(barrierArrivalDeadline)
 	for {
 		states, err := h.pageStates()
 		if err != nil {
@@ -321,7 +321,7 @@ func waitForState(ctx context.Context, h *testHandler, offset uint64, want block
 
 		if time.Now().After(end) {
 			return fmt.Errorf("page state at offset %d: want %d after %s — last seen removed=%v faulted=%v",
-				offset, want, deadline, states.removed, states.faulted)
+				offset, want, barrierArrivalDeadline, states.removed, states.faulted)
 		}
 
 		select {

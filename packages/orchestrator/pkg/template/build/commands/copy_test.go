@@ -207,14 +207,14 @@ func TestParseCopyArgs(t *testing.T) {
 		name          string
 		args          []string
 		defaultUser   string
-		expected      *copyArgs
+		expected      *CopyArgs
 		expectedError string
 	}{
 		{
 			name:        "minimum_valid_arguments",
 			args:        []string{"/local/path", "/container/path"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "user:user",
@@ -225,7 +225,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "with_owner_specified",
 			args:        []string{"/local/path", "/container/path", "root"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "root:root",
@@ -236,7 +236,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "owner_with_group",
 			args:        []string{"/local/path", "/container/path", "www-data:www-data"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "www-data:www-data",
@@ -247,7 +247,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "owner_with_different_group",
 			args:        []string{"/local/path", "/container/path", "user:staff"},
 			defaultUser: "defaultuser",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "user:staff",
@@ -258,7 +258,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "empty_owner_uses_default",
 			args:        []string{"/local/path", "/container/path", ""},
 			defaultUser: "ubuntu",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "ubuntu:ubuntu",
@@ -269,7 +269,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "with_permissions_755",
 			args:        []string{"/local/path", "/container/path", "root", "755"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "root:root",
@@ -280,7 +280,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "with_permissions_644",
 			args:        []string{"/local/path", "/container/path", "www-data:www-data", "644"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/local/path",
 				TargetPath:  "/container/path",
 				Owner:       "www-data:www-data",
@@ -291,7 +291,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "glob_pattern_single_asterisk",
 			args:        []string{"/app/*.js", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -302,7 +302,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "glob_pattern_double_asterisk",
 			args:        []string{"/app/**/*.ts", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -313,7 +313,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "glob_pattern_question_mark",
 			args:        []string{"/app/file?.txt", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -324,7 +324,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "glob_pattern_brackets",
 			args:        []string{"/app/[abc].txt", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -335,7 +335,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "no_glob_pattern_with_trailing_slash",
 			args:        []string{"/app/src/", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app/src",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -346,7 +346,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "no_glob_pattern_without_trailing_slash",
 			args:        []string{"/app/src", "/dest/"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/app/src",
 				TargetPath:  "/dest/",
 				Owner:       "user:user",
@@ -357,7 +357,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "relative_paths",
 			args:        []string{"./local/path", "container/path"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "./local/path",
 				TargetPath:  "container/path",
 				Owner:       "user:user",
@@ -368,7 +368,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "complex_glob_at_end",
 			args:        []string{"/src/components/**/*.{ts,tsx}", "/dest/"},
 			defaultUser: "developer",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/src/components",
 				TargetPath:  "/dest/",
 				Owner:       "developer:developer",
@@ -379,7 +379,7 @@ func TestParseCopyArgs(t *testing.T) {
 			name:        "all_arguments_provided",
 			args:        []string{"/source/*.go", "/target/", "admin:sudo", "700"},
 			defaultUser: "user",
-			expected: &copyArgs{
+			expected: &CopyArgs{
 				SourcePath:  "/source",
 				TargetPath:  "/target/",
 				Owner:       "admin:sudo",
@@ -403,7 +403,7 @@ func TestParseCopyArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := parseCopyArgs(tt.args, tt.defaultUser)
+			result, err := ParseCopyArgs(tt.args, tt.defaultUser)
 
 			if tt.expectedError != "" {
 				require.Error(t, err)

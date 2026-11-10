@@ -1,0 +1,174 @@
+#!/bin/sh
+# First boot, run once by cloud-init as root: install Docker, move this
+# install's public IP onto this instance's network interface, materialize the
+# two shipped files and bring the stack up through e2b-embed.service. Every
+# later boot runs only that unit's `up -d --wait`; the unit re-adds the two
+# host mutations that do not survive a reboot (the TCP MSS clamp and
+# /var/run/netns). The files are written once; upgrades are explicit.
+# There is no watchdog here: the Application Health extension is the prober,
+# and the scale set repairs what it reports (main.tf).
+# Everything this script prints goes to /var/log/cloud-init-output.log and
+# the serial console, so it never prints the secrets it writes or the tokens
+# it signs with.
+# Shell parameters here are written $name, never with braces: Terraform's
+# templatefile() owns that syntax, and uses it for the values it fills in.
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+# Signed Azure calls without the Azure CLI: the identity's tokens come from
+# the instance metadata service and reach curl on its standard input.
+# The blob calls below carry x-ms-version: it is required for a token-signed
+# request, and its value is one of the published Storage REST versions
+# (learn.microsoft.com/rest/api/storageservices/versioning-for-the-azure-storage-services)
+# -- the service refuses a date that is not on that list with a 400, not a 4xx
+# that names the version, so it cannot be composed.
+install -d -m 0755 /usr/local/lib/e2b-embed
+cat > /usr/local/lib/e2b-embed/azure.sh <<'EOF'
+# shellcheck shell=sh
+imds() {
+  curl -fsS -m 5 -H 'Metadata: true' "http://169.254.169.254/metadata/$1"
+}
+# az_curl <audience> <url> [curl args...]: a call signed with the instance's
+# identity. The token goes from the metadata service into curl's standard
+# input as a config file; it is never a shell variable and never an argument,
+# so neither a process listing nor anything this script prints can carry it.
+# A metadata read that fails leaves that config empty, the call is refused,
+# and the caller's retry asks again.
+az_curl() {
+  audience=$1
+  url=$2
+  shift 2
+  imds "identity/oauth2/token?api-version=2018-02-01&client_id=${identity_client_id}&resource=$audience" |
+    sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/header = "Authorization: Bearer \1"/p' |
+    curl -sS -m 60 -K - "$@" "$url"
+}
+arm() {
+  path=$1
+  shift
+  az_curl https%3A%2F%2Fmanagement.azure.com%2F "https://management.azure.com$path" --fail-with-body "$@"
+}
+retry() {
+  n=$1
+  shift
+  until "$@"; do
+    n=$((n - 1))
+    [ "$n" -gt 0 ] || return 1
+    sleep 6
+  done
+}
+EOF
+
+# Every boot, first one included: `up -d --wait` in /opt/e2b.
+cat > /etc/systemd/system/e2b-embed.service <<'EOF'
+[Unit]
+Description=E2B Embed stack
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/e2b
+# Azure IMDS has no hop-limit guard (AWS: IMDSv2 TTL 1), so bridge containers
+# could mint the identity token; DOCKER-USER sees only forwarded traffic.
+ExecStartPre=/bin/sh -c 'iptables -C DOCKER-USER -d 169.254.169.254 -j DROP 2>/dev/null || iptables -I DOCKER-USER -d 169.254.169.254 -j DROP'
+ExecStart=/usr/bin/docker compose up -d --wait
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+
+if ! command -v docker >/dev/null 2>&1; then
+  # Ubuntu's own apt-daily/unattended-upgrades can hold the dpkg lock on a
+  # first boot; wait for it instead of aborting under set -e.
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  # These are the host tools `preflight` checks, so a minimal image boots too,
+  # plus jq, which edits the one Azure resource this script writes.
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq ca-certificates curl iptables rsync e2fsprogs iproute2 jq
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  systemctl enable --now docker
+fi
+
+# A scale set cannot attach a pre-created address, so the instance attaches it
+# to its own network interface. The NAT gateway carries egress before and
+# after, so this is what the outputs' address answers on, not what the
+# downloads leave from.
+# shellcheck source=/dev/null
+. /usr/local/lib/e2b-embed/azure.sh
+
+# The interface the scale set made for this instance, found by the private
+# address the instance is holding: nothing else here knows its name. Writing
+# an interface rewrites it whole, so the body is the one Azure just returned
+# with the address added, and attaching an address already attached is the
+# same write again.
+attach_public_ip() {
+  private_ip=$(imds 'instance/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=2021-02-01&format=text')
+  [ -n "$private_ip" ] || return 1
+  arm '${resource_group_id}/providers/Microsoft.Network/networkInterfaces?api-version=2024-05-01' \
+    -o /run/e2b-embed-nics.json || return 1
+  jq --arg ip "$private_ip" --arg pip '${public_ip_id}' \
+    'first(.value[] | select(any((.properties.ipConfigurations // [])[]; .properties.privateIPAddress == $ip)))
+     | .properties.ipConfigurations[0].properties.publicIPAddress = {id: $pip}' \
+    /run/e2b-embed-nics.json > /run/e2b-embed-nic.json
+  nic=$(jq -r '.id // empty' /run/e2b-embed-nic.json)
+  [ -n "$nic" ] || return 1
+  arm "$nic?api-version=2024-05-01" -X PUT -H 'Content-Type: application/json' \
+    --data-binary @/run/e2b-embed-nic.json -o /run/e2b-embed-attach.json ||
+    { cat /run/e2b-embed-attach.json; return 1; }
+}
+
+# The address names the interface it is on, so this is the attach landing
+# rather than a guess at how long it takes.
+public_ip_attached() {
+  arm '${public_ip_id}?api-version=2024-05-01' -o /run/e2b-embed-pip.json || return 1
+  [ -n "$(jq -r '.properties.ipConfiguration.id // empty' /run/e2b-embed-pip.json)" ]
+}
+
+retry 20 attach_public_ip
+retry 20 public_ip_attached
+
+install -d -m 0755 /opt/e2b
+cd /opt/e2b
+if [ ! -f compose.yaml ]; then
+  if [ -n "${compose_base_url}" ]; then
+    retry 10 curl -fsSL -o compose.yaml "${compose_base_url}/compose.yaml"
+  else
+    retry 10 az_curl https%3A%2F%2Fstorage.azure.com%2F "https://${blob_host}/${container}/${compose_blob}" \
+      -H 'x-ms-version: 2021-12-02' -f -o compose.yaml
+    echo "${compose_sha256}  compose.yaml" | sha256sum -c --quiet
+  fi
+fi
+if [ ! -f .env ]; then
+  if [ -n "${compose_base_url}" ]; then
+    retry 10 curl -fsSL -o .env "${compose_base_url}/.env"
+  else
+    retry 10 az_curl https%3A%2F%2Fstorage.azure.com%2F "https://${blob_host}/${container}/${env_blob}" \
+      -H 'x-ms-version: 2021-12-02' -f -o .env
+    echo "${env_sha256}  .env" | sha256sum -c --quiet
+  fi
+  sed -i -E '/^#?(ADMIN_TOKEN|SANDBOX_ACCESS_TOKEN_HASH_SEED|TEAM_API_KEY|HUGEPAGES|E2B_DASHBOARD_HOST|E2B_OTEL_COLLECTOR_GRPC_ENDPOINT|COMPOSE_PROFILES)=/d' .env
+  cat >> .env <<EOF
+ADMIN_TOKEN=${admin_token}
+SANDBOX_ACCESS_TOKEN_HASH_SEED=${sandbox_access_token_hash_seed}
+TEAM_API_KEY=${team_api_key}
+HUGEPAGES=${hugepages}
+E2B_DASHBOARD_HOST=${dashboard_host}
+E2B_OTEL_COLLECTOR_GRPC_ENDPOINT=${otel_endpoint}
+COMPOSE_PROFILES=${compose_profiles}
+EOF
+  chmod 0600 .env
+fi
+
+systemctl enable e2b-embed.service
+systemctl start e2b-embed.service
+# The ready service's log is deliberately not printed here: it carries the
+# team API key. Read the key with `terraform output -raw e2b_api_key`.

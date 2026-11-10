@@ -25,6 +25,7 @@ const (
 	resourceNetwork     = "network"
 	resourceCgroup      = "cgroup"
 	resourceFile        = "file"
+	resourceCacheDir    = "cache_dir"
 
 	procDir = "/proc"
 )
@@ -51,6 +52,11 @@ type Config struct {
 	ProcDir       string
 	NetnsDir      string
 	CgroupRoot    string
+
+	// CacheDirs are emptied; only the previous process wrote to them.
+	CacheDirs []string
+	// KeepPaths survive the sweep: a cache dir that is or holds one is skipped.
+	KeepPaths []string
 }
 
 type Summary struct {
@@ -69,6 +75,19 @@ func (s Summary) totalFailed() int {
 // HasFailures reports whether any resource failed to reclaim.
 func (s Summary) HasFailures() bool {
 	return s.totalFailed() > 0
+}
+
+// HasRuntimeFailures reports whether any reclaimer other than the cache-dir
+// sweep failed. Those leave processes, devices, slots or cgroups behind; a
+// cache dir the sweep refuses or cannot empty only keeps its files.
+func (s Summary) HasRuntimeFailures() bool {
+	for resource, failed := range s.Failed {
+		if resource != resourceCacheDir && failed > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func total(values map[string]int) int {
@@ -108,14 +127,22 @@ func Run(ctx context.Context, config Config) Summary {
 			return reclaimFirecrackers(ctx, config.ProcDir)
 		}},
 		{resourceNBD, nbd.ReclaimLeaked},
-		{resourceNetwork, func(context.Context) (int, []error) {
-			return network.ReclaimLeakedSlots(config.NetnsDir, config.NetworkConfig, config.EgressProxy)
+		{resourceNetwork, func(ctx context.Context) (int, []error) {
+			return network.ReclaimLeakedSlots(ctx, config.NetnsDir, config.NetworkConfig, config.EgressProxy)
 		}},
 		{resourceCgroup, func(ctx context.Context) (int, []error) {
 			return cgroup.ReclaimLeaked(ctx, config.CgroupManager, config.CgroupRoot)
 		}},
 		{resourceFile, func(context.Context) (int, []error) {
 			return storage.ReclaimSandboxFiles(config.TempDir, config.StorageConfig.SandboxCacheDir)
+		}},
+		{resourceCacheDir, func(ctx context.Context) (int, []error) {
+			reset, stale, failures := resetCacheDirs(config.CacheDirs, config.KeepPaths)
+			if len(stale) > 0 {
+				go removeStale(context.WithoutCancel(ctx), stale)
+			}
+
+			return reset, failures
 		}},
 	}
 

@@ -19,6 +19,9 @@ type instancesSyncStore struct {
 	discovery        servicediscovery.Discoverer
 	instances        *smap.Map[*Instance]
 	instanceCreation func(ctx context.Context, item servicediscovery.Instance) (*Instance, error)
+
+	// onInsert runs after an instance has been added to the pool, when set.
+	onInsert func()
 }
 
 func (d instancesSyncStore) SourceList(ctx context.Context) ([]servicediscovery.Instance, error) {
@@ -78,6 +81,10 @@ func (d instancesSyncStore) PoolInsert(ctx context.Context, item servicediscover
 	}
 
 	d.instances.Insert(item.WorkloadID, instance)
+
+	if d.onInsert != nil {
+		d.onInsert()
+	}
 }
 
 func (d instancesSyncStore) PoolUpdate(ctx context.Context, instance *Instance) {

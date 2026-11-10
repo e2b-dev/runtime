@@ -127,8 +127,8 @@ func (h *APIStore) Logs(c *gin.Context) {
 	}
 
 	// Resolve log destinations from LaunchDarkly (cached behind a short TTL),
-	// falling back to the fixed collector address. This lets operators retarget
-	// logs without a redeploy.
+	// merged over the collector address and LOGS_WRITE_* defaults. This lets
+	// operators retarget logs without a redeploy.
 	route := h.logWriteConfig.Resolve(ctx)
 
 	// Fire-and-forget shadow writes: never affect the response. Concurrency is

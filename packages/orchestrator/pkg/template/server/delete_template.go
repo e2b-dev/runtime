@@ -5,13 +5,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/builderrors"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/template"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -45,9 +45,9 @@ func (s *ServerStore) TemplateBuildDelete(ctx context.Context, in *templatemanag
 		})
 	}
 
-	err = template.Delete(ctx, s.artifactsregistry, s.templateStorage, in.GetTemplateID(), in.GetBuildID())
+	err = s.templateStorage.DeleteObjectsWithPrefix(ctx, in.GetBuildID())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error when deleting template objects: %w", err)
 	}
 
 	return nil, nil

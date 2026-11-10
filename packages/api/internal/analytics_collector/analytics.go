@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/posthog/posthog-go"
 	"go.uber.org/zap"
 
@@ -16,9 +18,19 @@ import (
 )
 
 const (
-	teamGroup                = "team"
-	placeholderTeamGroupUser = "backend"
-	placeholderProperty      = "first interaction"
+	teamGroup           = "team"
+	placeholderProperty = "first interaction"
+
+	// Server events have no user behind them. Each is keyed by the team or the
+	// sandbox it describes: PostHog reroutes a distinct ID with a high,
+	// sustained event rate to its overflow ingestion, which can lag by hours,
+	// so a single shared ID for every event put all of them there.
+	teamDistinctIDPrefix    = "team_"
+	sandboxDistinctIDPrefix = "sandbox_"
+
+	// The distinct IDs above are not people, so events must not create person
+	// profiles for them.
+	processPersonProfileKey = "$process_person_profile"
 
 	infraVersionKey = "infra_version"
 	infraVersion    = "v1"
@@ -26,12 +38,35 @@ const (
 	// duplicates the team group key: PostHog is not promoting $groups.team to $group_0
 	teamIDKey = "team_id"
 
+	// teamIdentifyTTL bounds how long IdentifyAnalyticsTeam suppresses an
+	// unchanged identify for a team. PostHog persists group properties, so
+	// re-sending an identical $groupidentify only adds ingestion volume; the
+	// periodic refresh covers properties lost or edited on the PostHog side.
+	teamIdentifyTTL = 24 * time.Hour
+
+	// identifiedTeamsCapacity bounds the identify cache, which has no eviction
+	// goroutine: expired entries read as misses and are refreshed in place, so
+	// the bound only matters for teams the process never sees again.
+	identifiedTeamsCapacity = 100_000
+
 	jsSDKUserAgentPrefix     = "e2b-js-sdk/"
 	pythonSDKUserAgentPrefix = "e2b-python-sdk/"
 )
 
 type PosthogClient struct {
 	client posthog.Client
+
+	// posthog-go closes its message channel in Close; closed keeps Enqueue
+	// from sending once Close has started.
+	mu     sync.RWMutex
+	closed bool
+
+	// identifiedTeams maps a team ID to the name last sent to PostHog.
+	identifiedTeams *ttlcache.Cache[string, string]
+	// identifying marks the teams with an identify in flight. Concurrent
+	// callers for such a team return instead of waiting, and one identify at
+	// a time per team keeps the cached name equal to the one enqueued last.
+	identifying sync.Map
 }
 
 func NewPosthogClient(ctx context.Context, posthogAPIKey string) (*PosthogClient, error) {
@@ -44,27 +79,118 @@ func NewPosthogClient(ctx context.Context, posthogAPIKey string) (*PosthogClient
 		posthogLogger = posthog.StdLogger(log.New(writer, "posthog ", log.LstdFlags))
 	}
 
+	identifiedTeams := newIdentifiedTeams(teamIdentifyTTL)
+
 	client, err := posthog.NewWithConfig(posthogAPIKey, posthog.Config{
 		Interval:  30 * time.Second,
 		BatchSize: 100,
 		Verbose:   false,
 		Logger:    posthogLogger,
+		Callback:  identifyFailures{identifiedTeams: identifiedTeams},
 	})
 	if err != nil {
 		logger.L().Fatal(ctx, "error initializing Posthog client", zap.Error(err))
 	}
 
 	return &PosthogClient{
-		client: client,
+		client:          client,
+		identifiedTeams: identifiedTeams,
 	}, nil
 }
 
+// newPosthogClient wraps an enqueuing client. Tests inject a recording client
+// and a short identify TTL through it.
+func newPosthogClient(client posthog.Client, identifyTTL time.Duration) *PosthogClient {
+	return &PosthogClient{
+		client:          client,
+		identifiedTeams: newIdentifiedTeams(identifyTTL),
+	}
+}
+
+// newIdentifiedTeams builds the identify cache. It is deliberately never
+// started: reads treat expired entries as misses and writes refresh them in
+// place, so the eviction goroutine would only reclaim memory, and its Stop is
+// a no-op when Close runs before that goroutine has been scheduled.
+func newIdentifiedTeams(ttl time.Duration) *ttlcache.Cache[string, string] {
+	return ttlcache.New(
+		ttlcache.WithTTL[string, string](ttl),
+		ttlcache.WithDisableTouchOnHit[string, string](),
+		ttlcache.WithCapacity[string, string](identifiedTeamsCapacity),
+	)
+}
+
+// identifyFailures is the posthog-go upload callback. A $groupidentify that
+// PostHog failed to ingest forgets its team, so the next request re-sends it
+// instead of waiting out the TTL.
+type identifyFailures struct {
+	identifiedTeams *ttlcache.Cache[string, string]
+}
+
+func (identifyFailures) Success(posthog.APIMessage) {}
+
+func (f identifyFailures) Failure(msg posthog.APIMessage, _ error) {
+	identify, ok := msg.(posthog.GroupIdentifyInApi)
+	if !ok || identify.Properties["$group_type"] != teamGroup {
+		return
+	}
+
+	if teamID, ok := identify.Properties["$group_key"].(string); ok {
+		f.identifiedTeams.Delete(teamID)
+	}
+}
+
 func (p *PosthogClient) Close() error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+
+		return nil
+	}
+	p.closed = true
+	p.mu.Unlock()
+
 	return p.client.Close()
 }
 
+// enqueue drops the message once Close has started.
+func (p *PosthogClient) enqueue(msg posthog.Message) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.closed {
+		return nil
+	}
+
+	return p.client.Enqueue(msg)
+}
+
+// IdentifyAnalyticsTeam sets the team group's properties in PostHog. Handlers
+// call it on every request, so the identify is sent only when the cached name
+// for the team is missing or differs: for a new or renamed team, after a
+// restart, once per TTL, and again after PostHog reports a failed upload.
+// Nothing here waits: a caller that finds an identify for the team already in
+// flight returns, and the next request re-checks the cache.
+// Any property added here that can vary per team must join the cached value.
 func (p *PosthogClient) IdentifyAnalyticsTeam(ctx context.Context, teamID string, teamName string) {
-	err := p.client.Enqueue(posthog.GroupIdentify{
+	if p.teamIdentified(teamID, teamName) {
+		return
+	}
+
+	if _, inFlight := p.identifying.LoadOrStore(teamID, struct{}{}); inFlight {
+		return
+	}
+	defer p.identifying.Delete(teamID)
+
+	if p.teamIdentified(teamID, teamName) {
+		return
+	}
+
+	// Record the identify before enqueueing: posthog-go can report an upload
+	// failure from its own goroutine as soon as the message is handed off, and
+	// that Delete has to land after this Set.
+	p.identifiedTeams.Set(teamID, teamName, ttlcache.DefaultTTL)
+
+	err := p.enqueue(posthog.GroupIdentify{
 		Type: teamGroup,
 		Key:  teamID,
 		Properties: posthog.NewProperties().
@@ -73,15 +199,37 @@ func (p *PosthogClient) IdentifyAnalyticsTeam(ctx context.Context, teamID string
 	},
 	)
 	if err != nil {
+		p.identifiedTeams.Delete(teamID)
 		logger.L().Error(ctx, "error when setting group property in Posthog", zap.Error(err))
 	}
 }
 
+func (p *PosthogClient) teamIdentified(teamID, teamName string) bool {
+	sent := p.identifiedTeams.Get(teamID)
+
+	return sent != nil && sent.Value() == teamName
+}
+
+// CreateAnalyticsTeamEvent sends an event about a team as a whole.
 func (p *PosthogClient) CreateAnalyticsTeamEvent(ctx context.Context, teamID, event string, properties posthog.Properties) {
-	err := p.client.Enqueue(posthog.Capture{
-		DistinctId: placeholderTeamGroupUser,
+	p.createAnalyticsEvent(ctx, teamDistinctIDPrefix+teamID, teamID, event, properties)
+}
+
+// CreateAnalyticsSandboxEvent sends an event about one sandbox. It is keyed by
+// the sandbox, since a team starting sandboxes at a high rate would otherwise
+// concentrate all of its sandbox events on the team's distinct ID.
+func (p *PosthogClient) CreateAnalyticsSandboxEvent(ctx context.Context, teamID, sandboxID, event string, properties posthog.Properties) {
+	p.createAnalyticsEvent(ctx, sandboxDistinctIDPrefix+sandboxID, teamID, event, properties)
+}
+
+func (p *PosthogClient) createAnalyticsEvent(ctx context.Context, distinctID, teamID, event string, properties posthog.Properties) {
+	err := p.enqueue(posthog.Capture{
+		DistinctId: distinctID,
 		Event:      event,
-		Properties: properties.Set(infraVersionKey, infraVersion).Set(teamIDKey, teamID),
+		Properties: properties.
+			Set(infraVersionKey, infraVersion).
+			Set(teamIDKey, teamID).
+			Set(processPersonProfileKey, false),
 		Groups: posthog.NewGroups().
 			Set("team", teamID),
 	})

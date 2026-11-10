@@ -77,7 +77,7 @@ func Run(
 	sourceLayer := LayerResult{}
 
 	for _, builder := range builders {
-		res, err := runPhase(ctx, logger, userLogger, metrics, builder, sourceLayer)
+		res, err := runPhase(ctx, logger, userLogger, metrics, bc.Config.TeamID, builder, sourceLayer)
 		if err != nil {
 			return LayerResult{}, err
 		}
@@ -95,6 +95,7 @@ func runPhase(
 	logger logger.Logger,
 	userLogger logger.Logger,
 	metrics *metrics.BuildMetrics,
+	teamID string,
 	builder BuilderPhase,
 	sourceLayer LayerResult,
 ) (_ LayerResult, e error) {
@@ -136,7 +137,7 @@ func runPhase(
 	if err != nil {
 		return LayerResult{}, fmt.Errorf("getting layer: %w", err)
 	}
-	metrics.RecordCacheResult(ctx, meta.Phase, meta.StepType, currentLayer.Cached)
+	metrics.RecordCacheResult(ctx, teamID, meta.Phase, meta.StepType, currentLayer.Cached)
 	span.SetAttributes(attribute.Bool("cached", currentLayer.Cached))
 
 	prefix := builder.Prefix()
@@ -148,7 +149,7 @@ func runPhase(
 
 	if currentLayer.Cached {
 		phaseDuration := time.Since(phaseStartTime)
-		metrics.RecordPhaseDuration(ctx, phaseDuration, meta.Phase, meta.StepType, true)
+		metrics.RecordPhaseDuration(ctx, teamID, phaseDuration, meta.Phase, meta.StepType, true)
 
 		return currentLayer, nil
 	}
@@ -161,7 +162,7 @@ func runPhase(
 	res, err := builder.Build(ctx, stepUserLogger, prefix, sourceLayer, currentLayer)
 	// Record phase duration
 	phaseDuration := time.Since(phaseStartTime)
-	metrics.RecordPhaseDuration(ctx, phaseDuration, meta.Phase, meta.StepType, false)
+	metrics.RecordPhaseDuration(ctx, teamID, phaseDuration, meta.Phase, meta.StepType, false)
 
 	if err != nil {
 		return LayerResult{}, err

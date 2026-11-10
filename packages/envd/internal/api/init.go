@@ -9,15 +9,16 @@ import (
 	"maps"
 	"net/http"
 	"net/netip"
-	"os/exec"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awnumar/memguard"
 	"github.com/rs/zerolog"
 	"github.com/txn2/txeh"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/host"
 	"github.com/e2b-dev/infra/packages/envd/internal/logs"
@@ -81,11 +82,13 @@ func (a *API) checkMMDSHash(ctx context.Context, requestToken *SecureToken) (boo
 	}
 
 	mmdsHash, err := a.mmdsClient.GetAccessTokenHash(ctx)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		// Self-heal: a user-installed PREROUTING/OUTPUT redirect on
 		// 169.254.169.254:80 in the same netns can shadow our route.
 		// Re-pin our RETURN rule at position 1 of nat PREROUTING and
-		// OUTPUT, then retry once.
+		// OUTPUT, then retry once. A read that failed because the request
+		// ended says nothing about the route, and neither iptables nor the
+		// retry could run under that context.
 		if pinErr := host.PinMMDSRoute(ctx); pinErr != nil {
 			if ok, suppressed := pinMMDSWarnLimit.Allow(); ok {
 				a.logger.Warn().Err(pinErr).Int64("suppressed", suppressed).Msg("failed to pin MMDS iptables route")
@@ -175,6 +178,23 @@ type effectiveDefaults struct {
 // be a second declaration to keep in step.
 const memoryHeader = "X-Envd-Memory"
 
+// unobservedHeader carries the freezer's unobserved-/init count on a /init 204 whose client
+// is still connected when its headers are decided: the number of handlers whose thaw ran
+// and finished with no client left, since the last such response or the last freeze,
+// whichever came later. Always set on that response, so a zero reads as "counted none" and
+// only an envd predating the header sends nothing. An error response carries nothing and
+// resets nothing: the orchestrator is to read the header off a served 204 only.
+const unobservedHeader = "X-Envd-Init-Unobserved"
+
+// thawHeader answers "skip" on a /init that carried thaw: "skip" and so installed no thaw.
+const thawHeader = "X-Envd-Thaw"
+
+// clockCorrectionHeader carries the time, in whole milliseconds truncated, that /init added to
+// its timestamp before the clock gates (see the correction in PostInit). Set whenever the
+// request carried a timestamp and passed auth, whether or not the gates then stepped the
+// clock.
+const clockCorrectionHeader = "X-Envd-Init-Clock-Correction"
+
 func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -204,6 +224,18 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	operationID := logs.AssignOperationID()
 	logger := a.logger.With().Str(string(logs.OperationIDKey), operationID).Logger()
 
+	// Why this request's cpuCount was refused, reported on its own response only.
+	var cpuErr error
+
+	// Read on entry, before the first body read and before the /init lock, and compared
+	// again by the thaw below: a freeze that lands at any point before that thaw, including
+	// while this handler waits on either, has voided it. Under an Expect: 100-continue request the 100 Continue, and so the
+	// body, goes out only at the first body read, after this read: a handler that entered
+	// after a freeze holds the new generation and thaws, and one that entered before it keeps
+	// the old one whatever it then waits on. A request sent with its body is dispatched
+	// whenever the guest gets to it, so for it the entry is only as early as the dispatch.
+	freezeGen := a.workloadFreezer.FreezeGeneration(ctx)
+
 	if r.Body != nil {
 		// Read raw body so we can wipe it after parsing
 		body, err := io.ReadAll(r.Body)
@@ -215,6 +247,9 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
+		// The timestamp is the host's time when the body was sent, so this is the reading the
+		// correction below measures this handler's own delay from.
+		bodyRead := a.now()
 
 		var initRequest PostInitJSONBody
 		if len(body) > 0 {
@@ -268,8 +303,29 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		a.auditFrozenSet(w, logger)
 
 		// Run on every /init regardless of the Timestamp guard, so stale/replayed
-		// requests still thaw cgroups after pre-pause freeze.
-		defer a.unfreezeUserCgroups(ctx, logger)
+		// requests still thaw cgroups after pre-pause freeze, unless a freeze came after
+		// this handler entered or the request asked to skip the thaw. Once: the success path
+		// runs it before the response is decided, and the defer covers the error returns.
+		thaw := func() {}
+		if skipThaw(initRequest.Thaw) {
+			// Set when decided, so an error response this handler still writes says it too.
+			w.Header().Set(thawHeader, string(Skip))
+		} else {
+			thaw = sync.OnceFunc(func() { a.unfreezeUserCgroups(ctx, logger, freezeGen) })
+			defer thaw()
+		}
+
+		if initRequest.Timestamp != nil {
+			// The host minted the timestamp before it sent the body; everything since this
+			// handler read it -- the lock, the token check, the audit -- is time the guest clock
+			// would otherwise lose. Moving the target forward cannot cause a backward step, and
+			// the newest-wins compare and the step's bands apply to the corrected value.
+			correction := a.now().Sub(bodyRead)
+			corrected := initRequest.Timestamp.Add(correction)
+			initRequest.Timestamp = &corrected
+			w.Header().Set(clockCorrectionHeader, strconv.FormatInt(correction.Milliseconds(), 10))
+			logger.Info().Dur("clock_correction", correction).Msg("corrected the /init timestamp by the handler's delay")
+		}
 
 		// Restore the access token (and env) BEFORE marking the envd initialized.
 		// On a live-upgraded envd, WithAuthorization only fails CLOSED while
@@ -285,6 +341,14 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 
 				return
 			}
+
+			// A refused count must not fail the resume.
+			// The refusal is reported as "rejected" on the X-Envd-Cpus header.
+			if initRequest.CpuCount != nil {
+				if cpuErr = a.cpuManager.SetTarget(*initRequest.CpuCount); cpuErr != nil {
+					logger.Warn().Err(cpuErr).Int("cpu_count", *initRequest.CpuCount).Msg("ignoring cpu count")
+				}
+			}
 		}
 
 		// Auth passed and token restored: mark the envd initialized so the
@@ -292,6 +356,19 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		// up — a guest process that can't pass auth can't flip this and drive an
 		// unauthenticated upgrade.
 		a.initialized.Store(true)
+
+		// Before the response is decided: a bodiless 204 reaches the wire only when the
+		// handler returns, after the thaw, so a client that leaves during a slow thaw must be
+		// seen as gone below rather than handed the count in a response it will never read.
+		thaw()
+
+		// Only a response whose client is still connected when its headers are decided
+		// carries the count; one written into a connection already dead would reset it
+		// unread. (A client that leaves between this check and the handler's return is
+		// handed the count anyway: the header bytes leave only at return.)
+		if ctx.Err() == nil {
+			w.Header().Set(unobservedHeader, strconv.FormatInt(a.workloadFreezer.TakeUnobservedInits(), 10))
+		}
 	}
 
 	go func() { //nolint:contextcheck // TODO: fix this later
@@ -303,6 +380,7 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	// After SetData, so this reports what is actually in effect rather than what was
 	// requested. Set before WriteHeader.
 	a.reportEffectiveDefaults(w, logger)
+	a.reportCPUs(w, cpuErr)
 
 	w.Header().Set("Cache-Control", "no-store")
 
@@ -358,7 +436,7 @@ func (a *API) SetData(ctx context.Context, logger zerolog.Logger, data PostInitJ
 		// Check if current time differs significantly from the received timestamp
 		if shouldSetSystemTime(time.Now(), *data.Timestamp) {
 			logger.Debug().Msgf("Setting sandbox start time to: %v", *data.Timestamp)
-			if err := setSystemTime(*data.Timestamp); err != nil {
+			if err := a.setSystemTime(*data.Timestamp); err != nil {
 				logger.Error().Msgf("Failed to set system time: %v", err)
 			}
 		} else {
@@ -593,9 +671,9 @@ func (a *API) PostFreeze(w http.ResponseWriter, r *http.Request, params PostFree
 	}
 }
 
-// PostUnfreeze thaws user/pty cgroups directly. Exists ONLY for the
-// orchestrator's pause-failure rollback path; the resume thaw runs via /init's
-// deferred unfreeze and must not be replaced by this endpoint. Best-effort: tries
+// PostUnfreeze thaws user/pty cgroups directly. Exists for the orchestrator's
+// pause-failure rollback and for the thaw after an in-place checkpoint; the resume thaw
+// runs inside /init, before it answers, and must not be replaced by this endpoint. Best-effort: tries
 // every cgroup even if one fails so a partial failure cannot leave the rest frozen.
 func (a *API) PostUnfreeze(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
@@ -613,16 +691,49 @@ func (a *API) PostUnfreeze(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// unfreezeUserCgroups unfreezes user/pty cgroups (idempotent if not frozen).
-// The freezer detaches the wait from ctx cancellation so the unfreeze always
-// completes.
-func (a *API) unfreezeUserCgroups(ctx context.Context, logger zerolog.Logger) {
-	if err := a.workloadFreezer.Unfreeze(ctx); err != nil {
+// skipThaw reports whether a /init asked to leave the workload frozen. Only "skip" does: an
+// absent field, "inline" and any value this envd does not know thaw, the side on which a
+// guest is never left frozen.
+func skipThaw(v *PostInitJSONBodyThaw) bool {
+	return v != nil && *v == Skip
+}
+
+// unfreezeUserCgroups unfreezes user/pty cgroups (idempotent if not frozen), unless a
+// freeze has advanced the generation since entryGen was read, and this handler must not
+// undo it: a pause's freeze is kept in its snapshot, or thawed through /unfreeze on the
+// pause's own failure or after an in-place checkpoint; the live upgrade's handover freeze
+// is thawed by the outgoing envd if the handover fails, or by the post-upgrade /init in the
+// process that replaces this one, or, if that /init never comes, by the 60 s post-upgrade
+// fallback thaw; the thaw watchdog backs up both freezes. A thaw that finishes with the
+// client gone counts the handler as unobserved, decided after the thaw, which is the event
+// the count is about, and inside the freeze lock, so a freeze cannot zero the count between
+// the thaw and the count. A handler whose thaw is withheld is never counted. The freezer
+// detaches the wait from ctx cancellation so the unfreeze always completes.
+func (a *API) unfreezeUserCgroups(ctx context.Context, logger zerolog.Logger, entryGen uint64) {
+	current, matched, _, err := a.workloadFreezer.ThawIfGeneration(ctx, entryGen, func() {
+		if ctx.Err() != nil {
+			a.workloadFreezer.AddUnobservedInit()
+		}
+	})
+	if !matched {
+		logger.Warn().Uint64("entry_freeze_generation", entryGen).Uint64("current_freeze_generation", current).
+			Msg("a freeze came after this /init entered; not thawing the workload")
+
+		return
+	}
+	if err != nil {
 		logger.Warn().Err(err).Msg("unfreeze workload cgroups")
 	}
 }
 
+// failedVolumeHeader names the volume path a failed /init could not mount.
+const failedVolumeHeader = "X-Envd-Failed-Volume"
+
 func writeInitError(w http.ResponseWriter, logger zerolog.Logger, err error) {
+	if volumeErr, ok := errors.AsType[*nfsVolumeError](err); ok {
+		w.Header().Set(failedVolumeHeader, volumeErr.path)
+	}
+
 	switch {
 	case errors.Is(err, ErrAccessTokenMismatch), errors.Is(err, ErrAccessTokenResetNotAuthorized):
 		w.WriteHeader(http.StatusUnauthorized)
@@ -654,114 +765,230 @@ var nfsOptions = strings.Join([]string{
 	// disable caching so that pause/resume works correctly
 	"noac",
 	"lookupcache=none",
+
+	// make a single attempt; a foreground mount otherwise retries for 2 minutes,
+	// far past nfsMountTimeout. mountNFS retries instead.
+	"retry=0",
 }, ",")
 
+// nfsMountTimeout bounds one mount command. It starts when that mount starts, since
+// volumes are mounted one at a time.
 const nfsMountTimeout = 10 * time.Second
 
-func (a *API) setupNFS(ctx context.Context, logger zerolog.Logger, lifecycleID *string, mounts []VolumeMount) (e error) {
-	// Prevent concurrent mounting attempts
-	if !a.isMountingNFS.CompareAndSwap(false, true) {
-		logger.Debug().Msg("NFS volumes already mounting")
+// nfsMountAttempts is how many times a mount that times out is tried.
+const nfsMountAttempts = 2
 
-		return e
-	}
-	defer a.isMountingNFS.Store(false)
+// nfsVolumeBudget bounds creating one volume's mount point and all its mount attempts.
+const nfsVolumeBudget = nfsMountAttempts * nfsMountTimeout
 
-	logger.Debug().Msg("Setting up NFS volumes")
+// nfsMountRetryDelay is the default pause after a mount that failed without timing out.
+const nfsMountRetryDelay = 500 * time.Millisecond
 
-	ctx = context.WithoutCancel(ctx)                         // don't allow request context cancellation to propagate
-	ctx, cancel := context.WithTimeout(ctx, nfsMountTimeout) // don't let the nfs mount run forever
-	defer cancel()
+// nfsFailure remembers why mounting failed for a lifecycle.
+type nfsFailure struct {
+	lifecycleID string
+	err         error
+}
 
-	wg, wgCtx := errgroup.WithContext(ctx)
-
+// setupNFS mounts the volumes one at a time, parents before children, and stops at the
+// first volume that is not mounted afterwards. It runs under initLock.
+//
+// A failure is remembered for the lifecycle: the caller's request has usually timed out
+// by then, and its retry gets the same error at once instead of a remount.
+func (a *API) setupNFS(ctx context.Context, logger zerolog.Logger, lifecycleID *string, mounts []VolumeMount) error {
 	requestLifecycleID := derefString(lifecycleID)
+	if a.nfsFailure.err != nil && a.nfsFailure.lifecycleID == requestLifecycleID {
+		return a.nfsFailure.err
+	}
 
-	for _, volume := range mounts {
-		// Check if this path is already mounted for the current lifecycle
+	logger.Debug().Int("count", len(mounts)).Msg("Setting up NFS volumes")
+	start := time.Now()
+
+	ctx = context.WithoutCancel(ctx) // don't allow request context cancellation to propagate
+
+	// A mount on a parent hides a mount made earlier on a child path.
+	ordered := slices.SortedStableFunc(slices.Values(mounts), func(x, y VolumeMount) int {
+		return pathDepth(x.Path) - pathDepth(y.Path)
+	})
+
+	var pending []VolumeMount
+	for _, volume := range ordered {
 		mountedLifecycle, isMounted := a.mountedPaths.Load(volume.Path)
-		mountedLifecycleID := asString(mountedLifecycle)
-		if !shouldRemountNFS(isMounted, mountedLifecycleID, requestLifecycleID) {
-			logger.Debug().Msgf("Skipping %q, already mounted for lifecycle %q", volume.Path, requestLifecycleID)
+		if shouldRemountNFS(isMounted, asString(mountedLifecycle), requestLifecycleID) {
+			pending = append(pending, volume)
+		}
+	}
+
+	// Detach every stale mount before mounting any: the guest keeps one NFS client per
+	// server, and while an old mount still holds it, a new mount reuses its connection,
+	// which is dead after a resume.
+	for _, volume := range pending {
+		a.mountedPaths.Delete(volume.Path)
+		if err := a.nfs.Unmount(volume.Path); err != nil {
+			return a.failNFS(requestLifecycleID, volume, fmt.Errorf("unmount: %w", err))
+		}
+	}
+
+	// Order by where each path really leads: a parent reached through a symlink must
+	// still be mounted before the paths beneath it.
+	depths := make(map[string]int, len(pending))
+	for _, volume := range pending {
+		depths[volume.Path] = pathDepth(resolveExisting(volume.Path))
+	}
+	pending = slices.SortedStableFunc(slices.Values(pending), func(x, y VolumeMount) int {
+		return depths[x.Path] - depths[y.Path]
+	})
+
+	mountIDs := make(map[string]uint64, len(pending))
+	for _, volume := range pending {
+		id, err := a.mountNFS(ctx, logger, volume, requestLifecycleID)
+		if err != nil {
+			return a.failNFS(requestLifecycleID, volume, err)
+		}
+		mountIDs[volume.Path] = id
+	}
+
+	// A later mount can still cover an earlier one, so check each path once more.
+	for _, volume := range pending {
+		if id, err := a.nfs.MountID(volume.Path); err != nil || id != mountIDs[volume.Path] {
+			a.mountedPaths.Delete(volume.Path)
+
+			return a.failNFS(requestLifecycleID, volume, errors.New("hidden by another volume mounted over it"))
+		}
+	}
+
+	logger.Info().
+		Int("volumes", len(pending)).
+		Dur("duration", time.Since(start)).
+		Msg("NFS volumes set up")
+
+	return nil
+}
+
+// nfsVolumeError names the volume path that could not be mounted.
+type nfsVolumeError struct {
+	path string
+	err  error
+}
+
+func (e *nfsVolumeError) Error() string { return fmt.Sprintf("NFS volume at %q: %v", e.path, e.err) }
+
+func (e *nfsVolumeError) Unwrap() error { return e.err }
+
+// failNFS remembers a mount failure for the lifecycle and returns it.
+func (a *API) failNFS(lifecycleID string, volume VolumeMount, err error) error {
+	err = &nfsVolumeError{path: volume.Path, err: err}
+	if lifecycleID != "" {
+		a.nfsFailure = nfsFailure{lifecycleID: lifecycleID, err: err}
+	}
+
+	return err
+}
+
+// resolveExisting resolves symlinks in the longest existing prefix of path.
+func resolveExisting(path string) string {
+	path = filepath.Clean(path)
+	for dir, rest := path, ""; ; {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
+}
+
+func (a *API) mountNFS(ctx context.Context, logger zerolog.Logger, volume VolumeMount, lifecycleID string) (uint64, error) {
+	// Creating the mount point and every mount attempt share one budget per volume;
+	// the orchestrator's envdWaitForStalledMount allows for it.
+	volumeCtx, cancelVolume := context.WithTimeout(ctx, nfsVolumeBudget)
+	defer cancelVolume()
+
+	// A killable process creates the mount point: inside another volume, the lookup
+	// waits on that volume's NFS server.
+	dirCtx, cancel := context.WithTimeout(volumeCtx, nfsMountTimeout)
+	err := a.nfs.MakeDir(dirCtx, volume.Path)
+	cancel()
+	if err != nil {
+		return 0, fmt.Errorf("create the mount point: %w", err)
+	}
+
+	before, err := a.nfs.MountID(volume.Path)
+	if err != nil {
+		return 0, err
+	}
+
+	start := time.Now()
+	attempts, timeouts := 0, 0
+	for {
+		attempts++
+		mountCtx, cancel := context.WithTimeout(volumeCtx, nfsMountTimeout)
+		err = a.nfs.Mount(mountCtx, volume.NfsTarget, volume.Path)
+		timedOut := mountCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded)
+		cancel()
+		if err == nil {
+			break
+		}
+
+		logger.Warn().
+			Err(err).
+			Str("target", volume.NfsTarget).
+			Str("path", volume.Path).
+			Int("attempt", attempts).
+			Bool("timed_out", timedOut).
+			Msg("NFS mount attempt failed")
+
+		if timedOut {
+			// Under load a single mount can stall, so one that times out is tried once more.
+			timeouts++
+			if timeouts == nfsMountAttempts || volumeCtx.Err() != nil {
+				break
+			}
+			if err := a.nfs.Unmount(volume.Path); err != nil {
+				return 0, fmt.Errorf("unmount after a timed-out mount: %w", err)
+			}
 
 			continue
 		}
 
-		if isMounted {
-			logger.Debug().Msgf("Lifecycle changed for %q: %q -> %q", volume.Path, mountedLifecycleID, requestLifecycleID)
+		// A mount that fails at once, as while the NFS proxy is starting and refuses
+		// connections, is tried again until nfsMountRetryFor has passed.
+		if time.Since(start)+a.nfsMountRetryDelay > a.nfsMountRetryFor {
+			break
 		}
-
-		logger.Debug().Msgf("Setting up %s at %q", volume.NfsTarget, volume.Path)
-
-		wg.Go(func() error {
-			// Unmount if currently mounted (handles stale mounts from previous lifecycle)
-			if err := a.unmountNFS(wgCtx, logger, volume.Path); err != nil {
-				return fmt.Errorf("failed to unmount stale NFS mount at %q: %w", volume.Path, err)
-			}
-
-			if err := a.mountNFS(wgCtx, volume.NfsTarget, volume.Path); err != nil {
-				return fmt.Errorf("failed to mount NFS at %q: %w", volume.Path, err)
-			}
-
-			a.mountedPaths.Store(volume.Path, requestLifecycleID)
-
-			return nil
-		})
+		time.Sleep(a.nfsMountRetryDelay)
 	}
-
-	return wg.Wait()
-}
-
-func (a *API) unmountNFS(ctx context.Context, logger zerolog.Logger, path string) error {
-	// Check if actually mounted before trying to unmount.
-	// findmnt returns exit code 1 when path is not a mount point - that's not an error.
-	data, err := exec.CommandContext(ctx, "findmnt", "--noheadings", "--output", "SOURCE", path).CombinedOutput()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			// Not mounted - nothing to unmount
-			return nil
-		}
-
-		return fmt.Errorf("failed to check if %q is mounted: %w", path, err)
+		return 0, fmt.Errorf("after %d attempts: %w", attempts, err)
 	}
 
-	source := strings.TrimSpace(string(data))
-	if source == "" {
-		return nil // already unmounted
+	// The mount ID identifies the mount the path resolves to, so this also holds for
+	// a path behind a symlink or inside another volume.
+	after, err := a.nfs.MountID(volume.Path)
+	if err != nil {
+		return 0, err
+	}
+	if after == before {
+		return 0, errors.New("mount reported success, but the path is not on a new mount")
 	}
 
-	logger.Debug().Msgf("Unmounting stale NFS mount at %q (was: %s)", path, source)
+	a.mountedPaths.Store(volume.Path, lifecycleID)
 
-	if data, err = exec.CommandContext(ctx, "umount", "--force", path).CombinedOutput(); err != nil {
-		logger.Warn().Err(err).Str("path", path).Str("output", string(data)).Msg("Forced NFS umount failed, falling back to lazy")
-		// Fresh ctx so the forced umount running out of budget doesn't kill the fallback.
-		lazyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		if data, err = exec.CommandContext(lazyCtx, "umount", "--lazy", path).CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to unmount stale NFS mount at %q: %w\n%s", path, err, string(data))
-		}
-	}
+	logger.Info().
+		Str("target", volume.NfsTarget).
+		Str("path", volume.Path).
+		Int("attempts", attempts).
+		Dur("duration", time.Since(start)).
+		Msg("Mounted NFS volume")
 
-	a.mountedPaths.Delete(path)
-
-	return nil
+	return after, nil
 }
 
-func (a *API) mountNFS(ctx context.Context, nfsTarget, path string) error {
-	commands := [][]string{
-		{"mkdir", "-p", path},
-		{"mount", "-v", "-t", "nfs", "-o", "fg,hard," + nfsOptions, nfsTarget, path},
-	}
-
-	for _, command := range commands {
-		data, err := exec.CommandContext(ctx, command[0], command[1:]...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("`%s` failed: %w\n%s", strings.Join(command, " "), err, string(data))
-		}
-	}
-
-	return nil
+func pathDepth(path string) int {
+	return strings.Count(filepath.Clean(path), "/")
 }
 
 // shouldRemountNFS determines if an NFS volume should be remounted based on lifecycle IDs.
@@ -803,7 +1030,7 @@ func (a *API) SetupHyperloop(address string) {
 	a.hyperloopLock.Lock()
 	defer a.hyperloopLock.Unlock()
 
-	if err := rewriteHostsFile(address, "/etc/hosts"); err != nil {
+	if err := rewriteHostsFile(address, hostsFilePath()); err != nil {
 		a.logger.Error().Err(err).Msg("failed to modify hosts file")
 	} else {
 		a.defaults.EnvVars.Store("E2B_EVENTS_ADDRESS", fmt.Sprintf("http://%s", address))

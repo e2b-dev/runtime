@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/bits-and-blooms/bitset"
@@ -32,6 +33,64 @@ func TestGetDevicePrefersCallerCancellation(t *testing.T) {
 		_, err := pool.GetDevice(ctx)
 		require.ErrorIs(t, err, context.Canceled)
 	}
+}
+
+func TestGetDeviceReceivedSlotRechecksClosedOwnership(t *testing.T) {
+	t.Parallel()
+
+	pool := retryingPool()
+	pool.slots = make(chan DeviceSlot)
+	pool.mu.Lock()
+
+	type result struct {
+		slot DeviceSlot
+		err  error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		slot, err := pool.GetDevice(t.Context())
+		resultCh <- result{slot: slot, err: err}
+	}()
+	sent := make(chan struct{})
+	go func() {
+		pool.slots <- DeviceSlot(7)
+		close(sent)
+	}()
+	<-sent // GetDevice has received the slot and is blocked claiming it under mu.
+	pool.doneOnce.Do(func() { close(pool.done) })
+	pool.mu.Unlock()
+
+	got := <-resultCh
+	require.Zero(t, got.slot)
+	require.ErrorIs(t, got.err, ErrClosed)
+}
+
+func TestCloseJoinsPopulateBeforeSlotSnapshot(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		pool := retryingPool()
+		finish, ok := pool.beginPopulate()
+		require.True(t, ok)
+
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- pool.Close(t.Context()) }()
+		<-pool.done
+		synctest.Wait()
+		select {
+		case err := <-closeDone:
+			t.Fatalf("Close returned before Populate completed: %v", err)
+		default:
+		}
+
+		_, cleanup, admitted := pool.getMaybeEmptySlot(0)
+		cleanup()
+		require.False(t, admitted, "closed producer admission allocated a new slot")
+		require.Zero(t, pool.usedSlots.Count())
+
+		finish()
+		require.NoError(t, <-closeDone)
+	})
 }
 
 // A slots channel closed by Populate's exit must read as a closed pool, not
@@ -99,5 +158,40 @@ func TestCloseBoundsEachReleaseIndependently(t *testing.T) {
 	assert.True(t, pool.usedSlots.Test(0), "the stuck device stays claimed")
 	for slot := uint(1); slot < 5; slot++ {
 		assert.False(t, pool.usedSlots.Test(slot), "free device %d must be released", slot)
+	}
+}
+
+func TestPopulateRegistersAndPublishesOwnerCompletion(t *testing.T) {
+	t.Parallel()
+
+	blockDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(blockDir, "nbd0"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(blockDir, "nbd0", "size"), []byte("0\n"), 0o644))
+	pool := new(DevicePool)
+	pool.done = make(chan struct{})
+	pool.usedSlots = bitset.New(1)
+	pool.slots = make(chan DeviceSlot)
+	pool.sysBlockDir = blockDir
+	ctx, cancel := context.WithCancel(t.Context())
+	returned := make(chan struct{})
+	go func() {
+		pool.Populate(ctx)
+		close(returned)
+	}()
+
+	require.Equal(t, DeviceSlot(0), <-pool.slots)
+	pool.mu.Lock()
+	populateDone := pool.populateDone
+	pool.mu.Unlock()
+	require.NotNil(t, populateDone, "actual Populate did not register its owner completion")
+
+	cancel()
+	<-returned
+	_, feedOpen := <-pool.slots
+	require.False(t, feedOpen, "Populate returned before closing the slot feed")
+	select {
+	case <-populateDone:
+	default:
+		t.Fatal("Populate returned without publishing owner completion")
 	}
 }

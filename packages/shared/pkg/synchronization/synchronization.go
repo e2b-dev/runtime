@@ -28,6 +28,15 @@ type Store[SourceItem any, PoolItem any] interface {
 
 // Synchronize is a generic type that provides methods for synchronizing a pool of items with a source.
 // It uses a Store interface to interact with the source and pool, allowing for flexible synchronization logic.
+// Replacer is an optional Store extension for items whose identity outlives
+// their contents. When an outdated pool item still has a source item with the
+// same identity, PoolReplace swaps in its replacement before retiring the old
+// item, so a lookup never misses it. It reports false when the item has no
+// replacement, and the item is then removed.
+type Replacer[SourceItem any, PoolItem any] interface {
+	PoolReplace(ctx context.Context, source []SourceItem, old PoolItem) bool
+}
+
 type Synchronize[SourceItem any, PoolItem any] struct {
 	store Store[SourceItem, PoolItem]
 
@@ -104,8 +113,11 @@ func (s *Synchronize[SourceItem, PoolItem]) Sync(ctx context.Context) error {
 		return err
 	}
 
-	s.syncDiscovered(ctx, sourceItems)
+	// Remove outdated items before inserting discovered ones, so an item that
+	// keeps its ID but changes (a moved endpoint, a restarted process) is
+	// replaced in this round instead of missing until the next one.
 	s.syncOutdated(ctx, sourceItems)
+	s.syncDiscovered(ctx, sourceItems)
 
 	return nil
 }
@@ -150,6 +162,10 @@ func (s *Synchronize[SourceItem, PoolItem]) syncOutdated(ctx context.Context, so
 			if found {
 				s.store.PoolUpdate(ctx, poolItem)
 
+				return
+			}
+
+			if replacer, ok := s.store.(Replacer[SourceItem, PoolItem]); ok && replacer.PoolReplace(spanCtx, sourceItems, poolItem) {
 				return
 			}
 

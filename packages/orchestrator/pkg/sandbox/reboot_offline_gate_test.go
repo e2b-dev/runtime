@@ -122,6 +122,63 @@ func TestOfflineGateSwapsOnceTheBinaryIsCached(t *testing.T) {
 		"a cached binary newer than built-with must still swap")
 }
 
+func TestOfflineSwapRecordsTheVersionItPutOnTheRootfs(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		swapErr error
+		want    string
+	}{
+		{name: "swapped", want: "0.9.0"},
+		{name: "swap failed, original kept", swapErr: errors.New("swap failed"), want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			src := filepath.Join(dir, "envd")
+			writeEnvdImage(t, src, "0.9.0")
+
+			f := offlineGateFactory(t, src, filepath.Join(dir, "cache"), true)
+			require.NoError(t, f.envdBinCache.Warm(t.Context(), src))
+			f.swapEnvdBinary = func(context.Context, string, string) (rootfs.SwapResult, error) {
+				return rootfs.SwapResult{}, tc.swapErr
+			}
+
+			config := &Config{Envd: EnvdMetadata{Version: "0.6.12"}}
+			runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
+			swap := f.envdOfflineUpgradePreBoot(t.Context(), config, runtime, true)
+			require.NotNil(t, swap)
+			swappedTo, err := swap(t.Context(), filepath.Join(dir, "rootfs"))
+			require.NoError(t, err)
+
+			require.Equal(t, tc.want, swappedTo, "the expected envd version takes only a version that reached the rootfs")
+		})
+	}
+}
+
+func TestOfflineResolutionRecordsTheTargetVersionItRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "envd")
+	writeEnvdImage(t, src, "0.9.0")
+
+	f := offlineGateFactory(t, src, filepath.Join(dir, "cache"), true)
+	f.envdTargets = &envdTargetVersions{}
+	require.NoError(t, f.envdBinCache.Warm(t.Context(), src))
+
+	// Already on the target: no swap, but a sandbox upgraded to it in an earlier life
+	// reports it, so the label must hold it.
+	config := &Config{Envd: EnvdMetadata{Version: "0.9.0"}}
+	runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
+	require.Nil(t, f.envdOfflineUpgradePreBoot(t.Context(), config, runtime, true))
+
+	require.True(t, f.envdTargets.holds("0.9.0"), "the resolved target version is held")
+	require.False(t, f.envdTargets.holds("0.6.12"), "nothing else is")
+}
+
 // writeEnvdImage writes a stand-in envd that is a well-formed ELF image the
 // structural check accepts, and not a runnable program -- it declares no
 // segments. The cache validates the structure of every copy before probing it, so
@@ -299,8 +356,9 @@ func TestOfflinePreBootDefersWhenTheCachedCopyIsRetired(t *testing.T) {
 	// Exactly what a promotion does between the resolve and the boot.
 	require.NoError(t, os.Remove(entry.LocalPath))
 
-	require.NoError(t, preBoot(t.Context(), filepath.Join(dir, "rootfs.ext4")),
-		"a retired copy is a deferral, not a boot failure: the guest boots its own envd")
+	swappedTo, err := preBoot(t.Context(), filepath.Join(dir, "rootfs.ext4"))
+	require.NoError(t, err, "a retired copy is a deferral, not a boot failure: the guest boots its own envd")
+	require.Empty(t, swappedTo)
 	require.Zero(t, swap.calls,
 		"nothing on local disk holds the resolved bytes, so the rootfs must not be touched")
 }
@@ -329,7 +387,9 @@ func TestOfflinePreBootSwapsFromTheCachedCopy(t *testing.T) {
 	require.NotNil(t, preBoot)
 
 	rootfsPath := filepath.Join(dir, "rootfs.ext4")
-	require.NoError(t, preBoot(t.Context(), rootfsPath))
+	swappedTo, err := preBoot(t.Context(), rootfsPath)
+	require.NoError(t, err)
+	require.Equal(t, "0.9.0", swappedTo)
 	require.Equal(t, 1, swap.calls)
 	require.Equal(t, rootfsPath, swap.rootfs)
 	require.Equal(t, entry.LocalPath, swap.src,
@@ -378,7 +438,7 @@ func TestOfflinePreBootFailsTheBootOnlyWhenTheRootfsIsUnbootable(t *testing.T) {
 				sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}, true)
 			require.NotNil(t, preBoot)
 
-			err := preBoot(t.Context(), filepath.Join(dir, "rootfs.ext4"))
+			_, err := preBoot(t.Context(), filepath.Join(dir, "rootfs.ext4"))
 			require.Equal(t, 1, swap.calls)
 			if tc.wantErr {
 				require.ErrorIs(t, err, rootfs.ErrOfflineSwapUnrecoverable,

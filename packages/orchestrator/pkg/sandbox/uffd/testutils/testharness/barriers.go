@@ -18,6 +18,12 @@ const (
 	// BeforePrefaultRLock parks inside Prefault(), before settleRequests.RLock.
 	// Value must stay in sync with faultPhaseBeforePrefaultRLock in the parent package.
 	BeforePrefaultRLock
+	// BeforeSettleLock parks the serve loop after it read a REMOVE batch,
+	// before settleRequests.Lock; the address is the batch's first start.
+	BeforeSettleLock
+	// AfterDeferral parks a worker right after it re-queued its fault on
+	// EAGAIN, before it returns.
+	AfterDeferral
 )
 
 // Registry is the child-side barrier store consulted by the per-fault hook.

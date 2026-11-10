@@ -243,6 +243,48 @@ func TestErrorHandlerOnWebhookReadRoutesIsBodyBlind(t *testing.T) {
 	}
 }
 
+// A request refused for its credentials was refused before its body was
+// validated, so the body is neither reported nor consumed.
+func TestErrorHandlerOnAuthFailureIsBodyBlind(t *testing.T) {
+	t.Parallel()
+
+	const sentinel = "env-secret-DO-NOT-LOG-0000"
+
+	for _, test := range []struct {
+		name       string
+		message    string
+		statusCode int
+		wantCode   int
+	}{
+		{name: "unknown key", message: sharedauth.SecurityErrPrefix + "Invalid API key", statusCode: http.StatusUnauthorized, wantCode: http.StatusUnauthorized},
+		{name: "forbidden team", message: sharedauth.ForbiddenErrPrefix + "team is banned", statusCode: http.StatusUnauthorized, wantCode: http.StatusForbidden},
+		{name: "blocked team", message: sharedauth.BlockedErrPrefix + "team is blocked", statusCode: http.StatusUnauthorized, wantCode: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes",
+				strings.NewReader(`{"templateID":"base","envVars":{"TOKEN":"`+sentinel+`"}}`))
+
+			ErrorHandler(c, test.message, test.statusCode)
+
+			assert.Equal(t, test.wantCode, recorder.Code)
+			assert.NotContains(t, recorder.Body.String(), sentinel)
+
+			require.NotEmpty(t, c.Errors)
+			for _, ginErr := range c.Errors {
+				assert.NotContains(t, ginErr.Error(), sentinel, "a gin error carried the request body")
+			}
+
+			body, err := io.ReadAll(c.Request.Body)
+			require.NoError(t, err)
+			assert.Contains(t, string(body), sentinel, "the error handler consumed the request body")
+		})
+	}
+}
+
 // Every other route keeps reporting the body, which is what makes a rejected
 // request diagnosable.
 func TestErrorHandlerStillRecordsTheBodyElsewhere(t *testing.T) {

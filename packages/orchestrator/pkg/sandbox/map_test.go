@@ -4,15 +4,22 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 func TestMapMarkRunningTracksLifecycle(t *testing.T) {
@@ -35,8 +42,10 @@ type insertRecorder struct {
 func (r *insertRecorder) OnInsert(_ context.Context, sbx *Sandbox) {
 	r.inserts = append(r.inserts, sbx)
 }
-func (r *insertRecorder) OnStopping(context.Context, *Sandbox)       {}
-func (r *insertRecorder) OnNetworkRelease(context.Context, *Sandbox) {}
+func (r *insertRecorder) OnStopping(context.Context, *Sandbox) {}
+func (r *insertRecorder) OnNetworkRelease(context.Context, *Sandbox) error {
+	return nil
+}
 
 // A second lifecycle under a live sandbox ID is refused and left out of every
 // index: not routable, not tracked for cleanup, not announced. The live one is
@@ -308,6 +317,224 @@ func TestCheckpointHandoffReservesBeforeSubscribers(t *testing.T) {
 	require.NoError(t, r.MarkRunning(t.Context(), testMapSandbox(t, "successor")))
 }
 
+// A subscriber panicking inside the stopping notification leaves the map
+// as it was: the sandbox live, no hold, the panic raised again.
+// A registration under a reservation can be refused once the operation's
+// context has ended, decided with the registration itself; the reservation
+// stays held and nothing goes live.
+func TestReservationMarkRunningUnlessEnded(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	r, err := sandboxes.MarkStoppingReserved(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	require.NoError(t, err)
+	defer r.Release()
+
+	ended, cancel := context.WithCancelCause(t.Context())
+	cancel(errors.New("deleted meanwhile"))
+	resumed := testMapSandbox(t, "resumed")
+	err = r.MarkRunningUnlessEnded(ended, resumed)
+	require.ErrorContains(t, err, "deleted meanwhile")
+	_, live := sandboxes.Get(old.Runtime.SandboxID)
+	assert.False(t, live, "nothing went live")
+
+	require.NoError(t, r.MarkRunningUnlessEnded(t.Context(), resumed), "a live context registers as MarkRunning does")
+	got, live := sandboxes.Get(old.Runtime.SandboxID)
+	require.True(t, live)
+	assert.Same(t, resumed, got)
+}
+
+func TestMarkStoppingReservedUndoesItselfOnSubscriberPanic(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	calls := 0
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		calls++
+		if calls == 1 {
+			panic("subscriber panicked")
+		}
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		_, _ = sandboxes.MarkStoppingReserved(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	})
+
+	live, ok := sandboxes.Get(old.Runtime.SandboxID)
+	require.True(t, ok, "the sandbox is live again")
+	require.Same(t, old, live)
+	r, err := sandboxes.MarkStoppingReserved(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	require.NoError(t, err, "no hold was stranded")
+	r.Release()
+	require.Equal(t, 2, calls)
+}
+
+// The undo is skipped when the gap let another lifecycle register live under
+// the ID: the successor is not overwritten by the sandbox that was being
+// stopped.
+func TestMarkStoppingSkipsTheUndoWhenTheIDWasTaken(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	successor := testMapSandbox(t, "successor")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		require.NoError(t, sandboxes.MarkRunning(t.Context(), successor))
+		panic("subscriber panicked")
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		sandboxes.MarkStopping(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	})
+
+	live, ok := sandboxes.Get(old.Runtime.SandboxID)
+	require.True(t, ok)
+	require.Same(t, successor, live, "the successor is not overwritten")
+}
+
+// A reservation another operation took in the gap (a Create for the ID once
+// the live entry was gone) does not keep a live VM out of the map, where the
+// caller, which dies with the panic, would never stop it: the sandbox is put
+// back, the other operation's registration is refused as it would have been
+// had the VM stayed live, and the ID is free once both have let go.
+func TestMarkStoppingUndoesOverAReservationTakenInTheGap(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	var r *Reservation
+	calls := 0
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		calls++
+		if calls != 1 {
+			return
+		}
+		var err error
+		r, err = sandboxes.Reserve(old.Runtime.SandboxID)
+		require.NoError(t, err)
+		panic("subscriber panicked")
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		sandboxes.MarkStopping(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	})
+
+	live, ok := sandboxes.Get(old.Runtime.SandboxID)
+	require.True(t, ok, "a live VM is not left out of the map")
+	require.Same(t, old, live)
+	sandboxes.registryMu.Lock()
+	held := sandboxes.reservations[old.Runtime.SandboxID]
+	sandboxes.registryMu.Unlock()
+	require.Same(t, r, held, "the other operation's reservation stands")
+	require.ErrorIs(t, r.MarkRunning(t.Context(), testMapSandbox(t, "created")), ErrSandboxAlreadyRunning, "the other operation's registration is refused, the ID is live")
+	_, err := sandboxes.Reserve(old.Runtime.SandboxID)
+	require.ErrorIs(t, err, ErrSandboxAlreadyRunning)
+
+	r.Release()
+	require.True(t, sandboxes.MarkStopping(t.Context(), old.Runtime.SandboxID, old.LifecycleID))
+	next, err := sandboxes.Reserve(old.Runtime.SandboxID)
+	require.NoError(t, err, "the ID is free once the sandbox is stopped and the reservation released")
+	next.Release()
+	require.Equal(t, 2, calls)
+}
+
+// The hold a lifecycle's own creator still has (a checkpoint's or Create's
+// reservation between publication and return) is not another operation:
+// a subscriber panic while that lifecycle is being stopped still puts it
+// back live.
+func TestMarkStoppingUndoesUnderTheCreatorsOwnHold(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	resumed := testMapSandbox(t, "resumed")
+	r, err := sandboxes.Reserve(resumed.Runtime.SandboxID)
+	require.NoError(t, err)
+	require.NoError(t, r.MarkRunning(t.Context(), resumed))
+	calls := 0
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		calls++
+		if calls == 1 {
+			panic("subscriber panicked")
+		}
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		sandboxes.MarkStopping(t.Context(), resumed.Runtime.SandboxID, resumed.LifecycleID)
+	})
+
+	live, ok := sandboxes.Get(resumed.Runtime.SandboxID)
+	require.True(t, ok, "the sandbox is live again under its creator's hold")
+	require.Same(t, resumed, live)
+	_, err = sandboxes.Reserve(resumed.Runtime.SandboxID)
+	require.ErrorIs(t, err, ErrSandboxAlreadyRunning, "the creator's hold stands")
+	r.Release()
+	require.True(t, sandboxes.MarkStopping(t.Context(), resumed.Runtime.SandboxID, resumed.LifecycleID))
+}
+
+// A sandbox whose cleanup ran while the subscriber was panicking is closed;
+// the undo must not bring a closed VM back as live, where nothing removes
+// it again.
+func TestMarkStoppingSkipsTheUndoWhenTheSandboxClosedMeanwhile(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	old.cleanup = NewCleanup()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		require.NoError(t, old.cleanup.Run(t.Context()))
+		panic("subscriber panicked")
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		sandboxes.MarkStopping(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	})
+
+	_, live := sandboxes.Get(old.Runtime.SandboxID)
+	require.False(t, live, "a closed sandbox is not put back")
+	r, err := sandboxes.Reserve(old.Runtime.SandboxID)
+	require.NoError(t, err, "nothing holds the ID")
+	r.Release()
+}
+
+// The hold a checkpoint's reservation takes is dropped when the subscriber
+// panics, since the caller never receives it, also when the sandbox closed
+// meanwhile and is not put back: otherwise the ID stays reserved for good,
+// and every later Reserve and MarkStoppingReserved for it fails until the
+// node restarts.
+func TestMarkStoppingReservedDropsTheHoldWhenTheSandboxClosedMeanwhile(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	old := testMapSandbox(t, "old")
+	old.cleanup = NewCleanup()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), old))
+	sandboxes.Subscribe(&handoffSubscriber{onStopping: func() {
+		require.NoError(t, old.cleanup.Run(t.Context()))
+		panic("subscriber panicked")
+	}})
+
+	require.PanicsWithValue(t, "subscriber panicked", func() {
+		_, _ = sandboxes.MarkStoppingReserved(t.Context(), old.Runtime.SandboxID, old.LifecycleID)
+	})
+
+	_, live := sandboxes.Get(old.Runtime.SandboxID)
+	require.False(t, live, "a closed sandbox is not put back")
+	sandboxes.registryMu.Lock()
+	_, held := sandboxes.reservations[old.Runtime.SandboxID]
+	sandboxes.registryMu.Unlock()
+	require.False(t, held, "the hold nobody received is dropped")
+	r, err := sandboxes.Reserve(old.Runtime.SandboxID)
+	require.NoError(t, err, "the ID is free for the next operation")
+	r.Release()
+}
+
 func TestUnpublishedLifecycleRemainsTrackedDuringClose(t *testing.T) {
 	t.Parallel()
 
@@ -506,6 +733,575 @@ func TestMapConcurrentMarkStoppingAndStoppedDoesNotResurrectLifecycle(t *testing
 	}
 }
 
+func TestMapMarkRunningRefusesCollidingLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	oldSbx := testMapSandbox(t, "lifecycle-old")
+	newSbx := testMapSandbox(t, "lifecycle-new")
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), oldSbx))
+
+	// The old lifecycle is still live (e.g. it crashed and nothing removed it
+	// yet): the new lifecycle must be refused, not silently dropped — a silent
+	// drop leaves its FC process running with no id-based way to reach it.
+	require.ErrorIs(t, sandboxes.MarkRunning(t.Context(), newSbx), ErrSandboxAlreadyRunning)
+
+	live, ok := sandboxes.Get(oldSbx.Runtime.SandboxID)
+	require.True(t, ok)
+	require.Same(t, oldSbx, live)
+	require.Len(t, sandboxes.LifecycleItems(), 1)
+}
+
+func TestMapMarkRunningIdempotentForSameLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.Len(t, sandboxes.Items(), 1)
+	require.Len(t, sandboxes.LifecycleItems(), 1)
+}
+
+func TestSandboxCloseDoesNotRemoveNewerLiveLifecycle(t *testing.T) {
+	t.Parallel()
+	// The owner returns false here, so nothing is counted — but the rule is about
+	// registering it, not about which arm the registration happens to take, so that
+	// this stays true however the fixture is edited later.
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	oldSbx := testMapSandbox(t, "lifecycle-old")
+	newSbx := testMapSandbox(t, "lifecycle-new")
+	// The registrar captures the old lifecycle's ID when it is called, where the
+	// callback it replaced read it when the chain ran. This test is what pins the
+	// two to the same value: it fails if the owner reclaims by anything else.
+	attachOwnedCleanup(t, sandboxes, oldSbx)
+
+	sandboxes.MarkRunning(t.Context(), oldSbx)
+	require.True(t, sandboxes.MarkStopping(t.Context(), oldSbx.Runtime.SandboxID, oldSbx.LifecycleID))
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), newSbx))
+
+	// The old lifecycle's Close must not evict the newer live lifecycle.
+	require.NoError(t, oldSbx.Close(t.Context()))
+
+	live, ok := sandboxes.Get(newSbx.Runtime.SandboxID)
+	require.True(t, ok)
+	require.Same(t, newSbx, live)
+}
+
+// stoppingRecorder appends to a shared event log on every OnStopping, so a test
+// can attribute a removal to the mechanism that made it rather than only observe
+// that the entry is gone.
+type stoppingRecorder struct {
+	insertRecorder
+
+	mu     *sync.Mutex
+	events *[]string
+}
+
+func (r *stoppingRecorder) OnStopping(context.Context, *Sandbox) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	*r.events = append(*r.events, "reclaim")
+}
+
+// unstoppedCounterMu serializes every test that moves lifecycleUnstoppedCounter.
+//
+// The counter carries one attribute, sandbox_type, and deliberately nothing that
+// identifies a run — that is what keeps its series count independent of traffic. So
+// a test has nothing to filter its own increments by, and the reader installed in
+// TestMain is process-wide and cumulative across the whole binary. The only sound
+// reading is a delta, and a delta is sound only while every test that moves the
+// instrument holds this lock. Four tests here predate the counter and register the
+// owner: two move it, and two sit on a branch that does not currently fire — which
+// is a property of their fixtures, not of their subjects, so it can change without
+// anyone noticing. TestEveryOwnedCleanupTestSerializesTheCounter keeps all four in.
+var unstoppedCounterMu sync.Mutex
+
+// serializeUnstoppedCounter claims the counter for this test until it returns.
+func serializeUnstoppedCounter(t *testing.T) {
+	t.Helper()
+
+	unstoppedCounterMu.Lock()
+	t.Cleanup(unstoppedCounterMu.Unlock)
+}
+
+// unstoppedCounts is the counter's current value per sandbox_type. Absent types
+// read as zero, so a caller can subtract two of these without checking presence.
+func unstoppedCounts(t *testing.T) map[string]int64 {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, testMetricReader.Collect(t.Context(), &rm))
+
+	out := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != string(telemetry.SandboxLifecycleUnstoppedCounterName) {
+				continue
+			}
+
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.Truef(t, ok, "%s is not an int64 sum", m.Name)
+
+			for _, dp := range sum.DataPoints {
+				v, ok := dp.Attributes.Value(attribute.Key("sandbox_type"))
+				require.True(t, ok, "unstopped datapoint without a sandbox_type")
+				out[v.AsString()] += dp.Value
+			}
+		}
+	}
+
+	return out
+}
+
+// unstoppedDelta is what the counter moved by, per sandbox_type, since before.
+func unstoppedDelta(t *testing.T, before map[string]int64) map[string]int64 {
+	t.Helper()
+
+	after := unstoppedCounts(t)
+	delta := map[string]int64{}
+	for _, sbxType := range []string{
+		string(sandboxtypes.SandboxTypeSandbox),
+		string(sandboxtypes.SandboxTypeBuild),
+	} {
+		delta[sbxType] = after[sbxType] - before[sbxType]
+	}
+
+	require.Subsetf(t, []string{
+		string(sandboxtypes.SandboxTypeSandbox),
+		string(sandboxtypes.SandboxTypeBuild),
+	}, keysOf(after), "the counter grew a sandbox_type value outside the closed set")
+
+	return delta
+}
+
+func keysOf(m map[string]int64) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+
+	return out
+}
+
+// testTypedMapSandbox is testMapSandbox with an explicit sandbox type, which the
+// counter reports.
+func testTypedMapSandbox(t *testing.T, lifecycleID string, sandboxType sandboxtypes.SandboxType) *Sandbox {
+	t.Helper()
+
+	sbx := testMapSandbox(t, lifecycleID)
+	sbx.Runtime.SandboxType = sandboxType
+
+	return sbx
+}
+
+// attachOwnedCleanup gives sbx the cleanup chain a factory would build: the
+// registrar's callback, and nothing else. Both factories register it at one
+// fixed point, so a fixture without it asserts a behaviour no real sandbox has.
+func attachOwnedCleanup(t *testing.T, sandboxes *Map, sbx *Sandbox) {
+	t.Helper()
+
+	sbx.cleanup = NewCleanup()
+	sbx.sandboxes = sandboxes
+	sandboxes.reclaimLiveEntryOnCleanup(t.Context(), sbx.cleanup, sbx.Runtime, sbx.LifecycleID)
+}
+
+// The cleanup chain owns the reclamation, and owns it at one point. The chain runs
+// backward, so in RUN order the reclaim falls after the steps registered after the
+// registrar and before those registered before it. An end-state assertion cannot
+// see this — the entry is gone either way — so the markers and the event log are
+// the test.
+func TestSandboxCloseReclaimsLiveEntryInTheCleanupChain(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	before := unstoppedCounts(t)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	mark := func(name string) func(context.Context) error {
+		return func(context.Context) error {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, name)
+
+			return nil
+		}
+	}
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	// The chain runs backward, so a callback registered later runs earlier. The
+	// names say when each one RUNS, which is the order being asserted.
+	sbx.cleanup = NewCleanup()
+	sbx.sandboxes = sandboxes
+	sbx.cleanup.Add(t.Context(), mark("late"))
+	sandboxes.reclaimLiveEntryOnCleanup(t.Context(), sbx.cleanup, sbx.Runtime, sbx.LifecycleID)
+	sbx.cleanup.Add(t.Context(), mark("early"))
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sbx.Close(t.Context()))
+
+	require.Empty(t, sandboxes.Items())
+	require.Equal(t, []string{"early", "reclaim", "late"}, events,
+		"the chain must reclaim the entry exactly once, between the steps either side of the registrar")
+
+	// The reclamation and its report are the same branch, so the counter moving by
+	// one is the same claim as the "reclaim" marker above — read from the metric
+	// rather than from the callback, which is where a dashboard reads it.
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 1,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// An operation-initiated stop — delete, pause, a checkpoint that resumes fresh —
+// reclaims the entry before the chain runs. The chain's callback must then do
+// nothing at all: no second OnStopping for subscribers to act on twice.
+func TestSandboxCloseDoesNotReclaimAnEntryAnOperationAlreadyTook(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.True(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID),
+		"the operation reclaims the entry first, as Delete and Pause require")
+	require.NoError(t, sbx.Close(t.Context()))
+
+	require.Equal(t, []string{"reclaim"}, events,
+		"the chain's callback must not reclaim an entry an operation already took")
+
+	// The load-bearing case for the whole metric: this is what makes the series mean
+	// "nobody stopped this lifecycle" rather than "a sandbox ended". Delete, pause
+	// and a checkpoint that resumes fresh all mark the entry stopping before the
+	// chain runs and must land here, uncounted. An in-place checkpoint is the one
+	// that does not, and it is counted — see the test below.
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 0,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// Several drivers can call Close for one lifecycle — the lifecycle goroutine, the
+// start rollback, the build tree's deferred close alongside Shutdown, and Pause's
+// own in-place teardown. Cleanup.Run is once-guarded, so they reclaim once between
+// them and none returns before the reclamation has completed.
+func TestSandboxCloseConcurrentClosesReclaimOnce(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	sandboxes.Subscribe(&stoppingRecorder{mu: &mu, events: &events})
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	for range 2 {
+		go func() {
+			defer wg.Done()
+			<-start
+			assert.NoError(t, sbx.Close(t.Context()))
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, []string{"reclaim"}, events)
+	require.Empty(t, sandboxes.Items())
+	require.Empty(t, sandboxes.LifecycleItems())
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 1,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// Two sequential closes happen for real on the build provisioning path, which
+// defers a Close and then calls Shutdown, whose own Close runs first. Cleanup.Run
+// is once-guarded, so the second Close never re-enters the chain at all and the
+// counter cannot double — this pins that guard, not anything about the counter's
+// own arithmetic. The concurrent case above is the one with an interleaving.
+func TestSandboxCloseTwiceCountsOnce(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sbx.Close(t.Context()))
+	require.NoError(t, sbx.Close(t.Context()), "a second Close must stay successful")
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 1,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// A build layer boot ends exactly like a crash does — nothing in the build tree
+// marks a sandbox stopping, and every successful layer reaches the branch. The
+// population has to be visible, or a build tree that stopped reaching it would
+// read the same as a healthy one.
+func TestSandboxCloseCountsABuildLifecycle(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeBuild)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sbx.Close(t.Context()))
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 0,
+		string(sandboxtypes.SandboxTypeBuild):   1,
+	}, unstoppedDelta(t, before))
+}
+
+// SandboxType's zero value is reachable: the resume-build and benchmark harnesses
+// build RuntimeMetadata without it. String() maps it to "sandbox", so an unset
+// type joins the customer series rather than opening a third one.
+func TestSandboxCloseCountsAnUnsetTypeAsACustomerSandbox(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", "")
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.NoError(t, sbx.Close(t.Context()))
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 1,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// An in-place checkpoint never marks the entry stopping — that is the point of it
+// — so when its resume fails, Sandbox.Pause tears the sandbox down with the entry
+// still live, having already recorded why. That teardown is orchestrator-chosen
+// and still lands in the customer series, because the branch is about which
+// mechanism reclaimed the entry and not about intent. Pinning it here is what
+// stops the series being read as "guest deaths": a recorded stop reason does not
+// take a lifecycle out of it.
+func TestSandboxCloseCountsAnOrchestratorTeardownThatSkippedTheMark(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	sbx.SetStopReason(StopReasonKilled)
+	require.NoError(t, sbx.Close(t.Context()))
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 1,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+}
+
+// A lifecycle that never became live has no entry to reclaim: the reboot path
+// defers its mark, and any construction failing before MarkRunning never made
+// one. Nothing is counted, correctly — and Close returns exactly what it returns
+// with an entry present, so the counter cannot turn a successful teardown into a
+// failed one.
+func TestSandboxCloseWithoutALiveEntryCountsNothing(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testTypedMapSandbox(t, "lifecycle-1", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, sbx)
+	before := unstoppedCounts(t)
+
+	// No MarkRunning.
+	require.NoError(t, sbx.Close(t.Context()), "Close must succeed with no live entry")
+
+	assert.Equal(t, map[string]int64{
+		string(sandboxtypes.SandboxTypeSandbox): 0,
+		string(sandboxtypes.SandboxTypeBuild):   0,
+	}, unstoppedDelta(t, before))
+
+	// The same Close against a live entry: the counted branch returns the same
+	// value, so no error was introduced on either side of the boolean.
+	live := testTypedMapSandbox(t, "lifecycle-2", sandboxtypes.SandboxTypeSandbox)
+	attachOwnedCleanup(t, sandboxes, live)
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), live))
+	require.NoError(t, live.Close(t.Context()), "Close must succeed with a live entry too")
+}
+
+// In-flight starts count toward the limit before anything is live.
+func TestMapReserveWithinCountsStartsInFlight(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+
+	a, err := sandboxes.ReserveWithin("sandbox-a", 2)
+	require.NoError(t, err)
+	b, err := sandboxes.ReserveWithin("sandbox-b", 2)
+	require.NoError(t, err)
+	require.Zero(t, sandboxes.Count(), "nothing is live yet")
+
+	_, err = sandboxes.ReserveWithin("sandbox-c", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	a.Release()
+	c, err := sandboxes.ReserveWithin("sandbox-c", 2)
+	require.NoError(t, err, "a released start frees its slot")
+	b.Release()
+	c.Release()
+}
+
+// A start that is both live and reserved counts once.
+func TestMapReserveWithinCountsALiveReservationOnce(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+
+	r, err := sandboxes.ReserveWithin("sandbox-1", 2)
+	require.NoError(t, err)
+	require.NoError(t, r.MarkRunning(t.Context(), testMapSandbox(t, "lifecycle-1")))
+
+	other, err := sandboxes.ReserveWithin("sandbox-2", 2)
+	require.NoError(t, err)
+
+	_, err = sandboxes.ReserveWithin("sandbox-3", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	r.Release()
+	other.Release()
+	third, err := sandboxes.ReserveWithin("sandbox-3", 2)
+	require.NoError(t, err, "releasing the unstarted reservation frees its slot")
+	_, err = sandboxes.ReserveWithin("sandbox-4", 2)
+	require.ErrorIs(t, err, ErrNodeAtCapacity, "the live sandbox still holds its slot after the start finishes")
+	third.Release()
+}
+
+// A checkpoint hold keeps the slot while the VM still runs.
+func TestMapReserveWithinCountsCheckpointHolds(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	hold, err := sandboxes.MarkStoppingReserved(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	require.Zero(t, sandboxes.Count())
+
+	_, err = sandboxes.ReserveWithin("sandbox-2", 1)
+	require.ErrorIs(t, err, ErrNodeAtCapacity)
+
+	hold.Release()
+	r, err := sandboxes.ReserveWithin("sandbox-2", 1)
+	require.NoError(t, err)
+	r.Release()
+}
+
+// On a full node a duplicate ID still fails as a duplicate, not as capacity.
+func TestMapReserveWithinRefusesDuplicatesBeforeCapacity(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	r, err := sandboxes.ReserveWithin("sandbox-1", 1)
+	require.NoError(t, err)
+	t.Cleanup(r.Release)
+
+	_, err = sandboxes.ReserveWithin("sandbox-1", 1)
+	require.ErrorIs(t, err, ErrSandboxAlreadyRunning)
+	require.NotErrorIs(t, err, ErrNodeAtCapacity)
+}
+
+func TestMapReserveWithinRefusesNonPositiveLimits(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	for _, limit := range []int64{0, -1} {
+		_, err := sandboxes.ReserveWithin("sandbox-1", limit)
+		require.ErrorIs(t, err, ErrNodeAtCapacity, "limit %d", limit)
+	}
+}
+
+// Concurrent creates admit exactly limit sandboxes.
+func TestMapReserveWithinAdmitsExactlyTheLimitUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	const (
+		limit    = 5
+		creators = 64
+	)
+	sandboxes := NewSandboxesMap()
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		admitted []*Reservation
+		refused  int
+	)
+	start := make(chan struct{})
+	for i := range creators {
+		wg.Go(func() {
+			<-start
+			r, err := sandboxes.ReserveWithin(fmt.Sprintf("sandbox-%d", i), limit)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				assert.ErrorIs(t, err, ErrNodeAtCapacity)
+				refused++
+
+				return
+			}
+			admitted = append(admitted, r)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	require.Len(t, admitted, limit)
+	require.Equal(t, creators-limit, refused)
+	for _, r := range admitted {
+		r.Release()
+	}
+}
+
 func testMapSandbox(t *testing.T, lifecycleID string) *Sandbox {
 	t.Helper()
 
@@ -520,4 +1316,200 @@ func testMapSandbox(t *testing.T, lifecycleID string) *Sandbox {
 		},
 		Resources: &Resources{Slot: slot},
 	}
+}
+
+type releaseSubscriber struct {
+	insertRecorder
+
+	onRelease func(*Sandbox) error
+}
+
+func (s *releaseSubscriber) OnNetworkRelease(_ context.Context, sbx *Sandbox) error {
+	return s.onRelease(sbx)
+}
+
+// A failed release is reported after the source lookup is gone, and the other
+// subscribers still receive the release.
+func TestMapNetworkReleasedJoinsSubscriberErrors(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	ip := sbx.Slot.HostIPString()
+	boom := errors.New("boom")
+	var released []*Sandbox
+	sandboxes.Subscribe(&releaseSubscriber{onRelease: func(*Sandbox) error {
+		_, err := sandboxes.GetByHostPort(net.JoinHostPort(ip, "1234"))
+		assert.Error(t, err, "subscribers run after the source lookup is removed")
+
+		return boom
+	}})
+	sandboxes.Subscribe(&releaseSubscriber{onRelease: func(sbx *Sandbox) error {
+		released = append(released, sbx)
+
+		return nil
+	}})
+	sandboxes.AssignNetwork(t.Context(), sbx)
+
+	require.ErrorIs(t, sandboxes.NetworkReleased(t.Context(), ip), boom)
+	assert.Equal(t, []*Sandbox{sbx}, released)
+	require.NoError(t, sandboxes.NetworkReleased(t.Context(), ip), "a repeated release notifies nobody")
+	assert.Len(t, released, 1)
+}
+
+// A migration holds a live lifecycle against every lifecycle change a caller
+// asks for, once the update in flight committed, and lets its holder, once it
+// ended the migration, and the lifecycle's own teardown remove it. Ended, the
+// lifecycle is ordinary again.
+func TestMapMigrationHoldsALiveLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	// An update in flight commits before the migration begins.
+	updating, finish := make(chan struct{}), make(chan struct{})
+	var committed bool
+	go func() {
+		_ = sbx.RunUpdate(func() error {
+			close(updating)
+			<-finish
+			committed = true
+
+			return nil
+		})
+	}()
+	<-updating
+	begun := make(chan *Sandbox)
+	go func() {
+		migrating, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+		assert.NoError(t, err)
+		begun <- migrating
+	}()
+	select {
+	case <-begun:
+		t.Fatal("the migration did not wait for the update in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(finish)
+	require.Same(t, sbx, <-begun)
+	require.True(t, committed)
+
+	require.True(t, sbx.MigrationInFlight())
+	require.ErrorIs(t, sbx.RunUpdate(func() error { return nil }), ErrSandboxMigrating)
+	require.False(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID))
+	_, err := sandboxes.MarkStoppingReserved(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.ErrorIs(t, err, ErrSandboxMigrating)
+	require.False(t, sbx.BeginCheckpoint(), "a checkpoint of a sandbox being migrated is refused")
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.ErrorIs(t, err, ErrSandboxMigrating)
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.True(t, live, "a sandbox being migrated stays live")
+
+	sbx.EndMigration()
+	sbx.EndMigration()
+	require.False(t, sbx.MigrationInFlight())
+	require.False(t, sbx.CheckpointInFlight())
+	require.NoError(t, sbx.RunUpdate(func() error { return nil }))
+
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	require.False(t, sandboxes.EndMigrationStopping(t.Context(), sbx.Runtime.SandboxID, "lifecycle-other"), "another lifecycle is not the migrated one")
+	require.True(t, sbx.MigrationInFlight(), "a refused end leaves the migration marked")
+	require.True(t, sandboxes.EndMigrationStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID), "the holder ends the migration and removes the sandbox in one step")
+	require.False(t, sbx.MigrationInFlight())
+	_, live = sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.Error(t, err, "only a live lifecycle is migrated")
+}
+
+// A sandbox being migrated whose process ended still leaves the live map
+// through its own teardown.
+func TestMapMigrationLetsTheTeardownReclaim(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	attachOwnedCleanup(t, sandboxes, sbx)
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	_, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+
+	require.NoError(t, sbx.Close(t.Context()))
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+}
+
+// A lifecycle went live once it was registered, reserved or not, and stays so
+// through its stop: a restore never promoted never does.
+func TestMapWentLive(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	restored := testMapSandbox(t, "lifecycle-restored")
+	sandboxes.TrackLifecycle(t.Context(), restored)
+	require.False(t, restored.WentLive(), "tracked, not registered")
+
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.False(t, sbx.WentLive())
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.True(t, sbx.WentLive())
+	require.True(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID))
+	require.True(t, sbx.WentLive(), "a stop does not unmake it")
+
+	reserved := testMapSandbox(t, "lifecycle-2")
+	reserved.Runtime.SandboxID = "sbx-reserved"
+	reservation, err := sandboxes.Reserve(reserved.Runtime.SandboxID)
+	require.NoError(t, err)
+	require.NoError(t, reservation.MarkRunningUnlessEnded(t.Context(), reserved))
+	require.True(t, reserved.WentLive())
+}
+
+// The teardown bypasses whatever migration is in flight when it removes the
+// entry, not one it read before: one ended and another begun after the
+// teardown started still lets it remove the entry, while every other caller
+// stays refused.
+func TestMapTeardownBypassesAMigrationBegunAfterItStarted(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	_, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+
+	// The teardown starts under the first migration, which is then replaced.
+	sbx.EndMigration()
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	defer sbx.EndMigration()
+
+	require.False(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID), "another caller is refused")
+	require.True(t, sandboxes.markStoppingAs(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID, true, false), "the teardown removes the entry")
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+}
+
+// LifecycleTracked answers for the sandbox and lifecycle pair it was tracked
+// under, from TrackLifecycle until MarkStopped.
+func TestMapLifecycleTracked(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
+
+	sandboxes.TrackLifecycle(t.Context(), sbx)
+	assert.True(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
+	assert.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, "lifecycle-2"), "another lifecycle of the sandbox")
+	assert.False(t, sandboxes.LifecycleTracked("sandbox-2", sbx.LifecycleID), "the lifecycle under another sandbox")
+
+	sandboxes.MarkStopped(t.Context(), sbx)
+	assert.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
 }

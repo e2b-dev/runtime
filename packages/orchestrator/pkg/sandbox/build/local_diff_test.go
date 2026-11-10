@@ -3,6 +3,7 @@
 package build
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestLocalDiffFileCloseToDiffRemovesPartialOnError(t *testing.T) {
 	cachePath := f.cachePath
 	require.FileExists(t, cachePath)
 
-	// Force a materialization failure: closing the fd makes the Sync inside
+	// Force a materialization failure: closing the fd makes the Stat inside
 	// CloseToDiff fail, driving the error path.
 	require.NoError(t, f.File.Close())
 
@@ -51,4 +52,25 @@ func TestLocalDiffFileCloseToDiffRemovesEmptyCacheFile(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, &NoDiff{}, diff)
 	require.NoFileExists(t, cachePath, "empty diff cache file must be removed")
+}
+
+// TestLocalDiffFileCloseToDiffServesWrittenBytes verifies the diff serves the
+// bytes written through the file, as a copy that cannot reflink leaves them.
+func TestLocalDiffFileCloseToDiffServesWrittenBytes(t *testing.T) {
+	t.Parallel()
+
+	f, err := NewLocalDiffFile(t.TempDir(), "build-test-id", Rootfs)
+	require.NoError(t, err)
+
+	payload := bytes.Repeat([]byte{0xA5, 0x5A}, 1<<19)
+	_, err = f.File.WriteAt(payload, 0)
+	require.NoError(t, err)
+
+	diff, err := f.CloseToDiff(blockSize)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = diff.Close() })
+
+	data, err := diff.Slice(t.Context(), 0, int64(len(payload)), nil)
+	require.NoError(t, err)
+	require.Equal(t, payload, data)
 }

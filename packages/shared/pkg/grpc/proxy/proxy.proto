@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package proxy;
 
+import "orchestrator.proto";
+
 option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy;proxygrpc";
 
 // Request to resume a paused sandbox.
@@ -15,7 +17,12 @@ message SandboxResumeRequest {
 // Response with routing info for the resumed/running sandbox.
 message SandboxResumeResponse {
   // Orchestrator node IP that can receive traffic for this sandbox.
+  // Empty for a full-router sandbox, whose ingress has no orchestrator route.
   string orchestrator_ip = 1;
+  // Placement of the sandbox's current execution, the one the orchestrator
+  // returned for it. Absent for a sandbox on the legacy per-worker network,
+  // as in SandboxCreateResponse: callers then route on orchestrator_ip.
+  SandboxNetworkPlacement network_placement = 2;
 }
 
 // SandboxService is used by the client-proxy to resume sandboxes.

@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Golden lines lifted VERBATIM from the pre-change provision.sh so the debian
@@ -79,6 +81,21 @@ func TestRhelAllowErasingFollowsSubcommand(t *testing.T) {
 	}
 	if strings.Contains(rhel.PkgInstall, "--allowerasing install") {
 		t.Errorf("rhel install has --allowerasing before the subcommand, which dnf5 rejects: %s", rhel.PkgInstall)
+	}
+}
+
+// Minimal RPM images ship only one of dnf, microdnf or yum (OpenCloudOS and
+// TencentOS publish -microdnf variants with no dnf), so every RPM profile has to
+// fall through all three or provisioning dies with "dnf: command not found".
+func TestRPMProfilesFallBackFromDnf(t *testing.T) {
+	t.Parallel()
+	for _, p := range Profiles {
+		if !strings.HasPrefix(p.PkgQueryBody, "rpm ") {
+			continue
+		}
+		for _, want := range []string{"dnf -y install --allowerasing", "|| microdnf -y install", "|| yum -y install"} {
+			assert.Contains(t, p.PkgInstall, want, "%s install is missing %q", p.Key, want)
+		}
 	}
 }
 

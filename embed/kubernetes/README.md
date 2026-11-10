@@ -4,7 +4,7 @@ One StatefulSet that translates [`../compose/compose.yaml`](../compose/compose.y
 the stores, Vector, the orchestrator, api and client-proxy run as sidecar init
 containers in the compose start order, the one-shots as init containers
 between them, and the pod is Ready once the `base` template exists. It is a
-single-node evaluation package rather than a Kubernetes deployment pattern;
+single-node package rather than a Kubernetes deployment pattern;
 the hub is [`../README.md`](../README.md).
 
 ## Requirements
@@ -15,14 +15,13 @@ the hub is [`../README.md`](../README.md).
   another host with kernel 6.8 or newer, glibc 2.34 or newer, cgroup v2 and
   the `iptables`, `rsync`, `e2fsprogs` and `iproute2` tools; 12 GiB RAM and
   20 GiB free on `/`. No Container-Optimized OS. arm64 is verified end to
-  end on a bare-metal arm64 host with the Compose shape (2026-09-14, kernel
+  end on a bare-metal arm64 host with Docker Compose (2026-09-14, kernel
   7.0); no arm64 node has run this StatefulSet yet. arm64 needs kernel 6.10
-  or newer (userfaultfd write-protect, see the Compose guide). The seven
-  pinned images are
-  published for both architectures, and the `fetch-artifacts` init container
-  verifies the arm64 orchestrator and envd against the `.sha256` their
-  release writes beside the object. A pin with no such object still stops
-  with a `FIX:` line naming it.
+  or newer (userfaultfd write-protect, see the Compose guide). The nine
+  pinned images are published for both architectures, and the `fetch-artifacts`
+  init container verifies the arm64 orchestrator and envd against the
+  `.sha256` their release writes beside the object. A pin with no such object
+  still stops with a `FIX:` line naming it.
 - 4 GiB of 2 MiB hugepages, reserved before the kubelet starts, because it
   advertises only what it saw then. Every sandbox needs them, and the
   orchestrator's request is what stops the kubelet capping the pod at zero.
@@ -89,11 +88,15 @@ checkout: `kubectl apply -k embed/kubernetes`.
 
 ## Try it
 
-Put this install's three SDK variables in your shell:
+Put this install's three SDK variables and the dashboard URL in your shell:
 
 ```bash
 eval "$(kubectl -n e2b exec e2b-0 -c ready -- cat /run/e2b/sdk.env)"
 ```
+
+Open the dashboard at `$E2B_DASHBOARD_URL`, which is the node's IP on port
+3001, and paste `$E2B_API_KEY` into its key form. The browser also reaches
+sandbox traffic on the node's IP, port 3002, so both have to be open to it.
 
 Install the SDK in a virtual environment, which is what keeps it off the
 system Python that Ubuntu's `pip` refuses to write to. On Ubuntu `venv`
@@ -152,17 +155,19 @@ node keeps what `host-setup` wrote until it is recycled: the files under
 `/etc`, the rest of `/var/lib/e2b` (its `storage` holds the built templates and
 their cache, about 2 GiB after one install), `/fc-*`, the hugepage reservation
 and the iptables rule.
-There is no Kubernetes teardown one-shot; the compose shape's `host-teardown`
+There is no Kubernetes teardown one-shot; Compose's `host-teardown`
 has no counterpart here.
 
 ## Reference
 
 ### What runs where
 
-One pod on the labelled node. The stores, Vector, the orchestrator, api and
-client-proxy are sidecar init containers started in the compose order, host
-preparation first; the one-shots are ordinary init containers between them;
-`ready` turns the pod Ready once the `base` template exists.
+One pod on the labelled node. The stores, Vector, the orchestrator, api,
+client-proxy and the dashboard are sidecar init containers started in the
+compose order, host preparation first and the dashboard last, so the `base`
+template never waits on the browser UI; the one-shots are
+ordinary init containers between them; `ready` turns the pod Ready once the
+`base` template exists and the dashboard answers.
 
 The pod uses the node's network and pid namespaces, runs three privileged
 containers (`preflight`, `host-setup` and the orchestrator launcher, which
@@ -179,17 +184,18 @@ stack.
 
 ### Ports
 
-The node exposes the same eleven ports as a compose host, and Postgres,
-Redis, ClickHouse and Vector listen on loopback here too. The SDK variables
-`ready` prints use the node's IP: reach 3000 and 3002 on it and firewall the
-other nine (3003, 5007, 5008, 5009, 5109 and the sandbox egress proxies 5010,
-5016, 5017 and 5018), since 5008 is an unauthenticated control API and the
-egress proxies expect no external client.
+The node exposes the same twelve ports as a compose host, and Postgres,
+Redis, ClickHouse and Vector listen on loopback here too, as does the
+collector under Telemetry once it is patched in. The SDK variables
+`ready` prints use the node's IP: reach 3000, 3001 and 3002 on it and firewall
+the other nine (3003, 5007, 5008, 5009, 5109 and the sandbox egress
+proxies 5010, 5016, 5017 and 5018), since 5008 is an unauthenticated control
+API and the egress proxies expect no external client.
 
-k3s adds two ports of its own on top of those eleven: `*:6443`, the
+k3s adds two ports of its own on top of those twelve: `*:6443`, the
 Kubernetes API server, and `*:10250`, the kubelet. They belong to the
 cluster rather than to the stack, and they want the same firewall treatment
-as the nine, more urgently if anything: the install above writes the
+as the ten, more urgently if anything: the install above writes the
 cluster-admin kubeconfig mode 644, so 6443 is the port that hands out the
 node.
 
@@ -202,7 +208,7 @@ the pod's own loopback log traffic away from Vector.
 
 The api's two secrets, `ADMIN_TOKEN` and `SANDBOX_ACCESS_TOKEN_HASH_SEED`,
 come from the `e2b-api` Secret created during the install; nothing in the
-manifest carries them. The compose shape generates them per install in an
+manifest carries them. Compose generates them per install in an
 `api-secrets` one-shot, which has no counterpart here: rotate them by
 replacing the Secret and restarting the pod.
 
@@ -221,6 +227,74 @@ prints the new exports. To pin a key instead of generating one, patch the seed
 init container's `SEED_TEAM_API_KEY` with a kustomize patch; the value is
 `e2b_` followed by at least 32 hex characters, as compose's `TEAM_API_KEY`
 documents.
+
+The dashboard keeps the key you paste in an httpOnly browser cookie for a
+year, not marked Secure because the node serves plain http; sign-out
+clears it.
+
+### Telemetry
+
+api, the orchestrator and client-proxy take their OpenTelemetry collector
+from the `OTEL_COLLECTOR_GRPC_ENDPOINT` literal of the
+`e2b-settings` ConfigMap in [`kustomization.yaml`](kustomization.yaml). It
+ships empty, which exports nothing; `127.0.0.1:4317`, or any `host:port` the
+node can reach, sends their metrics, traces and logs there over OTLP/gRPC.
+The built-in collector, the compose `otel` profile's service, is the one
+commented line at the end of that file:
+
+```yaml
+# patches: [{ path: patches/otel-collector.yaml, target: { kind: StatefulSet, name: e2b } }]
+```
+
+From a checkout, set the literal to `127.0.0.1:4317`, uncomment that line and
+run `kubectl apply -k embed/kubernetes`.
+[`patches/otel-collector.yaml`](patches/otel-collector.yaml) appends an
+`otel-collector` sidecar after the dashboard, reading
+[`config/otel-collector.yaml`](config/otel-collector.yaml) from the
+`otel-config` ConfigMap, and `curl -s 127.0.0.1:13133` on the node answers
+while it runs. Unlike compose, where nothing waits for it, its startup probe
+comes before `ready`, so a collector that never answers leaves the pod
+unready. With the dashboard patch under Limitations as well, both entries go
+in the one `patches:` list.
+
+The URL install has no file to edit. An overlay of your own does the same: a
+directory holding this `kustomization.yaml` and a copy of the patch file
+(`curl -fsSLO https://raw.githubusercontent.com/e2b-dev/runtime/main/embed/kubernetes/patches/otel-collector.yaml`),
+applied with `kubectl apply -k` on that directory.
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: e2b
+resources:
+  - https://github.com/e2b-dev/runtime//embed/kubernetes?ref=main
+configMapGenerator:
+  - name: e2b-settings
+    behavior: merge
+    literals:
+      - OTEL_COLLECTOR_GRPC_ENDPOINT=127.0.0.1:4317
+patches:
+  - path: otel-collector.yaml
+    target: { kind: StatefulSet, name: e2b }
+```
+
+For a collector of your own, give its address instead and leave out
+`patches:`. The reference's
+[Observability](../docs/REFERENCE.md#observability) says what the built-in
+collector keeps and what reads it.
+
+The built-in collector discards traces and logs. To forward them from the
+overlay, copy its config in as well
+(`curl -fsSL --create-dirs -o config/otel-collector.yaml https://raw.githubusercontent.com/e2b-dev/runtime/main/embed/kubernetes/config/otel-collector.yaml`),
+make the edit its comments describe, and replace the `otel-config` ConfigMap
+with that copy through one more entry under `configMapGenerator:`:
+
+```yaml
+  - name: otel-config
+    behavior: replace
+    files:
+      - config.yaml=config/otel-collector.yaml
+```
 
 ### Upgrading
 
@@ -254,6 +328,23 @@ when they disagree.
 - There is no `smoke` service. Try it above has the recipe that replaces it.
 - A node that carries a taint needs a toleration, added with a kustomize
   patch; a commented example is in [`statefulset.yaml`](statefulset.yaml).
+- To run without the dashboard, drop its container with a
+  strategic-merge patch beside [`kustomization.yaml`](kustomization.yaml),
+  referenced from it as `patches: [{ path: no-dashboard.yaml }]`; the rest of
+  the stack runs.
+
+  ```yaml
+  apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: e2b
+  spec:
+    template:
+      spec:
+        initContainers:
+          - name: dashboard
+            $patch: delete
+  ```
 
 ### Troubleshooting
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,10 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -47,7 +49,7 @@ func postResume(t *testing.T, teamID uuid.UUID, sandboxID string, stub *resumeWa
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/resume", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -131,7 +133,7 @@ func TestConnect_RestoredPauseConnects(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/connect", strings.NewReader(`{"timeout":60}`))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -140,4 +142,39 @@ func TestConnect_RestoredPauseConnects(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.Equal(t, 1, stub.waitCall)
+}
+
+// A sandbox created before its cluster moved to a new domain connects with
+// the cluster's current domain, not the one recorded at creation.
+func TestConnect_AnswersWithTheClustersCurrentDomain(t *testing.T) {
+	t.Parallel()
+
+	teamID, clusterID := uuid.New(), uuid.New()
+	sandboxID := "i" + id.Generate()
+	recorded, current := "c-1.old.example.test", "c-1.new.example.test"
+	stub := &connectStub{
+		waited: true,
+		sbx: sandbox.Sandbox{
+			SandboxID: sandboxID, TeamID: teamID, ClusterID: clusterID, Domain: &recorded,
+			State: sandbox.StateRunning, StartTime: time.Now(), EndTime: time.Now().Add(time.Hour),
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/connect", strings.NewReader(`{"timeout":60}`))
+	ginCtx.Request.Header.Set("Content-Type", "application/json")
+	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team", ClusterID: &clusterID},
+		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
+	})
+
+	store := &APIStore{connectBackendOverride: stub, clusters: clusters.NewTestPool(clusters.NewTestCluster(clusterID, &current))}
+	store.PostSandboxesSandboxIDConnect(ginCtx, sandboxID)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var body api.Sandbox
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.NotNil(t, body.Domain)
+	assert.Equal(t, current, *body.Domain)
 }

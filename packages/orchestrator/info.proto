@@ -3,7 +3,7 @@ syntax = "proto3";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "https://github.com/e2b-dev/infra/orchestrator";
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info;orchestrator";
 
 // needs to be different from the enumeration in the template manager
 enum ServiceInfoStatus {
@@ -11,10 +11,13 @@ enum ServiceInfoStatus {
   // Draining excludes new work while existing work finishes; it can return to Healthy.
   Draining = 1;
   Unhealthy = 2;
-  // Standby means the node is not actively used, but it can return to Healthy and continues serving traffic.
+  // Standby refuses new sandboxes while the ones it holds keep serving; it can return to Healthy.
   Standby = 3;
   // ShuttingDown drains existing work before process exit and cannot be reversed.
   ShuttingDown = 4;
+  // NotReady is a starting node that cannot take new work yet. Only the node
+  // sets it, and it becomes Healthy by itself once ready.
+  NotReady = 5;
 }
 
 enum ServiceInfoRole {
@@ -29,7 +32,6 @@ message DiskMetrics {
   uint64 used_bytes = 4;
   uint64 total_bytes = 5;
 }
-
 
 message MachineInfo {
   string cpu_architecture = 1;
@@ -52,11 +54,17 @@ message ServiceInfoResponse {
   repeated string labels = 55;
   google.protobuf.Timestamp service_status_changed_at = 56;
 
-  // Missing means unknown, not idle.
-  optional uint64 outstanding_work = 58;
+  // Owner recorded by the current Standby override, empty when none.
+  string status_owner = 57;
 
-  // Node-scoped sandbox admission limit; absent when unsupported or not an orchestrator.
-  optional int64 max_sandboxes = 59;
+  // Overlapping work holds, not distinct sandboxes or builds. Zero is idle.
+  uint64 outstanding_work = 58;
+
+  // Nonpositive values reject sandbox creation.
+  int64 max_sandboxes = 59;
+
+  // Capabilities of this build, for example "park-owner".
+  repeated string capabilities = 60;
 
   int64 metric_vcpu_used = 101 [deprecated = true];
   int64 metric_memory_used_mb = 102 [deprecated = true];
@@ -84,10 +92,19 @@ message ServiceInfoResponse {
   uint64 metric_hugepages_used = 115;
   uint64 metric_hugepages_reserved = 116;
   uint64 metric_hugepage_size_bytes = 117;
+  // Pool ceiling: nr_hugepages + nr_overcommit_hugepages. 0 when unknown.
+  uint64 metric_hugepages_capacity = 118;
+  // Base pool: nr_hugepages, allocated at boot. Unset when unknown; 0 is a
+  // pool that is all overcommit.
+  optional uint64 metric_hugepages_base = 119;
 }
 
 message ServiceStatusChangeRequest {
   ServiceInfoStatus service_status = 2;
+  // Owner of a Standby override, at most 63 characters of [a-z0-9-] starting and ending alphanumeric; empty is no owner.
+  string owner = 3;
+  // Force applies the carried status and owner regardless of the recorded owner.
+  bool force = 4;
 }
 
 service InfoService {

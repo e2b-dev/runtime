@@ -5,6 +5,7 @@ package block
 import (
 	"testing"
 
+	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -114,6 +115,106 @@ func TestTracker(t *testing.T) {
 
 		s.MarkInstalled(8, 8, Clean)
 		assert.Equal(t, NotPresent, s.Get(8), "empty range is a no-op")
+	})
+
+	t.Run("Installing claims one installer per page", func(t *testing.T) {
+		t.Parallel()
+		s := NewTracker()
+
+		assert.Equal(t, "installing", Installing.String(), "the wp_promote from_state label")
+
+		prev, claimed := s.BeginInstall(0)
+		assert.True(t, claimed)
+		assert.Equal(t, NotPresent, prev)
+		assert.Equal(t, Installing, s.Get(0))
+		assert.True(t, s.HasRange(0, 1, Installing))
+		assertOneStatePerPage(t, s)
+
+		prev, claimed = s.BeginInstall(0)
+		assert.False(t, claimed, "a second claim must lose")
+		assert.Equal(t, Installing, prev)
+		assertOneStatePerPage(t, s)
+
+		bmDirty, bmEmpty := s.Export()
+		assert.False(t, bmDirty.Contains(0), "installing pages are not dirty")
+		assert.False(t, bmEmpty.Contains(0), "installing pages are not empty")
+		assert.False(t, s.Present(0, 1), "an installing page has no bytes yet")
+
+		s.AbortInstall(0)
+		assert.Equal(t, NotPresent, s.Get(0), "abort releases the claim")
+		s.AbortInstall(0)
+		assert.Equal(t, NotPresent, s.Get(0), "abort is idempotent")
+
+		for _, installed := range []State{Dirty, Zero, Removed, Clean} {
+			s.SetRange(1, 2, installed)
+			prev, claimed = s.BeginInstall(1)
+			assert.Falsef(t, claimed, "%s page must not be claimed", installed)
+			assert.Equal(t, installed, prev)
+			s.AbortInstall(1)
+			assert.Equalf(t, installed, s.Get(1), "abort must not touch a %s page", installed)
+			assertOneStatePerPage(t, s)
+		}
+	})
+
+	t.Run("Installing leaves through every install path", func(t *testing.T) {
+		t.Parallel()
+		s := NewTracker()
+
+		_, claimed := s.BeginInstall(0)
+		assert.True(t, claimed)
+		s.MarkInstalled(0, 1, Clean)
+		assert.Equal(t, Clean, s.Get(0), "read install upgrades the claim")
+		assertOneStatePerPage(t, s)
+
+		_, claimed = s.BeginInstall(1)
+		assert.True(t, claimed)
+		s.SetRange(1, 2, Dirty)
+		assert.Equal(t, Dirty, s.Get(1), "write install replaces the claim")
+		assertOneStatePerPage(t, s)
+
+		_, claimed = s.BeginInstall(2)
+		assert.True(t, claimed)
+		s.SetRange(2, 3, Removed)
+		assert.Equal(t, Removed, s.Get(2), "a REMOVE batch overrides the claim")
+		assertOneStatePerPage(t, s)
+		s.AbortInstall(2)
+		assert.Equal(t, Removed, s.Get(2), "the owner's rollback must keep Removed")
+
+		_, claimed = s.BeginInstall(3)
+		assert.True(t, claimed)
+		assert.Equal(t, Installing, s.MarkWritten(3), "a WP fault beating the bookkeeping promotes")
+		assert.Equal(t, Dirty, s.Get(3))
+		assertOneStatePerPage(t, s)
+		s.MarkInstalled(3, 4, Clean)
+		assert.Equal(t, Dirty, s.Get(3), "the late read bookkeeping must not downgrade")
+		assertOneStatePerPage(t, s)
+
+		_, claimed = s.BeginInstall(4)
+		assert.True(t, claimed)
+		assert.Equal(t, Installing, s.MarkWrittenPresent(4))
+		assert.Equal(t, Dirty, s.Get(4))
+		assertOneStatePerPage(t, s)
+
+		_, claimed = s.BeginInstall(5)
+		assert.True(t, claimed)
+		s.MarkInstalled(5, 6, Zero)
+		assert.Equal(t, Zero, s.Get(5), "zero install upgrades the claim")
+		assertOneStatePerPage(t, s)
+
+		_, claimed = s.BeginInstall(6)
+		assert.True(t, claimed)
+		_, claimed = s.BeginInstall(7)
+		assert.True(t, claimed)
+		s.MarkInstalled(6, 8, Clean)
+		assert.Equal(t, Clean, s.Get(6), "ranged MarkInstalled upgrades claims")
+		assert.Equal(t, Clean, s.Get(7))
+		assertOneStatePerPage(t, s)
+
+		bmDirty, bmZero, bmRemoved, bmClean := s.ExportStates()
+		assert.Equal(t, uint64(8), bmDirty.GetCardinality()+bmZero.GetCardinality()+bmRemoved.GetCardinality()+bmClean.GetCardinality(),
+			"eight pages left Installing; none may sit in two states")
+		assert.False(t, s.HasRange(0, 8, Installing))
+		assert.True(t, s.Present(0, 8))
 	})
 
 	t.Run("MarkWritten promotion matrix", func(t *testing.T) {
@@ -282,4 +383,23 @@ func TestTracker(t *testing.T) {
 		bmDirty.Add(42)
 		assert.Equal(t, NotPresent, s.Get(42), "mutating export must not leak into tracker")
 	})
+}
+
+// assertOneStatePerPage checks the tracker's invariant that an index sits in
+// at most one state bitmap; Get would hide a page left in two, since it
+// reports the first bitmap that contains the index.
+func assertOneStatePerPage(t *testing.T, s *Tracker) {
+	t.Helper()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	bms := map[State]*roaring.Bitmap{Dirty: s.dirty, Zero: s.zero, Removed: s.removed, Clean: s.clean, Installing: s.installing}
+	for a, ba := range bms {
+		for b, bb := range bms {
+			if a < b {
+				assert.Zerof(t, roaring.And(ba, bb).GetCardinality(), "pages in both %s and %s", a, b)
+			}
+		}
+	}
 }

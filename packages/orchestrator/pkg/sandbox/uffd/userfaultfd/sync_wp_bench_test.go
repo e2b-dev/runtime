@@ -13,8 +13,13 @@ package userfaultfd
 // (the "guest"); a handler goroutine on a dedicated OS thread drains the uffd
 // and resolves each WP fault with UFFDIO_WRITEPROTECT(unprotect)+wake (no copy).
 //
-// Run: sudo -E go test -run TestSyncWPFaultLatency -v ./packages/orchestrator/pkg/sandbox/uffd/userfaultfd/
-// Tunables: E2B_WP_PAGES (default 256), E2B_WP_ROUNDS (default 20).
+// These are benchmarks, so go test does not run them; they need -bench and,
+// because they register a userfaultfd, root:
+//
+//	sudo -E go test -run '^$' -bench BenchmarkSyncWPFaultLatency -benchtime 1x -v ./packages/orchestrator/pkg/sandbox/uffd/userfaultfd/
+//
+// Tunables: E2B_WP_PAGES (default 256), E2B_WP_ROUNDS (default 20, multiplied
+// by b.N).
 
 import (
 	"errors"
@@ -26,6 +31,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -97,22 +103,109 @@ type serveResult struct {
 	err      error
 }
 
-// TestSyncWPFaultLatency measures synchronous WP fault round-trip latency on
+// measurement is what the timed store loop reports back to the test goroutine.
+type measurement struct {
+	latencies []time.Duration
+	arms      []time.Duration
+	err       error
+}
+
+// measurementBudget bounds the whole store loop. A store that faults returns
+// only once the handler resolves that fault, so the bound has to be enforced
+// from a goroutine that is not the one storing.
+const measurementBudget = 120 * time.Second
+
+// wakeBlockedFaults releases every store waiting on a synchronous WP fault in
+// the range: unregistering wakes the waiters and their faults retry against an
+// unprotected range. A thread inside a page fault cannot be interrupted, not
+// by go test's timeout and not by SIGKILL, so whoever stops serving has to
+// call this or the store never returns.
+func wakeBlockedFaults(fd Fd, start uintptr, size uint64) {
+	_ = unregister(fd, start, size)
+}
+
+func serveSyncWP(fd Fd, stop int, pagesize uint64, totalFaults int, resolvedSoFar *atomic.Int64) serveResult {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	buf := make([]byte, unsafe.Sizeof(UffdMsg{}))
+	pfds := []unix.PollFd{
+		{Fd: int32(fd), Events: unix.POLLIN},
+		{Fd: int32(stop), Events: unix.POLLIN},
+	}
+	var res serveResult
+	for res.resolved < totalFaults {
+		if _, err := unix.Poll(pfds, -1); err != nil {
+			if errors.Is(err, syscall.EINTR) {
+				continue
+			}
+			res.err = fmt.Errorf("uffd poll: %w", err)
+
+			return res
+		}
+		if pfds[1].Revents != 0 {
+			return res
+		}
+		if pfds[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
+			res.err = fmt.Errorf("uffd poll events: %#x", pfds[0].Revents)
+
+			return res
+		}
+
+		n, err := syscall.Read(int(fd), buf)
+		if errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN) {
+			continue
+		}
+		if err != nil {
+			res.err = fmt.Errorf("uffd read: %w", err)
+
+			return res
+		}
+		if n == 0 {
+			continue
+		}
+
+		msg := (*UffdMsg)(unsafe.Pointer(&buf[0]))
+		if getMsgEvent(msg) != UFFD_EVENT_PAGEFAULT {
+			continue
+		}
+
+		arg := getMsgArg(msg)
+		pf := (*UffdPagefault)(unsafe.Pointer(&arg[0]))
+		if uint64(pf.flags)&uint64(UFFD_PAGEFAULT_FLAG_WP) == 0 {
+			res.nonWP++
+		}
+
+		addr := getPagefaultAddress(pf) &^ uintptr(pagesize-1)
+		// Mode 0 clears WP and wakes the blocked writer.
+		if err := fd.writeProtectRange(addr, uintptr(pagesize), uintptr(pagesize), 0); err != nil {
+			res.err = fmt.Errorf("unprotect: %w", err)
+
+			return res
+		}
+		res.resolved++
+		resolvedSoFar.Store(int64(res.resolved))
+	}
+
+	return res
+}
+
+// BenchmarkSyncWPFaultLatency measures synchronous WP fault round-trip latency on
 // 2 MiB hugepages and reports the distribution + re-arm cost.
-//
-//nolint:paralleltest // mutates GOMAXPROCS and disables GC
-func TestSyncWPFaultLatency(t *testing.T) {
+func BenchmarkSyncWPFaultLatency(b *testing.B) {
 	if os.Geteuid() != 0 {
-		t.Skip("requires root (userfaultfd registration)")
+		b.Skip("requires root (userfaultfd registration)")
 	}
 
 	const pagesize = uint64(header.HugepageSize)
 	nPages := envInt("E2B_WP_PAGES", 256)
 	// need >=1 warmup + >=1 measured round
-	nRounds := max(envInt("E2B_WP_ROUNDS", 20), 2)
+	// b.N multiplies the rounds rather than repeating the whole run, so the
+	// cold round is discarded once instead of once per iteration.
+	nRounds := max(envInt("E2B_WP_ROUNDS", 20), 2) * b.N
 	size := pagesize * uint64(nPages)
 
-	mem, memStart := hugepageMmap(t, size)
+	mem, memStart := hugepageMmap(b, size)
 
 	// Populate every hugepage (present, no uffd yet) so the measured faults are
 	// pure WP faults, not MISSING faults.
@@ -121,118 +214,132 @@ func TestSyncWPFaultLatency(t *testing.T) {
 	}
 
 	// Create the uffd WITHOUT WP_ASYNC → synchronous WP fault delivery.
-	fd, err := newFd(syscall.O_CLOEXEC)
+	fd, err := newFd(syscall.O_CLOEXEC | syscall.O_NONBLOCK)
 	if err != nil {
-		t.Fatalf("userfaultfd: %v", err)
+		b.Fatalf("userfaultfd: %v", err)
 	}
-	t.Cleanup(func() { fd.close() })
+	b.Cleanup(func() { fd.close() })
 
 	// UFFDIO_API with features=0 (the crux: no WP_ASYNC). Read back the
 	// kernel-supported features for the record.
 	api := newUffdioAPI(UFFD_API, 0)
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		t.Fatalf("UFFDIO_API: %v", errno)
+		b.Fatalf("UFFDIO_API: %v", errno)
 	}
 	wpAsyncSupported := uint64(api.features)&uint64(UFFD_FEATURE_WP_ASYNC) != 0
 
 	// Register write-protect-only. (Production registers MISSING|WP; we only
 	// need WP here since pages are already present.)
 	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		t.Fatalf("UFFDIO_REGISTER MODE_WP on hugetlbfs: %v", err)
+		b.Fatalf("UFFDIO_REGISTER MODE_WP on hugetlbfs: %v", err)
 	}
-	t.Cleanup(func() { _ = unregister(fd, memStart, size) })
+	b.Cleanup(func() { _ = unregister(fd, memStart, size) })
 
 	totalFaults := nPages * nRounds
 
-	// Handler goroutine on a dedicated OS thread: drain the uffd, resolve each
-	// WP fault with unprotect+wake (mode 0), until totalFaults are resolved.
-	ready := make(chan struct{})
+	var stop [2]int
+	if err := syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK); err != nil {
+		b.Fatalf("pipe2: %v", err)
+	}
+
+	var resolvedSoFar atomic.Int64
 	done := make(chan serveResult, 1)
+	handlerExited := make(chan struct{})
 	go func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-
-		buf := make([]byte, unsafe.Sizeof(UffdMsg{}))
-		close(ready)
-
-		resolved, nonWP := 0, 0
-		for resolved < totalFaults {
-			n, rerr := syscall.Read(int(fd), buf)
-			if errors.Is(rerr, syscall.EINTR) {
-				continue
-			}
-			if rerr != nil {
-				done <- serveResult{resolved, nonWP, fmt.Errorf("uffd read: %w", rerr)}
-
-				return
-			}
-			if n == 0 {
-				continue
-			}
-
-			msg := (*UffdMsg)(unsafe.Pointer(&buf[0]))
-			if getMsgEvent(msg) != UFFD_EVENT_PAGEFAULT {
-				continue
-			}
-
-			arg := getMsgArg(msg)
-			pf := (*UffdPagefault)(unsafe.Pointer(&arg[0]))
-			if uint64(pf.flags)&uint64(UFFD_PAGEFAULT_FLAG_WP) == 0 {
-				nonWP++
-			}
-
-			addr := getPagefaultAddress(pf) &^ uintptr(pagesize-1)
-			// mode 0 = clear WP + wake the blocked writer (no DONTWAKE).
-			if werr := fd.writeProtectRange(addr, uintptr(pagesize), uintptr(pagesize), 0); werr != nil {
-				done <- serveResult{resolved, nonWP, fmt.Errorf("unprotect: %w", werr)}
-
-				return
-			}
-			resolved++
+		defer close(handlerExited)
+		res := serveSyncWP(fd, stop[0], pagesize, totalFaults, &resolvedSoFar)
+		if res.err != nil {
+			wakeBlockedFaults(fd, memStart, size)
 		}
-		done <- serveResult{resolved, nonWP, nil}
+		done <- res
 	}()
-	<-ready
+	b.Cleanup(func() {
+		// Closing the pipe wakes poll even when no more faults will arrive.
+		// Join before the remaining cleanups close the uffd and unmap memory.
+		_ = syscall.Close(stop[1])
+		<-handlerExited
+		_ = syscall.Close(stop[0])
+	})
 
-	// Give the handler its own P, and stop GC so no STW can block on the
-	// fault-stuck writer M during the measurement.
-	if prev := runtime.GOMAXPROCS(0); prev < 2 {
-		runtime.GOMAXPROCS(2)
+	// One P each for the fault-blocked writer, the handler and this goroutine
+	// (it has to run the deadline branch while the writer holds its P), and
+	// stop GC so no STW can block on the fault-stuck writer M.
+	if prev := runtime.GOMAXPROCS(0); prev < 3 {
+		runtime.GOMAXPROCS(3)
 		defer runtime.GOMAXPROCS(prev)
 	}
 	prevGC := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(prevGC)
 
-	latencies := make([]time.Duration, 0, nPages*(nRounds-1))
-	arms := make([]time.Duration, 0, nRounds-1)
+	b.ResetTimer()
 
-	deadline := time.Now().Add(120 * time.Second)
-	for r := range nRounds {
-		// Arm: WP the whole range (this is the per-snapshot re-arm cost).
-		armStart := time.Now()
-		if err := fd.writeProtectRange(memStart, uintptr(size), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
-			t.Fatalf("arm writeProtectRange (round %d): %v", r, err)
+	// The stores run on their own goroutine so this one stays free to enforce
+	// measurementBudget: a store waiting on an unresolved fault never reaches
+	// a check of its own.
+	measured := make(chan measurement, 1)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		m := measurement{
+			latencies: make([]time.Duration, 0, nPages*(nRounds-1)),
+			arms:      make([]time.Duration, 0, nRounds-1),
 		}
-		armDur := time.Since(armStart)
 
-		for i := range nPages {
-			off := uint64(i) * pagesize
-			start := time.Now()
-			mem[off] = byte(r) // store → sync WP fault → handler unprotect+wake → returns
-			lat := time.Since(start)
+		for r := range nRounds {
+			// Arm: WP the whole range (this is the per-snapshot re-arm cost).
+			armStart := time.Now()
+			if err := fd.writeProtectRange(memStart, uintptr(size), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
+				m.err = fmt.Errorf("arm writeProtectRange (round %d): %w", r, err)
+				measured <- m
 
-			if r > 0 { // discard round 0 (cold) as warmup
-				latencies = append(latencies, lat)
+				return
+			}
+			armDur := time.Since(armStart)
+
+			for i := range nPages {
+				off := uint64(i) * pagesize
+				start := time.Now()
+				mem[off] = byte(r) // store → sync WP fault → handler unprotect+wake → returns
+				lat := time.Since(start)
+
+				if r > 0 { // discard round 0 (cold) as warmup
+					m.latencies = append(m.latencies, lat)
+				}
+			}
+			if r > 0 {
+				m.arms = append(m.arms, armDur)
 			}
 		}
-		if r > 0 {
-			arms = append(arms, armDur)
-		}
 
-		if time.Now().After(deadline) {
-			t.Fatal("measurement exceeded deadline — WP faults likely not being delivered")
-		}
+		measured <- m
+	}()
+
+	var m measurement
+	select {
+	case m = <-measured:
+	case <-time.After(measurementBudget):
+		resolved := resolvedSoFar.Load()
+
+		wakeBlockedFaults(fd, memStart, size)
+
+		// Join before failing. Failing runs the cleanups, which close the
+		// descriptor and unmap mem, and the store goroutine is touching both.
+		// It terminates on its own: no store can block on an unregistered
+		// range, and the next round's arm fails there.
+		<-measured
+
+		b.Fatalf("stores did not finish within %s (%d of %d faults resolved): WP faults are not being delivered, or the handler stopped serving before the last store",
+			measurementBudget, resolved, totalFaults)
 	}
+
+	b.StopTimer()
+
+	if m.err != nil {
+		b.Fatal(m.err)
+	}
+
+	latencies, arms := m.latencies, m.arms
 
 	// Join the handler (with a timeout so a non-delivering kernel fails loudly
 	// instead of hanging).
@@ -240,16 +347,16 @@ func TestSyncWPFaultLatency(t *testing.T) {
 	select {
 	case res = <-done:
 	case <-time.After(30 * time.Second):
-		t.Fatalf("handler did not resolve %d faults — sync WP not delivering on hugepages", totalFaults)
+		b.Fatalf("handler did not resolve %d faults — sync WP not delivering on hugepages", totalFaults)
 	}
 	if res.err != nil {
-		t.Fatalf("handler error after %d/%d faults: %v", res.resolved, totalFaults, res.err)
+		b.Fatalf("handler error after %d/%d faults: %v", res.resolved, totalFaults, res.err)
 	}
 	if res.resolved != totalFaults {
-		t.Fatalf("resolved %d faults, expected %d", res.resolved, totalFaults)
+		b.Fatalf("resolved %d faults, expected %d", res.resolved, totalFaults)
 	}
 	if res.nonWP != 0 {
-		t.Errorf("got %d non-WP pagefaults (expected all WP)", res.nonWP)
+		b.Errorf("got %d non-WP pagefaults (expected all WP)", res.nonWP)
 	}
 
 	slices.Sort(latencies)
@@ -266,21 +373,25 @@ func TestSyncWPFaultLatency(t *testing.T) {
 	}
 	armMean := armSum / time.Duration(len(arms))
 
-	t.Logf("=== sync WP fault latency (2 MiB hugepages) ===")
-	t.Logf("config: %d pages (%d MiB) x %d rounds; %d measured faults (round 0 warmup discarded)",
+	b.Logf("=== sync WP fault latency (2 MiB hugepages) ===")
+	b.Logf("config: %d pages (%d MiB) x %d rounds; %d measured faults (round 0 warmup discarded)",
 		nPages, size/(1024*1024), nRounds, len(latencies))
-	t.Logf("kernel WP_ASYNC supported: %v; uffd created WITHOUT it (synchronous WP)", wpAsyncSupported)
-	t.Logf("per-fault round-trip: p50=%v  p90=%v  p99=%v  max=%v  mean=%v",
+	b.Logf("kernel WP_ASYNC supported: %v; uffd created WITHOUT it (synchronous WP)", wpAsyncSupported)
+	b.Logf("per-fault round-trip: p50=%v  p90=%v  p99=%v  max=%v  mean=%v",
 		percentile(latencies, 50), percentile(latencies, 90),
 		percentile(latencies, 99), percentile(latencies, 100), mean)
-	t.Logf("throughput (single writer, lock-step): %.0f faults/sec", faultsPerSec)
-	t.Logf("re-arm whole range: mean=%v (%v per hugepage, %d pages)",
+	b.Logf("throughput (single writer, lock-step): %.0f faults/sec", faultsPerSec)
+	b.Logf("re-arm whole range: mean=%v (%v per hugepage, %d pages)",
 		armMean, armMean/time.Duration(nPages), nPages)
-	t.Logf("projected tax to re-dirty a working set: 1 GiB=%v, 8 GiB=%v (mean x pages)",
+	b.Logf("projected tax to re-dirty a working set: 1 GiB=%v, 8 GiB=%v (mean x pages)",
 		mean*time.Duration(512), mean*time.Duration(4096))
+
+	b.ReportMetric(float64(mean), "ns/fault")
+	b.ReportMetric(float64(percentile(latencies, 99)), "p99-ns/fault")
+	b.ReportMetric(float64(armMean)/float64(nPages), "ns/rearmed-page")
 }
 
-// TestAsyncWPWriteLatency is the WP_ASYNC counterpart of TestSyncWPFaultLatency:
+// BenchmarkAsyncWPWriteLatency is the WP_ASYNC counterpart of BenchmarkSyncWPFaultLatency:
 // the current production mechanism. With WP_ASYNC the kernel resolves the write
 // fault in-kernel (clears the WP bit, marks the pagemap dirty) with NO userspace
 // handler round-trip, so there is no handler here — we just time the stores. The
@@ -288,28 +399,26 @@ func TestSyncWPFaultLatency(t *testing.T) {
 // which is the readout cost the async approach pays at snapshot time and that the
 // sync/always-sync design avoids. Comparing the two tests gives the per-write tax
 // of moving dirty tracking from in-kernel (async) to userspace (sync).
-//
-//nolint:paralleltest // mutates GOMAXPROCS and disables GC
-func TestAsyncWPWriteLatency(t *testing.T) {
+func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 	if os.Geteuid() != 0 {
-		t.Skip("requires root (userfaultfd registration)")
+		b.Skip("requires root (userfaultfd registration)")
 	}
 
 	const pagesize = uint64(header.HugepageSize)
 	nPages := envInt("E2B_WP_PAGES", 256)
-	nRounds := max(envInt("E2B_WP_ROUNDS", 20), 2)
+	nRounds := max(envInt("E2B_WP_ROUNDS", 20), 2) * b.N
 	size := pagesize * uint64(nPages)
 
-	mem, memStart := hugepageMmap(t, size)
+	mem, memStart := hugepageMmap(b, size)
 	for i := range nPages {
 		mem[uint64(i)*pagesize] = 0
 	}
 
 	fd, err := newFd(syscall.O_CLOEXEC)
 	if err != nil {
-		t.Fatalf("userfaultfd: %v", err)
+		b.Fatalf("userfaultfd: %v", err)
 	}
-	t.Cleanup(func() { fd.close() })
+	b.Cleanup(func() { fd.close() })
 
 	// UFFDIO_API WITH WP_ASYNC (production config).
 	features := CULong(UFFD_FEATURE_WP_ASYNC)
@@ -318,22 +427,22 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 	}
 	api := newUffdioAPI(UFFD_API, features)
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		t.Fatalf("UFFDIO_API: %v", errno)
+		b.Fatalf("UFFDIO_API: %v", errno)
 	}
 	if uint64(api.features)&uint64(UFFD_FEATURE_WP_ASYNC) == 0 {
-		t.Skip("kernel does not support UFFD_FEATURE_WP_ASYNC")
+		b.Skip("kernel does not support UFFD_FEATURE_WP_ASYNC")
 	}
 
 	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		t.Fatalf("UFFDIO_REGISTER MODE_WP: %v", err)
+		b.Fatalf("UFFDIO_REGISTER MODE_WP: %v", err)
 	}
-	t.Cleanup(func() { _ = unregister(fd, memStart, size) })
+	b.Cleanup(func() { _ = unregister(fd, memStart, size) })
 
 	pagemap, err := testutils.NewPagemapReader()
 	if err != nil {
-		t.Fatalf("pagemap reader: %v", err)
+		b.Fatalf("pagemap reader: %v", err)
 	}
-	t.Cleanup(func() { pagemap.Close() })
+	b.Cleanup(func() { pagemap.Close() })
 
 	if prev := runtime.GOMAXPROCS(0); prev < 2 {
 		runtime.GOMAXPROCS(2)
@@ -346,10 +455,12 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 	arms := make([]time.Duration, 0, nRounds-1)
 	scans := make([]time.Duration, 0, nRounds-1)
 
+	b.ResetTimer()
+
 	for r := range nRounds {
 		armStart := time.Now()
 		if err := fd.writeProtectRange(memStart, uintptr(size), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
-			t.Fatalf("arm writeProtectRange (round %d): %v", r, err)
+			b.Fatalf("arm writeProtectRange (round %d): %v", r, err)
 		}
 		armDur := time.Since(armStart)
 
@@ -369,7 +480,7 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 		for i := range nPages {
 			e, rerr := pagemap.ReadEntry(memStart + uintptr(uint64(i)*pagesize))
 			if rerr != nil {
-				t.Fatalf("pagemap read (round %d page %d): %v", r, i, rerr)
+				b.Fatalf("pagemap read (round %d page %d): %v", r, i, rerr)
 			}
 			if e.IsPresent() && !e.IsWriteProtected() {
 				dirty++
@@ -378,13 +489,15 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 		scanDur := time.Since(scanStart)
 
 		if dirty != nPages {
-			t.Errorf("round %d: pagemap reported %d/%d dirty (expected all written)", r, dirty, nPages)
+			b.Errorf("round %d: pagemap reported %d/%d dirty (expected all written)", r, dirty, nPages)
 		}
 		if r > 0 {
 			arms = append(arms, armDur)
 			scans = append(scans, scanDur)
 		}
 	}
+
+	b.StopTimer()
 
 	slices.Sort(latencies)
 	var sum time.Duration
@@ -402,15 +515,18 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 		return s / time.Duration(len(ds))
 	}
 
-	t.Logf("=== async WP write latency (2 MiB hugepages, WP_ASYNC = current mechanism) ===")
-	t.Logf("config: %d pages (%d MiB) x %d rounds; %d measured writes (round 0 warmup discarded)",
+	b.Logf("=== async WP write latency (2 MiB hugepages, WP_ASYNC = current mechanism) ===")
+	b.Logf("config: %d pages (%d MiB) x %d rounds; %d measured writes (round 0 warmup discarded)",
 		nPages, size/(1024*1024), nRounds, len(latencies))
-	t.Logf("per-write (in-kernel, no handler): p50=%v  p90=%v  p99=%v  max=%v  mean=%v",
+	b.Logf("per-write (in-kernel, no handler): p50=%v  p90=%v  p99=%v  max=%v  mean=%v",
 		percentile(latencies, 50), percentile(latencies, 90),
 		percentile(latencies, 99), percentile(latencies, 100), mean)
-	t.Logf("re-arm whole range: mean=%v (%v per hugepage)", meanOf(arms), meanOf(arms)/time.Duration(nPages))
-	t.Logf("pagemap dirty-set readout: mean=%v for %d pages (%v per hugepage) — the async-only snapshot cost",
+	b.Logf("re-arm whole range: mean=%v (%v per hugepage)", meanOf(arms), meanOf(arms)/time.Duration(nPages))
+	b.Logf("pagemap dirty-set readout: mean=%v for %d pages (%v per hugepage) — the async-only snapshot cost",
 		meanOf(scans), nPages, meanOf(scans)/time.Duration(nPages))
+
+	b.ReportMetric(float64(mean), "ns/write")
+	b.ReportMetric(float64(meanOf(scans))/float64(nPages), "ns/scanned-page")
 }
 
 // runConcurrentSyncWP runs nWriters writer goroutines (simulating nWriters vCPUs), each on its
@@ -423,24 +539,24 @@ func TestAsyncWPWriteLatency(t *testing.T) {
 // Deadlock note: a goroutine blocked in a page fault holds its P (unlike a
 // syscall), so the caller MUST set GOMAXPROCS > nWriters or the resolvers starve. The
 // blocked writers consume no CPU, so resolvers still run on the physical cores.
-func runConcurrentSyncWP(t *testing.T, mem []byte, memStart uintptr, pagesize uint64, nPages, nRounds, nWriters, handlers int) ([]time.Duration, time.Duration) {
-	t.Helper()
+func runConcurrentSyncWP(tb testing.TB, mem []byte, memStart uintptr, pagesize uint64, nPages, nRounds, nWriters, handlers int) ([]time.Duration, time.Duration) {
+	tb.Helper()
 
 	size := pagesize * uint64(nPages)
 
 	// Non-blocking: the reader polls, then drains until EAGAIN.
 	fd, err := newFd(syscall.O_CLOEXEC | syscall.O_NONBLOCK)
 	if err != nil {
-		t.Fatalf("userfaultfd: %v", err)
+		tb.Fatalf("userfaultfd: %v", err)
 	}
 	defer fd.close()
 
 	api := newUffdioAPI(UFFD_API, 0) // features=0 → synchronous WP
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		t.Fatalf("UFFDIO_API: %v", errno)
+		tb.Fatalf("UFFDIO_API: %v", errno)
 	}
 	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		t.Fatalf("register MODE_WP: %v", err)
+		tb.Fatalf("register MODE_WP: %v", err)
 	}
 	defer func() { _ = unregister(fd, memStart, size) }()
 
@@ -461,7 +577,7 @@ func runConcurrentSyncWP(t *testing.T, mem []byte, memStart uintptr, pagesize ui
 	// reader terminates cleanly without needing to count faults.
 	var stop [2]int
 	if err := syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK); err != nil {
-		t.Fatalf("pipe2: %v", err)
+		tb.Fatalf("pipe2: %v", err)
 	}
 	defer syscall.Close(stop[0])
 	defer syscall.Close(stop[1])
@@ -533,7 +649,7 @@ func runConcurrentSyncWP(t *testing.T, mem []byte, memStart uintptr, pagesize ui
 				// Arm this writer's own sub-range (disjoint from others).
 				rangeStart := memStart + uintptr(uint64(lo)*pagesize)
 				if err := fd.writeProtectRange(rangeStart, uintptr(uint64(hi-lo)*pagesize), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
-					t.Errorf("writer %d arm: %v", w, err)
+					tb.Errorf("writer %d arm: %v", w, err)
 
 					return
 				}
@@ -563,13 +679,25 @@ func runConcurrentSyncWP(t *testing.T, mem []byte, memStart uintptr, pagesize ui
 		_, _ = syscall.Write(stop[1], []byte{1})
 		<-readerDone
 		close(workCh)
-		t.Fatalf("nWriters=%d: writers did not finish within 60s (handler not keeping up / deadlock)", nWriters)
+
+		// The writers are blocked in faults the stopped reader will not serve;
+		// leaving them there pins a P each for the rest of the binary.
+		wakeBlockedFaults(fd, memStart, size)
+
+		// Join before failing. Failing runs this function's defers and the
+		// caller's cleanups, which close the descriptor and unmap mem, while
+		// the woken writers still store into mem and can report an arm
+		// failure that would land after the benchmark had finished.
+		<-writersDone
+		resolvers.Wait()
+
+		tb.Fatalf("nWriters=%d: writers did not finish within 60s (handler not keeping up / deadlock)", nWriters)
 	}
 	wall := time.Since(wallStart)
 
 	// All faults resolved → stop the reader, then drain resolvers.
 	if _, err := syscall.Write(stop[1], []byte{1}); err != nil {
-		t.Fatalf("signal stop: %v", err)
+		tb.Fatalf("signal stop: %v", err)
 	}
 	<-readerDone
 	close(workCh)
@@ -583,15 +711,13 @@ func runConcurrentSyncWP(t *testing.T, mem []byte, memStart uintptr, pagesize ui
 	return all, wall
 }
 
-// TestSyncWPConcurrentLatency sweeps the number of concurrent writers (simulated
+// BenchmarkSyncWPConcurrentLatency sweeps the number of concurrent writers (simulated
 // vCPUs) and reports whether the production-style (reader + worker fan-out)
 // handler keeps per-fault latency bounded under concurrent load — the
-// question the single-writer TestSyncWPFaultLatency can't answer.
-//
-//nolint:paralleltest // mutates GOMAXPROCS and disables GC
-func TestSyncWPConcurrentLatency(t *testing.T) {
+// question the single-writer BenchmarkSyncWPFaultLatency can't answer.
+func BenchmarkSyncWPConcurrentLatency(b *testing.B) {
 	if os.Geteuid() != 0 {
-		t.Skip("requires root (userfaultfd registration)")
+		b.Skip("requires root (userfaultfd registration)")
 	}
 
 	const pagesize = uint64(header.HugepageSize)
@@ -600,7 +726,7 @@ func TestSyncWPConcurrentLatency(t *testing.T) {
 	handlers := envInt("E2B_WP_HANDLERS", runtime.NumCPU())
 	size := pagesize * uint64(nPages)
 
-	mem, memStart := hugepageMmap(t, size)
+	mem, memStart := hugepageMmap(b, size)
 	for i := range nPages {
 		mem[uint64(i)*pagesize] = 0
 	}
@@ -629,29 +755,31 @@ func TestSyncWPConcurrentLatency(t *testing.T) {
 	prevGC := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(prevGC)
 
-	t.Logf("=== sync WP concurrent fault latency (2 MiB hugepages) ===")
-	t.Logf("config: %d pages x %d rounds, %d handler workers, %d host CPUs; per-fault latency by writer count",
+	b.Logf("config: %d pages x %d rounds, %d handler workers, %d host CPUs; one sub-benchmark per writer count",
 		nPages, nRounds, handlers, ncpu)
-	t.Logf("%-8s %-10s %-10s %-10s %-14s", "writers", "p50", "p99", "max", "throughput")
 
-	var base time.Duration
 	for _, W := range writerCounts {
-		lats, wall := runConcurrentSyncWP(t, mem, memStart, pagesize, nPages, nRounds, W, handlers)
-		if len(lats) == 0 {
-			continue
-		}
-		slices.Sort(lats)
-		p50 := percentile(lats, 50)
-		if W == writerCounts[0] {
-			base = p50
-		}
-		tput := float64(len(lats)) / wall.Seconds()
-		amp := ""
-		if base > 0 {
-			amp = fmt.Sprintf(" (%.1fx p50 vs W=%d)", float64(p50)/float64(base), writerCounts[0])
-		}
-		t.Logf("%-8d %-10v %-10v %-10v %-14s%s",
-			W, p50, percentile(lats, 99), percentile(lats, 100),
-			fmt.Sprintf("%.0f f/s", tput), amp)
+		b.Run(fmt.Sprintf("writers=%d", W), func(b *testing.B) {
+			var (
+				all  []time.Duration
+				wall time.Duration
+			)
+
+			for range b.N {
+				lats, w := runConcurrentSyncWP(b, mem, memStart, pagesize, nPages, nRounds, W, handlers)
+				all = append(all, lats...)
+				wall += w
+			}
+
+			if len(all) == 0 {
+				b.Skip("no faults measured")
+			}
+
+			slices.Sort(all)
+			b.ReportMetric(float64(percentile(all, 50)), "p50-ns/fault")
+			b.ReportMetric(float64(percentile(all, 99)), "p99-ns/fault")
+			b.ReportMetric(float64(percentile(all, 100)), "max-ns/fault")
+			b.ReportMetric(float64(len(all))/wall.Seconds(), "faults/s")
+		})
 	}
 }

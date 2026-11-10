@@ -29,10 +29,7 @@ func UploadFileAs(tb testing.TB, ctx context.Context, sbx *api.Sandbox, envdClie
 
 	buffer, contentType := CreateTextFile(tb, path, content)
 
-	reqEditors := []envd.RequestEditorFn{setup.WithSandbox(tb, sbx.SandboxID)}
-	if sbx.EnvdAccessToken != nil {
-		reqEditors = append(reqEditors, setup.WithEnvdAccessToken(tb, *sbx.EnvdAccessToken))
-	}
+	reqEditors := []envd.RequestEditorFn{setup.WithSandbox(tb, sbx)}
 
 	writeRes, err := envdClient.HTTPClient.PostFilesWithBodyWithResponse(
 		ctx,
@@ -76,7 +73,7 @@ func CreateDir(tb testing.TB, sbx *api.Sandbox, path string) {
 	req := connect.NewRequest(&filesystem.MakeDirRequest{
 		Path: path,
 	})
-	setup.SetSandboxHeader(tb, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(tb, req.Header(), sbx)
 	setup.SetUserHeader(tb, req.Header(), "user")
 
 	_, err := client.FilesystemClient.MakeDir(ctx, req)

@@ -34,7 +34,7 @@ func TestRestoreRunning_UsesTransitionExpiryWithoutIndex(t *testing.T) {
 	assert.True(t, transition.Sandbox.EndTime.Before(expiresAt))
 	require.NoError(t, client.ZRem(ctx, globalExpirationSet, sandboxExpirationMember(sbx)).Err())
 
-	restored, err := storage.RestoreRunning(ctx, transition, 10*time.Second)
+	restored, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 	require.NoError(t, err)
 	assert.True(t, expiresAt.Equal(restored.EndTime))
 	stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
@@ -57,7 +57,7 @@ func TestRestoreRunning_RepeatedRefusalsPreserveOriginalExpiry(t *testing.T) {
 		transition, alreadyDone, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 		require.NoError(t, err)
 		require.False(t, alreadyDone)
-		restored, err := storage.RestoreRunning(ctx, transition, 10*time.Second)
+		restored, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
 		require.NoError(t, err)
 		finish(ctx, sandboxtypes.ErrTransitionRestored)
 
@@ -89,7 +89,7 @@ func TestRestoreRunning_RejectsUnownedTransition(t *testing.T) {
 	require.True(t, alreadyDone)
 	defer finish(ctx, nil)
 	require.Nil(t, transition.OriginalEndTime)
-	_, err = storage.RestoreRunning(ctx, transition, 0)
+	_, err = storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{})
 	require.Error(t, err)
 	stored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)

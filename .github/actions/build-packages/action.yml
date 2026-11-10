@@ -14,7 +14,97 @@ runs:
         # run would restore stale artifacts and recompile everything.
         cache: false
 
+    # One reset of a module proxy stream fails the job otherwise; see
+    # go-setup-cache for the mechanism.
+    - name: Retry module proxy errors
+      shell: bash
+      run: echo 'GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.golang.org/|direct' | tee -a "$GITHUB_ENV"
+
+    # Blacksmith runners serve the Go build cache through GOCACHEPROG, so
+    # ~/.cache/go-build stays empty there and only the module download
+    # cache is worth carrying between jobs. It lives on a sticky disk: one
+    # ext4 volume per repository, cloned into the job in a few seconds
+    # whatever its size and committed back only when a build downloaded
+    # something. Module zips do not depend on build flags, so every job
+    # shares the one disk, race-instrumented or not. On other runners both
+    # directories are live and the actions/cache tarball below stays. The
+    # runner is detected by process env, which the env context cannot see,
+    # hence the probe step (the same one build-sandbox-template uses). The
+    # mount path comes from the toolchain rather than a literal ~/go/pkg/mod
+    # and must be absolute: the sticky-disk action resolves an empty or
+    # relative path against the workspace and would mount over it.
+    - name: Detect the runner's cache backend
+      id: cache-backend
+      shell: bash
+      run: |
+        if [ -n "${BLACKSMITH_ACTIONS_RESULTS_URL:-}" ]; then
+          echo "blacksmith=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "blacksmith=false" >> "$GITHUB_OUTPUT"
+        fi
+        modcache=$(go env GOMODCACHE)
+        case "$modcache" in
+          /*) ;;
+          *)
+            echo "::error::go env GOMODCACHE returned '${modcache}', not an absolute path"
+            exit 1
+            ;;
+        esac
+        echo "modcache=${modcache}" >> "$GITHUB_OUTPUT"
+
+    - name: Mount the Go module cache
+      if: steps.cache-backend.outputs.blacksmith == 'true'
+      uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
+      with:
+        key: ${{ github.repository }}-go-mod-cache
+        path: ${{ steps.cache-backend.outputs.modcache }}
+        commit: on-change
+
+    # A module cache only grows: every dependency bump adds a version and
+    # removes none. Past the threshold the disk is emptied and this job
+    # downloads the current set again (about 20 s), which the commit then
+    # snapshots. The default is three times the measured 6-6.5 GiB working
+    # set; a set that outgrows it prunes on every job, which the log line
+    # below shows. sudo because the cache's directories are read-only and
+    # the template build runs go as root. GO_MOD_CACHE_PRUNE_MB in the job
+    # environment overrides the threshold, a whole number of MiB. `go clean
+    # -modcache` is not usable here: it removes the directory itself, which
+    # a mount point refuses. The guards keep the wipe on a mounted disk:
+    # findmnt with an empty argument matches every mount, and --mountpoint
+    # (unlike --target) never walks up to a parent filesystem.
+    - name: Prune the module cache
+      if: steps.cache-backend.outputs.blacksmith == 'true'
+      shell: bash
+      env:
+        MODCACHE: ${{ steps.cache-backend.outputs.modcache }}
+      run: |
+        case "$MODCACHE" in
+          /*) ;;
+          *)
+            echo "::error::MODCACHE is '${MODCACHE}', not an absolute path"
+            exit 1
+            ;;
+        esac
+        limit="${GO_MOD_CACHE_PRUNE_MB:-20480}"
+        case "$limit" in
+          ''|*[!0-9]*)
+            echo "::error::GO_MOD_CACHE_PRUNE_MB is '${limit}', not a whole number of MiB"
+            exit 1
+            ;;
+        esac
+        if ! findmnt -n --mountpoint "$MODCACHE" >/dev/null; then
+          echo "${MODCACHE} is not a mounted sticky disk; nothing to prune"
+          exit 0
+        fi
+        df -h -- "$MODCACHE"
+        used=$(df -BM --output=used -- "$MODCACHE" | tail -n1 | tr -dc '0-9')
+        if [ "${used:-0}" -gt "$limit" ]; then
+          echo "module cache uses ${used} MiB, over ${limit} MiB; emptying it"
+          sudo find "$MODCACHE" -mindepth 1 -delete
+        fi
+
     - name: Restore Go caches
+      if: steps.cache-backend.outputs.blacksmith != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -25,7 +115,8 @@ runs:
         # carries the job's RACE_FLAG: race and non-race builds produce
         # different artifacts, and cache entries are immutable, so sharing one
         # key would leave whichever variant loses the first save recompiling
-        # on every run.
+        # on every run. Runners without GOCACHEPROG only; Blacksmith jobs take
+        # the sticky disk above.
         key: integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-${{ hashFiles('go.work', 'packages/*/go.mod', 'packages/*/go.sum', 'tests/integration/go.mod', 'tests/integration/go.sum') }}
         restore-keys: |
           integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-
@@ -35,7 +126,7 @@ runs:
     # the box idle. Output is buffered per package so logs stay readable.
     - name: Build Packages
       run: |
-        packages=(tests/integration packages/db packages/orchestrator packages/api packages/envd packages/client-proxy)
+        packages=(tests/integration packages/db packages/clickhouse packages/orchestrator packages/api packages/envd packages/client-proxy)
 
         pids=()
         for package in "${packages[@]}"; do

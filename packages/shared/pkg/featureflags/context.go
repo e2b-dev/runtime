@@ -19,6 +19,19 @@ func AddToContext(ctx context.Context, contexts ...ldcontext.Context) context.Co
 	return ctx
 }
 
+// DetachContext returns a context that carries the flag contexts attached to
+// ctx and nothing else of it: no deadline, cancellation or other value. A
+// holder that evaluates flags with a request's targeting after the request
+// has ended keeps this rather than the request context.
+func DetachContext(ctx context.Context) context.Context {
+	embedded, ok := getContext(ctx)
+	if !ok {
+		return context.Background()
+	}
+
+	return context.WithValue(context.Background(), ctxKey{}, embedded)
+}
+
 func getContext(ctx context.Context) (ldcontext.Context, bool) {
 	if val, ok := ctx.Value(ctxKey{}).(ldcontext.Context); ok {
 		return val, true
@@ -127,8 +140,8 @@ func InstanceGroupContext(instanceGroupName string) ldcontext.Context {
 	return ldcontext.NewWithKind(InstanceGroupKind, instanceGroupName)
 }
 
-func deploymentContext(deploymentName string) ldcontext.Context {
-	return ldcontext.NewWithKind(deploymentKind, deploymentName)
+func DeploymentEnvironmentContext(name string) ldcontext.Context {
+	return ldcontext.NewWithKind(DeploymentEnvironmentKind, name)
 }
 
 func SandboxContext(sandboxID string) ldcontext.Context {
@@ -145,13 +158,6 @@ func TeamContextWithName(teamID, teamName string) ldcontext.Context {
 func TeamContext(teamID string) ldcontext.Context {
 	return ldcontext.NewBuilder(teamID).
 		Kind(TeamKind).
-		Build()
-}
-
-func TierContext(tierID, tierName string) ldcontext.Context {
-	return ldcontext.NewBuilder(tierID).
-		Kind(TierKind).
-		Name(tierName).
 		Build()
 }
 

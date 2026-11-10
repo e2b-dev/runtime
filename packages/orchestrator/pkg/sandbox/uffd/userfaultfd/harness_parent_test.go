@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -84,6 +85,9 @@ func configureCrossProcessTest(ctx context.Context, t *testing.T, tt testConfig)
 
 	size, err := data.Size()
 	require.NoError(t, err)
+
+	contentPath := filepath.Join(t.TempDir(), "content")
+	require.NoError(t, os.WriteFile(contentPath, data.Content(), 0o600))
 
 	memoryArea, memoryStart, err := testutils.NewPageMmap(t, uint64(size), tt.pagesize)
 	require.NoError(t, err)
@@ -159,12 +163,15 @@ func configureCrossProcessTest(ctx context.Context, t *testing.T, tt testConfig)
 	}
 
 	if err := client.Bootstrap(testharness.BootstrapArgs{
-		MmapStart: uint64(memoryStart),
-		Pagesize:  int64(tt.pagesize),
-		TotalSize: size,
-		AlwaysWP:  tt.alwaysWP,
-		Barriers:  tt.barriers,
-		Content:   data.Content(),
+		MmapStart:   uint64(memoryStart),
+		Pagesize:    int64(tt.pagesize),
+		TotalSize:   size,
+		AlwaysWP:    tt.alwaysWP,
+		Barriers:    tt.barriers,
+		ContentPath: contentPath,
+
+		SourceDelayMs:   tt.sourceDelay.Milliseconds(),
+		InstallDedupOff: tt.installDedupOff,
 	}); err != nil {
 		return nil, fmt.Errorf("Lifecycle.Bootstrap: %w", err)
 	}
