@@ -12,10 +12,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dbmodule "github.com/e2b-dev/infra/packages/db"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
-func TestAPIListRateResolvesTierAndActiveAddons(t *testing.T) {
+const (
+	apiListRateMigration              = 20260910094221
+	projectLimitsAPIListRateMigration = 20260923090000
+)
+
+func TestAPIListRateResolvesDefaultsUntilPushed(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
@@ -28,49 +34,29 @@ func TestAPIListRateResolvesTierAndActiveAddons(t *testing.T) {
 	resolved := func(id uuid.UUID) int64 {
 		t.Helper()
 
-		row, err := db.AuthDB.GetTeamWithTierByTeamID(t.Context(), id)
+		row, err := db.AuthDB.GetTeamByTeamID(t.Context(), id)
 		require.NoError(t, err)
 
-		return row.TeamLimit.ApiTeamRpsList
+		return row.ApiTeamRpsList
 	}
 	assert.Zero(t, resolved(teamID))
-	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.tiers SET api_team_rps_list = 5 WHERE id = 'base_v1'`)
+	const largeRPS int64 = 1 << 32
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.default_limits SET api_team_rps_list = $1`, largeRPS)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), resolved(teamID))
-
-	_, err = sqlDB.ExecContext(t.Context(), `
-		INSERT INTO public.addons (team_id, name, extra_api_team_rps_list, valid_from, valid_to, added_by)
-		VALUES
-		($1, 'active', 2, now() - interval '1 hour', NULL, $3),
-		($1, 'active with end', 3, now() - interval '1 hour', now() + interval '1 hour', $3),
-		($1, 'expired', 100, now() - interval '2 hours', now() - interval '1 hour', $3),
-		($1, 'future', 100, now() + interval '1 hour', NULL, $3),
-		($2, 'other team', 7, now() - interval '1 hour', NULL, $3)
-	`, teamID, otherTeamID, uuid.Nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(10), resolved(teamID))
-	assert.Equal(t, int64(12), resolved(otherTeamID))
+	assert.Equal(t, largeRPS, resolved(teamID))
 
 	_, err = sqlDB.ExecContext(t.Context(), `
 		INSERT INTO public.project_limits (
 			team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
-			max_vcpu, max_ram_mb, disk_mb, events_ttl_days, default_free_disk_size_mb, max_disk_size_mb
-		) VALUES ($1, 1, 200, 20, 8, 8192, 10240, 7, 10240, 25600)
+			max_vcpu, max_ram_mb, disk_mb, events_ttl_days, default_free_disk_size_mb, max_disk_size_mb,
+			api_team_rps_list, api_team_rps_delete, max_secrets
+		) VALUES ($1, 1, 200, 20, 8, 8192, 10240, 7, 10240, 25600, 40, 0, 10)
 	`, teamID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(10), resolved(teamID))
+	assert.Equal(t, int64(40), resolved(teamID), "a pushed rate replaces the default")
+	assert.Equal(t, largeRPS, resolved(otherTeamID), "another team's push does not reach this one")
 
-	const largeRPS int64 = 1 << 32
-	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.tiers SET api_team_rps_list = $1 WHERE id = 'base_v1'`, largeRPS)
-	require.NoError(t, err)
-	assert.Equal(t, largeRPS+5, resolved(teamID))
-	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.addons SET extra_api_team_rps_list = $1 WHERE team_id = $2 AND name = 'active'`, largeRPS+1, teamID)
-	require.NoError(t, err)
-	assert.Equal(t, 2*largeRPS+4, resolved(teamID))
-
-	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.tiers SET api_team_rps_list = -1 WHERE id = 'base_v1'`)
-	require.Error(t, err)
-	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.addons SET extra_api_team_rps_list = -1 WHERE team_id = $1`, teamID)
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.default_limits SET api_team_rps_list = -1`)
 	require.Error(t, err)
 }
 
@@ -93,19 +79,67 @@ func TestAPIListRateMigrationRoundTrip(t *testing.T) {
 		t.Helper()
 
 		var limits string
-		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'api_team_rps_list')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
+		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'api_team_rps_list' - 'api_team_rps_delete' - 'max_secrets')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
 		require.NoError(t, err)
 
 		return limits
 	}
+	// Pinned to the migration under test, so later schema changes stay out of
+	// the round trip.
+	_, err = provider.DownTo(t.Context(), apiListRateMigration)
+	require.NoError(t, err)
 	before := resourceLimits()
-	_, err = provider.DownTo(t.Context(), 20260826075153)
+	_, err = provider.DownTo(t.Context(), apiListRateMigration-1)
 	require.NoError(t, err)
 	assert.JSONEq(t, before, resourceLimits())
-	_, err = provider.Up(t.Context())
+	_, err = provider.UpTo(t.Context(), apiListRateMigration)
 	require.NoError(t, err)
 	assert.JSONEq(t, before, resourceLimits())
 	var rate int64
 	require.NoError(t, sqlDB.QueryRowContext(t.Context(), `SELECT api_team_rps_list FROM public.team_limits WHERE id = $1`, teamID).Scan(&rate))
 	assert.Zero(t, rate)
+}
+
+func TestProjectLimitsAPIListRateMigrationKeepsWhatAnEarlierRowResolvedTo(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "rate-before-column")
+
+	store, err := database.NewStore(goose.DialectPostgres, testutils.TrackingTable)
+	require.NoError(t, err)
+	provider, err := goose.NewProvider("", sqlDB, dbmodule.Migrations(), goose.WithStore(store))
+	require.NoError(t, err)
+	_, err = provider.DownTo(t.Context(), projectLimitsAPIListRateMigration-1)
+	require.NoError(t, err)
+
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.tiers SET api_team_rps_list = 7 WHERE id = 'base_v1'`)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(t.Context(), `
+		INSERT INTO public.addons (team_id, name, extra_api_team_rps_list, valid_from, added_by)
+		VALUES ($1, 'active', 3, now() - interval '1 hour', $2)
+	`, teamID, uuid.Nil)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(t.Context(), `
+		INSERT INTO public.project_limits (
+			team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
+			max_vcpu, max_ram_mb, disk_mb, events_ttl_days, default_free_disk_size_mb, max_disk_size_mb
+		) VALUES ($1, 1, 200, 20, 8, 8192, 10240, 7, 10240, 25600)
+	`, teamID)
+	require.NoError(t, err)
+
+	_, err = provider.UpTo(t.Context(), projectLimitsAPIListRateMigration)
+	require.NoError(t, err)
+
+	var stored int64
+	require.NoError(t, sqlDB.QueryRowContext(t.Context(),
+		`SELECT api_team_rps_list FROM public.project_limits WHERE team_id = $1`, teamID,
+	).Scan(&stored))
+	assert.Equal(t, int64(10), stored, "the tier and active add-ons are stored")
+
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.project_limits SET api_team_rps_list = NULL WHERE team_id = $1`, teamID)
+	require.Error(t, err, "the column is NOT NULL")
 }

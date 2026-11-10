@@ -28,6 +28,7 @@ const (
 
 func recordSnapshotDiff(
 	ctx context.Context,
+	teamID string,
 	fileType string,
 	dm *header.DiffMetadata,
 	original *header.Header,
@@ -39,8 +40,9 @@ func recordSnapshotDiff(
 	total := int64(original.Metadata.Size)
 
 	ft := attribute.String("file_type", fileType)
+	team := telemetry.WithTeamID(teamID)
 
-	snapshotTotalBytes.Record(ctx, total, metric.WithAttributes(ft))
+	snapshotTotalBytes.Record(ctx, total, metric.WithAttributes(ft, team))
 
 	var dirtyBytes, emptyBytes int64
 	if dm.Dirty != nil {
@@ -53,7 +55,7 @@ func recordSnapshotDiff(
 		"dirty": dirtyBytes,
 		"empty": emptyBytes,
 	} {
-		attrs := metric.WithAttributes(ft, attribute.String("kind", kind))
+		attrs := metric.WithAttributes(ft, attribute.String("kind", kind), team)
 		snapshotDiffBytes.Record(ctx, b, attrs)
 		snapshotDiffRatio.Record(ctx, ratioFraction(b, total), attrs)
 	}
@@ -64,6 +66,7 @@ func recordSnapshotDiff(
 // mutually exclusive per pause so dashboards split cleanly by kind.
 func recordSnapshotDedup(
 	ctx context.Context,
+	teamID string,
 	fileType string,
 	pre, post *header.DiffMetadata,
 	bestEffort bool,
@@ -89,6 +92,7 @@ func recordSnapshotDedup(
 	attrs := metric.WithAttributes(
 		attribute.String("file_type", fileType),
 		attribute.String("kind", kind),
+		telemetry.WithTeamID(teamID),
 	)
 	snapshotDiffBytes.Record(ctx, savings, attrs)
 	snapshotDiffRatio.Record(ctx, ratioFraction(savings, preBytes), attrs)

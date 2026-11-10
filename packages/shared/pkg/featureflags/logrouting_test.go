@@ -13,6 +13,18 @@ import (
 
 const fallbackCollector = "http://localhost:30006"
 
+var collectorDefaults = LogWriteDefaults{PrimaryURL: fallbackCollector}
+
+// envDefaults is a deployment that sets every LOGS_WRITE_* default. Its URLs are
+// not ones isSafeLogURL accepts, to show env URLs are trusted.
+var envDefaults = LogWriteDefaults{
+	Mode:                    LogsWriteModePrimaryAndShadow,
+	PrimaryURL:              "http://collector.example:30006",
+	ShadowURLs:              []string{"http://shadow.example/logs", "http://collector.example:30006"},
+	Timeout:                 3 * time.Second,
+	MaxInflightShadowWrites: 32,
+}
+
 func legacyLogWriteConfig() LogWriteConfig {
 	// The legacy fallback leaves Timeout at 0 (rely on the HTTP client timeout),
 	// preserving pre-flag behavior. defaultLogWriteTimeout applies only to
@@ -28,9 +40,10 @@ func TestResolveLogWriteConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		value ldvalue.Value
-		want  LogWriteConfig
+		name     string
+		defaults *LogWriteDefaults
+		value    ldvalue.Value
+		want     LogWriteConfig
 	}{
 		{
 			name:  "null falls back to legacy collector",
@@ -59,11 +72,11 @@ func TestResolveLogWriteConfig(t *testing.T) {
 			want: legacyLogWriteConfig(),
 		},
 		{
-			name: "missing mode falls back to legacy collector",
+			name: "missing mode defaults to primary_only",
 			value: ldvalue.FromJSONMarshal(map[string]any{
 				"primary_url": "http://localhost:9999",
 			}),
-			want: legacyLogWriteConfig(),
+			want: LogWriteConfig{PrimaryURL: "http://localhost:9999", Timeout: defaultLogWriteTimeout, MaxInflightShadowWrites: defaultMaxInflightShadowWrites},
 		},
 		{
 			name: "primary_only with valid local url",
@@ -91,12 +104,135 @@ func TestResolveLogWriteConfig(t *testing.T) {
 			want: legacyLogWriteConfig(),
 		},
 		{
-			name: "primary_only empty primary url falls back",
+			name: "primary_only empty primary url uses the collector address",
 			value: ldvalue.FromJSONMarshal(map[string]any{
 				"mode":        LogsWriteModePrimaryOnly,
 				"primary_url": "",
+				"timeout_ms":  1500,
 			}),
-			want: legacyLogWriteConfig(),
+			want: LogWriteConfig{PrimaryURL: fallbackCollector, Timeout: 1500 * time.Millisecond, MaxInflightShadowWrites: defaultMaxInflightShadowWrites},
+		},
+		{
+			name: "primary_only missing primary url uses the collector address",
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode":                       LogsWriteModePrimaryOnly,
+				"shadow_urls":                []any{},
+				"timeout_ms":                 2000,
+				"max_inflight_shadow_writes": 1024,
+			}),
+			want: LogWriteConfig{PrimaryURL: fallbackCollector, Timeout: 2000 * time.Millisecond, MaxInflightShadowWrites: 1024},
+		},
+		{
+			name:     "missing primary url with no collector address falls back",
+			defaults: &LogWriteDefaults{},
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode": LogsWriteModePrimaryOnly,
+			}),
+			want: LogWriteConfig{MaxInflightShadowWrites: defaultMaxInflightShadowWrites},
+		},
+		{
+			name:     "null flag uses every env default",
+			defaults: &envDefaults,
+			value:    ldvalue.Null(),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				ShadowURLs:              []string{"http://shadow.example/logs"},
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
+		},
+		{
+			name:     "invalid flag uses every env default",
+			defaults: &envDefaults,
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"primary_url": "http://evil.example.com/logs",
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				ShadowURLs:              []string{"http://shadow.example/logs"},
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
+		},
+		{
+			name:     "empty object takes every env default",
+			defaults: &envDefaults,
+			value:    ldvalue.FromJSONMarshal(map[string]any{}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				ShadowURLs:              []string{"http://shadow.example/logs"},
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
+		},
+		{
+			name:     "every flag key overrides its env default",
+			defaults: &envDefaults,
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode":                       LogsWriteModePrimaryAndShadow,
+				"primary_url":                "http://127.0.0.1:30006",
+				"shadow_urls":                []any{"http://127.0.0.1:4321/logs"},
+				"timeout_ms":                 1500,
+				"max_inflight_shadow_writes": 64,
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://127.0.0.1:30006",
+				ShadowURLs:              []string{"http://127.0.0.1:4321/logs"},
+				Timeout:                 1500 * time.Millisecond,
+				MaxInflightShadowWrites: 64,
+			},
+		},
+		{
+			name:     "flag primary_only drops env shadows",
+			defaults: &envDefaults,
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode": LogsWriteModePrimaryOnly,
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
+		},
+		{
+			name:     "flag empty shadow_urls overrides env shadows",
+			defaults: &envDefaults,
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"shadow_urls": []any{},
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
+		},
+		{
+			name:     "flag shadow_urls are deduplicated against the env primary",
+			defaults: &LogWriteDefaults{PrimaryURL: "http://127.0.0.1:30006"},
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode":        LogsWriteModePrimaryAndShadow,
+				"shadow_urls": []any{"http://127.0.0.1:30006", "http://127.0.0.1:4321/logs"},
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://127.0.0.1:30006",
+				ShadowURLs:              []string{"http://127.0.0.1:4321/logs"},
+				Timeout:                 defaultLogWriteTimeout,
+				MaxInflightShadowWrites: defaultMaxInflightShadowWrites,
+			},
+		},
+		{
+			name:     "non-positive flag numbers fall through to env defaults",
+			defaults: &envDefaults,
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode":                       LogsWriteModePrimaryOnly,
+				"timeout_ms":                 0,
+				"max_inflight_shadow_writes": -1,
+			}),
+			want: LogWriteConfig{
+				PrimaryURL:              "http://collector.example:30006",
+				Timeout:                 3 * time.Second,
+				MaxInflightShadowWrites: 32,
+			},
 		},
 		{
 			name: "primary_only external https url falls back (unsafe)",
@@ -204,6 +340,15 @@ func TestResolveLogWriteConfig(t *testing.T) {
 			want: LogWriteConfig{PrimaryURL: "http://localhost:30006", Timeout: maxLogWriteTimeout, MaxInflightShadowWrites: defaultMaxInflightShadowWrites},
 		},
 		{
+			name: "timeout capped when large enough to overflow a duration",
+			value: ldvalue.FromJSONMarshal(map[string]any{
+				"mode":        LogsWriteModePrimaryOnly,
+				"primary_url": "http://localhost:30006",
+				"timeout_ms":  10000000000000,
+			}),
+			want: LogWriteConfig{PrimaryURL: "http://localhost:30006", Timeout: maxLogWriteTimeout, MaxInflightShadowWrites: defaultMaxInflightShadowWrites},
+		},
+		{
 			name: "max inflight shadow writes configured",
 			value: ldvalue.FromJSONMarshal(map[string]any{
 				"mode":                       LogsWriteModePrimaryOnly,
@@ -247,7 +392,12 @@ func TestResolveLogWriteConfig(t *testing.T) {
 
 			source.Update(source.Flag(LogsWriteConfigFlag.Key()).ValueForAll(tt.value))
 
-			got := ResolveLogWriteConfig(t.Context(), client, fallbackCollector)
+			defaults := collectorDefaults
+			if tt.defaults != nil {
+				defaults = *tt.defaults
+			}
+
+			got := ResolveLogWriteConfig(t.Context(), client, defaults)
 
 			assert.Equal(t, tt.want.PrimaryURL, got.PrimaryURL)
 			assert.Equal(t, tt.want.ShadowURLs, got.ShadowURLs)
@@ -260,13 +410,73 @@ func TestResolveLogWriteConfig(t *testing.T) {
 func TestResolveLogWriteConfigNilClientFallsBack(t *testing.T) {
 	t.Parallel()
 
-	got := ResolveLogWriteConfig(t.Context(), nil, fallbackCollector)
+	got := ResolveLogWriteConfig(t.Context(), nil, collectorDefaults)
 
 	assert.Equal(t, fallbackCollector, got.PrimaryURL)
 	assert.Nil(t, got.ShadowURLs)
 	// Legacy fallback leaves Timeout at 0 to rely on the HTTP client timeout.
 	assert.Equal(t, time.Duration(0), got.Timeout)
 	assert.Equal(t, int64(defaultMaxInflightShadowWrites), got.MaxInflightShadowWrites)
+}
+
+func TestParseLogWriteDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want LogWriteDefaults
+	}{
+		{
+			name: "unset keeps only the collector address",
+			want: LogWriteDefaults{PrimaryURL: fallbackCollector},
+		},
+		{
+			name: "every variable set",
+			env: map[string]string{
+				"LOGS_WRITE_MODE":                       " primary_and_shadow ",
+				"LOGS_WRITE_SHADOW_URLS":                "http://a:1/logs, ,http://b:2/logs",
+				"LOGS_WRITE_TIMEOUT_MS":                 "1500",
+				"LOGS_WRITE_MAX_INFLIGHT_SHADOW_WRITES": "64",
+			},
+			want: LogWriteDefaults{
+				Mode:                    LogsWriteModePrimaryAndShadow,
+				PrimaryURL:              fallbackCollector,
+				ShadowURLs:              []string{"http://a:1/logs", "http://b:2/logs"},
+				Timeout:                 1500 * time.Millisecond,
+				MaxInflightShadowWrites: 64,
+			},
+		},
+		{
+			name: "timeout is capped",
+			env:  map[string]string{"LOGS_WRITE_TIMEOUT_MS": "60000"},
+			want: LogWriteDefaults{PrimaryURL: fallbackCollector, Timeout: maxLogWriteTimeout},
+		},
+		{
+			name: "timeout is capped when large enough to overflow a duration",
+			env:  map[string]string{"LOGS_WRITE_TIMEOUT_MS": "10000000000000"},
+			want: LogWriteDefaults{PrimaryURL: fallbackCollector, Timeout: maxLogWriteTimeout},
+		},
+		{
+			name: "invalid values are ignored",
+			env: map[string]string{
+				"LOGS_WRITE_MODE":                       "bogus",
+				"LOGS_WRITE_TIMEOUT_MS":                 "soon",
+				"LOGS_WRITE_MAX_INFLIGHT_SHADOW_WRITES": "0",
+			},
+			want: LogWriteDefaults{PrimaryURL: fallbackCollector},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := parseLogWriteDefaults(" "+fallbackCollector+" ", func(key string) string { return tt.env[key] })
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestIsSafeLogURL(t *testing.T) {

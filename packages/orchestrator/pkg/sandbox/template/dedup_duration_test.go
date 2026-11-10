@@ -121,7 +121,7 @@ func TestAddSnapshot_RecordsDedupDurationAtSwap(t *testing.T) {
 	swapDone := make(chan struct{})
 
 	createdAt := time.Now().Add(-50 * time.Millisecond)
-	err := c.AddSnapshot(t.Context(), buildID,
+	finishUpload, err := c.AddSnapshot(t.Context(), buildID, SnapshotLineage{Origin: storage.ObjectOriginPause},
 		dedupedFuture, resolvedHeader(mustHeader(t, uuid.New())),
 		nil, nil,
 		&build.NoDiff{}, &build.NoDiff{},
@@ -130,6 +130,7 @@ func TestAddSnapshot_RecordsDedupDurationAtSwap(t *testing.T) {
 		func() { close(swapDone) },
 	)
 	require.NoError(t, err)
+	defer finishUpload(UploadLanded)
 
 	// The dedup is still pending: nothing recorded yet.
 	assert.Empty(t, dedupDurationSamples(t, reader))
@@ -163,7 +164,7 @@ func TestAddSnapshot_NoDedupDurationWithoutProvisional(t *testing.T) {
 	memfile := dedupTestDevice{build.NewFile(mustHeader(t, uuid.New()), nil, build.Memfile, nil, blockmetrics.Metrics{})}
 	residentTemplate(t, c, buildID, memfile)
 
-	err := c.AddSnapshot(t.Context(), buildID,
+	finishUpload, err := c.AddSnapshot(t.Context(), buildID, SnapshotLineage{Origin: storage.ObjectOriginPause},
 		resolvedHeader(mustHeader(t, uuid.New())), resolvedHeader(mustHeader(t, uuid.New())),
 		nil, nil,
 		&build.NoDiff{}, &build.NoDiff{},
@@ -172,6 +173,7 @@ func TestAddSnapshot_NoDedupDurationWithoutProvisional(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	defer finishUpload(UploadLanded)
 
 	assert.Empty(t, dedupDurationSamples(t, reader))
 }

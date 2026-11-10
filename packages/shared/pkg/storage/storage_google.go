@@ -18,6 +18,7 @@ import (
 	"github.com/googleapis/gax-go/v2"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+	"google.golang.org/api/iamcredentials/v1"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/api/option/internaloption"
@@ -48,8 +49,10 @@ const (
 )
 
 type gcpStorage struct {
-	client *storage.Client
-	bucket *storage.BucketHandle
+	client                *storage.Client
+	bucket                *storage.BucketHandle
+	signingClient         *iamcredentials.Service
+	signingServiceAccount string
 
 	limiter *limit.Limiter
 }
@@ -88,15 +91,30 @@ func NewGCP(ctx context.Context, bucketName string, limiter *limit.Limiter) (Sto
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}
+	var signingClient *iamcredentials.Service
+	if consts.GoogleSigningServiceAccount != "" {
+		signingClient, err = iamcredentials.NewService(ctx)
+		if err != nil {
+			_ = client.Close()
+
+			return nil, fmt.Errorf("failed to create GCS signing client: %w", err)
+		}
+	}
 
 	return &gcpStorage{
-		client:  client,
-		bucket:  client.Bucket(bucketName),
-		limiter: limiter,
+		client:                client,
+		bucket:                client.Bucket(bucketName),
+		signingClient:         signingClient,
+		signingServiceAccount: consts.GoogleSigningServiceAccount,
+		limiter:               limiter,
 	}, nil
 }
 
 func (s *gcpStorage) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
+	if err := validateObjectPath(prefix); err != nil {
+		return err
+	}
+
 	objects := s.bucket.Objects(ctx, &storage.Query{Prefix: prefix + "/"})
 
 	for {
@@ -122,17 +140,37 @@ func (s *gcpStorage) GetDetails() string {
 	return fmt.Sprintf("[GCP Storage, bucket set to %s]", s.bucket.BucketName())
 }
 
-func (s *gcpStorage) UploadSignedURL(_ context.Context, path string, ttl time.Duration) (UploadURL, error) {
-	token, err := parseServiceAccountBase64(consts.GoogleServiceAccountSecret)
-	if err != nil {
-		return UploadURL{}, fmt.Errorf("failed to parse GCP service account: %w", err)
+func (s *gcpStorage) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
 	}
 
 	opts := &storage.SignedURLOptions{
-		GoogleAccessID: token.ClientEmail,
-		PrivateKey:     []byte(token.PrivateKey),
-		Method:         http.MethodPut,
-		Expires:        time.Now().Add(ttl),
+		Method:  http.MethodPut,
+		Expires: time.Now().Add(ttl),
+	}
+	if s.signingServiceAccount != "" {
+		opts.GoogleAccessID = s.signingServiceAccount
+		opts.SignBytes = func(payload []byte) ([]byte, error) {
+			response, err := s.signingClient.Projects.ServiceAccounts.SignBlob(
+				"projects/-/serviceAccounts/"+s.signingServiceAccount,
+				&iamcredentials.SignBlobRequest{Payload: base64.StdEncoding.EncodeToString(payload)},
+			).Context(ctx).Do()
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign GCS upload: %w", err)
+			}
+
+			return base64.StdEncoding.DecodeString(response.SignedBlob)
+		}
+	} else {
+		// Existing installations can retain their explicitly configured key until
+		// their signing identity and IAM permissions have been migrated.
+		token, err := parseServiceAccountBase64(consts.GoogleServiceAccountSecret)
+		if err != nil {
+			return UploadURL{}, fmt.Errorf("failed to parse GCP service account: %w", err)
+		}
+		opts.GoogleAccessID = token.ClientEmail
+		opts.PrivateKey = []byte(token.PrivateKey)
 	}
 
 	url, err := storage.SignedURL(s.bucket.BucketName(), path, opts)
@@ -144,6 +182,10 @@ func (s *gcpStorage) UploadSignedURL(_ context.Context, path string, ttl time.Du
 }
 
 func (s *gcpStorage) OpenSeekable(_ context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	handle := s.bucket.Object(path).Retryer(
 		storage.WithMaxAttempts(googleMaxAttempts),
 		storage.WithPolicy(storage.RetryAlways),
@@ -169,6 +211,10 @@ func (s *gcpStorage) OpenSeekable(_ context.Context, path string) (Seekable, err
 }
 
 func (s *gcpStorage) OpenBlob(_ context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	handle := s.bucket.Object(path).Retryer(
 		storage.WithMaxAttempts(googleMaxAttempts),
 		storage.WithPolicy(storage.RetryAlways),

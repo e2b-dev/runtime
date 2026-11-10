@@ -86,7 +86,8 @@ func (s *Server) GetBuildFileExists(ctx context.Context, req *orchestrator.GetBu
 		return &orchestrator.GetBuildFileExistsResponse{Availability: peerUseStorage}, nil
 	}
 
-	src, err := peerserver.ResolveBlob(s.templateCache, req.GetBuildId(), req.GetName())
+	src, release, err := peerserver.ResolveBlob(ctx, s.templateCache, req.GetBuildId(), req.GetName())
+	defer release()
 	if err != nil {
 		if errors.Is(err, peerserver.ErrNotAvailable) {
 			return &orchestrator.GetBuildFileExistsResponse{Availability: peerNotAvailable}, nil
@@ -165,7 +166,8 @@ func (s *Server) GetBuildBlob(req *orchestrator.GetBuildBlobRequest, stream orch
 		return stream.Send(&orchestrator.GetBuildBlobResponse{Availability: peerUseStorage})
 	}
 
-	src, err := peerserver.ResolveBlob(s.templateCache, req.GetBuildId(), req.GetName())
+	src, release, err := peerserver.ResolveBlob(ctx, s.templateCache, req.GetBuildId(), req.GetName())
+	defer release()
 	if err != nil {
 		if errors.Is(err, peerserver.ErrNotAvailable) {
 			return stream.Send(&orchestrator.GetBuildBlobResponse{Availability: peerNotAvailable})

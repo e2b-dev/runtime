@@ -117,7 +117,7 @@ func newStorageDiff(
 	ff *featureflags.Client,
 ) (*StorageDiff, error) {
 	cachePath := GenerateDiffCachePath(basePath, buildID, diffType)
-	c, err := block.NewChunker(ff, uncompressedSize, blockSize, cachePath, metrics, storageObjectType)
+	c, err := block.NewChunker(ff, uncompressedSize, blockSize, cachePath, metrics, storageObjectType, buildID)
 	if err != nil {
 		return nil, fmt.Errorf("create chunker for build %s: %w", buildID, err)
 	}

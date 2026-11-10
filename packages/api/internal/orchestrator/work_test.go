@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -86,6 +87,8 @@ func TestDrainBudgetsNest(t *testing.T) {
 		"the drain must outlast the work it waits for")
 	assert.Greater(t, sandboxredis.TransitionKeyTTL, trackedWorkBound,
 		"the transition key must outlive the work that owns it")
+	assert.LessOrEqual(t, redisreservations.StaleTTL, trackedWorkBound,
+		"a resume create that runs on past its caller ends before the reservation can be reaped, inside the drain")
 }
 
 // gatedKillClient holds a kill inside its node RPC, the same in-flight window

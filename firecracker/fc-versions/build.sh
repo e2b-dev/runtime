@@ -42,6 +42,17 @@ tools/devtool -y build --release -- --bin firecracker
 # Output goes into {version_name}/{arch}/firecracker
 cp "$release_bin" "$out_dir/firecracker"
 
+# The debug variant is only useful where resume-build can drive it, and that
+# tool attaches gdb solely through the FIRECRACKER_GDB_SOCKET environment
+# variable. A source line without that fallback (v1.10) ships the prod binary
+# alone instead of failing the sanity check below.
+if ! grep -rqF FIRECRACKER_GDB_SOCKET src; then
+  echo "Warning: $version_name has no FIRECRACKER_GDB_SOCKET support; skipping the debug build" >&2
+  cd ..
+  rm -rf firecracker
+  exit 0
+fi
+
 # Also build a debug variant: same release (optimized) build with the gdb
 # feature enabled and debug symbols kept. Used ONLY for debugging guest kernels
 # on dev nodes; it is never deployed to prod client nodes, which resolve the FC

@@ -226,9 +226,9 @@ func TestConcurrentLookupsAndWarmsUnderPromotionChurn(t *testing.T) {
 		})
 	}
 	readerGroup.Wait()
-	bad.assertNone(t)
 	close(stop)
 	mutator.Wait()
+	bad.assertNone(t)
 
 	// Let the last warms retire, then check the invariants with nothing moving.
 	require.Eventually(t, func() bool {
@@ -729,6 +729,69 @@ func TestAWarmSupersededMidFlightPublishesNothingAndReleasesItsClaim(t *testing.
 	entry, ok := c.Lookup(src)
 	require.True(t, ok, "the next warm must publish the new generation")
 	require.Equal(t, "v2", entry.Version)
+}
+
+// A warm can stat the source before a promotion and open it after one. Its copy
+// is named for the generation it stat-ed, and a same-size promotion passes the
+// copy's length check, so the newer bytes would land under the older copy's name
+// while a resume holding the older entry may still be reading that file.
+func TestAStaleWarmNeverWritesAnotherGenerationUnderAnOlderCopysName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "envd")
+	writeGeneration(t, src, 1)
+	gen1 := mustStat(t, src)
+
+	// The resume holding the generation-1 entry reads its copy whenever a copy is
+	// probed: the moment a just-renamed copy sits under its final name.
+	var held atomic.Pointer[Entry]
+	var bad violations
+	var probes atomic.Int64
+	c := newCacheForTest(t, filepath.Join(dir, "cache"), func(ctx context.Context, path string) (string, error) {
+		probes.Add(1)
+		if e := held.Load(); e != nil {
+			if got, err := os.ReadFile(e.LocalPath); err == nil {
+				if v := strings.TrimSpace(payloadBytes(got)); v != e.Version {
+					bad.addf("copy %s holds %q but its entry records %q", e.LocalPath, v, e.Version)
+				}
+			}
+		}
+
+		return contentProbe(ctx, path)
+	})
+
+	require.NoError(t, c.Warm(t.Context(), src))
+	first, ok := c.Lookup(src)
+	require.True(t, ok)
+	require.Equal(t, "v1", first.Version)
+	held.Store(first)
+
+	// A same-size promotion, warmed, retires the generation-1 copy.
+	writeGeneration(t, src, 2)
+	require.NoError(t, c.Warm(t.Context(), src))
+	probed := probes.Load()
+
+	// A warm whose source stat predates that promotion.
+	var stale atomic.Bool
+	stale.Store(true)
+	c.statSrc = func(path string) (os.FileInfo, error) {
+		if stale.CompareAndSwap(true, false) {
+			return gen1, nil
+		}
+
+		return os.Stat(path)
+	}
+	require.NoError(t, c.Warm(t.Context(), src))
+	require.False(t, stale.Load(), "the warm must have taken the stale stat")
+	bad.assertNone(t)
+	require.Equal(t, probed, probes.Load(), "a copy of another generation must be abandoned before it is probed")
+
+	_, err := os.Stat(first.LocalPath)
+	require.ErrorIs(t, err, os.ErrNotExist, "nothing may be left under the retired generation-1 copy's name")
+	current, ok := c.Lookup(src)
+	require.True(t, ok)
+	require.Equal(t, "v2", current.Version)
 }
 
 // TestAStalledSourceStatInTheWarmerDoesNotBlockLookup pins the property the whole

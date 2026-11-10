@@ -2,14 +2,29 @@ package clusters
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/e2b-dev/infra/packages/db/queries"
+	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
+	"github.com/e2b-dev/infra/packages/shared/pkg/synchronization"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 // storeWithInstances builds a sync store whose creation step is a stub, so the
@@ -101,6 +116,246 @@ func TestRemoteInstanceAuthorization_RoutesOnTheProcess(t *testing.T) {
 	assert.True(t, auth.tls)
 }
 
+// Cluster.Start's mode decides whether discovery runs immediately or waits for
+// the first scheduled tick. A startup remote already applied its snapshot, so
+// running one immediately would be a second, overlapping discovery round.
+func TestClusterStartRunsInitialDiscoveryOnlyForSyncImmediately(t *testing.T) {
+	t.Parallel()
+
+	// The scheduled interval is far longer than this window, so any discovery
+	// observed here is the initial round rather than a periodic one.
+	const initialRoundWindow = 250 * time.Millisecond
+
+	for _, tc := range []struct {
+		name            string
+		mode            initialSyncMode
+		expectDiscovery bool
+	}{
+		{name: "syncImmediately runs the initial round", mode: syncImmediately, expectDiscovery: true},
+		{name: "syncOnNextTick skips the initial round", mode: syncOnNextTick, expectDiscovery: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			discovered := make(chan struct{}, 1)
+			instances := smap.New[*Instance]()
+			cluster := NewCluster(
+				uuid.New(),
+				nil,
+				"",
+				instances,
+				synchronization.NewSynchronize("test-cluster-instances", "Test cluster instances", instancesSyncStore{
+					clusterID: uuid.New(),
+					instances: instances,
+					discovery: listInstancesFunc{list: func(context.Context) ([]servicediscovery.Instance, error) {
+						select {
+						case discovered <- struct{}{}:
+						default:
+						}
+
+						return nil, nil
+					}},
+					instanceCreation: func(context.Context, servicediscovery.Instance) (*Instance, error) {
+						return &Instance{}, nil
+					},
+				}),
+				nil,
+			)
+			t.Cleanup(func() { _ = cluster.Close(t.Context()) })
+
+			cluster.Start(t.Context(), tc.mode)
+
+			select {
+			case <-discovered:
+				require.True(t, tc.expectDiscovery, "discovery must not run before the first scheduled tick")
+			case <-time.After(initialRoundWindow):
+				require.False(t, tc.expectDiscovery, "the initial discovery round did not run")
+			}
+		})
+	}
+}
+
+// listInstancesFunc is a query-style discoverer: it answers every call
+// directly, so it takes the shared no-op lifecycle half of the interface.
+type listInstancesFunc struct {
+	servicediscovery.NoSync
+
+	list func(ctx context.Context) ([]servicediscovery.Instance, error)
+}
+
+func (f listInstancesFunc) ListInstances(ctx context.Context) ([]servicediscovery.Instance, error) {
+	return f.list(ctx)
+}
+
+func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Pool Close cancels an in-flight startup probe", func(t *testing.T) {
+		t.Parallel()
+
+		lifecycleCtx, cancel := context.WithCancel(t.Context())
+		pool := newLifecycleTestPool(lifecycleCtx, cancel)
+		t.Cleanup(func() { pool.Close(t.Context()) })
+		probeStarted := make(chan struct{})
+		probeCanceled := make(chan error, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			close(probeStarted)
+			<-request.Context().Done()
+			probeCanceled <- request.Context().Err()
+		}))
+		t.Cleanup(server.Close)
+		target := queries.Cluster{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
+		startResult := make(chan error, 1)
+		go func() { startResult <- pool.startInitialRemoteCluster(lifecycleCtx, lifecycleCtx, target) }()
+
+		completionCtx, completionCancel := context.WithTimeout(t.Context(), time.Second)
+		defer completionCancel()
+		select {
+		case <-probeStarted:
+		case <-completionCtx.Done():
+			t.Fatal("startup probe did not reach its cancellation barrier")
+		}
+
+		closeFinished := make(chan struct{})
+		go func() {
+			pool.Close(completionCtx)
+			close(closeFinished)
+		}()
+		select {
+		case <-pool.lifecycleDone:
+		case <-completionCtx.Done():
+			t.Fatal("Pool.Close did not cancel the lifecycle context")
+		}
+		select {
+		case err := <-probeCanceled:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-completionCtx.Done():
+			t.Fatal("in-flight startup probe did not observe Pool.Close cancellation")
+		}
+		select {
+		case err := <-startResult:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-completionCtx.Done():
+			t.Fatal("in-flight startup probe did not return after Pool.Close")
+		}
+		select {
+		case <-closeFinished:
+		case <-completionCtx.Done():
+			t.Fatal("Pool.Close did not finish after canceling the startup probe")
+		}
+
+		pool.finishStartup(lifecycleCtx)
+
+		assert.Equal(t, 0, pool.clusters.Count(), "Pool.Close must prevent late insertion and background startup")
+		select {
+		case <-pool.StartupReady():
+			t.Fatal("Pool.Close must prevent late readiness")
+		default:
+		}
+	})
+
+	t.Run("parent cancellation rejects a staged synchronization insertion", func(t *testing.T) {
+		t.Parallel()
+
+		lifecycleCtx, cancel := context.WithCancel(t.Context())
+		pool := newLifecycleTestPool(lifecycleCtx, cancel)
+		t.Cleanup(func() { pool.Close(t.Context()) })
+		startEntered := make(chan struct{})
+		releaseStart := make(chan struct{})
+		startResult := make(chan error, 1)
+		pool.store.activateCluster = func(cluster *Cluster, mode initialSyncMode) error {
+			close(startEntered)
+			<-releaseStart
+			err := pool.activateCluster(lifecycleCtx, cluster, mode)
+			startResult <- err
+
+			return err
+		}
+		insertionDone := make(chan struct{})
+		go func() {
+			pool.store.PoolInsert(lifecycleCtx, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+			close(insertionDone)
+		}()
+
+		completionCtx, completionCancel := context.WithTimeout(t.Context(), time.Second)
+		defer completionCancel()
+		select {
+		case <-startEntered:
+		case <-completionCtx.Done():
+			t.Fatal("synchronization insertion did not reach its start barrier")
+		}
+		cancel()
+		select {
+		case <-pool.lifecycleDone:
+		case <-completionCtx.Done():
+			t.Fatal("parent cancellation did not reach the staged insertion")
+		}
+		close(releaseStart)
+		select {
+		case err := <-startResult:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-completionCtx.Done():
+			t.Fatal("staged insertion did not observe parent cancellation")
+		}
+		select {
+		case <-insertionDone:
+		case <-completionCtx.Done():
+			t.Fatal("staged insertion did not complete after cancellation")
+		}
+		pool.finishStartup(lifecycleCtx)
+
+		assert.Equal(t, 0, pool.clusters.Count(), "parent cancellation must prevent late insertion and background startup")
+		select {
+		case <-pool.StartupReady():
+			t.Fatal("parent cancellation must prevent readiness")
+		default:
+		}
+	})
+
+	t.Run("open pool positive control", func(t *testing.T) {
+		t.Parallel()
+
+		lifecycleCtx, cancel := context.WithCancel(t.Context())
+		pool := newLifecycleTestPool(lifecycleCtx, cancel)
+		remote, err := newRemoteCluster(nil, nil, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+		require.NoError(t, err)
+		require.NoError(t, pool.activateCluster(lifecycleCtx, remote, syncOnNextTick))
+		require.Equal(t, 1, pool.clusters.Count(), "an open pool must accept startup insertion")
+		pool.finishStartup(lifecycleCtx)
+
+		select {
+		case <-pool.StartupReady():
+		case <-t.Context().Done():
+			t.Fatal("open pool did not become ready")
+		}
+		pool.Close(t.Context())
+	})
+}
+
+func newLifecycleTestPool(lifecycleCtx context.Context, cancel context.CancelFunc) *Pool {
+	clusters := smap.New[*Cluster]()
+	p := &Pool{
+		clusters:       clusters,
+		cancel:         cancel,
+		lifecycleDone:  lifecycleCtx.Done(),
+		startupReady:   make(chan struct{}),
+		lifecycleMu:    &sync.Mutex{},
+		localInstances: make(chan struct{}, 1),
+	}
+	p.store = clustersSyncStore{
+		tel:             telemetry.NewNoopClient(),
+		clusters:        clusters,
+		onLocalInstance: p.notifyLocalInstance,
+		localCreds:      insecure.NewCredentials(),
+		activateCluster: func(cluster *Cluster, mode initialSyncMode) error {
+			return p.activateCluster(lifecycleCtx, cluster, mode)
+		},
+	}
+	p.synchronization = synchronization.NewSynchronize("test-clusters-pool", "Test clusters pool", p.store)
+
+	return p
+}
+
 func mustGet(t *testing.T, instances *smap.Map[*Instance], key string) *Instance {
 	t.Helper()
 
@@ -108,4 +363,106 @@ func mustGet(t *testing.T, instances *smap.Map[*Instance], key string) *Instance
 	require.True(t, found, "expected an instance keyed %q", key)
 
 	return instance
+}
+
+func TestInstancesSyncStore_ReportsAJoinAfterTheInsert(t *testing.T) {
+	t.Parallel()
+
+	store, instances := storeWithInstances(t)
+
+	var joins atomic.Int32
+	store.onInsert = func() {
+		assert.Positive(t, instances.Count(), "the hook must run after the insert")
+		joins.Add(1)
+	}
+
+	store.PoolInsert(t.Context(), servicediscovery.Instance{WorkloadID: "alloc-1", NodeID: "node-a"})
+	require.Equal(t, int32(1), joins.Load())
+
+	store.instanceCreation = func(context.Context, servicediscovery.Instance) (*Instance, error) {
+		return nil, errors.New("unreachable")
+	}
+	store.PoolInsert(t.Context(), servicediscovery.Instance{WorkloadID: "alloc-2", NodeID: "node-b"})
+	assert.Equal(t, int32(1), joins.Load(), "a failed creation inserts nothing and reports nothing")
+	assert.Equal(t, 1, instances.Count())
+}
+
+func TestPoolLocalInstanceJoinedCoalescesAndKeepsTheToken(t *testing.T) {
+	t.Parallel()
+
+	lifecycleCtx, cancel := context.WithCancel(t.Context())
+	pool := newLifecycleTestPool(lifecycleCtx, cancel)
+
+	for range 3 {
+		pool.notifyLocalInstance()
+	}
+
+	select {
+	case <-pool.LocalInstanceJoined():
+	default:
+		t.Fatal("a join sent before anyone received must be kept")
+	}
+	select {
+	case <-pool.LocalInstanceJoined():
+		t.Fatal("joins must coalesce into one token")
+	default:
+	}
+}
+
+// fakeInfoServer answers ServiceInfo as a healthy process serving both roles,
+// which is what the local backend's one instance reports.
+type fakeInfoServer struct {
+	infogrpc.UnimplementedInfoServiceServer
+}
+
+func (s *fakeInfoServer) ServiceInfo(context.Context, *emptypb.Empty) (*infogrpc.ServiceInfoResponse, error) {
+	return &infogrpc.ServiceInfoResponse{
+		NodeId:        "local",
+		ServiceId:     "svc-1",
+		ServiceStatus: infogrpc.ServiceInfoStatus_Healthy,
+		ServiceRoles:  []infogrpc.ServiceInfoRole{infogrpc.ServiceInfoRole_Orchestrator, infogrpc.ServiceInfoRole_TemplateBuilder},
+	}, nil
+}
+
+// The real wiring, Pool.newCluster -> newLocalCluster -> newInstance ->
+// PoolInsert, reports the local cluster's first instance. The server's cleanup
+// is registered first so the pool, and with it the instance's connection,
+// closes before the server stops.
+func TestPoolReportsTheLocalClusterFirstInstance(t *testing.T) {
+	t.Parallel()
+
+	lis, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	srv := grpc.NewServer()
+	infogrpc.RegisterInfoServiceServer(srv, &fakeInfoServer{})
+
+	go func() { _ = srv.Serve(lis) }()
+
+	t.Cleanup(srv.Stop)
+
+	discovery, err := servicediscovery.NewLocal(lis.Addr().String())
+	require.NoError(t, err)
+
+	lifecycleCtx, cancel := context.WithCancel(t.Context())
+	pool := newLifecycleTestPool(lifecycleCtx, cancel)
+	t.Cleanup(func() { pool.Close(t.Context()) })
+	pool.store.tel = telemetry.NewNoopClient()
+	pool.store.local = localClusterConfig()
+	pool.store.localDiscovery = discovery
+
+	local, err := pool.store.newCluster(*localClusterConfig())
+	require.NoError(t, err)
+	require.NoError(t, pool.activateCluster(lifecycleCtx, local, syncImmediately))
+
+	// The wait spans one failed round and the next one.
+	select {
+	case <-pool.LocalInstanceJoined():
+	case <-time.After(instancesSyncTimeout + instancesSyncInterval):
+		t.Fatal("the local cluster's first instance did not report a join")
+	}
+
+	_, found := pool.GetClusterById(local.ID)
+	require.True(t, found, "a reported join must find its cluster in the pool")
+	assert.Len(t, local.GetOrchestrators(), 1)
 }

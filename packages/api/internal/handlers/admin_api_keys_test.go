@@ -14,10 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/team"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	sharedkeys "github.com/e2b-dev/infra/packages/shared/pkg/keys"
 )
 
@@ -36,7 +37,7 @@ func TestPostAdminTeamsTeamIDApiKeysCreatesTeamKey(t *testing.T) {
 
 	store := &APIStore{
 		authDB:      testDB.AuthDB,
-		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &authqueries.Team{ID: teamID}}},
+		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &dbtypes.Team{ID: teamID}}},
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
@@ -92,7 +93,7 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsBlockedTeam(t *testing.T) {
 
 	store := &APIStore{
 		authDB: testDB.AuthDB,
-		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &authqueries.Team{
+		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &dbtypes.Team{
 			ID:            teamID,
 			IsBlocked:     true,
 			BlockedReason: &blockedReason,
@@ -200,7 +201,7 @@ func TestDeleteAdminTeamsTeamIDApiKeysDeletesTeamKey(t *testing.T) {
 	store := &APIStore{
 		authDB: testDB.AuthDB,
 		authService: fakeAPIKeyAuthService{
-			team:                    &authtypes.Team{Team: &authqueries.Team{ID: teamID}},
+			team:                    &authtypes.Team{Team: &dbtypes.Team{ID: teamID}},
 			invalidatedAPIKeyHashes: &invalidatedHashes,
 		},
 	}
@@ -257,11 +258,51 @@ func TestDeleteAdminTeamsTeamIDApiKeysRejectsMissingKey(t *testing.T) {
 	require.JSONEq(t, `{"code":404,"message":"API key not found"}`, recorder.Body.String())
 }
 
+func TestGetAdminTeamsTeamIDApiKeysListsKeysOfBannedTeam(t *testing.T) {
+	t.Parallel()
+
+	testDB := testutils.SetupDatabase(t)
+	teamID := testutils.CreateTestTeam(t, testDB)
+	otherTeamID := testutils.CreateTestTeam(t, testDB)
+
+	created, err := team.CreateAPIKey(t.Context(), testDB.AuthDB, teamID, nil, "Admin integration")
+	require.NoError(t, err)
+	_, err = team.CreateAPIKey(t.Context(), testDB.AuthDB, otherTeamID, nil, "Other team")
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/teams/"+teamID.String()+"/api-keys", nil)
+
+	store := &APIStore{
+		authDB:      testDB.AuthDB,
+		authService: fakeAPIKeyAuthService{err: &sharedauth.TeamForbiddenError{Message: "team is banned"}},
+	}
+	store.GetAdminTeamsTeamIDApiKeys(ginCtx, teamID)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	var body []api.TeamAPIKey
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	require.Equal(t, created.ID, body[0].Id)
+	require.Equal(t, "Admin integration", body[0].Name)
+	require.Equal(t, api.IdentifierMaskingDetails{
+		Prefix:            created.ApiKeyPrefix,
+		ValueLength:       int(created.ApiKeyLength),
+		MaskedValuePrefix: created.ApiKeyMaskPrefix,
+		MaskedValueSuffix: created.ApiKeyMaskSuffix,
+	}, body[0].Mask)
+	require.Nil(t, body[0].CreatedBy)
+}
+
 type fakeAPIKeyAuthService struct {
 	team *authtypes.Team
 	err  error
 
 	invalidatedAPIKeyHashes *[]string
+	invalidatedTeamIDs      *[]uuid.UUID
+	invalidateTeamErr       error
 }
 
 func (f fakeAPIKeyAuthService) ValidateAPIKey(context.Context, *gin.Context, string) (*authtypes.Team, *sharedauth.APIError) {
@@ -292,8 +333,12 @@ func (f fakeAPIKeyAuthService) InvalidateAPIKeyCache(_ context.Context, hashedKe
 	}
 }
 
-func (f fakeAPIKeyAuthService) InvalidateTeamCache(context.Context, uuid.UUID) error {
-	return nil
+func (f fakeAPIKeyAuthService) InvalidateTeamCache(_ context.Context, teamID uuid.UUID) error {
+	if f.invalidatedTeamIDs != nil {
+		*f.invalidatedTeamIDs = append(*f.invalidatedTeamIDs, teamID)
+	}
+
+	return f.invalidateTeamErr
 }
 
 func (f fakeAPIKeyAuthService) Close(context.Context) error {

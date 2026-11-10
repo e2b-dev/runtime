@@ -118,3 +118,47 @@ func TestIsExactMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestIsCompatibleWithExtra(t *testing.T) {
+	t.Parallel()
+
+	info := func(model string) MachineInfo {
+		return MachineInfo{CPUArchitecture: "x86_64", CPUFamily: "6", CPUModel: model}
+	}
+	extra := map[string][]string{IceLakeModel: {GraniteRapidsModel}}
+
+	tests := []struct {
+		name  string
+		build MachineInfo
+		node  MachineInfo
+		extra map[string][]string
+		want  bool
+	}{
+		{"listed extra pair", info(IceLakeModel), info(GraniteRapidsModel), extra, true},
+		{"no extras", info(IceLakeModel), info(GraniteRapidsModel), nil, false},
+		{"reverse is not implied", info(GraniteRapidsModel), info(IceLakeModel), extra, false},
+		{"granite to emerald is not implied", info(GraniteRapidsModel), info(EmeraldRapidsModel), extra, false},
+		{"hardcoded pair kept", info(IceLakeModel), info(EmeraldRapidsModel), extra, true},
+		{"unlisted node model", info(IceLakeModel), info("79"), extra, false},
+		{
+			"architecture mismatch",
+			info(IceLakeModel),
+			MachineInfo{CPUArchitecture: "aarch64", CPUFamily: "6", CPUModel: GraniteRapidsModel},
+			extra, false,
+		},
+		{
+			"family mismatch",
+			info(IceLakeModel),
+			MachineInfo{CPUArchitecture: "x86_64", CPUFamily: "23", CPUModel: GraniteRapidsModel},
+			extra, false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, tt.build.IsCompatibleWithExtra(tt.node, tt.extra))
+		})
+	}
+}

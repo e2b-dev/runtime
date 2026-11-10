@@ -28,22 +28,87 @@ jobs:
       GIN_MODE: test
       # Parallel `go test ./...` binaries derive the same Ryuk session id
       # and race on `reaper_<hash>` creation. Disable Ryuk; t.Cleanup
-      # handles normal exit, the reap step in the unit-tests action handles
-      # abnormal exit.
+      # handles normal exit, and every shard runs on a fresh VM, so
+      # containers left by an abnormal exit die with it.
       TESTCONTAINERS_RYUK_DISABLED: "true"
+      # The shards that set postgres share one server: each test copies its
+      # own database from a migrated template on it.
+      PG_TEST_DATABASE_URL: ${{ matrix.postgres && 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' || '' }}
+      # The shards that set redis share one server: each test's client
+      # namespaces its keys (go.segfaultmedaddy.com/redistest).
+      REDIS_TEST_DATABASE_URL: ${{ matrix.redis && 'redis://localhost:6379/0' || '' }}
+    # Service containers take no server flags, so the settings go in through
+    # POSTGRES_INITDB_ARGS, which writes them into postgresql.conf. Durability
+    # is traded for speed, and max_connections covers the parallel tests of
+    # every package go test runs at once. An empty image skips the service.
+    services:
+      postgres:
+        image: ${{ matrix.postgres && 'postgres:18-alpine' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_INITDB_ARGS: >-
+            --no-sync
+            -c max_connections=500
+            -c fsync=off
+            -c synchronous_commit=off
+            -c full_page_writes=off
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /var/lib/postgresql
+          --health-cmd "pg_isready --host 127.0.0.1 --username postgres"
+          --health-interval 2s
+          --health-start-period 30s
+          --health-start-interval 200ms
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: ${{ matrix.redis && 'redis:8-alpine' || '' }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-start-period 30s
+          --health-start-interval 200ms
+          --health-timeout 5s
+          --health-retries 30
     strategy:
       matrix:
         include:
           - package: packages/api
             test_path: ./...
+            postgres: true
+            redis: true
             sudo: false
+            race: true
+            runner: blacksmith-4vcpu-ubuntu-2404
+          # The sandbox store's Redis tests again, on a cluster-mode server
+          # that rejects a command whose keys span slots as a sharded
+          # deployment does, with the shared Redis helper's checks of it.
+          - package: packages/api
+            shard: cluster
+            test_path: ./internal/sandbox/... ../shared/pkg/redis/...
+            redis: true
+            cluster: true
+            sudo: false
+            race: true
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/client-proxy
+            test_path: ./...
+            redis: true
+            sudo: false
+            runner: blacksmith-4vcpu-ubuntu-2404
+          # The batcher, event and host-stats helpers, and the guard that keeps
+          # the embedded migrations equal to the directory. The module had no
+          # unit shard before this entry.
+          - package: packages/clickhouse
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/db
             test_path: ./...
+            postgres: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           # envd mounts via bindfs (FUSE, no modprobe); this shard doubles as
@@ -54,9 +119,10 @@ jobs:
             sudo: true
             runner: blacksmith-4vcpu-ubuntu-2404
           # The database seed: the key-resolution table and one Postgres-backed
-          # run through testcontainers.
+          # run on the shared server.
           - package: packages/local-dev
             test_path: ./...
+            postgres: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           # The one shard whose code carries cross-goroutine ownership
@@ -68,6 +134,7 @@ jobs:
             runner: infra-tests
           - package: packages/shared
             test_path: ./pkg/...
+            redis: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
       fail-fast: false
@@ -82,6 +149,7 @@ jobs:
           test-path: ${{ matrix.test_path }}
           sudo: ${{ matrix.sudo }}
           race: ${{ matrix.race || false }}
+          cluster: ${{ matrix.cluster || false }}
 
   unit_tests:
     needs: run-tests

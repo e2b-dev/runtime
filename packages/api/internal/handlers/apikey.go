@@ -65,9 +65,12 @@ func (a *APIStore) PatchApiKeysApiKeyID(c *gin.Context, apiKeyID string) {
 }
 
 func (a *APIStore) GetApiKeys(c *gin.Context) {
-	ctx := c.Request.Context()
+	a.respondTeamAPIKeys(c, auth.MustGetTeamID(c))
+}
 
-	teamID := auth.MustGetTeamID(c)
+// respondTeamAPIKeys writes the team's API keys, masked, as the response.
+func (a *APIStore) respondTeamAPIKeys(c *gin.Context, teamID uuid.UUID) {
+	ctx := c.Request.Context()
 
 	apiKeysDB, err := a.authDB.GetTeamAPIKeysWithCreator(ctx, teamID)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -26,6 +27,68 @@ const (
 type Config struct {
 	KernelVersion      string
 	FirecrackerVersion string
+
+	// The device names a snapshot bakes. Every snapshot this code base writes
+	// uses the defaults (drive "rootfs", interface "eth0", rootfs file
+	// "rootfs.ext4"), and an empty field means that default. A snapshot made
+	// outside it (an imported image) names them differently: the restore then addresses the drive and the interface
+	// by these names, presents the rootfs at the baked file name, and sends the
+	// slot's tap through network_overrides.
+	RootfsDriveID string
+	NetIfaceID    string
+	RootfsFile    string
+
+	// Guest is the profile of the template's guest OS; nil is the default profile.
+	Guest guest.Profile
+}
+
+// GuestProfile returns the profile that decides how the guest boots and restores.
+func (t Config) GuestProfile() guest.Profile {
+	if t.Guest == nil {
+		return guest.Default()
+	}
+
+	return t.Guest
+}
+
+// ForColdBoot returns a copy with only RootfsDriveID and NetIfaceID cleared, so
+// RootfsDriveIDOrDefault and NetIfaceIDOrDefault fall back to the runtime's drive
+// ID and the caller's default. A restore must not use it: it addresses the
+// devices by the IDs the snapshot holds.
+func (t Config) ForColdBoot() Config {
+	t.RootfsDriveID = ""
+	t.NetIfaceID = ""
+
+	return t
+}
+
+// RootfsDriveIDOrDefault returns the block device ID to address on the API.
+func (t Config) RootfsDriveIDOrDefault() string {
+	if t.RootfsDriveID == "" {
+		return rootfsDriveID
+	}
+
+	return t.RootfsDriveID
+}
+
+// NetIfaceIDOrDefault returns the network interface ID to address on the API;
+// def is the slot's own name, which every snapshot this code base writes bakes.
+func (t Config) NetIfaceIDOrDefault(def string) string {
+	if t.NetIfaceID == "" {
+		return def
+	}
+
+	return t.NetIfaceID
+}
+
+// RootfsFileName returns the file name the guest's rootfs is presented at
+// inside the sandbox directory.
+func (t Config) RootfsFileName() string {
+	if t.RootfsFile == "" {
+		return artifact.RootfsFileName
+	}
+
+	return t.RootfsFile
 }
 
 func (t Config) SandboxKernelDir() string {

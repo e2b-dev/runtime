@@ -12,6 +12,11 @@ import (
 // before the request payload is available.
 const IsResumeMetadataKey = "x-sandbox-resume"
 
+// TeamIDMetadataKey carries the sandbox's team ID for the same reason
+// IsResumeMetadataKey does: so the server's otelgrpc metrics can be split by
+// team before the request payload is decoded.
+const TeamIDMetadataKey = "x-team-id"
+
 type noTraceKey struct{}
 
 var noTrace = struct{}{}

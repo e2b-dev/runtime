@@ -19,13 +19,17 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
-// slotForwardAccepts builds the slot's iptables FORWARD accept pair,
+// slotForwardAcceptsFor builds the iptables FORWARD accept pair for the named veth,
 // matching v1's two rules.
-func slotForwardAccepts(slot *network.Slot, gw string) [][]string {
+func slotForwardAcceptsFor(vethName string, gw string) [][]string {
 	return [][]string{
-		{"-i", slot.VethName(), "-o", gw, "-j", "ACCEPT"},
-		{"-i", gw, "-o", slot.VethName(), "-j", "ACCEPT"},
+		{"-i", vethName, "-o", gw, "-j", "ACCEPT"},
+		{"-i", gw, "-o", vethName, "-j", "ACCEPT"},
 	}
+}
+
+func slotForwardAccepts(slot *network.Slot, gw string) [][]string {
+	return slotForwardAcceptsFor(slot.VethName(), gw)
 }
 
 // CreateNetworkV2 sets up the full network stack for a v2 slot.
@@ -40,6 +44,8 @@ func slotForwardAccepts(slot *network.Slot, gw string) [][]string {
 func CreateNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 	hf *HostFirewall, observer *VethObserver,
 ) error {
+	slot.MarkNetworkCreated(false)
+
 	// Run on a goroutine of its own so the thread it pins is this call's
 	// alone. createNetworkV2 keeps that thread locked if it cannot get back to
 	// the host namespace, and the runtime destroys a still-locked thread when
@@ -50,7 +56,14 @@ func CreateNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 		done <- createNetworkV2(ctx, slot, slotV2, hf, observer)
 	}()
 
-	return <-done
+	err := <-done
+	if err != nil {
+		return err
+	}
+
+	slot.MarkNetworkCreated(true)
+
+	return nil
 }
 
 func createNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
@@ -244,7 +257,7 @@ func createNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 	nsConn.CloseLasting()
 
 	// --- Initialize in-namespace firewall (reuse v1 Firewall) ---
-	if err := slot.InitializeFirewall(); err != nil {
+	if err := slot.InitializeFirewall(ctx); err != nil {
 		return fmt.Errorf("error initializing slot firewall: %w", err)
 	}
 
@@ -301,7 +314,7 @@ func RemoveNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 	var errs []error
 
 	// Close in-namespace firewall
-	if err := slot.CloseFirewall(); err != nil {
+	if err := slot.CloseFirewall(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("error closing firewall: %w", err))
 	}
 
@@ -315,15 +328,19 @@ func RemoveNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 	if err != nil {
 		errs = append(errs, fmt.Errorf("error initializing iptables: %w", err))
 	} else {
-		for _, rule := range slotForwardAccepts(slot, hf.defaultGw) {
-			appendUnlessAbsent(&errs, tables.Delete("filter", "FORWARD", rule...), isIPTablesNotExist, "error deleting forwarding rule: %w")
+		for _, vethName := range slot.TeardownVethNames() {
+			for _, rule := range slotForwardAcceptsFor(vethName, hf.defaultGw) {
+				appendUnlessAbsent(&errs, tables.Delete("filter", "FORWARD", rule...), isIPTablesNotExist, "error deleting forwarding rule: %w")
+			}
 		}
 	}
 
 	// Detach eBPF observer
 	if observer != nil {
-		if err := observer.Detach(slot.VethName()); err != nil {
-			errs = append(errs, fmt.Errorf("error detaching eBPF observer: %w", err))
+		for _, vethName := range slot.TeardownVethNames() {
+			if err := observer.Detach(vethName); err != nil {
+				errs = append(errs, fmt.Errorf("error detaching eBPF observer: %w", err))
+			}
 		}
 	}
 
@@ -335,11 +352,13 @@ func RemoveNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 	appendUnlessAbsent(&errs, err, isRouteNotExist, "error deleting route from host to FC: %w")
 
 	// Delete veth device explicitly (prevents race on reuse)
-	vethLink, err := netlink.LinkByName(slot.VethName())
-	if err != nil {
-		appendUnlessAbsent(&errs, err, isLinkNotExist, "error finding veth: %w")
-	} else {
-		appendUnlessAbsent(&errs, netlink.LinkDel(vethLink), isLinkNotExist, "error deleting veth device: %w")
+	for _, vethName := range slot.TeardownVethNames() {
+		vethLink, err := netlink.LinkByName(vethName)
+		if err != nil {
+			appendUnlessAbsent(&errs, err, isLinkNotExist, "error finding veth: %w")
+		} else {
+			appendUnlessAbsent(&errs, netlink.LinkDel(vethLink), isLinkNotExist, "error deleting veth device: %w")
+		}
 	}
 
 	// The /run/netns entry is the anchor startup reclaim uses to rediscover a
@@ -351,7 +370,7 @@ func RemoveNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 		return errors.Join(errs...)
 	}
 
-	err = netns.DeleteNamed(slot.NamespaceID())
+	err = network.DeleteNamespace(slot.NamespaceID())
 	appendUnlessAbsent(&errs, err, isNamespaceNotExist, "error deleting namespace: %w")
 
 	return errors.Join(errs...)

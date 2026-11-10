@@ -78,7 +78,7 @@ func TestResolveEnvdUpgradePath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gotPath, gotVersion, gotReason := resolveEnvdUpgradePath(t.Context(), tt.target, tt.builtWith, promoted, getVersion)
+			gotPath, gotVersion, gotReason := resolveEnvdUpgradePath(t.Context(), tt.target, tt.builtWith, promoted, getVersion, nil)
 			assert.Equal(t, tt.wantPath, gotPath)
 			assert.Equal(t, tt.wantVersion, gotVersion)
 			assert.Equal(t, tt.wantReason, gotReason)
@@ -99,7 +99,7 @@ func TestResolveEnvdUpgradePath_VersionError(t *testing.T) {
 		return "", assert.AnError
 	}
 
-	gotPath, gotVersion, gotReason := resolveEnvdUpgradePath(t.Context(), "promoted", "0.6.11", promoted, getVersion)
+	gotPath, gotVersion, gotReason := resolveEnvdUpgradePath(t.Context(), "promoted", "0.6.11", promoted, getVersion, nil)
 	assert.Empty(t, gotPath)
 	assert.Empty(t, gotVersion)
 	assert.Equal(t, "getversion_failed", gotReason)
@@ -126,7 +126,7 @@ func TestTheUpgradeResolutionProbesExactlyOnceOnThePathItReturns(t *testing.T) {
 		return "0.7.0", nil
 	}
 
-	path, version, reason := resolveEnvdUpgradePath(t.Context(), "promoted", "0.6.0", host, getVersion)
+	path, version, reason := resolveEnvdUpgradePath(t.Context(), "promoted", "0.6.0", host, getVersion, nil)
 
 	require.Empty(t, reason)
 	require.Equal(t, "0.7.0", version)

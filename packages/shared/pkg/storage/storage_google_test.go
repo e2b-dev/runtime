@@ -4,7 +4,7 @@ package storage
 // fake-gcs-server container over the GCS JSON API. Note production uses the
 // gRPC client (NewGCP); tests use the HTTP client — no emulator speaks the
 // GCS gRPC protocol. The XML multipart upload side (MultipartUploader) is
-// covered in gcp_multipart_test.go against MinIO.
+// covered in gcp_multipart_test.go against RustFS.
 
 import (
 	"bytes"

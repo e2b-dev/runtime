@@ -2,7 +2,7 @@ package storage
 
 // Integration test for the Azure Blob storage backend, running against a
 // per-test Azurite container (the official Azure Storage emulator) — same
-// pattern as the MinIO-backed S3 tests in storage_testcontainers_test.go
+// pattern as the RustFS-backed S3 tests in storage_testcontainers_test.go
 // (Docker required, torn down via t.Cleanup).
 
 import (
@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -311,11 +312,11 @@ func TestAzureIntegration(t *testing.T) {
 		for i := range 2 {
 			kept = append(kept, fmt.Sprintf("prefix-keep/obj-%d", i))
 		}
-		for _, path := range append(append([]string{}, doomed...), kept...) {
+		for _, path := range slices.Concat(doomed, kept) {
 			putBlob(path)
 		}
 
-		require.NoError(t, provider.DeleteObjectsWithPrefix(ctx, "prefix-del/"))
+		require.NoError(t, provider.DeleteObjectsWithPrefix(ctx, "prefix-del"))
 
 		for _, path := range doomed {
 			blob, err := provider.OpenBlob(ctx, path)
@@ -333,7 +334,7 @@ func TestAzureIntegration(t *testing.T) {
 		}
 
 		// An empty prefix would delete the entire container; it must error out.
-		require.ErrorContains(t, provider.DeleteObjectsWithPrefix(ctx, ""), "empty prefix")
+		require.ErrorIs(t, provider.DeleteObjectsWithPrefix(ctx, ""), errInvalidObjectPath)
 	})
 
 	t.Run("UploadSignedURLRequiresTheReturnedHeaders", func(t *testing.T) {

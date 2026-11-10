@@ -3,6 +3,11 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+
+	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 )
 
 func jsonbValue(v any) (driver.Value, error) {
@@ -49,6 +54,59 @@ func (m *JSONBStringMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Team holds the team columns the team lookups select. The auth cache stores
+// it as JSON that pods of adjacent releases read, so renaming, retyping or
+// tagging a field breaks the entries the other release wrote.
+type Team struct {
+	ID                      uuid.UUID
+	CreatedAt               time.Time
+	IsBlocked               bool
+	Name                    string
+	Email                   string
+	IsBanned                bool
+	BlockedReason           *string
+	ClusterID               *uuid.UUID
+	SandboxSchedulingLabels []string
+	SsoOrganizationID       *uuid.UUID
+	SsoAutoJoin             bool
+	DeletedAt               *time.Time
+	Slug                    string
+}
+
+func TeamFromRow(row authqueries.GetTeamByTeamIDRow) Team {
+	return Team{
+		ID:                      row.ID,
+		CreatedAt:               row.CreatedAt,
+		IsBlocked:               row.IsBlocked,
+		Name:                    row.Name,
+		Email:                   row.Email,
+		IsBanned:                row.IsBanned,
+		BlockedReason:           row.BlockedReason,
+		ClusterID:               row.ClusterID,
+		SandboxSchedulingLabels: row.SandboxSchedulingLabels,
+		SsoOrganizationID:       row.SsoOrganizationID,
+		SsoAutoJoin:             row.SsoAutoJoin,
+		DeletedAt:               row.DeletedAt,
+		Slug:                    row.Slug,
+	}
+}
+
+type ProjectSettings struct {
+	SandboxSettings SandboxSettings
+}
+
+type SandboxSettings struct {
+	DefaultAllowPublicTraffic *bool
+}
+
+func ProjectSettingsFromRow(row authqueries.GetTeamByTeamIDRow) ProjectSettings {
+	return ProjectSettings{
+		SandboxSettings: SandboxSettings{
+			DefaultAllowPublicTraffic: row.SandboxDefaultAllowPublicTraffic,
+		},
+	}
+}
+
 type BuildReason struct {
 	// Message with the status reason, currently reporting only for error status
 	Message string `json:"message"`
@@ -76,10 +134,23 @@ type SandboxNetworkEgressConfig struct {
 	DeniedAddresses  []string                        `json:"deniedAddresses,omitempty"`
 	Rules            map[string][]SandboxNetworkRule `json:"rules,omitempty"`
 
+	// DnsServers lists the DNS servers allowed when AllowedAddresses has a
+	// domain. Nil means the default nameserver; empty means none.
+	DnsServers *[]string `json:"dnsServers,omitempty"`
+
 	// SOCKS5 BYOP egress proxy configuration.
-	EgressProxyAddress  string `json:"egressProxyAddress,omitempty"`
-	EgressProxyUsername string `json:"egressProxyUsername,omitempty"`
-	EgressProxyPassword string `json:"egressProxyPassword,omitempty"`
+	EgressProxyAddress  string                       `json:"egressProxyAddress,omitempty"`
+	EgressProxyUsername string                       `json:"egressProxyUsername,omitempty"`
+	EgressProxyPassword string                       `json:"egressProxyPassword,omitempty"`
+	EgressProxyTLS      *SandboxEgressProxyTLSConfig `json:"egressProxyTls,omitempty"`
+}
+
+// SandboxEgressProxyTLSConfig configures TLS on the hop to the BYOP SOCKS5
+// proxy. CACert is a certificate, not a secret, so it is stored inline.
+type SandboxEgressProxyTLSConfig struct {
+	Enabled    bool   `json:"enabled"`
+	ServerName string `json:"serverName,omitempty"`
+	CACert     string `json:"caCert,omitempty"`
 }
 
 const AllowPublicAccessDefault = true
@@ -106,6 +177,12 @@ func (c *SandboxNetworkConfig) HasEgressProxy() bool {
 // RFC 1929 credentials.
 func (c *SandboxNetworkConfig) HasEgressProxyAuth() bool {
 	return c.HasEgressProxy() && c.Egress.EgressProxyUsername != ""
+}
+
+// HasEgressProxyTLS reports whether the hop to the egress proxy is wrapped in
+// TLS.
+func (c *SandboxNetworkConfig) HasEgressProxyTLS() bool {
+	return c.HasEgressProxy() && c.Egress.EgressProxyTLS != nil && c.Egress.EgressProxyTLS.Enabled
 }
 
 type SandboxVolumeMountConfig struct {

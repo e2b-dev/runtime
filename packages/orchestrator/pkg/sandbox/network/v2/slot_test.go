@@ -127,7 +127,7 @@ func TestSlotV2_EmbeddedSlotMethods(t *testing.T) {
 	sv2 := NewSlotV2(slot)
 
 	// Access base slot methods through composition
-	assert.Equal(t, "veth-3", sv2.Slot.VethName())
+	assert.Equal(t, "e2b-3", sv2.Slot.VethName())
 	assert.Equal(t, "ns-3", sv2.Slot.NamespaceID())
 	assert.NotNil(t, sv2.Slot.HostIP)
 }

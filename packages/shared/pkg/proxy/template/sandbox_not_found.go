@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_sandbox_not_found.html
 var sandboxNotFoundHtml string
-var sandboxNotFoundHtmlTemplate = template.Must(template.New("sandboxNotFoundHtml").Parse(sandboxNotFoundHtml))
+var sandboxNotFoundHtmlTemplate = newBrowserPage("sandboxNotFoundHtml", sandboxNotFoundHtml)
 
 type sandboxNotFoundData struct {
 	SandboxId string `json:"sandboxId"`

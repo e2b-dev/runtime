@@ -23,6 +23,9 @@ const (
 	fsWriteScattered  fsWritePattern = "scattered"
 )
 
+// The default lifetimes (30s on create, 15s on resume) are shorter than the write and hash take on a loaded runner.
+const fsIntegritySandboxTimeout int32 = 120
+
 func TestSandboxFilesystemPauseResumeIntegrity(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +107,7 @@ func runFilesystemPauseResumeIntegrityCase(t *testing.T, tc filesystemPauseResum
 	t.Helper()
 
 	c := setup.GetAPIClient()
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(false))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(false), utils.WithTimeout(fsIntegritySandboxTimeout))
 	sbxID := sbx.SandboxID
 	envdClient := setup.GetEnvdClient(t, t.Context())
 
@@ -123,7 +126,7 @@ func runFilesystemPauseResumeIntegrityCase(t *testing.T, tc filesystemPauseResum
 	}
 	resume := func() {
 		t.Helper()
-		resp, err := c.PostSandboxesSandboxIDResumeWithResponse(t.Context(), sbxID, api.PostSandboxesSandboxIDResumeJSONRequestBody{}, setup.WithAPIKey())
+		resp, err := c.PostSandboxesSandboxIDResumeWithResponse(t.Context(), sbxID, api.PostSandboxesSandboxIDResumeJSONRequestBody{Timeout: new(fsIntegritySandboxTimeout)}, setup.WithAPIKey())
 		require.NoError(t, err)
 		require.Equal(t, http.StatusCreated, resp.StatusCode())
 	}
@@ -145,7 +148,7 @@ func runFilesystemPauseResumeTruncateCase(t *testing.T) {
 	t.Helper()
 
 	c := setup.GetAPIClient()
-	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(false))
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithAutoPause(false), utils.WithTimeout(fsIntegritySandboxTimeout))
 	sbxID := sbx.SandboxID
 	envdClient := setup.GetEnvdClient(t, t.Context())
 
@@ -164,7 +167,7 @@ func runFilesystemPauseResumeTruncateCase(t *testing.T) {
 	}
 	resume := func() {
 		t.Helper()
-		resp, err := c.PostSandboxesSandboxIDResumeWithResponse(t.Context(), sbxID, api.PostSandboxesSandboxIDResumeJSONRequestBody{}, setup.WithAPIKey())
+		resp, err := c.PostSandboxesSandboxIDResumeWithResponse(t.Context(), sbxID, api.PostSandboxesSandboxIDResumeJSONRequestBody{Timeout: new(fsIntegritySandboxTimeout)}, setup.WithAPIKey())
 		require.NoError(t, err)
 		require.Equal(t, http.StatusCreated, resp.StatusCode())
 	}

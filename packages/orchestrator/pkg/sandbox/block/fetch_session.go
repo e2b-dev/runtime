@@ -86,14 +86,19 @@ func (s *fetchSession) registerAndWait(ctx context.Context, blockOff int64) erro
 		return nil
 	}
 
-	// Set up context cancellation to unblock cond.Wait.
+	// Serialize the cancellation wake with the predicate check and Cond.Wait
+	// registration. Cond.Wait atomically unlocks mu only after the waiter is
+	// registered, so the callback cannot spend the sole cancellation Broadcast
+	// in the check-to-wait gap.
 	stop := context.AfterFunc(ctx, func() {
+		s.cond.L.Lock()
+		defer s.cond.L.Unlock()
 		s.cond.Broadcast()
 	})
 	defer stop()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 
 	for {
 		if s.bytesReady.Load() >= endByte {

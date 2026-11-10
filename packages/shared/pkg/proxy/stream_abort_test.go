@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,18 +202,21 @@ func TestProxyEndsConnectStreamWhenSandboxStops(t *testing.T) {
 
 	const connectionKey = "connect-stream-backend"
 
+	var owner atomic.Pointer[pool.Owner]
 	getDestination := func(*http.Request) (*pool.Destination, error) {
 		return &pool.Destination{
 			Url:           backendURL,
 			SandboxId:     "sbx-1",
 			RequestLogger: logger.NewNopLogger(),
 			ConnectionKey: connectionKey,
+			Owner:         owner.Load(),
 		}, nil
 	}
 
 	proxy, port, err := newTestProxy(t, getDestination)
 	require.NoError(t, err)
 	defer proxy.Close()
+	owner.Store(proxy.NewOwner())
 
 	client := connect.NewClient[emptypb.Empty, emptypb.Empty](
 		testHTTPClient(t),
@@ -232,7 +236,7 @@ func TestProxyEndsConnectStreamWhenSandboxStops(t *testing.T) {
 		t.Fatalf("backend never sent the first frame: %v", t.Context().Err())
 	}
 
-	require.NoError(t, proxy.RemoveFromPool(connectionKey))
+	require.NoError(t, owner.Load().Close(t.Context()))
 
 	assert.False(t, stream.Receive(), "the stream should end after the sandbox stops")
 

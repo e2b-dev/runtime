@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
+	"google.golang.org/grpc/credentials"
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
@@ -27,18 +28,16 @@ import (
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
-	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-const statusLogInterval = time.Second * 20
-
 // trackedWorkBound is the longest a tracked pause can hold its count: the
 // pause budget, then the terminal build-status write, which opens a fresh
-// budget once the pause context has expired.
+// budget once the pause context has expired. A tracked resume create fits
+// inside it (CreateSandbox).
 const trackedWorkBound = pauseTimeout + buildStatusWriteTimeout
 
 // workDrainGrace pads trackedWorkBound so the drain outlasts the work.
@@ -59,23 +58,30 @@ type Orchestrator struct {
 	httpClient                    *http.Client
 	nodeDiscovery                 servicediscovery.Discoverer
 	sandboxStore                  *sandbox.Store
+	sandboxEvictor                *evictor.Evictor
 	nodes                         *smap.Map[*nodemanager.Node]
 	placementAlgorithm            *placement.BestOfK
 	featureFlagsClient            *featureflags.Client
 	analytics                     *analyticscollector.Analytics
 	posthogClient                 *analyticscollector.PosthogClient
-	routingCatalog                restorableCatalog
 	sqlcDB                        *sqlcdb.Client
 	tel                           *telemetry.Client
+	nodeCreds                     credentials.TransportCredentials
 	clusters                      *clusters.Pool
 	metricsRegistration           metric.Registration
 	sandboxCountGaugeRegistration metric.Registration
 	createdSandboxesCounter       metric.Int64Counter
 	resumeOriginNodeRemapCounter  metric.Int64Counter
 	pauseRefusalRestoreCounter    metric.Int64Counter
+	networkUpdateUnstoredCounter  metric.Int64Counter
+	noCeilingPlacementsCounter    metric.Int64Counter
+	featureUnsupportedCounter     metric.Int64Counter
 	teamMetricsObserver           *metrics.TeamObserver
 	accessTokenGenerator          *sandbox.AccessTokenGenerator
 	createdCounter                metric.Int64Counter
+	listReadsCounter              metric.Int64Counter
+	listAgeHistogram              metric.Int64Histogram
+	teamLists                     teamListSnapshots
 	snapshotCache                 SnapshotCacheInvalidator
 
 	snapshotUpsertSem *utils.AdjustableSemaphore
@@ -87,6 +93,7 @@ type Orchestrator struct {
 	outstandingWork atomic.Int64
 	drainMu         sync.RWMutex
 	draining        bool
+	scoreHugepages  bool
 
 	// localClusterOwnsOrchestrators makes connectToClusterNode register
 	// local-cluster instances that report the Orchestrator role as nodes.
@@ -117,6 +124,8 @@ type Orchestrator struct {
 	// same string, and nesting Do calls for the same key on the same Group would
 	// block forever.
 	discoveryGroup singleflight.Group
+
+	startup *startupGate
 }
 
 func New(
@@ -133,11 +142,13 @@ func New(
 	accessTokenGenerator *sandbox.AccessTokenGenerator,
 	snapshotCache SnapshotCacheInvalidator,
 	snapshotUpsertSem *utils.AdjustableSemaphore,
+	analyticsCreds, nodeCreds credentials.TransportCredentials,
 ) (*Orchestrator, error) {
 	analyticsInstance, err := analyticscollector.NewAnalytics(
 		config.AnalyticsCollectorHost,
 		config.AnalyticsCollectorAPIToken,
 		config.AnalyticsCollectorTLS,
+		analyticsCreds,
 	)
 	if err != nil {
 		logger.L().Error(ctx, "Error initializing Analytics client", zap.Error(err))
@@ -145,8 +156,6 @@ func New(
 		return nil, err
 	}
 	analyticsInstance.Init(ctx)
-
-	routingCatalog := e2bcatalog.NewRedisSandboxCatalog(redisClient)
 
 	// We will need to either use Redis or Consul's KV for storing active sandboxes to keep everything in sync,
 	// right now we load them from Orchestrator
@@ -163,9 +172,9 @@ func New(
 		Timeout: nodeHealthCheckTimeout,
 	}
 
-	bestOfKAlgorithm := placement.NewBestOfK(getBestOfKConfig(ctx, featureFlags)).(*placement.BestOfK)
+	bestOfKAlgorithm := placement.NewBestOfK(getBestOfKConfig(ctx, featureFlags, config.BestOfKHugepageMemory)).(*placement.BestOfK)
 
-	redisStorage, err := redisbackend.NewStorage(redisClient, tel.MeterProvider, featureFlags)
+	redisStorage, err := redisbackend.NewStorage(redisClient, tel.MeterProvider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis sandbox storage: %w", err)
 	}
@@ -186,12 +195,13 @@ func New(
 		nodeDiscovery:        nodeDiscovery,
 		nodes:                smap.New[*nodemanager.Node](),
 		placementAlgorithm:   bestOfKAlgorithm,
+		scoreHugepages:       config.BestOfKHugepageMemory,
 		featureFlagsClient:   featureFlags,
 		accessTokenGenerator: accessTokenGenerator,
-		routingCatalog:       routingCatalog,
 		sqlcDB:               sqlcDB,
 		snapshotCache:        snapshotCache,
 		tel:                  tel,
+		nodeCreds:            nodeCreds,
 		clusters:             clusters,
 		redisStorage:         redisStorage,
 
@@ -208,17 +218,24 @@ func New(
 		redisStorage,
 		redisreservations.NewReservationStorage(redisClient, redisStorage.Notifier()),
 		sandbox.Callbacks{
-			AddSandboxToRoutingTable: o.addSandboxToRoutingTableOrLog,
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
+			EndPoweredOffSandbox:     o.endPoweredOffSandbox,
+			EndEndedSandbox:          o.endEndedSandbox,
 		},
 	)
+
+	o.startup = newStartupGate(clusters.StartupReady(), clusters.LocalInstanceJoined(), o.syncClusterDiscoveredNodes)
+	o.startup.start(ctx)
 
 	// Evict old sandboxes
 	sandboxEvictor, err := evictor.New(ctx, o.sandboxStore, o.RemoveSandbox, o.featureFlagsClient, meter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox evictor: %w", err)
 	}
+	// Set before the sync starts, which is the only caller of
+	// endPoweredOffSandbox.
+	o.sandboxEvictor = sandboxEvictor
 	go sandboxEvictor.Start(ctx)
 
 	teamMetricsObserver, err := metrics.NewTeamObserver(ctx, o.sandboxStore)
@@ -238,60 +255,15 @@ func New(
 		return nil, fmt.Errorf("failed to setup metrics: %w", err)
 	}
 
-	go o.startStatusLogging(ctx)
-	go o.updateBestOfKConfig(ctx)
+	go o.refreshFlagConfig(ctx)
 
 	return &o, nil
 }
 
-func (o *Orchestrator) startStatusLogging(ctx context.Context) {
-	ticker := time.NewTicker(statusLogInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logger.L().Info(ctx, "Stopping status logging")
-
-			return
-		case <-ticker.C:
-			connectedNodes := make([]map[string]any, 0, o.nodes.Count())
-			templateManagers := make([]map[string]any, 0)
-
-			for _, nodeItem := range o.nodes.Items() {
-				if nodeItem == nil {
-					connectedNodes = append(connectedNodes, map[string]any{
-						"id": "nil",
-					})
-				} else {
-					connectedNodes = append(connectedNodes, map[string]any{
-						"id":        nodeItem.ID,
-						"status":    nodeItem.Status(),
-						"sandboxes": nodeItem.Metrics().SandboxCount,
-					})
-				}
-			}
-
-			for _, cluster := range o.clusters.GetClusters() {
-				for _, templateManager := range cluster.GetTemplateBuilders() {
-					info := templateManager.GetInfo()
-					templateManagers = append(templateManagers, map[string]any{
-						"cluster_id":          templateManager.ClusterID,
-						"node_id":             templateManager.NodeID,
-						"service_instance_id": info.ServiceInstanceID,
-						"status":              info.Status.String(),
-					})
-				}
-			}
-
-			logger.L().Info(ctx, "API internal status",
-				zap.Int("nodes_count", o.nodes.Count()),
-				zap.Any("nodes", connectedNodes),
-				zap.Int("template_managers_count", len(templateManagers)),
-				zap.Any("template_managers", templateManagers),
-			)
-		}
-	}
+// StartupReady closes once startup has observed a local node, completed the
+// initial cluster registry gate, and projected those snapshots into placement.
+func (o *Orchestrator) StartupReady() <-chan struct{} {
+	return o.startup.Ready()
 }
 
 // TrackWork registers an operation that outlives its caller. It reports false
@@ -376,18 +348,15 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 
-	if err := o.routingCatalog.Close(ctx); err != nil {
-		errs = append(errs, err)
-	}
-
 	o.redisStorage.Close(ctx)
 
 	return errors.Join(errs...)
 }
 
-// updateBestOfKConfig periodically updates the BestOfK algorithm configuration from feature flags
-func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second) // Check for config updates every 30 seconds
+// refreshFlagConfig re-reads the BestOfK placement configuration from its
+// flags every 30 s.
+func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -395,15 +364,12 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			config := getBestOfKConfig(ctx, o.featureFlagsClient)
-
-			// Update the config
-			o.placementAlgorithm.UpdateConfig(config)
+			o.placementAlgorithm.UpdateConfig(getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages))
 		}
 	}
 }
 
-func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Client) placement.BestOfKConfig {
+func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Client, scoreHugepages bool) placement.BestOfKConfig {
 	k := featureFlagsClient.IntFlag(ctx, featureflags.BestOfKSampleSize)
 
 	maxOvercommitPercent := featureFlagsClient.IntFlag(ctx, featureflags.BestOfKMaxOvercommit)
@@ -418,6 +384,6 @@ func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Clie
 		R:              maxOvercommit,
 		K:              k,
 		Alpha:          alpha,
-		ScoreHugepages: featureFlagsClient.BoolFlag(ctx, featureflags.BestOfKHugepageMemory),
+		ScoreHugepages: scoreHugepages,
 	}
 }

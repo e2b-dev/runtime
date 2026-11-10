@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/semaphore"
@@ -13,6 +14,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/host"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/fsfreeze"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
@@ -53,22 +55,34 @@ type API struct {
 
 	lastSetTime *utils.AtomicMax
 	initLock    *semaphore.Weighted
+	// setSystemTime steps the guest clock; tests replace it so they never step the host's.
+	setSystemTime func(time.Time) error
+	// now reads the time /init's clock correction is measured with; tests replace it.
+	now func() time.Time
 
 	caCertInstaller *host.CACertInstaller
 	// workloadFreezer freezes/thaws the user+pty cgroups. Shared with the process
 	// service (the live-upgrade handover) so every freeze/unfreeze caller — this
-	// API's /freeze, /unfreeze and /init deferred thaw, plus the upgrade — is
+	// API's /freeze, /unfreeze and /init's thaw, plus the upgrade — is
 	// serialized through one lock.
 	workloadFreezer *cgroups.WorkloadFreezer
 	logFlusher      LogFlusher
 
-	isMountingNFS atomic.Bool
-	mountedPaths  sync.Map // map[path]lifecycleID - tracks which lifecycle each path was mounted for
+	nfs        nfsMounter
+	nfsFailure nfsFailure // guarded by initLock
+	// nfsMountRetryFor is how long a mount that fails without timing out is retried.
+	nfsMountRetryFor time.Duration
+	// nfsMountRetryDelay is the pause between those retries.
+	nfsMountRetryDelay time.Duration
+	mountedPaths       sync.Map // map[path]lifecycleID - tracks which lifecycle each path was mounted for
 
 	// fsFreezer freezes/thaws the guest rootfs for filesystem-only pauses;
 	// fsFreezeLock serializes /fsfreeze and /fsthaw.
 	fsFreezer    fsfreeze.Freezer
 	fsFreezeLock *semaphore.Weighted
+
+	// cpuManager applies the target online CPU count.
+	cpuManager cpus.Manager
 
 	// handover, when non-nil, is the outcome of the live-upgrade handover this
 	// envd booted from; PostInit advertises it to the orchestrator via the
@@ -83,6 +97,9 @@ type API struct {
 	// init system's, written at boot, so the two agree unless something changed the
 	// cgroups after envd started.
 	memory cgroups.MemoryProtection
+
+	// oomKills is nil when OOM kills aren't watched, as outside Firecracker.
+	oomKills *host.OOMWatcher
 
 	// initialized flips true on the first authenticated /init. It gates the
 	// live-upgrade /upgrade endpoint and the handover fallback thaw so a
@@ -132,28 +149,39 @@ func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retai
 	}
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, logFlushers ...LogFlusher) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, oomKills *host.OOMWatcher, cpuManager cpus.Manager, logFlushers ...LogFlusher) *API {
 	logFlusher := NewNoopLogFlusher()
 	if len(logFlushers) > 0 && logFlushers[0] != nil {
 		logFlusher = logFlushers[0]
 	}
 
 	return &API{
-		logger:          l,
-		defaults:        defaults,
-		mmdsChan:        mmdsChan,
-		isNotFC:         isNotFC,
-		mmdsClient:      &DefaultMMDSClient{},
-		lastSetTime:     utils.NewAtomicMax(),
-		accessToken:     &SecureToken{},
-		caCertInstaller: host.NewCACertInstaller(l),
-		workloadFreezer: workloadFreezer,
-		memory:          workloadFreezer.MemoryProtection(),
-		logFlusher:      logFlusher,
-		initLock:        semaphore.NewWeighted(1),
-		fsFreezer:       fsfreeze.New(),
-		fsFreezeLock:    semaphore.NewWeighted(1),
+		logger:             l,
+		defaults:           defaults,
+		mmdsChan:           mmdsChan,
+		isNotFC:            isNotFC,
+		mmdsClient:         &DefaultMMDSClient{},
+		lastSetTime:        utils.NewAtomicMax(),
+		setSystemTime:      setSystemTime,
+		now:                time.Now,
+		accessToken:        &SecureToken{},
+		caCertInstaller:    host.NewCACertInstaller(l),
+		workloadFreezer:    workloadFreezer,
+		memory:             workloadFreezer.MemoryProtection(),
+		oomKills:           oomKills,
+		logFlusher:         logFlusher,
+		initLock:           semaphore.NewWeighted(1),
+		fsFreezer:          fsfreeze.New(),
+		fsFreezeLock:       semaphore.NewWeighted(1),
+		cpuManager:         cpuManager,
+		nfs:                execNFSMounter{},
+		nfsMountRetryFor:   nfsMountTimeout,
+		nfsMountRetryDelay: nfsMountRetryDelay,
 	}
+}
+
+func (a *API) RunCACertCleanup(ctx context.Context) {
+	a.caCertInstaller.Run(ctx)
 }
 
 func (a *API) GetHealth(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +209,17 @@ func (a *API) GetMetrics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 
 		return
+	}
+	cpu := a.cpuManager.Status()
+	metrics.CPUPossible = uint32(cpu.Possible)
+	metrics.CPUTarget = uint32(cpu.Target)
+	metrics.CPUTargetAttempts = uint32(cpu.Attempts)
+	metrics.CPUWritePendingMs = uint64(cpu.WritePending.Milliseconds())
+
+	if a.oomKills != nil {
+		if kills, ok := a.oomKills.Kills(); ok {
+			metrics.OomKills = &kills
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

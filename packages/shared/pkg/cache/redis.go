@@ -182,6 +182,17 @@ func (rc *RedisCache[V]) Set(ctx context.Context, key string, value V) {
 //     callback is capped at RefreshTimeout, which is strictly less than the
 //     lock TTL the wait is derived from.
 func (rc *RedisCache[V]) Delete(ctx context.Context, key string) {
+	if err := rc.TryDelete(ctx, key); err != nil {
+		logger.L().Warn(ctx, "RedisCache: Redis DEL error",
+			zap.String("key", rc.RedisKey(key)),
+			zap.Error(err))
+	}
+}
+
+// TryDelete is Delete for callers whose correctness depends on the entry being
+// gone: a failed DEL is returned so the caller can retry instead of reporting a
+// stale entry as evicted.
+func (rc *RedisCache[V]) TryDelete(ctx context.Context, key string) error {
 	// Wait past a wedged writer's lock auto-expiry (LockTTL) so lock
 	// acquisition can only fail on Redis/lock-service errors or ctx expiry,
 	// not on writer contention.
@@ -198,12 +209,11 @@ func (rc *RedisCache[V]) Delete(ctx context.Context, key string) {
 	ctx, cancel := context.WithTimeout(ctx, rc.config.RedisTimeout)
 	defer cancel()
 
-	redisKey := rc.RedisKey(key)
-	if err := rc.config.RedisClient.Del(ctx, redisKey).Err(); err != nil {
-		logger.L().Warn(ctx, "RedisCache: Redis DEL error",
-			zap.String("key", redisKey),
-			zap.Error(err))
+	if err := rc.config.RedisClient.Del(ctx, rc.RedisKey(key)).Err(); err != nil {
+		return fmt.Errorf("delete %s: %w", rc.RedisKey(key), err)
 	}
+
+	return nil
 }
 
 // DeleteByPrefix removes all keys matching the given prefix from Redis.

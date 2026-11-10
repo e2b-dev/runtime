@@ -548,7 +548,7 @@ const file_chunks_proto_rawDesc = "" +
 	"\x10GetBuildFileSize\x12\x18.GetBuildFileSizeRequest\x1a\x19.GetBuildFileSizeResponse\x12M\n" +
 	"\x12GetBuildFileExists\x12\x1a.GetBuildFileExistsRequest\x1a\x1b.GetBuildFileExistsResponse\x12R\n" +
 	"\x13ReadAtBuildSeekable\x12\x1b.ReadAtBuildSeekableRequest\x1a\x1c.ReadAtBuildSeekableResponse0\x01\x12=\n" +
-	"\fGetBuildBlob\x12\x14.GetBuildBlobRequest\x1a\x15.GetBuildBlobResponse0\x01B/Z-https://github.com/e2b-dev/infra/orchestratorb\x06proto3"
+	"\fGetBuildBlob\x12\x14.GetBuildBlobRequest\x1a\x15.GetBuildBlobResponse0\x01B@Z>github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestratorb\x06proto3"
 
 var (
 	file_chunks_proto_rawDescOnce sync.Once

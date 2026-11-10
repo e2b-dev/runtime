@@ -47,8 +47,9 @@ func (c CachePaths) CacheMetadata() string {
 	return filepath.Join(c.cacheDir(), MetadataName)
 }
 
+// cacheDir is one flat directory per instance, so Close leaves no parent behind.
 func (c CachePaths) cacheDir() string {
-	return filepath.Join(c.config.TemplateCacheDir, c.BuildID, "cache", c.CacheIdentifier)
+	return filepath.Join(c.config.TemplateCacheDir, c.BuildID+"-"+c.CacheIdentifier)
 }
 
 func (c CachePaths) Close() error {

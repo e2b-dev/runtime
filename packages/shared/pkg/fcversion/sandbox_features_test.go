@@ -45,3 +45,26 @@ func TestE2BSnapshotFeatures(t *testing.T) {
 		})
 	}
 }
+
+// v1.14-0.3.0 is the first release whose PUT /cpu-config accepts x86_tsc_khz.
+func TestHasTscKhzTemplate(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"v1.14-0.3.0", true},
+		{"v1.14-0.3.1", true},
+		{"v1.14-1.0.0", true},
+		{"v1.14-0.2.0", false},
+		{"v1.14.1_431f1fc", false}, // legacy: never qualifies
+		{"v1.10.1", false},         // bare upstream dev build
+	}
+
+	for _, tc := range cases {
+		info, err := New(tc.version)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, info.HasTscKhzTemplate(), "HasTscKhzTemplate(%s)", tc.version)
+	}
+}

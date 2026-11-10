@@ -19,22 +19,24 @@ FOR UPDATE;
 -- rather than against what it read.
 -- name: ApplyProjectLimitsProjection :one
 WITH changed AS (
-    INSERT INTO projection.project_limits (project_id, revision)
+    INSERT INTO projection.project_limits (project_id, revision, decided_at)
     VALUES (
         sqlc.arg(project_id)::uuid,
-        sqlc.arg(revision)::bigint
+        sqlc.arg(revision)::bigint,
+        sqlc.narg(decided_at)::timestamptz
     )
     ON CONFLICT (project_id) DO UPDATE
     SET
         revision = EXCLUDED.revision,
+        decided_at = EXCLUDED.decided_at,
         updated_at = now()
     WHERE projection.project_limits.revision < EXCLUDED.revision
     RETURNING project_id
 )
 SELECT EXISTS (SELECT 1 FROM changed) AS applied;
 
--- UpsertProjectLimits records a project's effective limits, which the
--- team_limits view reads in preference to the tier-plus-addons arithmetic.
+-- UpsertProjectLimits records a project's effective limits, which the team
+-- lookups read in preference to default_limits.
 --
 -- Every column is supplied on every call: the caller sends a complete set, so
 -- there is no partial update to merge and no prior row to read first.
@@ -58,6 +60,9 @@ INSERT INTO public.project_limits (
     default_free_disk_size_mb,
     max_disk_size_mb,
     max_free_disk_size_mb,
+    api_team_rps_list,
+    api_team_rps_delete,
+    max_secrets,
     updated_at
 ) VALUES (
     sqlc.arg(team_id)::uuid,
@@ -71,6 +76,9 @@ INSERT INTO public.project_limits (
     sqlc.arg(default_free_disk_size_mb)::bigint,
     sqlc.arg(max_free_disk_size_mb)::bigint,
     sqlc.arg(max_free_disk_size_mb)::bigint,
+    sqlc.arg(api_team_rps_list)::bigint,
+    sqlc.arg(api_team_rps_delete)::bigint,
+    sqlc.arg(max_secrets)::bigint,
     now()
 )
 ON CONFLICT (team_id) DO UPDATE SET
@@ -84,4 +92,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     default_free_disk_size_mb  = EXCLUDED.default_free_disk_size_mb,
     max_disk_size_mb           = EXCLUDED.max_disk_size_mb,
     max_free_disk_size_mb      = EXCLUDED.max_free_disk_size_mb,
+    api_team_rps_list          = EXCLUDED.api_team_rps_list,
+    api_team_rps_delete        = EXCLUDED.api_team_rps_delete,
+    max_secrets                = EXCLUDED.max_secrets,
     updated_at                 = now();

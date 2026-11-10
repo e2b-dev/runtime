@@ -15,6 +15,7 @@
 package chrooted
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -39,6 +40,11 @@ type Chrooted struct {
 	// an unrelated open, while an operation still resolves against it.
 	mu     sync.RWMutex
 	rootFD int
+
+	// closeDone is published after the original root descriptor close finishes.
+	// Waiters never initiate or retry that close.
+	closeDone chan struct{}
+	closeErr  error
 }
 
 type Option func(*Chrooted)
@@ -120,6 +126,7 @@ func Chroot(source string, opts ...Option) (*Chrooted, error) {
 	fs := &Chrooted{
 		ActualRoot: source,
 		rootFD:     rootFD,
+		closeDone:  make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -156,42 +163,83 @@ func (fs *Chrooted) acquire() (release func(), err error) {
 // ErrCloseTimeout and the descriptor is released when the last operation
 // completes.
 func (fs *Chrooted) Close() error {
+	return fs.closeWithTimeout(closeDrainTimeout)
+}
+
+// CloseAsync stops admission and starts the original descriptor close without
+// waiting for in-flight operations. WaitClosed joins that close and its result.
+func (fs *Chrooted) CloseAsync() error {
 	if !fs.closed.CompareAndSwap(false, true) {
 		return fmt.Errorf("%w: %q has already been closed", ErrClosed, fs.ActualRoot)
 	}
 
-	// Nothing in flight is the common case (the volume service opens a tree
-	// per request): release the root here, with no goroutine or timer.
 	if fs.mu.TryLock() {
-		err := unix.Close(fs.rootFD)
+		result := fs.closeResult(unix.Close(fs.rootFD))
 		fs.mu.Unlock()
 
-		return fs.closeResult(err)
+		return result
 	}
 
-	done := make(chan error, 1)
 	go func() {
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
 
-		done <- unix.Close(fs.rootFD)
+		fs.closeResult(unix.Close(fs.rootFD))
 	}()
 
-	timeout := time.NewTimer(closeDrainTimeout)
+	return nil
+}
+
+func (fs *Chrooted) closeWithTimeout(drainTimeout time.Duration) error {
+	if err := fs.CloseAsync(); err != nil {
+		return err
+	}
+	select {
+	case <-fs.closeDone:
+		return fs.closeErr
+	default:
+	}
+
+	timeout := time.NewTimer(drainTimeout)
 	defer timeout.Stop()
 
 	select {
-	case err := <-done:
-		return fs.closeResult(err)
+	case <-fs.closeDone:
+		return fs.closeErr
 	case <-timeout.C:
 		return fmt.Errorf("%w: %q", ErrCloseTimeout, fs.ActualRoot)
 	}
 }
 
-func (fs *Chrooted) closeResult(err error) error {
-	if err != nil {
-		return fmt.Errorf("failed to close root %q: %w", fs.ActualRoot, err)
+// WaitClosed waits for the original root descriptor close result. It does not
+// initiate Close; cancellation only stops this caller's wait. A Close that
+// returned ErrCloseTimeout may finish later, while a second Close still
+// returns ErrClosed. This covers the root descriptor only, not open files,
+// guest state, network slots, or durable volume deletion.
+func (fs *Chrooted) WaitClosed(ctx context.Context) error { //nolint:contextcheck // nil is explicitly supported; non-nil callers keep their original context
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	return nil
+	select {
+	case <-fs.closeDone:
+		return fs.closeErr
+	default:
+	}
+	select {
+	case <-fs.closeDone:
+		return fs.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (fs *Chrooted) closeResult(err error) error {
+	if err != nil {
+		err = fmt.Errorf("failed to close root %q: %w", fs.ActualRoot, err)
+	}
+	fs.closeErr = err
+	close(fs.closeDone)
+
+	return err
 }

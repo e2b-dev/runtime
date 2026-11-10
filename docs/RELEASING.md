@@ -12,7 +12,6 @@ appear in this repository.
 | api | `packages/api` | images `us-docker.pkg.dev/e2b-artifacts/api/api` and `…/api/db-migrator` (released as one unit) |
 | client-proxy | `packages/client-proxy` | image `us-docker.pkg.dev/e2b-artifacts/client-proxy/client-proxy` |
 | clickhouse-migrator | `packages/clickhouse` | image `us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator` |
-| dashboard-api | `packages/dashboard-api` | image `us-docker.pkg.dev/e2b-artifacts/dashboard-api/dashboard-api` |
 | embed | `embed` | images `us-docker.pkg.dev/e2b-artifacts/embed/tools`, `…/embed/node-e2b` and `…/embed/seed` (released as one unit; the release moves every platform pin in `embed/compose/.env` and `embed/kubernetes/kustomization.yaml` — api, db-migrator, client-proxy, clickhouse-migrator, orchestrator and these three — to its own version) |
 | envd | `packages/envd` | binary `https://storage.googleapis.com/e2b-artifact-binaries/envd/v<version>/envd` |
 | nomad-nodepool-apm | `packages/nomad-nodepool-apm` | binaries `nomad-nodepool-apm`, `nomad-deployment-aware-target` under `…/nomad-nodepool-apm/v<version>/` |
@@ -29,12 +28,14 @@ Two identities:
    the patch. The timestamp sits in the patch slot, so these tags sort
    above every `MAJOR.MINOR.x` release — pin exact tags, not "highest".
 2. Conventional commits (`feat:`, `fix:`) accumulate into a release PR.
-   api, client-proxy, clickhouse-migrator, dashboard-api, embed,
+   api, client-proxy, clickhouse-migrator,
    nomad-nodepool-apm and orchestrator share one coordinated SemVer with
    the rest of the platform: merging that PR tags each of them
-   `<component>-vX.Y.Z` at the same number, with changelog. envd is
-   versioned on its own and has its own release PR. (The same commits
-   arrive here through the copybara export.)
+   `<component>-vX.Y.Z` at the same number, with changelog. embed has
+   its own release PR, opened once the platform release is tagged, at
+   that same number. envd is versioned on its own and has its own
+   release PR. (The same commits arrive here through the copybara
+   export.)
 3. Either tag is a git tag only — no GitHub Release. The tag push
    publishes to `e2b-artifacts` — images as `:v<version>`, binaries as
    versioned objects in the public `e2b-artifact-binaries` bucket at

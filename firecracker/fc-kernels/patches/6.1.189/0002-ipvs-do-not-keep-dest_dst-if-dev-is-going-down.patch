@@ -1,0 +1,124 @@
+From 0b60fb44247eab81e7a9490c38ca62c7120eec75 Mon Sep 17 00:00:00 2001
+From: Julian Anastasov <ja@ssi.bg>
+Date: Sat, 14 Feb 2026 16:58:50 +0200
+Subject: [PATCH] ipvs: do not keep dest_dst if dev is going down
+
+[ Upstream commit 8fde939b0206afc1d5846217a01a16b9bc8c7896 ]
+
+There is race between the netdev notifier ip_vs_dst_event()
+and the code that caches dst with dev that is going down.
+As the FIB can be notified for the closed device after our
+handler finishes, it is possible valid route to be returned
+and cached resuling in a leaked dev reference until the dest
+is not removed.
+
+To prevent new dest_dst to be attached to dest just after the
+handler dropped the old one, add a netif_running() check
+to make sure the notifier handler is not currently running
+for device that is closing.
+
+Fixes: 7a4f0761fce3 ("IPVS: init and cleanup restructuring")
+Signed-off-by: Julian Anastasov <ja@ssi.bg>
+Signed-off-by: Florian Westphal <fw@strlen.de>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/ipvs/ip_vs_xmit.c | 46 ++++++++++++++++++++++++++-------
+ 1 file changed, 36 insertions(+), 10 deletions(-)
+
+diff --git a/net/netfilter/ipvs/ip_vs_xmit.c b/net/netfilter/ipvs/ip_vs_xmit.c
+index 79d6e3b4e2c03..b424ebd7235fe 100644
+--- a/net/netfilter/ipvs/ip_vs_xmit.c
++++ b/net/netfilter/ipvs/ip_vs_xmit.c
+@@ -306,6 +306,12 @@ static inline bool decrement_ttl(struct netns_ipvs *ipvs,
+ 	return true;
+ }
+ 
++/* rt has device that is down */
++static bool rt_dev_is_down(const struct net_device *dev)
++{
++	return dev && !netif_running(dev);
++}
++
+ /* Get route to destination or remote server */
+ static int
+ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
+@@ -321,9 +327,11 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
+ 
+ 	if (dest) {
+ 		dest_dst = __ip_vs_dst_check(dest);
+-		if (likely(dest_dst))
++		if (likely(dest_dst)) {
+ 			rt = (struct rtable *) dest_dst->dst_cache;
+-		else {
++			if (ret_saddr)
++				*ret_saddr = dest_dst->dst_saddr.ip;
++		} else {
+ 			dest_dst = ip_vs_dest_dst_alloc();
+ 			spin_lock_bh(&dest->dst_lock);
+ 			if (!dest_dst) {
+@@ -339,14 +347,22 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
+ 				ip_vs_dest_dst_free(dest_dst);
+ 				goto err_unreach;
+ 			}
+-			__ip_vs_dst_set(dest, dest_dst, &rt->dst, 0);
++			/* It is forbidden to attach dest->dest_dst if
++			 * device is going down.
++			 */
++			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)))
++				__ip_vs_dst_set(dest, dest_dst, &rt->dst, 0);
++			else
++				noref = 0;
+ 			spin_unlock_bh(&dest->dst_lock);
+ 			IP_VS_DBG(10, "new dst %pI4, src %pI4, refcnt=%d\n",
+ 				  &dest->addr.ip, &dest_dst->dst_saddr.ip,
+ 				  atomic_read(&rt->dst.__refcnt));
++			if (ret_saddr)
++				*ret_saddr = dest_dst->dst_saddr.ip;
++			if (!noref)
++				ip_vs_dest_dst_free(dest_dst);
+ 		}
+-		if (ret_saddr)
+-			*ret_saddr = dest_dst->dst_saddr.ip;
+ 	} else {
+ 		noref = 0;
+ 
+@@ -483,9 +499,11 @@ __ip_vs_get_out_rt_v6(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
+ 
+ 	if (dest) {
+ 		dest_dst = __ip_vs_dst_check(dest);
+-		if (likely(dest_dst))
++		if (likely(dest_dst)) {
+ 			rt = dst_rt6_info(dest_dst->dst_cache);
+-		else {
++			if (ret_saddr)
++				*ret_saddr = dest_dst->dst_saddr.in6;
++		} else {
+ 			u32 cookie;
+ 
+ 			dest_dst = ip_vs_dest_dst_alloc();
+@@ -506,14 +524,22 @@ __ip_vs_get_out_rt_v6(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
+ 			}
+ 			rt = dst_rt6_info(dst);
+ 			cookie = rt6_get_cookie(rt);
+-			__ip_vs_dst_set(dest, dest_dst, &rt->dst, cookie);
++			/* It is forbidden to attach dest->dest_dst if
++			 * device is going down.
++			 */
++			if (!rt_dev_is_down(dst_dev_rcu(&rt->dst)))
++				__ip_vs_dst_set(dest, dest_dst, &rt->dst, cookie);
++			else
++				noref = 0;
+ 			spin_unlock_bh(&dest->dst_lock);
+ 			IP_VS_DBG(10, "new dst %pI6, src %pI6, refcnt=%d\n",
+ 				  &dest->addr.in6, &dest_dst->dst_saddr.in6,
+ 				  atomic_read(&rt->dst.__refcnt));
++			if (ret_saddr)
++				*ret_saddr = dest_dst->dst_saddr.in6;
++			if (!noref)
++				ip_vs_dest_dst_free(dest_dst);
+ 		}
+-		if (ret_saddr)
+-			*ret_saddr = dest_dst->dst_saddr.in6;
+ 	} else {
+ 		noref = 0;
+ 		dst = __ip_vs_route_output_v6(net, daddr, ret_saddr, do_xfrm,

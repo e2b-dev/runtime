@@ -84,7 +84,10 @@ func (lb *LayerExecutor) BuildLayer(
 	ctx, childSpan := tracer.Start(ctx, "run-in-sandbox")
 	defer childSpan.End()
 
-	localTemplate, err := cmd.SourceTemplate.Get(ctx, lb.templateCache)
+	localTemplate, releaseTemplate, err := cmd.SourceTemplate.Get(ctx, lb.templateCache)
+	// Deferred first so it runs last, after the sandbox built on the template
+	// has been closed.
+	defer releaseTemplate()
 	if err != nil {
 		return metadata.Template{}, fmt.Errorf("get template snapshot: %w", err)
 	}
@@ -97,9 +100,8 @@ func (lb *LayerExecutor) BuildLayer(
 	defer sbx.Close(ctx)
 
 	defer func() {
-		closeErr := lb.proxy.RemoveFromPool(sbx.LifecycleID)
+		closeErr := lb.proxy.RemoveFromPool(ctx, sbx.LifecycleID)
 		if closeErr != nil {
-			// Errors here will be from forcefully closing the connections, so we can ignore them—they will at worst timeout on their own.
 			lb.logger.Warn(ctx, "errors when manually closing connections to sandbox", zap.Error(closeErr))
 		} else {
 			lb.logger.Debug(
@@ -127,6 +129,23 @@ func (lb *LayerExecutor) BuildLayer(
 		}
 	}
 
+	// A cold-booted guest answers through envd while systemd is still starting
+	// units, and a snapshot taken then resumes with PID 1 unresponsive. Settling
+	// before the action also lets the action's disk sync capture boot's writes.
+	if _, coldBooted := cmd.SandboxCreator.(*CreateSandbox); coldBooted {
+		state, settleErr := sandboxtools.WaitForInitToSettle(ctx, lb.proxy, sbx.Runtime.SandboxID)
+		if settleErr != nil || sandboxtools.StillBooting(state) {
+			lb.logger.Warn(
+				ctx,
+				"guest init did not settle before the build step",
+				logger.WithSandboxID(sbx.Runtime.SandboxID),
+				logger.WithExecutionID(sbx.Runtime.ExecutionID),
+				zap.String("systemd_state", state),
+				zap.Error(settleErr),
+			)
+		}
+	}
+
 	// Execute the action using the executor
 	meta, err := cmd.ActionExecutor.Execute(ctx, sbx, cmd.CurrentLayer)
 	if err != nil {
@@ -147,7 +166,8 @@ func (lb *LayerExecutor) BuildLayer(
 		KernelVersion:      sbx.Config.FirecrackerConfig.KernelVersion,
 		FirecrackerVersion: sbx.Config.FirecrackerConfig.FirecrackerVersion,
 	})
-	err = lb.PauseAndUpload(
+	// Only the paused metadata is returned, so dropping it does not compile.
+	paused, err := lb.PauseAndUpload(
 		ctx,
 		userLogger,
 		sbx,
@@ -159,7 +179,7 @@ func (lb *LayerExecutor) BuildLayer(
 		return metadata.Template{}, fmt.Errorf("pause and upload: %w", err)
 	}
 
-	return meta, nil
+	return paused, nil
 }
 
 // updateEnvdInSandbox updates the envd binary in the sandbox to the latest version.
@@ -235,9 +255,8 @@ fi`,
 
 	// Remove the proxy client to prevent reuse of broken connection, because we restarted envd server inside of the sandbox.
 	// This might not be necessary if we don't use keepalives for the proxy.
-	err = lb.proxy.RemoveFromPool(sbx.LifecycleID)
+	err = lb.proxy.RemoveFromPool(ctx, sbx.LifecycleID)
 	if err != nil {
-		// Errors here will be from forcefully closing the connections, so we can ignore them—they will at worst timeout on their own.
 		lb.logger.Warn(ctx, "errors when manually closing connections to sandbox after restarting envd", zap.Error(err))
 	}
 
@@ -268,7 +287,7 @@ func (lb *LayerExecutor) PauseAndUpload(
 	hash string,
 	meta metadata.Template,
 	buildOrigin storage.ObjectOrigin,
-) (e error) {
+) (_ metadata.Template, e error) {
 	ctx, childSpan := tracer.Start(ctx, "pause-and-upload")
 	defer childSpan.End()
 
@@ -279,10 +298,21 @@ func (lb *LayerExecutor) PauseAndUpload(
 		sandbox.SnapshotUseCaseBuild,
 	)
 	if err != nil {
-		return fmt.Errorf("error processing vm: %w", err)
+		return metadata.Template{}, fmt.Errorf("error processing vm: %w", err)
 	}
 
-	return lb.UploadSnapshot(ctx, userLogger, snapshot, hash, meta, buildOrigin)
+	if err := lb.UploadSnapshot(ctx, userLogger, snapshot, hash, meta, buildOrigin); err != nil {
+		return metadata.Template{}, err
+	}
+
+	return pausedLayerMetadata(meta, snapshot), nil
+}
+
+// pausedLayerMetadata is the metadata a paused layer hands the next phase: meta
+// with the envd version the pause recorded (RunningEnvdVersion), which
+// NewVersionTemplate drops and the build's result reads.
+func pausedLayerMetadata(meta metadata.Template, snapshot *sandbox.Snapshot) metadata.Template {
+	return meta.WithRunningEnvdVersion(snapshot.Metadata.RunningEnvdVersion)
 }
 
 // UploadSnapshot caches and uploads a snapshot produced without a running VM.
@@ -297,9 +327,10 @@ func (lb *LayerExecutor) UploadSnapshot(
 	userLogger.Debug(ctx, fmt.Sprintf("Adding layer to cache: %s", meta.Template.BuildID))
 
 	// Add snapshot to template cache so it can be used immediately
-	err := lb.templateCache.AddSnapshot(
+	finishUpload, err := lb.templateCache.AddSnapshot(
 		context.WithoutCancel(ctx),
 		meta.Template.BuildID,
+		sbxtemplate.SnapshotLineage{Origin: buildOrigin},
 		snapshot.MemorySnapshot.DiffHeader,
 		snapshot.RootfsDiffHeader,
 		snapshot.Snapfile,
@@ -322,7 +353,7 @@ func (lb *LayerExecutor) UploadSnapshot(
 
 	objectMetadata := lb.BuildContext.Config.ObjectMetadata(buildOrigin)
 
-	upload, err := sandbox.NewUpload(ctx, lb.uploads, snapshot, lb.templateStorage, lb.compressConfig, lb.ff, storage.UseCaseBuild, objectMetadata)
+	upload, err := sandbox.NewUpload(ctx, lb.uploads, snapshot, lb.templateStorage, lb.compressConfig, lb.ff, storage.UseCaseBuild, objectMetadata, finishUpload)
 	if err != nil {
 		return fmt.Errorf("register upload: %w", err)
 	}
@@ -354,7 +385,7 @@ func (lb *LayerExecutor) UploadSnapshot(
 		}()
 
 		// Signal even on error so child layers waiting on this build can abort.
-		defer func() { upload.Finish(ctx, uploadErr) }()
+		defer func() { endLayerUpload(ctx, upload, uploadErr) }()
 
 		if err := upload.Run(ctx); err != nil {
 			return fmt.Errorf("error uploading snapshot: %w", err)
@@ -386,4 +417,16 @@ func (lb *LayerExecutor) UploadSnapshot(
 	})
 
 	return nil
+}
+
+// endLayerUpload ends a build layer's upload, returning its template cache pin.
+// A failed layer fails its build, so nothing will read it: it is abandoned
+// rather than finished.
+func endLayerUpload(ctx context.Context, upload *sandbox.Upload, uploadErr error) {
+	if uploadErr != nil {
+		upload.Abandon(ctx, uploadErr)
+
+		return
+	}
+	upload.Finish(ctx, nil)
 }

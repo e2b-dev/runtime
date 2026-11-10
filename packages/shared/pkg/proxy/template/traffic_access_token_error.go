@@ -3,17 +3,16 @@ package template
 import (
 	_ "embed"
 	"fmt"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_traffic_access_token_missing_error.html
 var missingTrafficAccessTokenErrHtml string
-var missingTrafficAccessTokenErrHtmlTemplate = template.Must(template.New("missingTrafficAccessTokenErrHtml").Parse(missingTrafficAccessTokenErrHtml))
+var missingTrafficAccessTokenErrHtmlTemplate = newBrowserPage("missingTrafficAccessTokenErrHtml", missingTrafficAccessTokenErrHtml)
 
 //go:embed browser_traffic_access_token_invalid_error.html
 var invalidTrafficAccessTokenErrHtml string
-var invalidTrafficAccessTokenErrHtmlTemplate = template.Must(template.New("invalidTrafficAccessTokenErrHtml").Parse(invalidTrafficAccessTokenErrHtml))
+var invalidTrafficAccessTokenErrHtmlTemplate = newBrowserPage("invalidTrafficAccessTokenErrHtml", invalidTrafficAccessTokenErrHtml)
 
 type trafficAccessTokenErrData struct {
 	SandboxId string `json:"sandboxId"`

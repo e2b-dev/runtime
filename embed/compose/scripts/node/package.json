@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "e2b": "2.46.1"
+    "e2b": "2.61.0"
   }
 }

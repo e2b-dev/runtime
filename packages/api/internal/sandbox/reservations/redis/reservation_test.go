@@ -36,15 +36,68 @@ func setupTestReservationStorage(t *testing.T) (*ReservationStorage, goredis.Uni
 	go storageInstance.Start(t.Context())
 	t.Cleanup(func() { storageInstance.Close(context.WithoutCancel(t.Context())) })
 
-	storage := NewReservationStorage(client, storageInstance.Notifier())
+	notifier := storageInstance.Notifier()
+	waitForNotifierLive(t, notifier)
+
+	storage := NewReservationStorage(client, &subscribeCountingNotifier{Notifier: notifier})
 
 	return storage, client
+}
+
+// waitForNotifierLive blocks until a publish reaches an in-process subscriber.
+// Storage.Start subscribes to Redis asynchronously; without this, a test's
+// first publish can land before the subscription and be dropped.
+func waitForNotifierLive(t *testing.T, notifier Notifier) {
+	t.Helper()
+
+	probeKey := "notifier-probe:" + uuid.NewString()
+	ch, cleanup := notifier.Subscribe(probeKey)
+	defer cleanup()
+
+	require.Eventually(t, func() bool {
+		notifier.Publish(t.Context(), probeKey)
+
+		select {
+		case <-ch:
+			return true
+		case <-time.After(50 * time.Millisecond):
+			return false
+		}
+	}, 10*time.Second, time.Millisecond, "storage notifier never delivered a publish")
+}
+
+// subscribeCountingNotifier counts Subscribe calls so a test can wait for its
+// waiters to register before publishing.
+type subscribeCountingNotifier struct {
+	Notifier
+
+	subscribed atomic.Int64
+}
+
+func (n *subscribeCountingNotifier) Subscribe(routingKey string) (<-chan struct{}, func()) {
+	ch, cleanup := n.Notifier.Subscribe(routingKey)
+	n.subscribed.Add(1)
+
+	return ch, cleanup
+}
+
+// waitForSubscribers blocks until at least count waiters have subscribed on a
+// storage built by setupTestReservationStorage.
+func waitForSubscribers(t *testing.T, storage *ReservationStorage, count int64) {
+	t.Helper()
+
+	notifier, ok := storage.notifier.(*subscribeCountingNotifier)
+	require.True(t, ok, "storage was not built by setupTestReservationStorage")
+
+	require.Eventually(t, func() bool {
+		return notifier.subscribed.Load() >= count
+	}, 5*time.Second, time.Millisecond, "waiters did not subscribe")
 }
 
 func newTestSandboxStorage(t *testing.T, client goredis.UniversalClient) *storage_redis.Storage {
 	t.Helper()
 
-	storageInstance, err := storage_redis.NewStorage(client, noop.NewMeterProvider(), nil)
+	storageInstance, err := storage_redis.NewStorage(client, noop.NewMeterProvider())
 	require.NoError(t, err)
 
 	return storageInstance
@@ -497,7 +550,7 @@ func TestReservation_StalePendingCleanup(t *testing.T) {
 	pendingSetKey := getPendingSetKey(teamID.String())
 
 	// Simulate a crashed API instance by manually inserting a stale pending entry
-	// with a timestamp well in the past (3 minutes ago, beyond the 2-minute staleTTL)
+	// with a timestamp well in the past (3 minutes ago, beyond the 90-second StaleTTL)
 	staleTimestamp := float64(time.Now().Add(-3 * time.Minute).Unix())
 	err := client.ZAdd(t.Context(), pendingSetKey, goredis.Z{
 		Score:  staleTimestamp,

@@ -31,6 +31,18 @@ func sandboxLifecycleToAPI(autoPause bool, autoResumeConfig *dbtypes.SandboxAuto
 	}
 }
 
+// sandboxPauseModeToAPI names what a paused sandbox's snapshot holds. Rows
+// from before filesystem-only pauses existed omit the flag, which decodes to a
+// full snapshot, the only kind there was.
+func sandboxPauseModeToAPI(config *dbtypes.PausedSandboxConfig) *api.SandboxPauseMode {
+	pauseMode := api.Full
+	if config != nil && config.FilesystemOnly {
+		pauseMode = api.Filesystem
+	}
+
+	return &pauseMode
+}
+
 func dbNetworkConfigToAPI(network *dbtypes.SandboxNetworkConfig) *api.SandboxNetworkConfig {
 	if network == nil {
 		return nil
@@ -54,6 +66,8 @@ func dbNetworkConfigToAPI(network *dbtypes.SandboxNetworkConfig) *api.SandboxNet
 		if egress.DeniedAddresses != nil {
 			result.DenyOut = &egress.DeniedAddresses
 		}
+
+		result.DnsServers = egress.DnsServers
 
 		if egress.Rules != nil {
 			apiRules := make(map[string][]api.SandboxNetworkRule, len(egress.Rules))
@@ -86,6 +100,16 @@ func dbNetworkConfigToAPI(network *dbtypes.SandboxNetworkConfig) *api.SandboxNet
 			if egress.EgressProxyUsername != "" {
 				username := egress.EgressProxyUsername
 				proxyCfg.Username = &username
+			}
+			// The CA bundle is omitted too: the caller supplied it, and it is
+			// multi-kilobyte.
+			if t := egress.EgressProxyTLS; t != nil && t.Enabled {
+				tlsCfg := &api.SandboxEgressProxyTLSConfig{Enabled: true}
+				if t.ServerName != "" {
+					serverName := t.ServerName
+					tlsCfg.ServerName = &serverName
+				}
+				proxyCfg.Tls = tlsCfg
 			}
 			result.EgressProxy = proxyCfg
 		}
@@ -243,24 +267,31 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	pausedAlias := firstAlias(lastSnapshot.Aliases)
 
 	sandbox := api.SandboxDetail{
-		ClientID:            consts.ClientID, // for backwards compatibility we need to return a client id
-		TemplateID:          lastSnapshot.Snapshot.BaseEnvID,
-		SandboxID:           lastSnapshot.Snapshot.SandboxID,
-		StartedAt:           lastSnapshot.Snapshot.SandboxStartedAt.Time,
-		CpuCount:            cpuCount,
-		MemoryMB:            memoryMB,
-		DiskSizeMB:          diskSize,
-		EndAt:               lastSnapshot.EnvBuild.CreatedAt, // Latest build created_at represents last pause time
-		State:               api.Paused,
-		EnvdVersion:         envdVersion,
-		EnvdAccessToken:     sbxAccessToken,
-		AllowInternetAccess: lastSnapshot.Snapshot.AllowInternetAccess,
-		Domain:              nil,
-		Network:             dbNetworkConfigToAPI(networkConfig),
-		Lifecycle:           sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
+		ClientID:                consts.ClientID, // for backwards compatibility we need to return a client id
+		TemplateID:              lastSnapshot.Snapshot.BaseEnvID,
+		SandboxID:               lastSnapshot.Snapshot.SandboxID,
+		StartedAt:               lastSnapshot.Snapshot.SandboxStartedAt.Time,
+		CpuCount:                cpuCount,
+		MemoryMB:                memoryMB,
+		DiskSizeMB:              diskSize,
+		EndAt:                   lastSnapshot.EnvBuild.CreatedAt, // Latest build created_at represents last pause time
+		State:                   api.Paused,
+		EnvdVersion:             envdVersion,
+		EnvdUnresponsiveAtPause: envdUnresponsiveAtPause(lastSnapshot.EnvBuild.EnvdUnresponsive),
+		EnvdAccessToken:         sbxAccessToken,
+		AllowInternetAccess:     lastSnapshot.Snapshot.AllowInternetAccess,
+		Domain:                  nil,
+		Network:                 dbNetworkConfigToAPI(networkConfig),
+		Lifecycle:               sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
+		PauseMode:               sandboxPauseModeToAPI(lastSnapshot.Snapshot.Config),
 	}
 
+	// Always set, even to "", so a paused sandbox answers like a running one.
 	sandbox.Alias = &pausedAlias
+
+	if lastSnapshot.Snapshot.Config != nil {
+		sandbox.VolumeMounts = convertFromDBMountsToAPIMounts(lastSnapshot.Snapshot.Config.VolumeMounts)
+	}
 
 	if lastSnapshot.Snapshot.Metadata != nil {
 		metadata := api.SandboxMetadata(lastSnapshot.Snapshot.Metadata)

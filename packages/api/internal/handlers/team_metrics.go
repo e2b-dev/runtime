@@ -22,7 +22,7 @@ func (a *APIStore) GetTeamsTeamIDMetrics(c *gin.Context, teamID string, params a
 
 	authTeamID := auth.MustGetTeamID(c)
 
-	if teamID != authTeamID.String() {
+	if !teamIDMatches(authTeamID, teamID) {
 		telemetry.ReportError(ctx, "team ids mismatch", fmt.Errorf("you (%s) are not authorized to access this team's (%s) metrics", authTeamID, teamID), telemetry.WithTeamID(authTeamID.String()))
 		a.sendAPIStoreError(c, http.StatusForbidden, fmt.Sprintf("You (%s) are not authorized to access this team's (%s) metrics", authTeamID, teamID))
 
@@ -49,7 +49,7 @@ func (a *APIStore) GetTeamsTeamIDMetrics(c *gin.Context, teamID string, params a
 
 	step := clickhouseUtils.CalculateStep(start, end)
 
-	metrics, err := a.clickhouseStore.QueryTeamMetrics(ctx, teamID, start, end, step)
+	metrics, err := a.clickhouseStore.QueryTeamMetrics(ctx, authTeamID.String(), start, end, step)
 	if err != nil {
 		telemetry.ReportError(ctx, "error fetching team metrics", err, telemetry.WithTeamID(authTeamID.String()))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("error querying team metrics: %s", err))

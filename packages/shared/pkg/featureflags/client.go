@@ -2,11 +2,14 @@ package featureflags
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/launchdarkly/go-sdk-common/v3/ldreason"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	ldclient "github.com/launchdarkly/go-server-sdk/v7"
 	"github.com/launchdarkly/go-server-sdk/v7/interfaces"
@@ -24,11 +27,66 @@ var launchDarklyApiKey = os.Getenv("LAUNCH_DARKLY_API_KEY")
 
 const waitForInit = 5 * time.Second
 
+// Option configures NewClient and NewClientWithLogLevel.
+type Option func(*options)
+
+type options struct{ startOnInitTimeout bool }
+
+// WithStartOnInitTimeout keeps the client when LaunchDarkly has not answered
+// within waitForInit: it is Live and serves fallbacks until the stream
+// connects, then follows the flags. A permanent failure, such as a rejected
+// SDK key, still fails. Opt in only where running on fallbacks is safer than
+// not starting.
+func WithStartOnInitTimeout() Option {
+	return func(o *options) { o.startOnInitTimeout = true }
+}
+
+// undefinedDeploymentEnvironment is the place key of a process whose
+// configuration names no deployment environment. It keeps the context
+// present, so the gap is visible in LaunchDarkly instead of silent.
+const undefinedDeploymentEnvironment = "undefined"
+
+// Config identifies the place a process runs in. Services embed it in their
+// configuration struct, so the environment parser fills it with the rest.
+type Config struct {
+	// DeploymentEnvironment is the OpenTelemetry deployment.environment value
+	// of this process, for example "staging".
+	DeploymentEnvironment string `env:"DEPLOYMENT_ENVIRONMENT"`
+}
+
 type Client struct {
-	ld               *ldclient.LDClient
-	deploymentName   string
-	serviceName      string
-	contextProviders []ContextProvider
+	ld                    *ldclient.LDClient
+	static                bool
+	deploymentEnvironment string
+	serviceName           string
+	contextProviders      []ContextProvider
+}
+
+func newClient(ld *ldclient.LDClient, static bool, deploymentEnvironment, serviceName string) *Client {
+	if deploymentEnvironment == "" {
+		deploymentEnvironment = undefinedDeploymentEnvironment
+	}
+
+	return &Client{ld: ld, static: static, deploymentEnvironment: deploymentEnvironment, serviceName: serviceName}
+}
+
+// applicationInfo names the process to LaunchDarkly. Every deployment
+// environment reports into one LaunchDarkly environment, and the Monitoring
+// tab splits evaluations by application only, so the application ID carries
+// the environment next to the service name. An empty service name sends no
+// metadata: the SDK drops it without an ID anyway.
+func applicationInfo(deploymentEnvironment, serviceName, serviceVersion string) interfaces.ApplicationInfo {
+	if serviceName == "" {
+		return interfaces.ApplicationInfo{}
+	}
+	if deploymentEnvironment == "" {
+		deploymentEnvironment = undefinedDeploymentEnvironment
+	}
+
+	return interfaces.ApplicationInfo{
+		ApplicationID:      serviceName + "-" + deploymentEnvironment,
+		ApplicationVersion: serviceVersion,
+	}
 }
 
 // ContextProvider supplies an additional LD context on every flag evaluation.
@@ -55,29 +113,65 @@ func NewClientWithDatasource(source *ldtestdata.TestDataSource) (*Client, error)
 	return &Client{ld: ldClient}, nil
 }
 
-func NewClient() (*Client, error) {
-	if launchDarklyApiKey == "" {
-		return NewClientWithDatasource(launchDarklyOfflineStore)
+// NewClient creates a client that adds a DeploymentEnvironmentKind context and,
+// when serviceName is not empty, a ServiceKind context to every evaluation.
+// The same names, with serviceVersion, identify the process as a LaunchDarkly
+// application; see applicationInfo.
+func NewClient(deploymentEnvironment, serviceName, serviceVersion string, opts ...Option) (*Client, error) {
+	return NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion, ldlog.Info, opts...)
+}
+
+// connect makes the SDK client and waits up to wait for its first payload.
+// On ErrInitializationTimeout the SDK keeps connecting in the background, and
+// the client is kept if the caller opted in. Otherwise an error closes the
+// client, stopping its event processor and data source. Close does not stop a
+// stream still retrying its first connection: it keeps running until it
+// connects.
+//
+//nolint:contextcheck // the constructors take no context; the warning is a one-off at startup
+func connect(sdkKey string, cfg ldclient.Config, wait time.Duration, deploymentEnvironment, serviceName string, opts ...Option) (*Client, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
 	}
 
-	ldClient, err := ldclient.MakeClient(launchDarklyApiKey, waitForInit)
+	ldClient, err := ldclient.MakeCustomClient(sdkKey, cfg, wait)
 	if err != nil {
-		return nil, err
+		if !o.startOnInitTimeout || !errors.Is(err, ldclient.ErrInitializationTimeout) {
+			if ldClient != nil {
+				_ = ldClient.Close()
+			}
+
+			return nil, err
+		}
+
+		logger.L().Warn(context.Background(), "LaunchDarkly client did not initialize in time; starting on flag fallbacks",
+			zap.String("service", serviceName), zap.Duration("waited", wait), zap.Error(err))
 	}
 
-	return &Client{ld: ldClient}, nil
+	return newClient(ldClient, false, deploymentEnvironment, serviceName), nil
 }
 
 // NewClientWithLogLevel creates a client with a specific log level.
 // Use ldlog.Error to suppress INFO/WARN logs in CLI tools.
-func NewClientWithLogLevel(logLevel ldlog.LogLevel) (*Client, error) {
-	cfg := ldclient.Config{
-		Logging: ldcomponents.Logging().MinLevel(logLevel),
+func NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion string, logLevel ldlog.LogLevel, opts ...Option) (*Client, error) {
+	if firecrackerVersionsEnvErr != nil {
+		return nil, firecrackerVersionsEnvErr
 	}
 
-	if launchDarklyApiKey == "" {
+	cfg := ldclient.Config{
+		ApplicationInfo:  applicationInfo(deploymentEnvironment, serviceName, serviceVersion),
+		Logging:          ldcomponents.Logging().MinLevel(logLevel),
+		ServiceEndpoints: serviceEndpoints(),
+	}
+
+	sdkKey, err := configureAuthentication(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if sdkKey == "" {
 		cfg.DataSource = launchDarklyOfflineStore
-		// Disable all outbound network traffic when no API key is configured.
 		cfg.Events = ldcomponents.NoEvents()
 		cfg.DiagnosticOptOut = true
 		ldClient, err := ldclient.MakeCustomClient("", cfg, 0)
@@ -85,23 +179,32 @@ func NewClientWithLogLevel(logLevel ldlog.LogLevel) (*Client, error) {
 			return nil, err
 		}
 
-		return &Client{ld: ldClient}, nil
+		return newClient(ldClient, true, deploymentEnvironment, serviceName), nil
 	}
 
-	ldClient, err := ldclient.MakeCustomClient(launchDarklyApiKey, cfg, waitForInit)
-	if err != nil {
-		return nil, err
+	return connect(sdkKey, cfg, waitForInit, deploymentEnvironment, serviceName, opts...)
+}
+
+func configureAuthentication(cfg *ldclient.Config) (string, error) {
+	if launchDarklyApiKey != "" {
+		return launchDarklyApiKey, nil
 	}
 
-	return &Client{ld: ldClient}, nil
+	return configureOAuth(cfg)
 }
 
-func (c *Client) SetDeploymentName(deploymentName string) {
-	c.deploymentName = deploymentName
+// LAUNCH_DARKLY_BASE_URL redirects streaming, polling and events together.
+func serviceEndpoints() interfaces.ServiceEndpoints {
+	if baseURL := os.Getenv("LAUNCH_DARKLY_BASE_URL"); baseURL != "" {
+		return ldcomponents.RelayProxyEndpoints(baseURL)
+	}
+
+	return interfaces.ServiceEndpoints{}
 }
 
-func (c *Client) SetServiceName(serviceName string) {
-	c.serviceName = serviceName
+// Live reports whether flag values can change at runtime.
+func (c *Client) Live() bool {
+	return c != nil && c.ld != nil && !c.static
 }
 
 // RegisterContextProvider registers a provider whose contexts are appended to
@@ -148,12 +251,101 @@ func (c *Client) WatchJSONFlag(ctx context.Context, flag JSONFlag, contexts ...l
 	}
 }
 
+// WatchFlag delivers on every change to the flag's configuration, whatever
+// value any one context evaluates to, so a caller whose evaluations differ by
+// context re-evaluates each of them on a change; changes that arrive while
+// one is pending fold into it. The returned function ends the delivery and
+// closes the channel.
+func (c *Client) WatchFlag(key string) (<-chan struct{}, func()) {
+	changes := make(chan struct{}, 1)
+	if c.ld == nil {
+		close(changes)
+
+		return changes, func() {}
+	}
+
+	events := c.ld.GetFlagTracker().AddFlagChangeListener()
+	go func() {
+		defer close(changes)
+		for event := range events {
+			if event.Key != key {
+				continue
+			}
+			select {
+			case changes <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	return changes, func() { c.ld.GetFlagTracker().RemoveFlagChangeListener(events) }
+}
+
 func (c *Client) IntFlag(ctx context.Context, flag IntFlag, contexts ...ldcontext.Context) int {
 	return getFlag(ctx, c.ld, c.ld.IntVariationCtx, flag, c.allContexts(ctx, contexts))
 }
 
+// IntFlagWithError uses the fallback only when no flag value is available.
+// Invalid values and other evaluation failures are returned as errors.
+func (c *Client) IntFlagWithError(ctx context.Context, flag IntFlag, contexts ...ldcontext.Context) (int, error) {
+	if c.ld == nil {
+		return flag.Fallback(), nil
+	}
+	value, detail, err := c.ld.IntVariationDetailCtx(ctx, flag.Key(), mergeContexts(ctx, c.allContexts(ctx, contexts)), flag.Fallback())
+	switch detail.Reason.GetErrorKind() {
+	case ldreason.EvalErrorFlagNotFound, ldreason.EvalErrorClientNotReady:
+		return flag.Fallback(), nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("evaluate integer flag %q: %w", flag.Key(), err)
+	}
+	if detail.Reason.GetKind() == ldreason.EvalReasonError {
+		return 0, fmt.Errorf("evaluate integer flag %q: %s", flag.Key(), detail.Reason.GetErrorKind())
+	}
+	if !detail.Value.IsInt() {
+		return 0, fmt.Errorf("flag %q must be an integer", flag.Key())
+	}
+
+	return value, nil
+}
+
+// IntFlagOverride returns the flag's value and whether LaunchDarkly served it.
+// On a failed evaluation — a client in LaunchDarkly's offline mode or not yet
+// initialised, a value of the wrong type — the value is the fallback and the
+// second result is false, so a caller can tell a served value from one equal
+// to the fallback. A key the environment does not define counts as served at
+// the fallback: nobody has chosen a value, which is what the fallback stands
+// for, and an environment that never creates the flag is not failing. The
+// keyless client (the package's offline store) serves every NewIntFlag flag
+// at its fallback, which counts as served too.
+func (c *Client) IntFlagOverride(ctx context.Context, flag IntFlag, contexts ...ldcontext.Context) (int, bool) {
+	if c.ld == nil {
+		return flag.Fallback(), false
+	}
+	value, detail, err := c.ld.IntVariationDetailCtx(ctx, flag.Key(), mergeContexts(ctx, c.allContexts(ctx, contexts)), flag.Fallback())
+	if detail.Reason.GetErrorKind() == ldreason.EvalErrorFlagNotFound {
+		return flag.Fallback(), true
+	}
+
+	return value, err == nil && !detail.IsDefaultValue()
+}
+
 func (c *Client) StringFlag(ctx context.Context, flag StringFlag, contexts ...ldcontext.Context) string {
 	return getFlag(ctx, c.ld, c.ld.StringVariationCtx, flag, c.allContexts(ctx, contexts))
+}
+
+// StringFlagOverride returns the value and whether the client supplied a
+// variation, distinguishing a configured fallback value from a failed evaluation.
+func (c *Client) StringFlagOverride(ctx context.Context, flag StringFlag, contexts ...ldcontext.Context) (string, bool) {
+	if c.ld == nil || !c.ld.Initialized() {
+		return flag.Fallback(), false
+	}
+	value, detail, err := c.ld.StringVariationDetailCtx(ctx, flag.Key(), mergeContexts(ctx, c.allContexts(ctx, contexts)), flag.Fallback())
+	if err != nil {
+		logger.L().Warn(ctx, "error evaluating flag", zap.Error(err), zap.String("flag", flag.Key()))
+	}
+
+	return value, err == nil && !detail.IsDefaultValue()
 }
 
 type typedFlag[T any] interface {
@@ -171,6 +363,13 @@ func getFlag[T any](
 	if ld == nil {
 		logger.L().Info(ctx, "LaunchDarkly client is not initialized, returning fallback")
 
+		return flag.Fallback()
+	}
+
+	// A client kept on an initialization timeout fails every evaluation with
+	// ErrClientNotInitialized until its stream connects. That is expected, so
+	// it serves the fallback without a warning on each read.
+	if !ld.Initialized() {
 		return flag.Fallback()
 	}
 
@@ -197,16 +396,20 @@ func (c *Client) Close(ctx context.Context) error {
 	return nil
 }
 
+// allContexts puts the process identity before the contexts of one
+// evaluation: mergeContexts lets a later context of the same kind win, so a
+// caller that names a service explicitly overrides the process default.
 func (c *Client) allContexts(ctx context.Context, contexts []ldcontext.Context) []ldcontext.Context {
-	if c.deploymentName != "" {
-		contexts = append(contexts, deploymentContext(c.deploymentName))
+	var all []ldcontext.Context
+	if c.deploymentEnvironment != "" {
+		all = append(all, DeploymentEnvironmentContext(c.deploymentEnvironment))
 	}
 	if c.serviceName != "" {
-		contexts = append(contexts, ServiceContext(c.serviceName))
+		all = append(all, ServiceContext(c.serviceName))
 	}
 	for _, provider := range c.contextProviders {
-		contexts = append(contexts, provider(ctx))
+		all = append(all, provider(ctx))
 	}
 
-	return contexts
+	return append(all, contexts...)
 }

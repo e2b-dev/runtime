@@ -72,7 +72,13 @@ func wrapImagePullError(ctx context.Context, err error, imageRef string) error {
 		return nil
 	}
 
-	logger.L().Warn(ctx, "failed to pull image", zap.String("image_ref", imageRef), zap.Error(err))
+	proxyAccessDenied := errors.Is(err, dockerhub.ErrRepositoryAccessDenied)
+	logger.L().Warn(ctx, "failed to pull image", zap.String("image_ref", imageRef), zap.Bool("dockerhub_proxy_access_denied", proxyAccessDenied), zap.Error(err))
+
+	if proxyAccessDenied {
+		// Keep the classification without exposing registry-controlled error details.
+		return fmt.Errorf("failed to pull image '%s': %w", imageRef, dockerhub.ErrRepositoryAccessDenied)
+	}
 
 	// Check for transport errors with specific error codes from the registry API
 	if transportErr, ok := errors.AsType[*transport.Error](err); ok {

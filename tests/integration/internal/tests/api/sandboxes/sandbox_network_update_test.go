@@ -422,3 +422,57 @@ func TestUpdateNetworkConfig(t *testing.T) { //nolint:tparallel // subtests are 
 		})
 	})
 }
+
+// TestUpdateNetworkConfigDNSServers tests that dnsServers is replaced by an
+// update, and that leaving it out resets it to the default nameserver.
+func TestUpdateNetworkConfigDNSServers(t *testing.T) { //nolint:tparallel // subtests are sequential
+	t.Parallel()
+
+	templateID := ensureNetworkTestTemplate(t)
+	ctx := t.Context()
+	client := setup.GetAPIClient()
+	envdClient := setup.GetEnvdClient(t, ctx)
+
+	sbx := utils.SetupSandboxWithCleanup(t, client,
+		utils.WithTemplateID(templateID),
+		utils.WithTimeout(120),
+		utils.WithAutoPause(false),
+		utils.WithNetwork(&api.SandboxNetworkConfig{
+			AllowOut:   ptrS("google.com"),
+			DenyOut:    ptrS(blockAll),
+			DnsServers: &[]string{},
+		}),
+	)
+
+	t.Run("omitted_resets_to_default", func(t *testing.T) { //nolint:paralleltest // sequential
+		resp := putNetwork(t, ctx, client, sbx.SandboxID, api.PutSandboxesSandboxIDNetworkJSONRequestBody{
+			AllowOut: ptrS("google.com"),
+			DenyOut:  ptrS(blockAll),
+		})
+		require.Equal(t, http.StatusNoContent, resp.StatusCode())
+		assertSuccessfulDNSQuery(t, ctx, sbx, envdClient, sandbox_network.DefaultNameserver, "google.com", "Expected DNS query to the default nameserver to succeed after an update that omits dnsServers")
+		assertStoredDNSServers(t, ctx, client, sbx.SandboxID, nil)
+	})
+
+	t.Run("empty_list_blocks_it", func(t *testing.T) { //nolint:paralleltest // sequential
+		resp := putNetwork(t, ctx, client, sbx.SandboxID, api.PutSandboxesSandboxIDNetworkJSONRequestBody{
+			AllowOut:   ptrS("google.com"),
+			DenyOut:    ptrS(blockAll),
+			DnsServers: &[]string{},
+		})
+		require.Equal(t, http.StatusNoContent, resp.StatusCode())
+		assertDefaultDNSBlocked(t, ctx, sbx, envdClient, "after an update with an empty dnsServers list")
+		assertStoredDNSServers(t, ctx, client, sbx.SandboxID, &[]string{})
+	})
+
+	t.Run("listed_default_reopens_it", func(t *testing.T) { //nolint:paralleltest // sequential
+		resp := putNetwork(t, ctx, client, sbx.SandboxID, api.PutSandboxesSandboxIDNetworkJSONRequestBody{
+			AllowOut:   ptrS("google.com"),
+			DenyOut:    ptrS(blockAll),
+			DnsServers: ptrS(sandbox_network.DefaultNameserver),
+		})
+		require.Equal(t, http.StatusNoContent, resp.StatusCode())
+		assertSuccessfulDNSQuery(t, ctx, sbx, envdClient, sandbox_network.DefaultNameserver, "google.com", "Expected DNS query to the default nameserver to succeed when it is listed")
+		assertStoredDNSServers(t, ctx, client, sbx.SandboxID, ptrS(sandbox_network.DefaultNameserver))
+	})
+}

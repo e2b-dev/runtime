@@ -32,13 +32,6 @@ fi
 sudo sysctl vm.swappiness=10
 sudo sysctl vm.vfs_cache_pressure=50
 
-# Add tmpfs for snapshotting
-# TODO: Parametrize this
-sudo mkdir -p /mnt/snapshot-cache
-sudo mount -t tmpfs -o size=65G tmpfs /mnt/snapshot-cache
-
-ulimit -n 1048576
-
 # Applied directly rather than appended to /etc/sysctl.conf: ephemeral CI
 # hosts never reboot, so persistence has nothing to persist for. The
 # production init also raises the net.core/tcp backlog knobs; CI runs a
@@ -58,10 +51,11 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 
 # Load the nbd module. Production hosts provision themselves; this script
-# only serves CI. The orchestrator and the template manager each pre-warm
-# NBD_POOL_SIZE (default 64) device slots from this shared pool, so 64 total
-# starved the second process and rapid pause/resume tests saw 503s; 128
-# covers exactly both warm pools — a test holding a device just delays a
+# only serves CI. The orchestrator process (it runs the sandbox and the
+# template services from one device pool) pre-warms NBD_POOL_SIZE (default
+# 64) slots and holds one more while the buffer is full; every running
+# sandbox and template build takes a device beyond those. 128 leaves the
+# warm pool half of the namespace — a test holding a device just delays a
 # warm-loop refill, which is backpressure, not failure — without the
 # node-creation storm of 4096. The nowatch udev rule above must be in place
 # before the devices appear. Overridable for local experiments.
@@ -70,6 +64,18 @@ sudo udevadm trigger
 # module tree to load from there.
 if [ ! -e /dev/nbd0 ]; then
     sudo modprobe nbd nbds_max="${NBDS_MAX:-128}"
+fi
+
+# Keep the warm pool within half of the namespace the kernel offers. A
+# built-in driver's 16 slots cannot hold the default 64: the pool would
+# buffer every device and spin on the exhausted namespace, warning every
+# few seconds, while the sandboxes wait on each release. Exported to the
+# job so the services started later and the template build's create-build
+# read it; a value the job already set wins. 64 is the default in
+# packages/orchestrator/pkg/cfg/model.go.
+have_nbds="$(cat /sys/module/nbd/parameters/nbds_max)"
+if [ -z "${NBD_POOL_SIZE:-}" ] && [ -n "${GITHUB_ENV:-}" ] && [ "$((have_nbds / 2))" -lt 64 ]; then
+    echo "NBD_POOL_SIZE=$((have_nbds / 2))" >>"${GITHUB_ENV}"
 fi
 
 # Create the directory for the fc mounts

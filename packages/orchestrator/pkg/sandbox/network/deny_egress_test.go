@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"os"
 	"runtime"
 	"testing"
@@ -19,10 +20,10 @@ import (
 // is the safety guarantee for the pause-resume prefetch harvest: its throwaway
 // sandbox must not be able to reach the network at all, not even the
 // orchestrator's own in-sandbox IP (which fronts the NFS proxy/portmapper/
-// hyperloop). The ONLY accept is ESTABLISHED/RELATED return traffic, so the
-// orchestrator can still drive the resume by connecting INTO the guest; there
-// must be no destination/set accept that would let the guest open a connection
-// outward.
+// hyperloop). The ONLY accepts are the ESTABLISHED/RELATED pair ApplyRules
+// installs too, so the orchestrator can still drive the resume by connecting
+// INTO the guest; there must be no destination/set accept that would let the
+// guest open a connection outward.
 //
 // It builds a real slot netns + nftables ruleset, so it needs root; it skips
 // otherwise — same gating as the other privileged integration tests in this
@@ -39,7 +40,7 @@ func TestDenyEgress_InstallsAllProtocolDrop(t *testing.T) { //nolint:paralleltes
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	// Baseline: the default ruleset must NOT unconditionally drop guest egress
 	// (internet is allowed by default and TCP is handed to the proxy).
@@ -61,6 +62,46 @@ func TestDenyEgress_InstallsAllProtocolDrop(t *testing.T) { //nolint:paralleltes
 		"DenyEgress must still accept ESTABLISHED/RELATED so the control path replies, got %+v", got)
 	require.Falsef(t, got.hasAllowSetAccept,
 		"DenyEgress must NOT accept any allow-set/destination — all guest-initiated egress is dropped, including to the orchestrator IP; got %+v", got)
+	require.Equal(t, []ruleShape{establishedNonUDPAccept, establishedReplyAccept, {verdict: "drop"}}, filterChainShapes(t, slot.NamespaceID()),
+		"DenyEgress accepts only the ESTABLISHED/RELATED pair ahead of the drop")
+}
+
+// headFilterProxy is an EgressProxy whose head rule accepts everything from
+// the tap.
+type headFilterProxy struct{ NoopEgressProxy }
+
+func (headFilterProxy) HeadFilterRules(s *Slot) [][]expr.Any {
+	return [][]expr.Any{{
+		&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+		&expr.Cmp{Register: 1, Op: expr.CmpOpEq, Data: append([]byte(s.TapName()), 0)},
+		&expr.Verdict{Kind: expr.VerdictAccept},
+	}}
+}
+
+// TestHeadFilterRules_LeadEveryPolicy verifies that the egress proxy's head
+// rules come first after a policy replacement and are absent after DenyEgress.
+// Needs root; skips otherwise.
+func TestHeadFilterRules_LeadEveryPolicy(t *testing.T) { //nolint:paralleltest // mutates the caller's netns via LockOSThread + netns.Set; cannot run in parallel
+	if os.Geteuid() != 0 {
+		t.Skip("requires root for netns + nftables")
+	}
+
+	config, err := ParseConfig()
+	require.NoError(t, err)
+
+	slot, err := NewSlot("head-filter-test", reserveNSTestIdx(t), config, headFilterProxy{})
+	require.NoError(t, err)
+
+	require.NoError(t, slot.CreateNetwork(t.Context()))
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
+
+	require.True(t, summarizeFilterChain(t, slot.NamespaceID()).plainAcceptFirst, "the head rule leads the initial rules")
+
+	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeCount, []string{"192.0.2.0/24"}, []string{"0.0.0.0/0"}))
+	require.True(t, summarizeFilterChain(t, slot.NamespaceID()).plainAcceptFirst, "the head rule leads a replaced policy, the non-DNS UDP rule included")
+
+	require.NoError(t, slot.DenyEgress(t.Context()))
+	require.False(t, summarizeFilterChain(t, slot.NamespaceID()).hasPlainAccept, "DenyEgress installs no head rule")
 }
 
 // TestDenyEgress_NilFirewallErrors verifies DenyEgress fails fast — returning an
@@ -83,8 +124,9 @@ type filterChainSummary struct {
 	// hasUnconditionalDrop is a drop with no protocol/set/conntrack qualifier —
 	// i.e. it drops every protocol to any destination from the tap.
 	hasUnconditionalDrop bool
-	// hasProtocolQualifiedRule is any rule that matches on the L4 protocol (the
-	// non-TCP-only variant that would let TCP escape to the proxy).
+	// hasProtocolQualifiedRule is any rule without a conntrack match that
+	// matches on the L4 protocol (the non-TCP-only variant that would let TCP
+	// escape to the proxy).
 	hasProtocolQualifiedRule bool
 	// hasEstablishedAccept is a conntrack-state accept (return traffic).
 	hasEstablishedAccept bool
@@ -93,11 +135,15 @@ type filterChainSummary struct {
 	// dropIsLast is true when the final rule in the chain is the unconditional
 	// drop — i.e. it is the catch-all that every unaccepted packet falls through to.
 	dropIsLast bool
+	// hasPlainAccept is an accept with no protocol/set/conntrack qualifier,
+	// which only an egress proxy's head rule installs; plainAcceptFirst when
+	// the chain starts with one.
+	hasPlainAccept, plainAcceptFirst bool
 }
 
-// summarizeFilterChain enters the slot's network namespace and classifies the
-// rules in the firewall filter chain.
-func summarizeFilterChain(t *testing.T, nsName string) filterChainSummary {
+// filterChainRules enters the slot's network namespace and lists the rules in
+// the firewall filter chain.
+func filterChainRules(t *testing.T, nsName string) []*nftables.Rule {
 	t.Helper()
 
 	runtime.LockOSThread()
@@ -124,6 +170,15 @@ func summarizeFilterChain(t *testing.T, nsName string) filterChainSummary {
 	require.NoError(t, err)
 	require.NotEmpty(t, rules, "filter chain should have rules")
 
+	return rules
+}
+
+// summarizeFilterChain classifies the rules in the slot firewall's filter chain.
+func summarizeFilterChain(t *testing.T, nsName string) filterChainSummary {
+	t.Helper()
+
+	rules := filterChainRules(t, nsName)
+
 	var s filterChainSummary
 	for i, r := range rules {
 		var drop, accept, l4proto, setLookup, ct bool
@@ -148,7 +203,14 @@ func summarizeFilterChain(t *testing.T, nsName string) filterChainSummary {
 		}
 
 		isUnconditionalDrop := drop && !l4proto && !setLookup && !ct
-		if l4proto {
+		plainAccept := accept && !l4proto && !setLookup && !ct
+		if plainAccept {
+			s.hasPlainAccept = true
+		}
+		if i == 0 {
+			s.plainAcceptFirst = plainAccept
+		}
+		if l4proto && !ct {
 			s.hasProtocolQualifiedRule = true
 		}
 		if isUnconditionalDrop {

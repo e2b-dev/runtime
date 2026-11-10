@@ -72,20 +72,9 @@ func NewOIDCVerifier(ctx context.Context, config ProviderConfig, httpClient *htt
 // matching identity exists.
 type IdentityLookup = oidc.IdentityLookup
 
-// OIDCVerifier verifies auth-provider user JWTs for a single issuer and
-// resolves the internal user identity through an IdentityLookup.
-type OIDCIssuerVerifier = oidc.Verifier
-
 // ErrIdentityNotFound is returned by OIDC verification when the token is
 // valid but no matching identity exists.
 var ErrIdentityNotFound = oidc.ErrIdentityNotFound
-
-// NewOIDCVerifier constructs an OIDCVerifier for the given issuer config.
-// External consumers (e.g. belt) use this to verify auth-provider tokens with
-// their own identity storage.
-func NewOIDCIssuerVerifier(ctx context.Context, config JWTConfig, httpClient *http.Client, identities IdentityLookup) (*OIDCIssuerVerifier, error) {
-	return oidc.NewVerifier(ctx, config, httpClient, identities)
-}
 
 // LinkedOIDCVerifier verifies auth-provider user JWTs across every issuer in
 // a ProviderConfig and resolves each to the internal user it names.

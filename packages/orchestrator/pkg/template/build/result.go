@@ -26,3 +26,17 @@ func ClassifyBuildResult(r *Result, err error) metrics.BuildResultType {
 
 	return metrics.BuildResultInternalError
 }
+
+// builtVcpuSizing is the `built` label on template_build_result_total: resizable
+// when the final VM has more vCPUs than are online, not_resizable otherwise, and
+// none when the build failed, as it leaves no template.
+func builtVcpuSizing(r *Result, err error, vcpus int64) string {
+	switch {
+	case err != nil || r == nil:
+		return "none"
+	case r.VcpuCount > vcpus:
+		return "resizable"
+	default:
+		return "not_resizable"
+	}
+}

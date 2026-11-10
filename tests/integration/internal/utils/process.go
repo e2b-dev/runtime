@@ -18,6 +18,33 @@ import (
 
 const sandboxStateProbeTimeout = 5 * time.Second
 
+// processStartWait bounds how long a process start may take to report its
+// first event; the stream itself lives on, for the process's output.
+const processStartWait = 30 * time.Second
+
+// RequireProcessStarted reads a process start stream's first event and fails
+// the test unless the process started within processStartWait. connect
+// reports a failed request on the first receive, not on Start, so a test
+// that only starts a process and waits would otherwise turn a failed start
+// into a timeout much later.
+func RequireProcessStarted(tb testing.TB, stream *connect.ServerStreamForClient[process.StartResponse]) {
+	tb.Helper()
+
+	received := make(chan bool, 1)
+	go func() { received <- stream.Receive() }()
+	select {
+	case ok := <-received:
+		if !ok {
+			tb.Fatalf("the process did not start: %v", stream.Err())
+		}
+	case <-time.After(processStartWait):
+		tb.Fatalf("the process did not report its start within %s", processStartWait)
+	}
+	if stream.Msg().GetEvent().GetStart() == nil {
+		tb.Fatalf("the process stream did not open with a start event: %v", stream.Msg().GetEvent())
+	}
+}
+
 func ExecCommand(tb testing.TB, ctx context.Context, sbx *api.Sandbox, envdClient *setup.EnvdClient, command string, args ...string) error {
 	tb.Helper()
 
@@ -73,7 +100,7 @@ func ExecCommandWithOutput(tb testing.TB, ctx context.Context, sbx *api.Sandbox,
 		Stdin: &f,
 	})
 
-	setup.SetSandboxHeader(tb, req.Header(), sbx.SandboxID)
+	setup.SetSandboxHeader(tb, req.Header(), sbx)
 	// An empty user omits the auth header so envd uses its default user.
 	if user != "" {
 		setup.SetUserHeader(tb, req.Header(), user)

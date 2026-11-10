@@ -10,41 +10,46 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
-	"github.com/e2b-dev/infra/packages/shared/pkg/edge"
+	grpcshared "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
 
-// The delete event the API attaches for a cluster node carries the restore
-// decision the edge acts on; a local node attaches no event at all.
-func TestGetSandboxDeleteCtx_CarriesTheRestoreDecisionToTheEdge(t *testing.T) {
+// The create RPC carries only the resume marker and the team the server
+// labels its RPC metrics with: routing is the node's own and no catalog event
+// rides on the metadata, cluster node or not.
+func TestGetSandboxCreateCtx_CarriesOnlyTheMetricMarkers(t *testing.T) {
 	t.Parallel()
 
-	for name, restore := range map[string]bool{"restore on": true, "restore off": false} {
+	for name, clusterID := range map[string]uuid.UUID{"cluster node": uuid.New(), "local node": consts.LocalClusterID} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			node := NewTestNode("node-1", api.NodeStatusReady, 0, 8)
-			node.ClusterID = uuid.New()
+			node.ClusterID = clusterID
 
-			_, ctx := node.GetSandboxDeleteCtx(t.Context(), "sbx-1", "exec-1", restore)
+			_, ctx := node.GetSandboxCreateCtx(t.Context(), &orchestrator.SandboxCreateRequest{
+				Sandbox: &orchestrator.SandboxConfig{SandboxId: "sbx-1", ExecutionId: "exec-1", Snapshot: true, TeamId: "team-1"},
+			})
 			md, ok := metadata.FromOutgoingContext(ctx)
 			require.True(t, ok)
 
-			ev, err := edge.ParseSandboxCatalogDeleteEvent(md)
-			require.NoError(t, err)
-			assert.Equal(t, "sbx-1", ev.SandboxID)
-			assert.Equal(t, "exec-1", ev.ExecutionID)
-			assert.Equal(t, restore, ev.RestoreOnRefusal)
+			assert.Equal(t, []string{"true"}, md.Get(grpcshared.IsResumeMetadataKey))
+			assert.Equal(t, []string{"team-1"}, md.Get(grpcshared.TeamIDMetadataKey))
+			assert.Len(t, md, 2)
 		})
 	}
+}
 
-	t.Run("local node attaches no event", func(t *testing.T) {
-		t.Parallel()
+// The other sandbox RPCs carry the team too, so every orchestrator RPC
+// metric can be split by it.
+func TestGetSandboxClient_CarriesTheTeamID(t *testing.T) {
+	t.Parallel()
 
-		node := NewTestNode("node-1", api.NodeStatusReady, 0, 8)
-		node.ClusterID = consts.LocalClusterID
+	node := NewTestNode("node-1", api.NodeStatusReady, 0, 8)
 
-		_, ctx := node.GetSandboxDeleteCtx(t.Context(), "sbx-1", "exec-1", true)
-		md, _ := metadata.FromOutgoingContext(ctx)
-		assert.Empty(t, md.Get(edge.EventTypeHeader))
-	})
+	_, ctx := node.GetSandboxClient(t.Context(), "team-1")
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+
+	assert.Equal(t, []string{"team-1"}, md.Get(grpcshared.TeamIDMetadataKey))
 }

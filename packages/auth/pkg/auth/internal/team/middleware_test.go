@@ -45,7 +45,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "not blocked passes",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(&authqueries.Team{IsBlocked: false}, &authqueries.TeamLimit{}),
+			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: false}),
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -53,7 +53,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and allowlisted get passes",
 			method:         http.MethodGet,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(&authqueries.Team{IsBlocked: true, BlockedReason: &reason}, &authqueries.TeamLimit{}),
+			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -61,7 +61,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and allowlisted delete passes",
 			method:         http.MethodDelete,
 			fullPath:       "/sandboxes/:sandboxID",
-			team:           types.NewTeam(&authqueries.Team{IsBlocked: true, BlockedReason: &reason}, &authqueries.TeamLimit{}),
+			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -69,7 +69,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and non-allowlisted post denied",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(&authqueries.Team{IsBlocked: true, BlockedReason: &reason}, &authqueries.TeamLimit{}),
+			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
 			wantHandlerRan: false,
 			wantStatus:     http.StatusForbidden,
 			wantBodyHas:    "team is blocked: " + reason,
@@ -78,7 +78,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and method mismatch on allowlisted path denied",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes/:sandboxID",
-			team:           types.NewTeam(&authqueries.Team{IsBlocked: true}, &authqueries.TeamLimit{}),
+			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true}),
 			wantHandlerRan: false,
 			wantStatus:     http.StatusForbidden,
 			wantBodyHas:    "team is blocked",
@@ -103,7 +103,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 func TestEnforceBlockedTeam_AllowlistParameterization(t *testing.T) {
 	t.Parallel()
 
-	team := types.NewTeam(&authqueries.Team{IsBlocked: true}, &authqueries.TeamLimit{})
+	team := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true})
 	const method, path = http.MethodGet, "/teams/:teamID/members"
 
 	permissive := BlockedTeamAllowlist{method: {path: {}}}
@@ -126,10 +126,10 @@ func TestCheckTeamAccess(t *testing.T) {
 		http.MethodGet: {"/sandboxes": {}},
 	}
 
-	cleanTeam := types.NewTeam(&authqueries.Team{}, &authqueries.TeamLimit{})
-	bannedTeam := types.NewTeam(&authqueries.Team{IsBanned: true}, &authqueries.TeamLimit{})
-	blockedTeam := types.NewTeam(&authqueries.Team{IsBlocked: true, BlockedReason: &reason}, &authqueries.TeamLimit{})
-	bannedAndBlockedTeam := types.NewTeam(&authqueries.Team{IsBanned: true, IsBlocked: true, BlockedReason: &reason}, &authqueries.TeamLimit{})
+	cleanTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{})
+	bannedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBanned: true})
+	blockedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason})
+	bannedAndBlockedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBanned: true, IsBlocked: true, BlockedReason: &reason})
 
 	wantForbidden := func(t *testing.T, err error) {
 		t.Helper()

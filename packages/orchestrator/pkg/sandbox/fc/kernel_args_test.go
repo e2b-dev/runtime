@@ -140,6 +140,23 @@ func TestBuildKernelArgs_VariantArgsAreOverlaid(t *testing.T) {
 	assert.Equal(t, base, withPSI, "nothing outside the supplied args may change")
 }
 
+// BootCpus caps the CPUs the kernel brings up; without it the command line is unchanged.
+func TestBuildKernelArgs_BootCpus(t *testing.T) {
+	t.Parallel()
+
+	options := ProcessOptions{InitScriptPath: "/sbin/init"}
+	base := buildKernelArgs(testIPv4, options)
+	_, present := base["maxcpus"]
+	require.False(t, present)
+
+	options.BootCpus = 2
+	withCap := buildKernelArgs(testIPv4, options)
+	require.Equal(t, "2", withCap["maxcpus"])
+
+	delete(withCap, "maxcpus")
+	assert.Equal(t, base, withCap, "nothing else may change")
+}
+
 // A variant naming a reserved key must reach the guest as the default command line —
 // not partially applied, and not as a boot failure. Dropping only the offending key
 // would boot a command line nobody specified.
@@ -280,6 +297,10 @@ func TestValidateCmdlineArgs(t *testing.T) {
 		{name: "loglevel reserved", args: map[string]string{"loglevel": "7"}, wantErr: true},
 		{name: "quiet reserved", args: map[string]string{"quiet": ""}, wantErr: true},
 		{name: "selinux reserved", args: map[string]string{"selinux": "1"}, wantErr: true},
+		{name: "maxcpus reserved", args: map[string]string{"maxcpus": "1"}, wantErr: true},
+		{name: "nr_cpus reserved", args: map[string]string{"nr_cpus": "1"}, wantErr: true},
+		{name: "possible_cpus reserved", args: map[string]string{"possible_cpus": "1"}, wantErr: true},
+		{name: "nosmp reserved", args: map[string]string{"nosmp": ""}, wantErr: true},
 		// Whitespace would split into extra arguments once rendered, letting one
 		// key smuggle in another - including a reserved one.
 	}

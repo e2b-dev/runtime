@@ -1,0 +1,4 @@
+# mise is not in mise's own tool registry; this lets the mise pin in
+# .tool-versions resolve.
+[tool_alias]
+mise = "aqua:jdx/mise"

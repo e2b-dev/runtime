@@ -53,14 +53,13 @@ func TestNew_LegacyFormatGoldens(t *testing.T) {
 	cases := []struct {
 		version             string
 		major, minor, patch uint64
-		hugePages           bool
 		memfd               bool
 		freePageReporting   bool
 		freePageHinting     bool
 	}{
-		{"v1.10.1_30cbb07", 1, 10, 1, true, false, false, false},
-		{"v1.12.1_210cbac", 1, 12, 1, true, false, false, false},
-		{"v1.14.1_431f1fc", 1, 14, 1, true, true, true, true},
+		{"v1.10.1_30cbb07", 1, 10, 1, false, false, false},
+		{"v1.12.1_210cbac", 1, 12, 1, false, false, false},
+		{"v1.14.1_431f1fc", 1, 14, 1, true, true, true},
 	}
 
 	for _, tc := range cases {
@@ -74,7 +73,6 @@ func TestNew_LegacyFormatGoldens(t *testing.T) {
 			assert.Equal(t, tc.major, ver.Major())
 			assert.Equal(t, tc.minor, ver.Minor())
 			assert.Equal(t, tc.patch, ver.Patch())
-			assert.Equal(t, tc.hugePages, info.HasHugePages())
 			assert.Equal(t, tc.memfd, info.HasMemfd())
 			assert.Equal(t, tc.freePageReporting, info.HasFreePageReporting())
 			assert.Equal(t, tc.freePageHinting, info.HasFreePageHinting())
@@ -179,7 +177,6 @@ func TestCapabilityGates_AgreeAcrossFormats(t *testing.T) {
 	e2b, err := New("v1.14-0.1.0")
 	require.NoError(t, err)
 
-	assert.Equal(t, legacy.HasHugePages(), e2b.HasHugePages())
 	assert.Equal(t, legacy.HasMemfd(), e2b.HasMemfd())
 	assert.Equal(t, legacy.HasFreePageReporting(), e2b.HasFreePageReporting())
 	assert.Equal(t, legacy.HasFreePageHinting(), e2b.HasFreePageHinting())
@@ -191,39 +188,7 @@ func TestCapabilityGates_E2BFormatOldLine(t *testing.T) {
 	info, err := New("v1.7-0.1.0")
 	require.NoError(t, err)
 
-	assert.True(t, info.HasHugePages())
 	assert.False(t, info.HasMemfd())
 	assert.False(t, info.HasFreePageReporting())
 	assert.False(t, info.HasFreePageHinting())
-}
-
-func TestHasHugePages(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		version string
-		want    bool
-	}{
-		// Below the 1.7 boundary: no huge-pages.
-		{"v1.5.0_abc1234", false},
-		{"v1.6.9_abc1234", false},
-		// At and above 1.7: huge-pages.
-		{"v1.7.0_abc1234", true},
-		{"v1.10.1_30cbb07", true},
-		{"v1.12.1_210cbac", true},
-		{"v1.14.1_458ca91", true},
-		// Future major versions must stay on the huge-pages side.
-		{"v2.0.0_deadbee", true},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.version, func(t *testing.T) {
-			t.Parallel()
-
-			info, err := New(tc.version)
-			require.NoError(t, err)
-
-			assert.Equal(t, tc.want, info.HasHugePages())
-		})
-	}
 }

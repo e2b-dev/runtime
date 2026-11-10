@@ -10,22 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type Team struct {
-	ID                      uuid.UUID
-	CreatedAt               time.Time
-	IsBlocked               bool
-	Name                    string
-	Tier                    string
-	Email                   string
-	IsBanned                bool
-	BlockedReason           *string
-	ClusterID               *uuid.UUID
-	SandboxSchedulingLabels []string
-	SsoOrganizationID       *uuid.UUID
-	SsoAutoJoin             bool
-	Slug                    string
-}
-
 type TeamApiKey struct {
 	CreatedAt time.Time
 	TeamID    uuid.UUID
@@ -40,19 +24,4 @@ type TeamApiKey struct {
 	ApiKeyLength     int32
 	ApiKeyMaskPrefix string
 	ApiKeyMaskSuffix string
-}
-
-type TeamLimit struct {
-	ID                       uuid.UUID
-	MaxLengthHours           int64
-	ConcurrentSandboxes      int64
-	ConcurrentTemplateBuilds int64
-	MaxVcpu                  int64
-	MaxRamMb                 int64
-	DiskMb                   int64
-	EventsTtlDays            int64
-	DefaultFreeDiskSizeMb    int64
-	MaxDiskSizeMb            int64
-	MaxFreeDiskSizeMb        int64
-	ApiTeamRpsList           int64
 }

@@ -48,7 +48,6 @@ func createLaunchDarklyTeamContext(c *gin.Context) (ldcontext.Context, bool) {
 		contexts = append(contexts, featureflags.TeamContextWithName(team.ID.String(), team.Name))
 		realClusterID := clusters.WithClusterFallback(team.ClusterID)
 		contexts = append(contexts, featureflags.ClusterContext(realClusterID))
-		contexts = append(contexts, featureflags.TierContext(team.Tier, team.Tier))
 	}
 
 	if len(contexts) == 0 {

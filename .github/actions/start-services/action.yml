@@ -54,24 +54,9 @@ runs:
         CLICKHOUSE_PORT: "9000"
         CLICKHOUSE_DATABASE: "default"
       run: |
-        wait_healthy() {
-          local name="$1" timeout="${2:-120}" i
-          for ((i = 0; i < timeout; i += 2)); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$name" 2>/dev/null)" = "healthy" ]; then
-              echo "$name is healthy!"
-              return 0
-            fi
-            echo "Waiting for $name to be healthy..."
-            sleep 2
-          done
-          echo "::error::$name did not become healthy within ${timeout}s"
-          docker logs "$name" 2>&1 | tail -50 || true
-          return 1
-        }
-
-        wait_healthy postgres 120
-        wait_healthy clickhouse 120
-        wait_healthy redis 60
+        ./.github/actions/start-services/wait-healthy.sh postgres 120
+        ./.github/actions/start-services/wait-healthy.sh clickhouse 120
+        ./.github/actions/start-services/wait-healthy.sh redis 60
 
         # Install extensions
         docker exec postgres psql -U postgres -d mydatabase -c "CREATE SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;"
@@ -99,11 +84,9 @@ runs:
         ENVD_TIMEOUT: "60s"
         ORCHESTRATOR_SERVICES: "orchestrator,template-manager"
         SANDBOX_ACCESS_TOKEN_HASH_SEED: "abcdefghijklmnopqrstuvwxyz"
-        ARTIFACTS_REGISTRY_PROVIDER: "Local"
         STORAGE_PROVIDER: "Local"
         ENVIRONMENT: "local"
         OTEL_COLLECTOR_GRPC_ENDPOINT: "localhost:4317"
-        MAX_PARALLEL_MEMFILE_SNAPSHOTTING: "2"
         SHARED_CHUNK_CACHE_PATH: "./.e2b-chunk-cache"
         REDIS_URL: "localhost:6379"
         # Client-proxy config
@@ -150,8 +133,9 @@ runs:
         ./scripts/start-service.sh "OtelCollector" packages/otel-collector run ~/logs/otel-collector.log http://localhost:13133/healthz
 
 
+        # Both services default to pprof on 6060; the API keeps it, as in Embed.
         echo "Start orchestrator"
-        ./scripts/start-service.sh "Orchestrator" "${ORCHESTRATOR_MAKE_PATH}" run-debug ~/logs/orchestrator.log http://localhost:5008/health
+        PPROF_PORT=6061 ./scripts/start-service.sh "Orchestrator" "${ORCHESTRATOR_MAKE_PATH}" run-debug ~/logs/orchestrator.log http://localhost:5008/health
 
         echo "Start API"
         STARTUP_TIMEOUT=60 ./scripts/start-service.sh "API" packages/api run ~/logs/api.log http://localhost:3000/health

@@ -28,9 +28,10 @@ var pagesCounter = utils.Must(meter.Int64Counter(
 ))
 
 // durationHistogram records prefetch run phase durations. The fetch and copy
-// phases overlap (copy starts once uffd is ready); "total" spans the whole
-// run. copy/total durations far exceeding the resume duration mean the
-// prefetch ran too late to help.
+// phases overlap (copy starts once uffd is ready); "copy_start_delay" is the
+// time from run start until copy could begin, and "total" spans the whole run.
+// Copy/total durations far exceeding the resume duration mean the prefetch
+// ran too late to help.
 var durationHistogram = utils.Must(meter.Int64Histogram(
 	"orchestrator.sandbox.uffd.prefetch.duration",
 	metric.WithDescription("Prefetch run phase durations"),
@@ -58,7 +59,8 @@ var (
 	stageCopiedAttr       = telemetry.PrecomputeAttrs(attribute.String("stage", "copied"))
 	stageCopySkippedAttr  = telemetry.PrecomputeAttrs(attribute.String("stage", "copy_skipped"))
 
-	phaseFetchAttr = telemetry.PrecomputeAttrs(attribute.String("phase", "fetch"))
-	phaseCopyAttr  = telemetry.PrecomputeAttrs(attribute.String("phase", "copy"))
-	phaseTotalAttr = telemetry.PrecomputeAttrs(attribute.String("phase", "total"))
+	phaseFetchAttr          = telemetry.PrecomputeAttrs(attribute.String("phase", "fetch"))
+	phaseCopyAttr           = telemetry.PrecomputeAttrs(attribute.String("phase", "copy"))
+	phaseCopyStartDelayAttr = telemetry.PrecomputeAttrs(attribute.String("phase", "copy_start_delay"))
+	phaseTotalAttr          = telemetry.PrecomputeAttrs(attribute.String("phase", "total"))
 )

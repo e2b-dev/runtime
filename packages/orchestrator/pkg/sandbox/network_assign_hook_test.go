@@ -10,12 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
-type networkAssignHookFunc func(context.Context, *Sandbox, NetworkAssignReason) error
+type networkAssignHookFunc func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error)
 
-func (f networkAssignHookFunc) OnNetworkAssign(ctx context.Context, sbx *Sandbox, reason NetworkAssignReason) error {
+func (f networkAssignHookFunc) OnNetworkAssign(ctx context.Context, sbx *Sandbox, reason NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
 	return f(ctx, sbx, reason)
 }
 
@@ -34,43 +35,59 @@ func TestFactoryRunNetworkAssignHookSuccess(t *testing.T) {
 	var gotSandbox *Sandbox
 	var gotReason NetworkAssignReason
 	var ctxUnchanged bool
-	factory := &Factory{networkAssignHook: networkAssignHookFunc(func(ctx context.Context, got *Sandbox, reason NetworkAssignReason) error {
+	want := &orchestrator.SandboxNetworkPlacement{ExecutionId: "execution"}
+	factory := &Factory{networkAssignHook: networkAssignHookFunc(func(ctx context.Context, got *Sandbox, reason NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
 		gotSandbox = got
 		gotReason = reason
 		ctxUnchanged = ctx == callerCtx
 
-		return nil
+		return want, nil
 	})}
 
-	factory.runNetworkAssignHook(callerCtx, sbx, NetworkAssignReasonResume)
-
+	placement, err := factory.runNetworkAssignHook(callerCtx, sbx, NetworkAssignReasonResume)
+	require.NoError(t, err)
+	require.Same(t, want, placement)
 	require.Same(t, sbx, gotSandbox)
 	require.Equal(t, NetworkAssignReasonResume, gotReason)
 	require.True(t, ctxUnchanged, "the caller's ctx is passed through unchanged, with no derived timeout")
 }
 
-func TestFactoryRunNetworkAssignHookSwallowsError(t *testing.T) {
+// An error fails the start, one the hook marked optional is logged and the
+// start goes on, and a panic fails the start without escaping.
+func TestFactoryRunNetworkAssignHookFailures(t *testing.T) {
 	t.Parallel()
+	failure := errors.New("hook failed")
+	for name, tc := range map[string]struct {
+		hook  networkAssignHookFunc
+		fatal bool
+	}{
+		"error": {fatal: true, hook: func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+			return nil, failure
+		}},
+		"optional error": {hook: func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+			return nil, OptionalNetworkAssignError(failure)
+		}},
+		"panic": {fatal: true, hook: func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+			panic("hook panicked")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			factory := &Factory{networkAssignHook: tc.hook}
+			var placement *orchestrator.SandboxNetworkPlacement
+			var err error
+			require.NotPanics(t, func() {
+				placement, err = factory.runNetworkAssignHook(t.Context(), testNetworkAssignHookSandbox(), NetworkAssignReasonResume)
+			})
+			require.Nil(t, placement)
+			if tc.fatal {
+				require.Error(t, err)
 
-	factory := &Factory{networkAssignHook: networkAssignHookFunc(func(context.Context, *Sandbox, NetworkAssignReason) error {
-		return errors.New("hook failed")
-	})}
-
-	require.NotPanics(t, func() {
-		factory.runNetworkAssignHook(t.Context(), testNetworkAssignHookSandbox(), NetworkAssignReasonResume)
-	})
-}
-
-func TestFactoryRunNetworkAssignHookRecoversPanic(t *testing.T) {
-	t.Parallel()
-
-	factory := &Factory{networkAssignHook: networkAssignHookFunc(func(context.Context, *Sandbox, NetworkAssignReason) error {
-		panic("hook panicked")
-	})}
-
-	require.NotPanics(t, func() {
-		factory.runNetworkAssignHook(t.Context(), testNetworkAssignHookSandbox(), NetworkAssignReasonResume)
-	})
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestNewFactoryDefaultsNilNetworkAssignHook(t *testing.T) {
@@ -106,6 +123,71 @@ func BenchmarkFactoryRunNetworkAssignHook(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		factory.runNetworkAssignHook(ctx, sbx, NetworkAssignReasonResume)
+		_, _ = factory.runNetworkAssignHook(ctx, sbx, NetworkAssignReasonResume)
 	}
+}
+
+func (networkAssignHookFunc) OnNetworkUpdate(context.Context, *Sandbox) {}
+
+func (networkAssignHookFunc) OnEnvdReady(context.Context, *Sandbox, string) error { return nil }
+
+// updateRecorder records the sandboxes whose committed updates reached the hook.
+type updateRecorder struct {
+	NoopNetworkAssignHook
+
+	updated []*Sandbox
+}
+
+func (r *updateRecorder) OnNetworkUpdate(_ context.Context, sbx *Sandbox) {
+	r.updated = append(r.updated, sbx)
+}
+
+// A sandbox the hook gave a placement is refused an egress proxy before its
+// update runs or commits, takes egress without one, and the hook hears of
+// each committed update but not of a rolled-back one. A sandbox on the
+// worker's own network takes a proxy, and the hook never hears of it.
+func TestFactoryRunUpdate(t *testing.T) {
+	t.Parallel()
+	hook := &updateRecorder{}
+	factory := &Factory{networkAssignHook: hook}
+	ordinary, placed := testNetworkAssignHookSandbox(), testNetworkAssignHookSandbox()
+	ordinary.Config, placed.Config = NewConfig(Config{}), NewConfig(Config{})
+	placed.NetworkPlacement = &orchestrator.SandboxNetworkPlacement{ExecutionId: "execution"}
+	committed := func(sbx *Sandbox) uint64 {
+		var n uint64
+		sbx.ReadCommitted(func(committedUpdates uint64) { n = committedUpdates })
+
+		return n
+	}
+	proxied := &orchestrator.SandboxNetworkEgressConfig{EgressProxyAddress: "proxy.example:1080"}
+	apply := func(sbx *Sandbox, egress *orchestrator.SandboxNetworkEgressConfig) error {
+		return factory.RunUpdate(t.Context(), sbx, egress, func() error {
+			sbx.Config.SetNetworkEgress(egress)
+
+			return nil
+		})
+	}
+
+	require.ErrorIs(t, apply(placed, proxied), ErrEgressProxyUnsupported)
+	require.Nil(t, placed.Config.GetNetworkEgress(), "the rejected proxy never became desired")
+	require.Zero(t, committed(placed))
+	require.Empty(t, hook.updated)
+
+	require.NoError(t, apply(placed, &orchestrator.SandboxNetworkEgressConfig{AllowedCidrs: []string{"192.0.2.0/24"}}))
+	require.Equal(t, []string{"192.0.2.0/24"}, placed.Config.GetNetworkEgress().GetAllowedCidrs())
+	require.Equal(t, uint64(1), committed(placed))
+	require.Equal(t, []*Sandbox{placed}, hook.updated)
+
+	failure := errors.New("the kernel refused the update")
+	require.ErrorIs(t, factory.RunUpdate(t.Context(), placed, nil, func() error { return failure }), failure)
+	require.Equal(t, uint64(1), committed(placed))
+	require.Len(t, hook.updated, 1, "a rolled-back update is not told")
+
+	require.NoError(t, apply(ordinary, proxied))
+	require.Equal(t, proxied.GetEgressProxyAddress(), ordinary.Config.GetNetworkEgress().GetEgressProxyAddress())
+	require.Equal(t, uint64(1), committed(ordinary))
+	require.NoError(t, apply(ordinary, nil))
+	require.Nil(t, ordinary.Config.GetNetworkEgress(), "ordinary BYOP removal still commits")
+	require.Equal(t, uint64(2), committed(ordinary))
+	require.Len(t, hook.updated, 1)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
@@ -33,6 +34,17 @@ type Pool struct {
 
 	clusters        *smap.Map[*Cluster]
 	synchronization *synchronization.Synchronize[queries.Cluster, *Cluster]
+	store           clustersSyncStore
+
+	cancel           context.CancelFunc
+	lifecycleDone    <-chan struct{}
+	startupReady     chan struct{}
+	startupReadyOnce sync.Once
+	lifecycleMu      *sync.Mutex
+
+	// localInstances carries one token per batch of joins to the local
+	// cluster's registry.
+	localInstances chan struct{}
 }
 
 func localClusterConfig() *queries.Cluster {
@@ -53,35 +65,49 @@ func NewPool(
 	sandboxLogsReader ClickhouseLogsReader,
 	featureFlags *featureflags.Client,
 	config cfg.Config,
+	localCreds credentials.TransportCredentials,
 ) (*Pool, error) {
 	clusters := smap.New[*Cluster]()
-
-	localCluster := localClusterConfig()
-
+	poolCtx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		db:       db,
-		tel:      tel,
-		clusters: clusters,
-		synchronization: synchronization.NewSynchronize(
-			"clusters-pool",
-			"Clusters pool",
-			clustersSyncStore{
-				config:               config,
-				db:                   db,
-				tel:                  tel,
-				clusters:             clusters,
-				local:                localCluster,
-				localDiscovery:       localDiscovery,
-				queryLogsProvider:    queryLogsProvider,
-				queryMetricsProvider: queryMetricsProvider,
-				sandboxLogsReader:    sandboxLogsReader,
-				featureFlags:         featureFlags,
-			},
-		),
+		db:             db,
+		tel:            tel,
+		clusters:       clusters,
+		cancel:         cancel,
+		lifecycleDone:  poolCtx.Done(),
+		startupReady:   make(chan struct{}),
+		lifecycleMu:    &sync.Mutex{},
+		localInstances: make(chan struct{}, 1),
 	}
+	p.store = clustersSyncStore{
+		config:               config,
+		db:                   db,
+		tel:                  tel,
+		clusters:             clusters,
+		local:                localClusterConfig(),
+		localDiscovery:       localDiscovery,
+		queryLogsProvider:    queryLogsProvider,
+		queryMetricsProvider: queryMetricsProvider,
+		sandboxLogsReader:    sandboxLogsReader,
+		featureFlags:         featureFlags,
+		localCreds:           localCreds,
+		onLocalInstance:      p.notifyLocalInstance,
+		activateCluster: func(cluster *Cluster, mode initialSyncMode) error {
+			return p.activateCluster(poolCtx, cluster, mode)
+		},
+	}
+	p.synchronization = synchronization.NewSynchronize("clusters-pool", "Clusters pool", p.store)
 
-	// Periodically sync clusters with the database
-	go p.synchronization.Start(ctx, clustersSyncInterval, clusterSyncTimeout, true)
+	coordinator := newStartupCoordinator(
+		func(inventoryCtx context.Context) ([]queries.Cluster, error) {
+			return p.initialInventory(poolCtx, inventoryCtx)
+		},
+		func(attemptCtx context.Context, cluster queries.Cluster) error {
+			return p.startInitialRemoteCluster(poolCtx, attemptCtx, cluster)
+		},
+		p.finishStartup,
+	)
+	go coordinator.Start(poolCtx)
 
 	return p, nil
 }
@@ -94,7 +120,30 @@ func (p *Pool) GetClusters() map[string]*Cluster {
 	return p.clusters.Items()
 }
 
+// LocalInstanceJoined delivers a token after an instance joins the local
+// cluster's registry. Tokens coalesce, so one receive can stand for several
+// joins, and a token sent before anyone receives waits for the first receiver.
+func (p *Pool) LocalInstanceJoined() <-chan struct{} {
+	return p.localInstances
+}
+
+func (p *Pool) notifyLocalInstance() {
+	select {
+	case p.localInstances <- struct{}{}:
+	default:
+	}
+}
+
+// StartupReady closes after the first successful inventory and every remote
+// target in that inventory has applied a snapshot or exhausted startup retries.
+func (p *Pool) StartupReady() <-chan struct{} {
+	return p.startupReady
+}
+
 func (p *Pool) Close(ctx context.Context) {
+	p.lifecycleMu.Lock()
+	p.cancel()
+	p.lifecycleMu.Unlock()
 	p.synchronization.Close()
 
 	wg := &sync.WaitGroup{}
@@ -122,6 +171,9 @@ type clustersSyncStore struct {
 	sandboxLogsReader    ClickhouseLogsReader
 	featureFlags         *featureflags.Client
 	config               cfg.Config
+	localCreds           credentials.TransportCredentials
+	activateCluster      func(*Cluster, initialSyncMode) error
+	onLocalInstance      func()
 }
 
 func (d clustersSyncStore) SourceList(ctx context.Context) ([]queries.Cluster, error) {
@@ -146,7 +198,15 @@ func (d clustersSyncStore) SourceList(ctx context.Context) ([]queries.Cluster, e
 func (d clustersSyncStore) SourceExists(_ context.Context, s []queries.Cluster, p *Cluster) bool {
 	for _, item := range s {
 		if item.ID == p.ID {
-			return true
+			// A replacement deployment keeps its cluster ID but rotates the edge
+			// credential, and a cluster that moves domain changes its endpoint
+			// and sandbox domain. Retire its old clients so the next sync
+			// recreates them.
+			sameDomain := (item.SandboxProxyDomain == nil) == (p.SandboxDomain == nil) &&
+				(item.SandboxProxyDomain == nil || *item.SandboxProxyDomain == *p.SandboxDomain)
+
+			return item.ID == consts.LocalClusterID || (item.Token == p.edgeToken && item.Endpoint == p.endpoint &&
+				item.EndpointTls == p.endpointTLS && sameDomain)
 		}
 	}
 
@@ -169,50 +229,150 @@ func (d clustersSyncStore) PoolExists(_ context.Context, cluster queries.Cluster
 }
 
 func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster queries.Cluster) {
-	clusterID := cluster.ID.String()
-
 	logger.L().Info(ctx, "Initializing newly discovered cluster", logger.WithClusterID(cluster.ID))
 
-	var c *Cluster
-	var err error
-
-	// Local cluster
-	if cluster.ID == consts.LocalClusterID {
-		c = newLocalCluster(context.WithoutCancel(ctx), d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config)
-		d.clusters.Insert(clusterID, c)
-		logger.L().Info(ctx, "Local cluster initialized successfully", logger.WithClusterID(cluster.ID))
-
-		return
-	}
-
-	// Remote cluster
-	authOrgID := ""
-	if cluster.AuthOrgID != nil {
-		authOrgID = *cluster.AuthOrgID
-	}
-
-	c, err = newRemoteCluster(
-		context.WithoutCancel(ctx),
-		d.tel,
-		cluster.Endpoint,
-		cluster.EndpointTls,
-		cluster.Token,
-		cluster.ID,
-		cluster.SandboxProxyDomain,
-		authOrgID,
-	)
+	c, err := d.newCluster(cluster)
 	if err != nil {
-		logger.L().Error(ctx, "Initializing remote cluster failed", zap.Error(err), logger.WithClusterID(cluster.ID))
+		logger.L().Error(ctx, "Initializing cluster failed", zap.Error(err), logger.WithClusterID(cluster.ID))
 
 		return
 	}
 
-	d.clusters.Insert(clusterID, c)
-	logger.L().Info(ctx, "Remote cluster initialized successfully", logger.WithClusterID(cluster.ID))
+	if err := d.activateCluster(c, syncImmediately); err != nil {
+		logger.L().Info(ctx, "Skipped cluster initialization during shutdown", zap.Error(err), logger.WithClusterID(cluster.ID))
+
+		return
+	}
+
+	logger.L().Info(ctx, "Cluster initialized successfully", logger.WithClusterID(cluster.ID))
+}
+
+func (d clustersSyncStore) newCluster(cluster queries.Cluster) (*Cluster, error) {
+	if cluster.ID == consts.LocalClusterID {
+		return newLocalCluster(d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config, d.localCreds, d.onLocalInstance), nil
+	}
+
+	return newRemoteCluster(d.tel, d.featureFlags, cluster)
+}
+
+func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Context) ([]queries.Cluster, error) {
+	clusters, err := p.store.SourceList(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]queries.Cluster, 0, len(clusters))
+	for _, cluster := range clusters {
+		if cluster.ID != consts.LocalClusterID {
+			targets = append(targets, cluster)
+
+			continue
+		}
+
+		local, localErr := p.store.newCluster(cluster)
+		if localErr != nil {
+			return nil, localErr
+		}
+		if err := p.activateCluster(lifecycleCtx, local, syncImmediately); err != nil {
+			return nil, err
+		}
+	}
+
+	return targets, nil
+}
+
+func (p *Pool) startInitialRemoteCluster(lifecycleCtx context.Context, ctx context.Context, cluster queries.Cluster) error {
+	c, err := p.store.newCluster(cluster)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SyncInstances(ctx); err != nil {
+		_ = c.Close(ctx)
+
+		return err
+	}
+
+	// The snapshot is already applied, so the periodic loop starts at its first
+	// scheduled tick rather than repeating discovery now.
+	if err := p.activateCluster(lifecycleCtx, c, syncOnNextTick); err != nil {
+		_ = c.Close(ctx)
+
+		return err
+	}
+
+	return nil
+}
+
+// activateCluster publishes a constructed cluster: it adds the cluster to the
+// pool and starts the cluster's periodic discovery. Both happen under
+// lifecycleMu, the mutex Close holds while cancelling, so a cluster can never
+// start or become visible after shutdown began. The insert comes first so a
+// registry join reported by the first discovery round finds the cluster in
+// the pool. Callers construct the cluster and run any network calls outside
+// this method, both to keep those off the mutex and because the caller owns
+// the cluster until activation succeeds.
+func (p *Pool) activateCluster(lifecycleCtx context.Context, cluster *Cluster, mode initialSyncMode) error {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if err := lifecycleCtx.Err(); err != nil {
+		return err
+	}
+
+	p.clusters.Insert(cluster.ID.String(), cluster)
+	cluster.Start(lifecycleCtx, mode)
+
+	return nil
+}
+
+func (p *Pool) finishStartup(lifecycleCtx context.Context) {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if lifecycleCtx.Err() != nil {
+		return
+	}
+
+	p.startupReadyOnce.Do(func() {
+		close(p.startupReady)
+		go p.synchronization.Start(lifecycleCtx, clustersSyncInterval, clusterSyncTimeout, false)
+	})
 }
 
 func (d clustersSyncStore) PoolUpdate(_ context.Context, _ *Cluster) {
 	// Clusters pool currently does not do something special during synchronization
+}
+
+// PoolReplace swaps a cluster whose endpoint, TLS setting, sandbox domain or
+// credential changed for one built from its current row, and only then closes
+// the old clients, so GetClusterById finds the cluster throughout the move.
+func (d clustersSyncStore) PoolReplace(ctx context.Context, rows []queries.Cluster, old *Cluster) bool {
+	for _, row := range rows {
+		if row.ID != old.ID {
+			continue
+		}
+
+		replacement, err := d.newCluster(row)
+		if err != nil {
+			logger.L().Error(ctx, "Initializing changed cluster failed", zap.Error(err), logger.WithClusterID(row.ID))
+
+			return false
+		}
+		if err := d.activateCluster(replacement, syncImmediately); err != nil {
+			logger.L().Info(ctx, "Skipped changed cluster replacement during shutdown", zap.Error(err), logger.WithClusterID(row.ID))
+
+			return false
+		}
+		if err := old.Close(ctx); err != nil {
+			logger.L().Error(ctx, "Error closing replaced cluster", zap.Error(err), logger.WithClusterID(row.ID))
+		}
+		logger.L().Info(ctx, "Replaced changed cluster", logger.WithClusterID(row.ID))
+
+		return true
+	}
+
+	return false
 }
 
 func (d clustersSyncStore) PoolRemove(ctx context.Context, cluster *Cluster) {

@@ -16,20 +16,24 @@ import (
 	"syscall"
 	"time"
 
+	"buf.build/go/protovalidate"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
-	limits "github.com/gin-contrib/size"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	protovalidatemw "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
 	middleware "github.com/oapi-codegen/gin-middleware"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/handlers"
 	customMiddleware "github.com/e2b-dev/infra/packages/api/internal/middleware"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/ratelimit"
 	"github.com/e2b-dev/infra/packages/api/internal/oauth"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
@@ -40,6 +44,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	"github.com/e2b-dev/infra/packages/shared/pkg/httpserver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -47,6 +52,9 @@ import (
 	sharedmiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware"
 	metricsMiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/metrics"
 	tracingMiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/tracing"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	"github.com/e2b-dev/infra/packages/shared/pkg/openapispec"
+	"github.com/e2b-dev/infra/packages/shared/pkg/removedroutes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -58,13 +66,11 @@ const (
 
 	maxReadHeaderTimeout = 5 * time.Second
 	maxReadTimeout       = 10 * time.Second
-	maxWriteTimeout      = 75 * time.Second
-
-	// requestTimeout is the context deadline applied to each request.
-	// Must be less than maxWriteTimeout so the context cancels before the
-	// server's write deadline kills the connection (WriteTimeout does NOT
-	// cancel r.Context(); see https://github.com/golang/go/issues/59602).
-	requestTimeout = 70 * time.Second
+	// maxWriteTimeout must exceed cfg.RequestTimeout so the request context
+	// cancels before the server's write deadline kills the connection.
+	maxWriteTimeout = 75 * time.Second
+	// Fails to compile when cfg.RequestTimeout reaches maxWriteTimeout.
+	_ = uint(maxWriteTimeout - cfg.RequestTimeout - 1)
 
 	// This timeout should be > 600 (GCP LB upstream idle timeout) to prevent race condition
 	// https://cloud.google.com/load-balancing/docs/https#timeouts_and_retries%23:~:text=The%20load%20balancer%27s%20backend%20keepalive,is%20greater%20than%20600%20seconds
@@ -78,7 +84,7 @@ const (
 	shutdownDrainWait = 15 * time.Second
 
 	// shutdownTimeout caps how long s.Shutdown waits for in-flight
-	// requests to complete. Must be >= requestTimeout so a request, that
+	// requests to complete. Must be >= cfg.RequestTimeout so a request, that
 	// arrived before load balancer stopped sending new traffic,
 	// has its full deadline to finish
 	// (e.g. a slow sandbox pause / snapshot RPC).
@@ -86,7 +92,7 @@ const (
 	// Also caps grpc.Server.GracefulStop. After this we
 	// fall back to Stop() so a stuck stream cannot block the process
 	// past Nomad's kill_timeout.
-	shutdownTimeout = requestTimeout + 5*time.Second
+	shutdownTimeout = cfg.RequestTimeout + 5*time.Second
 
 	// pprofShutdownTimeout is a best-effort bound for pprof drain.
 	pprofShutdownTimeout = 5 * time.Second
@@ -95,10 +101,17 @@ const (
 var (
 	commitSHA                  string
 	expectedMigrationTimestamp string
-	serviceVersion             = "0.14.1" // x-release-please-version
+	serviceVersion             = "0.30.0" // x-release-please-version
 )
 
-func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T, port int) *http.Server {
+func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client, l logger.Logger, apiStore *handlers.APIStore, adminJWTVerifier *auth.JWKSVerifier, redisClient redis.UniversalClient, ff *featureflags.Client, swagger *openapi3.T) *http.Server {
+	// Rendered before the servers are cleared below, so the served document
+	// keeps them.
+	openAPISpec, err := openapispec.Handler(swagger)
+	if err != nil {
+		l.Fatal(ctx, "failed to render the OpenAPI document", zap.Error(err))
+	}
+
 	// Clear out the servers array in the swagger spec, that skips validating
 	// that server names match. We don't know how this thing will be run.
 	swagger.Servers = nil
@@ -133,7 +146,10 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 			"/sandboxes/:sandboxID/connect",
 			"/sandboxes/:sandboxID/resume",
 			"/sandboxes/:sandboxID/snapshots",
+			"/v2/sandboxes",
+			"/v2/sandboxes/:sandboxID/connect",
 		),
+		customMiddleware.LabelMetricsWithTeam(),
 		sharedmiddleware.LoggingMiddleware(l, sharedmiddleware.Config{ //nolint:contextcheck // ctx is captured before c.Next() intentionally to avoid seeing child context cancellations from inner middleware
 			TimeFormat:   time.RFC3339Nano,
 			UTC:          true,
@@ -158,7 +174,7 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 			},
 		}),
 		gin.Recovery(),
-		sharedmiddleware.RequestTimeout(requestTimeout), //nolint:contextcheck // Gin middleware sets context via c.Request.WithContext
+		sharedmiddleware.RequestTimeout(cfg.RequestTimeout), //nolint:contextcheck // Gin middleware sets context via c.Request.WithContext
 	)
 
 	r.Use(customMiddleware.CORS())
@@ -166,18 +182,16 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// Removed routes are registered before the OpenAPI validator middleware
 	// (which rejects paths missing from the spec) so old clients get a clear
 	// 410 instead of a 404.
-	gone := func(msg string) gin.HandlerFunc {
-		return func(c *gin.Context) { apierrors.SendAPIStoreError(c, http.StatusGone, msg) }
+	for _, route := range removedroutes.Routes {
+		r.Handle(route.Method, route.GinPath(), func(c *gin.Context) {
+			apierrors.SendAPIStoreError(c, http.StatusGone, route.Message)
+		})
 	}
-	accessTokensGone := gone("E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation")
-	r.POST("/access-tokens", accessTokensGone)
-	r.DELETE("/access-tokens/:accessTokenID", accessTokensGone)
 
-	templateBuildV1Gone := gone("The v1 template build API is no longer supported. Upgrade the CLI and migrate to v2 templates. See https://e2b.dev/docs/template/migration-v2")
-	r.POST("/templates", templateBuildV1Gone)
-	r.POST("/templates/:templateID", templateBuildV1Gone)
-	r.POST("/templates/:templateID/builds/:buildID", templateBuildV1Gone)
-	r.POST("/v2/templates", templateBuildV1Gone)
+	// The spec does not declare its own document, so it is registered before
+	// the validator, like the removed routes.
+	r.GET(openapispec.Path, openAPISpec)
+	r.HEAD(openapispec.Path, openAPISpec)
 
 	// Create a team API Key auth validator
 	AuthenticationFunc := auth.CreateAuthenticationFunc(
@@ -195,9 +209,11 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// Use our validation middleware to check all requests against the
 	// OpenAPI schema.
 	r.Use(
-		limits.RequestSizeLimiter(maxUploadLimit),
+		customMiddleware.ReadRequestBody(maxUploadLimit),
 		middleware.OapiRequestValidatorWithOptions(swagger,
 			&middleware.Options{
+				// Nothing reads the decoded body; don't hold it for the whole request.
+				DiscardValidatedValue: true,
 				ErrorHandler: func(c *gin.Context, message string, fallbackStatusCode int) {
 					// Override the status code provided by the oapi-codegen/gin-middleware as that is always set to 400 or 404.
 					statusCode := max(c.Writer.Status(), fallbackStatusCode)
@@ -221,10 +237,15 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	}
 	r.Use(rateLimitMiddleware)
 
+	// A deleted project keeps its team row, so management writes naming it are
+	// refused before they reach a handler.
+	r.Use(customMiddleware.RefuseDeletedProject(apiStore.IsProjectDeleted)) //nolint:contextcheck // Gin middleware gets context from the request.
+
 	// Deny blocked teams on every mutating route unless allowlisted in
 	// EnforceBlockedTeam. Must run after auth (which populates team info on
 	// the gin context) and before the handlers.
 	r.Use(customMiddleware.EnforceBlockedTeam())
+	r.Use(idempotency.Middleware(redisClient, ff)) //nolint:contextcheck // Gin middleware gets context from the request.
 
 	// We now register our store above as the handler for the interface
 	api.RegisterHandlersWithOptions(r, apiStore, api.GinServerOptions{
@@ -237,7 +258,6 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 
 	s := &http.Server{
 		Handler: r,
-		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
 
 		// Configure request timeouts.
 		ReadHeaderTimeout: maxReadHeaderTimeout,
@@ -255,7 +275,6 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 		// still running. Per-request deadlines come from middleware.
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	httpserver.ConfigureH2C(s)
 
 	return s
 }
@@ -279,7 +298,7 @@ func run() int {
 	serviceInstanceID := uuid.New().String()
 	nodeID := env.GetNodeID()
 
-	tel, err := telemetry.New(ctx, nodeID, serviceName, commitSHA, serviceVersion, serviceInstanceID)
+	tel, err := telemetry.NewWithOptions(ctx, nodeID, serviceName, commitSHA, serviceVersion, serviceInstanceID, telemetry.WithDeltaTemporality())
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create metrics exporter", zap.Error(err))
 	}
@@ -412,14 +431,20 @@ func run() int {
 		return redisClient.Close()
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, serviceVersion, featureflags.WithStartOnInitTimeout())
 	if err != nil {
 		logger.L().Fatal(ctx, "failed to create feature flags client", zap.Error(err))
 	}
 	cleanupFns = append(cleanupFns, featureFlags.Close)
 
-	featureFlags.SetServiceName(serviceName)
-	featureFlags.SetDeploymentName(config.DomainName)
+	tlsProcess, err := mtls.NewProcess(ctx, tel.MeterProvider, featureFlags.StringReader(), l)
+	if err != nil {
+		l.Fatal(ctx, "failed to set up mutual TLS", zap.Error(err))
+	}
+	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS)
+	if err != nil {
+		l.Fatal(ctx, "invalid mutual TLS configuration", zap.Error(err))
+	}
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),
 	// falling back to the fixed collector address. Created here so it can use the
@@ -440,8 +465,15 @@ func run() int {
 	// Create an instance of our handler which satisfies the generated interface
 	//  (use the outer context rather than the signal handling
 	//   context so it doesn't exit first.)
-	apiStore := handlers.NewAPIStore(ctx, tel, redisClient, featureFlags, config)
+	apiStore := handlers.NewAPIStore(ctx, tel, redisClient, featureFlags, config, tlsConfig.hops)
 	cleanupFns = append(cleanupFns, apiStore.Close)
+
+	riverOutbox, err := apiStore.NewOutbox(l)
+	if err != nil {
+		l.Error(ctx, "initializing the outbox", zap.Error(err))
+
+		return 1
+	}
 
 	adminJWTVerifier, err := auth.NewJWKSVerifier(ctx, config.AdminAuthProvider, http.DefaultClient)
 	if err != nil {
@@ -459,7 +491,21 @@ func run() int {
 		l.Fatal(ctx, "failed to create proxy grpc listener", zap.Error(err))
 	}
 
-	grpcServer := e2bgrpc.NewGRPCServer(tel)
+	placementCallers, err := mtls.ParseAllowList(config.TLS.PlacementAllow, mtls.WithoutWildcards())
+	if err != nil {
+		l.Fatal(ctx, "invalid placement caller allow-list", zap.Error(err))
+	}
+	validator, err := protovalidate.New()
+	if err != nil {
+		l.Fatal(ctx, "failed to create request validator", zap.Error(err))
+	}
+	// The placement calls carry the caller's deadline; the proxy's resume
+	// on the same listener must not be bounded by a server ceiling.
+	grpcServer := e2bgrpc.NewGRPCServer(tel, append(grpcTLSOptions(tlsConfig.internalGRPC),
+		e2bgrpc.WithRecoveryHandler(func(any) error { return status.Error(codes.Internal, "internal error") }),
+		e2bgrpc.WithUnaryInterceptors(protovalidatemw.UnaryServerInterceptor(validator)),
+	)...)
+	placementpb.RegisterSandboxPlacementServiceServer(grpcServer, apiStore.SandboxPlacementService(placementCallers))
 	proxygrpc.RegisterSandboxServiceServer(grpcServer, handlers.NewSandboxService(apiStore, false, nil))
 
 	edgeGrpcAddr := fmt.Sprintf("0.0.0.0:%d", config.APIEdgeGrpcPort)
@@ -468,7 +514,7 @@ func run() int {
 		l.Fatal(ctx, "failed to create edge proxy grpc listener", zap.Error(err))
 	}
 
-	edgeGrpcServer := e2bgrpc.NewGRPCServer(tel)
+	edgeGrpcServer := e2bgrpc.NewGRPCServer(tel, grpcTLSOptions(tlsConfig.publicGRPC)...)
 	clientProxyOAuthVerifier, err := oauth.NewVerifier(ctx, config.ClientProxyOIDCIssuerURL)
 	if err != nil {
 		l.Fatal(ctx, "failed to create client proxy OIDC verifier", zap.Error(err))
@@ -478,8 +524,21 @@ func run() int {
 	}
 	proxygrpc.RegisterSandboxServiceServer(edgeGrpcServer, handlers.NewSandboxService(apiStore, true, clientProxyOAuthVerifier))
 
+	httpInner, err := (&net.ListenConfig{}).Listen(ctx, "tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		l.Fatal(ctx, "failed to create http listener", zap.Error(err))
+	}
+
 	// Pass ctx so in-flight requests survive the serve goroutines' exit during graceful shutdown.
-	s := NewGinServer(ctx, config, tel, l, apiStore, adminJWTVerifier, redisClient, featureFlags, swagger, port)
+	s := NewGinServer(ctx, config, tel, l, apiStore, adminJWTVerifier, redisClient, featureFlags, swagger)
+	httpListener := mtls.WrapHTTPServer(s, httpInner, tlsConfig.http, tlsConfig.httpHealthPaths)
+	httpserver.ConfigureH2C(s)
+
+	if err := riverOutbox.Start(ctx); err != nil {
+		l.Error(ctx, "starting the outbox", zap.Error(err))
+
+		return 1
+	}
 
 	// ////////////////////////
 	//
@@ -492,8 +551,8 @@ func run() int {
 
 	// serveErrCtx is cancelled by any serve goroutine when it exits — both
 	// on fatal Serve() error and on the normal "listener closed by Shutdown"
-	// exit. The shutdown watcher selects on this so that a startup-time
-	// listener failure (e.g. port in use) also triggers the drain sequence.
+	// exit. The shutdown watcher selects on this so that any Serve error also
+	// triggers the drain sequence.
 	serveErrCtx, serveErrCancel := context.WithCancel(ctx)
 	defer serveErrCancel()
 
@@ -512,7 +571,7 @@ func run() int {
 		l.Info(ctx, "Http service starting", zap.Int("port", port))
 
 		// Serve HTTP until shutdown.
-		err := s.ListenAndServe()
+		err := s.Serve(httpListener)
 
 		switch {
 		case errors.Is(err, http.ErrServerClosed):
@@ -572,7 +631,7 @@ func run() int {
 		// to signal that the service is shutting down.
 		// This is a bit of a hack, but this way we can properly propagate
 		// the health status to the load balancer.
-		apiStore.Healthy.Store(false)
+		apiStore.BeginDrain()
 
 		// Skip the delay in local environment for instant shutdown
 		if !env.IsLocal() {
@@ -611,6 +670,14 @@ func run() int {
 		// the database and Redis clients it is still using.
 		if err := apiStore.Drain(ctx); err != nil {
 			l.Error(ctx, "sandbox work did not finish before shutdown", zap.Error(err))
+		}
+
+		// Outbox jobs use the same clients. One still running at the deadline
+		// is rescued and retried by another replica; every step is idempotent.
+		outboxStopCtx, outboxStopCancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer outboxStopCancel()
+		if err := riverOutbox.Stop(outboxStopCtx); err != nil {
+			l.Error(ctx, "outbox shutdown error", zap.Error(err))
 		}
 
 		// Drain pprof after, so that it is still available during the shutdown process for debugging if needed.

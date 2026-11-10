@@ -21,26 +21,21 @@ import (
 func TestServiceInfoSandboxLimit(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		name    string
-		roles   []orchestratorinfo.ServiceInfoRole
-		reports bool
-	}{
-		{"sandbox", []orchestratorinfo.ServiceInfoRole{orchestratorinfo.ServiceInfoRole_Orchestrator}, true},
-		{"builder", []orchestratorinfo.ServiceInfoRole{orchestratorinfo.ServiceInfoRole_TemplateBuilder}, false},
-		{"mixed", []orchestratorinfo.ServiceInfoRole{orchestratorinfo.ServiceInfoRole_Orchestrator, orchestratorinfo.ServiceInfoRole_TemplateBuilder}, true},
+	for name, roles := range map[string][]orchestratorinfo.ServiceInfoRole{
+		"sandbox": {orchestratorinfo.ServiceInfoRole_Orchestrator},
+		"builder": {orchestratorinfo.ServiceInfoRole_TemplateBuilder},
+		"mixed":   {orchestratorinfo.ServiceInfoRole_Orchestrator, orchestratorinfo.ServiceInfoRole_TemplateBuilder},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			info := &ServiceInfo{Roles: tc.roles}
+			info := &ServiceInfo{Roles: roles}
 			info.MaxSandboxes.Store(200)
 
 			listener := bufconn.Listen(1 << 20)
 			server := grpc.NewServer()
-			orchestratorinfo.RegisterInfoServiceServer(server, NewInfoService(
-				info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics(),
-			))
+			infoService := NewInfoService(info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics(), nil)
+			orchestratorinfo.RegisterInfoServiceServer(server, infoService)
 			go func() { _ = server.Serve(listener) }()
 			t.Cleanup(func() {
 				server.Stop()
@@ -59,11 +54,7 @@ func TestServiceInfoSandboxLimit(t *testing.T) {
 				t.Helper()
 				response, err := client.ServiceInfo(t.Context(), &emptypb.Empty{})
 				require.NoError(t, err)
-				if tc.reports {
-					require.Equal(t, new(want), response.MaxSandboxes)
-				} else {
-					require.Nil(t, response.MaxSandboxes)
-				}
+				require.Equal(t, want, response.GetMaxSandboxes())
 			}
 
 			assertLimit(200)

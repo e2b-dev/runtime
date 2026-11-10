@@ -2,6 +2,7 @@ package buildlogger
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"go.uber.org/zap/zapcore"
@@ -128,7 +129,7 @@ func (c *childCore) Enabled(l zapcore.Level) bool { return c.parent.Enabled(l) }
 func (c *childCore) With(fields []zapcore.Field) zapcore.Core {
 	return &childCore{
 		parent: c.parent,
-		with:   append(append([]zapcore.Field{}, c.with...), fields...),
+		with:   slices.Concat(c.with, fields),
 	}
 }
 

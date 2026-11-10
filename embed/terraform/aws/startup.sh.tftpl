@@ -1,0 +1,191 @@
+#!/bin/sh
+# First boot, run once by cloud-init as root: start the health watchdog,
+# install Docker, move the Elastic IP to this instance, materialize the two
+# shipped files and bring the stack up through e2b-embed.service. Every
+# later boot runs only that unit's `up -d --wait` and the watchdog timer;
+# the unit re-adds the two host mutations that do not survive a reboot (the
+# TCP MSS clamp and /var/run/netns). The files are written once; upgrades
+# are explicit.
+# Everything this script prints goes to /var/log/cloud-init-output.log and
+# the serial console, so it never prints the secrets it writes or the role
+# credentials it signs with.
+# Shell parameters here are written $name, never with braces: Terraform's
+# templatefile() owns that syntax, and uses it for the values it fills in.
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+# Signed AWS calls without the AWS CLI: the role's credentials come from the
+# instance metadata service (IMDSv2), and curl signs with them (SigV4). They
+# reach curl on its standard input, never on a command line. The watchdog
+# sources the same file.
+install -d -m 0755 /usr/local/lib/e2b-embed
+cat > /usr/local/lib/e2b-embed/aws.sh <<'EOF'
+# shellcheck shell=sh disable=SC2034  # the scripts that source this read INSTANCE_ID
+imds() {
+  curl -fsS -m 5 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
+}
+aws_env() {
+  IMDS_TOKEN=$(curl -fsS -m 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 900' http://169.254.169.254/latest/api/token)
+  INSTANCE_ID=$(imds instance-id)
+  REGION=$(imds placement/region)
+  role=$(imds iam/security-credentials/)
+  creds=$(imds "iam/security-credentials/$role")
+  AWS_AK=$(printf '%s\n' "$creds" | sed -n 's/.*"AccessKeyId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  AWS_SK=$(printf '%s\n' "$creds" | sed -n 's/.*"SecretAccessKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  AWS_ST=$(printf '%s\n' "$creds" | sed -n 's/.*"Token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  [ -n "$INSTANCE_ID" ] && [ -n "$REGION" ] && [ -n "$AWS_AK" ] && [ -n "$AWS_SK" ] && [ -n "$AWS_ST" ]
+}
+aws_curl() {
+  svc=$1
+  url=$2
+  shift 2
+  printf 'user = "%s:%s"\nheader = "x-amz-security-token: %s"\n' "$AWS_AK" "$AWS_SK" "$AWS_ST" |
+    curl -sS -m 60 -K - --aws-sigv4 "aws:amz:$REGION:$svc" "$@" "$url"
+}
+# An EC2-style query API call. The response is printed: on a refusal it
+# carries the error code, and it never carries a credential.
+aws_query() {
+  rc=0
+  aws_curl "$1" "https://$1.$REGION.amazonaws.com/" --fail-with-body --data "$2" || rc=$?
+  echo
+  return "$rc"
+}
+has_address() {
+  [ "$(imds public-ipv4)" = "$1" ]
+}
+retry() {
+  n=$1
+  shift
+  until "$@"; do
+    n=$((n - 1))
+    [ "$n" -gt 0 ] || return 1
+    sleep 6
+  done
+}
+EOF
+
+# Marks the instance Unhealthy once GET :3000/health has failed for ten
+# minutes, so the Auto Scaling group replaces it: the self-heal a load
+# balancer health check would give, without one. It starts before anything
+# below can fail, so a first boot that never gets healthy is replaced too.
+# The clock lives in /run, so every boot starts it again, and the group
+# ignores the call during its 900-second grace period after a launch.
+cat > /usr/local/sbin/e2b-embed-watchdog <<'EOF'
+#!/bin/sh
+set -eu
+stamp=/run/e2b-embed-watchdog.last-ok
+if curl -fsS -m 10 -o /dev/null http://127.0.0.1:3000/health; then
+  touch "$stamp"
+  exit 0
+fi
+[ -f "$stamp" ] || touch "$stamp"
+failing=$(($(date +%s) - $(stat -c %Y "$stamp")))
+[ "$failing" -ge 600 ] || exit 0
+# shellcheck source=/dev/null
+. /usr/local/lib/e2b-embed/aws.sh
+aws_env
+echo "e2b-embed-watchdog: /health has failed for $failing seconds; marking this instance Unhealthy"
+aws_query autoscaling "Action=SetInstanceHealth&Version=2011-01-01&InstanceId=$INSTANCE_ID&HealthStatus=Unhealthy"
+EOF
+chmod 0755 /usr/local/sbin/e2b-embed-watchdog
+
+cat > /etc/systemd/system/e2b-embed-watchdog.service <<'EOF'
+[Unit]
+Description=E2B Embed health watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/e2b-embed-watchdog
+EOF
+cat > /etc/systemd/system/e2b-embed-watchdog.timer <<'EOF'
+[Unit]
+Description=E2B Embed health watchdog, every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+# Every boot, first one included: `up -d --wait` in /opt/e2b.
+cat > /etc/systemd/system/e2b-embed.service <<'EOF'
+[Unit]
+Description=E2B Embed stack
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/e2b
+ExecStart=/usr/bin/docker compose up -d --wait
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now e2b-embed-watchdog.timer
+
+if ! command -v docker >/dev/null 2>&1; then
+  # Ubuntu's own apt-daily/unattended-upgrades can hold the dpkg lock on a
+  # first boot; wait for it instead of aborting under set -e.
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  # These are the host tools `preflight` checks, so a minimal image boots too.
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq ca-certificates curl iptables rsync e2fsprogs iproute2
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  systemctl enable --now docker
+fi
+
+# An Auto Scaling group cannot attach an Elastic IP, so the instance claims
+# it. Until then the launch-time public address carries the downloads above;
+# the association replaces it, so nothing else is downloaded until the
+# instance answers on the Elastic IP.
+# shellcheck source=/dev/null
+. /usr/local/lib/e2b-embed/aws.sh
+retry 10 aws_env
+retry 10 aws_query ec2 "Action=AssociateAddress&Version=2016-11-15&AllocationId=${eip_allocation_id}&InstanceId=$INSTANCE_ID&AllowReassociation=true"
+retry 20 has_address "${dashboard_host}"
+
+install -d -m 0755 /opt/e2b
+cd /opt/e2b
+if [ ! -f compose.yaml ]; then
+  if [ -n "${compose_base_url}" ]; then
+    retry 10 curl -fsSL -o compose.yaml "${compose_base_url}/compose.yaml"
+  else
+    retry 10 aws_curl s3 "https://${s3_host}/${compose_key}" -f -o compose.yaml
+    echo "${compose_sha256}  compose.yaml" | sha256sum -c --quiet
+  fi
+fi
+if [ ! -f .env ]; then
+  if [ -n "${compose_base_url}" ]; then
+    retry 10 curl -fsSL -o .env "${compose_base_url}/.env"
+  else
+    retry 10 aws_curl s3 "https://${s3_host}/${env_key}" -f -o .env
+    echo "${env_sha256}  .env" | sha256sum -c --quiet
+  fi
+  sed -i -E '/^#?(ADMIN_TOKEN|SANDBOX_ACCESS_TOKEN_HASH_SEED|TEAM_API_KEY|HUGEPAGES|E2B_DASHBOARD_HOST|E2B_OTEL_COLLECTOR_GRPC_ENDPOINT|COMPOSE_PROFILES)=/d' .env
+  cat >> .env <<EOF
+ADMIN_TOKEN=${admin_token}
+SANDBOX_ACCESS_TOKEN_HASH_SEED=${sandbox_access_token_hash_seed}
+TEAM_API_KEY=${team_api_key}
+HUGEPAGES=${hugepages}
+E2B_DASHBOARD_HOST=${dashboard_host}
+E2B_OTEL_COLLECTOR_GRPC_ENDPOINT=${otel_endpoint}
+COMPOSE_PROFILES=${compose_profiles}
+EOF
+  chmod 0600 .env
+fi
+
+systemctl enable e2b-embed.service
+systemctl start e2b-embed.service
+# The ready service's log is deliberately not printed here: it carries the
+# team API key. Read the key with `terraform output -raw e2b_api_key`.

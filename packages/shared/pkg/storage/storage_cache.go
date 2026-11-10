@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -50,6 +51,21 @@ type cache struct {
 
 var _ StorageProvider = (*cache)(nil)
 
+// nfsCachePathUnsetWarnOnce guards the warning below so a missing cache path is
+// reported once per process instead of on every build/launch/resume. The path
+// comes from immutable config, so a single line is enough.
+var nfsCachePathUnsetWarnOnce sync.Once
+
+// WarnNFSCachePathUnsetOnce logs, at most once per process, that an NFS cache
+// feature flag is enabled while its cache path is unset, so NFS caching is
+// silently disabled. Callers on the hot path use this instead of logging the
+// same warning on every operation.
+func WarnNFSCachePathUnsetOnce(ctx context.Context) {
+	nfsCachePathUnsetWarnOnce.Do(func() {
+		logger.L().Warn(ctx, "NFS cache feature flag is enabled but its cache path is unset; NFS caching is disabled until SHARED_CHUNK_CACHE_PATH is set")
+	})
+}
+
 func WrapInNFSCache(
 	ctx context.Context,
 	rootPath string,
@@ -73,6 +89,10 @@ func WrapInNFSCache(
 }
 
 func (c cache) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
+	if err := validateObjectPath(prefix); err != nil {
+		return err
+	}
+
 	// no need to wait for cache deletion before returning
 	go func(ctx context.Context) {
 		c.deleteCachedObjectsWithPrefix(ctx, prefix)
@@ -82,10 +102,18 @@ func (c cache) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error
 }
 
 func (c cache) UploadSignedURL(ctx context.Context, path string, ttl time.Duration) (UploadURL, error) {
+	if err := validateObjectPath(path); err != nil {
+		return UploadURL{}, err
+	}
+
 	return c.inner.UploadSignedURL(ctx, path, ttl)
 }
 
 func (c cache) OpenBlob(ctx context.Context, path string) (Blob, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	innerObject, err := c.inner.OpenBlob(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open object: %w", err)
@@ -106,6 +134,10 @@ func (c cache) OpenBlob(ctx context.Context, path string) (Blob, error) {
 }
 
 func (c cache) OpenSeekable(ctx context.Context, path string) (Seekable, error) {
+	if err := validateObjectPath(path); err != nil {
+		return nil, err
+	}
+
 	innerObject, err := c.inner.OpenSeekable(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open object: %w", err)

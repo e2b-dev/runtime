@@ -16,13 +16,13 @@ func handleInput(process *handler.Handler, in *rpc.ProcessInput) error {
 	case *rpc.ProcessInput_Pty:
 		err := process.WriteTty(in.GetPty())
 		if err != nil {
-			return connect.NewError(connect.CodeInternal, fmt.Errorf("error writing to tty: %w", err))
+			return connect.NewError(handler.InputErrorCode(err), fmt.Errorf("error writing to tty: %w", err))
 		}
 
 	case *rpc.ProcessInput_Stdin:
 		err := process.WriteStdin(in.GetStdin())
 		if err != nil {
-			return connect.NewError(connect.CodeInternal, fmt.Errorf("error writing to stdin: %w", err))
+			return connect.NewError(handler.InputErrorCode(err), fmt.Errorf("error writing to stdin: %w", err))
 		}
 
 	default:
@@ -87,13 +87,13 @@ func (s *Service) CloseStdin(
 	_ context.Context,
 	req *connect.Request[rpc.CloseStdinRequest],
 ) (*connect.Response[rpc.CloseStdinResponse], error) {
-	handler, err := s.getProcess(req.Msg.GetProcess())
+	proc, err := s.getProcess(req.Msg.GetProcess())
 	if err != nil {
 		return nil, err
 	}
 
-	if err := handler.CloseStdin(); err != nil {
-		return nil, connect.NewError(connect.CodeUnknown, fmt.Errorf("error closing stdin: %w", err))
+	if err := proc.CloseStdin(); err != nil {
+		return nil, connect.NewError(handler.InputErrorCode(err), fmt.Errorf("error closing stdin: %w", err))
 	}
 
 	return connect.NewResponse(&rpc.CloseStdinResponse{}), nil

@@ -24,12 +24,21 @@ func WrapWithRecovery(ctx context.Context, h nfs.Handler) *Handler {
 	return &Handler{inner: h, ctx: ctx}
 }
 
-func (h Handler) Mount(ctx context.Context, conn net.Conn, request nfs.MountRequest) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
-	defer tryRecovery(ctx, "Mount")
-	s, fs, auth := h.inner.Mount(ctx, conn, request)
+func (h Handler) Mount(ctx context.Context, conn net.Conn, request nfs.MountRequest) (status nfs.MountStatus, fs billy.Filesystem, auth []nfs.AuthFlavor) {
+	defer func() {
+		if r := recover(); r != nil {
+			// A recovered panic must not report a successful MOUNT without a root.
+			status, fs, auth = nfs.MountStatusErrServerFault, nil, nil
+			logger.L().Error(ctx, `panic in "Mount" nfs handler`,
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+		}
+	}()
+	status, fs, auth = h.inner.Mount(ctx, conn, request)
 	fs = wrapFS(ctx, fs)
 
-	return s, fs, auth
+	return status, fs, auth
 }
 
 func (h Handler) Change(ctx context.Context, filesystem billy.Filesystem) billy.Change {
@@ -54,7 +63,12 @@ func (h Handler) ToHandle(ctx context.Context, fs billy.Filesystem, path []strin
 func (h Handler) FromHandle(ctx context.Context, fh []byte) (fs billy.Filesystem, path []string, e error) {
 	defer deferErrRecovery(ctx, "Handler.FromHandle", &e)
 
-	return h.inner.FromHandle(ctx, fh)
+	fs, path, e = h.inner.FromHandle(ctx, fh)
+	if fs != nil {
+		fs = wrapFS(ctx, fs)
+	}
+
+	return
 }
 
 func (h Handler) InvalidateHandle(ctx context.Context, filesystem billy.Filesystem, bytes []byte) (e error) {

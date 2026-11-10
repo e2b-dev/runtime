@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -53,15 +53,18 @@ func (nopResolver) Close()               {}
 type peerResolver struct {
 	registry       Registry
 	selfAddress    string
+	creds          credentials.TransportCredentials
 	peerConns      sync.Map // address → *grpc.ClientConn
 	uploadedBuilds sync.Map // buildID → *atomic.Bool
 	dialGroup      singleflight.Group
 }
 
-func NewResolver(registry Registry, selfAddress string) Resolver {
+// NewResolver dials peers through creds.
+func NewResolver(registry Registry, selfAddress string, creds credentials.TransportCredentials) Resolver {
 	return &peerResolver{
 		registry:    registry,
 		selfAddress: selfAddress,
+		creds:       creds,
 	}
 }
 
@@ -81,7 +84,7 @@ func (r *peerResolver) getOrDialPeer(ctx context.Context, address string) (*grpc
 		}
 
 		conn, err := grpc.NewClient(address,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithTransportCredentials(r.creds),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithConnectParams(grpc.ConnectParams{MinConnectTimeout: peerConnectTimeout}),
 		)

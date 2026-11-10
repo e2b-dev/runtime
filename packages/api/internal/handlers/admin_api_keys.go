@@ -16,6 +16,12 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 )
 
+// GetAdminTeamsTeamIDApiKeys lists a team's API keys without resolving the
+// team, so, like the admin delete, it also answers for a banned team.
+func (a *APIStore) GetAdminTeamsTeamIDApiKeys(c *gin.Context, teamID openapi_types.UUID) {
+	a.respondTeamAPIKeys(c, teamID)
+}
+
 func (a *APIStore) PostAdminTeamsTeamIDApiKeys(c *gin.Context, teamID openapi_types.UUID) {
 	ctx := c.Request.Context()
 

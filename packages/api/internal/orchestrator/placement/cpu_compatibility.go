@@ -15,6 +15,10 @@ type CPURequirement struct {
 	// this CPU model. It narrows Build's rule rather than replacing it, so a
 	// build the pinned model cannot run has no candidates at all.
 	PinnedModel string
+
+	// ExtraNodeModels adds one-way build model to node models pairs to the
+	// hardcoded rule.
+	ExtraNodeModels map[string][]string
 }
 
 // NodeSatisfiesCPU reports whether node meets req. A build with no recorded CPU
@@ -31,5 +35,5 @@ func NodeSatisfiesCPU(node *nodemanager.Node, req CPURequirement) bool {
 		return true
 	}
 
-	return req.Build.IsCompatibleWith(nodeMachineInfo)
+	return req.Build.IsCompatibleWithExtra(nodeMachineInfo, req.ExtraNodeModels)
 }

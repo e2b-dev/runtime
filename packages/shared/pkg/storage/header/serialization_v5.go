@@ -78,8 +78,8 @@ func serializeV5(metadata *Metadata, builds map[uuid.UUID]BuildData, mapping Map
 //	N × uvarint                    build-id table index
 func writeV5MappingSection(block *bytes.Buffer, m Mapping) error {
 	var n int
-	for _, idx := range m.buildIdx {
-		if idx != nilBuildIdx {
+	for i := range m.offsets {
+		if m.buildIndex(i) >= 0 {
 			n++
 		}
 	}
@@ -99,34 +99,34 @@ func writeV5MappingSection(block *bytes.Buffer, m Mapping) error {
 
 	var prevOffset uint64
 	for i, v := range m.offsets {
-		if m.buildIdx[i] == nilBuildIdx {
+		if m.buildIndex(i) < 0 {
 			continue
 		}
 		off := uint64(v)
 		block.Write(buf[:binary.PutUvarint(buf[:], off-prevOffset)])
 		prevOffset = off
 	}
-	for i, v := range m.lengths {
-		if m.buildIdx[i] == nilBuildIdx {
+	for i := range m.offsets {
+		if m.buildIndex(i) < 0 {
 			continue
 		}
-		block.Write(buf[:binary.PutUvarint(buf[:], uint64(v))])
+		block.Write(buf[:binary.PutUvarint(buf[:], uint64(m.lengthBlocks(i)))])
 	}
 	var prevStorage int64
 	for i, v := range m.storage {
-		if m.buildIdx[i] == nilBuildIdx {
+		if m.buildIndex(i) < 0 {
 			continue
 		}
 		s := int64(v)
 		block.Write(buf[:binary.PutVarint(buf[:], s-prevStorage)])
 		prevStorage = s
 	}
-	for _, v := range m.buildIdx {
-		idx := uint64(v)
-		if v == nilBuildIdx {
+	for i := range m.offsets {
+		bi := m.buildIndex(i)
+		if bi < 0 {
 			continue
 		}
-		block.Write(buf[:binary.PutUvarint(buf[:], idx)])
+		block.Write(buf[:binary.PutUvarint(buf[:], uint64(bi))])
 	}
 
 	return nil
@@ -216,18 +216,21 @@ func readV5MappingSection(reader *bytes.Reader, blockSize, size uint64) (Mapping
 
 	if n == 0 {
 		if size == 0 {
-			return newMappingFromColumns(blockSize, builds, nil, nil, nil, nil)
+			return newMappingFromColumns(blockSize, builds, nil, nil, nil, 0)
 		}
 
 		return newMappingFromColumns(blockSize, builds,
-			[]uint32{0}, []uint32{uint32(sizeBlocks)}, []uint32{0}, []uint16{nilBuildIdx})
+			[]uint32{0}, []uint32{0}, []uint16{nilBuildIdx16}, sizeBlocks)
 	}
 	// Each entry needs at least one byte in each of the four encoded columns,
 	// and sparse input can reconstruct up to a gap plus mapped entry per
-	// encoded entry. Bound the crafted count before allocating either form.
+	// encoded entry. Bound the crafted count before allocating either form:
+	// the decoded columns are transient and carry the wire lengths, the
+	// reconstructed ones are retained and derive them.
 	maxEntriesByBytes := uint64(reader.Len()) / 4
-	const compactEntryBytes = 3*4 + 2
-	maxEntriesByMemory := uint64(v4MaxUncompressedHeaderSize) / (compactEntryBytes + 2*compactEntryBytes)
+	const encodedEntryBytes = 3*4 + 2
+	const compactEntryBytes = 2*4 + 2 // upper bound; the retained index column is one byte for most headers
+	maxEntriesByMemory := uint64(v4MaxUncompressedHeaderSize) / (encodedEntryBytes + 2*compactEntryBytes)
 	if maxEntriesByBytes > maxEntriesByMemory {
 		maxEntriesByBytes = maxEntriesByMemory
 	}
@@ -305,13 +308,14 @@ func readV5MappingSection(reader *bytes.Reader, blockSize, size uint64) (Mapping
 		total++
 	}
 
+	// The reconstruction below fills every gap with a nil entry and rejects
+	// overlaps, so the result is contiguous from block 0 to sizeBlocks and the
+	// wire lengths need not be retained: each entry ends where the next starts.
 	offsets := make([]uint32, 0, total)
-	lengths := make([]uint32, 0, total)
 	storageCol := make([]uint32, 0, total)
 	buildIdx := make([]uint16, 0, total)
-	appendEntry := func(off, length, storage uint32, idx uint16) {
+	appendEntry := func(off, storage uint32, idx uint16) {
 		offsets = append(offsets, off)
-		lengths = append(lengths, length)
 		storageCol = append(storageCol, storage)
 		buildIdx = append(buildIdx, idx)
 	}
@@ -326,18 +330,18 @@ func readV5MappingSection(reader *bytes.Reader, blockSize, size uint64) (Mapping
 			return Mapping{}, fmt.Errorf("mapping offset %d at entry %d overlaps previous end %d", off, i, current)
 		}
 		if off > current {
-			appendEntry(current, off-current, 0, nilBuildIdx)
+			appendEntry(current, 0, nilBuildIdx16)
 		}
 		end := uint64(off) + uint64(length)
 		if end > sizeBlocks {
 			return Mapping{}, fmt.Errorf("mapping end block %d at entry %d exceeds size %d", end, i, sizeBlocks)
 		}
-		appendEntry(off, length, encodedStorage[i], encodedBuildIdx[i])
+		appendEntry(off, encodedStorage[i], encodedBuildIdx[i])
 		current = uint32(end)
 	}
 	if uint64(current) < sizeBlocks {
-		appendEntry(current, uint32(sizeBlocks)-current, 0, nilBuildIdx)
+		appendEntry(current, 0, nilBuildIdx16)
 	}
 
-	return newMappingFromColumns(blockSize, builds, offsets, lengths, storageCol, buildIdx)
+	return newMappingFromColumns(blockSize, builds, offsets, storageCol, buildIdx, sizeBlocks)
 }

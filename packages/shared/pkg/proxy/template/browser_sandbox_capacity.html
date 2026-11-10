@@ -1,0 +1,11 @@
+{{define "title"}}Sandbox cannot be resumed{{end}}
+{{define "tone"}}warning{{end}}
+{{define "body"}}
+                    <p class="message">{{.Message}}</p>
+                    <p class="hint">Sandbox <code>{{.SandboxId}}</code></p>
+{{end}}
+{{define "actions"}}
+                <div class="actions">
+                    <a class="button button-primary" href="">{{template "refresh-icon"}}Try again</a>
+                </div>
+{{end}}

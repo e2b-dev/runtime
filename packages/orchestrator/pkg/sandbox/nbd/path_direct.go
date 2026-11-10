@@ -38,9 +38,11 @@ const (
 	// the connection dead and returns EIO to the guest.
 	ioTimeout = 90 * time.Second
 
-	// deadconnTimeout is how long the kernel waits after an I/O timeout
-	// before declaring the NBD connection dead.
-	deadconnTimeout = 30 * time.Second
+	// The kernel waits here only for a replacement NBD socket. This mount never
+	// reconnects: after its last connection is lost, fail queued I/O instead of
+	// waiting for a recovery path that does not exist. Keep the separate 90s
+	// request timeout so a healthy slow backend still has time to respond.
+	deadconnTimeout = 0
 
 	// disconnectTimeout should not be necessary if the disconnect is reliable
 	disconnectTimeout = 30 * time.Second
@@ -88,6 +90,8 @@ type DirectPathMount struct {
 	devicePool   *DevicePool
 	featureFlags *featureflags.Client
 
+	logger logger.Logger
+
 	Backend         block.Device
 	deviceIndex     uint32
 	blockSize       uint64
@@ -102,10 +106,35 @@ type DirectPathMount struct {
 	// guest was running - which is the failure worth reporting.
 	deviceFile *os.File
 
+	// ioctlSession is set when the device was attached through the ioctl
+	// interface; Close then detaches through the same interface.
+	ioctlSession *ioctlSession
+	// ioctlUnmasked leaves the parked NBD_DO_IT thread's signals deliverable,
+	// and ioctlAfterConfigure runs once the device is configured; only tests
+	// set them.
+	ioctlUnmasked        bool
+	ioctlAfterConfigure  func(deviceIndex uint32)
+	ioctlCloseCtl        func(fd int) error
+	ioctlDisconnectIoctl func(fd int) error
+	ioctlAbandoned       func(*ioctlSession)
+	// openDeviceFn opens the connected device; only tests set it.
+	openDeviceFn func(path string) (*os.File, error)
+	// deferredReleaseTimeout bounds the release of a slot whose ioctl session
+	// outlived its disconnect; zero is the pool's own close bound. Only tests
+	// set it, and deferredReleaseDone, which receives that release's result.
+	deferredReleaseTimeout time.Duration
+	deferredReleaseDone    chan error
+
 	// afterConnect runs as soon as nbdnl.Connect has succeeded, before the
 	// wait-for-connected poll. Only tests set it, to cancel the context inside
 	// the window where the kernel holds the device but Open has not returned it.
 	afterConnect func(deviceIndex uint32)
+
+	// Tests replace device operations without connecting a kernel NBD device.
+	// Production leaves these nil and uses the same disconnect and pool calls.
+	disconnectDeviceFn func(ctx context.Context, deviceIndex uint32) error
+	releaseDeviceFn    func(ctx context.Context, deviceIndex uint32) error
+	socketPairFn       func() ([2]int, error)
 
 	dispatchers []*Dispatch
 	socksClient []*os.File
@@ -122,17 +151,18 @@ func WithIOTimeout(d time.Duration) MountOption {
 	return func(m *DirectPathMount) { m.ioTimeout = d }
 }
 
-// WithDeadconnTimeout overrides the kernel NBD dead-connection timeout (default 30s).
+// WithDeadconnTimeout overrides the kernel NBD reconnect wait (default 0).
 func WithDeadconnTimeout(d time.Duration) MountOption {
 	return func(m *DirectPathMount) { m.deadconnTimeout = d }
 }
 
-func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, opts ...MountOption) *DirectPathMount {
+func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, lg logger.Logger, opts ...MountOption) *DirectPathMount {
 	m := &DirectPathMount{
 		Backend:         b,
 		blockSize:       4096,
 		devicePool:      devicePool,
 		featureFlags:    featureFlags,
+		logger:          lg,
 		socksClient:     make([]*os.File, 0),
 		socksServer:     make([]io.Closer, 0),
 		deviceIndex:     math.MaxUint32,
@@ -152,7 +182,12 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 	// otherwise invisible; both add up when this is opened once per measure/resize.
 	ctx, span := tracer.Start(ctx, "direct-path-mount-open")
 
-	ctx, d.cancelfn = context.WithCancel(ctx)
+	// The dispatchers take a context only Close cancels: they serve the
+	// writeback flush Close runs before that cancel, and a dispatcher bound
+	// to the caller's context returns at its next request - that flush's
+	// write - leaving the flush to the kernel's connection timeouts and EIO.
+	handlerCtx, cancelHandlers := context.WithCancel(context.WithoutCancel(ctx))
+	d.cancelfn = cancelHandlers
 
 	defer func() {
 		// Set the device index to the one returned, correctly capture error values
@@ -163,7 +198,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			span.SetStatus(codes.Error, err.Error())
 		}
 		span.End()
-		logger.L().Debug(ctx, "opening direct path mount", zap.Uint32("device_index", d.deviceIndex), zap.Error(err))
+		d.logger.Debug(ctx, "opening direct path mount", zap.Uint32("device_index", d.deviceIndex), zap.Error(err))
 	}()
 
 	telemetry.ReportEvent(ctx, "opening direct path mount")
@@ -177,6 +212,9 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 	var deviceIndex uint32
 
+	// One attach uses one interface, whatever the flag says mid-retry.
+	viaIoctl := d.featureFlags.BoolFlag(ctx, featureflags.NBDAttachViaIoctlFlag)
+
 	for {
 		deviceIndex, err = d.devicePool.GetDevice(ctx)
 		if err != nil {
@@ -185,6 +223,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		telemetry.ReportEvent(ctx, "got device index")
 
+		attachStart := time.Now()
 		d.socksClient = make([]*os.File, 0)
 		d.socksServer = make([]io.Closer, 0)
 		d.dispatchers = make([]*Dispatch, 0)
@@ -194,7 +233,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		for i := range connections {
 			// Create the socket pairs
-			sockPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+			sockPair, err := d.socketPair()
 			if err != nil {
 				closeErr := closeSocketPairs(d.socksClient, d.socksServer)
 				releaseErr := d.devicePool.ReleaseDevice(ctx, deviceIndex)
@@ -216,20 +255,20 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			}
 			server.Close()
 
-			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes)
-			// Capture deviceIndex for the goroutine closure — it's reassigned on
-			// each retry iteration of the outer for-loop (not a range loop, so
-			// Go 1.22+ loop variable fix doesn't apply).
-			devIdx := deviceIndex
+			// Capture deviceIndex here — it's reassigned on each retry
+			// iteration of the outer for-loop (not a range loop, so Go 1.22+
+			// loop variable fix doesn't apply).
+			connLogger := d.logger.With(
+				zap.Uint32("device_index", deviceIndex),
+				zap.Int("socket_index", i),
+			)
+
+			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes, connLogger)
 			// Start reading commands on the socket and dispatching them to our provider
 			d.handlersWg.Go(func() {
-				handleErr := dispatch.Handle(ctx)
+				handleErr := dispatch.Handle(handlerCtx)
 				// The error is expected to happen if the nbd (socket connection) is closed
-				logger.L().Info(ctx, "closing handler for NBD commands",
-					zap.Error(handleErr),
-					zap.Uint32("device_index", devIdx),
-					zap.Int("socket_index", i),
-				)
+				connLogger.Info(handlerCtx, "closing handler for NBD commands", zap.Error(handleErr))
 			})
 
 			d.socksServer = append(d.socksServer, serverc)
@@ -246,8 +285,40 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		serverFlags := nbdnl.FlagHasFlags | nbdnl.FlagCanMulticonn |
 			nbdnl.FlagSendTrim | flagSendWriteZeroes
 
-		idx, connectErr := nbdnl.Connect(deviceIndex, d.socksClient, uint64(size), 0, serverFlags, opts...)
+		var idx uint32
+		var connectErr error
+		attachInterface := "netlink"
+		if viaIoctl {
+			attachInterface = "ioctl"
+			var session *ioctlSession
+			session, connectErr = attachIoctl(ctx, ioctlAttachConfig{
+				index:           deviceIndex,
+				socks:           d.socksClient,
+				size:            uint64(size),
+				blockSize:       d.blockSize,
+				timeout:         d.ioTimeout,
+				deadconn:        d.deadconnTimeout,
+				flags:           uint64(serverFlags),
+				maxDevices:      d.devicePool.MaxDevices(),
+				afterConfigure:  d.ioctlAfterConfigure,
+				closeCtl:        d.ioctlCloseCtl,
+				disconnectIoctl: d.ioctlDisconnectIoctl,
+				abandoned:       d.ioctlAbandoned,
+			}, d.logger, d.ioctlUnmasked)
+			if connectErr == nil {
+				idx = deviceIndex
+				d.ioctlSession = session
+			}
+		} else {
+			idx, connectErr = nbdnl.Connect(deviceIndex, d.socksClient, uint64(size), 0, serverFlags, opts...)
+		}
+		nbdAttachCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("interface", attachInterface),
+			attribute.String("result", attachResult(connectErr)),
+		))
 		if connectErr == nil {
+			nbdAttachDuration.Record(ctx, time.Since(attachStart).Milliseconds(),
+				metric.WithAttributes(attribute.String("interface", attachInterface)))
 			// The idx should be the same as deviceIndex, because we are connecting to it,
 			// but we will use the one returned by nbdnl
 			deviceIndex = idx
@@ -259,22 +330,58 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			break
 		}
 
-		logger.L().Error(ctx, "error opening NBD, retrying", zap.Error(connectErr), zap.Uint32("device_index", deviceIndex))
+		d.logger.Error(ctx, "error opening NBD, retrying", zap.Error(connectErr), zap.Uint32("device_index", deviceIndex))
 
 		// Sometimes (rare), there seems to be a BADF error here. Lets just retry for now...
 		// Close things down and try again...
 		err := closeSocketPairs(d.socksClient, d.socksServer)
 		if err != nil {
-			logger.L().Error(ctx, "error closing socket pairs on error opening NBD", zap.Error(err))
+			d.logger.Error(ctx, "error closing socket pairs on error opening NBD", zap.Error(err))
+		}
+		// A Close after a failed Open must not close them again.
+		d.socksClient, d.socksServer, d.dispatchers = nil, nil, nil
+
+		// A device another owner holds, which both interfaces report with
+		// EBUSY and the ioctl one also as a typed lost race, was never this
+		// mount's to free: a release would find it in use and keep the slot
+		// out of the pool for the life of the process, so the slot is given
+		// up instead and the feeder offers it again once the device is free.
+		// Every other failure releases the device, on a context that cannot
+		// have ended because a cancelled caller is one of the failures, and
+		// waits for a session still ending in the kernel within the same
+		// bound a disconnect gets.
+		taken := errors.Is(connectErr, errIoctlDeviceTaken)
+		if !viaIoctl && (errors.Is(connectErr, unix.EBUSY) || strings.Contains(connectErr.Error(), "device or resource busy")) {
+			taken = true
+		}
+		// A cancelled ioctl attach, or one whose session ended before the
+		// device started, hands the device to that session's own teardown
+		// (its run goroutine ends the session and frees the device). Open
+		// gives the slot back rather than spin-releasing a device the session
+		// still holds, or one another owner took when a lost claim's caller
+		// had already cancelled; the feeder re-offers it once sysfs reads it
+		// free. These do not retry.
+		sessionOwnsTeardown := viaIoctl && (errors.Is(connectErr, context.Canceled) ||
+			errors.Is(connectErr, context.DeadlineExceeded) || errors.Is(connectErr, errIoctlSessionEnded))
+		if taken || sessionOwnsTeardown {
+			d.devicePool.Disown(ctx, deviceIndex)
+		} else {
+			err = d.devicePool.ReleaseDevice(context.WithoutCancel(ctx), deviceIndex, WithInfiniteRetry(), WithTimeout(disconnectTimeout), WithLogger(d.logger))
+			if err != nil {
+				d.logger.Error(ctx, "error opening NBD, error releasing device", zap.Error(err), zap.Uint32("device_index", deviceIndex))
+			}
+		}
+		if sessionOwnsTeardown {
+			return math.MaxUint32, connectErr
 		}
 
-		// Release the device back to the pool
-		err = d.devicePool.ReleaseDevice(ctx, deviceIndex)
-		if err != nil {
-			logger.L().Error(ctx, "error opening NBD, error releasing device", zap.Error(err), zap.Uint32("device_index", deviceIndex))
-		}
-
-		if strings.Contains(connectErr.Error(), "invalid argument") {
+		// A lost device race retries with another device, whatever errno the
+		// kernel chose for it; the other failures below are final.
+		if !taken &&
+			(strings.Contains(connectErr.Error(), "invalid argument") ||
+				errors.Is(connectErr, errIoctlDeadconnTimeout) || errors.Is(connectErr, errIoctlInvalidGeometry) ||
+				errors.Is(connectErr, errIoctlInvalidConfig) || errors.Is(connectErr, errIoctlSignalMask) ||
+				errors.Is(connectErr, errIoctlSocketDup)) {
 			return math.MaxUint32, connectErr
 		}
 
@@ -285,8 +392,9 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		}
 	}
 
-	// Wait until it's connected...
-	for {
+	// Wait until it's connected... An ioctl attach returns with the device
+	// started, so only the netlink attach waits here.
+	for d.ioctlSession == nil {
 		select {
 		case <-ctx.Done():
 			closeErr := d.closeConnected(ctx, deviceIndex, "wait_connected")
@@ -304,6 +412,13 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		time.Sleep(100 * time.Microsecond)
 	}
+	// Cancellation that landed after the connect, in afterConnect or while an
+	// ioctl session started, still means the caller owns no device.
+	if err := ctx.Err(); err != nil {
+		closeErr := d.closeConnected(ctx, deviceIndex, "wait_connected")
+
+		return math.MaxUint32, errors.Join(err, closeErr)
+	}
 
 	telemetry.ReportEvent(ctx, "connected to NBD")
 
@@ -313,7 +428,11 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 	// would not do.
 	devicePath := GetDevicePath(deviceIndex)
 
-	deviceFile, err := os.Open(devicePath)
+	openDevice := os.Open
+	if d.openDeviceFn != nil {
+		openDevice = d.openDeviceFn
+	}
+	deviceFile, err := openDevice(devicePath)
 	if err != nil {
 		closeErr := d.closeConnected(ctx, deviceIndex, "device_open")
 
@@ -325,6 +444,24 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 	d.deviceFile = deviceFile
 
+	// The open can wait on the device, for a partition scan among other
+	// things, so a caller that went away during it still gets no device, and
+	// neither does one whose session the kernel ended meanwhile.
+	if err := ctx.Err(); err != nil {
+		closeErr := d.closeConnected(ctx, deviceIndex, "device_open")
+
+		return math.MaxUint32, errors.Join(err, closeErr)
+	}
+	if d.ioctlSession != nil {
+		select {
+		case <-d.ioctlSession.exited:
+			closeErr := d.closeConnected(ctx, deviceIndex, "device_open")
+
+			return math.MaxUint32, errors.Join(d.ioctlSession.endedError(), closeErr)
+		default:
+		}
+	}
+
 	return deviceIndex, nil
 }
 
@@ -333,16 +470,17 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 // cancels the handlers and drains the dispatchers before disconnecting, and
 // releases the slot with infinite retry. Close reads the index off the mount,
 // and Open's deferred assignment has not run yet, so set it first. The context
-// Close is given has to be detached, because Close cancels Open's partway
-// through its teardown - and Close's opening flush-and-release of the
-// descriptor can block on the backend, canceled context or not.
+// Close is given has to be detached: the wait_connected caller reaches here
+// only after Open's context ended, and on that context Close's disconnect
+// wait and slot release return at once, with the device still connected and
+// the slot still taken.
 func (d *DirectPathMount) closeConnected(ctx context.Context, deviceIndex uint32, stage string) error {
 	nbdUnwoundCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("stage", stage)))
 
 	// Warn, not Debug: this is rare, it means a device and a pool slot came within
 	// one branch of being stranded, and the build failure the caller reports does
 	// not name either of them.
-	logger.L().Warn(ctx, "tearing down a connected NBD device Open cannot return",
+	d.logger.Warn(ctx, "tearing down a connected NBD device Open cannot return",
 		zap.Uint32("device_index", deviceIndex),
 		zap.String("stage", stage),
 	)
@@ -462,7 +600,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		stage.Store("sync")
 		watchdog := time.AfterFunc(deviceCloseWarnThreshold, func() {
 			nbdSlowCloseCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("stage", stage.Load().(string))))
-			logger.L().Warn(ctx, "NBD device descriptor close stalled",
+			d.logger.Warn(ctx, "NBD device descriptor close stalled",
 				zap.Duration("threshold", deviceCloseWarnThreshold),
 				zap.Uint32("device_index", idx),
 			)
@@ -491,7 +629,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		}
 
 		if !watchdog.Stop() {
-			logger.L().Warn(ctx, "NBD device descriptor close finished after stalling",
+			d.logger.Warn(ctx, "NBD device descriptor close finished after stalling",
 				zap.Duration("duration", time.Since(closeStart)),
 				zap.Uint32("device_index", idx),
 			)
@@ -500,6 +638,12 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		nbdCloseDuration.Record(ctx, time.Since(closeStart).Milliseconds())
 
 		d.deviceFile = nil
+	}
+
+	// Closing the server sockets below ends an ioctl session from the kernel's
+	// side; the session has to know this process asked for it.
+	if d.ioctlSession != nil {
+		d.ioctlSession.expectEnd()
 	}
 
 	// Cancel the context, which will stop waiting on pending readAt/writeAt...
@@ -532,10 +676,11 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 	}
 
 	// Disconnect NBD
+	var disconnectErr error
 	if idx != math.MaxUint32 {
-		err := disconnectNBDWithTimeout(ctx, idx, disconnectTimeout)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("error disconnecting NBD: %w", err))
+		disconnectErr = d.disconnectDevice(ctx, idx)
+		if disconnectErr != nil {
+			errs = append(errs, fmt.Errorf("error disconnecting NBD: %w", disconnectErr))
 		}
 	}
 
@@ -553,13 +698,80 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 	// Release the device back to the pool, retry if it is in use
 	if idx != math.MaxUint32 {
 		telemetry.ReportEvent(ctx, "releasing device to the pool")
-		err := d.devicePool.ReleaseDevice(ctx, idx, WithInfiniteRetry())
+		var err error
+		if d.ioctlSession != nil && disconnectErr != nil {
+			err = d.releaseAfterSession(ctx, idx)
+		} else {
+			err = d.releaseDevice(ctx, idx)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("error releasing overlay device: %w", err))
 		}
 	}
 
 	return errors.Join(errs...)
+}
+
+func (d *DirectPathMount) socketPair() ([2]int, error) {
+	if d.socketPairFn != nil {
+		return d.socketPairFn()
+	}
+
+	return syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+}
+
+func (d *DirectPathMount) disconnectDevice(ctx context.Context, deviceIndex uint32) error {
+	if d.disconnectDeviceFn != nil {
+		return d.disconnectDeviceFn(ctx, deviceIndex)
+	}
+	if d.ioctlSession != nil {
+		return d.ioctlSession.disconnect(ctx, disconnectTimeout)
+	}
+
+	return disconnectNBDWithTimeout(ctx, deviceIndex, disconnectTimeout)
+}
+
+func (d *DirectPathMount) releaseDevice(ctx context.Context, deviceIndex uint32) error {
+	if d.releaseDeviceFn != nil {
+		return d.releaseDeviceFn(ctx, deviceIndex)
+	}
+
+	return d.devicePool.ReleaseDevice(ctx, deviceIndex, WithInfiniteRetry(), WithLogger(d.logger))
+}
+
+// releaseAfterSession releases the slot of an ioctl session whose disconnect
+// did not finish. The device reads as in use until every descriptor on it is
+// closed, the session's own and the disconnect request's private duplicate,
+// and either close can hang on the device; a release here would spin for as
+// long as the hang lasts and hold the caller's teardown with it. One attempt
+// reclaims a device that has freed since; otherwise the release moves to a
+// goroutine under one deadline, like the pool's own close, and the caller
+// learns that its slot is still claimed.
+func (d *DirectPathMount) releaseAfterSession(ctx context.Context, deviceIndex uint32) error {
+	ctx = context.WithoutCancel(ctx)
+	if err := d.devicePool.ReleaseDevice(ctx, deviceIndex, WithLogger(d.logger)); err == nil {
+		return nil
+	}
+
+	timeout := d.deferredReleaseTimeout
+	if timeout == 0 {
+		timeout = devicePoolCloseReleaseTimeout
+	}
+	go func() {
+		err := d.devicePool.ReleaseDevice(ctx, deviceIndex, WithInfiniteRetry(), WithTimeout(timeout), WithLogger(d.logger))
+		if err != nil {
+			d.logger.Error(ctx, "NBD device slot left claimed: its device stayed in use after its ioctl session's disconnect",
+				zap.Uint32("device_index", deviceIndex),
+				zap.Duration("timeout", timeout),
+				zap.Error(err),
+			)
+		}
+		if d.deferredReleaseDone != nil {
+			d.deferredReleaseDone <- err
+		}
+	}()
+
+	return fmt.Errorf("device %d: slot release deferred, its device is still in use", deviceIndex)
 }
 
 func disconnectNBDWithTimeout(ctx context.Context, deviceIndex uint32, timeout time.Duration) error {
@@ -609,4 +821,21 @@ func closeSocketPairs(socksClient []*os.File, socksServer []io.Closer) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// attachResult is the attach counter's outcome label. A lost device race is
+// retried and a cancelled caller is its own outcome, so neither is lumped with
+// a real failure that a rollout alert would watch.
+func attachResult(err error) string {
+	switch {
+	case err == nil:
+		return "success"
+	case errors.Is(err, errIoctlDeviceTaken) || errors.Is(err, unix.EBUSY) ||
+		strings.Contains(err.Error(), "device or resource busy"):
+		return "taken"
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return "cancelled"
+	default:
+		return "failure"
+	}
 }

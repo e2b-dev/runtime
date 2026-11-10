@@ -4,8 +4,7 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "orchestrator.proto";
 
-option go_package = "https://github.com/e2b-dev/infra/template-manager";
-
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager;template_manager";
 
 message InitLayerFileUploadRequest {
   string templateID = 1;
@@ -13,7 +12,7 @@ message InitLayerFileUploadRequest {
   optional string cacheScope = 3;
 }
 
-message InitLayerFileUploadResponse{
+message InitLayerFileUploadResponse {
   bool present = 1;
   optional string url = 2;
   // Request headers the upload client must send on the PUT to `url`.
@@ -66,6 +65,7 @@ message TemplateConfig {
   string buildID = 2;
 
   int32 memoryMB = 3;
+  // CPUs online during the build and in the final template.
   int32 vCpuCount = 4;
   int32 diskSizeMB = 5;
 
@@ -73,7 +73,7 @@ message TemplateConfig {
   string kernelVersion = 6 [deprecated = true];
   string firecrackerVersion = 7 [deprecated = true];
   string startCommand = 8;
-  // Deprecated: hugePages is derived from the resolved firecracker version locally
+  // Deprecated: every template build uses huge pages
   bool hugePages = 9 [deprecated = true];
 
   string readyCommand = 10;
@@ -82,9 +82,9 @@ message TemplateConfig {
   repeated TemplateStep steps = 13;
 
   oneof source {
-     string fromImage = 11;
-     FromTemplateConfig fromTemplate = 14;
-   }
+    string fromImage = 11;
+    FromTemplateConfig fromTemplate = 14;
+  }
 
   optional FromImageRegistry fromImageRegistry = 15;
 
@@ -93,6 +93,11 @@ message TemplateConfig {
   // Optional during the rolling upgrade. When absent, the template manager
   // uses diskSizeMB as the post-build free-space target.
   optional int32 freeDiskSizeMB = 17;
+
+  // Capacity of the final template VM, of which vCpuCount are online.
+  // Provisioning and step VMs boot with vCpuCount; absent means the final VM does too.
+  // On x86, both counts must be 1 or even because each is a physical VM size.
+  optional int32 maxVCpuCount = 18;
 }
 
 message TemplateCreateRequest {
@@ -102,10 +107,10 @@ message TemplateCreateRequest {
 }
 
 enum LogLevel {
-    Debug = 0;
-    Info = 1;
-    Warn = 2;
-    Error = 3;
+  Debug = 0;
+  Info = 1;
+  Warn = 2;
+  Error = 3;
 }
 
 enum LogsDirection {
@@ -176,14 +181,14 @@ message TemplateBuildStatusResponse {
 // Interface exported by the server.
 service TemplateService {
   // TemplateCreate is a gRPC service that creates a new template
-  rpc TemplateCreate (TemplateCreateRequest) returns (google.protobuf.Empty);
+  rpc TemplateCreate(TemplateCreateRequest) returns (google.protobuf.Empty);
 
   // TemplateStatus is a gRPC service that streams the status of a template build
-  rpc TemplateBuildStatus (TemplateStatusRequest) returns (TemplateBuildStatusResponse);
+  rpc TemplateBuildStatus(TemplateStatusRequest) returns (TemplateBuildStatusResponse);
 
   // TemplateBuildDelete is a gRPC service that deletes files associated with a template build
-  rpc TemplateBuildDelete (TemplateBuildDeleteRequest) returns (google.protobuf.Empty);
+  rpc TemplateBuildDelete(TemplateBuildDeleteRequest) returns (google.protobuf.Empty);
 
   // InitLayerFileUpload requests an upload URL for a tar file containing layer files to be cached for the template build.
-  rpc InitLayerFileUpload (InitLayerFileUploadRequest) returns (InitLayerFileUploadResponse);
+  rpc InitLayerFileUpload(InitLayerFileUploadRequest) returns (InitLayerFileUploadResponse);
 }

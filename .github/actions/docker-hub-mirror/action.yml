@@ -1,0 +1,19 @@
+name: "Docker Hub Mirror"
+description: |
+  Makes testcontainers pull Docker Hub images from mirror.gcr.io, Google's
+  public cache of Docker Hub, for the rest of the job. Anonymous Docker Hub
+  pulls from shared runners hit Hub's rate limit ("toomanyrequests"), which
+  fails the tests that start containers. Images that name another registry
+  are left alone. scripts/pull-retry.sh does the same for the containers the
+  workflows start themselves.
+
+  The mirror is named in the image reference rather than configured as a
+  daemon registry-mirror: on these runners dockerd keeps resolving against
+  registry-1.docker.io after registry-mirrors is reloaded.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Route testcontainers through the Docker Hub mirror
+      shell: bash
+      run: echo "TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io" >> "$GITHUB_ENV"

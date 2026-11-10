@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,8 +67,8 @@ func TestProxyCORSOnDestinationErrors(t *testing.T) {
 		err        error
 		wantStatus int
 	}{
-		{"sandbox not found", NewErrSandboxNotFound("test-sandbox"), http.StatusBadGateway},
-		{"resume permission denied", NewErrSandboxResumePermissionDenied("test-sandbox"), http.StatusForbidden},
+		{"sandbox not found", NewErrSandboxNotFound("test-sandbox", PresenceAbsent), http.StatusBadGateway},
+		{"resume permission denied", NewErrSandboxResumePermissionDenied("test-sandbox", nil), http.StatusForbidden},
 		{"still transitioning", NewErrSandboxStillTransitioning("test-sandbox"), http.StatusConflict},
 		{"internal route", NewErrInternalRoute("test-sandbox", "/init"), http.StatusNotFound},
 		{"resource exhausted", NewErrSandboxResourceExhausted("test-sandbox", "rate limit hit"), http.StatusTooManyRequests},
@@ -307,4 +309,23 @@ func TestNoRawHTTPErrorInProxyPackage(t *testing.T) {
 			assert.NotContains(t, string(content), "http.Error(", "%s: use cors.Error instead of http.Error so browsers can read the response", path)
 		}
 	}
+}
+
+func TestRetiredOwnerAnswersPreflight(t *testing.T) {
+	t.Parallel()
+	p := pool.New(4, 1, time.Minute, false)
+	target := &url.URL{Scheme: "http", Host: "127.0.0.1:1"}
+	d, err := destinationFor(target, "retired")(nil)
+	require.NoError(t, err)
+	d.Owner = p.NewOwner()
+	require.NoError(t, d.Owner.Close(t.Context()))
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "http://example/", nil)
+	r.Header.Set("Origin", "https://caller.example")
+	r.Header.Set("Access-Control-Request-Method", "POST")
+	w := httptest.NewRecorder()
+	handler(p, func(*http.Request) (*pool.Destination, error) { return d, nil }, nil, options{}).ServeHTTP(w, r)
+	assert.GreaterOrEqual(t, w.Code, 200)
+	assert.Less(t, w.Code, 300)
+	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Zero(t, p.TotalConnections())
 }

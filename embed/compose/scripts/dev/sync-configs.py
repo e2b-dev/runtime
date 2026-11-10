@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Copy compose/config/clickhouse/config.xml and compose/config/vector/vector.toml
-into their inline `configs:` blocks in compose/compose.yaml and stamp each
-consuming service with the file's SHA-256 (CLICKHOUSE_CONFIG_SHA256,
-VECTOR_CONFIG_SHA256).
+"""Copy compose/config/clickhouse/config.xml, compose/config/vector/vector.toml
+and compose/config/otel/otel-collector.yaml into their inline `configs:` blocks
+in compose/compose.yaml and stamp each consuming service with the file's
+SHA-256 (CLICKHOUSE_CONFIG_SHA256, VECTOR_CONFIG_SHA256, OTEL_CONFIG_SHA256).
 
 The inline copies are what the two-file install ships; the checksums are what
 make Compose recreate the container when a config changes, because Compose
@@ -22,13 +22,14 @@ COMPOSE = ROOT / "compose/compose.yaml"
 CONFIGS = {
     "clickhouse-config": ("compose/config/clickhouse/config.xml", "CLICKHOUSE_CONFIG_SHA256"),
     "vector-config": ("compose/config/vector/vector.toml", "VECTOR_CONFIG_SHA256"),
+    "otel-collector-config": ("compose/config/otel/otel-collector.yaml", "OTEL_CONFIG_SHA256"),
 }
 
 # The Kubernetes copies are derived, not identical: the pod shares the node's
 # network namespace, so every listener that compose keeps behind a 127.0.0.1
 # port mapping must bind loopback itself, and Vector reaches ClickHouse on
 # loopback instead of the compose service name. Regenerate with
-# `make sync-configs` after editing either source; tests/kubernetes.bats
+# `make sync-configs` after editing any source; tests/kubernetes.bats
 # compares the checked-in copies with `--print-k8s`.
 K8S_CONFIGS = {
     "compose/config/clickhouse/config.xml": ("kubernetes/config/clickhouse-config.xml", (
@@ -42,6 +43,9 @@ K8S_CONFIGS = {
         ('address = "0.0.0.0:30006"', 'address = "127.0.0.1:20006"'),
         ('endpoint = "http://clickhouse:8123"', 'endpoint = "http://127.0.0.1:8123"'),
     )),
+    # The collector already runs on the host network under compose, binding
+    # loopback and reaching ClickHouse there, so its copy is the source as is.
+    "compose/config/otel/otel-collector.yaml": ("kubernetes/config/otel-collector.yaml", ()),
 }
 
 
@@ -88,7 +92,7 @@ def main() -> int:
 
     for rel, (dst, substitutions) in K8S_CONFIGS.items():
         (ROOT / dst).write_text(derive_k8s((ROOT / rel).read_text(), substitutions))
-        print(f"sync-configs: {dst} <- {rel} (loopback binds)")
+        print(f"sync-configs: {dst} <- {rel} ({'loopback binds' if substitutions else 'as is'})")
 
     COMPOSE.write_text(yaml)
     return 0

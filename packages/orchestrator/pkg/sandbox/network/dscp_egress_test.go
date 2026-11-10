@@ -289,6 +289,7 @@ func TestCreateNetwork_TagsEgressWithDSCP(t *testing.T) { //nolint:paralleltest 
 	if os.Geteuid() != 0 {
 		t.Skip("requires root for netns + iptables")
 	}
+	requireDSCPTarget(t)
 
 	config, err := ParseConfig()
 	require.NoError(t, err)
@@ -298,7 +299,7 @@ func TestCreateNetwork_TagsEgressWithDSCP(t *testing.T) { //nolint:paralleltest 
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	rules := dscpMangleRules(t, slot.NamespaceID())
 
@@ -312,6 +313,7 @@ func TestApplyEgressDSCP_RestampsSlotRule(t *testing.T) { //nolint:paralleltest 
 	if os.Geteuid() != 0 {
 		t.Skip("requires root for netns + iptables")
 	}
+	requireDSCPTarget(t)
 
 	config, err := ParseConfig()
 	require.NoError(t, err)
@@ -322,7 +324,7 @@ func TestApplyEgressDSCP_RestampsSlotRule(t *testing.T) { //nolint:paralleltest 
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	requireSingleDSCPRule(t, slot, "0x08") // CreateNetwork seeds the sandbox class
 
@@ -349,6 +351,7 @@ func TestApplyEgressDSCP_FailedRestampKeepsOldClass(t *testing.T) { //nolint:par
 	if os.Geteuid() != 0 {
 		t.Skip("requires root for netns + iptables")
 	}
+	requireDSCPTarget(t)
 
 	config, err := ParseConfig()
 	require.NoError(t, err)
@@ -358,7 +361,7 @@ func TestApplyEgressDSCP_FailedRestampKeepsOldClass(t *testing.T) { //nolint:par
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	requireSingleDSCPRule(t, slot, "0x08")
 
@@ -370,6 +373,39 @@ func TestApplyEgressDSCP_FailedRestampKeepsOldClass(t *testing.T) { //nolint:par
 	// The cache must still drive a later restamp from the old class.
 	require.NoError(t, slot.applyEgressDSCP(t.Context(), 16))
 	requireSingleDSCPRule(t, slot, "0x10")
+}
+
+// requireDSCPTarget skips the test on a kernel without the DSCP xtables target
+// (CONFIG_NETFILTER_XT_TARGET_DSCP): a runner kernel with no module tree cannot
+// load xt_DSCP, and iptables then fails every -j DSCP rule with "Extension DSCP
+// revision 0 not supported". The probe appends one rule inside a scratch
+// network namespace that is discarded with it, so the host tables stay
+// untouched. Callers hold root already.
+func requireDSCPTarget(t *testing.T) {
+	t.Helper()
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	host, err := netns.Get()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, netns.Set(host))
+		_ = host.Close()
+	}()
+
+	scratch, err := netns.New()
+	require.NoError(t, err)
+	defer func() { _ = scratch.Close() }()
+
+	tables, err := iptables.New()
+	require.NoError(t, err)
+
+	err = tables.Append("mangle", "OUTPUT", "-j", "DSCP", "--set-dscp", "0")
+	if err != nil && strings.Contains(err.Error(), "Extension DSCP") && strings.Contains(err.Error(), "not supported") {
+		t.Skipf("kernel lacks the DSCP xtables target (CONFIG_NETFILTER_XT_TARGET_DSCP): %v", err)
+	}
+	require.NoError(t, err, "probing the DSCP target in a scratch netns")
 }
 
 // requireSingleDSCPRule asserts exactly one DSCP mangle rule on the uplink.
@@ -424,6 +460,7 @@ func TestPool_GetFailureReturnsSlotWithSandboxDSCP(t *testing.T) { //nolint:para
 	if os.Geteuid() != 0 {
 		t.Skip("requires root for netns + iptables")
 	}
+	requireDSCPTarget(t)
 
 	config, err := ParseConfig()
 	require.NoError(t, err)
@@ -436,7 +473,7 @@ func TestPool_GetFailureReturnsSlotWithSandboxDSCP(t *testing.T) { //nolint:para
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	pool := NewPool(2, 1, &fakeStorage{}, config)
 	t.Cleanup(func() { _ = pool.Close(context.WithoutCancel(t.Context())) })
@@ -466,6 +503,7 @@ func TestPool_RecycleRestoresSandboxDSCP(t *testing.T) { //nolint:paralleltest /
 	if os.Geteuid() != 0 {
 		t.Skip("requires root for netns + iptables")
 	}
+	requireDSCPTarget(t)
 
 	config, err := ParseConfig()
 	require.NoError(t, err)
@@ -476,7 +514,7 @@ func TestPool_RecycleRestoresSandboxDSCP(t *testing.T) { //nolint:paralleltest /
 	require.NoError(t, err)
 
 	require.NoError(t, slot.CreateNetwork(t.Context()))
-	t.Cleanup(func() { _ = slot.RemoveNetwork() })
+	t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
 
 	pool := NewPool(2, 1, &fakeStorage{}, config)
 	t.Cleanup(func() { _ = pool.Close(context.WithoutCancel(t.Context())) })

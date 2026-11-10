@@ -213,9 +213,11 @@ func TestV5_ReconstructedColumnsExactlySized(t *testing.T) {
 
 	m := got.Mapping
 	assert.Equal(t, len(m.offsets), cap(m.offsets))
-	assert.Equal(t, len(m.lengths), cap(m.lengths))
 	assert.Equal(t, len(m.storage), cap(m.storage))
-	assert.Equal(t, len(m.buildIdx), cap(m.buildIdx))
+	assert.Equal(t, len(m.buildIdx8), cap(m.buildIdx8))
+	assert.Nil(t, m.buildIdx16)
+	assert.True(t, m.Contiguous(), "the reconstructed mapping is contiguous and stores no lengths column")
+	assert.Nil(t, m.lengths)
 }
 
 func TestV5_RejectsOversizePrefix(t *testing.T) {
@@ -238,4 +240,45 @@ func TestV5_RejectsOversizePrefix(t *testing.T) {
 
 	_, err = DeserializeBytes(data)
 	require.ErrorContains(t, err, "exceeds cap")
+}
+
+// TestV5_RoundTripLargeSparse round-trips a large mapping whose nil regions
+// are dropped on the wire and reconstructed on read, checking the result is
+// entry-for-entry identical and stores no lengths column.
+func TestV5_RoundTripLargeSparse(t *testing.T) {
+	t.Parallel()
+
+	bs := uint64(4096)
+	a, b := uuid.New(), uuid.New()
+	const runs = 60_000
+	mappings := make([]BuildMap, 0, runs)
+	var off, sa, sb uint64
+	for i := range runs {
+		length := bs * uint64(1+i%3)
+		switch i % 3 {
+		case 0:
+			mappings = append(mappings, BuildMap{Offset: off, Length: length, BuildId: a, BuildStorageOffset: sa})
+			sa += length
+		case 1:
+			mappings = append(mappings, BuildMap{Offset: off, Length: length, BuildId: uuid.Nil})
+		default:
+			mappings = append(mappings, BuildMap{Offset: off, Length: length, BuildId: b, BuildStorageOffset: sb})
+			sb += length
+		}
+		off += length
+	}
+	meta := &Metadata{BlockSize: bs, Size: off, BuildId: a, BaseBuildId: b}
+	h := v5Header(t, meta, mappings, map[uuid.UUID]BuildData{a: {Size: int64(sa)}, b: {Size: int64(sb)}})
+	require.True(t, h.Mapping.Contiguous())
+
+	data, err := SerializeHeader(h)
+	require.NoError(t, err)
+	got, err := DeserializeBytes(data)
+	require.NoError(t, err)
+
+	require.True(t, got.Mapping.Contiguous())
+	require.Nil(t, got.Mapping.lengths)
+	require.Equal(t, mappings, got.Mapping.Slice())
+	require.Equal(t, h.Mapping.BytesByBuild(), got.Mapping.BytesByBuild())
+	require.NoError(t, got.Mapping.Validate(off, PageSize))
 }

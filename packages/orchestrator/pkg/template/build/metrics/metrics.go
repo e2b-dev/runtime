@@ -102,43 +102,49 @@ func NewBuildMetrics(meterProvider metric.MeterProvider) (*BuildMetrics, error) 
 }
 
 // RecordBuildDuration records the total build duration
-func (m *BuildMetrics) RecordBuildDuration(ctx context.Context, duration time.Duration, success bool) {
+func (m *BuildMetrics) RecordBuildDuration(ctx context.Context, teamID string, duration time.Duration, success bool) {
 	attrs := []attribute.KeyValue{
 		attribute.Bool("success", success),
+		telemetry.WithTeamID(teamID),
 	}
 	m.BuildDurationHistogram.Record(ctx, duration.Milliseconds(), metric.WithAttributes(attrs...))
 }
 
 // RecordPhaseDuration records the duration of a build phase
-func (m *BuildMetrics) RecordPhaseDuration(ctx context.Context, duration time.Duration, phase Phase, stepType string, cached bool) {
+func (m *BuildMetrics) RecordPhaseDuration(ctx context.Context, teamID string, duration time.Duration, phase Phase, stepType string, cached bool) {
 	attrs := []attribute.KeyValue{
 		attribute.String("phase", string(phase)),
 		attribute.String("step_type", stepType),
 		attribute.Bool("cached", cached),
+		telemetry.WithTeamID(teamID),
 	}
 	m.BuildPhaseDurationHistogram.Record(ctx, duration.Milliseconds(), metric.WithAttributes(attrs...))
 }
 
-// RecordBuildResult records the result of a build (success, user_error, or internal_error)
-func (m *BuildMetrics) RecordBuildResult(ctx context.Context, teamID string, resultType BuildResultType) {
+// RecordBuildResult records the result of a build (success, user_error, or internal_error),
+// the vCPU sizing it requested and whether it built a resizable template.
+func (m *BuildMetrics) RecordBuildResult(ctx context.Context, teamID string, resultType BuildResultType, vcpuSizing, built string) {
 	attrs := []attribute.KeyValue{
-		telemetry.WithTeamID(teamID),
 		attribute.String("result", string(resultType)),
+		attribute.String("vcpu_sizing", vcpuSizing),
+		attribute.String("built", built),
+		telemetry.WithTeamID(teamID),
 	}
 	m.BuildResultCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
 // RecordCacheResult records the result of a cache lookup (hit or miss)
-func (m *BuildMetrics) RecordCacheResult(ctx context.Context, phase Phase, stepType string, hit bool) {
+func (m *BuildMetrics) RecordCacheResult(ctx context.Context, teamID string, phase Phase, stepType string, hit bool) {
 	attrs := []attribute.KeyValue{
 		attribute.String("phase", string(phase)),
 		attribute.String("step_type", stepType),
 		attribute.Bool("hit", hit),
+		telemetry.WithTeamID(teamID),
 	}
 	m.BuildCacheResultCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
 // RecordRootfsSize records the rootfs size
-func (m *BuildMetrics) RecordRootfsSize(ctx context.Context, size int64) {
-	m.BuildRootfsSizeHistogram.Record(ctx, size)
+func (m *BuildMetrics) RecordRootfsSize(ctx context.Context, teamID string, size int64) {
+	m.BuildRootfsSizeHistogram.Record(ctx, size, metric.WithAttributes(telemetry.WithTeamID(teamID)))
 }

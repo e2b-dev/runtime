@@ -2,7 +2,15 @@
 -- +goose StatementBegin
 CREATE SCHEMA IF NOT EXISTS auth;
 
-CREATE ROLE authenticated;
+-- Roles are server-wide: another database on the same server may have
+-- created it already.
+DO $role$
+BEGIN
+    CREATE ROLE authenticated;
+EXCEPTION WHEN duplicate_object THEN
+    NULL;
+END
+$role$;
 
 CREATE FUNCTION auth.uid() RETURNS uuid AS $func$
 BEGIN

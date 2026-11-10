@@ -4,15 +4,25 @@ import (
 	"fmt"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 // CheckTeamBanned returns *ForbiddenError if the team is banned.
 // Called inside the shared auth store so every service rejects banned teams
 // at auth time without per-handler plumbing.
-func CheckTeamBanned(team authqueries.Team) error {
+func CheckTeamBanned(team dbtypes.Team) error {
 	if team.IsBanned {
 		return &ForbiddenError{Message: "team is banned"}
+	}
+
+	return nil
+}
+
+// CheckTeamDeleted returns *ForbiddenError if the team was deleted. A deleted
+// team keeps its memberships, so this is what stops them from granting access.
+func CheckTeamDeleted(team dbtypes.Team) error {
+	if team.DeletedAt != nil {
+		return &ForbiddenError{Message: "team is deleted"}
 	}
 
 	return nil

@@ -3,6 +3,7 @@ package retry
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -172,4 +173,100 @@ func TestDo_OnRetryInvoked(t *testing.T) {
 
 	require.NoError(t, Do(t.Context(), fastPolicy(), nil, fn, onRetry))
 	assert.EqualValues(t, 2, retries.Load(), "onRetry fires once per retry (not the final success)")
+}
+
+// The schedule grows from Initial by Multiplier up to Max, spreads each wait
+// within the jitter band, and restarts after Reset.
+func TestBackoffScheduleAndJitter(t *testing.T) {
+	t.Parallel()
+	exact := Backoff{Initial: time.Second, Max: 5 * time.Second, Multiplier: 2}
+	var waits []time.Duration
+	for range 4 {
+		waits = append(waits, exact.Next())
+	}
+	require.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second}, waits)
+	exact.Reset()
+	require.Equal(t, time.Second, exact.Next())
+
+	jittered := Backoff{Initial: 10 * time.Second, Max: 10 * time.Second, Multiplier: 2, Jitter: 0.5}
+	distinct := map[time.Duration]bool{}
+	var longest time.Duration
+	for range 50 {
+		wait := jittered.Next()
+		require.GreaterOrEqual(t, wait, 5*time.Second)
+		require.LessOrEqual(t, wait, 15*time.Second)
+		distinct[wait] = true
+		longest = max(longest, wait)
+	}
+	require.Greater(t, len(distinct), 1, "jitter spreads the waits")
+	require.Greater(t, longest, 10*time.Second, "jitter applies after the Max cap")
+	require.Zero(t, (&Backoff{}).Next(), "the zero value waits nothing")
+}
+
+// Each case lists the inclusive range of consecutive waits, checked repeatedly
+// and again after Reset.
+func TestBackoffArithmetic(t *testing.T) {
+	t.Parallel()
+	const maxWait = time.Duration(math.MaxInt64)
+	type span struct{ low, high time.Duration }
+	tests := []struct {
+		name    string
+		backoff Backoff
+		want    []span
+	}{
+		{
+			name:    "max caps the first wait",
+			backoff: Backoff{Initial: 10 * time.Second, Max: 2 * time.Second, Multiplier: 2},
+			want:    []span{{2 * time.Second, 2 * time.Second}, {2 * time.Second, 2 * time.Second}},
+		},
+		{
+			name:    "negative initial waits zero",
+			backoff: Backoff{Initial: -time.Second, Multiplier: 2, Jitter: 0.5},
+			want:    []span{{0, 0}, {0, 0}},
+		},
+		{
+			name:    "jitter above one is clamped to one",
+			backoff: Backoff{Initial: time.Second, Jitter: 5},
+			want:    []span{{0, 2 * time.Second}, {0, 2 * time.Second}},
+		},
+		{
+			name:    "infinite jitter is clamped to one",
+			backoff: Backoff{Initial: time.Second, Jitter: math.Inf(1)},
+			want:    []span{{0, 2 * time.Second}},
+		},
+		{
+			name:    "NaN jitter is disabled",
+			backoff: Backoff{Initial: time.Second, Jitter: math.NaN()},
+			want:    []span{{time.Second, time.Second}},
+		},
+		{
+			name:    "growth saturates instead of overflowing",
+			backoff: Backoff{Initial: maxWait/2 + 1, Multiplier: 2},
+			want:    []span{{maxWait/2 + 1, maxWait/2 + 1}, {maxWait, maxWait}, {maxWait, maxWait}},
+		},
+		{
+			name:    "jitter band at the largest wait",
+			backoff: Backoff{Initial: maxWait, Jitter: 1},
+			want:    []span{{0, maxWait}},
+		},
+		{
+			name:    "jitter band above the largest wait is clipped",
+			backoff: Backoff{Initial: maxWait - 1, Jitter: 0.5},
+			want:    []span{{maxWait/2 - 1, maxWait}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := tc.backoff
+			for range 50 {
+				for _, want := range tc.want {
+					wait := b.Next()
+					require.GreaterOrEqual(t, wait, want.low)
+					require.LessOrEqual(t, wait, want.high)
+				}
+				b.Reset()
+			}
+		})
+	}
 }

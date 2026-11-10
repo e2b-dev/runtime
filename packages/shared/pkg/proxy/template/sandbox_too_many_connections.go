@@ -3,13 +3,12 @@ package template
 import (
 	_ "embed"
 	"fmt"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_sandbox_too_many_connections.html
 var sandboxTooManyConnectionsHtml string
-var sandboxTooManyConnectionsHtmlTemplate = template.Must(template.New("sandboxTooManyConnectionsHtml").Parse(sandboxTooManyConnectionsHtml))
+var sandboxTooManyConnectionsHtmlTemplate = newBrowserPage("sandboxTooManyConnectionsHtml", sandboxTooManyConnectionsHtml)
 
 type sandboxTooManyConnectionsData struct {
 	SandboxId       string `json:"sandboxId"`

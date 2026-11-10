@@ -15,7 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func assertBadRequestTimeout(t *testing.T, recorder *httptest.ResponseRecorder) {
@@ -30,7 +30,7 @@ func assertBadRequestTimeout(t *testing.T, recorder *httptest.ResponseRecorder) 
 
 func minimalTeamInfo() *authtypes.Team {
 	return &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New()},
+		Team:   &dbtypes.Team{ID: uuid.New()},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	}
 }
@@ -105,6 +105,44 @@ func TestSandboxFork_RejectsNonPositiveTimeout(t *testing.T) {
 			auth.SetTeamInfoForTest(t, ginCtx, minimalTeamInfo())
 
 			store.PostSandboxesSandboxIDFork(ginCtx, "abc123")
+
+			assertBadRequestTimeout(t, recorder)
+		})
+	}
+}
+
+// TestSandboxConnect_RejectsNonPositiveTimeout verifies that POST /sandboxes/{id}/connect
+// returns 400 for zero and negative timeout values. The check runs before any
+// sandbox-ID check or orchestrator lookup.
+func TestSandboxConnect_RejectsNonPositiveTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		timeout int32
+	}{
+		{"zero", 0},
+		{"negative one", -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			store := &APIStore{}
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+
+			body, err := json.Marshal(api.PostSandboxesSandboxIDConnectJSONRequestBody{
+				Timeout: tc.timeout,
+			})
+			require.NoError(t, err)
+
+			ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes/abc/connect", bytes.NewReader(body))
+			ginCtx.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, ginCtx, minimalTeamInfo())
+
+			store.PostSandboxesSandboxIDConnect(ginCtx, "abc123")
 
 			assertBadRequestTimeout(t, recorder)
 		})

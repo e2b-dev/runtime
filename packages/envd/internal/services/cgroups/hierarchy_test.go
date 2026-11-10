@@ -752,7 +752,7 @@ func TestResumeFrozen_RestoresWhatTheExecveDropped(t *testing.T) {
 	fired := make(chan ThawResult, 1)
 	in.SetThawWatchdog(40*time.Millisecond, func(res ThawResult, _ error) { fired <- res })
 	in.SetGuestFrozenPaths(carried)
-	in.ResumeFrozen(t.Context())
+	require.NoError(t, in.ResumeFrozen(t.Context()))
 
 	// A freeze before the post-upgrade /init must not adopt our predecessor's freezes.
 	res, err := in.Freeze(t.Context(), FreezeOptions{Mode: ModeHierarchy})
@@ -1042,7 +1042,7 @@ func TestGuestFrozen_SecondFreezeDoesNotAdoptOurOwn(t *testing.T) {
 }
 
 // TestAuditFrozenState_NotAfterTheThaw covers the /init that is not a resume. The resume audit
-// runs before /init's deferred thaw, but /init is retried, and the in-place checkpoint path thaws
+// runs inside /init before its thaw, but /init is retried, and the in-place checkpoint path thaws
 // through POST /unfreeze itself and then re-inits — so a look at the tree AFTER the thaw is an
 // ordinary occurrence, not an edge case. Scored against the sweep it would find every cgroup
 // unfrozen and call all of them escapes, overwriting the real audit and inflating the metric.
@@ -1500,7 +1500,7 @@ func TestAuditFrozenState_ChildrenOfAnAllowlistedCgroupAreExempt(t *testing.T) {
 // TestAuditFrozenState_RpcStatdIsAllowlisted: statd is started by systemd into its own unit
 // cgroup, not into init.scope, so covering the thing that launches it does not cover it. It
 // holds the NLM lock state an nfsvers=3 mount without nolock needs, which is the mount every
-// volume-backed sandbox performs on the resume path, before the deferred thaw runs.
+// volume-backed sandbox performs on the resume path, before the thaw runs.
 func TestAuditFrozenState_RpcStatdIsAllowlisted(t *testing.T) {
 	t.Parallel()
 

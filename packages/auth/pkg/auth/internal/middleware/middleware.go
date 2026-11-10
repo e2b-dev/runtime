@@ -19,6 +19,7 @@ import (
 	internalauthteam "github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/team"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/token"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/api/apierror"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -39,7 +40,7 @@ var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/auth/pkg/auth/intern
 var (
 	ErrNoAuthHeader      = errors.New("authorization header is missing")
 	ErrInvalidAuthHeader = errors.New("authorization header is malformed")
-	ErrMalformedAPIKey   = fmt.Errorf("API key is malformed: expected the %q prefix, visit https://docs.e2b.dev/api-key for more information", PrefixAPIKey)
+	ErrMalformedAPIKey   = errors.New(apierror.MalformedAPIKeyMessage)
 )
 
 // headerKey describes how to extract an authentication token from an HTTP request header.
@@ -132,7 +133,14 @@ func (a *commonAuthenticator[T]) Authenticate(ctx context.Context, ginCtx *gin.C
 			return validationError.Err
 		}
 
-		return fmt.Errorf("%s\n%s", a.errorMessage, validationError.ClientMsg)
+		// The scheme's message rejects the credential, which a server error
+		// has not done.
+		message := validationError.ClientMsg
+		if validationError.Code < http.StatusInternalServerError {
+			message = fmt.Sprintf("%s\n%s", a.errorMessage, validationError.ClientMsg)
+		}
+
+		return errors.New(message)
 	}
 
 	telemetry.ReportEvent(ctx, "api key validated")
@@ -227,7 +235,7 @@ func NewApiKeyAuthenticator(validationFunc func(ctx context.Context, ginCtx *gin
 		},
 		validationFunc: validationFunc,
 		setContextFunc: authcontext.SetTeamInfo,
-		errorMessage:   "Invalid API key, please visit https://docs.e2b.dev/api-key for more information.",
+		errorMessage:   apierror.InvalidAPIKeyMessage,
 	}
 }
 

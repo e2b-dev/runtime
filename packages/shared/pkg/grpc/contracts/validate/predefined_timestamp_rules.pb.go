@@ -40,8 +40,9 @@ var file_e2b_validate_v1_predefined_timestamp_rules_proto_extTypes = []protoimpl
 // Extension fields to validate.TimestampRules.
 var (
 	// Restricts a timestamp to the representable google.protobuf.Timestamp
-	// range (0001-01-01 to 9999-12-31), the same check Timestamp.CheckValid
-	// performs.
+	// range (0001-01-01 to 9999-12-31) after CEL normalization. This does not
+	// reject malformed raw nanos; Go must check Timestamp.CheckValid before
+	// conversion to time.Time.
 	//
 	// optional bool in_representable_range = 50000;
 	E_InRepresentableRange = &file_e2b_validate_v1_predefined_timestamp_rules_proto_extTypes[0]

@@ -35,6 +35,9 @@ BUILD_PLATFORM ?= linux/$(BUILD_ARCH)
 # a command-line value always wins over the env file.
 CLICKHOUSE_MIGRATOR_VERSION := $(strip $(subst ",,$(CLICKHOUSE_MIGRATOR_VERSION)))
 
+# A file, because under GOCACHEPROG `go tool goose` relinks the CLI on every call.
+GOOSE_BIN := bin/goose
+
 .PHONY: migrate
 migrate: build migrate-without-build
 
@@ -62,10 +65,17 @@ migrate-local:
 # no benefit (the migrations directory is mounted over the baked-in copy at
 # runtime anyway).
 .PHONY: migrate-host
-migrate-host:
+migrate-host: $(GOOSE_BIN)
 	@echo "Applying Clickhouse migrations *$(notdir $@)*"
-	@GOOSE_DBSTRING="clickhouse://$(CLICKHOUSE_USERNAME):$(CLICKHOUSE_PASSWORD)@localhost:$(CLICKHOUSE_PORT)/$(CLICKHOUSE_DATABASE)" go tool goose -table "_migrations" -dir "migrations" clickhouse up
+	@GOOSE_DBSTRING="clickhouse://$(CLICKHOUSE_USERNAME):$(CLICKHOUSE_PASSWORD)@localhost:$(CLICKHOUSE_PORT)/$(CLICKHOUSE_DATABASE)" ./$(GOOSE_BIN) -table "_migrations" -dir "migrations" clickhouse up
 	@echo "Done"
+
+$(GOOSE_BIN): go.mod go.sum
+	go build -o $@ github.com/pressly/goose/v3/cmd/goose
+
+# CI's parallel package build runs this, so migrate-host finds the CLI built.
+.PHONY: build-debug
+build-debug: $(GOOSE_BIN)
 
 .PHONY: build
 build:

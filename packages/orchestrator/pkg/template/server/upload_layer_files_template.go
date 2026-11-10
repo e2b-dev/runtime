@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/storage/paths"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
 )
 
 const signedUrlExpiration = time.Minute * 30
@@ -19,6 +22,10 @@ const signedUrlExpiration = time.Minute * 30
 func (s *ServerStore) InitLayerFileUpload(ctx context.Context, in *templatemanager.InitLayerFileUploadRequest) (*templatemanager.InitLayerFileUploadResponse, error) {
 	ctx, childSpan := tracer.Start(ctx, "template-create")
 	defer childSpan.End()
+
+	if err := templates.ValidateFilesHash(in.GetHash()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
 	// default to scope by template ID
 	cacheScope := in.GetTemplateID()

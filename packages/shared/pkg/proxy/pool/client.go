@@ -28,12 +28,15 @@ const tlsHandshakeTimeout = 10 * time.Second
 type ProxyClient struct {
 	httputil.ReverseProxy
 
+	owner *Owner
+
 	transport *http.Transport
 
 	activeConnections *smap.Map[*tracking.Connection]
 }
 
 func newProxyClient(
+	owner *Owner,
 	maxIdleConns,
 	maxHostIdleConns int,
 	maxConnectionAttempts int,
@@ -43,6 +46,8 @@ func newProxyClient(
 	l *log.Logger,
 	disableKeepAlives bool,
 	insecureSkipTLSVerify bool,
+	key string,
+	wrap TransportWrap,
 ) *ProxyClient {
 	activeConnections := smap.New[*tracking.Connection]()
 
@@ -58,6 +63,12 @@ func newProxyClient(
 		ForceAttemptHTTP2:     false,
 		// TCP configuration
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			ctx, release, acquireErr := owner.acquire(ctx)
+			if acquireErr != nil {
+				return nil, acquireErr
+			}
+			defer release()
+
 			var conn net.Conn
 			var err error
 
@@ -72,9 +83,15 @@ func newProxyClient(
 				}).DialContext(ctx, network, addr)
 
 				if err == nil {
+					tracked := tracking.NewConnection(conn, currentConnsCounter, activeConnections)
+					if owner.refused() {
+						_ = tracked.Close()
+
+						return nil, errOwnerClosed
+					}
 					totalConnsCounter.Add(1)
 
-					return tracking.NewConnection(conn, currentConnsCounter, activeConnections), nil
+					return tracked, nil
 				}
 
 				if ctx.Err() != nil {
@@ -101,8 +118,23 @@ func newProxyClient(
 	if insecureSkipTLSVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Sandbox services commonly use self-signed certificates.
 	}
+	if wrap != nil {
+		transport = wrap(key, transport)
+		// The pool closes both sides of an upgraded connection at once (see
+		// tracking.Connection): hide any CloseWrite a wrapped dial returns.
+		dial := transport.DialContext
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+
+			return fullCloseConn{Conn: conn}, nil
+		}
+	}
 
 	pc := &ProxyClient{
+		owner:             owner,
 		transport:         transport,
 		activeConnections: activeConnections,
 	}
@@ -118,6 +150,12 @@ func newProxyClient(
 			}
 
 			r.SetURL(t.Url)
+			// Rewrite runs after hop-by-hop header removal. Connection must not
+			// let a caller remove the execution selected by the routing lookup.
+			r.Out.Header.Del(ExpectedExecutionIDHeader)
+			if t.ExpectedExecutionID != "" {
+				r.Out.Header.Set(ExpectedExecutionIDHeader, t.ExpectedExecutionID)
+			}
 
 			if t.MaskRequestHost != nil {
 				// Mask the request host to bypass source host protections.
@@ -208,6 +246,9 @@ func newProxyClient(
 
 	return pc
 }
+
+// fullCloseConn hides the CloseWrite of the connection it embeds.
+type fullCloseConn struct{ net.Conn }
 
 func (p *ProxyClient) getDestination(r *http.Request) (*Destination, bool) {
 	ctx := r.Context()

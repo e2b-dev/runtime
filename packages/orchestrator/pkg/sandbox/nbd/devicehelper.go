@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // GetNBDDevice provisions a one-shot device pool, opens a direct-path mount
@@ -50,7 +51,7 @@ func GetNBDDevice(ctx context.Context, backend block.Device, featureFlags *featu
 		close(poolClosed)
 	}()
 
-	mnt := NewDirectPathMount(backend, devicePool, featureFlags, mountOpts...)
+	mnt := NewDirectPathMount(backend, devicePool, featureFlags, logger.L(), mountOpts...)
 
 	mntIndex, err := mnt.Open(ctx)
 	if err != nil {

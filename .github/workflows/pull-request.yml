@@ -2,7 +2,6 @@ name: Pull Request
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,6 +39,9 @@ jobs:
               - '.github/workflows/pr-tests.yml'
               - '.github/workflows/pr-tests-arm64.yml'
               - '.github/actions/go-setup-cache/**'
+              - '.github/actions/unit-tests/**'
+              # invoked by the unit-tests action to pull the cluster-mode Valkey
+              - 'scripts/pull-retry.sh'
             # Like test-inputs, but scoped to only the .github paths that affect
             # the integration harness (its workflow + composite actions) instead
             # of all of .github/**. This keeps unrelated CI edits (e.g. other
@@ -162,7 +164,7 @@ jobs:
 
       - name: Publish Test Results
         if: ${{ (contains(fromJSON(needs.detect-changes.outputs.changed-scopes), 'test-inputs') || contains(fromJSON(needs.detect-changes.outputs.changed-scopes), 'integration-inputs')) && needs.detect-changes.outputs.docs-only != 'true' }}
-        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+        uses: EnricoMi/publish-unit-test-result-action@7622c5bf3d112a72ab4fa3951c2aa5723d8ab92d # v2.25.0
         with:
           comment_mode: off
           fail_on: "errors"

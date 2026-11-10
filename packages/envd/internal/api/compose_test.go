@@ -18,6 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -33,7 +34,7 @@ func newComposeTestAPI(t *testing.T) (*API, *user.User) {
 		User:    currentUser.Username,
 	}
 
-	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager())), currentUser
+	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager()), currentUser
 }
 
 func writeSourceFile(t *testing.T, dir string, name string, data []byte) string {
@@ -295,6 +296,7 @@ func TestCompose_PreservesExistingFileOnFailure(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root to enforce directory permissions")
 	}
+	skipUnlessDirModeBlocksCreate(t)
 
 	api, currentUser := newComposeTestAPI(t)
 	destDir := t.TempDir()
@@ -357,4 +359,29 @@ func TestCompose_SingleFile(t *testing.T) {
 	data, err := os.ReadFile(destPath)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("solo"), data)
+}
+
+// A source spelled differently from the destination but naming the same file
+// is refused: composing would replace the destination, then remove it as a
+// consumed source.
+func TestCompose_SourceAliasesDestination(t *testing.T) {
+	t.Parallel()
+
+	api, currentUser := newComposeTestAPI(t)
+	dir := t.TempDir()
+	destPath := writeSourceFile(t, dir, "part", []byte("kept"))
+	other := writeSourceFile(t, dir, "other", []byte("other"))
+	sep := string(filepath.Separator)
+
+	w := callCompose(t, api, ComposeRequest{
+		SourcePaths: []string{other, dir + sep + "." + sep + "part"},
+		Destination: destPath,
+		Username:    &currentUser.Username,
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, "kept", string(got))
+	assert.FileExists(t, other)
 }

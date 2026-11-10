@@ -17,48 +17,12 @@ import (
 	"github.com/e2b-dev/infra/tests/integration/internal/utils"
 )
 
-func TestDownloadFileWhenAuthIsDisabled(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
-	sbx := createSandbox(t, false, setup.WithAPIKey())
-	envdClient := setup.GetEnvdClient(t, ctx)
-
-	// create test file
-	filePath := "test.txt"
-	textFile, contentType := utils.CreateTextFile(t, filePath, "Hello, World!")
-
-	writeRes, err := envdClient.HTTPClient.PostFilesWithBodyWithResponse(
-		ctx,
-		&envd.PostFilesParams{
-			Path:     &filePath,
-			Username: new("user"),
-		},
-		contentType,
-		textFile,
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
-	)
-
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, writeRes.StatusCode())
-
-	getRes, err := envdClient.HTTPClient.GetFilesWithResponse(
-		ctx,
-		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
-	)
-
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, getRes.StatusCode())
-}
-
 func TestDownloadFileWithoutSigningWhenAuthIsEnabled(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -79,8 +43,7 @@ func TestDownloadFileWithoutSigningWhenAuthIsEnabled(t *testing.T) {
 		},
 		contentType,
 		textFile,
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
-		setup.WithEnvdAccessToken(t, *envdToken),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, err)
@@ -89,7 +52,7 @@ func TestDownloadFileWithoutSigningWhenAuthIsEnabled(t *testing.T) {
 	readRes, readErr := envdClient.HTTPClient.GetFiles(
 		ctx,
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 	require.NoError(t, readErr)
 	require.NoError(t, readRes.Body.Close())
@@ -101,7 +64,7 @@ func TestDownloadFileWithSigningWhenAuthIsEnabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -123,7 +86,7 @@ func TestDownloadFileWithSigningWhenAuthIsEnabled(t *testing.T) {
 		},
 		contentType,
 		textFile,
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, err)
@@ -132,7 +95,7 @@ func TestDownloadFileWithSigningWhenAuthIsEnabled(t *testing.T) {
 	readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &filePath, Username: new("user"), Signature: &readFileSigning},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, readErr)
@@ -145,7 +108,7 @@ func TestDownloadWithAlreadyExpiredToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -166,7 +129,7 @@ func TestDownloadWithAlreadyExpiredToken(t *testing.T) {
 			Signature:           &signatureForRead,
 			SignatureExpiration: &readExpiration,
 		},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, readErr)
@@ -179,7 +142,7 @@ func TestDownloadWithHealthyToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -200,7 +163,7 @@ func TestDownloadWithHealthyToken(t *testing.T) {
 			Signature:           &signatureForRead,
 			SignatureExpiration: &readExpiration,
 		},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, readErr)
@@ -213,7 +176,7 @@ func TestAccessWithNotCorrespondingSignatureAndSignatureExpiration(t *testing.T)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sbx := createSandbox(t, true, setup.WithAPIKey())
+	sbx := createSandbox(t, setup.WithAPIKey())
 	require.NotNil(t, sbx.JSON201)
 	require.NotNil(t, sbx.JSON201.EnvdAccessToken)
 
@@ -234,7 +197,7 @@ func TestAccessWithNotCorrespondingSignatureAndSignatureExpiration(t *testing.T)
 			Signature:           &signatureForRead,
 			SignatureExpiration: &readExpiration,
 		},
-		setup.WithSandbox(t, sbx.JSON201.SandboxID),
+		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
 
 	require.NoError(t, readErr)

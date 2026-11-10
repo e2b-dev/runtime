@@ -2,23 +2,27 @@ package featureflags
 
 import (
 	"context"
-	"net"
-	"net/url"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -37,16 +41,21 @@ const (
 	ClusterKind          ldcontext.Kind = "cluster"
 	BatcherKind          ldcontext.Kind = "batcher.name"
 	InstanceGroupKind    ldcontext.Kind = "instance-group"
-	deploymentKind       ldcontext.Kind = "deployment"
-	TierKind             ldcontext.Kind = "tier"
 	ServiceKind          ldcontext.Kind = "service"
 	TemplateKind         ldcontext.Kind = "template"
 	VolumeKind           ldcontext.Kind = "volume"
 	CompressFileTypeKind ldcontext.Kind = "compress-file-type"
 	CompressUseCaseKind  ldcontext.Kind = "compress-use-case"
+
+	// DeploymentEnvironmentKind has the same name and value as the
+	// OpenTelemetry deployment.environment resource attribute, so a flag
+	// rule and a dashboard filter select one place with one string.
+	DeploymentEnvironmentKind ldcontext.Kind = "deployment_environment"
 )
 
 // All flags must be defined here: https://app.launchdarkly.com/projects/default/flags/
+// A flag read through StringReader is the exception: its caller owns the key
+// and the fallback.
 
 type JSONFlag struct {
 	name     string
@@ -94,6 +103,16 @@ const (
 
 var RateLimitV2Mode = NewStringFlag("rate-limit-v2-mode", APIGroupRateLimitDisabled)
 
+var RateLimitDeleteMode = NewStringFlag("rate-limit-delete-mode", APIGroupRateLimitDisabled)
+
+// SandboxPauseRateLimitFlag caps explicit pause requests per sandbox:
+//
+//	{"limit": 5, "period_s": 60}
+//
+// period_s must be 1 to 600, which keeps every limiter key in Redis for at
+// most ten minutes. Null or an invalid value leaves pauses unlimited.
+var SandboxPauseRateLimitFlag = NewJSONFlag("sandbox-pause-rate-limit", ldvalue.Null())
+
 type BoolFlag struct {
 	name     string
 	fallback bool
@@ -122,6 +141,21 @@ func envBoolOr(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+// envIntOr reads key as an integer, falling back when it is unset or
+// unparseable, for the same reason as envBoolOr.
+func envIntOr(key string, fallback int) int {
+	raw := env.GetEnv(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
 	}
@@ -159,6 +193,11 @@ var (
 	CreateStorageCacheSpansFlag         = NewBoolFlag("create-storage-cache-spans", env.IsDevelopment())
 	OrchAcceptsCombinedHostFlag         = NewBoolFlag("orch-accepts-combined-host", false)
 	WorkspacesEnabledFlag               = NewBoolFlag("workspacesEnabled", false)
+
+	// ClientProxyResumeParkingFlag lets client-proxy retry a wake-on-traffic
+	// resume that failed retryably, read by each request at its own park
+	// transition: off means the first retryable failure is that request's answer.
+	ClientProxyResumeParkingFlag = NewBoolFlag("client-proxy-resume-parking", false)
 
 	// FsFreezeViaExecFlag freezes the guest rootfs with `fsfreeze -f /` run through
 	// the envd exec API before a filesystem-only pause, for guests whose envd
@@ -199,6 +238,14 @@ var (
 	// fields on snapshot load, so a mismatch fails the resume loudly.
 	UseSyncWPFlag = NewBoolFlag("use-sync-wp", false)
 
+	// UffdInstallDedupFlag makes the UFFD serve loop drop a MISSING fault for
+	// a page another worker is already installing instead of starting a
+	// second worker, buffer and source read for it (one installer per page).
+	// Read once per start/resume. Off restores one worker per fault message,
+	// the behaviour before the dedup; it is the kill switch for that change.
+	// UFFD_INSTALL_DEDUP sets the fallback where there is no LaunchDarkly.
+	UffdInstallDedupFlag = NewBoolFlag("uffd-install-dedup", envBoolOr("UFFD_INSTALL_DEDUP", true))
+
 	// InPlaceCheckpointFlag makes Checkpoint pause, snapshot and resume the
 	// SAME Firecracker process (in-place) instead of resuming a fresh sandbox
 	// from the new build. Only honored for sandboxes resumed with
@@ -207,6 +254,85 @@ var (
 	// on the sync-WP serve loop; resume-fresh stays the fallback for async
 	// sandboxes and when this flag is off.
 	InPlaceCheckpointFlag = NewBoolFlag("in-place-checkpoint", false)
+
+	// GuestRebootInPlaceFlag boots a sandbox whose guest reset itself (a
+	// reboot, or a kernel crash that restarts) again on its own disk and
+	// network slot, under the same sandbox and execution IDs, instead of
+	// stopping it. Read at the moment of the reset for a running sandbox, and
+	// at the start of a create or resume for a reset before envd answers. The
+	// fallback reads GUEST_REBOOT_IN_PLACE so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestRebootInPlaceFlag = NewBoolFlag("guest-reboot-in-place", envBoolOr("GUEST_REBOOT_IN_PLACE", false))
+
+	// GuestPowerOffEndFlag keeps a sandbox whose guest powered itself off,
+	// disk included, and lists it as powered off, so the API ends it with the
+	// sandbox's own timeout action: a kill, or a filesystem-only pause.
+	// Read when a cold boot, or a restore whose guest profile asks for it,
+	// decides whether to declare the ACPI power-off device, at an exit to
+	// decide whether to wait for the final guest counters, and again at the
+	// power-off. A process whose Firecracker took the device is held whatever
+	// the flag says then, so turning it off never costs that sandbox its disk.
+	// Off, a power-off of a process that did not take the device itself (a
+	// restore that sent no declaration, even when its snapshot's guest still
+	// has the device) stops the sandbox as a crash does.
+	// The fallback reads GUEST_POWEROFF_END so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestPowerOffEndFlag = NewBoolFlag("guest-poweroff-end", envBoolOr("GUEST_POWEROFF_END", false))
+
+	// SandboxEndedOnNodeFlag lists a sandbox that ended on its node without
+	// being asked to (a crash, a reset that was not booted again) as ended for
+	// two minutes, so the API's sync ends its record with kill reason
+	// ended_on_node instead of keeping it running until its end time. A held
+	// power-off is listed under GuestPowerOffEndFlag whatever this says. Off,
+	// an unrequested end leaves the record as it did before. The fallback
+	// reads SANDBOX_ENDED_ON_NODE so a deployment without LaunchDarkly can
+	// turn it on.
+	SandboxEndedOnNodeFlag = NewBoolFlag("sandbox-ended-on-node", envBoolOr("SANDBOX_ENDED_ON_NODE", false))
+
+	// GuestProfilesFlag lets a registered non-default guest profile serve
+	// the orchestrator's builds and sandboxes on this node. Read at the
+	// start of every build FROM a parent of another guest OS and of every
+	// create or resume of a template whose guest OS is not the default; the
+	// default profile never reads it, and the standalone tools that resolve
+	// a profile outside the orchestrator are not gated. Off (the default), a
+	// create or resume is refused with a FailedPrecondition that carries no
+	// create-refused detail, so placement still tries a node that has the
+	// flag on, but a build fails its base phase: the API sends a build to one
+	// builder and never retries it on another. Turn it on for every template
+	// builder of a cluster together: target the deployment environment or the
+	// instance groups that run builders, which every evaluation carries,
+	// rather than single orchestrator nodes. An orchestrator sends no cluster
+	// context, so a cluster rule never matches. The fallback reads
+	// GUEST_PROFILES_ENABLED so a deployment without LaunchDarkly can turn it on.
+	GuestProfilesFlag = NewBoolFlag("guest-profiles-enabled", envBoolOr("GUEST_PROFILES_ENABLED", false))
+
+	// FilesystemOnlyCheckpointFlag enables the filesystem-only checkpoint:
+	// the rootfs is exported and no memfile, the SAME Firecracker process is
+	// resumed afterwards, and a sandbox created from the build cold-boots.
+	// Independent of InPlaceCheckpointFlag: no memory is exported, so the
+	// sync-WP tracking, the Firecracker release and the balloon that gate the
+	// memory in-place path play no part. Off (the default) refuses the
+	// request before anything is touched; there is no memory fallback, since
+	// the caller asked for a template that cold-boots.
+	FilesystemOnlyCheckpointFlag = NewBoolFlag("filesystem-only-checkpoint", false)
+
+	// EnvdInitHeldRequestFlag makes a start whose envd is at or above
+	// utils.MinEnvdVersionForHeldInit wait on one /init for its whole envd-wait budget
+	// instead of abandoning an attempt every envd-init-request-timeout-milliseconds, and
+	// send that /init's body, timestamp included, only once envd asks for it
+	// (Expect: 100-continue). Off (the default) runs today's retry loop on every start.
+	EnvdInitHeldRequestFlag = NewBoolFlag("envd-init-held-request", false)
+
+	// InPlaceCheckpointReportingFlag re-admits to the in-place checkpoint the
+	// sandboxes whose balloon runs free-page reporting, and those whose
+	// balloon could not be read. It only decides where DeferMemoryExportFlag
+	// is on: there the CoW window pauses reporting and the deferred reports
+	// drain onto the serve loop when it resumes, so off (the default) sends
+	// both cohorts resume-fresh, and on lets them in place for a per-team A/B
+	// of the two paths without a redeploy. Where the deferred export is off
+	// the in-place checkpoint takes the synchronous copy, never touches
+	// reporting, and every balloon goes in place regardless of this flag.
+	InPlaceCheckpointReportingFlag = NewBoolFlag("in-place-checkpoint-reporting", false)
 
 	// DeferMemoryExportFlag makes the in-place checkpoint export guest
 	// memory through the CoW window instead of the synchronous dirty-RAM
@@ -220,7 +346,12 @@ var (
 	// is owed); requires an FC build with /balloon/reporting — pause failures
 	// fall back to the synchronous copy. (The synchronous pre-pause
 	// free-page-hinting drain settles before the dirty readout and needs no
-	// pause.) Default off = today's synchronous copy.
+	// pause.) Default off = today's synchronous copy. Because of that pause,
+	// this flag also moves the checkpoint ROUTE of reporting-built (and
+	// unread-balloon) sandboxes: turning it on sends them resume-fresh unless
+	// InPlaceCheckpointReportingFlag re-admits them, and turning it off
+	// mid-ramp sends them back in place. The route panel and the checkpoint
+	// counter's route label show the move.
 	DeferMemoryExportFlag = NewBoolFlag("defer-memory-export", false)
 
 	// SyncWPTrackerDirtyFlag derives the pause-time dirty set from the
@@ -266,6 +397,23 @@ var (
 	// ready. Only affects the memfd-dedup path; off restores the prior
 	// wait-for-dedup behavior.
 	MemfdDedupInflightServeFlag = NewBoolFlag("memfd-dedup-inflight-serve", false)
+
+	// MemfdDedupFreeIndexFlag frees the memfd dedup cache's packed index when
+	// its memfd is released. The index only translates in-flight drain reads
+	// to memfd offsets, which cannot be served once the memfd is gone, yet it
+	// otherwise stays on the cache for as long as the diff store keeps it.
+	// Only MemfdDedupInflightServeFlag pauses build an index, so elsewhere
+	// this flag has nothing to free.
+	MemfdDedupFreeIndexFlag = NewBoolFlag("memfd-dedup-free-index", false)
+
+	// SnapshotCacheDropProvisionalHeaderFlag drops the two long-lived holders
+	// of a pause's provisional memfile header: the local template's header
+	// holder, cleared once Fetch has read it to build the memfile device, and the
+	// snapshot the upload keeps, cleared as the upload is created. The device
+	// keeps its own reference until the deduped or the published header
+	// replaces it. Only MemfdDedupInflightServeFlag pauses build a provisional
+	// header.
+	SnapshotCacheDropProvisionalHeaderFlag = NewBoolFlag("snapshot-cache-drop-provisional-header", false)
 
 	// PeerToPeerChunkTransferFlag enables peer-to-peer chunk routing.
 	PeerToPeerChunkTransferFlag = NewBoolFlag("peer-to-peer-chunk-transfer", false)
@@ -352,10 +500,36 @@ var (
 	// for sandbox placement.
 	SandboxVolumeLabelBasedSchedulingFlag = NewBoolFlag("sandbox-volume-label-based-scheduling", false)
 
+	// SandboxListMaxLagMsFlag is how far, in milliseconds, a team's sandbox list
+	// may lag the store. With it set, each API replica shares one store read
+	// between the team's concurrent list requests and keeps it that long, so at
+	// 2000 a team is read at most every 2 s per replica however often it lists,
+	// while reads succeed; a failed read is not kept. Target it at a team to
+	// bound that team alone. The fallback, zero, keeps every request on its own
+	// read, with the same store commands as before.
+	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
+
+	// UnpaginatedTemplateListCapFlag caps GET /templates at 5000 templates; a
+	// team above it gets a 400 pointing at GET /v2/templates. Evaluated per team.
+	UnpaginatedTemplateListCapFlag = NewBoolFlag("unpaginated-template-list-cap", true)
+
+	// UnpaginatedSandboxListCapFlag caps GET /sandboxes at 5000 running
+	// sandboxes; a team above it gets a 400 pointing at GET /v2/sandboxes.
+	// Evaluated per team.
+	UnpaginatedSandboxListCapFlag = NewBoolFlag("unpaginated-sandbox-list-cap", true)
+
 	NetworkTransformRulesFlag = NewBoolFlag("network-transform-rules", env.IsDevelopment())
 	MaxNetworkRuleDomains     = NewIntFlag("max-network-rule-domains", 10)
+	// MaxNetworkRuleHeaderValueLen caps the length of a header value in a
+	// network transform rule, before placeholders are resolved. Evaluated per team.
+	MaxNetworkRuleHeaderValueLen = NewIntFlag("max-network-rule-header-value-len", 2048)
 
-	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", env.IsDevelopment())
+	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", true)
+
+	// SandboxFirewallNonDNSUDPFlag selects what the slot firewall does with
+	// guest UDP to ports other than 53: "off" leaves it alone, "count" counts
+	// it, "drop" counts and drops it. Read at every chain build.
+	SandboxFirewallNonDNSUDPFlag = NewStringFlag("sandbox-firewall-non-dns-udp", "off")
 
 	// EgressProxyInterceptTracingFlag turns on connection, request and upstream
 	// spans for a sandbox's TLS-intercepted egress. Target the sandbox or team
@@ -365,6 +539,15 @@ var (
 	// SandboxIamTokensFlag gates the sandbox IAM workload token configuration
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
+
+	// ResizableTemplatesFlag lets a team pass maxCpuCount on a template build.
+	// Off, a request carrying the field is refused.
+	ResizableTemplatesFlag = NewBoolFlag("resizable-templates", env.IsDevelopment())
+
+	// ResizableTemplateDefaultMaxCpuFlag is the max CPU count applied to a
+	// team's builds that omit maxCpuCount while ResizableTemplatesFlag is on;
+	// 0 applies no default.
+	ResizableTemplateDefaultMaxCpuFlag = NewIntFlag("resizable-template-default-max-cpu", 0)
 
 	// CustomerSecretsFlag gates the customer-facing secret management routes
 	// per project during rollout. It falls back to off, so a deployment that
@@ -382,21 +565,41 @@ var (
 	// supersedes V4HeaderForUncompressedFlag for uncompressed uploads.
 	HeaderV5WriteFlag = NewBoolFlag("header-v5-write", false)
 
+	// SnapshotCacheAncestorStorageFallbackFlag lets a snapshot upload resolve an
+	// ancestor whose upload future fired successfully but whose template-cache
+	// entry is gone, instead of failing the upload. An entry the child already
+	// carries is kept; otherwise it is healed from the ancestor's stored header
+	// without LoadHeader's backfill, so the child gets the ancestor's entry only
+	// as that header carries it, or the empty entry a header older than the
+	// Builds map always gets. Evaluated at each wait that reaches that case.
+	// It changes bytes written into headers that reach storage, and turning it
+	// off does not rewrite headers written while it was on.
+	SnapshotCacheAncestorStorageFallbackFlag = NewBoolFlag("snapshot-cache-ancestor-storage-fallback", false)
+
+	// SnapshotCacheReleaseSupersededFlag lets the template cache delete a pause
+	// layer as soon as a later pause on the node has superseded it, nothing
+	// holds a pin on it and its devices have resolved, instead of keeping it
+	// to its TTL. It acts only together with
+	// SnapshotCacheAncestorStorageFallbackFlag: a released ancestor's upload
+	// future outlives its entry, and without the fallback a descendant's upload
+	// fails on it. Supersession and pins are recorded whatever the flag says;
+	// it is read wherever the release would act, so a flip takes effect at each
+	// entry's next pin return, supersession or fetch completion. Turning it off
+	// stops further releases and restores nothing already released.
+	SnapshotCacheReleaseSupersededFlag = NewBoolFlag("snapshot-cache-release-superseded", false)
+
 	// ResumeOriginNodeRemapFlag enables repointing a snapshot's origin_node_id to
 	// the fallback node a resume timed out on. The node's local cache is warming
 	// from the in-progress snapshot pull, so pinning the retry to it avoids
 	// re-pulling the snapshot onto yet another node.
 	ResumeOriginNodeRemapFlag = NewBoolFlag("resume-origin-node-remap", false)
 
-	// ExpirationIndexHealerFlag enables the API's Redis expiration index healer
-	// loop, which re-adds sandboxes missing from the global expiration ZSET
-	// (a missing member is never seen by the evictor and would live forever).
-	// Checked on every heal tick, so it can be toggled without a redeploy.
-	// On by default; acts as a kill switch if a heal pass misbehaves.
-	ExpirationIndexHealerFlag = NewBoolFlag("expiration-index-healer", true)
-
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
 	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
+
+	// BuildLayerMemfileDedupFlag gates the 4 KiB memfile dedup of a build layer whose
+	// guest profile asks for it, whatever memfile-diff-dedup's "enabled" says.
+	BuildLayerMemfileDedupFlag = NewBoolFlag("build-layer-memfile-dedup", true)
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")
@@ -441,22 +644,54 @@ func NewIntFlag(name string, fallback int) IntFlag {
 }
 
 var (
-	MaxSandboxesPerNode = NewIntFlag("max-sandboxes-per-node", 200)
+	// EgressRetirementTimeoutMsFlag sets the wait for retiring egress connections
+	// at network release. Callers accept positive milliseconds that fit in a
+	// time.Duration, otherwise using the one-minute fallback. Updates affect
+	// future retirements.
+	EgressRetirementTimeoutMsFlag = NewIntFlag("egress-retirement-timeout-ms", 60000)
+
+	// RemoteClusterInstancesPerConnectionFlag caps how many of a remote
+	// cluster's instances the api places on one shared gRPC connection to the
+	// cluster's edge; the pool opens another connection once every connection
+	// is full. An AWS ALB serves at most 128 concurrent streams per HTTP/2
+	// connection and a sync round calls every instance at once, so the
+	// fallback keeps half of each connection's streams for sandbox calls.
+	// Evaluated against the cluster's context as each instance joins; values
+	// below one count as one.
+	RemoteClusterInstancesPerConnectionFlag = NewIntFlag("remote-cluster-instances-per-connection", 64)
+
+	// RemoteClusterMinConnectionsFlag is the fewest shared gRPC connections the
+	// api keeps to a remote cluster's edge, however few instances it has.
+	// Evaluated against the cluster's context as each instance joins; values
+	// below one count as one.
+	RemoteClusterMinConnectionsFlag = NewIntFlag("remote-cluster-min-connections", 4)
+
+	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", 200)
+	APIIdempotencyRoutes     = NewJSONFlag("api-idempotency-routes", ldvalue.Null())
+	APIIdempotencyTTLSeconds = NewIntFlag("api-idempotency-ttl-seconds", 86400)
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
 	StorageConcurrentUploadLimit  = NewIntFlag("gcloud-concurrent-upload-limit", 8)
 	StorageMaxUploadTasks         = NewIntFlag("gcloud-max-tasks", 16)
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)
-	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)      // Default K=3
-	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400) // Default R=4 (stored as percentage, max over-commit ratio)
-	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)           // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
-	// BestOfKHugepageMemory includes hugepage-pool load in best-of-K scoring
-	// (max of CPU and memory). Off = CPU only. A node that reports no pool
-	// scores 0.5. Turn on after nodes report a pool.
-	BestOfKHugepageMemory       = NewBoolFlag("best-of-k-hugepage-memory", false)
-	EnvdInitTimeoutMilliseconds = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
-	EnvdTimeoutMilliseconds     = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
+	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
+	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
+	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit (of its memory outside the pool, for a sandbox without hugepages); 0 disables the check
+	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
+	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
+	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	// SandboxMigrationOperationBudgetSeconds bounds how long a sandbox migration may run, fixed per migration at acceptance.
+	SandboxMigrationOperationBudgetSeconds = NewIntFlag("sandbox-migration-operation-budget-seconds", 900)
+	// SandboxMigrationTerminationBudgetSeconds is how long the API's hold on a migrating sandbox outlives the operation deadline, fixed per migration at acceptance.
+	// The migration manager runs a termination for 30 minutes from its first call, which can start up to a grace after the operation deadline,
+	// so the hold keeps ten minutes of slack past it. A termination read after the hold lapsed is consumed by the poller without the hold.
+	SandboxMigrationTerminationBudgetSeconds = NewIntFlag("sandbox-migration-termination-budget-seconds", 2400)
+	// EnvdInitConnectTimeoutMilliseconds bounds each connect of the held envd init
+	// request. Read with EnvdInitHeldRequestFlag; a value below 1000 is raised to it, and
+	// a value at or below zero reads as the fallback.
+	EnvdInitConnectTimeoutMilliseconds = NewIntFlag("envd-init-connect-timeout-milliseconds", 5000)
 	// GuestSyncTimeoutMs overrides the mandatory pre-pause guest-sync deadline
 	// for filesystem-only snapshots, in milliseconds. 0 (default) derives the
 	// timeout from guest RAM; a positive value pins it.
@@ -466,26 +701,66 @@ var (
 	// 0 probes the parent header's readiness without waiting; a positive value
 	// waits up to that long before refusing retryably.
 	PauseAdmissionGraceMs = NewIntFlag("pause-admission-grace-milliseconds", -1)
+	// PauseEnvdHealthTimeoutMs gates the envd health probe every snapshot runs
+	// before anything destructive, in milliseconds. 0 or less (default -1)
+	// disables the probe: an HTTP request cannot complete inside a zero
+	// deadline, so unlike PauseAdmissionGraceMs zero is not an instant probe.
+	// A positive value probes envd's /health with that timeout, capped at the
+	// sandbox HTTP client's 10s limit. When envd does not answer, a memory
+	// pause proceeds and the snapshot is recorded as taken over an
+	// unresponsive agent, unless the caller requires a healthy guest, in
+	// which case it is refused retryably with an ENVD_UNRESPONSIVE detail;
+	// filesystem-only captures and checkpoints (forks, snapshot templates)
+	// are always refused that way, since a filesystem-only capture needs the
+	// agent to freeze the rootfs and a fork of a hung agent is born dead. A
+	// rollout brake: once production confirms the refusal rate matches the
+	// dead-guest rate, the timeout becomes a constant and the flag is
+	// retired.
+	PauseEnvdHealthTimeoutMs = NewIntFlag("pause-envd-health-timeout-milliseconds", -1)
+	// PauseAdmissionDiskHeadroomMiB makes a node refuse a pause, retryably and
+	// before anything destructive, when the filesystem holding its build
+	// directory cannot take the snapshot's capture (guest memory plus the
+	// rootfs cache plus a snapfile allowance, twice that when template storage
+	// is a directory on the same filesystem, counting captures already admitted
+	// and not yet on disk) and still keep this many MiB free. Negative, the
+	// default, turns the check off; the fallback reads
+	// PAUSE_ADMISSION_DISK_HEADROOM_MIB so a deployment without LaunchDarkly can
+	// turn it on, as E2B Embed does.
+	PauseAdmissionDiskHeadroomMiB = NewIntFlag("pause-admission-disk-headroom-mib", envIntOr("PAUSE_ADMISSION_DISK_HEADROOM_MIB", -1))
+	// OrchestratorGOGCPercentFlag sets the orchestrator's Go GC percent. 10 to
+	// 100 is written with debug.SetGCPercent. -1 (default) and any other
+	// value, 0 included, keep the percent read when the controller was built:
+	// nothing is written unless an applied value has to be undone.
+	OrchestratorGOGCPercentFlag = NewIntFlag("orchestrator-gogc-percent", -1)
 	// PauseRefusalRestoreFlag gates the API-side restore of a retryably
 	// refused pause: record kept, routing re-registered, state back to
-	// Running. Off (default), a refused pause still ends today's way — the
+	// Running. Off (default), a busy-node refusal still ends today's way — the
 	// record is removed, the live sandbox is reaped as an orphan shortly
 	// after, and the pause endpoint answers today's generic error rather than
-	// a 503 whose retry could not succeed.
-	PauseRefusalRestoreFlag = NewBoolFlag("pause-refusal-restore", false)
-	// OrchestratorRoutingPublishFlag makes the orchestrator write the sandbox
-	// routing record (sandbox:routing:{id}) on MarkRunning and delete it on
-	// MarkStopping. Runs next to the API-owned sandbox:catalog:{id} record.
-	// On by default: the write is best-effort and nothing reads the record
-	// until OrchestratorRoutingPrioritizedFlag is on. Turn off in LaunchDarkly
-	// to stop the extra Redis write.
-	OrchestratorRoutingPublishFlag = NewBoolFlag("orchestrator-routing-publish", true)
-	// OrchestratorRoutingPrioritizedFlag makes client-proxy resolve the node
-	// from the orchestrator-owned sandbox:routing:{id} record instead of the
-	// API-owned sandbox:catalog:{id} record. Turn on only after
-	// OrchestratorRoutingPublishFlag has been on for one max sandbox length.
-	OrchestratorRoutingPrioritizedFlag = NewBoolFlag("orchestrator-routing-prioritized", false)
-	MaxCacheWriterConcurrencyFlag      = NewIntFlag("max-cache-writer-concurrency", 10)
+	// a 503 whose retry could not succeed. A refusal the node types as a
+	// checkpoint in flight restores whatever the flag says: the node has
+	// proven the sandbox alive and the refusal ends with the checkpoint. The fallback reads
+	// PAUSE_REFUSAL_RESTORE so a deployment without LaunchDarkly can turn it on.
+	PauseRefusalRestoreFlag = NewBoolFlag("pause-refusal-restore", envBoolOr("PAUSE_REFUSAL_RESTORE", false))
+	// CreateMemoryRefusalFlag changes what a create answers when the hugepage
+	// pool cannot back its guest memory. On, while a sandbox on the node is
+	// still tearing down, the create is refused with ResourceExhausted, so
+	// placement retries the node once the pages are back; with nothing tearing
+	// down it fails at once and says why. Off (default), such a create fails
+	// as an internal error and placement excludes the node, which on a
+	// one-node deployment turns a create sent right after a kill into a
+	// failure. The fallback reads CREATE_MEMORY_REFUSAL so a deployment
+	// without LaunchDarkly can turn it on.
+	CreateMemoryRefusalFlag = NewBoolFlag("create-memory-refusal", envBoolOr("CREATE_MEMORY_REFUSAL", false))
+	// CreateHugePageAdmissionFlag refuses a hugepage create or resume before
+	// it starts when the node cannot allocate the guest's memory in hugepages,
+	// less what the starts already admitted may still take. Off (default), the
+	// start goes ahead, and a guest that cannot fault in its pages fails its
+	// start or crashes a neighbour mid-run. The fallback reads
+	// CREATE_HUGEPAGE_ADMISSION so a deployment without LaunchDarkly can turn
+	// it on.
+	CreateHugePageAdmissionFlag   = NewBoolFlag("create-hugepage-admission", envBoolOr("CREATE_HUGEPAGE_ADMISSION", false))
+	MaxCacheWriterConcurrencyFlag = NewIntFlag("max-cache-writer-concurrency", 10)
 
 	// BuildCacheMaxUsagePercentage the maximum percentage of the cache disk storage
 	// that can be used before the cache starts evicting items.
@@ -510,6 +785,20 @@ var (
 
 	// NBDConnectionsPerDevice the number of NBD socket connections per device
 	NBDConnectionsPerDevice = NewIntFlag("nbd-connections-per-device", 1)
+
+	// NBDAttachViaIoctlFlag attaches sandbox rootfs devices through the NBD
+	// driver's ioctl interface instead of netlink. The netlink interface runs
+	// every attach and detach on a node under one kernel-wide lock, so starts
+	// queue behind each other; the ioctl interface locks per device, at the
+	// cost of one parked OS thread per attached device. That thread waits in
+	// the driver interruptibly, so anything that stops or traps the process
+	// (a ptrace attach such as strace, gdb or dlv, SIGSTOP, a cgroup freeze)
+	// ends every ioctl session on the node and fails the guests' rootfs I/O;
+	// netlink devices have no parked thread and only pause. Never trace,
+	// stop or freeze an orchestrator that runs with this flag on. Read once
+	// per attach; a device detaches through the interface that attached it.
+	// Disabled by default.
+	NBDAttachViaIoctlFlag = NewBoolFlag("nbd-attach-via-ioctl", false)
 
 	// NBDAsyncWriteZeroesFlag, when enabled, handles NBD WRITE_ZEROES/TRIM
 	// commands in a goroutine instead of inline on the dispatch read loop.
@@ -559,10 +848,18 @@ var (
 	ResumeLastCyclePrefetchMaxMiBFlag = NewIntFlag("resume-last-cycle-prefetch-max-mib", -1)
 
 	// PauseResumePrefetchHarvestFlag makes the orchestrator, after a pause
-	// snapshot is durable, run a throwaway warm resume of the just-written
-	// artifact (driven by envd /init, workload frozen, egress denied) to record
-	// the resume page-fault trace and turn it into a prefetch mapping. Off by
-	// default; the harvest is best-effort and never affects the pause result.
+	// snapshot or an in-place checkpoint is durable, run a throwaway warm resume
+	// of the just-written artifact (driven by envd /init, workload frozen, egress
+	// denied) to record the resume page-fault trace and turn it into a prefetch
+	// mapping. The in-place checkpoint has no resume of its own to trace, so
+	// this is the only way a template it produces gets an init mapping. The
+	// code fallback is off, but the flag already serves true in every
+	// production environment, so wherever in-place-checkpoint is on the
+	// checkpoint harvest runs too: this flag gates both producers at once and
+	// turning it off also stops the pause harvest. To stop only the checkpoint
+	// harvest, turn in-place-checkpoint off (read per checkpoint; a resume-fresh
+	// checkpoint records its own mapping and runs no throwaway). The harvest is
+	// best-effort and never affects the pause or checkpoint result.
 	PauseResumePrefetchHarvestFlag = NewBoolFlag("pause-resume-prefetch-harvest", false)
 
 	// PauseResumePrefetchConsumeFlag controls whether a harvested mapping is
@@ -593,6 +890,18 @@ var (
 	// BuildBaseRootfsSizeLimitMB is the maximum size of the base rootfs filesystem created from the OCI image, in MB.
 	BuildBaseRootfsSizeLimitMB = NewIntFlag("build-base-rootfs-size-limit-mb", 25000)
 
+	// ClientProxyResumeParkingBudgetMs gates the retries of one resume
+	// flight, counted from its first retryable failure and read when the
+	// flight is created: no retry starts past it, an attempt under way keeps
+	// its ceiling while a caller waits, and is cut at the budget's end once
+	// every caller has left.
+	ClientProxyResumeParkingBudgetMs = NewIntFlag("client-proxy-resume-parking-budget-ms", 15000)
+
+	// ClientProxyResumeParkingLotSize caps the requests one client-proxy
+	// process keeps waiting on retried resumes, read by each request at its
+	// park transition; the rest are shed with a 503.
+	ClientProxyResumeParkingLotSize = NewIntFlag("client-proxy-resume-parking-lot-size", 512)
+
 	// MinAutoResumeTimeoutSeconds is the minimum auto-resume timeout in seconds.
 	// This prevents thrashing from very short timeouts.
 	MinAutoResumeTimeoutSeconds = NewIntFlag("minimum-autoresume-timeout", 300)
@@ -600,6 +909,10 @@ var (
 	// BuildReservedDiskSpaceMB is the amount of disk space in MB reserved for root on the guest filesystem.
 	// Reserved blocks are only usable by root (uid 0), protecting the guest OS from disk-full conditions.
 	BuildReservedDiskSpaceMB = NewIntFlag("build-reserved-disk-space-mb", 256)
+
+	// BuildBootDiagnosticsFlag inspects the rootfs before each build cold boot and annotates
+	// an envd timeout with what it found. Off means no inspection.
+	BuildBootDiagnosticsFlag = NewBoolFlag("build-boot-diagnostics", false)
 
 	// MaxStartingInstancesPerNode limits concurrent sandbox start/resume operations on a single orchestrator node.
 	// Must be > 0.
@@ -618,16 +931,42 @@ var (
 	// refused for one). Same sign convention as PauseAdmissionGraceMs:
 	// negative = never degrade (retry for as long as the node refuses), 0 = no
 	// retries (degrade at the first refusal), positive = the budget. Only ever
-	// consulted on a refusal, and refusals only reach the evictor with
-	// PauseRefusalRestoreFlag on, so it is inert until that flag is.
+	// consulted on a busy-node refusal, which reaches the evictor only with
+	// PauseRefusalRestoreFlag on; a checkpoint-in-flight refusal reaches it
+	// regardless but never degrades and does not charge this budget.
 	AutoPauseOverstayBudgetMs = NewIntFlag("auto-pause-overstay-budget-milliseconds", 120000)
+
+	// AutoPauseEnvdGraceMs is how long the evictor honours the guest agent's
+	// refusal of an expired auto-pause, from the first envd refusal of its
+	// current episode, before retrying the memory pause once without the
+	// probe. Sign convention as AutoPauseOverstayBudgetMs: negative never,
+	// 0 at the first refusal, positive the grace. Inert until
+	// PauseEnvdHealthTimeoutMs is on. A rollout brake like that flag: once
+	// production shows how long a guest takes to recover, the grace becomes
+	// a constant and the flag is retired with it.
+	AutoPauseEnvdGraceMs = NewIntFlag("auto-pause-envd-grace-milliseconds", 120000)
 
 	// MaxConcurrentSnapshotUpserts limits concurrent UpsertSnapshot calls (pause + snapshot template paths).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotUpserts = NewIntFlag("max-concurrent-snapshot-upserts", 0)
-	// MaxConcurrentSandboxListQueries limits concurrent GetSnapshotsWithCursor calls in the sandbox list path.
+	// MaxConcurrentSandboxListQueries limits how many sandbox list pages run their paused snapshot queries at once.
+	// A page holds its slot across its GetSnapshotsWithCursor calls, which run one after another.
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSandboxListQueries = NewIntFlag("max-concurrent-sandbox-list-queries", 0)
+
+	// PausedSandboxListBatchLimit caps the rows each GetSnapshotsWithCursor call of a GET /v2/sandboxes
+	// paused page asks for, or the rows the page still misses when more. A capped page that does not
+	// fill within its calls ends early and the next page continues after the last row read.
+	// 0 or negative leaves the calls uncapped. Evaluated per team.
+	PausedSandboxListBatchLimit = NewIntFlag("paused-sandbox-list-batch-limit", 0)
+
+	// DBMaxConnLifetimeSeconds overrides pgxpool MaxConnLifetime when positive.
+	// 0 or negative keeps pgxpool's default (1h, or the value in the DSN).
+	DBMaxConnLifetimeSeconds = NewIntFlag("db-max-conn-lifetime-seconds", 0)
+	// DBMaxConnLifetimeJitterSeconds overrides pgxpool MaxConnLifetimeJitter when positive.
+	// 0 or negative keeps pgxpool's default (0, or the value in the DSN).
+	DBMaxConnLifetimeJitterSeconds = NewIntFlag("db-max-conn-lifetime-jitter-seconds", 0)
+
 	// MaxConcurrentSnapshotBuildQueries limits concurrent GetSnapshotBuilds calls (e.g. sandbox delete).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotBuildQueries = NewIntFlag("max-concurrent-snapshot-build-queries", 0)
@@ -650,8 +989,10 @@ var ReclaimConfigFlag = NewJSONFlag("guest-pause-reclaim", ldvalue.Null())
 // race fixed in https://lore.kernel.org/lkml/20240429125100.7393-1-david@redhat.com/
 // is on the hinting flow, gated by the per-use-case timeouts below).
 // "pause"/"build" are pre-pause drain timeouts in ms keyed by SnapshotUseCase;
-// missing/zero/negative disables the drain for that use case.
-// Example: {"enabled": true, "pause": 500, "build": 0}
+// missing/zero/negative disables the drain for that use case. "stop" and
+// "stop_grace" bound the stop of a cycle that outlived its budget (see
+// GetPrePauseHintConfig).
+// Example: {"enabled": true, "pause": 500, "build": 0, "stop": 2000, "stop_grace": 100}
 var FreePageHintingConfig = NewJSONFlag("free-page-hinting-config", ldvalue.Null())
 
 // IsFreePageHintingEnabled reports whether FPH should be configured on the
@@ -660,16 +1001,158 @@ func IsFreePageHintingEnabled(ctx context.Context, ff *Client, contexts ...ldcon
 	return ff.JSONFlag(ctx, FreePageHintingConfig, contexts...).GetByKey("enabled").BoolValue()
 }
 
-// GetFreePageHintingTimeout returns the pre-pause FPH drain timeout for the
-// given SnapshotUseCase. Zero means disabled.
-func GetFreePageHintingTimeout(ctx context.Context, ff *Client, useCase string, contexts ...ldcontext.Context) time.Duration {
-	ms := ff.JSONFlag(ctx, FreePageHintingConfig, contexts...).GetByKey(useCase).IntValue()
-	if ms <= 0 {
-		return 0
+// HintStopConfig bounds the stop of a hinting cycle the host stopped waiting
+// for; every hinting drain shares it ("stop", "stop_grace" in
+// FreePageHintingConfig, milliseconds).
+type HintStopConfig struct {
+	// Timeout bounds the stop; zero leaves such a cycle running, which is the
+	// behaviour before the stop existed and the rollback lever for it.
+	Timeout time.Duration
+	// Grace is how long the stop waits for a guest that has not echoed the
+	// cycle's command before taking it to have never read it.
+	Grace time.Duration
+}
+
+// PrePauseHintConfig is what the pre-pause drain reads from
+// FreePageHintingConfig for one SnapshotUseCase.
+type PrePauseHintConfig struct {
+	// Timeout is the drain budget; zero disables the drain for the use case.
+	Timeout time.Duration
+	Stop    HintStopConfig
+}
+
+const (
+	defaultHintStopTimeout = 2 * time.Second
+	defaultHintStopGrace   = 100 * time.Millisecond
+)
+
+// flagMillis reads key from v as a non-negative duration in milliseconds, def
+// when absent or not a number.
+func flagMillis(v ldvalue.Value, key string, def time.Duration) time.Duration {
+	x := v.GetByKey(key)
+	if !x.IsNumber() {
+		return def
 	}
 
-	return time.Duration(ms) * time.Millisecond
+	return max(time.Duration(x.IntValue())*time.Millisecond, 0)
 }
+
+func hintStopConfig(v ldvalue.Value) HintStopConfig {
+	return HintStopConfig{
+		Timeout: flagMillis(v, "stop", defaultHintStopTimeout),
+		Grace:   flagMillis(v, "stop_grace", defaultHintStopGrace),
+	}
+}
+
+// GetPrePauseHintConfig reads the drain budget for useCase ("pause", "build")
+// and the shared stop settings.
+// Example: {"enabled": true, "pause": 500, "build": 0, "stop": 2000, "stop_grace": 100}
+func GetPrePauseHintConfig(ctx context.Context, ff *Client, useCase string, contexts ...ldcontext.Context) PrePauseHintConfig {
+	v := ff.JSONFlag(ctx, FreePageHintingConfig, contexts...)
+
+	return PrePauseHintConfig{Timeout: flagMillis(v, useCase, 0), Stop: hintStopConfig(v)}
+}
+
+// PeriodicHintingConfig is the "periodic" object of FreePageHintingConfig:
+// host-driven free-page-hinting runs that replace continuous free-page
+// reporting. Example:
+//
+//	{"enabled": true, "pause": 500, "stop": 2000, "stop_grace": 100,
+//	 "periodic": {"interval": 15000, "timeout": 500, "quiet_after_start": 10000}}
+//
+// interval <= 0 disables the loop, and so does an interval under a second (the
+// field is in milliseconds; a value typed in seconds would be a tight loop
+// against every guest); timeout <= 0 falls back to 500 ms; quiet_after_start
+// clamps at 0. The stop settings are the shared top-level ones. observe_only
+// keeps the loop ticking and recording the interval baseline without ever
+// hinting: the control cohort a ramp is read against.
+//
+// silent_runs is how many runs in a row a guest may sit out (never echoing the
+// command, or a start FC refuses) before the loop backs off to
+// unresponsive_retry between attempts; 0 never backs off. host_slots bounds the
+// runs in flight on one host; 0 is unbounded.
+type PeriodicHintingConfig struct {
+	Interval        time.Duration
+	Timeout         time.Duration
+	QuietAfterStart time.Duration
+	// ObserveOnly ticks and records the interval baseline but never hints: a
+	// control cohort on hinting templates.
+	ObserveOnly       bool
+	SilentRuns        int
+	UnresponsiveRetry time.Duration
+	HostSlots         int
+	Stop              HintStopConfig
+}
+
+func (c PeriodicHintingConfig) Enabled() bool { return c.Interval > 0 }
+
+const (
+	minPeriodicHintingInterval = time.Second
+	defaultPeriodicHintTimeout = 500 * time.Millisecond
+)
+
+// GetPeriodicHintingConfig reads the periodic block; missing fields take the
+// defaults above, a missing block or interval <= 0 disables the loop.
+func GetPeriodicHintingConfig(ctx context.Context, ff *Client, contexts ...ldcontext.Context) PeriodicHintingConfig {
+	top := ff.JSONFlag(ctx, FreePageHintingConfig, contexts...)
+	v := top.GetByKey("periodic")
+	// A mistyped field silently falling back would disable the loop with
+	// nothing to say why; the read path runs per sandbox per tick, so each
+	// complaint is made once per process.
+	complain := func(field, why string, x ldvalue.Value) {
+		if _, dup := periodicHintingComplaints.LoadOrStore(field+":"+why, struct{}{}); !dup {
+			logger.L().Warn(ctx, "free-page-hinting-config periodic: "+why, zap.String("field", field), zap.String("value", x.JSONString()))
+		}
+	}
+	if !v.IsNull() && v.Type() != ldvalue.ObjectType {
+		complain("periodic", "not an object; periodic hinting off", v)
+	}
+	num := func(key string, def int64) int64 {
+		x := v.GetByKey(key)
+		if x.IsNumber() {
+			return int64(x.IntValue())
+		}
+		if !x.IsNull() {
+			complain(key, "not a number; using the default", x)
+		}
+
+		return def
+	}
+	ms := func(key string, def int64) time.Duration { return time.Duration(num(key, def)) * time.Millisecond }
+	boolean := func(key string) bool {
+		x := v.GetByKey(key)
+		if x.IsBool() {
+			return x.BoolValue()
+		}
+		if !x.IsNull() {
+			complain(key, "not a boolean; using the default", x)
+		}
+
+		return false
+	}
+	cfg := PeriodicHintingConfig{
+		Interval:          max(ms("interval", 0), 0),
+		Timeout:           ms("timeout", defaultPeriodicHintTimeout.Milliseconds()),
+		QuietAfterStart:   max(ms("quiet_after_start", 10000), 0),
+		SilentRuns:        int(max(num("silent_runs", 3), 0)),
+		UnresponsiveRetry: max(ms("unresponsive_retry", 300000), 0),
+		HostSlots:         int(max(num("host_slots", 16), 0)),
+		Stop:              hintStopConfig(top),
+		ObserveOnly:       boolean("observe_only"),
+	}
+	if cfg.Interval > 0 && cfg.Interval < minPeriodicHintingInterval {
+		complain("interval", "below the one-second floor; periodic hinting off", v.GetByKey("interval"))
+		cfg.Interval = 0
+	}
+	// A non-positive timeout would start guest cycles and abandon them at once.
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = defaultPeriodicHintTimeout
+	}
+
+	return cfg
+}
+
+var periodicHintingComplaints sync.Map
 
 type ReclaimConfig struct {
 	Sync          time.Duration
@@ -740,11 +1223,16 @@ const (
 	// balloon reporting-pause API; filesystem-only snapshots ship with every
 	// e2b release from 0.1.0 — the per-feature floors live in fcversion.
 	DefaultFirecrackerV1_14_0Version = "v1.14-0.2.0"
+	// The v1.17-0 release line: upstream Firecracker v1.17 with the v1.14-0
+	// patches, and it restores snapshots taken by every older line. It starts
+	// at 0.4.0 because e2b release numbers rise across lines and v1.14-0
+	// already shipped 0.3.x; the version gates key on that number.
+	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.1"
 	// New template builds get the current release; existing builds keep
 	// resolving within their own line below (cross-line upgrades are an
 	// operator decision via the firecracker-versions flag, never a baked
 	// default — the map invariant key == LDKey(value) enforces it).
-	DefaultFirecrackerVersion = DefaultFirecrackerV1_14_0Version
+	DefaultFirecrackerVersion = DefaultFirecrackerV1_17_0Version
 )
 
 var FirecrackerVersionMap = map[string]string{
@@ -752,7 +1240,58 @@ var FirecrackerVersionMap = map[string]string{
 	"v1.12":   DefaultFirecrackerV1_12Version,
 	"v1.14":   DefaultFirecrackerV1_14Version,
 	"v1.14-0": DefaultFirecrackerV1_14_0Version,
+	"v1.17-0": DefaultFirecrackerV1_17_0Version,
 }
+
+// FirecrackerVersionsEnv overrides the firecracker-versions fallback where there is no LaunchDarkly: a JSON object of release line to served version, e.g. {"v1.14-0":"v1.14-0.3.1"}.
+// Set it identically on every binary that resolves versions (api and orchestrator). Like the flag, an override may move a line onto another release, so one security fix can cover every line: {"v1.10":"v1.14-0.3.1","v1.12":"v1.14-0.3.1","v1.14":"v1.14-0.3.1","v1.14-0":"v1.14-0.3.1"}; the operator owns snapshot compatibility across that move.
+const FirecrackerVersionsEnv = "DEFAULT_FIRECRACKER_VERSIONS"
+
+// FirecrackerVersionsFallback merges the FirecrackerVersionsEnv overrides in raw over base; base entries must derive to their key, overrides must parse; on error it returns a copy of base with the error.
+func FirecrackerVersionsFallback(base map[string]string, raw string) (map[string]string, error) {
+	merged := maps.Clone(base)
+	if merged == nil {
+		merged = map[string]string{}
+	}
+
+	for key, value := range base {
+		info, err := fcversion.New(value)
+		if err != nil {
+			return maps.Clone(base), fmt.Errorf("%s[%q]: %w", FirecrackerVersionsEnv, key, err)
+		}
+
+		derived, ok := info.LDKey()
+		if !ok || derived != key {
+			return maps.Clone(base), fmt.Errorf("%s[%q]: baked default %q does not belong to release line %q", FirecrackerVersionsEnv, key, value, key)
+		}
+	}
+
+	if strings.TrimSpace(raw) == "" {
+		return merged, nil
+	}
+
+	var overrides map[string]string
+	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+		return merged, fmt.Errorf("%s: expected a JSON object of release line to version: %w", FirecrackerVersionsEnv, err)
+	}
+
+	if overrides == nil {
+		return merged, fmt.Errorf("%s: expected a JSON object of release line to version, got null", FirecrackerVersionsEnv)
+	}
+
+	for key, value := range overrides {
+		if _, err := fcversion.New(value); err != nil {
+			return maps.Clone(base), fmt.Errorf("%s[%q]: %w", FirecrackerVersionsEnv, key, err)
+		}
+	}
+
+	maps.Copy(merged, overrides)
+
+	return merged, nil
+}
+
+// A malformed override keeps the baked map here and fails NewClient, so the service stops with the message instead of a package-init panic.
+var firecrackerVersionsFallback, firecrackerVersionsEnvErr = FirecrackerVersionsFallback(FirecrackerVersionMap, env.GetEnv(FirecrackerVersionsEnv, ""))
 
 // BuildIoEngine Sync is used by default as there seems to be a bad interaction between Async and a lot of io operations.
 var (
@@ -791,6 +1330,21 @@ var (
 	// the template's metadata and replayed when a filesystem-only snapshot cold-boots, so
 	// a snapshot keeps booting the way it was built even if this flag later changes.
 	BuildKernelCmdlineArgs = NewStringFlag("build-kernel-cmdline-args", "")
+
+	// BuildCPUTemplate is the per-team custom Firecracker CPU template every layer of a build
+	// boots with, as the PUT /cpu-config body.
+	// A template the build's host or Firecracker version cannot apply falls back to none.
+	// The applied template is stored in the template's metadata and replayed on cold boot.
+	BuildCPUTemplate = NewJSONFlag("build-cpu-template", ldvalue.Null())
+
+	// RebootCPUTemplateOverride replaces the build's CPU template on a filesystem-only cold
+	// boot: {"template": <PUT /cpu-config body>}; {"template": {}} boots with none. {} or null
+	// (the default) boots the build's template. The applied template is recorded as the
+	// running one, so the next pause stores it, while the build's template is kept and
+	// returns once the flag clears.
+	// A value that does not parse is logged and ignored; one the resolved Firecracker version
+	// or host cannot apply fails the boot, like a stored template would.
+	RebootCPUTemplateOverride = NewJSONFlag("reboot-cpu-template-override", ldvalue.Null())
 
 	// EnvdUpgradeTargetFlag drives the resume-time envd live-upgrade.
 	// Multivariate string:
@@ -848,21 +1402,31 @@ var (
 	// sandbox on the node, so the node, its group and its cluster are the cohorts
 	// that mean anything.
 	EnvdBinaryCacheFlag = NewBoolFlag("envd-binary-cache", envBoolOr("ENVD_BINARY_CACHE", env.IsDevelopment()))
-	// FsOnlyResumeCPUModelFlag restricts where a filesystem-only snapshot may be
-	// resumed: placement keeps only nodes reporting this CPU model, on top of the
-	// build-compatibility rule every sandbox is already subject to. The value is
-	// a bare CPU model as /proc/cpuinfo reports it — machineinfo.IceLakeModel is
-	// "106" (n2), machineinfo.EmeraldRapidsModel is "207" (n4).
+	// FsOnlyResumeCPUModelFlag restricts where a cold boot (a resume of a
+	// filesystem-only snapshot, a memory:false resume, or a sandbox created from a
+	// memory:false snapshot template) may run: placement keeps only nodes
+	// reporting this CPU model, on top of the build-compatibility rule every
+	// sandbox is already subject to. The value is a bare CPU model as
+	// /proc/cpuinfo reports it; see the machineinfo model constants.
 	//
-	// Empty (the default) turns the restriction off, leaving filesystem-only
-	// snapshots on the cross-generation rule a memory restore uses. A deployment
+	// Empty (the default) turns the restriction off, leaving cold boots on the
+	// cross-generation rule a memory restore uses. A deployment
 	// with no LaunchDarkly therefore keeps placing them exactly as before, rather
-	// than needing an LD rule to unpin itself. Memory snapshots never read it.
+	// than needing an LD rule to unpin itself. Memory restores never read it.
 	FsOnlyResumeCPUModelFlag = NewStringFlag("fs-only-resume-cpu-model", "")
+
+	// ExtraCompatibleNodeModelsFlag adds CPU model pairs to the hardcoded
+	// compatibility rule, as a JSON object from build model to node models:
+	// {"106": ["173"]} lets n2 builds run on C4 Granite Rapids nodes. Pairs are
+	// one-way, and architecture and family must still match.
+	//
+	// Null (the default) or a malformed value adds nothing. It applies to every
+	// placement, and FsOnlyResumeCPUModelFlag still narrows on top of it.
+	ExtraCompatibleNodeModelsFlag = NewJSONFlag("extra-compatible-node-models", ldvalue.Null())
 
 	DefaultPersistentVolumeType = NewStringFlag("default-persistent-volume-type", "")
 	BuildNodeInfo               = NewJSONFlag("preferred-build-node", ldvalue.Null())
-	FirecrackerVersions         = NewJSONFlag("firecracker-versions", ldvalue.FromJSONMarshal(FirecrackerVersionMap))
+	FirecrackerVersions         = NewJSONFlag("firecracker-versions", ldvalue.FromJSONMarshal(firecrackerVersionsFallback))
 
 	// ClickhouseReadEndpointFlag selects which ClickHouse DSN to use for reads.
 	// "" (empty) → singular CLICKHOUSE_CONNECTION_STRING (self-managed default).
@@ -886,297 +1450,6 @@ var (
 	ClickhouseAsyncInsertFlag        = BoolFlag{name: "clickhouse-async-insert", fallback: true}
 	ClickhouseWaitForAsyncInsertFlag = NewBoolFlag("clickhouse-wait-for-async-insert", true)
 )
-
-// LogsWriteConfigFlag controls where sandbox/external logs are written, so
-// operators can retarget log destinations from LaunchDarkly without a redeploy.
-//
-// Shape:
-//
-//	{
-//	  "mode": "primary_only" | "primary_and_shadow",
-//	  "primary_url": "http://localhost:30006",
-//	  "shadow_urls": ["http://localhost:4321/logs"],
-//	  "timeout_ms": 2000,
-//	  "max_inflight_shadow_writes": 1024
-//	}
-//
-// Semantics:
-//   - null/missing/invalid  -> fall back to the legacy collector address only.
-//   - "primary_only"        -> write to primary_url only.
-//   - "primary_and_shadow"  -> write to primary_url; fire-and-forget shadow_urls
-//     (shadow failures never affect the primary result).
-//   - Empty primary_url in a non-disabled mode is invalid -> legacy fallback.
-//   - shadow_urls must be an array of <= maxLogWriteShadowURLs safe string URLs.
-//   - timeout_ms <= 0 or too large is clamped to a safe range.
-//   - max_inflight_shadow_writes <= 0 defaults to defaultMaxInflightShadowWrites.
-//   - Only http URLs pointing at local/private hosts or allowed internal DNS
-//     suffixes are allowed; anything else is rejected and the whole config falls
-//     back to legacy.
-//
-// The fallback collector address is a runtime env value the flag cannot know,
-// so the default is Null() and the code substitutes the legacy address.
-var LogsWriteConfigFlag = NewJSONFlag("logs-write-config", ldvalue.Null())
-
-// LogsReadConfigFlag selects the backend used to read sandbox/build logs.
-// false reads from Loki (unchanged behavior); true reads from the ClickHouse
-// sandbox_logs table. The fallback comes from LOGS_READ_CONFIG and defaults to
-// false, so a deployment without LaunchDarkly, or one whose LaunchDarkly has
-// no value for the flag, reads where the variable says; a LaunchDarkly value
-// wins when there is one.
-var LogsReadConfigFlag = NewBoolFlag("logs-read-config", logsReadConfigFallback())
-
-// logsReadConfigFallback reads LOGS_READ_CONFIG. Unset or unparseable means
-// false, the way envdTimeoutFallbackMs treats ENVD_TIMEOUT.
-func logsReadConfigFallback() bool {
-	return parseLogsReadConfig(os.Getenv("LOGS_READ_CONFIG"))
-}
-
-func parseLogsReadConfig(raw string) bool {
-	value, err := strconv.ParseBool(strings.TrimSpace(raw))
-
-	return err == nil && value
-}
-
-// Log write routing modes for LogsWriteConfigFlag.
-const (
-	LogsWriteModePrimaryOnly      = "primary_only"
-	LogsWriteModePrimaryAndShadow = "primary_and_shadow"
-)
-
-const (
-	// defaultLogWriteTimeout is used when timeout_ms is missing/invalid.
-	defaultLogWriteTimeout = 2000 * time.Millisecond
-	// maxLogWriteTimeout caps operator-provided timeouts.
-	maxLogWriteTimeout = 10000 * time.Millisecond
-	// maxLogWriteShadowURLs caps fanout configured from LaunchDarkly.
-	maxLogWriteShadowURLs = 4
-	// defaultMaxInflightShadowWrites is used when max_inflight_shadow_writes is missing/invalid.
-	defaultMaxInflightShadowWrites = 1024
-)
-
-var (
-	logRoutingMeter                = otel.Meter("github.com/e2b-dev/infra/packages/shared/pkg/featureflags")
-	logWriteConfigResolutionMetric = mustLogRoutingCounter(
-		"log_write_config_resolution_count",
-		"Number of logs-write-config resolutions by outcome and fallback reason",
-	)
-)
-
-func mustLogRoutingCounter(name, description string) metric.Int64Counter {
-	counter, err := logRoutingMeter.Int64Counter(name, metric.WithDescription(description))
-	if err != nil {
-		return nil
-	}
-
-	return counter
-}
-
-// LogWriteConfig is the resolved, validated log write routing configuration.
-// The zero value (PrimaryURL set by the resolver) preserves legacy behavior.
-type LogWriteConfig struct {
-	// PrimaryURL is the synchronous, success-controlling destination.
-	PrimaryURL string
-	// ShadowURLs are best-effort, fire-and-forget destinations.
-	ShadowURLs []string
-	// Timeout bounds each individual log write request.
-	Timeout time.Duration
-	// MaxInflightShadowWrites bounds concurrent best-effort shadow writes.
-	MaxInflightShadowWrites int64
-}
-
-// ResolveLogWriteConfig reads LogsWriteConfigFlag and returns a validated
-// LogWriteConfig. On any missing/malformed/unsafe input it falls back to
-// writing only to fallbackURL (today's behavior).
-func ResolveLogWriteConfig(ctx context.Context, ff *Client, fallbackURL string, contexts ...ldcontext.Context) LogWriteConfig {
-	// The legacy fallback (flag null/invalid) preserves pre-flag behavior: it
-	// leaves Timeout at 0 so callers skip the per-request WithTimeout and rely
-	// solely on the HTTP client's own timeout, exactly as before this flag
-	// existed. defaultLogWriteTimeout only applies to explicitly-configured
-	// flags with a missing/invalid timeout_ms.
-	legacy := LogWriteConfig{
-		PrimaryURL:              strings.TrimSpace(fallbackURL),
-		Timeout:                 0,
-		MaxInflightShadowWrites: defaultMaxInflightShadowWrites,
-	}
-
-	if ff == nil {
-		recordLogWriteConfigResolution(ctx, "legacy", "nil_client", "")
-
-		return legacy
-	}
-
-	value := ff.JSONFlag(ctx, LogsWriteConfigFlag, contexts...)
-	if value.IsNull() {
-		recordLogWriteConfigResolution(ctx, "legacy", "null", "")
-
-		return legacy
-	}
-	if value.Type() != ldvalue.ObjectType {
-		recordLogWriteConfigResolution(ctx, "legacy", "non_object", "")
-
-		return legacy
-	}
-
-	modeValue := value.GetByKey("mode")
-	if modeValue.Type() != ldvalue.StringType {
-		recordLogWriteConfigResolution(ctx, "legacy", "mode_not_string", "")
-
-		return legacy
-	}
-	mode := strings.TrimSpace(modeValue.StringValue())
-	switch mode {
-	case LogsWriteModePrimaryOnly, LogsWriteModePrimaryAndShadow:
-		// handled below
-	default:
-		// unknown/missing mode -> legacy fallback
-		recordLogWriteConfigResolution(ctx, "legacy", "unknown_mode", mode)
-
-		return legacy
-	}
-
-	primaryValue := value.GetByKey("primary_url")
-	if primaryValue.Type() != ldvalue.StringType {
-		recordLogWriteConfigResolution(ctx, "legacy", "primary_not_string", mode)
-
-		return legacy
-	}
-	primary := strings.TrimSpace(primaryValue.StringValue())
-	if !isSafeLogURL(primary) {
-		recordLogWriteConfigResolution(ctx, "legacy", "unsafe_primary", mode)
-
-		return legacy
-	}
-
-	var shadows []string
-	if mode == LogsWriteModePrimaryAndShadow {
-		raw := value.GetByKey("shadow_urls")
-		if !raw.IsNull() {
-			if raw.Type() != ldvalue.ArrayType {
-				recordLogWriteConfigResolution(ctx, "legacy", "shadow_not_array", mode)
-
-				return legacy
-			}
-			if raw.Count() > maxLogWriteShadowURLs {
-				recordLogWriteConfigResolution(ctx, "legacy", "too_many_shadows", mode)
-
-				return legacy
-			}
-
-			seen := map[string]struct{}{primary: {}}
-			for i := range raw.Count() {
-				item := raw.GetByIndex(i)
-				if item.Type() != ldvalue.StringType {
-					recordLogWriteConfigResolution(ctx, "legacy", "shadow_not_string", mode)
-
-					return legacy
-				}
-				u := strings.TrimSpace(item.StringValue())
-				// An unsafe shadow URL invalidates the whole config: fail safe to
-				// legacy rather than silently exfiltrating to an external host.
-				if !isSafeLogURL(u) {
-					recordLogWriteConfigResolution(ctx, "legacy", "unsafe_shadow", mode)
-
-					return legacy
-				}
-				if _, ok := seen[u]; ok {
-					continue
-				}
-				seen[u] = struct{}{}
-				shadows = append(shadows, u)
-			}
-		}
-	}
-
-	recordLogWriteConfigResolution(ctx, "configured", "", mode)
-
-	return LogWriteConfig{
-		PrimaryURL:              primary,
-		ShadowURLs:              shadows,
-		Timeout:                 clampLogWriteTimeout(value),
-		MaxInflightShadowWrites: clampMaxInflightShadowWrites(value),
-	}
-}
-
-func recordLogWriteConfigResolution(ctx context.Context, outcome, reason, mode string) {
-	if logWriteConfigResolutionMetric == nil {
-		return
-	}
-
-	logWriteConfigResolutionMetric.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("outcome", outcome),
-		attribute.String("reason", reason),
-		attribute.String("mode", mode),
-	))
-}
-
-// clampLogWriteTimeout reads timeout_ms and clamps it to a safe range.
-func clampLogWriteTimeout(value ldvalue.Value) time.Duration {
-	ms := value.GetByKey("timeout_ms").IntValue()
-	if ms <= 0 {
-		return defaultLogWriteTimeout
-	}
-
-	d := time.Duration(ms) * time.Millisecond
-	if d > maxLogWriteTimeout {
-		return maxLogWriteTimeout
-	}
-
-	return d
-}
-
-func clampMaxInflightShadowWrites(value ldvalue.Value) int64 {
-	maxInflight := value.GetByKey("max_inflight_shadow_writes").IntValue()
-	if maxInflight <= 0 {
-		return defaultMaxInflightShadowWrites
-	}
-
-	return int64(maxInflight)
-}
-
-var allowedLogHostSuffixes = []string{
-	".service.consul",
-	".consul",
-	".svc.cluster.local",
-	".svc",
-	".local",
-	".internal",
-}
-
-// isSafeLogURL allows only http URLs pointing at loopback, link-local, private
-// IPs, or internal service-discovery DNS suffixes. This keeps log routing on
-// local/private infrastructure and prevents exfiltration to arbitrary external
-// endpoints via the flag.
-func isSafeLogURL(raw string) bool {
-	if raw == "" {
-		return false
-	}
-
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" || u.Host == "" {
-		return false
-	}
-
-	host := u.Hostname()
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-
-	hostLower := strings.ToLower(host)
-	for _, suffix := range allowedLogHostSuffixes {
-		if strings.HasSuffix(hostLower, suffix) {
-			return true
-		}
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Non-IP host without an explicitly allowed internal suffix -> reject.
-		return false
-	}
-
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
-}
 
 // Named under orchestrator.* (the resolver's sole caller) so it passes the
 // otel collector's include-only metric allow-list.
@@ -1262,24 +1535,52 @@ func ResolveFirecrackerVersion(ctx context.Context, ff *Client, buildVersion str
 // injected so this shared package does not depend on the orchestrator.
 //
 // The "should we upgrade?" test compares baked version *strings* (built-with vs
-// the target's version). This is sufficient because CLAUDE.md mandates bumping
-// packages/envd/pkg/version.go on every behavioral change; if that ever stops
-// holding, a same-version binary swap would be skipped and this must switch to
-// comparing by git SHA.
+// the target's version). That holds as long as every upgrade target bakes a
+// distinct version. A published build does: it bakes its release identity
+// (LINK_VERSION), the SemVer of an envd release or the per-commit auto-deploy
+// identity of any other main commit. A build without one bakes
+// packages/envd/pkg/version.go, which release-please moves only once per envd
+// release (nobody bumps it by hand), so two such builds cut between releases
+// compare equal and a swap between them would be skipped.
 // It returns the target binary's path and baked version ("" path = no upgrade),
 // plus a reason for the no-upgrade case — off | not_staged | invalid_target |
-// getversion_failed | same_version | downgrade, and "" when an upgrade IS returned
-// — so the caller can tell a benign no-op (off / same_version) from a
-// misconfigured target (not_staged from a bad SHA, a target that is not a bare
-// identifier, getversion_failed, a refused downgrade).
+// getversion_failed | same_version | downgrade | source_stalled, and "" when an
+// upgrade IS returned — so the caller can tell a benign no-op (off / same_version)
+// from a misconfigured target (not_staged from a bad SHA, a target that is not a
+// bare identifier, getversion_failed, a refused downgrade) and from a mount that
+// did not answer in time (source_stalled).
+//
+// stat is how the candidate paths are checked; nil means os.Stat. The mount can
+// stall a metadata lookup indefinitely, so a caller on the resume path passes a
+// bounded stat.
 func ResolveEnvdUpgrade(
 	ctx context.Context,
 	target string,
 	builtWithVersion string,
 	hostEnvdPath string,
 	getVersion func(context.Context, string) (string, error),
+	stat EnvdStatFunc,
 ) (path, version, reason string) {
-	return resolveEnvdUpgradePath(ctx, target, builtWithVersion, hostEnvdPath, getVersion)
+	return resolveEnvdUpgradePath(ctx, target, builtWithVersion, hostEnvdPath, getVersion, stat)
+}
+
+// ReasonSourceStalled is the no-upgrade reason for a resume whose candidate on the
+// host mount did not answer in time: neither a misconfigured target nor a cold
+// cache, but a slow or stuck mount, which clears on its own.
+const ReasonSourceStalled = "source_stalled"
+
+// ErrEnvdSourceStalled is what an injected stat or version probe wraps when the
+// source did not answer in time. The resolver maps it to ReasonSourceStalled.
+var ErrEnvdSourceStalled = errors.New("envd source did not answer in time")
+
+// EnvdStatFunc stats an envd upgrade candidate on the host mount.
+type EnvdStatFunc func(ctx context.Context, path string) (os.FileInfo, error)
+
+// sourceStalled reports whether a stat or probe error means the source did not
+// answer in time, as opposed to answering that it is missing or unreadable. A
+// caller deadline or cancellation counts: the resume was waiting on the mount.
+func sourceStalled(err error) bool {
+	return errors.Is(err, ErrEnvdSourceStalled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // EnvdUpgradeTarget reads the live-upgrade target flag. Split from ResolveEnvdUpgrade so a
@@ -1311,9 +1612,10 @@ func ResolveEnvdOfflineUpgrade(
 	builtWithVersion string,
 	hostEnvdPath string,
 	getVersion func(context.Context, string) (string, error),
+	stat EnvdStatFunc,
 	evalContexts ...ldcontext.Context,
 ) (path, version, reason string) {
-	return resolveEnvdUpgradePath(ctx, ff.StringFlag(ctx, EnvdOfflineUpgradeTargetFlag, evalContexts...), builtWithVersion, hostEnvdPath, getVersion)
+	return resolveEnvdUpgradePath(ctx, ff.StringFlag(ctx, EnvdOfflineUpgradeTargetFlag, evalContexts...), builtWithVersion, hostEnvdPath, getVersion, stat)
 }
 
 // resolveEnvdUpgradePath is the pure decision, split out so it can be unit-tested
@@ -1335,13 +1637,17 @@ func resolveEnvdUpgradePath(
 	builtWithVersion string,
 	hostEnvdPath string,
 	getVersion func(context.Context, string) (string, error),
+	stat EnvdStatFunc,
 ) (path, version, reason string) {
-	candidate, reason := EnvdUpgradeCandidate(target, hostEnvdPath)
+	candidate, reason := envdUpgradeCandidate(ctx, target, hostEnvdPath, stat)
 	if reason != "" {
 		return "", "", reason
 	}
 
 	targetVersion, err := getVersion(ctx, candidate)
+	if err != nil && sourceStalled(err) {
+		return "", "", ReasonSourceStalled
+	}
 	if err != nil || targetVersion == "" {
 		return "", "", "getversion_failed"
 	}
@@ -1369,13 +1675,32 @@ func resolveEnvdUpgradePath(
 // resolveEnvdUpgradePath reports -- and (candidate, "") when there is a binary to
 // probe. Everything past this point costs an exec of that binary, which is what
 // the caller may want to keep off its critical path.
-func EnvdUpgradeCandidate(target, hostEnvdPath string) (candidate, reason string) {
+func EnvdUpgradeCandidate(ctx context.Context, target, hostEnvdPath string) (candidate, reason string) {
+	return envdUpgradeCandidate(ctx, target, hostEnvdPath, nil)
+}
+
+// envdUpgradeCandidate is EnvdUpgradeCandidate with the stat injected; nil means
+// os.Stat. A stat that did not answer in time yields ReasonSourceStalled.
+func envdUpgradeCandidate(ctx context.Context, target, hostEnvdPath string, stat EnvdStatFunc) (candidate, reason string) {
+	if stat == nil {
+		stat = func(_ context.Context, path string) (os.FileInfo, error) { return os.Stat(path) }
+	}
+
 	if EnvdUpgradeTargetDisabled(target) {
 		return "", "off"
 	}
 
 	switch target {
 	case "promoted":
+		if _, err := stat(ctx, hostEnvdPath); err != nil {
+			if sourceStalled(err) {
+				return "", ReasonSourceStalled
+			}
+
+			// The promoted binary is absent (e.g. a version-free central mount
+			// with no unversioned object).
+			return "", "not_staged"
+		}
 		candidate = hostEnvdPath
 	default:
 		// A concrete version id -> the staged binary next to the promoted one,
@@ -1391,10 +1716,14 @@ func EnvdUpgradeCandidate(target, hostEnvdPath string) (candidate, reason string
 		}
 		dir := filepath.Dir(hostEnvdPath)
 		for _, c := range []string{filepath.Join(dir, "envd."+target), filepath.Join(dir, target, "envd")} {
-			if _, err := os.Stat(c); err == nil {
+			_, err := stat(ctx, c)
+			if err == nil {
 				candidate = c
 
 				break
+			}
+			if sourceStalled(err) {
+				return "", ReasonSourceStalled
 			}
 		}
 	}
@@ -1402,12 +1731,6 @@ func EnvdUpgradeCandidate(target, hostEnvdPath string) (candidate, reason string
 	if candidate == "" {
 		// Not staged on this node in either layout — e.g. a bad target /
 		// rubbish flag value, or a node that has not fetched the target yet.
-		return "", "not_staged"
-	}
-
-	if _, err := os.Stat(candidate); err != nil {
-		// The promoted binary is absent (e.g. a version-free central mount
-		// with no unversioned object).
 		return "", "not_staged"
 	}
 
@@ -1578,4 +1901,42 @@ func GetIsolatedSchedulingHosts(ctx context.Context, ff *Client, contexts ...ldc
 	}
 
 	return hosts
+}
+
+// malformedExtraModels records the malformed values already logged.
+var malformedExtraModels sync.Map
+
+// GetExtraCompatibleNodeModels reads ExtraCompatibleNodeModelsFlag. A null or
+// malformed value returns nil; a malformed one is logged once per distinct value.
+func GetExtraCompatibleNodeModels(ctx context.Context, ff *Client, contexts ...ldcontext.Context) map[string][]string {
+	value := ff.JSONFlag(ctx, ExtraCompatibleNodeModelsFlag, contexts...)
+	if value.IsNull() {
+		return nil
+	}
+
+	var extra map[string][]string
+	if err := json.Unmarshal([]byte(value.JSONString()), &extra); err != nil {
+		// Dedupe on the value with sorted keys: JSONString orders keys randomly.
+		var generic any
+		_ = json.Unmarshal([]byte(value.JSONString()), &generic)
+		canonical, marshalErr := json.Marshal(generic)
+		if marshalErr != nil {
+			canonical = []byte(value.JSONString())
+		}
+
+		if _, dup := malformedExtraModels.LoadOrStore(string(canonical), struct{}{}); !dup {
+			targets := make([]string, 0, len(contexts))
+			for _, c := range contexts {
+				targets = append(targets, string(c.Kind())+":"+c.Key())
+			}
+
+			logger.L().Warn(ctx, "malformed feature flag value, ignoring",
+				zap.String("flag", ExtraCompatibleNodeModelsFlag.Key()), zap.String("value", value.JSONString()),
+				zap.Strings("contexts", targets), zap.Error(err))
+		}
+
+		return nil
+	}
+
+	return extra
 }

@@ -13,7 +13,17 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
+
+// RequestTimeout is the context deadline applied to each API request. It
+// bounds work a request leaves running for other requests too, such as the
+// shared sandbox list read, which must never be cut shorter than a request's
+// own read would have been. It must stay below the HTTP server's write
+// timeout so the context cancels before the write deadline kills the
+// connection (WriteTimeout does NOT cancel r.Context(); see
+// https://github.com/golang/go/issues/59602).
+const RequestTimeout = 70 * time.Second
 
 const (
 	// ServiceDiscoveryProviderNomad queries Nomad's HTTP API (the original / Nomad-based deploy).
@@ -31,6 +41,8 @@ const (
 )
 
 type Config struct {
+	featureflags.Config
+
 	AdminToken string `env:"ADMIN_TOKEN"`
 
 	AnalyticsCollectorAPIToken string `env:"ANALYTICS_COLLECTOR_API_TOKEN"`
@@ -104,6 +116,11 @@ type Config struct {
 	DBMaxOpenConnections     int32  `env:"DB_MAX_OPEN_CONNECTIONS"                      envDefault:"40"`
 	DBMinIdleConnections     int32  `env:"DB_MIN_IDLE_CONNECTIONS"                      envDefault:"5"`
 
+	// PostgresReadReplicaConnectionString points read-only queries that tolerate
+	// replica lag at a read replica, with the same pool sizes as the primary.
+	// Empty keeps them on the primary.
+	PostgresReadReplicaConnectionString string `env:"POSTGRES_READ_REPLICA_CONNECTION_STRING"`
+
 	AuthDBConnectionString   string `env:"AUTH_DB_CONNECTION_STRING"`
 	AuthDBMinIdleConnections int32  `env:"AUTH_DB_MIN_IDLE_CONNECTIONS" envDefault:"5"`
 	AuthDBMaxOpenConnections int32  `env:"AUTH_DB_MAX_OPEN_CONNECTIONS" envDefault:"20"`
@@ -124,10 +141,11 @@ type Config struct {
 
 	SandboxAccessTokenHashSeed string `env:"SANDBOX_ACCESS_TOKEN_HASH_SEED"`
 
-	// SecretsStoreBackendGrpcAddress is the "host:port" address of the secrets
-	// store management backend. Optional: when empty the API keeps serving
-	// every other route and answers the secret management routes with the same
-	// forbidden response the feature gate produces.
+	// SecretsStoreBackendGrpcAddress is the gRPC target of the secrets store
+	// management backend, either "host:port" or a schemed target such as
+	// "dns:///name:port" for a headless Service. Optional: when empty the API
+	// keeps serving every other route and answers the secret management routes
+	// with the same forbidden response the feature gate produces.
 	SecretsStoreBackendGrpcAddress string `env:"SECRETS_STORE_BACKEND_GRPC_ADDRESS"`
 
 	// WebhooksBackendGrpcAddress is the sandbox events and webhook management
@@ -150,7 +168,24 @@ type Config struct {
 	// region with several types lacks an explicit default.
 	DefaultPersistentVolumeTypeByRegion map[string]string `env:"DEFAULT_PERSISTENT_VOLUME_TYPE_BY_REGION"`
 
+	// DomainName is the public domain of this deployment. It builds API-facing
+	// URLs, such as the volume token audience. It is not a LaunchDarkly key.
 	DomainName string `env:"DOMAIN_NAME" envDefault:""`
+
+	// BestOfKHugepageMemory includes hugepage-pool load in best-of-K
+	// placement (max of CPU and pool). A node that reports no pool scores
+	// 0.5, so clusters without a pool should set this false and rank on CPU.
+	BestOfKHugepageMemory bool `env:"BEST_OF_K_HUGEPAGE_MEMORY" envDefault:"true"`
+
+	// OutboxMaxWorkers is how many River outbox jobs one API replica works at
+	// once.
+	OutboxMaxWorkers int `env:"OUTBOX_MAX_WORKERS" envDefault:"10"`
+	// OutboxBacklogInterval is how often the outbox backlog gauges are read
+	// from the database.
+	OutboxBacklogInterval time.Duration `env:"OUTBOX_BACKLOG_INTERVAL" envDefault:"30s"`
+
+	// TLS is the mutual TLS settings of the api's ports and client hops.
+	TLS TLSConfig
 }
 
 type FailureCondition string

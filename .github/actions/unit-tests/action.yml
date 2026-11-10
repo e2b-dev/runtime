@@ -2,8 +2,7 @@ name: "Unit Tests"
 description: |
   Runs the unit test shard for one infra package, including the host setup
   that the package needs (bindfs for envd, NBD/hugepages/uffd for the
-  orchestrator). Writes coverage.txt into the package directory when coverage
-  is enabled; coverage is opt-in and no CI workflow currently enables it.
+  orchestrator).
 
   The workspace root must have this repository's layout. The logic lives in
   a composite action (instead of inline in pr-tests.yml) so that other
@@ -25,8 +24,8 @@ inputs:
     description: "Run with the race detector (roughly doubles runtime; raises the go test timeout to 40m)"
     required: false
     default: "false"
-  coverage:
-    description: "Write coverage.txt (set/atomic covermode picked by go test); enable when the caller uploads it"
+  cluster:
+    description: "Run the Redis tests on a one-node cluster-mode Valkey instead of the standalone server"
     required: false
     default: "false"
 
@@ -41,25 +40,33 @@ runs:
           ${{ inputs.package }}/go.mod
           ${{ inputs.package }}/go.sum
 
-    - name: Reap orphaned Testcontainers from previous runs
+    - name: Use the Docker Hub mirror
+      uses: ./.github/actions/docker-hub-mirror
+
+    # A one-node cluster-mode Valkey on 6380 (6379 stays the standalone
+    # server), reached through REDIS_TEST_CLUSTER_URL: the node holds every
+    # slot, so a command whose keys span slots fails as on a sharded
+    # deployment. Host networking: a cluster client dials the port the node
+    # announces, so the node must listen on the port the tests reach.
+    - name: Start a cluster-mode Valkey
+      if: inputs.cluster == 'true'
       shell: bash
-      # Persistent runner + Ryuk disabled: prune leftover containers
-      # from SIGKILL/timeout/OOM in prior jobs.
-      # Two `docker ps` calls because different filter keys AND inside
-      # one call. Don't anchor `name=^reaper_` — Docker silently drops
-      # anchored patterns (docker/cli#1201).
       run: |
-        set -euo pipefail
-        ids=$(
-          {
-            docker ps -aq --filter "label=org.testcontainers=true"
-            docker ps -aq --filter "name=reaper_"
-          } | sort -u
-        )
-        if [ -n "${ids}" ]; then
-          # shellcheck disable=SC2086
-          docker rm -f ${ids}
-        fi
+        image=valkey/valkey:8.1.10
+        ./scripts/pull-retry.sh "$image"
+        docker run -d --name valkey-cluster --network host "$image" \
+          valkey-server --cluster-enabled yes --port 6380 --appendonly no --save ""
+        for _ in $(seq 30); do
+          docker exec valkey-cluster valkey-cli -p 6380 cluster addslotsrange 0 16383 >/dev/null 2>&1 || true
+          if docker exec valkey-cluster valkey-cli -p 6380 cluster info 2>/dev/null | grep -q cluster_state:ok; then
+            echo "REDIS_TEST_CLUSTER_URL=redis://localhost:6380/0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::error::the cluster-mode Valkey did not reach cluster_state:ok in 30 s"
+        docker logs valkey-cluster
+        exit 1
 
     - name: Setup envd tests
       if: inputs.package == 'packages/envd'
@@ -72,44 +79,182 @@ runs:
       if: inputs.package == 'packages/orchestrator'
       shell: bash
       run: |
+        sudo apt-get update
+        mount_tools="$RUNNER_TEMP/nfs-client"
+        mkdir -p "$mount_tools"
+        (
+          cd "$mount_tools"
+          apt-get download nfs-common
+          dpkg-deb -x nfs-common_*.deb .
+        )
+        chmod u-s "$mount_tools/usr/sbin/mount.nfs"
+        echo "NFS_TEST_MOUNT_HELPER=$mount_tools/usr/sbin/mount.nfs" >> "$GITHUB_ENV"
         make -C packages/orchestrator fetch-busybox
         echo "HOST_BUSYBOX_DIR=$(pwd)/packages/orchestrator/.busybox" >> "$GITHUB_ENV"
 
         # Enable unprivileged uffd mode
         echo 1 | sudo tee /proc/sys/vm/unprivileged_userfaultfd
 
+        # Sandboxes reach the network through NAT. Docker's daemon turns this
+        # on when it starts, so a job that never starts it had sandboxes with
+        # no route out.
+        sudo sysctl -qw net.ipv4.ip_forward=1
+
         # Enable hugepages
         sudo mkdir -p /mnt/hugepages
         sudo mount -t hugetlbfs none /mnt/hugepages
         echo 2000 | sudo tee /proc/sys/vm/nr_hugepages
 
-        # Enable NBD
-        sudo modprobe nbd nbds_max=256
+        # Enable NBD. Skipped when devices already exist: a kernel with the
+        # driver built in (CONFIG_BLK_DEV_NBD=y) boots with its own device set
+        # and modprobe has no module tree to load from there.
+        if [ ! -e /dev/nbd0 ]; then
+          sudo modprobe nbd nbds_max=256
+        fi
+
+        # The shard's test binaries share the device namespace: the smoke
+        # test pre-warms NBD_POOL_SIZE slots from device 0 up, and the nbd
+        # package partitions the slots above that pool into per-test windows
+        # (pkg/sandbox/nbd/partition_test.go reads the same variable). The
+        # smoke test boots one sandbox at a time, so two warm slots are
+        # plenty, and the windows then fit a built-in driver's 16 devices as
+        # well as the 256 loaded above.
+        echo "NBD_POOL_SIZE=2" >> "$GITHUB_ENV"
 
         # Disable inotify watching of change events for NBD devices
         echo 'ACTION=="add|change", KERNEL=="nbd*", OPTIONS:="nowatch"' | sudo tee /etc/udev/rules.d/97-nbd-device.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger
 
+    # Prefixed so the pins cannot shadow variables such as GO in the
+    # Makefiles the tests run.
+    - name: Parse .tool-versions
+      uses: wistia/parse-tool-versions@32f568a4ffd4bfa7720ebf93f171597d1ebc979a # v2.1.1
+      with:
+        prefix: TOOL_VERSION_
+
+    # mise downloads the release binary pinned in .tool-versions rather than
+    # building it from source.
     - name: Install gotestsum
+      uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      with:
+        version: ${{ env.TOOL_VERSION_MISE }}
+        install_args: gotestsum
+
+    # Put the binary itself on PATH, not just mise's shim: under sudo the shim
+    # would look for mise's installs in root's home.
+    - name: Add gotestsum to PATH
       shell: bash
-      run: go install gotest.tools/gotestsum@v1.13.0
+      run: dirname "$(mise which gotestsum)" >> "$GITHUB_PATH"
+
+    # go test replays a cached pass when the test binary and the inputs it
+    # observed are unchanged, and that cache outlives the job on every
+    # route: with GOCACHEPROG set it is a store shared across jobs and
+    # runners, and without it setup-go restores GOCACHE, test results
+    # included, from the actions cache under a key made of the module files,
+    # while a persistent runner keeps it on disk. The sudo shards exercise
+    # the runner kernel itself (userfaultfd, NBD, netns, FUSE), which is not
+    # one of those inputs, so a kernel change on the runners would replay
+    # results recorded on the old one. Linking the test binaries with the
+    # kernel in -ldflags keys the replay by kernel: go records -ldflags in a
+    # binary's build settings, so a new value recompiles the generated test
+    # main and moves both IDs a result is stored under, the link action ID
+    # and the binary's content ID. The -X target is a variable no package
+    # declares, so the linker ignores it and the tests run unchanged: an
+    # unchanged kernel replays as before, a new one runs every package once
+    # more. -trimpath leaves -ldflags out of the build settings and would
+    # quietly bring the kernel-blind replay back, so the step fails when
+    # GOFLAGS turns it on, in any spelling go reads as on: the value is read
+    # through go env, which sees the process environment and the go env file
+    # alike, and split into words the way go splits it, across newlines and
+    # with quotes dropped.
+    - name: Key cached test results by the runner kernel
+      if: inputs.sudo == 'true'
+      shell: bash
+      run: |
+        kernel="$(uname -rv)"
+        echo "Runner kernel: ${kernel}"
+        # Split as go splits GOFLAGS: a word ends at a space, tab, newline or
+        # carriage return, and a word that opens with a quote runs to the
+        # matching quote, which is dropped. go rejects an unterminated quote;
+        # here the rest of the value is one word.
+        ws=$' \t\n\r'
+        rest="$(go env GOFLAGS)"
+        while rest="${rest#"${rest%%[!"${ws}"]*}"}" && [ -n "${rest}" ]; do
+          case "${rest}" in
+            [\'\"]*)
+              quote="${rest:0:1}"
+              rest="${rest:1}"
+              flag="${rest%%"${quote}"*}"
+              rest="${rest:${#flag}+1}"
+              ;;
+            *)
+              flag="${rest%%["${ws}"]*}"
+              rest="${rest:${#flag}}"
+              ;;
+          esac
+          # One or two dashes name the same flag. Only the values go reads as
+          # false pass; any other -trimpath value turns it on or stops go.
+          name="${flag#-}"
+          case "${name#-}" in
+            trimpath=0|trimpath=[fF]|trimpath=false|trimpath=FALSE|trimpath=False) ;;
+            trimpath|trimpath=*)
+              echo "::error::GOFLAGS carries ${flag}: -ldflags leaves the build settings and test results replay across kernels"
+              exit 1
+              ;;
+          esac
+        done
+        salt="${kernel//[^[:alnum:]._:#+~-]/_}"
+        echo "Cached test results keyed by this kernel (ci.kernel=${salt})"
+        echo "TEST_LDFLAGS=-ldflags=-X=ci.kernel=${salt}" >> "$GITHUB_ENV"
+
+    # Ordinary unit runs skip native slot and kernel-mount tests. Private
+    # namespaces keep network and mount changes off the runner's namespace.
+    # Compile first: a preceding sudo Go run can create root-owned module-cache
+    # directories that prevent this unprivileged compile from fetching dependencies.
+    - name: Run native NFS network and kernel-mount lifecycle tests
+      if: inputs.package == 'packages/orchestrator'
+      shell: bash
+      working-directory: ${{ inputs.package }}
+      run: |
+        set -euo pipefail
+        binary=$(mktemp "${RUNNER_TEMP}/nfs-network-test.XXXXXX")
+        trap 'rm -f "$binary"' EXIT
+        RACE=""
+        if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; fi
+        # The sudo'd test run above leaves whatever it fetched or built in the
+        # module and build caches owned by root, so on a cold cache this build
+        # fails as the runner user; it runs under the same identity.
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" go test -c $RACE -o "$binary" ./pkg/nfsproxy
+        mount_helper="$NFS_TEST_MOUNT_HELPER"
+        "$mount_helper" -V
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" \
+          NFS_TEST_NATIVE_NETWORK=1 NFS_TEST_KERNEL_MOUNT=1 NFS_TEST_MOUNT_HELPER="$mount_helper" \
+          unshare --net --mount --propagation private bash -euo pipefail -c '
+            ip link set lo up
+            ip link add nfs-test-gw type dummy
+            ip addr add 192.0.2.1/30 dev nfs-test-gw
+            ip link set nfs-test-gw up
+            ip route add default via 192.0.2.2 dev nfs-test-gw
+            exec "$1" -test.v -test.count=1 -test.timeout=5m \
+              -test.run="^Test(NetworkPoolNative(NFSReleaseBeforeMountDrain|PendingShutdown|HandledRecycleFailure)|KernelMountRetainsRootAcrossLifecycleReplacement)$"
+          ' bash "$binary"
 
     # sudo strips PATH; pass it through so gotestsum/go resolve to the
-    # runner's toolchain instead of /usr/bin/go. Trap chowns the coverage
-    # profile back to the runner so callers can read it even when tests fail.
+    # runner's toolchain instead of /usr/bin/go. The rest of the environment
+    # (Go cache settings, HOST_BUSYBOX_DIR, NBD_POOL_SIZE) goes over as an
+    # explicit --preserve-env list: sudo-rs, the sudo on Ubuntu 25.10 and
+    # later images, ignores a bare -E, and both implementations take the
+    # list form.
     - name: Run tests that require sudo
       if: inputs.sudo == 'true'
       shell: bash
       working-directory: ${{ inputs.package }}
       run: |
-        trap 'sudo chown "$(id -u):$(id -g)" coverage.txt 2>/dev/null || true' EXIT
         RACE=""; TEST_TIMEOUT=20m
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
-        COVER=""
-        if [ "${{ inputs.coverage }}" = "true" ]; then COVER="-coverprofile=coverage.txt"; fi
-        sudo -E env "PATH=$PATH" gotestsum --format=standard-verbose \
-          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 $COVER ${{ inputs.test-path }}
+        sudo --preserve-env="$(compgen -e | paste -sd,)" env "PATH=$PATH" gotestsum --format=standard-verbose \
+          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 ${TEST_LDFLAGS:-} ${{ inputs.test-path }}
 
     - name: Run tests
       if: inputs.sudo != 'true'
@@ -118,7 +263,5 @@ runs:
       run: |
         RACE=""; TEST_TIMEOUT=20m
         if [ "${{ inputs.race }}" = "true" ]; then RACE="-race"; TEST_TIMEOUT=40m; fi
-        COVER=""
-        if [ "${{ inputs.coverage }}" = "true" ]; then COVER="-coverprofile=coverage.txt"; fi
         gotestsum --format=standard-verbose \
-          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 $COVER ${{ inputs.test-path }}
+          -- -timeout $TEST_TIMEOUT $RACE -parallel 16 ${{ inputs.test-path }}

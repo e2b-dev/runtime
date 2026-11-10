@@ -107,7 +107,6 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 	downloadKernel(b, linuxKernelFilename, linuxKernelURL)
 
 	// hacks, these should go away
-	b.Setenv("ARTIFACTS_REGISTRY_PROVIDER", "Local")
 	b.Setenv("FIRECRACKER_VERSIONS_DIR", abs(filepath.Join("..", "..", "fc-versions", "builds")))
 	b.Setenv("HOST_ENVD_PATH", abs(filepath.Join("..", "..", "envd", "bin", "envd")))
 	b.Setenv("HOST_KERNELS_DIR", abs(kernelsDir))
@@ -157,7 +156,7 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 		assert.NoError(b, err)
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())
@@ -307,13 +306,14 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 	}
 
 	// retrieve template
-	tmpl, err := templateCache.GetTemplate(
+	tmpl, releaseTmpl, err := templateCache.GetTemplatePinned(
 		b.Context(),
 		buildID,
 		false,
 		false,
 	)
 	require.NoError(b, err)
+	b.Cleanup(releaseTmpl)
 
 	tc := testContainer{
 		sandboxFactory: sandboxFactory,

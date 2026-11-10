@@ -1,0 +1,88 @@
+# The built-in OpenTelemetry collector. The services export to it once their
+# collector endpoint is 127.0.0.1:4317. It keeps the e2b.* metrics and writes
+# them into the stack's own ClickHouse, into the metrics_gauge and metrics_sum
+# tables the clickhouse-migrator creates; the api's metrics endpoints read
+# what those two feed. Traces, logs and the other metrics are dropped; the
+# commented otlp/upstream exporter below forwards traces and logs instead.
+# Every listener binds loopback: the collector shares the machine's network
+# with the services, and nothing off the machine has a reason to reach it.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+        max_recv_msg_size_mib: 100
+
+processors:
+  # Batches traces and logs on their way to nop, or to otlp/upstream once
+  # that forwards them.
+  batch:
+    timeout: 5s
+
+  batch/clickhouse:
+    timeout: 5s
+    send_batch_size: 50000
+
+  filter/external_metrics:
+    metrics:
+      include:
+        match_type: regexp
+        metric_names:
+          - "e2b.*"
+
+extensions:
+  # `curl -s 127.0.0.1:13133` on the machine answers while the collector runs.
+  # The image has no shell, so there is nothing to check from inside it.
+  health_check:
+    endpoint: 127.0.0.1:13133
+
+exporters:
+  clickhouse:
+    endpoint: tcp://127.0.0.1:9000
+    database: default
+    username: clickhouse
+    password: clickhouse
+    async_insert: true
+    create_schema: false
+    metrics_tables:
+      gauge:
+        name: metrics_gauge
+      sum:
+        name: metrics_sum
+
+  # Accepts traces and logs and discards them. Without a pipeline for them the
+  # receiver would answer Unimplemented, and every service would log each
+  # batch it refused.
+  nop:
+
+  # To forward traces and logs to a collector of your own, uncomment this
+  # exporter, put that collector's OTLP/gRPC address in its endpoint, and
+  # name it in place of nop in the traces and logs pipelines at the end.
+  # otlp/upstream:
+  #   endpoint: collector.example.com:4317
+  #   tls:
+  #     insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: warn
+    # No internal metrics: by default the collector serves its own on
+    # 127.0.0.1:8888, one more listener on the machine, and refuses to start
+    # when something else holds that port.
+    metrics:
+      level: none
+  extensions: [health_check]
+  pipelines:
+    metrics/external:
+      receivers: [otlp]
+      processors: [filter/external_metrics, batch/clickhouse]
+      exporters: [clickhouse]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [nop]

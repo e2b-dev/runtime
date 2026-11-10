@@ -97,3 +97,25 @@ func TestMemoryPrefetchMappingCount(t *testing.T) {
 	assert.Equal(t, 0, (&MemoryPrefetchMapping{}).Count())
 	assert.Equal(t, 3, (&MemoryPrefetchMapping{Indices: []uint64{1, 2, 3}}).Count())
 }
+
+// The origin rides with the mapping through the file, and a mapping written
+// before origins existed reads back as unknown rather than as something else.
+func TestPrefetchOrigin_FileRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	stamped := Template{Version: CurrentVersion}.WithPrefetch(&Prefetch{Memory: &MemoryPrefetchMapping{Indices: []uint64{1}}, Origin: PrefetchOriginHarvest})
+	require.NoError(t, stamped.ToFile(path))
+	got, err := FromFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, PrefetchOriginHarvest, got.Prefetch.Origin)
+	assert.Equal(t, "harvest", got.Prefetch.InitOrigin())
+
+	legacy := Template{Version: CurrentVersion}.WithPrefetch(&Prefetch{Memory: &MemoryPrefetchMapping{Indices: []uint64{1}}})
+	require.NoError(t, legacy.ReplaceFile(path))
+	got, err = FromFile(path)
+	require.NoError(t, err)
+	assert.Empty(t, got.Prefetch.Origin)
+	assert.Equal(t, "unknown", got.Prefetch.InitOrigin())
+	assert.Equal(t, "none", (*Prefetch)(nil).InitOrigin())
+}

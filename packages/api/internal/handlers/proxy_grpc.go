@@ -8,11 +8,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
 	"github.com/e2b-dev/infra/packages/api/internal/oauth"
 	apiorchestrator "github.com/e2b-dev/infra/packages/api/internal/orchestrator"
@@ -33,6 +36,25 @@ type SandboxService struct {
 	api                        *APIStore
 	requireEdgeClientProxyAuth bool
 	clientProxyOAuth           oauth.Verifier
+}
+
+// autoResumeOrchestrator is the slice of *orchestrator.Orchestrator the
+// auto-resume RPC consumes. An interface so the ordering that matters, a
+// still-running sandbox routed before its snapshot kind is consulted, is
+// testable without a real orchestrator.
+type autoResumeOrchestrator interface {
+	GetSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandbox.Sandbox, error)
+	HandleExistingSandboxAutoResume(ctx context.Context, teamID uuid.UUID, sandboxID string, sbx sandbox.Sandbox, transitionWaitBudget time.Duration) (*proxygrpc.SandboxResumeResponse, bool, error)
+}
+
+// autoResumeBackend returns the auto-resume RPC's orchestrator slice,
+// overridable in tests via autoResumeBackendOverride.
+func (a *APIStore) autoResumeBackend() autoResumeOrchestrator {
+	if a.autoResumeBackendOverride != nil {
+		return a.autoResumeBackendOverride
+	}
+
+	return a.orchestrator
 }
 
 func NewSandboxService(api *APIStore, requireEdgeClientProxyAuth bool, clientProxyOAuth oauth.Verifier) *SandboxService {
@@ -114,13 +136,6 @@ func (s *SandboxService) getAutoResumeSnapshot(ctx context.Context, sandboxID st
 		return nil, nil, status.Error(codes.NotFound, "sandbox auto-resume disabled")
 	}
 
-	// A filesystem-only snapshot can only be resumed by cold-booting (reboot),
-	// which loses in-memory state. Refuse to do that implicitly on an incoming
-	// request — the caller must resume it explicitly.
-	if snapshotIsFilesystemOnly(snap.Snapshot) {
-		return nil, nil, status.Error(codes.FailedPrecondition, "filesystem-only snapshot must be resumed explicitly")
-	}
-
 	return snap, autoResume, nil
 }
 
@@ -176,13 +191,15 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
 
-	sandboxData, sandboxErr := s.api.orchestrator.GetSandbox(ctx, teamID, sandboxID)
+	backend := s.api.autoResumeBackend()
+
+	sandboxData, sandboxErr := backend.GetSandbox(ctx, teamID, sandboxID)
 	if sandboxErr != nil {
 		if !errors.Is(sandboxErr, sandbox.ErrNotFound) {
 			return nil, status.Errorf(codes.Internal, "failed to get sandbox state: %v", sandboxErr)
 		}
 	} else {
-		nodeIP, handled, existingErr := s.api.orchestrator.HandleExistingSandboxAutoResume(
+		resp, handled, existingErr := backend.HandleExistingSandboxAutoResume(
 			ctx,
 			teamID,
 			sandboxID,
@@ -203,8 +220,27 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 			return nil, status.Error(codes.Internal, existingErr.Error())
 		}
 		if handled {
-			return &proxygrpc.SandboxResumeResponse{OrchestratorIp: nodeIP}, nil
+			return resp, nil
 		}
+	}
+
+	// A filesystem-only snapshot can only be resumed by cold-booting (reboot),
+	// which loses in-memory state. Refuse to do that implicitly on an incoming
+	// request; the caller must resume it explicitly. Checked only once a resume
+	// is actually needed: a sandbox that is still running is routed above
+	// whatever kind its last snapshot recorded (a filesystem-only snapshot
+	// template leaves the source running).
+	if snapshotIsFilesystemOnly(snap.Snapshot) {
+		return nil, status.Error(codes.FailedPrecondition, "filesystem-only snapshot must be resumed explicitly")
+	}
+
+	// Auto-resume restores memory, and this snapshot's memory holds a guest
+	// agent that did not answer at pause; only an explicit resume without
+	// memory (memory: false) brings the sandbox back. The same structured
+	// refusal as the explicit resume, so the proxy answers the 409 and its
+	// error code rather than a bare status.
+	if snapshotEnvdUnresponsive(snap.EnvBuild) {
+		return nil, resumeStatusError(ctx, snapshotGuestAgentUnresponsiveError(sandboxID))
 	}
 
 	minAutoResumeTimeout := time.Duration(s.api.featureFlags.IntFlag(ctx, featureflags.MinAutoResumeTimeoutSeconds)) * time.Second
@@ -267,15 +303,46 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		true,
 		false,
 		nil, // mcp
+		// The proxy comes back for the sandbox, not for this answer: a create
+		// under way completes for it even if it stops waiting.
+		apiorchestrator.CompleteStartedCreate(),
 	)
 	if apiErr != nil {
-		return nil, status.Error(sharedutils.GRPCCodeFromHTTPStatus(apiErr.Code), apiErr.ClientMsg)
+		return nil, resumeStatusError(ctx, apiErr)
 	}
 
-	nodeIP := s.api.orchestrator.GetNodeRouteIPAddress(sbx.ClusterID, sbx.NodeID)
-	if nodeIP == "" {
-		return nil, status.Error(codes.Internal, "sandbox resumed but orchestrator IP is not available yet")
+	// sbx is the start that won, possibly another caller's, with its placement.
+	resp, err := s.api.orchestrator.StartedSandboxResumeResponse(sbx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &proxygrpc.SandboxResumeResponse{OrchestratorIp: nodeIP}, nil
+	return resp, nil
+}
+
+// resumeStatusError turns a start failure into the resume RPC's status. The
+// API's semantic error code travels as an ErrorInfo detail, so the proxy can
+// tell a placement refusal no retry helps from a shortage that clears; the
+// HTTP status alone maps both to Unavailable. The detail also carries that
+// HTTP status, so the page the proxy renders for a refusal answers with it
+// rather than with one read back off the gRPC code, which folds 500 into
+// the 503 the SDKs retry.
+func resumeStatusError(ctx context.Context, apiErr *api.APIError) error {
+	st := status.New(sharedutils.GRPCCodeFromHTTPStatus(apiErr.Code), apiErr.ClientMsg)
+	if apiErr.ErrorCode == "" {
+		return st.Err()
+	}
+
+	withCode, err := st.WithDetails(&errdetails.ErrorInfo{
+		Reason:   apiErr.ErrorCode,
+		Domain:   proxygrpc.ResumeErrorDomain,
+		Metadata: map[string]string{proxygrpc.ResumeErrorHTTPStatusKey: strconv.Itoa(apiErr.Code)},
+	})
+	if err != nil {
+		logger.L().Error(ctx, "failed to attach the error code to the resume status", zap.Error(err), zap.String("error_code", apiErr.ErrorCode))
+
+		return st.Err()
+	}
+
+	return withCode.Err()
 }

@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap/zapcore"
@@ -23,8 +21,8 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process/processconnect"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -127,7 +125,8 @@ func runCommandWithAllOptions(
 	confirmCh chan<- struct{},
 	processOutput func(stdout, stderr string),
 ) (e error) {
-	ctx, span := tracer.Start(ctx, "run command", trace.WithAttributes(attribute.String("command", command), telemetry.WithSandboxID(sandboxID)))
+	// The command text stays out of the span: build steps run users' commands.
+	ctx, span := tracer.Start(ctx, "run command", trace.WithAttributes(telemetry.WithSandboxID(sandboxID)))
 	defer span.End()
 	defer func() {
 		if e != nil {
@@ -154,13 +153,8 @@ func runCommandWithAllOptions(
 		},
 	})
 
-	hc := http.Client{
-		Timeout:   commandHardTimeout,
-		Transport: sandbox.SandboxHttpTransport,
-	}
-
 	proxyHost := fmt.Sprintf("http://localhost%s", proxy.GetAddr())
-	processC := processconnect.NewProcessClient(&hc, proxyHost)
+	processC := sandbox.NewEnvdProcessClient(proxyHost, commandHardTimeout)
 	err := grpc.SetSandboxHeader(runCmdReq.Header(), proxyHost, sandboxID)
 	if err != nil {
 		return fmt.Errorf("failed to set sandbox header: %w", err)
@@ -169,11 +163,11 @@ func runCommandWithAllOptions(
 
 	processCtx, processCancel := context.WithCancel(ctx)
 	defer processCancel()
-	commandStream, err := processC.Start(processCtx, runCmdReq)
+	commandStream, err := processC.Start(sandbox.WithEnvdSandbox(processCtx, sbxlogger.SandboxMetadata{SandboxID: sandboxID}), runCmdReq)
 	// Confirm the command has executed before proceeding
 	close(confirmCh)
 	if err != nil {
-		return fmt.Errorf("error starting process: %w", err)
+		return fmt.Errorf("error starting process: %w", withoutCommand(err, command))
 	}
 	defer func() {
 		processCancel()
@@ -187,14 +181,14 @@ func runCommandWithAllOptions(
 		case <-ctx.Done():
 			return fmt.Errorf("context: %w", ctx.Err())
 		case err := <-msgErrCh:
-			return fmt.Errorf("command failed: %w", err)
+			return fmt.Errorf("command failed: %w", withoutCommand(err, command))
 		case msg, ok := <-msgCh:
 			if !ok {
 				// The terminal status, if any, is in msgErrCh before msgCh
 				// closes - drain it so a failure is not reported as success.
 				select {
 				case err := <-msgErrCh:
-					return fmt.Errorf("command failed: %w", err)
+					return fmt.Errorf("command failed: %w", withoutCommand(err, command))
 				default:
 					return nil
 				}
@@ -239,6 +233,29 @@ func logStream(ctx context.Context, logger logger.Logger, lvl zapcore.Level, id 
 		msg := fmt.Sprintf("[%s] [%s]: %s", id, name, line)
 		logger.Log(ctx, lvl, msg)
 	}
+}
+
+// SyncChangesToDiskWith flushes the guest's disk writes with command, the
+// guest profile's own flush; an empty command is SyncChangesToDisk.
+func SyncChangesToDiskWith(
+	ctx context.Context,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	command string,
+) error {
+	if command == "" {
+		return SyncChangesToDisk(ctx, proxy, sandboxID)
+	}
+
+	return RunCommand(
+		ctx,
+		proxy,
+		sandboxID,
+		command,
+		metadata.Context{
+			User: "root",
+		},
+	)
 }
 
 // syncChangesToDisk synchronizes filesystem changes to the filesystem

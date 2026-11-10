@@ -5,25 +5,32 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
+	scpb "buf.build/gen/go/grpc/grpc/protocolbuffers/go/grpc/service_config"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
+	_ "google.golang.org/grpc/health" // Registers the client side of healthCheckConfig.
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
-	managementv1 "github.com/e2b-dev/infra/packages/api/internal/secretsstore/management/v1"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/secretsstore"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -32,7 +39,12 @@ import (
 const (
 	// secretsBackendTimeout bounds one management call. A caller deadline that
 	// is already shorter wins, since context.WithTimeout keeps the earlier one.
-	secretsBackendTimeout = 25 * time.Second
+	secretsBackendTimeout  = 25 * time.Second
+	secretLimitReachedCode = "secret_limit_reached"
+
+	// secretsReadinessService is the health service a backend reports SERVING
+	// only while it can take management calls.
+	secretsReadinessService = "readiness"
 )
 
 // Client-facing messages. They are fixed and carry no request material: no
@@ -47,20 +59,51 @@ var (
 	errSecretsBackendResponse = errors.New("secrets backend returned an unusable response")
 )
 
-// newSecretsManagementClient dials nothing: grpc.NewClient only prepares the
+// newSecretsManagementClient dials the secrets store management backend; see
+// newReadinessBalancedClient.
+func newSecretsManagementClient(address string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	return newReadinessBalancedClient(address, creds, secretsReadinessService, "secrets store management")
+}
+
+// newReadinessBalancedClient dials nothing: grpc.NewClient only prepares the
 // connection, so a backend that is down or not yet deployed cannot keep the API
-// from starting. The hop is private, in-cluster and plaintext by decision, it
-// carries no credential of any kind, and a call that may have reached the
-// backend is never replayed by the transport.
-func newSecretsManagementClient(address string) (*grpc.ClientConn, error) {
+// from starting. The hop is private and in-cluster; it dials through creds,
+// plaintext while its mutual TLS mode is off, and carries no other credential.
+// A call that may have reached the backend is never replayed by the transport.
+// gRPC may still transparently retry a call that it knows never reached the
+// server's application code.
+//
+// address is a gRPC target used as given. A plain "host:port" goes through
+// the default DNS resolver. With a headless Service name every ready backend
+// address becomes its own connection. The client resolves again whenever a
+// connection closes, so a backend that rotates its connections by age lets it
+// find replicas added later. backend names the backend in errors.
+func newReadinessBalancedClient(address string, creds credentials.TransportCredentials, readinessService, backend string) (*grpc.ClientConn, error) {
+	// Calls are spread over every resolved backend address, and only to a
+	// backend whose readiness health service reports SERVING. A backend without
+	// the health service is still picked: gRPC treats its UNIMPLEMENTED answer
+	// as healthy. grpc-go takes a default service config only as JSON.
+	serviceConfig, err := protojson.Marshal(&scpb.ServiceConfig{
+		LoadBalancingConfig: []*scpb.LoadBalancingConfig{{Policy: &scpb.LoadBalancingConfig_RoundRobin{RoundRobin: &scpb.RoundRobinConfig{}}}},
+		HealthCheckConfig:   &scpb.ServiceConfig_HealthCheckConfig{ServiceName: wrapperspb.String(readinessService)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding the %s service config: %w", backend, err)
+	}
+
 	conn, err := grpc.NewClient(
 		address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		// Turns off configured retries, whatever any service config says.
 		grpc.WithDisableRetry(),
+		// Keeps this caller's balancing and readiness policy: a resolver
+		// cannot supply a service config that replaces it.
+		grpc.WithDisableServiceConfig(),
+		grpc.WithDefaultServiceConfig(string(serviceConfig)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("creating the secrets store management client: %w", err)
+		return nil, fmt.Errorf("creating the %s client: %w", backend, err)
 	}
 
 	return conn, nil
@@ -68,7 +111,7 @@ func newSecretsManagementClient(address string) (*grpc.ClientConn, error) {
 
 // PostSecrets creates a secret with its first version.
 func (a *APIStore) PostSecrets(c *gin.Context) {
-	client, projectID, ok := a.secretsBackend(c)
+	client, projectID, team, ok := a.secretsBackend(c)
 	if !ok {
 		return
 	}
@@ -93,10 +136,11 @@ func (a *APIStore) PostSecrets(c *gin.Context) {
 	defer cancel()
 
 	response, err := client.CreateSecret(ctx, &managementv1.CreateSecretRequest{
-		ProjectId: projectID,
-		Name:      name,
-		Value:     value,
-		Metadata:  secretMetadataValues(body.Metadata),
+		ProjectId:           projectID,
+		Name:                name,
+		Value:               value,
+		Metadata:            secretMetadataValues(body.Metadata),
+		ProjectSecretsLimit: projectSecretsLimit(team),
 	})
 	if err != nil {
 		a.sendSecretsBackendError(c, err)
@@ -116,7 +160,7 @@ func (a *APIStore) PostSecrets(c *gin.Context) {
 
 // GetSecrets lists the project's secrets.
 func (a *APIStore) GetSecrets(c *gin.Context, params api.GetSecretsParams) {
-	client, projectID, ok := a.secretsBackend(c)
+	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
 	}
@@ -167,7 +211,7 @@ func (a *APIStore) GetSecrets(c *gin.Context, params api.GetSecretsParams) {
 
 // GetSecretsSecretID returns one secret's metadata.
 func (a *APIStore) GetSecretsSecretID(c *gin.Context, secretID api.SecretID) {
-	client, projectID, ok := a.secretsBackend(c)
+	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
 	}
@@ -204,7 +248,7 @@ func (a *APIStore) GetSecretsSecretID(c *gin.Context, secretID api.SecretID) {
 
 // PostSecretsSecretID replaces a secret's value by appending a version.
 func (a *APIStore) PostSecretsSecretID(c *gin.Context, secretID api.SecretID) {
-	client, projectID, ok := a.secretsBackend(c)
+	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
 	}
@@ -259,7 +303,7 @@ func (a *APIStore) PostSecretsSecretID(c *gin.Context, secretID api.SecretID) {
 
 // DeleteSecretsSecretID revokes a secret.
 func (a *APIStore) DeleteSecretsSecretID(c *gin.Context, secretID api.SecretID) {
-	client, projectID, ok := a.secretsBackend(c)
+	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
 	}
@@ -291,14 +335,14 @@ func (a *APIStore) DeleteSecretsSecretID(c *gin.Context, secretID api.SecretID) 
 // The gate is evaluated after authentication, and a missing backend address is
 // indistinguishable from a closed gate, so an unauthenticated or ungated caller
 // learns nothing about the rollout.
-func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagementServiceClient, string, bool) {
+func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagementServiceClient, string, *types.Team, bool) {
 	ctx := c.Request.Context()
 
 	team, ok := auth.GetTeamInfo(c)
 	if !ok || team == nil {
 		a.sendAPIStoreError(c, http.StatusUnauthorized, middleware.SecretsUnauthorizedMessage)
 
-		return nil, "", false
+		return nil, "", nil, false
 	}
 
 	telemetry.SetAttributes(ctx, telemetry.WithTeamID(team.ID.String()))
@@ -306,7 +350,7 @@ func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagement
 	if a.secretsManagement == nil || !a.featureFlags.BoolFlag(ctx, featureflags.CustomerSecretsFlag) {
 		a.sendAPIStoreError(c, http.StatusForbidden, middleware.SecretsUnavailableMessage)
 
-		return nil, "", false
+		return nil, "", nil, false
 	}
 
 	// The project is the team under the name the backend uses. The UUID is
@@ -314,7 +358,13 @@ func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagement
 	// wire, and no tenant field a client sent is consulted.
 	projectID := uuid.UUID(id.ConvertTeamIDToProjectID(team.ID)).String()
 
-	return a.secretsManagement, projectID, true
+	return a.secretsManagement, projectID, team, true
+}
+
+// projectSecretsLimit is the cap the backend enforces on a create: the team's
+// resolved limit, clamped to what the wire carries.
+func projectSecretsLimit(team *types.Team) int32 {
+	return int32(min(team.Limits.MaxSecrets, math.MaxInt32))
 }
 
 // rejectSecretsRequest answers a request the API itself refused. reason is a
@@ -325,13 +375,13 @@ func (a *APIStore) rejectSecretsRequest(c *gin.Context, reason string) {
 }
 
 // sendSecretsBackendError maps a management failure onto the public status. The
-// gRPC status description is never parsed, logged, or returned: only the code,
-// which is a bounded enum, is recorded.
+// gRPC status description is never parsed, logged, or returned. Only its code
+// and the typed quota detail determine the public response.
 func (a *APIStore) sendSecretsBackendError(c *gin.Context, err error) {
-	code, message := secretsBackendStatus(err)
+	publicError := secretsBackendStatus(err)
 
-	a.sendAPIStoreError(c, code, message)
-	telemetry.ReportErrorByCode(c.Request.Context(), code, "secrets backend call failed", errSecretsBackendCall,
+	apierrors.SendAPIError(c, publicError)
+	telemetry.ReportErrorByCode(c.Request.Context(), publicError.Code, "secrets backend call failed", errSecretsBackendCall,
 		attribute.String("rpc.grpc.status_code", status.Code(err).String()),
 	)
 }
@@ -344,55 +394,65 @@ func (a *APIStore) sendSecretsBackendResponseError(c *gin.Context) {
 }
 
 // secretsBackendStatus is the whole public error contract of the private hop.
-func secretsBackendStatus(err error) (int, string) {
+func secretsBackendStatus(err error) *apierrors.APIError {
 	st, ok := status.FromError(err)
 	if !ok {
-		return http.StatusBadGateway, middleware.SecretsBackendMessage
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
 	}
 
 	switch st.Code() {
 	case codes.InvalidArgument:
-		return http.StatusBadRequest, middleware.SecretsInvalidRequestMessage
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: middleware.SecretsInvalidRequestMessage}
 	case codes.NotFound:
-		return http.StatusNotFound, middleware.SecretsNotFoundMessage
+		return &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: middleware.SecretsNotFoundMessage}
 	case codes.AlreadyExists, codes.Aborted, codes.FailedPrecondition:
-		return http.StatusConflict, middleware.SecretsConflictMessage
+		return &apierrors.APIError{Code: http.StatusConflict, ClientMsg: middleware.SecretsConflictMessage}
 	case codes.ResourceExhausted:
 		return secretsExhaustedStatus(st)
 	case codes.DeadlineExceeded:
-		return http.StatusGatewayTimeout, middleware.SecretsBackendTimeoutMessage
+		return &apierrors.APIError{Code: http.StatusGatewayTimeout, ClientMsg: middleware.SecretsBackendTimeoutMessage}
 	default:
 		// Unavailable, Unimplemented, Internal, Unknown and everything else
 		// the backend may grow are one outcome to a client: the backend did
 		// not answer usefully.
-		return http.StatusBadGateway, middleware.SecretsBackendMessage
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
 	}
 }
 
 // secretsExhaustedStatus splits RESOURCE_EXHAUSTED by its typed detail. The
 // contract carries exactly one ManagementErrorDetail and nothing else, so a
 // missing, repeated, foreign, unspecified or unrecognized detail is a response
-// the API cannot act on: it is a malformed answer, not a lenient one. Nothing
-// of the status - description or detail contents - is read beyond the reason.
-func secretsExhaustedStatus(st *status.Status) (int, string) {
+// the API cannot act on: it is a malformed answer, not a lenient one. The
+// status description stays private; only the typed, client-visible reason
+// details for a secret limit error are returned.
+func secretsExhaustedStatus(st *status.Status) *apierrors.APIError {
 	details := st.Details()
 	if len(details) != 1 {
-		return http.StatusBadGateway, middleware.SecretsBackendMessage
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
 	}
 
 	detail, ok := details[0].(*managementv1.ManagementErrorDetail)
 	if !ok {
-		return http.StatusBadGateway, middleware.SecretsBackendMessage
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
 	}
 
 	switch detail.GetReason() {
 	case managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_SECRET_LIMIT_REACHED:
-		return http.StatusConflict, middleware.SecretsConflictMessage
+		publicError := &apierrors.APIError{
+			Code:      http.StatusConflict,
+			ClientMsg: "Project secret limit reached",
+			ErrorCode: secretLimitReachedCode,
+		}
+		if reasonDetails := detail.GetReasonDetails(); reasonDetails != "" {
+			publicError.ClientMsg = reasonDetails
+		}
+
+		return publicError
 	case managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_VALUE_TOO_LARGE:
-		return http.StatusBadRequest, middleware.SecretsInvalidRequestMessage
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: middleware.SecretsInvalidRequestMessage}
 	default:
 		// Unspecified today, and whatever the contract grows tomorrow.
-		return http.StatusBadGateway, middleware.SecretsBackendMessage
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
 	}
 }
 

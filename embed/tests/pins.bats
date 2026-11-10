@@ -22,6 +22,53 @@ setup() {
   fi
 }
 
+# A refused pause keeps the sandbox running only once the api reads
+# PAUSE_REFUSAL_RESTORE, and a pause the disk cannot hold is refused up front
+# only once the orchestrator reads PAUSE_ADMISSION_DISK_HEADROOM_MIB; both
+# shipped in the builds of 2026-10-05, which compose.yaml sets both variables
+# for. Older pins ignore the variables and a refusal kills the sandbox, so
+# the pins must not slide back below those builds.
+@test "api pin is at least the build that reads PAUSE_REFUSAL_RESTORE" {
+  grep -q 'PAUSE_REFUSAL_RESTORE: "true"' compose/compose.yaml
+  api_tag="$(sed -n 's/^E2B_API_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$api_tag" ]
+  min=v0.14.202610051633
+  lowest="$(printf '%s\n%s\n' "$min" "$api_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_API_IMAGE is $api_tag; PAUSE_REFUSAL_RESTORE is read from api build $min on" >&2
+    return 1
+  fi
+}
+
+@test "orchestrator pin is at least the build that reads PAUSE_ADMISSION_DISK_HEADROOM_MIB" {
+  grep -q 'PAUSE_ADMISSION_DISK_HEADROOM_MIB: "1024"' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  min=v0.16.202610051633
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; PAUSE_ADMISSION_DISK_HEADROOM_MIB is read from orchestrator build $min on" >&2
+    return 1
+  fi
+}
+
+# A create sent while a killed sandbox still holds its pages is refused and
+# retried on this host only once the orchestrator reads CREATE_MEMORY_REFUSAL,
+# which compose.yaml sets; that shipped in the orchestrator build of
+# 2026-10-20. Older pins ignore the variable and the create fails, so the pin
+# must not slide back below that build.
+@test "orchestrator pin is at least the build that reads CREATE_MEMORY_REFUSAL" {
+  grep -q 'CREATE_MEMORY_REFUSAL: "true"' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  min=v0.16.202610201713
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; CREATE_MEMORY_REFUSAL is read from orchestrator build $min on" >&2
+    return 1
+  fi
+}
+
 # The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
 # after a hyphen, and two images from different commits must not compare equal.
 @test "api and db-migrator pins move together" {
@@ -119,4 +166,20 @@ bake_repository() {
       return 1
     fi
   done
+}
+
+# The dashboard image has its own release line outside the group, so its pin
+# carries no release marker and is bumped by hand.
+@test "the dashboard pin is in both install files and equal" {
+  local env k8s
+  env="$(env_pin E2B_DASHBOARD_IMAGE)"
+  k8s="$(k8s_pin E2B_DASHBOARD_IMAGE)"
+  [ -n "$env" ] || { echo "compose/.env has no E2B_DASHBOARD_IMAGE" >&2; return 1; }
+  [ -n "$k8s" ] || { echo "kubernetes/kustomization.yaml has no E2B_DASHBOARD_IMAGE entry" >&2; return 1; }
+  [ "$env" = "$k8s" ] || { echo "E2B_DASHBOARD_IMAGE is $env in compose/.env and $k8s in kubernetes/kustomization.yaml" >&2; return 1; }
+}
+
+@test "the dashboard pin carries no release marker" {
+  grep -qE '^E2B_DASHBOARD_IMAGE=us-docker\.pkg\.dev/e2b-artifacts/dashboard/dashboard:v[0-9]+\.[0-9]+\.[0-9]+$' compose/.env
+  grep -A2 '^  - name: E2B_DASHBOARD_IMAGE$' kubernetes/kustomization.yaml | grep -qE 'newTag: v[0-9]+\.[0-9]+\.[0-9]+$'
 }

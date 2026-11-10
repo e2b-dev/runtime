@@ -32,7 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -81,7 +81,7 @@ func newRouterWithTeam(t *testing.T, limiter *redis_rate.Limiter, cfg Config, ff
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		auth.SetTeamInfoForTest(t, c, &types.Team{
-			Team: &authqueries.Team{ID: teamID},
+			Team: &dbtypes.Team{ID: teamID},
 		})
 		c.Next()
 	})
@@ -209,9 +209,11 @@ func TestIntegration_BurstThenDeny(t *testing.T) {
 
 	redisClient := redis_utils.SetupInstance(t)
 	limiter := redis_rate.NewLimiter(redisClient)
-	ff := newTestFF(t, routeConfig(1, 3))
+	ff := newTestFF(t, map[string]map[string]int{
+		testRoute: {"rate": 1, "burst": 3, "period_s": 600}, // slow refill so burst is the effective limit
+	})
 
-	r := newRouterWithTeam(t, limiter, Config{FailOpen: true}, ff, uuid.New())
+	r := newRouterWithTeam(t, limiter, Config{FailOpen: false}, ff, uuid.New())
 
 	// First 3 requests should succeed (burst).
 	for i := range 3 {
@@ -243,7 +245,12 @@ func TestIntegration_Refill(t *testing.T) {
 
 	redisClient := redis_utils.SetupInstance(t)
 	limiter := redis_rate.NewLimiter(redisClient)
-	ff := newTestFF(t, routeConfig(10, 2))
+	// One token every 2s: slow enough that a loaded runner cannot refill a
+	// token mid-drain (a 100ms refill raced the three requests below and the
+	// deny assertion saw 200), fast enough for the refill poll to finish.
+	ff := newTestFF(t, map[string]map[string]int{
+		testRoute: {"rate": 1, "burst": 2, "period_s": 2},
+	})
 
 	r := newRouterWithTeam(t, limiter, Config{FailOpen: true}, ff, uuid.New())
 
@@ -255,11 +262,11 @@ func TestIntegration_Refill(t *testing.T) {
 	w := doRequest(t, r)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-	// Wait for refill (rate=10/s → one token every 100ms).
-	time.Sleep(200 * time.Millisecond)
-
-	w = doRequest(t, r)
-	assert.Equal(t, http.StatusOK, w.Code)
+	// A denied request consumes no token, so poll until one refills instead
+	// of sleeping through a fixed window.
+	require.Eventually(t, func() bool {
+		return doRequest(t, r).Code == http.StatusOK
+	}, 10*time.Second, 50*time.Millisecond, "no token was refilled")
 }
 
 func TestIntegration_IndependentTeams(t *testing.T) {
@@ -271,9 +278,11 @@ func TestIntegration_IndependentTeams(t *testing.T) {
 
 	redisClient := redis_utils.SetupInstance(t)
 	limiter := redis_rate.NewLimiter(redisClient)
-	ff := newTestFF(t, routeConfig(1, 1))
+	ff := newTestFF(t, map[string]map[string]int{
+		testRoute: {"rate": 1, "burst": 1, "period_s": 600}, // slow refill so burst is the effective limit
+	})
 
-	cfg := Config{FailOpen: true}
+	cfg := Config{FailOpen: false}
 
 	teamA := uuid.New()
 	teamB := uuid.New()
@@ -342,13 +351,48 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 
 type groupLimiterFunc func(context.Context, string, redis_rate.Limit) (*redis_rate.Result, error)
 
+func TestSandboxCreateRetryRateLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, path, key, wantRetry string
+	}{
+		{name: "unkeyed v1", path: "/sandboxes"},
+		{name: "unkeyed v2", path: "/v2/sandboxes", wantRetry: "true"},
+		{name: "keyed v2", path: "/v2/sandboxes", key: "key", wantRetry: "true"},
+		{name: "other operation", path: "/sandboxes/sbx/connect"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			flags := newTestFF(t, map[string]map[string]int{tc.path: {"rate": 1, "burst": 1}})
+			limiter := groupLimiterFunc(func(context.Context, string, redis_rate.Limit) (*redis_rate.Result, error) {
+				return &redis_rate.Result{Allowed: 0, RetryAfter: 2 * time.Second}, nil
+			})
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
+			}, newTestMiddleware(t, limiter, Config{FailOpen: true}, flags))
+			router.POST(tc.path, func(*gin.Context) { t.Error("rate-limited request executed") })
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tc.path, nil)
+			if tc.key != "" {
+				req.Header.Set("Idempotency-Key", tc.key)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+			require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+			assert.Equal(t, tc.wantRetry, recorder.Result().Header.Get("Should-Retry"))
+			assert.Equal(t, "2", recorder.Result().Header.Get("Retry-After"))
+		})
+	}
+}
+
 func (f groupLimiterFunc) Allow(ctx context.Context, key string, limit redis_rate.Limit) (*redis_rate.Result, error) {
 	return f(ctx, key, limit)
 }
 
 func groupTeam(rate int64) *types.Team {
 	return &types.Team{
-		Team:   &authqueries.Team{ID: uuid.New()},
+		Team:   &dbtypes.Team{ID: uuid.New()},
 		Limits: &types.TeamLimits{APITeamRPSList: rate},
 	}
 }
@@ -417,6 +461,14 @@ func groupRouter(t *testing.T, limiter requestLimiter, mode string, team *types.
 	} {
 		r.GET(path, ok)
 	}
+	for _, path := range []string{
+		"/sandboxes/:sandboxID", "/templates/:templateID", "/templates/tags",
+		"/api-keys/:apiKeyID", "/volumes/:volumeID", "/secrets/:secretID",
+		"/events/webhooks/:webhookID", "/admin/teams/:teamID/api-keys/:apiKeyID",
+		"/clusters/:clusterID/rigs/instances/:instanceID",
+	} {
+		r.DELETE(path, ok)
+	}
 
 	return groupFixture{router: r, reader: reader, logs: logs, flags: td}
 }
@@ -431,6 +483,12 @@ func groupRequest(t *testing.T, r *gin.Engine, method, path string) *httptest.Re
 }
 
 func groupDecisions(t *testing.T, reader *sdkmetric.ManualReader, mode string, teamID uuid.UUID) map[string]int64 {
+	t.Helper()
+
+	return decisionsForGroup(t, reader, mode, teamID, "list")
+}
+
+func decisionsForGroup(t *testing.T, reader *sdkmetric.ManualReader, mode string, teamID uuid.UUID, wantGroup string) map[string]int64 {
 	t.Helper()
 
 	var metrics metricdata.ResourceMetrics
@@ -452,7 +510,7 @@ func groupDecisions(t *testing.T, reader *sdkmetric.ManualReader, mode string, t
 				group, _ := point.Attributes.Value("api_group")
 				gotMode, _ := point.Attributes.Value("mode")
 				decision, _ := point.Attributes.Value("decision")
-				assert.Equal(t, "list", group.AsString())
+				assert.Equal(t, wantGroup, group.AsString())
 				assert.Equal(t, mode, gotMode.AsString())
 				decisions[decision.AsString()] += point.Value
 			}
@@ -497,7 +555,7 @@ func TestAPIGroupBypass(t *testing.T) {
 		{"missing flag", "", http.MethodGet, "/sandboxes", groupTeam(1)},
 		{"invalid mode", "enabeld", http.MethodGet, "/sandboxes", groupTeam(1)},
 		{"unauthenticated", "enabled", http.MethodGet, "/sandboxes", nil},
-		{"missing cached limits", "enabled", http.MethodGet, "/sandboxes", &types.Team{Team: &authqueries.Team{ID: uuid.New()}}},
+		{"missing cached limits", "enabled", http.MethodGet, "/sandboxes", &types.Team{Team: &dbtypes.Team{ID: uuid.New()}}},
 		{"unconfigured", "enabled", http.MethodGet, "/sandboxes", groupTeam(0)},
 		{"negative", "enabled", http.MethodGet, "/sandboxes", groupTeam(-1)},
 		{"sandbox creation", "enabled", http.MethodPost, "/sandboxes", groupTeam(1)},
@@ -756,7 +814,7 @@ func TestIntegration_APIGroupUsesIndependentRouteBudgets(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Redis integration test")
 	}
-	limiter := redis_rate.NewLimiter(redis_utils.SetupInstance(t))
+	limiter := slowRefillRedisLimiter(t)
 	team := groupTeam(1)
 	f := groupRouter(t, limiter, "enabled", team)
 	otherTeam := groupRouter(t, limiter, "enabled", groupTeam(1))
@@ -774,7 +832,7 @@ func TestIntegration_APIGroupUsesRouteTemplate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Redis integration test")
 	}
-	limiter := redis_rate.NewLimiter(redis_utils.SetupInstance(t))
+	limiter := slowRefillRedisLimiter(t)
 	f := groupRouter(t, limiter, "enabled", groupTeam(1))
 	assert.Equal(t, http.StatusNoContent, groupRequest(t, f.router, http.MethodGet, "/templates/template-a/tags?value=1").Code)
 	assert.Equal(t, http.StatusTooManyRequests, groupRequest(t, f.router, http.MethodGet, "/templates/template-b/tags?value=2").Code)
@@ -786,7 +844,7 @@ func TestIntegration_APIGroupRolloutModes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Redis integration test")
 	}
-	limiter := redis_rate.NewLimiter(redis_utils.SetupInstance(t))
+	limiter := slowRefillRedisLimiter(t)
 	team := groupTeam(1)
 	f := groupRouter(t, limiter, "disabled", team)
 	for range 3 {

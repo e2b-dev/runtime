@@ -14,9 +14,11 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
@@ -25,7 +27,8 @@ import (
 )
 
 var (
-	meter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network/v2")
+	tracer = otel.Tracer("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network/v2")
+	meter  = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network/v2")
 
 	newSlotsAvailableCounter = utils.Must(meter.Int64UpDownCounter("orchestrator.network.v2.slots_pool.new",
 		metric.WithDescription("Number of new v2 network slots ready to be used."),
@@ -76,6 +79,13 @@ func WithPopulateRetryDelay(delay time.Duration) V2PoolOption {
 	return func(pool *V2Pool) { pool.populateRetryDelay = delay }
 }
 
+// WithNonDNSUDPFlag has every slot build its chain in the mode the flag
+// serves and the pool follow the flag for the slots it has handed out.
+// Without it every slot builds in off mode.
+func WithNonDNSUDPFlag(flags *featureflags.Client) V2PoolOption {
+	return func(pool *V2Pool) { pool.modeFollower = network.NewNonDNSUDPModeFollower(flags) }
+}
+
 // V2Pool implements network.PoolInterface using the v2 nftables datapath.
 type V2Pool struct {
 	config      network.Config
@@ -91,12 +101,23 @@ type V2Pool struct {
 	closeMu sync.RWMutex
 	closed  bool
 
+	// admissionsWG tracks Get calls admitted before Close published closed. It
+	// covers slot selection, the final handoff, configuration, and initiation of
+	// a configuration-failure return. If that return runs asynchronously,
+	// returnsWG owns its cleanup; Close joins it after admissionsWG.
+	admissionsWG sync.WaitGroup
+
 	// returnsWG tracks in-flight asynchronous slot returns; Close waits for
 	// it before draining the pool.
 	returnsWG sync.WaitGroup
+	// First unresolved failures only, guarded by closeMu; returns report every error.
+	releaseErr    error
+	cleanupErr    error
+	retainedSlots map[*network.Slot]struct{}
 
 	metrics            *Metrics
 	populateRetryDelay time.Duration
+	modeFollower       *network.NonDNSUDPModeFollower
 }
 
 // Compile-time check that V2Pool satisfies network.PoolInterface.
@@ -148,6 +169,7 @@ func NewV2Pool(storage network.Storage, config network.Config, hostFw *HostFirew
 		reusedSlots:        make(chan *network.Slot, network.ReusedSlotsPoolSize),
 		done:               make(chan struct{}),
 		populateRetryDelay: defaultPopulateRetryDelay,
+		modeFollower:       network.NewNonDNSUDPModeFollower(nil),
 	}
 	for _, option := range options {
 		option(pool)
@@ -165,6 +187,7 @@ func (p *V2Pool) createNetworkSlot(ctx context.Context) (*network.Slot, error) {
 		return nil, &slotCreationError{stage: slotCreationStageAcquire, err: fmt.Errorf("failed to acquire network slot: %w", err)}
 	}
 
+	slot.UseNonDNSUDPMode(p.modeFollower.Provider())
 	slotV2 := NewSlotV2(slot)
 	p.registry.Store(slotV2)
 
@@ -180,6 +203,9 @@ func (p *V2Pool) createNetworkSlot(ctx context.Context) (*network.Slot, error) {
 
 func (p *V2Pool) Populate(ctx context.Context) {
 	defer close(p.newSlots)
+
+	stopFollowing := p.modeFollower.Start(ctx)
+	defer stopFollowing()
 
 	for {
 		select {
@@ -242,22 +268,55 @@ func (p *V2Pool) Populate(ctx context.Context) {
 }
 
 func (p *V2Pool) Get(ctx context.Context, netConfig *orchestrator.SandboxNetworkConfig, class sandboxtypes.EgressClass) (*network.Slot, error) {
-	var slot *network.Slot
+	if !p.tryTrackAdmission() {
+		return nil, network.ErrClosed
+	}
+	defer p.admissionsWG.Done()
+
+	slot, err := p.take(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	p.modeFollower.HandOut(slot)
+	if err := p.configureSlot(ctx, slot, netConfig, class); err != nil {
+		// Never handed out, so nobody listens for the release notification.
+		if rerr := p.ReturnAsync(context.WithoutCancel(ctx), slot, func(context.Context, string) error { return nil }, 0); rerr != nil {
+			logger.L().Error(ctx, "failed to return v2 slot to pool", zap.Error(rerr), zap.Int("slot_index", slot.Idx))
+		}
+
+		return nil, err
+	}
+
+	return slot, nil
+}
+
+// take prefers a reused slot and otherwise waits for whichever queue delivers
+// first.
+func (p *V2Pool) take(ctx context.Context) (*network.Slot, error) {
+	var (
+		slot   *network.Slot
+		reused bool
+	)
 
 	select {
 	case <-p.done:
 		return nil, network.ErrClosed
 	case s := <-p.reusedSlots:
 		reusableSlotsAvailableCounter.Add(ctx, -1)
-		acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "reused")))
-		telemetry.ReportEvent(ctx, "reused v2 network slot")
 		slot = s
+		reused = true
 	default:
 		select {
 		case <-p.done:
 			return nil, network.ErrClosed
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case s := <-p.reusedSlots:
+			// ReturnAsync may publish a reusable slot after the fast-path miss.
+			reusableSlotsAvailableCounter.Add(ctx, -1)
+			slot = s
+			reused = true
 		case s, ok := <-p.newSlots:
 			// Populate closes the channel on its way out, and a closed channel
 			// wins this select as readily as done does.
@@ -266,20 +325,22 @@ func (p *V2Pool) Get(ctx context.Context, netConfig *orchestrator.SandboxNetwork
 			}
 
 			newSlotsAvailableCounter.Add(ctx, -1)
-			acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", "new")))
-			telemetry.ReportEvent(ctx, "new v2 network slot")
 			slot = s
 		}
 	}
 
-	if err := p.configureSlot(ctx, slot, netConfig, class); err != nil {
-		// Never handed out, so nobody listens for the release notification.
-		if rerr := p.ReturnAsync(context.WithoutCancel(ctx), slot, func(context.Context, string) {}, 0); rerr != nil {
-			logger.L().Error(ctx, "failed to return v2 slot to pool", zap.Error(rerr), zap.Int("slot_index", slot.Idx))
-		}
-
+	if err := p.claimSlot(ctx, slot); err != nil {
 		return nil, err
 	}
+
+	poolName := "new"
+	event := "new v2 network slot"
+	if reused {
+		poolName = "reused"
+		event = "reused v2 network slot"
+	}
+	acquiredSlots.Add(ctx, 1, metric.WithAttributes(attribute.String("pool", poolName)))
+	telemetry.ReportEvent(ctx, event)
 
 	return slot, nil
 }
@@ -296,6 +357,37 @@ func (p *V2Pool) configureSlot(ctx context.Context, slot *network.Slot, netConfi
 	}
 
 	return nil
+}
+
+// tryTrackAdmission registers a complete Get, including configuration and
+// initiation of its failure cleanup, before Close can publish closed and wait.
+// It reports false for every later caller.
+func (p *V2Pool) tryTrackAdmission() bool {
+	p.closeMu.RLock()
+	defer p.closeMu.RUnlock()
+
+	if p.closed {
+		return false
+	}
+
+	p.admissionsWG.Add(1)
+
+	return true
+}
+
+// claimSlot is the final handoff linearization point. If Close published
+// closed first, the admission still owns the received slot and must clean it
+// up before returning ErrClosed; Close joins that work through admissionsWG.
+func (p *V2Pool) claimSlot(ctx context.Context, slot *network.Slot) error {
+	p.closeMu.RLock()
+	closed := p.closed
+	p.closeMu.RUnlock()
+
+	if !closed {
+		return nil
+	}
+
+	return p.cleanupWith(context.WithoutCancel(ctx), slot, network.ErrClosed)
 }
 
 func (p *V2Pool) tryTrackReturn() bool {
@@ -315,6 +407,8 @@ func (p *V2Pool) tryTrackReturn() bool {
 // returning them. Close waits for all in-flight returns before draining the
 // pool. If the pool is already closed the slot is cleaned up synchronously.
 func (p *V2Pool) ReturnAsync(ctx context.Context, slot *network.Slot, releasedFn network.ReleaseNotify, returnDelay time.Duration) error {
+	p.modeFollower.TakeBack(slot)
+
 	if !p.tryTrackReturn() {
 		return p.returnSlot(ctx, slot, releasedFn, returnDelay)
 	}
@@ -325,6 +419,8 @@ func (p *V2Pool) ReturnAsync(ctx context.Context, slot *network.Slot, releasedFn
 		err := p.returnSlot(ctx, slot, releasedFn, returnDelay)
 		switch {
 		case err == nil:
+		case errors.Is(err, network.ErrSlotRetained):
+			logger.L().Error(ctx, "v2 network slot retained and unavailable for reuse", zap.Error(err), zap.Int("slot_index", slot.Idx))
 		case errors.Is(err, network.ErrClosed), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			logger.L().Warn(ctx, "v2 network slot returned during pool shutdown", zap.Error(err), zap.Int("slot_index", slot.Idx))
 		default:
@@ -337,26 +433,59 @@ func (p *V2Pool) ReturnAsync(ctx context.Context, slot *network.Slot, releasedFn
 
 // returnSlot recycles a slot that was used by a sandbox. It waits returnDelay
 // before making the slot reusable to let inflight requests on the previous
-// sandbox drain.
-func (p *V2Pool) returnSlot(ctx context.Context, slot *network.Slot, releasedFn network.ReleaseNotify, returnDelay time.Duration) error {
-	notifyNetworkRelease := sync.OnceFunc(func() {
-		releasedFn(ctx, slot.HostIPString())
-	})
-	defer notifyNetworkRelease()
+// sandbox drain. Notifications must finish before teardown and succeed before reuse.
+func (p *V2Pool) returnSlot(ctx context.Context, slot *network.Slot, releasedFn network.ReleaseNotify, returnDelay time.Duration) (retErr error) {
+	started := time.Now()
+	cleanupStarted := started
+	defer func() { network.RecordSlotReturnDuration(ctx, started, cleanupStarted, 2, retErr) }()
 
-	// If the pool is closed or the context is cancelled during the delay we
-	// still fall through and clean up the slot to avoid leaking it.
-	select {
-	case <-ctx.Done():
-		return p.cleanupWith(ctx, slot, ctx.Err())
-	case <-p.done:
-		return p.cleanupWith(ctx, slot, network.ErrClosed)
-	case <-time.After(returnDelay):
-	}
+	return telemetry.Observe0(ctx, tracer, "clean network-slot", func(ctx context.Context) error {
+		// If the pool is closed or the context is cancelled during the delay we
+		// still fall through and clean up the slot to avoid leaking it.
+		var cause error
+		select {
+		case <-ctx.Done():
+			cause = ctx.Err()
+		case <-p.done:
+			cause = network.ErrClosed
+		case <-time.After(returnDelay):
+		}
 
-	notifyNetworkRelease()
+		cleanupStarted = time.Now()
 
-	return p.recycle(ctx, slot)
+		// Every path notifies before the slot can be torn down or reused.
+		if err := releasedFn(context.WithoutCancel(ctx), slot.HostIPString()); err != nil {
+			p.closeMu.Lock()
+			closed := p.closed
+			var releaseErr error
+			if closed {
+				releaseErr = errors.Join(network.ErrClosed, cause, err)
+			} else {
+				releaseErr = errors.Join(cause, fmt.Errorf("%w: v2 slot '%d': %w", network.ErrSlotRetained, slot.Idx, err))
+			}
+			if p.releaseErr == nil {
+				p.releaseErr = releaseErr
+			}
+			if !closed {
+				if p.retainedSlots == nil {
+					p.retainedSlots = make(map[*network.Slot]struct{})
+				}
+				p.retainedSlots[slot] = struct{}{}
+			}
+			p.closeMu.Unlock()
+			if closed {
+				return p.cleanupWith(ctx, slot, releaseErr)
+			}
+			telemetry.SetAttributes(ctx, attribute.Bool("network.slot.retained", true))
+
+			return releaseErr
+		}
+		if cause != nil {
+			return p.cleanupWith(ctx, slot, cause)
+		}
+
+		return p.recycle(ctx, slot)
+	}, trace.WithAttributes(attribute.Int("network_version", 2)))
 }
 
 func (p *V2Pool) recycle(ctx context.Context, slot *network.Slot) error {
@@ -406,7 +535,14 @@ func (p *V2Pool) tryReuse(ctx context.Context, slot *network.Slot) (reused bool,
 // cleanupWith tears the slot down and attaches any cleanup error to cause.
 func (p *V2Pool) cleanupWith(ctx context.Context, slot *network.Slot, cause error) error {
 	if cerr := p.cleanup(ctx, slot); cerr != nil {
-		return errors.Join(cause, fmt.Errorf("cleanup v2 slot '%d': %w", slot.Idx, cerr))
+		cleanupErr := fmt.Errorf("cleanup v2 slot '%d': %w", slot.Idx, cerr)
+		p.closeMu.Lock()
+		if p.cleanupErr == nil {
+			p.cleanupErr = cleanupErr
+		}
+		p.closeMu.Unlock()
+
+		return errors.Join(cause, cleanupErr)
 	}
 
 	return cause
@@ -423,7 +559,7 @@ func (p *V2Pool) cleanup(ctx context.Context, slot *network.Slot) error {
 		p.registry.Delete(slot.Idx)
 	} else {
 		// Fallback: try basic cleanup even without v2 metadata
-		if err := slot.RemoveNetwork(); err != nil {
+		if err := slot.RemoveNetwork(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("cannot remove network for slot '%d': %w", slot.Idx, err))
 		}
 	}
@@ -437,22 +573,43 @@ func (p *V2Pool) cleanup(ctx context.Context, slot *network.Slot) error {
 	return errors.Join(errs...)
 }
 
+// Close leaves the pool unchanged when ctx is canceled before Close publishes
+// closed. Once it has published closed, Close ignores later cancellation so it
+// can join admissions and returns before removing shared network state.
 func (p *V2Pool) Close(ctx context.Context) error {
-	logger.L().Info(ctx, "Closing v2 network pool")
+	p.closeMu.Lock()
+	if err := ctx.Err(); err != nil {
+		p.closeMu.Unlock()
 
+		return err
+	}
+	p.closed = true
 	p.doneOnce.Do(func() {
 		close(p.done)
 	})
-
-	p.closeMu.Lock()
-	p.closed = true
 	p.closeMu.Unlock()
 
-	// Wait for in-flight asynchronous returns: each either cleans its slot
-	// up itself or has already pushed it into reusedSlots, drained below.
+	ctx = context.WithoutCancel(ctx)
+	logger.L().Info(ctx, "Closing v2 network pool")
+
+	// Admissions register while open under closeMu. A successful claim may
+	// still be configuring its caller-owned slot after Close publishes closed.
+	// Join the complete Get, including rejected-claim cleanup or initiation of
+	// a configuration-failure return; returnsWG below joins asynchronous returns.
+	p.admissionsWG.Wait()
+
 	p.returnsWG.Wait()
 
-	var errs []error
+	p.closeMu.Lock()
+	errs := []error{p.releaseErr, p.cleanupErr}
+	retained := p.retainedSlots
+	p.retainedSlots = nil
+	p.closeMu.Unlock()
+	for slot := range retained {
+		if err := p.cleanup(ctx, slot); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup retained v2 slot '%d': %w", slot.Idx, err))
+		}
+	}
 
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)

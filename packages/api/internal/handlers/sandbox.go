@@ -30,6 +30,7 @@ func (a *APIStore) startSandbox(
 	isResume bool,
 	demandFilesystemBoot bool,
 	mcp api.Mcp,
+	options ...orchestrator.CreateOption,
 ) (*api.Sandbox, *api.APIError) {
 	sbx, apiErr := a.startSandboxInternal(
 		ctx,
@@ -41,6 +42,7 @@ func (a *APIStore) startSandbox(
 		isResume,
 		demandFilesystemBoot,
 		mcp,
+		options...,
 	)
 	if apiErr != nil {
 		return nil, apiErr
@@ -60,6 +62,7 @@ func (a *APIStore) startSandboxInternal(
 	isResume bool,
 	demandFilesystemBoot bool,
 	mcp api.Mcp,
+	options ...orchestrator.CreateOption,
 ) (sandbox.Sandbox, *api.APIError) {
 	startTime := time.Now()
 	endTime := startTime.Add(timeout)
@@ -81,6 +84,7 @@ func (a *APIStore) startSandboxInternal(
 		isResume,
 		demandFilesystemBoot,
 		creationMeta,
+		options...,
 	)
 	if instanceErr != nil {
 		telemetry.ReportError(ctx, "error when creating instance", instanceErr.Err)

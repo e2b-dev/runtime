@@ -15,7 +15,9 @@ if [ -z "${workdir}" ]; then
     # Use the user's home directory
     workdir=$(getent passwd "$user" | cut -d: -f6)
 fi
-cd "$workdir" || exit 1
+# A user without a passwd entry leaves workdir empty; stay in the current
+# directory then, as bash did implicitly before 5.3 made `cd ""` an error.
+cd "${workdir:-.}" || exit 1
 
 # Get the parent folder of the source file/folder
 sourceFolder="$(dirname "$sourcePath")"

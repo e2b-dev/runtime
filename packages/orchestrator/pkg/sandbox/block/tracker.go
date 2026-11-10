@@ -31,6 +31,20 @@ const (
 	// diff can inherit the page from the parent layer. A write-protect
 	// fault promotes it to Dirty.
 	Clean
+	// Installing: absent, and a demand-fault worker owns its install. Set by
+	// BeginInstall in the serve loop before the worker is dispatched, so
+	// every further MISSING fault for the page is dropped instead of reading
+	// the source again (the owner's UFFDIO_COPY wakes all of them). Leaves
+	// via MarkInstalled / SetRange(Dirty) on install, AbortInstall when the
+	// install did not happen, SetRange(Removed) when a REMOVE batch lands
+	// first, and MarkWritten when a WP fault beats the owner's bookkeeping:
+	// the owner's UFFDIO_COPY makes the page present and wakes the blocked
+	// threads before the owner records the install, so a woken writer can
+	// take a real WP fault on the now-present page while the tracker still
+	// says Installing. A prefault may still install an Installing page (it
+	// has the bytes in hand); only demand faults are deduped. Absent for
+	// Export like NotPresent: nothing has been written to it.
+	Installing
 
 	// numStates is the sentinel for consumers sizing tables by State (e.g.
 	// metric label arrays). Keep it immediately after the last state so
@@ -54,27 +68,66 @@ func (s State) String() string {
 		return "removed"
 	case Clean:
 		return "clean"
+	case Installing:
+		return "installing"
 	default:
 		return "unknown"
 	}
 }
 
 type Tracker struct {
-	mu                          sync.RWMutex
-	dirty, zero, removed, clean *roaring.Bitmap
+	mu                                      sync.RWMutex
+	dirty, zero, removed, clean, installing *roaring.Bitmap
 }
 
 func NewTracker() *Tracker {
 	return &Tracker{
-		dirty:   roaring.New(),
-		zero:    roaring.New(),
-		removed: roaring.New(),
-		clean:   roaring.New(),
+		dirty:      roaring.New(),
+		zero:       roaring.New(),
+		removed:    roaring.New(),
+		clean:      roaring.New(),
+		installing: roaring.New(),
 	}
+}
+
+// BeginInstall claims idx for a demand-fault install. A NotPresent page
+// becomes Installing and claimed is true; any other state is returned
+// unchanged with claimed false, so concurrent faults for one page collapse
+// onto one installer.
+func (t *Tracker) BeginInstall(idx uint32) (prev State, claimed bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	prev = t.stateOf(idx)
+	if prev != NotPresent {
+		return prev, false
+	}
+	t.installing.Add(idx)
+
+	return prev, true
+}
+
+// AbortInstall releases a BeginInstall claim whose install did not happen.
+// An Installing page becomes NotPresent; a page in any other state is left
+// alone. Releasing the claim raises nothing: the guest threads blocked on
+// the page stay blocked, so the caller must still resolve the fault it
+// holds. The serve loop re-queues it on EAGAIN and tears the handler down
+// on a failed read or ESRCH; it never waits for the kernel to fault again.
+func (t *Tracker) AbortInstall(idx uint32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.installing.Remove(idx)
 }
 
 // SetRange sets state for indices in [start, end). The index math.MaxUint32
 // is unaddressable: end is the half-open upper bound and capped at MaxUint32.
+//
+// Caller contract, not checked here: NotPresent clears Installing claims
+// like any other state, so callers must not apply it to a range that may be
+// mid-install; a dropped claim lets a stale owner release a newer one, and
+// the page then gets two installers. Only AbortInstall returns a claimed
+// page to NotPresent. No production caller passes NotPresent today.
 func (t *Tracker) SetRange(start, end uint32, state State) {
 	if end <= start {
 		return
@@ -85,7 +138,7 @@ func (t *Tracker) SetRange(start, end uint32, state State) {
 
 	s, e := uint64(start), uint64(end)
 	target := t.bitmapFor(state)
-	for _, bm := range []*roaring.Bitmap{t.dirty, t.zero, t.removed, t.clean} {
+	for _, bm := range []*roaring.Bitmap{t.dirty, t.zero, t.removed, t.clean, t.installing} {
 		if bm == target {
 			bm.AddRange(s, e)
 		} else {
@@ -95,7 +148,8 @@ func (t *Tracker) SetRange(start, end uint32, state State) {
 }
 
 // MarkInstalled records a read-side install (state Zero or Clean) for
-// [start, end), but only for indices currently NotPresent or Removed.
+// [start, end), but only for indices currently NotPresent, Removed or
+// Installing.
 // Installed states are never touched: an installer that was suspended
 // between its UFFDIO_COPY and this call must not downgrade a page a
 // concurrent write-protect fault has already promoted to Dirty.
@@ -117,6 +171,9 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 		case Removed:
 			t.removed.Remove(start)
 			t.bitmapFor(state).Add(start)
+		case Installing:
+			t.installing.Remove(start)
+			t.bitmapFor(state).Add(start)
 		case NotPresent:
 			t.bitmapFor(state).Add(start)
 		case Dirty, Zero, Clean, numStates:
@@ -132,8 +189,9 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 	mask.AndNot(t.dirty)
 	mask.AndNot(t.zero)
 	mask.AndNot(t.clean)
-	// mask now holds the Removed and NotPresent indices of the range.
+	// mask now holds the Removed, Installing and NotPresent indices of the range.
 	t.removed.AndNot(mask)
+	t.installing.AndNot(mask)
 	t.bitmapFor(state).Or(mask)
 }
 
@@ -143,10 +201,11 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 // Removed pages are skipped — a WP fault can be stale (read from the event
 // queue before a REMOVE batch zapped the page), and a Dirty entry for an
 // absent page would let its reinstall MISSING fault short-circuit without
-// installing or waking. A NotPresent page IS promoted: the kernel delivers
-// WP faults only for present pages, so NotPresent here means an installer
-// is suspended between its UFFDIO_COPY and MarkInstalled — which never
-// downgrades, so the promotion sticks.
+// installing or waking. A NotPresent or Installing page IS promoted: the
+// kernel delivers WP faults only for present pages, so either state here
+// means an installer's UFFDIO_COPY has landed and woken the writer while
+// the installer has not yet reached MarkInstalled — which never downgrades,
+// so the promotion sticks.
 //
 // Returns the state the page was in before the call.
 func (t *Tracker) MarkWritten(idx uint32) (prev State) {
@@ -161,6 +220,8 @@ func (t *Tracker) MarkWritten(idx uint32) (prev State) {
 		t.zero.Remove(idx)
 	case Clean:
 		t.clean.Remove(idx)
+	case Installing:
+		t.installing.Remove(idx)
 	case NotPresent, numStates:
 		// NotPresent: promotion sticks (see doc); numStates is unreachable.
 	}
@@ -189,6 +250,7 @@ func (t *Tracker) MarkWrittenPresent(idx uint32) (prev State) {
 	t.zero.Remove(idx)
 	t.removed.Remove(idx)
 	t.clean.Remove(idx)
+	t.installing.Remove(idx)
 	t.dirty.Add(idx)
 
 	return prev
@@ -224,6 +286,8 @@ func (t *Tracker) bitmapFor(state State) *roaring.Bitmap {
 		return t.removed
 	case Clean:
 		return t.clean
+	case Installing:
+		return t.installing
 	case NotPresent:
 		return nil
 	default:
@@ -251,6 +315,8 @@ func (t *Tracker) stateOf(idx uint32) State {
 		return Removed
 	case t.clean.Contains(idx):
 		return Clean
+	case t.installing.Contains(idx):
+		return Installing
 	default:
 		return NotPresent
 	}
@@ -275,8 +341,9 @@ func (t *Tracker) HasRange(start, end uint32, state State) bool {
 	return bm.CardinalityInRange(uint64(start), uint64(end)) == uint64(end-start)
 }
 
-// Present reports whether every index in [start, end) has been observed
-// (i.e., is not NotPresent).
+// Present reports whether every index in [start, end) is installed or
+// removed, i.e. readable from the mapping. Installing pages have no bytes
+// yet and do not count.
 func (t *Tracker) Present(start, end uint32) bool {
 	if end <= start {
 		return end == start
@@ -296,7 +363,9 @@ func (t *Tracker) Present(start, end uint32) bool {
 // Export returns clones of the dirty and empty bitmaps. Zero and Removed
 // pages both read back as zeros, so they merge into the empty set. Clean
 // pages appear in neither: their content matches the source, so a snapshot
-// diff inherits them from the parent layer.
+// diff inherits them from the parent layer. Installing pages appear in
+// neither as well: nothing can have been written to a page that is not yet
+// installed.
 func (t *Tracker) Export() (dirty, empty *roaring.Bitmap) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -304,8 +373,24 @@ func (t *Tracker) Export() (dirty, empty *roaring.Bitmap) {
 	return t.dirty.Clone(), roaring.Or(t.zero, t.removed)
 }
 
-// ExportStates returns clones of all four per-state bitmaps, without the
-// empty-set merging Export applies.
+// Counts returns how many pages are in each state. NotPresent stays 0: the
+// tracker records the pages that left it, not the size of the memory.
+func (t *Tracker) Counts() (counts [NumStates]uint64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for state := range numStates {
+		if bm := t.bitmapFor(state); bm != nil {
+			counts[state] = bm.GetCardinality()
+		}
+	}
+
+	return counts
+}
+
+// ExportStates returns clones of the four installed/removed per-state
+// bitmaps, without the empty-set merging Export applies. Installing pages
+// are absent, like NotPresent.
 func (t *Tracker) ExportStates() (dirty, zero, removed, clean *roaring.Bitmap) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

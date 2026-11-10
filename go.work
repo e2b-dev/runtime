@@ -1,11 +1,10 @@
-go 1.26.8
+go 1.27.3
 
 use (
 	./packages/api
 	./packages/auth
 	./packages/clickhouse
 	./packages/client-proxy
-	./packages/dashboard-api
 	./packages/db
 	./packages/envd
 	./packages/local-dev

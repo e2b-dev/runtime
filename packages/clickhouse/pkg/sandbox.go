@@ -115,7 +115,8 @@ func (c *Client) QuerySandboxMetrics(ctx context.Context, sandboxID string, team
 		clickhouse.Named("sandbox_id", sandboxID),
 		clickhouse.Named("team_id", teamID),
 		clickhouse.DateNamed("start_time", start, clickhouse.Seconds),
-		clickhouse.DateNamed("end_time", end, clickhouse.Seconds),
+		// The bound binds at whole seconds; rounding up keeps a sample stored after the last whole second.
+		clickhouse.DateNamed("end_time", end.Add(time.Second-time.Nanosecond).Truncate(time.Second), clickhouse.Seconds),
 		clickhouse.Named("step", strconv.Itoa(int(step.Seconds()))),
 	)
 	if err != nil {

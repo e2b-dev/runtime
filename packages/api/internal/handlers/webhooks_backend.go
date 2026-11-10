@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
@@ -19,8 +19,8 @@ import (
 // newWebhooksClient dials nothing: grpc.NewClient only prepares the connection,
 // so a backend that is down or not yet deployed cannot keep the API from
 // starting.
-func newWebhooksClient(address string) (*grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(address, webhooksDialOptions()...)
+func newWebhooksClient(address string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	conn, err := grpc.NewClient(address, webhooksDialOptions(creds)...)
 	if err != nil {
 		return nil, fmt.Errorf("creating the webhooks backend client: %w", err)
 	}
@@ -29,15 +29,16 @@ func newWebhooksClient(address string) (*grpc.ClientConn, error) {
 }
 
 // webhooksDialOptions configures the connection to the backend. The hop is
-// private, in-cluster and plaintext by decision, it carries no credential, and
-// a call that may have reached the backend is never replayed by the transport.
+// private and in-cluster; it dials through creds, plaintext while its mutual
+// TLS mode is off, carries no other credential, and a call that may have
+// reached the backend is never replayed by the transport.
 //
 // The receive limit is raised because gRPC's own default is 4 MiB and a valid
 // deliveries page exceeds it; the call would otherwise fail with
 // ResourceExhausted for a request the spec allows.
-func webhooksDialOptions() []grpc.DialOption {
+func webhooksDialOptions(creds credentials.TransportCredentials) []grpc.DialOption {
 	return []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithDisableRetry(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxDeliveriesPageBytes)),

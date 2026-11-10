@@ -93,6 +93,21 @@ func backfillMissingV3UncompressedBuilds(h *Header) {
 // it to throughput telemetry. Errors (including storage.ErrObjectNotExist) are
 // returned as-is.
 func LoadHeader(ctx context.Context, s storage.StorageProvider, path string) (*Header, int, error) {
+	h, n, err := LoadStoredHeader(ctx, s, path)
+	if err != nil {
+		return nil, n, err
+	}
+
+	if !h.IncompletePendingUpload {
+		backfillMissingV3UncompressedBuilds(h)
+	}
+
+	return h, n, nil
+}
+
+// LoadStoredHeader is LoadHeader without the V3 uncompressed-build backfill:
+// its Builds map holds exactly the entries the serialized header carried.
+func LoadStoredHeader(ctx context.Context, s storage.StorageProvider, path string) (*Header, int, error) {
 	blob, err := s.OpenBlob(ctx, path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("open blob %s: %w", path, err)
@@ -110,10 +125,6 @@ func LoadHeader(ctx context.Context, s storage.StorageProvider, path string) (*H
 	storage.RecordReadBlobDecompress(ctx, time.Since(decStart), int64(len(data)), path, headerCodec(h), err)
 	if err != nil {
 		return nil, len(data), err
-	}
-
-	if !h.IncompletePendingUpload {
-		backfillMissingV3UncompressedBuilds(h)
 	}
 
 	return h, len(data), nil

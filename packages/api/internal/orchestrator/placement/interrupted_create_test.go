@@ -28,7 +28,7 @@ func TestPlaceSandbox_InterruptedCreateReportsNode(t *testing.T) {
 	// the deadline lands mid-flight (the orchestrator collapses this to Internal).
 	node.SetSandboxClient(erroringClient(cancel, status.Error(codes.Internal, "context canceled")))
 
-	result, err := PlaceSandbox(ctx, failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), CPURequirement{}, false, nil)
+	result, err := PlaceSandbox(ctx, failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), Requirements{}, false, nil)
 
 	require.Error(t, err)
 	assert.True(t, result.TimedOut)
@@ -49,7 +49,7 @@ func TestPlaceSandbox_ResourceExhaustedInterruptNotCompensated(t *testing.T) {
 	node := nodemanager.NewTestNode("node1", api.NodeStatusReady, 0, 4)
 	node.SetSandboxClient(erroringClient(cancel, status.Error(codes.ResourceExhausted, "no capacity")))
 
-	result, err := PlaceSandbox(ctx, failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), CPURequirement{}, false, nil)
+	result, err := PlaceSandbox(ctx, failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), Requirements{}, false, nil)
 
 	require.Error(t, err)
 	assert.True(t, result.TimedOut)
@@ -65,7 +65,7 @@ func TestPlaceSandbox_HardFailureNoCancelNoInterruptedNode(t *testing.T) {
 	node := nodemanager.NewTestNode("node1", api.NodeStatusReady, 0, 4,
 		nodemanager.WithSandboxCreateError(status.Error(codes.Internal, "create failed")))
 
-	result, err := PlaceSandbox(t.Context(), failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), CPURequirement{}, false, nil)
+	result, err := PlaceSandbox(t.Context(), failIfCalled(t), []*nodemanager.Node{node}, node, testSbxRequest("test-sandbox"), Requirements{}, false, nil)
 
 	require.Error(t, err)
 	assert.False(t, result.TimedOut)

@@ -47,9 +47,11 @@ const (
 type Source int8
 
 const (
-	// Order is latency-ascending and load-bearing: Slice records the slowest
-	// source it touched via max() over per-fetch sources.
+	// Order is a fixed source precedence and load-bearing: Slice uses max()
+	// when a read touches several sources. It does not measure their latency.
 	UnknownSource Source = iota
+	// SourceZero is a range the header maps to no build: zero-filled, never read.
+	SourceZero
 	SourceMmap
 	SourceFS
 	SourcePeer
@@ -60,10 +62,14 @@ const (
 	numSources
 )
 
+// NumSources sizes a per-source table.
+const NumSources = numSources
+
 func (s Source) String() string { return sourceStrings[s] }
 
 var sourceStrings = [numSources]string{
 	UnknownSource: "unknown",
+	SourceZero:    "zero",
 	SourceMmap:    "mmap",
 	SourceFS:      "fs",
 	SourcePeer:    "peer",
@@ -296,6 +302,14 @@ func RecordReadBlobDecompress(ctx context.Context, dur time.Duration, bytes int6
 }
 
 var meter = otel.Meter("github.com/e2b-dev/infra/packages/shared/pkg/storage")
+
+// uploadFramesHeld counts the memory compressed frames occupy, by capacity,
+// from compression until their part is uploaded. See heldFrames.
+var uploadFramesHeld = utils.Must(meter.Int64UpDownCounter(
+	"orchestrator.storage.upload.frames.held",
+	metric.WithDescription("Memory held by compressed frames of in-progress uploads, by allocated capacity, until their part is uploaded"),
+	metric.WithUnit("By"),
+))
 
 var googleWriteTimerFactory = utils.Must(telemetry.NewTimerFactory(meter,
 	"orchestrator.storage.gcs.write",

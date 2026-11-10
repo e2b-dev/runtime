@@ -17,15 +17,22 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Ephemeral runners lack the pinned toolchain, so setup-go downloads it
+    # Ephemeral runners without the pinned toolchain make setup-go download it
     # every run; restore it from the actions cache instead. No restore-keys:
-    # only the exact version helps.
+    # only the exact version helps. Images that preinstall the version skip the
+    # step: restoring over the image's copy is at best a wasted download and,
+    # where the tree is root-owned, a failed one that the post step re-saves.
     - name: Resolve Go toolchain version
       id: toolchain
       shell: bash
-      run: awk '$1 == "go" { v = $2 } $1 == "toolchain" { v = substr($2, 3) } END { print "version=" v }' go.work >> "$GITHUB_OUTPUT"
+      env:
+        TOOL_CACHE: ${{ runner.tool_cache }}
+        ARCH: ${{ runner.arch }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/toolchain-present.sh" go.work "$TOOL_CACHE" "$ARCH" | tee -a "$GITHUB_OUTPUT"
 
     - name: Cache Go toolchain
+      if: steps.toolchain.outputs.present != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.tool_cache }}/go/${{ steps.toolchain.outputs.version }}
@@ -37,3 +44,20 @@ runs:
         go-version-file: go.work
         cache-dependency-path: |
           ${{ inputs.cache-dependency-paths }}
+
+    # proxy.golang.org sometimes resets an HTTP/2 stream mid-transfer
+    # ("stream error: ... INTERNAL_ERROR; received from peer"). The go
+    # command does not retry, and the default comma-separated GOPROXY moves
+    # to its next entry only on a 404 or 410, so one reset fails the job. A
+    # pipe moves on after any error, so the same proxy listed again is the
+    # retry; direct stays last for a module the proxy lacks. The three
+    # entries are one endpoint spelled three ways on purpose: the go command
+    # keys its per-proxy repo cache by the string as written and memoises a
+    # failed .mod or .info fetch in it, so an identical entry would replay
+    # the error instead of asking again (only .zip fetches are not
+    # memoised). Exported rather than prefetched: golangci-lint's typecheck,
+    # go test and go tool fetch lazily, and in workspace mode a bare `go mod
+    # download` pulls every module of every workspace module.
+    - name: Retry module proxy errors
+      shell: bash
+      run: echo 'GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.golang.org/|direct' | tee -a "$GITHUB_ENV"

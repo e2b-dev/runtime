@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +77,40 @@ func TestGetTargetFromRequest(t *testing.T) {
 			host:      "abcd-isv6ril5xadwn1k9t2jye.e2b.app",
 			wantID:    "isv6ril5xadwn1k9t2jye",
 			wantPort:  49983,
+			wantErrAs: InvalidSandboxPortError{},
+		},
+		{
+			name:      "sandbox-host-with-zero-port",
+			host:      "0-isv6ril5xadwn1k9t2jye.e2b.app",
+			wantErrAs: InvalidSandboxPortError{},
+		},
+		{
+			name:      "sandbox-host-with-port-above-max",
+			host:      "65536-isv6ril5xadwn1k9t2jye.e2b.app",
+			wantErrAs: InvalidSandboxPortError{},
+		},
+		{
+			name:     "sandbox-host-with-max-port",
+			host:     "65535-isv6ril5xadwn1k9t2jye.e2b.app",
+			wantID:   "isv6ril5xadwn1k9t2jye",
+			wantPort: 65535,
+		},
+		{
+			name: "headers: zero port",
+			host: "localhost:1234",
+			headers: http.Header{
+				headerSandboxID:   []string{"isv6ril5xadwn1k9t2jye"},
+				headerSandboxPort: []string{"0"},
+			},
+			wantErrAs: InvalidSandboxPortError{},
+		},
+		{
+			name: "headers: port above max",
+			host: "localhost:1234",
+			headers: http.Header{
+				headerSandboxID:   []string{"isv6ril5xadwn1k9t2jye"},
+				headerSandboxPort: []string{"70000"},
+			},
 			wantErrAs: InvalidSandboxPortError{},
 		},
 		{
@@ -235,7 +271,8 @@ func TestGetTargetFromRequest(t *testing.T) {
 			}
 
 			if tt.wantErrAs != nil {
-				require.ErrorAs(t, err, &tt.wantErrIs) //nolint:testifylint // doesn't need to
+				_, ok := errors.AsType[InvalidSandboxPortError](err)
+				require.True(t, ok, "error %v is not an InvalidSandboxPortError", err)
 
 				return // no further checks when an error was expected
 			}
@@ -247,6 +284,66 @@ func TestGetTargetFromRequest(t *testing.T) {
 			if gotPort != tt.wantPort {
 				t.Errorf("ParseHost(%q) port = %d, want %d", tt.host, gotPort, tt.wantPort)
 			}
+		})
+	}
+}
+
+func TestMatchSandboxHost(t *testing.T) {
+	t.Parallel()
+
+	const (
+		sandboxID = "isv6ril5xadwn1k9t2jye"
+		otherID   = "iother5b5aiixd410phsjv"
+	)
+	routing := func(id, port string) http.Header {
+		return http.Header{headerSandboxID: {id}, headerSandboxPort: {port}}
+	}
+
+	tests := []struct {
+		name       string
+		host       string
+		headers    http.Header
+		wantDomain string
+		wantOK     bool
+		// local marks hosts GetTargetFromRequest reads from the routing
+		// headers alone; they have no domain, so MatchSandboxHost refuses them.
+		local bool
+	}{
+		{name: "sandbox host", host: "3000-" + sandboxID + ".e2b.dev", wantDomain: "e2b.dev", wantOK: true},
+		{name: "sandbox host with a client ID", host: "3000-" + sandboxID + "-6532622b.e2b.dev", wantDomain: "e2b.dev", wantOK: true},
+		{name: "sandbox host under a subdomain", host: "3000-" + sandboxID + ".demo.e2b.app", wantDomain: "demo.e2b.app", wantOK: true},
+		{name: "sandbox host with a port leaves the port out of the domain", host: "3000-" + sandboxID + ".e2b.dev:443", wantDomain: "e2b.dev", wantOK: true},
+		{name: "domain is returned as written", host: "3000-" + sandboxID + ".E2B.dev.", wantDomain: "E2B.dev.", wantOK: true},
+		{name: "routing headers do not override a sandbox host", host: "3000-" + sandboxID + ".e2b.dev", headers: routing(otherID, "8000"), wantDomain: "e2b.dev", wantOK: true},
+		{name: "sandbox host naming another sandbox", host: "3000-" + otherID + ".e2b.dev"},
+		{name: "sandbox host naming another port", host: "8000-" + sandboxID + ".e2b.dev"},
+		{name: "sandbox host without a domain", host: "3000-" + sandboxID},
+		{name: "sandbox host with an invalid port", host: "http-" + sandboxID + ".e2b.dev"},
+		{name: "shared host with routing headers naming the sandbox", host: "sandbox.e2b.dev", headers: routing(sandboxID, "3000"), wantDomain: "e2b.dev", wantOK: true},
+		{name: "shared host with a port", host: "sandbox.e2b.dev:443", headers: routing(sandboxID, "3000"), wantDomain: "e2b.dev", wantOK: true},
+		{name: "shared host with routing headers naming another sandbox", host: "sandbox.e2b.dev", headers: routing(otherID, "3000")},
+		{name: "shared host with routing headers naming another port", host: "sandbox.e2b.dev", headers: routing(sandboxID, "8000")},
+		{name: "shared host without routing headers", host: "sandbox.e2b.dev"},
+		{name: "shared host without the port header", host: "sandbox.e2b.dev", headers: http.Header{headerSandboxID: {sandboxID}}},
+		{name: "shared host without a domain", host: "sandbox.", headers: routing(sandboxID, "3000")},
+		{name: "localhost with routing headers", host: "localhost:3000", headers: routing(sandboxID, "3000"), local: true},
+		{name: "IP address with routing headers", host: "127.0.0.1", headers: routing(sandboxID, "3000"), local: true},
+	}
+
+	getTargetFromRequest := GetTargetFromRequest()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			domain, ok := MatchSandboxHost(tt.host, tt.headers, sandboxID, 3000)
+
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantDomain, domain)
+
+			// MatchSandboxHost must agree with how requests are routed.
+			id, port, err := getTargetFromRequest(&http.Request{Host: tt.host, Header: tt.headers})
+			routed := err == nil && id == sandboxID && port == 3000
+			assert.Equal(t, routed && !tt.local, ok, "routed to the sandbox: %t (id %q, port %d, err %v)", routed, id, port, err)
 		})
 	}
 }

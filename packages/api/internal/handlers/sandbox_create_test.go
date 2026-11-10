@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	middleware "github.com/oapi-codegen/gin-middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -21,11 +25,12 @@ import (
 	handlersmocks "github.com/e2b-dev/infra/packages/api/internal/handlers/mocks"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -399,13 +404,64 @@ func TestValidateNetworkConfig(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		// DNS server validation tests
+		{
+			name: "empty dns_servers is valid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "IPv4 dns_servers are valid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{"1.1.1.1", "9.9.9.9"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "more than 10 dns_servers is invalid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{"1.1.1.1", "1.1.1.2", "1.1.1.3", "1.1.1.4", "1.1.1.5", "1.1.1.6", "1.1.1.7", "1.1.1.8", "1.1.1.9", "1.1.1.10", "1.1.1.11"},
+			},
+			wantErr:    true,
+			wantCode:   http.StatusBadRequest,
+			wantErrMsg: "DNS servers can have at most 10 entries.",
+		},
+		{
+			name: "hostname in dns_servers is invalid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{"1.1.1.1", "dns.example.com"},
+			},
+			wantErr:    true,
+			wantCode:   http.StatusBadRequest,
+			wantErrMsg: "invalid DNS server dns.example.com: must be an IPv4 address",
+		},
+		{
+			name: "CIDR in dns_servers is invalid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{"1.1.1.1/32"},
+			},
+			wantErr:    true,
+			wantCode:   http.StatusBadRequest,
+			wantErrMsg: "invalid DNS server 1.1.1.1/32: must be an IPv4 address",
+		},
+		{
+			name: "unspecified address in dns_servers is invalid",
+			network: &api.SandboxNetworkConfig{
+				DnsServers: &[]string{"0.0.0.0"},
+			},
+			wantErr:    true,
+			wantCode:   http.StatusBadRequest,
+			wantErrMsg: "invalid DNS server 0.0.0.0: must be an IPv4 address",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mockFF := handlersmocks.NewMockFeatureFlagsClient(t)
-			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", 10, tt.network)
+			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", networkRuleLimits{MaxDomains: 10, MaxHeaderValueLen: 2048}, tt.network)
 
 			if tt.wantErr {
 				if err == nil {
@@ -648,6 +704,137 @@ func TestOrchestrator_convertVolumeMounts(t *testing.T) {
 	})
 }
 
+func TestNewSandboxFromV2(t *testing.T) {
+	t.Parallel()
+
+	t.Run("v2 request has every NewSandbox field except secure", func(t *testing.T) {
+		t.Parallel()
+
+		v1Fields := map[string]reflect.Type{}
+		for f := range reflect.TypeFor[api.NewSandbox]().Fields() {
+			v1Fields[f.Name] = f.Type
+		}
+		delete(v1Fields, "Secure")
+
+		v2Fields := map[string]reflect.Type{}
+		for f := range reflect.TypeFor[api.NewSandboxV2]().Fields() {
+			v2Fields[f.Name] = f.Type
+		}
+
+		assert.Equal(t, v1Fields, v2Fields)
+	})
+
+	t.Run("forces secure and copies every field", func(t *testing.T) {
+		t.Parallel()
+
+		timeout := int32(60)
+		autoPause := true
+		autoPauseMemory := false
+		allowInternet := false
+		allowPublicTraffic := false
+
+		v2 := api.NewSandboxV2{
+			TemplateID:          "base",
+			Timeout:             &timeout,
+			CpuCount:            new(api.CPUCount(2)),
+			AutoPause:           &autoPause,
+			AutoPauseMemory:     &autoPauseMemory,
+			AutoResume:          &api.SandboxAutoResumeConfig{Enabled: true},
+			AllowInternetAccess: &allowInternet,
+			Network:             &api.SandboxNetworkConfig{AllowPublicTraffic: &allowPublicTraffic},
+			Metadata:            &api.SandboxMetadata{"k": "v"},
+			EnvVars:             &api.EnvVars{"A": "1"},
+			Mcp:                 &api.Mcp{},
+			Iam:                 &api.SandboxIam{},
+			VolumeMounts:        &[]api.SandboxVolumeMount{{Name: "vol", Path: "/vol"}},
+		}
+
+		got := newSandboxFromV2(v2)
+
+		require.NotNil(t, got.Secure)
+		assert.True(t, *got.Secure)
+
+		got.Secure = nil
+		var want api.NewSandbox
+		raw, err := json.Marshal(v2)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(raw, &want))
+		assert.Equal(t, want, got)
+	})
+}
+
+func TestPostSandboxes_AlwaysRequiresSecureCapableTemplate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		secure *bool
+	}{
+		{name: "secure omitted"},
+		{name: "secure false", secure: new(false)},
+		{name: "secure true", secure: new(true)},
+	}
+
+	db := testutils.SetupDatabase(t)
+	redis := redis_utils.SetupInstance(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	teamSlug := testutils.GetTeamSlug(t, ctx, db, teamID)
+
+	flags, err := featureflags.NewClientWithLogLevel("", "", "", ldlog.Error)
+	require.NoError(t, err)
+
+	store := &APIStore{
+		templateCache: templatecache.NewTemplateCache(db.SqlcClient, redis),
+		featureFlags:  flags,
+	}
+	t.Cleanup(func() {
+		require.NoError(t, store.templateCache.Close(ctx))
+	})
+
+	alias := "secure-access-required"
+	templateID := createTestTemplate(ctx, t, db, teamID)
+	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &teamSlug)
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+
+			body, err := json.Marshal(api.PostSandboxesJSONRequestBody{
+				TemplateID: id.WithNamespace(teamSlug, alias),
+				Secure:     tt.secure,
+			})
+			require.NoError(t, err)
+
+			ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
+			ginCtx.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
+				Team: &dbtypes.Team{
+					ID:   teamID,
+					Slug: teamSlug,
+				},
+				Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
+			})
+
+			//nolint:contextcheck // handler reads ctx from ginCtx.Request.Context().
+			store.PostSandboxes(ginCtx)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+			var apiErr api.Error
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &apiErr))
+			assert.Equal(t, int32(http.StatusBadRequest), apiErr.Code)
+			assert.Equal(t, "You need to re-build template to allow using secured access. Please visit https://e2b.dev/docs/sandbox/secured-access for more information.", apiErr.Message)
+		})
+	}
+}
+
 func TestPostSandboxes_MissingTagDisclosure(t *testing.T) {
 	t.Parallel()
 
@@ -693,7 +880,7 @@ func TestPostSandboxes_MissingBareAliasUsesPromotedFallbackKey(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -753,7 +940,7 @@ func TestPostSandboxes_PrivateTemplateHidesAccessDenied(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -807,7 +994,7 @@ func assertMissingTagDisclosure(t *testing.T, public bool, alias string) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -868,7 +1055,7 @@ func assertMissingDefaultTagDisclosure(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -978,7 +1165,11 @@ func TestValidateNetworkRules(t *testing.T) {
 	t.Parallel()
 
 	teamID := uuid.New()
-	const defaultMaxDomains = 10
+	const (
+		defaultMaxDomains        = 10
+		defaultMaxHeaderValueLen = 2048
+	)
+	defaultLimits := networkRuleLimits{MaxDomains: defaultMaxDomains, MaxHeaderValueLen: defaultMaxHeaderValueLen}
 
 	rulesWithDomains := func(count int) *map[string][]api.SandboxNetworkRule {
 		rules := make(map[string][]api.SandboxNetworkRule, count)
@@ -1324,7 +1515,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen),
 				})},
 			}),
 			setupFF: ffEnabled,
@@ -1334,7 +1525,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen+1),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
 				})},
 			}),
 			setupFF:  ffEnabled,
@@ -1361,7 +1552,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			t.Parallel()
 
 			ff := tt.setupFF(t)
-			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultMaxDomains, tt.rules)
+			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultLimits, tt.rules)
 
 			if tt.wantMsg == "" {
 				assert.Nil(t, apiErr)
@@ -1380,7 +1571,18 @@ func TestValidateNetworkRules(t *testing.T) {
 		})
 	}
 
-	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, defaultMaxDomains+1, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+	customDomains := defaultLimits
+	customDomains.MaxDomains = defaultMaxDomains + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customDomains, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+
+	longValue := new(map[string][]api.SandboxNetworkRule{
+		"api.openai.com": {simpleRule(map[string]string{
+			"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
+		})},
+	})
+	customHeaderLen := defaultLimits
+	customHeaderLen.MaxHeaderValueLen = defaultMaxHeaderValueLen + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customHeaderLen, longValue), "custom max header value length should override the boundary")
 }
 
 func createTestTemplateAliasWithName(ctx context.Context, t *testing.T, db *testutils.Database, templateID, aliasName string, namespace *string) {
@@ -1395,4 +1597,146 @@ func createTestTemplateAliasWithName(ctx context.Context, t *testing.T, db *test
 		namespace,
 	)
 	require.NoError(t, err)
+}
+
+func TestCreateNetworkAppliesProjectIngressDefault(t *testing.T) {
+	t.Parallel()
+
+	swagger, err := api.GetSwagger()
+	require.NoError(t, err)
+	swagger.Servers = nil
+
+	router := gin.New()
+	router.Use(middleware.OapiRequestValidatorWithOptions(swagger, &middleware.Options{
+		Options: openapi3filter.Options{
+			AuthenticationFunc: func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
+			MultiError:         true,
+		},
+		SilenceServersWarning: true,
+	}))
+	// Each route decodes the validated body the way its production handler does.
+	router.POST("/sandboxes", func(c *gin.Context) {
+		body, err := ginutils.ParseBody[api.PostSandboxesJSONRequestBody](c.Request.Context(), c)
+		if err != nil {
+			c.Status(http.StatusTeapot)
+
+			return
+		}
+		c.JSON(http.StatusOK, body)
+	})
+	router.POST("/v2/sandboxes", func(c *gin.Context) {
+		var body api.PostV2SandboxesJSONRequestBody
+		if err := c.ShouldBind(&body); err != nil {
+			c.Status(http.StatusTeapot)
+
+			return
+		}
+		c.JSON(http.StatusOK, newSandboxFromV2(body))
+	})
+
+	// An old API binary caches the team without the field.
+	var oldCachedTeam authtypes.Team
+	require.NoError(t, json.Unmarshal([]byte(`{"ID":"`+uuid.NewString()+`","Slug":"team","Limits":{"MaxLengthHours":24}}`), &oldCachedTeam))
+	require.Nil(t, oldCachedTeam.ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic)
+
+	private := ingressOnly(false)
+	projectDefaults := map[string]*bool{"unset": oldCachedTeam.ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic, "public": new(true), "private": new(false)}
+
+	tests := []struct {
+		name    string
+		network string
+		want    map[string]*dbtypes.SandboxNetworkConfig
+	}{
+		{
+			name: "network omitted",
+			want: map[string]*dbtypes.SandboxNetworkConfig{"unset": nil, "public": nil, "private": private},
+		},
+		{
+			name:    "empty network",
+			network: `{}`,
+			want:    map[string]*dbtypes.SandboxNetworkConfig{"unset": withEgress(true, nil), "public": withEgress(true, nil), "private": withEgress(false, nil)},
+		},
+		{
+			name:    "egress only",
+			network: `{"allowOut":["8.8.8.8"]}`,
+			want: map[string]*dbtypes.SandboxNetworkConfig{
+				"unset":   withEgress(true, []string{"8.8.8.8"}),
+				"public":  withEgress(true, []string{"8.8.8.8"}),
+				"private": withEgress(false, []string{"8.8.8.8"}),
+			},
+		},
+		{
+			name:    "legacy null flag",
+			network: `{"allowPublicTraffic":null}`,
+			want:    map[string]*dbtypes.SandboxNetworkConfig{"unset": withEgress(true, nil), "public": withEgress(true, nil), "private": withEgress(false, nil)},
+		},
+		{
+			name:    "explicit true",
+			network: `{"allowPublicTraffic":true}`,
+			want:    map[string]*dbtypes.SandboxNetworkConfig{"unset": withEgress(true, nil), "public": withEgress(true, nil), "private": withEgress(true, nil)},
+		},
+		{
+			name:    "explicit false",
+			network: `{"allowPublicTraffic":false}`,
+			want:    map[string]*dbtypes.SandboxNetworkConfig{"unset": withEgress(false, nil), "public": withEgress(false, nil), "private": withEgress(false, nil)},
+		},
+	}
+
+	for _, path := range []string{"/sandboxes", "/v2/sandboxes"} {
+		t.Run(path+" rejects a null network", func(t *testing.T) {
+			t.Parallel()
+
+			recorder := postSandbox(t, router, path, `{"templateID":"base","network":null}`)
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+		})
+
+		for _, tt := range tests {
+			t.Run(path+" "+tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				body := `{"templateID":"base"}`
+				if tt.network != "" {
+					body = `{"templateID":"base","network":` + tt.network + `}`
+				}
+				recorder := postSandbox(t, router, path, body)
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+				var decoded api.NewSandbox
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &decoded))
+
+				for project, projectDefault := range projectDefaults {
+					got := sandboxNetworkConfig(decoded.Network, dbtypes.SandboxSettings{DefaultAllowPublicTraffic: projectDefault})
+					if want := tt.want[project]; want == nil {
+						assert.Nil(t, got, "project default %s", project)
+					} else {
+						require.NotNil(t, got, "project default %s", project)
+						assert.Equal(t, want.Ingress.AllowPublicAccess, got.Ingress.AllowPublicAccess, "project default %s", project)
+						assert.Equal(t, want.Egress, got.Egress, "project default %s", project)
+					}
+				}
+			})
+		}
+	}
+}
+
+func postSandbox(t *testing.T, router *gin.Engine, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	return recorder
+}
+
+func ingressOnly(allowPublicAccess bool) *dbtypes.SandboxNetworkConfig {
+	return &dbtypes.SandboxNetworkConfig{Ingress: &dbtypes.SandboxNetworkIngressConfig{AllowPublicAccess: &allowPublicAccess}}
+}
+
+func withEgress(allowPublicAccess bool, allowOut []string) *dbtypes.SandboxNetworkConfig {
+	network := ingressOnly(allowPublicAccess)
+	network.Egress = &dbtypes.SandboxNetworkEgressConfig{AllowedAddresses: allowOut}
+
+	return network
 }

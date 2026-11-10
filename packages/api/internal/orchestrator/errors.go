@@ -6,7 +6,10 @@ var (
 	ErrSandboxNotFound        = errors.New("sandbox not found")
 	ErrAccessForbidden        = errors.New("access forbidden")
 	ErrSandboxOperationFailed = errors.New("sandbox operation failed")
-	// ErrRefusedRouteLost: the node refused the pause retryably but the edge
-	// could not put the sandbox's route back, so the sandbox cannot be kept.
-	ErrRefusedRouteLost = errors.New("pause refused by the node and the edge could not restore its route")
+	// ErrExecutionChanged: a pause pinned with RemoveOpts.ExpectExecutionID
+	// found a different execution stored; nothing was changed.
+	ErrExecutionChanged = errors.New("sandbox execution changed")
+	// ErrSandboxLifecycleHeld: an operation outside the API's ordinary
+	// lifecycle holds the sandbox. Nothing was changed.
+	ErrSandboxLifecycleHeld = errors.New("sandbox lifecycle is held by another operation")
 )

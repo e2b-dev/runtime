@@ -87,12 +87,14 @@ components:
         - unhealthy
         - standby
         - shutting_down
+        - not_ready
       x-enum-varnames:
         - Healthy
         - Draining
         - Unhealthy
         - Standby
         - ShuttingDown
+        - NotReady
 
     ClusterOrchestratorRole:
       type: string

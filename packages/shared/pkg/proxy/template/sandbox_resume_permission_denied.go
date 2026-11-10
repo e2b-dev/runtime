@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_sandbox_resume_permission_denied.html
 var sandboxResumePermissionDeniedHtml string
-var sandboxResumePermissionDeniedHtmlTemplate = template.Must(template.New("sandboxResumePermissionDeniedHtml").Parse(sandboxResumePermissionDeniedHtml))
+var sandboxResumePermissionDeniedHtmlTemplate = newBrowserPage("sandboxResumePermissionDeniedHtml", sandboxResumePermissionDeniedHtml)
 
 type sandboxResumePermissionDeniedData struct {
 	SandboxId string `json:"sandboxId"`

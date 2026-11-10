@@ -83,6 +83,49 @@ func (c *Client) FaultOffsets() ([]int64, error) {
 	return reply.Offsets, nil
 }
 
+// SourceStats returns how many source reads the child has issued and the
+// most that were in flight at once.
+func (c *Client) SourceStats() (SourceStatsReply, error) {
+	var reply SourceStatsReply
+	err := c.rpc.Call("Paging.SourceStats", &Empty{}, &reply)
+
+	return reply, err
+}
+
+// ServeStats returns the child's serve counters.
+func (c *Client) ServeStats() (ServeStatsReply, error) {
+	var reply ServeStatsReply
+	err := c.rpc.Call("Paging.ServeStats", &Empty{}, &reply)
+
+	return reply, err
+}
+
+// Prefault installs one page through the child's Prefault path, with the
+// page's bytes taken from the child's source.
+func (c *Client) Prefault(offset int64) (bool, error) {
+	var reply PrefaultReply
+	err := c.rpc.Call("Paging.Prefault", &PrefaultArgs{Offset: offset}, &reply)
+
+	return reply.Installed, err
+}
+
+// PageState returns the tracker state of one page without draining workers.
+func (c *Client) PageState(offset int64) (uint8, error) {
+	var reply PageStateReply
+	err := c.rpc.Call("Paging.PageState", &PageStateArgs{Offset: offset}, &reply)
+
+	return reply.State, err
+}
+
+// EventPending reports whether the child's uffd fd is readable, i.e. the
+// kernel has queued an event the serve loop has not read yet.
+func (c *Client) EventPending() (bool, error) {
+	var reply EventPendingReply
+	err := c.rpc.Call("Paging.EventPending", &Empty{}, &reply)
+
+	return reply.Pending, err
+}
+
 // CoWBegin installs a CoW export window over the given page indices in the
 // serving child (real BeginCoWExport: arm + install through the live uffd).
 func (c *Client) CoWBegin(pages []uint64) error {

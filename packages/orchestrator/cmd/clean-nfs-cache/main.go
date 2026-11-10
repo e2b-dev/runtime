@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	envconfig "github.com/caarlos0/env/v11"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.uber.org/zap"
@@ -61,7 +62,13 @@ func main() {
 }
 
 func run(ctx context.Context, opts cleaner.Options, log logger.Logger, metrics *cleaner.Metrics) error {
-	if opts.TargetBytesToDelete == 0 {
+	if err := opts.Validate(); err != nil {
+		return err
+	}
+
+	// The byte budget resolves its target after the scan, so only the
+	// percent/bytes-to-delete modes can be decided here.
+	if opts.TargetBytesToDelete == 0 && opts.MaxCacheBytes == 0 {
 		log.Info(ctx, "disk already at or below target, nothing to do",
 			zap.Float64("target_disk_usage_percent", opts.TargetDiskUsagePercent))
 
@@ -91,7 +98,8 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 
 	flags := flag.NewFlagSet("clean-nfs-cache", flag.ExitOnError)
 	flags.Uint64Var(&opts.TargetBytesToDelete, "target-bytes-to-delete", 0, "target number of bytes to delete (overrides disk-usage-target-percent)")
-	flags.Float64Var(&opts.TargetDiskUsagePercent, "disk-usage-target-percent", 90, "disk usage target as a % (0-100)")
+	flags.Float64Var(&opts.TargetDiskUsagePercent, "disk-usage-target-percent", 90, "disk usage target as a % (0-100); needs a real disk — errors out on an elastic filesystem (EFS) unless max-cache-bytes is set")
+	flags.Uint64Var(&opts.MaxCacheBytes, "max-cache-bytes", 0, "byte budget for elastic filesystems (EFS): when the cache, sized from chunk filenames, exceeds this, evict coldest-first down to it; replaces disk-usage-target-percent (0 = off)")
 	flags.BoolVar(&opts.DryRun, "dry-run", true, "dry run")
 	flags.IntVar(&opts.MaxConcurrentStat, "max-concurrent-stat", 32, "number of concurrent statx goroutines (the NFS-latency-bound step — keep many RPCs in flight)")
 	flags.IntVar(&opts.MaxConcurrentScan, "max-concurrent-scan", 32, "number of concurrent build readdir goroutines")
@@ -104,6 +112,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 	flags.IntVar(&opts.BuildSampleMax, "build-sample-max", 0, "cap on build dirs scanned per run; 0 (default) = no limit (scan every build). Set > 0 to bound readdir/stat at huge caches, then min/pct apply")
 	flags.DurationVar(&opts.Grace, "grace", cleaner.GracePeriod, "never delete a build that has been warm within this window — warmth is the most-recent sampled chunk access (atime), or create time (btime) for a build with no chunks yet. Skips new and recently-used builds; 0 = no floor")
 	flags.BoolVar(&opts.Verify, "verify", false, "before each cold delete, stat the build's non-chunk files and record their size vs the flat estimate (chunk sizes are trusted from filenames); off by default")
+	flags.DurationVar(&opts.RunBudget, "run-budget", 0, "wall-time budget for one run: once spent, stop queueing deletes and starting batches; with build-sample-max > 0 and no max-cache-bytes, a run that misses its target scans further samples while time remains. Set it below the schedule interval so the next run starts on time, and well above the time to list the root and scan one sample, or the first batch has little time to delete; 0 = no budget, one sample")
 
 	args := os.Args[1:] // skip the command name
 	if err := flags.Parse(args); err != nil {
@@ -116,7 +125,12 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 	}
 	opts.Path = args[0]
 
-	ffc, err := featureflags.NewClient()
+	ffConfig, err := envconfig.ParseAs[featureflags.Config]()
+	if err != nil {
+		return opts, nil, nil, nil, nil, fmt.Errorf("could not parse feature flags config: %w", err)
+	}
+
+	ffc, err := featureflags.NewClient(ffConfig.DeploymentEnvironment, serviceName, serviceVersion)
 	if err != nil {
 		return opts, nil, nil, nil, nil, err
 	}
@@ -159,8 +173,14 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		if m.Get("targetBytesToDelete").IsNumber() {
 			opts.TargetBytesToDelete = uint64(m.Get("targetBytesToDelete").Float64Value())
 		}
+		if m.Get("maxCacheBytes").IsNumber() {
+			opts.MaxCacheBytes = uint64(m.Get("maxCacheBytes").Float64Value())
+		}
 		if m.Get("verify").IsBool() {
 			opts.Verify = m.Get("verify").BoolValue()
+		}
+		if m.Get("runBudgetSeconds").IsNumber() {
+			opts.RunBudget = time.Duration(m.Get("runBudgetSeconds").IntValue()) * time.Second
 		}
 	}
 
@@ -202,16 +222,27 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		l.Info(ctx, "feature flag present", zap.String("flag", featureflags.CleanNFSCache.String()))
 	}
 
-	if opts.TargetBytesToDelete == 0 && opts.TargetDiskUsagePercent > 0 {
-		diskInfo, derr := cleaner.GetDiskInfo(ctx, opts.Path)
+	// Percent mode: resolve the target from the filesystem size. Skipped when a byte budget is set
+	// (the budget replaces it — and on EFS the reported size is meaningless anyway).
+	if opts.TargetBytesToDelete == 0 && opts.MaxCacheBytes == 0 && opts.TargetDiskUsagePercent > 0 {
+		diskInfo, derr := cleaner.GetDiskInfo(opts.Path)
 		if derr != nil {
 			tel.Shutdown(ctx)
 
 			return opts, nil, nil, nil, nil, fmt.Errorf("could not get disk info: %w", derr)
 		}
+		if diskInfo.Elastic() {
+			// Fail the job rather than no-op forever: on EFS "used percent" is ~0
+			// however large the cache grows, and every GB is billed monthly.
+			tel.Shutdown(ctx)
+
+			return opts, nil, nil, nil, nil, fmt.Errorf(
+				"statfs reports %d bytes total for %s — an elastic filesystem (Amazon EFS reports 8 EiB), so disk-usage-target-percent can never trigger; set --max-cache-bytes instead",
+				diskInfo.Total, opts.Path)
+		}
 		targetDiskUsage := uint64(opts.TargetDiskUsagePercent / 100 * float64(diskInfo.Total))
-		if uint64(diskInfo.Used) > targetDiskUsage {
-			opts.TargetBytesToDelete = uint64(diskInfo.Used) - targetDiskUsage
+		if diskInfo.Used > targetDiskUsage {
+			opts.TargetBytesToDelete = diskInfo.Used - targetDiskUsage
 		}
 	}
 
@@ -219,6 +250,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		zap.Bool("dry_run", opts.DryRun),
 		zap.Uint64("target_bytes_to_delete", opts.TargetBytesToDelete),
 		zap.Float64("target_disk_usage_percent", opts.TargetDiskUsagePercent),
+		zap.Uint64("max_cache_bytes", opts.MaxCacheBytes),
 		zap.Int("sample_min", opts.SampleMinFiles),
 		zap.Int("sample_pct", opts.SamplePercent),
 		zap.Int("sample_max", opts.SampleMaxFiles),
@@ -230,6 +262,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		zap.Int("max_concurrent_stat", opts.MaxConcurrentStat),
 		zap.Int("max_concurrent_scan", opts.MaxConcurrentScan),
 		zap.Int("max_concurrent_delete", opts.MaxConcurrentDelete),
+		zap.Duration("run_budget", opts.RunBudget),
 	)
 
 	return opts, l, tel, metrics, meterProvider, nil

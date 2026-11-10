@@ -2,10 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -18,16 +20,49 @@ import (
 
 type pauseContextKey struct{}
 
-type pauseContextCatalog struct {
-	restorableCatalog
+// transitionCommitHook runs afterCommit once the pause transition is written,
+// before the snapshot upsert: the earliest point a caller can cancel after
+// the removal is committed.
+type transitionCommitHook struct {
+	afterCommit func()
 
-	beforeDelete func(context.Context)
+	fired atomic.Bool
 }
 
-func (c *pauseContextCatalog) DeleteSandbox(ctx context.Context, sandboxID, executionID string) error {
-	c.beforeDelete(ctx)
+func (h *transitionCommitHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 
-	return c.restorableCatalog.DeleteSandbox(ctx, sandboxID, executionID)
+func (h *transitionCommitHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *transitionCommitHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if err == nil && ctx.Value(pauseContextKey{}) != nil && isStartTransitionScript(cmd) {
+			h.fired.Store(true)
+			h.afterCommit()
+		}
+
+		return err
+	}
+}
+
+// startTransitionScript's keys are the record, the transition, its result
+// and the record's lock. The finish script's start with the transition. The
+// record key is the one with no transition segment.
+func isStartTransitionScript(cmd redis.Cmder) bool {
+	if cmd.Name() != "evalsha" && cmd.Name() != "eval" {
+		return false
+	}
+	args := cmd.Args()
+	if len(args) < 5 {
+		return false
+	}
+	numKeys, _ := args[2].(int)
+	first, _ := args[3].(string)
+	second, _ := args[4].(string)
+
+	return numKeys == 4 && !isTransitionMarker(first) && isTransitionMarker(second)
 }
 
 type pauseContextClient struct {
@@ -60,33 +95,24 @@ func TestRemoveSandbox_PausePersistsSnapshotAfterCallerCancellation(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			f := newRefusalFixture(t, true, consts.LocalClusterID, nil)
-			ctx := context.WithValue(t.Context(), pauseContextKey{}, "request-value")
+			var f refusalFixture
 			var cancel context.CancelFunc
+			hook := &transitionCommitHook{afterCommit: func() {
+				stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+				require.NoError(t, err)
+				require.Equal(t, sandbox.StatePausing, stored.State)
+				if tt.beforeUpsert {
+					cancel()
+				}
+			}}
+			f = newRefusalFixture(t, true, consts.LocalClusterID, nil, hook)
+			ctx := context.WithValue(t.Context(), pauseContextKey{}, "request-value")
 			if tt.callerTimeout > 0 {
 				ctx, cancel = context.WithTimeout(ctx, tt.callerTimeout)
 			} else {
 				ctx, cancel = context.WithCancel(ctx)
 			}
 			defer cancel()
-
-			var pauseDeadline time.Time
-			f.o.routingCatalog = &pauseContextCatalog{
-				restorableCatalog: f.o.routingCatalog,
-				beforeDelete: func(pauseCtx context.Context) {
-					stored, err := f.o.sandboxStore.Get(pauseCtx, f.sbx.TeamID, f.sbx.SandboxID)
-					require.NoError(t, err)
-					require.Equal(t, sandbox.StatePausing, stored.State)
-
-					var ok bool
-					pauseDeadline, ok = pauseCtx.Deadline()
-					require.True(t, ok)
-					assert.WithinDuration(t, time.Now().Add(80*time.Second), pauseDeadline, time.Second)
-					if tt.beforeUpsert {
-						cancel()
-					}
-				},
-			}
 
 			var snapshotBuildID uuid.UUID
 			node := f.o.GetNode(f.sbx.ClusterID, f.sbx.NodeID)
@@ -96,7 +122,7 @@ func TestRemoveSandbox_PausePersistsSnapshotAfterCallerCancellation(t *testing.T
 				assert.Equal(t, "request-value", pauseCtx.Value(pauseContextKey{}))
 				deadline, ok := pauseCtx.Deadline()
 				require.True(t, ok)
-				assert.Equal(t, pauseDeadline, deadline, "snapshot upsert and RPC must share the pause budget")
+				assert.WithinDuration(t, time.Now().Add(pauseTimeout), deadline, 2*time.Second, "the RPC runs on the pause budget, not the caller's")
 
 				var err error
 				snapshotBuildID, err = uuid.Parse(in.GetBuildId())
@@ -106,6 +132,7 @@ func TestRemoveSandbox_PausePersistsSnapshotAfterCallerCancellation(t *testing.T
 			}})
 
 			require.NoError(t, f.o.RemoveSandbox(ctx, f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause}))
+			require.True(t, hook.fired.Load())
 			require.ErrorIs(t, ctx.Err(), context.Canceled)
 			require.NotEqual(t, uuid.Nil, snapshotBuildID)
 

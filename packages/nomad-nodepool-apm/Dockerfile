@@ -1,8 +1,11 @@
-ARG GOLANG_VERSION=1.26.8
+ARG GOLANG_VERSION=1.27.3
 ARG ALPINE_VERSION=3.24
 
 # Build stage
 FROM golang:${GOLANG_VERSION}-alpine${ALPINE_VERSION} AS builder
+# Fall through to a retry on any module proxy error; see
+# .github/actions/go-setup-cache/action.yml for the mechanism.
+ENV GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.golang.org/|direct
 
 WORKDIR /app
 
@@ -10,13 +13,13 @@ WORKDIR /app
 COPY go.mod go.sum ./
 
 # Download dependencies
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # Copy source code
 COPY . .
 
 # Build the plugin
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /nomad-nodepool-apm .
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /nomad-nodepool-apm .
 
 # Final stage - minimal image, but shared with builder
 FROM alpine:${ALPINE_VERSION}

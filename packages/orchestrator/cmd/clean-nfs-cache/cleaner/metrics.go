@@ -58,6 +58,7 @@ type Metrics struct {
 	// and the population/throughput numbers that have no counter/histogram source;
 	// the per-run scalar totals are read from the triples/counters via increase().
 	LastListBuilds  metric.Int64Gauge // build dirs found by the most recent root listing (the population; the scan triple's count is the sampled subset)
+	LastCacheBytes  metric.Int64Gauge // By; estimated whole-cache size after the most recent scan (the value the byte budget is judged against)
 	PhaseDuration   metric.Int64Gauge // ms; {phase}=list/scan/delete wall time this run (stack by phase)
 	LastRunDuration metric.Int64Gauge // s; most recent whole-run wall time
 
@@ -112,6 +113,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		unit string
 	}{
 		{&m.LastListBuilds, "nfsclean.last.list.builds", "Build dirs found by the most recent root listing — the population the sample is drawn from (sticky last-value gauge)", ""},
+		{&m.LastCacheBytes, "nfsclean.last.cache.bytes", "Estimated on-disk size of the whole cache after the most recent scan, summed from chunk filenames and scaled up when build sampling is on — what --max-cache-bytes is judged against; the only size signal on elastic filesystems (EFS) where df is meaningless (sticky last-value gauge)", "By"},
 		{&m.PhaseDuration, "nfsclean.last.phase.duration", "Wall time of each phase this run, labeled {phase} (list/scan/delete) — stack by phase for a per-run breakdown (sticky last-value gauge)", "ms"},
 		{&m.LastRunDuration, "nfsclean.last.run.duration", "Most recent whole-run wall time (sticky last-value gauge)", "s"},
 	}
@@ -208,6 +210,11 @@ func (m *Metrics) recordPhase(ctx context.Context, phase string, d time.Duration
 // recordLastListBuilds records the build-dir count found by the root listing this run.
 func (m *Metrics) recordLastListBuilds(ctx context.Context, n int) {
 	m.LastListBuilds.Record(ctx, int64(n))
+}
+
+// recordLastCacheBytes records the estimated whole-cache size after this run's scan.
+func (m *Metrics) recordLastCacheBytes(ctx context.Context, n uint64) {
+	m.LastCacheBytes.Record(ctx, int64(n))
 }
 
 // recordScanBuild records one scanned build's triple (nfsclean.scan): wall time,

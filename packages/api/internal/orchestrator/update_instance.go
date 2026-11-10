@@ -19,6 +19,7 @@ import (
 
 func (o *Orchestrator) UpdateSandbox(
 	ctx context.Context,
+	teamID string,
 	sandboxID string,
 	endTime time.Time,
 	clusterID uuid.UUID,
@@ -36,7 +37,7 @@ func (o *Orchestrator) UpdateSandbox(
 		return fmt.Errorf("node '%s' not found", nodeID)
 	}
 
-	client, ctx := node.GetClient(ctx)
+	client, ctx := node.GetSandboxClient(ctx, teamID)
 	_, err := client.Sandbox.Update(
 		ctx, &orchestrator.SandboxUpdateRequest{
 			SandboxId: sandboxID,

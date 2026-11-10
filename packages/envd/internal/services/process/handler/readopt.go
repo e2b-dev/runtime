@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 	rpc "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process"
@@ -108,19 +107,17 @@ func Readopt(args ReadoptArgs, logger *zerolog.Logger) *Handler {
 
 	// NB: the reaper is NOT started here. It emits the terminal EndEvent, and a
 	// process whose sleep timer expired during the freeze can exit the instant
-	// it is unfrozen — before a caller (the service's trackTermination) has
-	// subscribed to EndEvent. Starting the reaper here would race that
-	// subscription and drop the exit code. The caller must subscribe first and
-	// then call BeginReaping.
+	// it is unfrozen — before the caller has set OnExit. Starting the reaper
+	// here would race that hook and drop the exit code. The caller must set
+	// OnExit first and then call BeginReaping.
 	return h
 }
 
-// BeginReaping starts the pidfd reaper (and re-arms the carried timeout). It
-// must be called AFTER the caller has subscribed to the handler's EndEvent, so
-// a fast-exiting re-adopted process cannot emit its terminal event before there
-// is a subscriber to retain it.
+// BeginReaping starts the reaper (and re-arms the carried timeout). It
+// must be called AFTER the caller has set OnExit, so a fast-exiting re-adopted
+// process cannot emit its terminal event before the hook that retains it.
 func (p *Handler) BeginReaping() {
-	go p.reapByPidfd()
+	go p.reapReadopted()
 
 	// Re-arm the carried process timeout: kill the process once the remaining
 	// timeout elapses, unless it exits first (outCtx is cancelled on exit). This
@@ -181,48 +178,11 @@ func (p *Handler) pump(r io.Reader, chunk int, counter *atomic.Int64, mk func([]
 	}
 }
 
-// reapByPidfd blocks on the child's pidfd until it exits, then harvests the
-// status with a pid-specific wait4 and emits the EndEvent (never wait4(-1),
-// which would steal os/exec's post-upgrade children).
-func (p *Handler) reapByPidfd() {
-	// Prefer a pidfd to wait for exit, but if pidfd_open fails (the process
-	// already exited, or fd exhaustion) fall back to a blocking pid-specific
-	// wait4 below. Either way a terminal event is still emitted — never leave the
-	// process orphaned in the live map with clients blocked on an EndEvent that
-	// would otherwise never fire.
-	if pidfd, err := pidfdOpen(int(p.pid)); err != nil {
-		p.logger.Warn().Err(err).Uint32("pid", p.pid).Msg("readopt: pidfd_open failed; falling back to blocking wait4")
-	} else {
-		pfd := []unix.PollFd{{Fd: int32(pidfd), Events: unix.POLLIN}}
-		for {
-			if _, perr := unix.Poll(pfd, -1); perr != nil {
-				if errors.Is(perr, unix.EINTR) {
-					continue
-				}
-			}
-
-			break
-		}
-		unix.Close(pidfd)
-	}
-
-	var ws syscall.WaitStatus
-	_, werr := syscall.Wait4(int(p.pid), &ws, 0, nil)
-
-	end := &rpc.ProcessEvent_EndEvent{}
-	switch {
-	case werr != nil:
-		msg := werr.Error()
-		end.Error = &msg
-		end.Status = "wait4 error"
-	case ws.Exited():
-		end.Exited = true
-		end.ExitCode = int32(ws.ExitStatus())
-		end.Status = "exited"
-	case ws.Signaled():
-		end.ExitCode = int32(128 + int(ws.Signal()))
-		end.Status = ws.Signal().String()
-	}
+// reapReadopted blocks until the re-adopted process exits, then emits its
+// EndEvent. Waiting is OS-specific (waitReadopted); publishing the terminal
+// event mirrors Wait's ordering.
+func (p *Handler) reapReadopted() {
+	end := p.waitReadopted()
 
 	p.EndEvent.Source <- rpc.ProcessEvent_End{End: end}
 	// Retain the terminal event synchronously — before closing the source — so a

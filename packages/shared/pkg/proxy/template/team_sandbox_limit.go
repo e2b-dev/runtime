@@ -2,13 +2,12 @@ package template
 
 import (
 	_ "embed"
-	"html/template"
 	"net/http"
 )
 
 //go:embed browser_team_sandbox_limit.html
 var teamSandboxLimitHtml string
-var teamSandboxLimitHtmlTemplate = template.Must(template.New("teamSandboxLimitHtml").Parse(teamSandboxLimitHtml))
+var teamSandboxLimitHtmlTemplate = newBrowserPage("teamSandboxLimitHtml", teamSandboxLimitHtml)
 
 type teamSandboxLimitData struct {
 	SandboxId string `json:"sandboxId"`

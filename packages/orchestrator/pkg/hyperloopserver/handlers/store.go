@@ -47,7 +47,7 @@ func NewHyperloopStore(logger logger.Logger, sandboxes *sandbox.Map, sandboxColl
 		collectorClient: http.Client{
 			Timeout: CollectorExporterTimeout,
 		},
-		logWriteConfig: featureflags.NewLogWriteConfigResolver(featureFlags, sandboxCollectorAddr),
+		logWriteConfig: featureflags.NewLogWriteConfigResolver(featureFlags, featureflags.LogWriteDefaultsFromEnv(sandboxCollectorAddr)),
 	}
 }
 

@@ -23,7 +23,7 @@ func TestAdminNodesOutstandingWork(t *testing.T) {
 	o := &Orchestrator{nodes: smap.New[*nodemanager.Node]()}
 	o.nodes.Insert(o.scopedNodeID(n.ClusterID, n.ID), n)
 
-	for _, work := range []*uint64{nil, new(uint64(0)), new(uint64(7)), new(uint64(math.MaxUint64)), nil} {
+	for _, work := range []uint64{0, 7, math.MaxUint64, 0} {
 		n.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{OutstandingWork: work})
 		nodes, err := o.AdminNodes(n.ClusterID)
 		require.NoError(t, err)
@@ -42,18 +42,7 @@ func TestAdminNodesOutstandingWork(t *testing.T) {
 		var detailJSON map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(data, &detailJSON))
 		for _, response := range []map[string]json.RawMessage{listJSON[0], detailJSON} {
-			if work == nil {
-				require.NotContains(t, response, "outstandingWork")
-			} else {
-				require.Equal(t, strconv.FormatUint(*work, 10), string(response["outstandingWork"]))
-			}
-		}
-
-		if work != nil {
-			*nodes[0].OutstandingWork = 11
-			require.Equal(t, work, detail.OutstandingWork)
-			*detail.OutstandingWork = 12
-			require.Equal(t, work, n.Metrics().OutstandingWork)
+			require.Equal(t, strconv.FormatUint(work, 10), string(response["outstandingWork"]))
 		}
 	}
 }
@@ -68,7 +57,7 @@ func TestAdminNodeOutstandingWorkSchema(t *testing.T) {
 			t.Parallel()
 
 			node := spec.Components.Schemas[name].Value
-			require.NotContains(t, node.Required, "outstandingWork")
+			require.Contains(t, node.Required, "outstandingWork")
 			work := node.Properties["outstandingWork"].Value
 			require.True(t, work.Type.Is("integer"))
 			require.Equal(t, "uint64", work.Format)
@@ -88,7 +77,7 @@ func TestAdminNodesMaxSandboxes(t *testing.T) {
 	o := &Orchestrator{nodes: smap.New[*nodemanager.Node]()}
 	o.nodes.Insert(o.scopedNodeID(n.ClusterID, n.ID), n)
 
-	for _, limit := range []*int64{nil, new(int64(200)), new(int64(320)), new(int64(0)), new(int64(-1)), nil} {
+	for _, limit := range []int64{0, 200, 320, 0, -1, 0} {
 		n.UpdateMetricsFromServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{MaxSandboxes: limit})
 		nodes, err := o.AdminNodes(n.ClusterID)
 		require.NoError(t, err)
@@ -101,11 +90,7 @@ func TestAdminNodesMaxSandboxes(t *testing.T) {
 			require.NoError(t, err)
 			var fields map[string]json.RawMessage
 			require.NoError(t, json.Unmarshal(data, &fields))
-			if limit == nil {
-				require.NotContains(t, fields, "maxSandboxes")
-			} else {
-				require.Equal(t, strconv.FormatInt(*limit, 10), string(fields["maxSandboxes"]))
-			}
+			require.Equal(t, strconv.FormatInt(limit, 10), string(fields["maxSandboxes"]))
 		}
 	}
 }
@@ -120,7 +105,7 @@ func TestAdminNodeMaxSandboxesSchema(t *testing.T) {
 			t.Parallel()
 
 			node := spec.Components.Schemas[name].Value
-			require.NotContains(t, node.Required, "maxSandboxes")
+			require.Contains(t, node.Required, "maxSandboxes")
 			limit := node.Properties["maxSandboxes"].Value
 			require.True(t, limit.Type.Is("integer"))
 			require.Equal(t, "int64", limit.Format)
@@ -128,4 +113,46 @@ func TestAdminNodeMaxSandboxesSchema(t *testing.T) {
 			require.False(t, limit.Nullable)
 		})
 	}
+}
+
+func TestAdminNodesStatusOwnerAndCapabilities(t *testing.T) {
+	t.Parallel()
+
+	parked := nodemanager.NewTestNode("parked", api.NodeStatusStandby, 0, 4, nodemanager.WithStatusOwner("x"), nodemanager.WithCapabilities("park-owner"))
+	bare := nodemanager.NewTestNode("bare", api.NodeStatusReady, 0, 4)
+	bare.ClusterID = parked.ClusterID
+	for _, n := range []*nodemanager.Node{parked, bare} {
+		client, _ := n.GetClient(t.Context())
+		t.Cleanup(func() { require.NoError(t, client.Close()) })
+	}
+	o := NewTestOrchestrator(parked, bare)
+
+	nodes, err := o.AdminNodes(parked.ClusterID)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	detail, err := o.AdminNodeDetail(parked.ClusterID, parked.ID)
+	require.NoError(t, err)
+
+	// Sorted by id: bare first.
+	require.Nil(t, nodes[0].StatusOwner)
+	require.Nil(t, nodes[0].Capabilities)
+	require.Equal(t, "x", *nodes[1].StatusOwner)
+	require.Equal(t, []string{"park-owner"}, *nodes[1].Capabilities)
+	require.Equal(t, "x", *detail.StatusOwner)
+	require.Equal(t, []string{"park-owner"}, *detail.Capabilities)
+
+	for i, response := range []any{nodes[0], nodes[1], detail} {
+		data, err := json.Marshal(response)
+		require.NoError(t, err)
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &fields))
+		_, hasOwner := fields["statusOwner"]
+		_, hasCapabilities := fields["capabilities"]
+		require.Equal(t, i != 0, hasOwner)
+		require.Equal(t, i != 0, hasCapabilities)
+	}
+	data, err := json.Marshal(detail)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"statusOwner":"x"`)
+	require.Contains(t, string(data), `"capabilities":["park-owner"]`)
 }

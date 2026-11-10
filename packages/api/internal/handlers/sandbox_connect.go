@@ -42,14 +42,7 @@ func (a *APIStore) connectBackend() connectOrchestrator {
 func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.SandboxID) {
 	ctx := c.Request.Context()
 
-	// Get team from context, use TeamContextKey
 	teamInfo := auth.MustGetTeamInfo(c)
-
-	span := trace.SpanFromContext(ctx)
-	traceID := span.SpanContext().TraceID().String()
-	c.Set("traceID", traceID)
-
-	telemetry.ReportEvent(ctx, "Parsed body")
 
 	body, err := ginutils.ParseBody[api.PostSandboxesSandboxIDConnectJSONRequestBody](ctx, c)
 	if err != nil {
@@ -60,16 +53,56 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 		return
 	}
 
-	timeout := time.Duration(body.Timeout) * time.Second
-	if timeout > time.Duration(teamInfo.Limits.MaxLengthHours)*time.Hour {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Timeout cannot be greater than %d hours", teamInfo.Limits.MaxLengthHours))
+	timeout, apiErr := validateAndParseTimeout(&body.Timeout, teamInfo.Limits.MaxLengthHours)
+	if apiErr != nil {
+		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 		return
 	}
 
+	a.connectSandbox(c, sandboxID, timeout, body.Memory)
+}
+
+// PostV2SandboxesSandboxIDConnect accepts an optional body; an omitted timeout falls back to SandboxTimeoutDefaultV2.
+func (a *APIStore) PostV2SandboxesSandboxIDConnect(c *gin.Context, sandboxID api.SandboxID) {
+	ctx := c.Request.Context()
+
+	teamInfo := auth.MustGetTeamInfo(c)
+
+	body, err := ginutils.ParseOptionalBody[api.PostV2SandboxesSandboxIDConnectJSONRequestBody](ctx, c)
+	if err != nil {
+		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
+
+		telemetry.ReportCriticalError(ctx, "error when parsing request", err)
+
+		return
+	}
+
+	timeout, apiErr := validateAndParseTimeoutWithDefault(body.Timeout, teamInfo.Limits.MaxLengthHours, sandbox.SandboxTimeoutDefaultV2)
+	if apiErr != nil {
+		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+
+		return
+	}
+
+	a.connectSandbox(c, sandboxID, timeout, body.Memory)
+}
+
+// connectSandbox extends a running sandbox's TTL or resumes a paused one from its last snapshot.
+func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeout time.Duration, memory *bool) {
+	ctx := c.Request.Context()
+
+	teamInfo := auth.MustGetTeamInfo(c)
+
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+	c.Set("traceID", traceID)
+
+	telemetry.ReportEvent(ctx, "Parsed body")
+
 	teamID := teamInfo.Team.ID
 
-	sandboxID, err = utils.ShortID(sandboxID)
+	sandboxID, err := utils.ShortID(sandboxID)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, "Invalid sandbox ID")
 
@@ -84,7 +117,16 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 	for attempt := range maxConnectRetries {
 		sbx, apiErr := a.connectBackend().KeepAliveFor(ctx, teamID, sandboxID, timeout, false)
 		if apiErr == nil {
-			c.JSON(http.StatusOK, sbx.ToAPISandbox())
+			apiSbx := sbx.ToAPISandbox()
+			// A cluster can move to a new domain while its sandboxes keep
+			// running. Answer with the cluster's current domain, as sandbox get
+			// does, not the one recorded when the sandbox was created.
+			if teamInfo.Team.ClusterID != nil {
+				if cluster, ok := a.clusters.GetClusterById(*teamInfo.Team.ClusterID); ok {
+					apiSbx.Domain = cluster.SandboxDomain
+				}
+			}
+			c.JSON(http.StatusOK, apiSbx)
 
 			return
 		}
@@ -165,8 +207,9 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 
 	// Pre-flight of the fetcher's authoritative gate so a disabled flag answers
 	// 400 even when the start would otherwise join an in-flight one (409).
-	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, body.Memory, lastSnapshot.Snapshot); apiErr != nil {
-		setMemoryOverrideOutcome(c, body.Memory, apiErr)
+	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, memory, lastSnapshot.Snapshot, lastSnapshot.EnvBuild); apiErr != nil {
+		setMemoryOverrideOutcome(c, memory, apiErr)
+		setResumeGateOutcome(c, memory, lastSnapshot.EnvBuild, apiErr)
 		apierrors.SendAPIError(c, apiErr)
 
 		return
@@ -183,15 +226,18 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 		sandboxID,
 		timeout,
 		teamInfo,
-		a.buildResumeSandboxData(sandboxID, nil, body.Memory),
+		a.buildResumeSandboxData(sandboxID, nil, memory),
 		&c.Request.Header,
 		true,
-		demandsFilesystemBoot(body.Memory, lastSnapshot.Snapshot),
+		demandsFilesystemBoot(memory, lastSnapshot.Snapshot),
 		nil, // mcp
 	)
-	setMemoryOverrideOutcome(c, body.Memory, createErr)
+	setMemoryOverrideOutcome(c, memory, createErr)
+	setResumeGateOutcome(c, memory, lastSnapshot.EnvBuild, createErr)
 	if createErr != nil {
-		apierrors.SendAPIError(c, createErr)
+		responseErr := *createErr
+		responseErr.Retryable = apierrors.UndefinedRetry
+		apierrors.SendAPIError(c, &responseErr)
 
 		return
 	}

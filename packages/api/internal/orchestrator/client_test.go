@@ -46,6 +46,7 @@ func newTestOrchestrator(t *testing.T, nomadClient *nomadapi.Client) *Orchestrat
 		nodes:         smap.New[*nodemanager.Node](),
 		nodeDiscovery: nomad.NewServices(nomadClient, []string{"orchestrator"}),
 		tel:           telemetry.NewNoopClient(),
+		nodeCreds:     insecure.NewCredentials(),
 	}
 }
 
@@ -438,7 +439,8 @@ func TestGetOrConnectNode_CarriesTheDiscoveryBackendToTheCatalog(t *testing.T) {
 					Port:       uint16(port),
 					Backend:    platform,
 				}}},
-				tel: telemetry.NewNoopClient(),
+				tel:       telemetry.NewNoopClient(),
+				nodeCreds: insecure.NewCredentials(),
 			}
 
 			node := o.getOrConnectNode(t.Context(), consts.LocalClusterID, nodeID)

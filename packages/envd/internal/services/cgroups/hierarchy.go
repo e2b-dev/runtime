@@ -16,8 +16,8 @@ const ProcSelfCgroup = "/proc/self/cgroup"
 // path in the resume, not by caution -- a list that grew with the customer population
 // would defeat the point of walking the hierarchy in the first place.
 //
-//   - init.scope holds systemd (PID 1). The resume thaw is deferred inside the /init
-//     handler, so it runs after setupNFS; volume mounts are nfsvers=3 without nolock, so
+//   - init.scope holds systemd (PID 1). The resume thaw runs late in the /init
+//     handler, after setupNFS; volume mounts are nfsvers=3 without nolock, so
 //     mount.nfs needs rpc.statd, which it asks systemd to start. Freeze PID 1 and every
 //     volume-mounting sandbox hangs to the NFS mount timeout and fails. Keeping systemd
 //     live is also what lets envd's own Restart=always fire if envd dies mid-resume.
@@ -28,8 +28,8 @@ const ProcSelfCgroup = "/proc/self/cgroup"
 //     (ProcessTypeSocat is absent from WorkloadProcessTypes); this preserves that.
 //   - rpcbind.service holds the local portmapper, and rpcbind.socket is its activation
 //     pair. nfsvers=3 mounts carry no `nolock`, so mount.nfs starts rpc.statd, which
-//     registers with the LOCAL portmapper -- and the resume thaw is deferred inside the
-//     /init handler, so it runs after setupNFS. Measured on a dev guest: with rpcbind
+//     registers with the LOCAL portmapper -- and the resume thaw runs late in the
+//     /init handler, after setupNFS. Measured on a dev guest: with rpcbind
 //     frozen, `rpcinfo -p 127.0.0.1` goes from answering in 0.145s to timing out, and a
 //     v3 mount attempt from a clean 3.2s error to a 25s hang. The socket unit holds no
 //     processes today, so freezing it stops nothing -- it is here because activation could

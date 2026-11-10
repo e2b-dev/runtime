@@ -2,37 +2,41 @@ package dummyserver
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 )
 
-// InfoServer is a static implementation of orchestratorinfo.InfoServiceServer
-// returning the bare minimum the api needs to route to this orchestrator.
+// InfoOptions describe the dummy node and what it reports. Machine is required.
+type InfoOptions struct {
+	NodeID, ServiceID, Version, Commit string
+	Labels                             []string
+	Machine                            *servicestatus.Machine
+	MaxSandboxes                       int64
+	SandboxCount                       func() uint32
+}
+
+// InfoServer implements orchestratorinfo.InfoServiceServer over the shared
+// status machine, so a test cluster running the dummy gets the status rules
+// a real orchestrator has.
 type InfoServer struct {
 	orchestratorinfo.UnimplementedInfoServiceServer
 
-	nodeID      string
-	serviceID   string
-	version     string
-	commit      string
-	labels      []string
+	options     InfoOptions
 	startedAt   time.Time
 	machineInfo *orchestratorinfo.MachineInfo
 }
 
-// NewInfo creates a new InfoServer with a stable per-process serviceID.
-func NewInfo(nodeID, serviceID, version, commit string, labels []string) *InfoServer {
+func NewInfo(options InfoOptions) *InfoServer {
 	return &InfoServer{
-		nodeID:    nodeID,
-		serviceID: serviceID,
-		version:   version,
-		commit:    commit,
-		labels:    labels,
+		options:   options,
 		startedAt: time.Now(),
 		machineInfo: &orchestratorinfo.MachineInfo{
 			CpuArchitecture: runtime.GOARCH,
@@ -43,21 +47,44 @@ func NewInfo(nodeID, serviceID, version, commit string, labels []string) *InfoSe
 	}
 }
 
+// NewMachine is the dummy's status machine. With a state dir, created when
+// missing, a Standby survives a restart through the shared record file;
+// without one nothing persists. A state dir that cannot be created returns no
+// machine; an unreadable record is returned beside the machine for the caller
+// to log, and the machine starts Healthy.
+func NewMachine(ctx context.Context, stateDir string) (*servicestatus.Machine, error) {
+	var store servicestatus.Store = servicestatus.NopStore{}
+	if stateDir != "" {
+		if err := os.MkdirAll(stateDir, 0o750); err != nil {
+			return nil, err
+		}
+		store = servicestatus.NewFileStore(filepath.Join(stateDir, servicestatus.FileName))
+	}
+	machine := servicestatus.New(store, time.Now)
+
+	return machine, machine.Restore(ctx)
+}
+
 func (s *InfoServer) ServiceInfo(_ context.Context, _ *emptypb.Empty) (*orchestratorinfo.ServiceInfoResponse, error) {
-	return &orchestratorinfo.ServiceInfoResponse{
-		NodeId:         s.nodeID,
-		ServiceId:      s.serviceID,
-		ServiceVersion: s.version,
-		ServiceCommit:  s.commit,
-		ServiceStatus:  orchestratorinfo.ServiceInfoStatus_Healthy,
+	resp := &orchestratorinfo.ServiceInfoResponse{
+		NodeId:         s.options.NodeID,
+		ServiceId:      s.options.ServiceID,
+		ServiceVersion: s.options.Version,
+		ServiceCommit:  s.options.Commit,
 		ServiceRoles:   []orchestratorinfo.ServiceInfoRole{orchestratorinfo.ServiceInfoRole_Orchestrator},
 		ServiceStartup: timestamppb.New(s.startedAt),
 		MachineInfo:    s.machineInfo,
-		Labels:         s.labels,
-	}, nil
+		Labels:         s.options.Labels,
+		MaxSandboxes:   s.options.MaxSandboxes,
+	}
+	if s.options.SandboxCount != nil {
+		resp.MetricSandboxesRunning = s.options.SandboxCount()
+	}
+	servicestatus.Fill(resp, s.options.Machine.Snapshot())
+
+	return resp, nil
 }
 
-func (s *InfoServer) ServiceStatusOverride(_ context.Context, _ *orchestratorinfo.ServiceStatusChangeRequest) (*emptypb.Empty, error) {
-	// No-op on the dummy server.
-	return &emptypb.Empty{}, nil
+func (s *InfoServer) ServiceStatusOverride(ctx context.Context, req *orchestratorinfo.ServiceStatusChangeRequest) (*emptypb.Empty, error) {
+	return servicestatus.HandleOverride(ctx, s.options.Machine.Override, req, nil)
 }

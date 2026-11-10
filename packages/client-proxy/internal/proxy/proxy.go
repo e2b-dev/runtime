@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -47,17 +48,35 @@ const (
 	autoResumeErrored
 )
 
-func catalogSandboxNodeIP(s *catalog.SandboxInfo) (string, error) {
-	return normalizeNodeIP(s.OrchestratorIP)
-}
+// routeHost returns the host and port a route's traffic goes to: the
+// orchestrator proxy for legacy and egress-router routes, the Router's
+// ingress endpoint saved in a full-router placement. A full-router route
+// without that endpoint, or an unknown mode, never falls back to the
+// orchestrator.
+func routeHost(route *catalog.SandboxInfo, orchestratorProxyPort uint16) (string, error) {
+	if placement := route.NetworkPlacement; placement != nil {
+		switch placement.NetworkMode {
+		case catalog.NetworkModeEgressRouter:
+		case catalog.NetworkModeFullRouter:
+			if route.ExecutionID == "" {
+				return "", fmt.Errorf("%w: full-router placement without its execution", ErrNodeRouteUnavailable)
+			}
+			if placement.IngressAddress == "" || placement.IngressPort == 0 || placement.IngressPort > math.MaxUint16 {
+				return "", fmt.Errorf("%w: full-router placement without its Router's ingress", ErrNodeRouteUnavailable)
+			}
 
-func normalizeNodeIP(nodeIP string) (string, error) {
-	nodeIP = strings.TrimSpace(nodeIP)
+			return net.JoinHostPort(placement.IngressAddress, strconv.FormatUint(uint64(placement.IngressPort), 10)), nil
+		default:
+			return "", fmt.Errorf("%w: unsupported network mode %q", ErrNodeRouteUnavailable, placement.NetworkMode)
+		}
+	}
+
+	nodeIP := strings.TrimSpace(route.OrchestratorIP)
 	if nodeIP == "" {
 		return "", ErrNodeRouteUnavailable
 	}
 
-	return nodeIP, nil
+	return net.JoinHostPort(nodeIP, strconv.Itoa(int(orchestratorProxyPort))), nil
 }
 
 func clientProxyMaskRequestHost(ctx context.Context, featureFlags *featureflags.Client, host string, sandboxID string, port uint64) *string {
@@ -71,25 +90,28 @@ func clientProxyMaskRequestHost(ctx context.Context, featureFlags *featureflags.
 	return &orchestratorHost
 }
 
-func catalogResolution(ctx context.Context, sandboxId string, sandboxPort uint64, trafficAccessToken string, envdAccessToken string, c catalog.SandboxesCatalog, pausedChecker PausedSandboxResumer) (string, error) {
+// catalogResolution returns the sandbox's route: the routing record on a
+// hit, and on a miss the route the resume answered with, without reading
+// the record again.
+func catalogResolution(ctx context.Context, sandboxId string, sandboxPort uint64, trafficAccessToken string, envdAccessToken string, c catalog.SandboxesCatalog, pausedChecker SandboxResumer) (*catalog.SandboxInfo, error) {
 	s, err := c.GetSandbox(ctx, sandboxId)
 	if err != nil {
 		if errors.Is(err, catalog.ErrSandboxNotFound) {
-			nodeIP, res, pausedErr := handlePausedSandbox(ctx, sandboxId, sandboxPort, trafficAccessToken, envdAccessToken, pausedChecker)
+			route, res, pausedErr := handlePausedSandbox(ctx, sandboxId, sandboxPort, trafficAccessToken, envdAccessToken, pausedChecker)
 			if pausedErr != nil {
-				return "", pausedErr
+				return nil, pausedErr
 			}
 			if res == autoResumeSucceeded {
-				return nodeIP, nil
+				return route, nil
 			}
 
-			return "", ErrNodeNotFound
+			return nil, ErrNodeNotFound
 		}
 
-		return "", fmt.Errorf("failed to get sandbox from catalog: %w", err)
+		return nil, fmt.Errorf("failed to get sandbox from catalog: %w", err)
 	}
 
-	return catalogSandboxNodeIP(s)
+	return s, nil
 }
 
 func handlePausedSandbox(
@@ -98,55 +120,129 @@ func handlePausedSandbox(
 	sandboxPort uint64,
 	trafficAccessToken string,
 	envdAccessToken string,
-	pausedChecker PausedSandboxResumer,
-) (string, autoResumeResult, error) {
+	pausedChecker SandboxResumer,
+) (*catalog.SandboxInfo, autoResumeResult, error) {
 	if pausedChecker == nil {
-		return "", autoResumeNotAllowed, nil
+		return nil, autoResumeNotAllowed, nil
 	}
 
-	logger.L().Info(ctx, "catalog miss, attempting resume via api", logger.WithSandboxID(sandboxId))
-	nodeIP, err := pausedChecker.Resume(ctx, sandboxId, sandboxPort, trafficAccessToken, envdAccessToken)
+	route, err := pausedChecker.Resume(ctx, sandboxId, sandboxPort, trafficAccessToken, envdAccessToken)
 	if err != nil {
-		if st, ok := status.FromError(err); ok {
+		if st, ok := resumeStatus(err); ok {
 			if st.Code() == codes.PermissionDenied {
-				return "", autoResumePermissionDenied, reverseproxy.NewErrSandboxResumePermissionDenied(sandboxId)
+				return nil, autoResumePermissionDenied, reverseproxy.NewErrSandboxResumePermissionDenied(sandboxId, err)
 			}
 			if st.Code() == codes.NotFound {
-				return "", autoResumeNotAllowed, nil
+				return nil, autoResumeNotAllowed, nil
 			}
 			if st.Code() == codes.FailedPrecondition && st.Message() == proxygrpc.SandboxStillTransitioningMessage {
-				return "", autoResumeErrored, reverseproxy.NewErrSandboxStillTransitioning(sandboxId)
+				// The SDK reads an envd-port 409 as "already exists" (a
+				// make_dir then reports success), so envd traffic gets
+				// the same page as 503, which it reads as unavailable.
+				if sandboxPort == uint64(consts.DefaultEnvdServerPort) {
+					return nil, autoResumeErrored, reverseproxy.NewErrSandboxStillTransitioningUnavailable(sandboxId)
+				}
+
+				return nil, autoResumeErrored, reverseproxy.NewErrSandboxStillTransitioning(sandboxId)
 			}
 			if st.Code() == codes.ResourceExhausted {
-				return "", autoResumeResourceExhausted, reverseproxy.NewErrSandboxResourceExhausted(sandboxId, st.Message())
+				return nil, autoResumeResourceExhausted, reverseproxy.NewErrSandboxResourceExhausted(sandboxId, st.Message())
+			}
+			// The code the API sent decides a placement outcome: a refusal
+			// no retry helps gets the refused page whatever its gRPC code
+			// (a node's refusal travels as 500 or 400), a placement timeout
+			// (504) and a create that failed on the node (500) the capacity
+			// page, since the not-found page they would fall to reads as
+			// the sandbox being gone.
+			code, permanent := resumeRefusalCode(st)
+			if permanent {
+				// The API's own status for the refusal, carried on its
+				// detail; from an API that sends none, a bad request stays
+				// a 400 the SDKs do not retry and anything else is the 503
+				// page.
+				statusCode := resumeHTTPStatus(st)
+				if statusCode == 0 {
+					statusCode = http.StatusServiceUnavailable
+					if st.Code() == codes.InvalidArgument {
+						statusCode = http.StatusBadRequest
+					}
+				}
+
+				return nil, autoResumeErrored, reverseproxy.NewErrSandboxPlacementRefused(sandboxId, st.Message(), code, statusCode)
+			}
+			// A placement code means the API found the sandbox and tried to
+			// place it; a bare Unavailable may be the API itself unreachable.
+			if proxygrpc.RetryablePlacementFailure(code) {
+				return nil, autoResumeErrored, reverseproxy.NewErrSandboxCapacity(sandboxId, reverseproxy.PresenceHeld, st.Message())
+			}
+			if st.Code() == codes.Unavailable {
+				return nil, autoResumeErrored, reverseproxy.NewErrSandboxCapacity(sandboxId, reverseproxy.PresenceUnknown, st.Message())
 			}
 		}
 
-		return "", autoResumeErrored, err
+		return nil, autoResumeErrored, err
 	}
 
-	nodeIP, err = normalizeNodeIP(nodeIP)
-	if err != nil {
-		return "", autoResumeErrored, err
-	}
-
-	return nodeIP, autoResumeSucceeded, nil
+	return route, autoResumeSucceeded, nil
 }
 
-// selectCatalog picks the routing source per request: the orchestrator-owned
-// record when OrchestratorRoutingPrioritizedFlag is on, else the API-owned one.
-// The sandbox ID is passed as a LaunchDarkly context so the flag can be rolled
-// out progressively per sandbox.
-func selectCatalog(ctx context.Context, featureFlags *featureflags.Client, sandboxID string, apiCatalog, orchestratorCatalog catalog.SandboxesCatalog) catalog.SandboxesCatalog {
-	if orchestratorCatalog != nil && featureFlags.BoolFlag(ctx, featureflags.OrchestratorRoutingPrioritizedFlag, featureflags.SandboxContext(sandboxID)) {
-		return orchestratorCatalog
-	}
+// RouterConnectionKey keys the pool client of full-router traffic, apart
+// from pool.ClientProxyConnectionKey, so the Router hop's transport serves
+// that traffic alone and is built once.
+const RouterConnectionKey = "client-proxy-router"
 
-	return apiCatalog
+// Option configures NewClientProxy.
+type Option func(*options)
+
+type options struct {
+	routerHop func(*http.Transport) *http.Transport
 }
 
-func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, catalog catalog.SandboxesCatalog, orchestratorCatalog catalog.SandboxesCatalog, pausedSandboxResumer PausedSandboxResumer, featureFlagsClient *featureflags.Client) (*reverseproxy.Proxy, error) {
+// WithRouterHop builds the transport of full-router traffic through wrap,
+// given the pool's own.
+func WithRouterHop(wrap func(base *http.Transport) *http.Transport) Option {
+	return func(o *options) {
+		o.routerHop = wrap
+	}
+}
+
+// NewClientProxy returns the proxy and, when resumes are enabled, the closer
+// that stops the resume flights still running after the proxy has shut down.
+// forwardedHostDomains lists the domains whose sandbox hosts a request's
+// X-Forwarded-Host may restore (restoreForwardedHost); empty turns that off.
+func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port, orchestratorProxyPort uint16, sandboxes catalog.SandboxesCatalog, sandboxResumer SandboxResumer, featureFlagsClient *featureflags.Client, forwardedHostDomains []string, opts ...Option) (*reverseproxy.Proxy, ResumeCloser, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	meter := meterProvider.Meter(serviceName)
+
+	var resumer SandboxResumer
+	var resumeCloser ResumeCloser
+	if sandboxResumer != nil {
+		flights, err := newResumeFlights(meter, sandboxResumer, featureFlagsClient)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		resumer = flights
+		resumeCloser = flights
+	}
+
+	proxyOptions := []reverseproxy.Option{reverseproxy.WithProbe()}
+	if o.routerHop != nil {
+		proxyOptions = append(proxyOptions, reverseproxy.WithTransportWrap(func(key string, base *http.Transport) *http.Transport {
+			if key == RouterConnectionKey {
+				return o.routerHop(base)
+			}
+
+			return base
+		}))
+	}
+
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
+	forwardedHostDomains = normalizeForwardedHostDomains(forwardedHostDomains)
 	proxy := reverseproxy.New(
 		port,
 		// Retries that are needed to handle port forwarding delays in sandbox envd are handled by the orchestrator proxy
@@ -158,44 +254,74 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 			if err != nil {
 				return nil, err
 			}
+			restoreForwardedHost(r, sandboxId, port, forwardedHostDomains)
 
 			l := logger.L().With(logger.ProxyRequestFields(r, sandboxId, port)...)
 
 			trafficAccessToken := r.Header.Get(proxygrpc.MetadataTrafficAccessToken)
 			envdAccessToken := r.Header.Get(proxygrpc.MetadataEnvdHTTPAccessToken)
-			routingSource := selectCatalog(ctx, featureFlagsClient, sandboxId, catalog, orchestratorCatalog)
-			nodeIP, err := catalogResolution(ctx, sandboxId, port, trafficAccessToken, envdAccessToken, routingSource, pausedSandboxResumer)
+			var host string
+			route, err := catalogResolution(ctx, sandboxId, port, trafficAccessToken, envdAccessToken, sandboxes, resumer)
+			if err == nil {
+				host, err = routeHost(route, orchestratorProxyPort)
+			}
 			if err != nil {
-				if resumeDeniedErr, ok := errors.AsType[*reverseproxy.SandboxResumePermissionDeniedError](err); ok {
-					l.Warn(ctx, "sandbox resume denied", zap.Error(err))
+				if sandboxErr, ok := errors.AsType[reverseproxy.SandboxError](err); ok {
+					// Logged with the request's fields; the lot-full shed is
+					// counted and stays quiet.
+					fields := []zap.Field{zap.Error(err)}
+					log := l.Warn
+					switch e := sandboxErr.(type) {
+					case *reverseproxy.SandboxCapacityError:
+						fields = append(fields, zap.String("reason", e.Message))
+						if e.Shed {
+							log = l.Debug
+						}
+					case *reverseproxy.SandboxPlacementRefusedError:
+						fields = append(fields, zap.String("reason", e.Message), zap.String("error_code", e.ErrorCode))
+					case *reverseproxy.SandboxNotFoundError,
+						*reverseproxy.SandboxResumePermissionDeniedError,
+						*reverseproxy.SandboxStillTransitioningError,
+						*reverseproxy.SandboxResourceExhaustedError,
+						*reverseproxy.TrafficAccessTokenError,
+						*reverseproxy.InternalRouteError:
+						// Nothing more to log than the error itself.
+					}
+					log(ctx, sandboxErr.Error(), fields...)
 
-					return nil, resumeDeniedErr
+					return nil, sandboxErr
 				}
 
-				if resourceExhaustedErr, ok := errors.AsType[*reverseproxy.SandboxResourceExhaustedError](err); ok {
-					l.Warn(ctx, "sandbox resource exhausted", zap.Error(err))
-
-					return nil, resourceExhaustedErr
+				// The caller left while it waited: nothing went wrong on
+				// this side, and nobody is left to read a page.
+				if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+					return nil, err
 				}
 
-				if stillTransitioningErr, ok := errors.AsType[*reverseproxy.SandboxStillTransitioningError](err); ok {
-					l.Warn(ctx, "sandbox still transitioning", zap.Error(err))
-
-					return nil, stillTransitioningErr
-				}
-
-				if errors.Is(err, ErrNodeRouteUnavailable) {
+				// Each answers the not-found page; they differ in what a
+				// probe learns, so a sandbox held here is never reported
+				// as elsewhere.
+				switch {
+				case errors.Is(err, ErrNodeRouteUnavailable):
 					l.Warn(ctx, "sandbox route unavailable", zap.Error(err))
-				} else if !errors.Is(err, ErrNodeNotFound) {
-					l.Warn(ctx, "failed to resolve node ip with Redis resolution", zap.Error(err))
-				}
 
-				return nil, reverseproxy.NewErrSandboxNotFound(sandboxId)
+					return nil, reverseproxy.NewErrSandboxNotFound(sandboxId, reverseproxy.PresenceHeld)
+				case errors.Is(err, ErrNodeNotFound) && resumer != nil:
+					return nil, reverseproxy.NewErrSandboxNotFound(sandboxId, reverseproxy.PresenceAbsent)
+				case errors.Is(err, ErrNodeNotFound):
+					// Without a resumer a catalog miss says nothing about
+					// a paused sandbox.
+					return nil, reverseproxy.NewErrSandboxNotFound(sandboxId, reverseproxy.PresenceUnknown)
+				default:
+					l.Warn(ctx, "failed to resolve node ip with Redis resolution", zap.Error(err))
+
+					return nil, reverseproxy.NewErrSandboxNotFound(sandboxId, reverseproxy.PresenceUnknown)
+				}
 			}
 
 			url := &url.URL{
 				Scheme: "http",
-				Host:   net.JoinHostPort(nodeIP, strconv.Itoa(int(orchestratorProxyPort))),
+				Host:   host,
 			}
 
 			l = l.With(
@@ -203,12 +329,20 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 				zap.String("target_port", url.Port()),
 			)
 
+			var expectedExecutionID string
+			connectionKey := pool.ClientProxyConnectionKey
+			if placement := route.NetworkPlacement; placement != nil && placement.NetworkMode == catalog.NetworkModeFullRouter {
+				expectedExecutionID = route.ExecutionID
+				connectionKey = RouterConnectionKey
+			}
+
 			return &pool.Destination{
-				SandboxId:     sandboxId,
-				RequestLogger: l,
-				SandboxPort:   port,
-				ConnectionKey: pool.ClientProxyConnectionKey,
-				Url:           url,
+				ExpectedExecutionID: expectedExecutionID,
+				SandboxId:           sandboxId,
+				RequestLogger:       l,
+				SandboxPort:         port,
+				ConnectionKey:       connectionKey,
+				Url:                 url,
 				MaskRequestHost: clientProxyMaskRequestHost(
 					ctx,
 					featureFlagsClient,
@@ -220,9 +354,9 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		},
 		nil,
 		false,
+		proxyOptions...,
 	)
 
-	meter := meterProvider.Meter(serviceName)
 	_, err := telemetry.GetObservableUpDownCounter(
 		meter, telemetry.ClientProxyPoolConnectionsMeterCounterName, func(_ context.Context, observer metric.Int64Observer) error {
 			observer.Observe(proxy.CurrentPoolConnections())
@@ -231,7 +365,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error registering client proxy connections metric (%s): %w", telemetry.ClientProxyPoolConnectionsMeterCounterName, err)
+		return nil, nil, fmt.Errorf("error registering client proxy connections metric (%s): %w", telemetry.ClientProxyPoolConnectionsMeterCounterName, err)
 	}
 
 	_, err = telemetry.GetObservableUpDownCounter(
@@ -242,7 +376,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error registering client proxy pool size metric (%s): %w", telemetry.ClientProxyPoolSizeMeterCounterName, err)
+		return nil, nil, fmt.Errorf("error registering client proxy pool size metric (%s): %w", telemetry.ClientProxyPoolSizeMeterCounterName, err)
 	}
 
 	_, err = telemetry.GetObservableUpDownCounter(
@@ -253,8 +387,8 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error registering client proxy server connections metric (%s): %w", telemetry.ClientProxyServerConnectionsMeterCounterName, err)
+		return nil, nil, fmt.Errorf("error registering client proxy server connections metric (%s): %w", telemetry.ClientProxyServerConnectionsMeterCounterName, err)
 	}
 
-	return proxy, nil
+	return proxy, resumeCloser, nil
 }

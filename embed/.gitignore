@@ -10,7 +10,7 @@ compose/env/*.local.env
 # tracked on purpose.
 !/compose/.env
 
-# `make lint` runs `terraform init` in the module and in the example, through a
+# `make lint` runs `terraform init` in each module and each example, through a
 # shared plugin cache; a module needs no lock file, so none of that is tracked.
 .terraform/
 .terraform-cache/

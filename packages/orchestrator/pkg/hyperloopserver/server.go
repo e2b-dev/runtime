@@ -35,7 +35,8 @@ func NewHyperloopServer(ctx context.Context, port uint16, logger logger.Logger, 
 	engine.Use(
 		gin.Recovery(),
 		limits.RequestSizeLimiter(maxUploadLimit),
-		middleware.OapiRequestValidatorWithOptions(swagger, &middleware.Options{}),
+		// Nothing reads the decoded body; don't hold it for the whole request.
+		middleware.OapiRequestValidatorWithOptions(swagger, &middleware.Options{DiscardValidatedValue: true}),
 	)
 
 	server := &http.Server{

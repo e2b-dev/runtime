@@ -4,6 +4,7 @@ package fc
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -145,4 +146,34 @@ func TestRunMetricsFlushLoop_SuppressesErrorWhenExitRacesFlush(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("loop did not stop after exit raced the flush")
 	}
+}
+
+// The flush-and-read wait keys on the line's own timestamp, not on "the
+// accumulator moved": a line from the periodic flusher that predates the
+// request does not satisfy it, one stamped at or after the request does.
+func TestWaitMetricsLineSince(t *testing.T) {
+	t.Parallel()
+	p := &Process{}
+	sinceMs := time.Now().UnixMilli()
+
+	p.metricsLineMs.Store(sinceMs - 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Millisecond)
+	defer cancel()
+	require.Error(t, p.waitMetricsLineSince(ctx, sinceMs), "an older line is not this flush")
+
+	p.metricsLineMs.Store(sinceMs)
+	require.NoError(t, p.waitMetricsLineSince(t.Context(), sinceMs), "a line stamped at the request satisfies it")
+
+	p2 := &Process{}
+	time.AfterFunc(20*time.Millisecond, func() { p2.metricsLineMs.Store(sinceMs + 5) })
+	require.NoError(t, p2.waitMetricsLineSince(t.Context(), sinceMs))
+}
+
+// A metrics line's timestamp decodes alongside the balloon counters.
+func TestFirecrackerMetricsDecodeTimestamp(t *testing.T) {
+	t.Parallel()
+	var m firecrackerMetrics
+	require.NoError(t, json.Unmarshal([]byte(`{"utc_timestamp_ms": 1739000000000, "balloon": {"free_page_hint_freed": 4096}}`), &m))
+	assert.Equal(t, int64(1739000000000), m.UtcTimestampMs)
+	assert.Equal(t, uint64(4096), m.Balloon.FreePageHintFreed)
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/envd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/cache"
-	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -45,15 +44,14 @@ const consumerStatusCheckGracePeriod = 15 * time.Second
 type ServerStore struct {
 	templatemanager.UnimplementedTemplateServiceServer
 
-	logger            logger.Logger
-	info              *service.ServiceInfo
-	builder           *build.Builder
-	buildCache        *cache.BuildCache
-	buildLogger       logger.Logger
-	featureFlags      *featureflags.Client
-	artifactsregistry artifactsregistry.ArtifactsRegistry
-	templateStorage   storage.StorageProvider
-	buildStorage      storage.StorageProvider
+	logger          logger.Logger
+	info            *service.ServiceInfo
+	builder         *build.Builder
+	buildCache      *cache.BuildCache
+	buildLogger     logger.Logger
+	featureFlags    *featureflags.Client
+	templateStorage storage.StorageProvider
+	buildStorage    storage.StorageProvider
 
 	wg           *sync.WaitGroup // wait group for running builds
 	activeBuilds atomic.Int64    // counter for active builds (for debugging)
@@ -124,11 +122,6 @@ func New(
 		}
 	}()
 
-	artifactsRegistry, err := artifactsregistry.GetArtifactsRegistryProvider(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error getting artifacts registry provider: %w", err)
-	}
-
 	dockerhubRepository, err := dockerhub.GetRemoteRepository(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting docker remote repository provider: %w", err)
@@ -157,17 +150,16 @@ func New(
 	)
 
 	store := &ServerStore{
-		logger:            logger,
-		info:              info,
-		builder:           builder,
-		buildCache:        buildCache,
-		buildLogger:       buildLogger,
-		featureFlags:      featureFlags,
-		artifactsregistry: artifactsRegistry,
-		templateStorage:   templatePersistence,
-		buildStorage:      buildPersistence,
-		wg:                &sync.WaitGroup{},
-		closers:           closers,
+		logger:          logger,
+		info:            info,
+		builder:         builder,
+		buildCache:      buildCache,
+		buildLogger:     buildLogger,
+		featureFlags:    featureFlags,
+		templateStorage: templatePersistence,
+		buildStorage:    buildPersistence,
+		wg:              &sync.WaitGroup{},
+		closers:         closers,
 	}
 
 	return store, nil

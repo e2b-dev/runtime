@@ -27,6 +27,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	e2bcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -45,7 +46,7 @@ const (
 
 var (
 	commitSHA string
-	version   = "0.3.0" // x-release-please-version
+	version   = "0.30.0" // x-release-please-version
 )
 
 func run() int {
@@ -100,15 +101,33 @@ func run() int {
 
 	l.Info(ctx, "Starting client proxy", zap.String("commit", commitSHA), zap.String("instance_id", instanceID))
 
-	featureFlagsClient, err := featureflags.NewClient()
+	featureFlagsClient, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, version, featureflags.WithStartOnInitTimeout())
 	if err != nil {
 		l.Error(ctx, "Failed to create feature flags client", zap.Error(err))
 
 		return 1
 	}
-	featureFlagsClient.SetServiceName(serviceName)
 
-	redisClient, err := factories.NewRedisClient(ctx, factories.RedisConfig{
+	tlsProcess, err := mtls.NewProcess(ctx, tel.MeterProvider, featureFlagsClient.StringReader(), l)
+	if err != nil {
+		l.Error(ctx, "Failed to set up mutual TLS", zap.Error(err))
+
+		return 1
+	}
+	apiHop, err := newAPIHop(tlsProcess, config.TLS)
+	if err != nil {
+		l.Error(ctx, "Invalid mutual TLS configuration for the api hop", zap.Error(err))
+
+		return 1
+	}
+	routerHop, err := newRouterHop(tlsProcess, config.TLS)
+	if err != nil {
+		l.Error(ctx, "Invalid mutual TLS configuration for the router hop", zap.Error(err))
+
+		return 1
+	}
+
+	redisClient, err := factories.NewRedisClient(signalCtx, factories.RedisConfig{
 		RedisURL:         config.RedisURL,
 		RedisClusterURL:  config.RedisClusterURL,
 		RedisTLSCABase64: config.RedisTLSCABase64,
@@ -129,7 +148,6 @@ func run() int {
 	}()
 
 	catalog := e2bcatalog.NewRedisSandboxCatalog(redisClient)
-	orchestratorCatalog := e2bcatalog.NewRedisSandboxRoutingCatalog(redisClient)
 
 	info := &internal.ServiceInfo{}
 	info.SetStatus(ctx, internal.Healthy)
@@ -149,7 +167,7 @@ func run() int {
 	}
 
 	if apiGRPCAddress != "" {
-		pausedSandboxResumer, err = e2bproxy.NewGRPCPausedSandboxResumer(ctx, apiGRPCAddress, apiGRPCOAuthConfig, apiGRPCUseTLS)
+		pausedSandboxResumer, err = e2bproxy.NewGRPCPausedSandboxResumer(ctx, apiGRPCAddress, apiGRPCOAuthConfig, apiGRPCUseTLS, apiHop)
 		if err != nil {
 			l.Error(ctx, "Failed to create paused sandbox checker", zap.Error(err))
 
@@ -162,15 +180,16 @@ func run() int {
 	}
 
 	// Proxy sandbox http traffic to orchestrator nodes
-	trafficProxy, err := e2bproxy.NewClientProxy(
+	trafficProxy, resumeCloser, err := e2bproxy.NewClientProxy(
 		tel.MeterProvider,
 		serviceName,
 		config.ProxyPort,
 		config.OrchestratorProxyPort,
 		catalog,
-		orchestratorCatalog,
 		pausedSandboxResumer,
 		featureFlagsClient,
+		config.ForwardedHostDomains,
+		e2bproxy.WithRouterHop(routerHop),
 	)
 	if err != nil {
 		l.Error(ctx, "Failed to create client proxy", zap.Error(err))
@@ -197,11 +216,7 @@ func run() int {
 		Handler: healthHandler,
 	}
 
-	var closers []Closeable
-	closers = append(closers, featureFlagsClient, catalog)
-	if closeable, ok := pausedSandboxResumer.(Closeable); ok {
-		closers = append(closers, closeable)
-	}
+	closers := shutdownClosers(featureFlagsClient, catalog, resumeCloser, pausedSandboxResumer)
 
 	wg.Go(func() {
 		// make sure to cancel the parent context before this
@@ -310,6 +325,22 @@ func run() int {
 	wg.Wait()
 
 	return int(exitCode.Load())
+}
+
+// shutdownClosers orders what shutdown closes: the resume flights first,
+// since a flight still running reads the feature flags closed after it and
+// calls the resumer closed last; the catalog closes with the flags.
+func shutdownClosers(featureFlags Closeable, catalog Closeable, resumeCloser e2bproxy.ResumeCloser, resumer e2bproxy.PausedSandboxResumer) []Closeable {
+	var closers []Closeable
+	if resumeCloser != nil {
+		closers = append(closers, resumeCloser)
+	}
+	closers = append(closers, featureFlags, catalog)
+	if closeable, ok := resumer.(Closeable); ok {
+		closers = append(closers, closeable)
+	}
+
+	return closers
 }
 
 func main() {

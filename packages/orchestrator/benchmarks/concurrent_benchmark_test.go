@@ -192,7 +192,6 @@ func BenchmarkConcurrentResume(b *testing.B) {
 	downloadKernel(b, linuxKernelFilename, linuxKernelURL)
 
 	// env vars
-	b.Setenv("ARTIFACTS_REGISTRY_PROVIDER", "Local")
 	b.Setenv("FIRECRACKER_VERSIONS_DIR", abs(filepath.Join("..", "..", "fc-versions", "builds")))
 	b.Setenv("HOST_ENVD_PATH", abs(filepath.Join("..", "..", "envd", "bin", "envd")))
 	b.Setenv("HOST_KERNELS_DIR", abs(kernelsDir))
@@ -235,7 +234,7 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		assert.NoError(b, devicePool.Close(ctx))
 	})
 
-	featureFlags, err := featureflags.NewClient()
+	featureFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		ctx := context.WithoutCancel(b.Context())
@@ -355,8 +354,9 @@ func BenchmarkConcurrentResume(b *testing.B) {
 		require.NoError(b, err)
 	}
 
-	tmpl, err := templateCache.GetTemplate(b.Context(), buildID, false, false)
+	tmpl, releaseTmpl, err := templateCache.GetTemplatePinned(b.Context(), buildID, false, false)
 	require.NoError(b, err)
+	b.Cleanup(releaseTmpl)
 
 	// warm-up: create and destroy one sandbox to prime caches
 	b.Log("warming up: creating one sandbox to prime caches...")

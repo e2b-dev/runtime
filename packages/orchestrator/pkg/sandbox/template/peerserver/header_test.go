@@ -45,9 +45,10 @@ func TestHeaderSource_Stream(t *testing.T) {
 	tmplMock.EXPECT().Memfile(mock.Anything).Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}
@@ -66,9 +67,10 @@ func TestHeaderSource_Stream_NilHeader(t *testing.T) {
 	tmplMock.EXPECT().Memfile(mock.Anything).Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	defer release()
 	require.NoError(t, err)
 
 	err = src.Stream(t.Context(), &collectSender{})
@@ -93,9 +95,10 @@ func TestHeaderSource_Stream_ServesDurableHeader(t *testing.T) {
 	tmplMock.EXPECT().Memfile(mock.Anything).Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}
@@ -119,9 +122,10 @@ func TestHeaderSource_Stream_ChunksOversizedHeader(t *testing.T) {
 	tmplMock.EXPECT().Memfile(mock.Anything).Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.MemfileName+storage.HeaderSuffix)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}
@@ -186,9 +190,10 @@ func TestHeaderSource_Stream_Rootfs(t *testing.T) {
 	tmplMock.EXPECT().Rootfs().Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
-	cache.EXPECT().GetCachedTemplate("build-1").Return(tmplMock, true)
+	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)
 
-	src, err := ResolveBlob(cache, "build-1", storage.RootfsName+storage.HeaderSuffix)
+	src, release, err := ResolveBlob(t.Context(), cache, "build-1", storage.RootfsName+storage.HeaderSuffix)
+	defer release()
 	require.NoError(t, err)
 
 	sender := &collectSender{}

@@ -10,48 +10,12 @@ runs:
         CLICKHOUSE_PASSWORD: "clickity-clicky-click"
         CLICKHOUSE_PORT: "9000"
         CLICKHOUSE_DATABASE: "default"
-      run: |
-        # Everything is backgrounded so the image pulls (with rate-limit
-        # retries, see scripts/pull-retry.sh) and container boots overlap
-        # with the (minutes-long) package builds that follow. Failures are
-        # not silent: a container whose pull or boot failed here never turns
-        # healthy, and start-services waits on container health with a
-        # bounded timeout.
-        (
-          ./scripts/pull-retry.sh postgres:18
-          docker run -d --name postgres \
-                        -e POSTGRES_USER=postgres \
-                        -e POSTGRES_PASSWORD=local \
-                        -e POSTGRES_DB=mydatabase \
-                        -p 5432:5432 \
-                        --health-cmd="pg_isready -U postgres" \
-                        --health-interval=5s \
-                        --health-timeout=2s \
-                        --health-retries=5 \
-                        postgres:18
-        ) &
-
-        (
-          ./scripts/pull-retry.sh redis:8
-          docker run -d --name redis \
-                -p 6379:6379 \
-                --health-cmd="redis-cli ping" \
-                --health-interval=5s \
-                --health-timeout=2s \
-                --health-retries=5 \
-                redis:8
-        ) &
-
-        (
-          ./scripts/pull-retry.sh clickhouse/clickhouse-server:25.8.30.16
-          make -C packages/clickhouse run
-        ) &
-
-        # Warm-up only: this discards its exit status by design (the step
-        # must not block on it). The guarantee lives in start-services,
-        # which re-runs pull-retry.sh for this image synchronously before
-        # starting the otel collector. The tag comes from the Makefile that
-        # runs the image, so a version bump there can't strand these pulls.
-        OTEL_IMAGE=$(grep -oE 'otel/opentelemetry-collector-contrib:[0-9.]+' packages/otel-collector/Makefile | head -1)
-        ./scripts/pull-retry.sh "$OTEL_IMAGE" &
+      # Every start runs in the background, detached from this step's
+      # output, so the image pulls (with rate-limit retries, see
+      # scripts/pull-retry.sh) and container boots overlap with the
+      # (minutes-long) package builds that follow. Each start logs under
+      # $RUNNER_TEMP/start-databases and records its exit status there;
+      # start-services waits on container health and fails as soon as a
+      # start has failed, printing that log.
+      run: ./.github/actions/start-databases/start.sh
       shell: bash

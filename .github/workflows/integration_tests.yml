@@ -30,7 +30,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +110,9 @@ jobs:
 
       - name: Upload Service Logs
         if: ${{ always() && inputs.publish == true }}
+        # Diagnostics only; a flaky or hung upload must not fail a green shard.
+        continue-on-error: true
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Service Logs (${{ matrix.name }})

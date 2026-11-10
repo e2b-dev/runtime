@@ -1,11 +1,8 @@
 #!/usr/bin/env bats
 
-# docs/overview.svg is drawn light and re-coloured for dark mode by one
-# @media (prefers-color-scheme: dark) block. That block matches on the literal
-# hex in each attribute ([fill="#F7F8FA"] and friends), so a colour changed in
-# the drawing keeps its light value in dark mode unless its selector changes
-# with it — nothing renders wrong, the shape just stays bright on a dark page.
-# These tests pair the two sets in both directions. No Docker needed.
+# Checks on the hub, the five install guides and the reference: the text they
+# quote, the links and pictures they point at, and the snippets they share.
+# No Docker needed.
 
 setup() {
   cd "$BATS_TEST_DIRNAME/.." || return 1
@@ -41,69 +38,15 @@ sys.stdout.write("\n".join(body) + "\n")
 PY
 }
 
-@test "overview.svg carries one dark-scheme style block" {
-  [ "$(grep -c '<style' docs/overview.svg)" -eq 1 ]
-  grep -q 'prefers-color-scheme: dark' docs/overview.svg
-}
-
-@test "every colour in overview.svg has a dark-scheme override" {
-  # The selectors spell the same fill="#XXXXXX" text as the attributes they
-  # match, so the attribute side skips the lines that start one; otherwise a
-  # selector left behind by a deleted element would vouch for itself.
-  attributes="$(grep -v '^[[:space:]]*\[' docs/overview.svg |
-    grep -oE '(fill|stroke)="#[0-9A-Fa-f]{6}"' | sort -u)"
-  selectors="$(grep -oE '\[(fill|stroke)="#[0-9A-Fa-f]{6}"\]' docs/overview.svg |
-    tr -d '[]' | sort -u)"
-  [ -n "$attributes" ]
-  [ -n "$selectors" ]
-
-  while read -r value; do
-    if ! printf '%s\n' "$selectors" | grep -qxF "$value"; then
-      echo "$value is drawn but the dark-scheme block does not override it" >&2
-      return 1
-    fi
-  done <<<"$attributes"
-
-  while read -r value; do
-    if ! printf '%s\n' "$attributes" | grep -qxF "$value"; then
-      echo "the dark-scheme block overrides $value, which nothing carries" >&2
-      return 1
-    fi
-  done <<<"$selectors"
-}
-
-# The hub README's port table and the overview diagram state the same eleven
-# ports in different notation (one row per port; a range in the picture). The
-# table is the one in README.md at the package root, the hub -- the three
-# install guides point at it rather than repeating it. Expand the ranges and
-# compare both ways, so a port added to one and not the other fails.
-#
-# The picture also names the ports of the four stores, which the table does not
-# list because nothing outside the machine can reach them. One of those,
-# Postgres on 5432, lands inside the numeric window scanned below, so the text
-# that draws a loopback port carries data-scope="loopback" and is dropped here.
-# The tag cannot hide a host-network port: the assertion under it fails if a
-# port from the table ever appears on a tagged line.
-@test "the ports drawn in overview.svg are the hub README table's, no more and no fewer" {
-  table="$(grep -oE '^\| [0-9]{4} \|' README.md | grep -oE '[0-9]{4}' | sort -u)"
-  [ -n "$table" ]
-  while read -r port; do
-    if grep 'data-scope="loopback"' docs/overview.svg | grep -qE "\\b$port\\b"; then
-      echo "$port is in the README's table but drawn as a loopback port" >&2
-      return 1
-    fi
-  done <<<"$table"
-  en_dash="$(printf '\342\200\223')"
-  drawn="$(sed "s/$en_dash/-/g" docs/overview.svg |
-    grep -v 'data-scope="loopback"' |
-    grep -oE '\b[0-9]{4}(-[0-9]{4})?\b' | while IFS= read -r tok; do
-    case "$tok" in
-      *-*) seq "${tok%-*}" "${tok#*-}" ;;
-      *) echo "$tok" ;;
-    esac
-  done | awk '$1 >= 3000 && $1 <= 5999' | sort -u)"
-  [ -n "$drawn" ]
-  diff <(echo "$table") <(echo "$drawn")
+# The hub's drawing is one PNG per colour scheme behind a <picture> element,
+# the way the banner above it is. The link test below reads Markdown links
+# only; the picture's src and srcset are HTML attributes, so a renamed export
+# would leave the hub showing a broken image with nothing to say so.
+@test "the hub's drawing exists for both colour schemes" {
+  grep -q '<source media="(prefers-color-scheme: dark)" srcset="docs/overview-dark.png">' README.md
+  grep -qE '<img [^>]*src="docs/overview-light.png"' README.md
+  [ -s docs/overview-dark.png ]
+  [ -s docs/overview-light.png ]
 }
 
 # The guides quote FIX lines their reader will meet in a log, so what is on the
@@ -121,7 +64,7 @@ PY
 @test "every FIX line a guide quotes is printed by a script" {
   local quoted checked=0 line
   quoted="$(python3 - README.md compose/README.md terraform/gcp/README.md \
-    kubernetes/README.md <<'PY'
+    terraform/aws/README.md terraform/azure/README.md kubernetes/README.md <<'PY'
 import re, sys
 
 for path in sys.argv[1:]:
@@ -156,16 +99,17 @@ PY
   [ "$checked" -gt 0 ]
 }
 
-# The hub and the three install guides cross-link each other, the diagrams,
+# The hub and the five install guides cross-link each other, the diagrams,
 # the manifests and the tests. A relative link that does not resolve is a dead
 # end for whoever follows it, and nothing else checks them. URLs and bare
 # in-page anchors are somebody else's business; every other target has to
 # exist on disk, relative to the README that names it. Fenced code blocks are
 # dropped first: a `](` inside one is not a link.
-@test "every relative Markdown link in the four READMEs resolves" {
+@test "every relative Markdown link in the six READMEs and the reference resolves" {
   local checked=0 readme dir target
   for readme in README.md compose/README.md terraform/gcp/README.md \
-                kubernetes/README.md; do
+                terraform/aws/README.md terraform/azure/README.md \
+                kubernetes/README.md docs/REFERENCE.md; do
     [ -f "$readme" ] || { echo "$readme is missing" >&2; return 1; }
     dir="$(dirname "$readme")"
     while IFS= read -r target; do
@@ -184,15 +128,16 @@ PY
   [ "$checked" -gt 0 ]
 }
 
-# The three install guides each end in the same Try-it snippet: the shapes
+# The five install guides each end in the same Try-it snippet: the shapes
 # differ in how the reader gets the SDK variables into their shell, but the
 # sandbox they then create is deliberately the same few lines, so someone who
 # has run one shape recognises it in the next. Kept byte-identical here
 # because nothing else compares them, and a snippet edited in one guide alone
 # reads as a difference between the shapes that does not exist.
-@test "the three guides' Try-it snippets are one snippet" {
+@test "the five guides' Try-it snippets are one snippet" {
   local guide out first=""
-  for guide in compose/README.md terraform/gcp/README.md kubernetes/README.md; do
+  for guide in compose/README.md terraform/gcp/README.md terraform/aws/README.md \
+               terraform/azure/README.md kubernetes/README.md; do
     out="$BATS_TEST_TMPDIR/${guide//\//_}"
     try_it_snippet "$guide" > "$out" || return 1
     [ -s "$out" ] || { echo "$guide: the Try-it snippet came out empty" >&2; return 1; }
@@ -204,4 +149,24 @@ PY
       return 1
     }
   done
+}
+
+# The hub's What-you-get section ends with one install snippet per way to run,
+# each linking its guide, and its How-to-run table names the same ways. A
+# guide added without its snippet and link, or a link whose guide went away,
+# is how the hub drifts from the package it introduces.
+@test "the hub's install snippets link exactly the install guides on disk" {
+  local links guides rows
+  links="$(awk '/^## What you get/ { f = 1; next } f && /^## / { exit } f' README.md |
+    grep -oE '\]\([a-z/]+/README\.md#install\)' | sed -E 's/^\]\(//; s/#install\)$//' | sort)"
+  guides="$(printf '%s\n' compose/README.md terraform/*/README.md kubernetes/README.md | sort)"
+  # A section the extractor stopped reading would pass vacuously.
+  [ "$(printf '%s\n' "$links" | grep -c .)" -gt 1 ]
+  diff <(echo "$guides") <(echo "$links")
+  # and the table's first column names the same ways as the Install headings
+  rows="$(awk '/^\| Run it with \|/ { f = 1; next }
+               f && /^\|-/ { next }
+               f && /^\|/ { print; next }
+               f { exit }' README.md | awk -F' *[|] *' '{ print $2 }' | sort)"
+  diff <(grep -E '^### ' README.md | sed 's/^### //' | sort) <(echo "$rows")
 }

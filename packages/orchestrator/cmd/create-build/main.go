@@ -25,13 +25,14 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
-	"github.com/e2b-dev/infra/packages/orchestrator/cmd/internal/cmdutil"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
+	sbxfc "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
@@ -76,6 +77,7 @@ func main() {
 	kernel := flag.String("kernel", featureflags.DefaultKernelVersion, "kernel version")
 	fc := flag.String("firecracker", featureflags.DefaultFirecrackerVersion, "firecracker version")
 	vcpu := flag.Int("vcpu", 2, "vCPUs")
+	maxVcpu := flag.Int("max-vcpus", 0, "vCPUs in the final template VM, of which -vcpu are online; 0 means -vcpu")
 	memory := flag.Int("memory", 1024, "memory MB")
 	disk := flag.Int("disk", 1024, "disk MB")
 	hugePages := flag.Bool("hugepages", true, "use 2MB huge pages for memory (false = 4KB pages)")
@@ -84,6 +86,7 @@ func main() {
 	startCmd := flag.String("start-cmd", "", "start command")
 	setupCmd := flag.String("setup-cmd", "", "setup command to run during build (e.g., install deps)")
 	readyCmd := flag.String("ready-cmd", "", "ready check command")
+	cpuTemplateFile := flag.String("cpu-template", "", "path to a custom Firecracker CPU template JSON file to be used for boot every layer with (empty = none)")
 	timeout := flag.Int("timeout", 5, "build timeout in minutes")
 	verbose := flag.Bool("v", false, "verbose output")
 	flag.Parse()
@@ -102,6 +105,31 @@ func main() {
 		log.Fatal("-to-build required")
 	}
 
+	if *maxVcpu != 0 {
+		if err := sbxfc.ValidateVcpus(int64(*vcpu), int64(*maxVcpu), "-vcpu", "-max-vcpus"); err != nil {
+			log.Fatalf("invalid flags: %v", err)
+		}
+		if !sbxfc.ValidMachineVcpus(int64(*vcpu)) {
+			log.Fatalf("invalid -vcpu %d: cannot boot an intermediate build VM with %d vcpus on this host", *vcpu, *vcpu)
+		}
+		if !sbxfc.ValidMachineVcpus(int64(*maxVcpu)) {
+			log.Fatalf("invalid -max-vcpus %d: cannot boot a VM with %d vcpus on this host", *maxVcpu, *maxVcpu)
+		}
+	}
+
+	var cpuTmpl *cputemplate.Template
+	if *cpuTemplateFile != "" {
+		raw, err := os.ReadFile(*cpuTemplateFile)
+		if err != nil {
+			log.Fatalf("read -cpu-template: %v", err)
+		}
+
+		cpuTmpl, err = cputemplate.Parse(raw)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	// FPH must be installed at boot — flag is read by Create, not Resume.
 	featureflags.NewJSONFlag("free-page-hinting-config", ldvalue.FromJSONMarshal(map[string]any{
 		"enabled": true,
@@ -109,7 +137,7 @@ func main() {
 
 	// Suppress other noisy output unless verbose, but keep std log for fatal errors
 	if !*verbose {
-		cmdutil.SuppressNoisyLogsKeepStdLog()
+		suppressNoisyLogs()
 	}
 
 	ctx := context.Background()
@@ -133,7 +161,7 @@ func main() {
 		log.Fatalf("network config: %v", err)
 	}
 
-	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *memory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, localMode, *verbose, *timeout, builderConfig, networkConfig)
+	err = doBuild(ctx, *templateID, *toBuild, *fromBuild, *kernel, *fc, *vcpu, *maxVcpu, *memory, *disk, *hugePages, *startCmd, *setupCmd, *readyCmd, cpuTmpl, localMode, *verbose, *timeout, builderConfig, networkConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -165,10 +193,9 @@ func setupEnv(ctx context.Context, storagePath, sandboxDir, kernel, fc string, l
 		}
 
 		env := map[string]string{
-			"ARTIFACTS_REGISTRY_PROVIDER": "Local",
-			"FIRECRACKER_VERSIONS_DIR":    abs(filepath.Join(dataDir, "fc-versions")),
-			"HOST_KERNELS_DIR":            abs(filepath.Join(dataDir, "kernels")),
-			"ORCHESTRATOR_BASE_PATH":      abs(filepath.Join(dataDir, "orchestrator")),
+			"FIRECRACKER_VERSIONS_DIR": abs(filepath.Join(dataDir, "fc-versions")),
+			"HOST_KERNELS_DIR":         abs(filepath.Join(dataDir, "kernels")),
+			"ORCHESTRATOR_BASE_PATH":   abs(filepath.Join(dataDir, "orchestrator")),
 		}
 		for k, v := range env {
 			if os.Getenv(k) == "" {
@@ -229,9 +256,10 @@ func setupEnv(ctx context.Context, storagePath, sandboxDir, kernel, fc string, l
 func doBuild(
 	parentCtx context.Context,
 	templateID, buildID, fromBuild, kernel, fc string,
-	vcpu, memory, disk int,
+	vcpu, maxVcpu, memory, disk int,
 	hugePages bool,
 	startCmd, setupCmd, readyCmd string,
+	cpuTemplate *cputemplate.Template,
 	localMode, verbose bool,
 	timeout int,
 	builderConfig cfg.BuilderConfig,
@@ -274,7 +302,7 @@ func doBuild(
 	if verbose {
 		logLevel = ldlog.Info
 	}
-	featureFlags, _ := featureflags.NewClientWithLogLevel(logLevel)
+	featureFlags, _ := featureflags.NewClientWithLogLevel(builderConfig.DeploymentEnvironment, "", "", logLevel)
 
 	sandboxes := sandbox.NewSandboxesMap()
 
@@ -350,13 +378,24 @@ func doBuild(
 	defer templateCache.Stop()
 
 	buildMetrics, _ := metrics.NewBuildMetrics(noop.MeterProvider{})
-	sandboxFactory := sandbox.NewFactory(ctx, c.BuilderConfig, networkPool, devicePool, featureFlags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), sandbox.NoopNetworkAssignHook{}, sandboxes)
+	// A VM larger than its online count needs a cpu limit, so it gets a real cgroup.
+	cgroupManager := cgroup.NewNoopManager()
+	if maxVcpu > vcpu {
+		cgroupManager, err = cgroup.NewManager()
+		if err != nil {
+			return fmt.Errorf("cgroup manager for -max-vcpus: %w", err)
+		}
+		if err := cgroupManager.Initialize(ctx); err != nil {
+			return fmt.Errorf("initialize cgroup root for -max-vcpus: %w", err)
+		}
+	}
+	sandboxFactory := sandbox.NewFactory(ctx, c.BuilderConfig, networkPool, devicePool, featureFlags, hoststats.NewNoopDelivery(), cgroupManager, network.NewNoopEgressProxy(), sandbox.NoopNetworkAssignHook{}, sandboxes)
 
 	// Layered V4 builds need the upload coordinator so child layers wait on
 	// their parents' header finalization. Redis is nil (CLI is single-host —
 	// no cross-orch signaling needed); local same-orch coordination via
 	// futures is what matters here.
-	uploads := sandbox.NewUploads(templateCache, persistenceTemplate, peerclient.NopResolver(), nil)
+	uploads := sandbox.NewUploads(templateCache, persistenceTemplate, peerclient.NopResolver(), nil, featureFlags)
 	defer uploads.Stop()
 
 	builder := build.NewBuilder(
@@ -388,11 +427,20 @@ func doBuild(
 		return fmt.Errorf("invalid firecracker version %q: %w", fc, err)
 	}
 
+	// Warn only, so a template can be tried against a debug Firecracker that supports it;
+	// an unsupported one still fails the boot when Firecracker rejects PUT /cpu-config.
+	if cpuTemplate != nil {
+		if err := cpuTemplate.Validate(fcInfo); err != nil {
+			fmt.Printf("firecracker %s: %v; sending it anyway\n", fc, err)
+		}
+	}
+
 	tmpl := config.TemplateConfig{
 		Version:            templates.TemplateV2LatestVersion,
 		TemplateID:         templateID,
 		Force:              &force,
 		VCpuCount:          int64(vcpu),
+		MaxVCpuCount:       int64(maxVcpu),
 		MemoryMB:           int64(memory),
 		DiskSizeMB:         int64(disk),
 		FreeDiskSizeMB:     int64(disk),
@@ -405,6 +453,11 @@ func doBuild(
 		FreePageHinting:    fcInfo.HasFreePageHinting(),
 		TeamID:             "local",
 		Steps:              steps,
+		CPUTemplate:        cpuTemplate,
+	}
+
+	if cpuTemplate != nil {
+		fmt.Printf("CPU template: %s (%s)\n", cpuTemplate.Digest(), cpuTemplate.String())
 	}
 
 	pageSizeStr := "2MB (hugepages)"
@@ -458,15 +511,15 @@ func printArtifactSizes(ctx context.Context, persistence storage.StorageProvider
 func printLocalFileSizes(basePath, buildID string) {
 	dir := filepath.Join(basePath, buildID)
 
-	for _, a := range cmdutil.MainArtifacts() {
+	for _, a := range mainArtifacts() {
 		path := filepath.Join(dir, a.File)
-		_, actual, err := cmdutil.GetFileSizes(path)
+		actual, err := actualFileSize(path)
 		if err != nil {
 			continue
 		}
 
 		headerPath := filepath.Join(dir, a.HeaderFile)
-		totalSize, blockSize := cmdutil.GetHeaderInfo(headerPath)
+		totalSize, blockSize := headerInfo(headerPath)
 		if totalSize == 0 {
 			fmt.Printf("   %s: %d MB (this layer)\n", a.Name, actual>>20)
 
@@ -478,9 +531,9 @@ func printLocalFileSizes(basePath, buildID string) {
 			a.Name, actual>>20, totalSize>>20, pct, blockSize>>10)
 	}
 
-	for _, a := range cmdutil.SmallArtifacts() {
+	for _, a := range smallArtifacts() {
 		path := filepath.Join(dir, a.File)
-		if actual, err := cmdutil.GetActualFileSize(path); err == nil {
+		if actual, err := actualFileSize(path); err == nil {
 			fmt.Printf("   %s: %d KB\n", a.Name, actual>>10)
 		}
 	}

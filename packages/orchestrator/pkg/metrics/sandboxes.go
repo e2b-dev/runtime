@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -29,18 +30,24 @@ const (
 
 	sbxMemThresholdPct = 80
 	sbxCpuThresholdPct = 80
+	// A CPU online/offline write older than this is stuck in the guest kernel.
+	sbxCpuWriteStuckMs = 10_000
+
+	// Caps the guest-supplied process name, in runes. Real names are escaped to ASCII, 60 at most.
+	maxOomProcessLen = 64
+
+	// Caps the kill lines one poll writes.
+	maxOomKillsLogged = 10
 
 	minEnvdVersionForMetrics         = "0.1.5"
 	minEnvVersionForMetricsTimestamp = "0.1.3"
-	minEnvdVersionForMemoryPrecise   = "0.2.4"
+	minEnvdVersionForMemoryMetrics   = "0.2.4"
 	minEnvdVersionForDiskMetrics     = "0.2.4"
 	minEnvdVersionForCacheMetrics    = "0.5.9"
 
 	timeoutGetMetrics         = 100 * time.Millisecond
 	metricsParallelismFactor  = 5 // Used to calculate number of concurrently sandbox metrics requests
 	sandboxMetricExportPeriod = 5 * time.Second
-
-	shiftFromMiBToBytes = 20 // Shift to convert MiB to bytes
 )
 
 type (
@@ -57,6 +64,10 @@ type SandboxObserver struct {
 	meter       metric.Meter
 	cpuTotal    metric.Int64ObservableGauge
 	cpuUsed     metric.Float64ObservableGauge
+	cpuPossible metric.Int64ObservableGauge
+	cpuTarget   metric.Int64ObservableGauge
+	cpuAttempts metric.Int64ObservableGauge
+	cpuPending  metric.Int64ObservableGauge
 	memoryTotal metric.Int64ObservableGauge
 	memoryUsed  metric.Int64ObservableGauge
 	memoryCache metric.Int64ObservableGauge
@@ -107,6 +118,26 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		return nil, fmt.Errorf("failed to create CPU used gauge: %w", err)
 	}
 
+	cpuPossible, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuPossibleGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU possible gauge: %w", err)
+	}
+
+	cpuTarget, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuTargetGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU target gauge: %w", err)
+	}
+
+	cpuAttempts, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuTargetAttemptsGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU target attempts gauge: %w", err)
+	}
+
+	cpuPending, err := telemetry.GetGaugeInt(meter, telemetry.SandboxCpuWritePendingGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CPU write pending gauge: %w", err)
+	}
+
 	memoryTotal, err := telemetry.GetGaugeInt(meter, telemetry.SandboxRamTotalGaugeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memory total gauge: %w", err)
@@ -139,6 +170,10 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		meter:          meter,
 		cpuTotal:       cpuTotal,
 		cpuUsed:        cpuUsed,
+		cpuPossible:    cpuPossible,
+		cpuTarget:      cpuTarget,
+		cpuAttempts:    cpuAttempts,
+		cpuPending:     cpuPending,
 		memoryTotal:    memoryTotal,
 		memoryUsed:     memoryUsed,
 		memoryCache:    memoryCache,
@@ -160,14 +195,16 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 	unregister, err := so.meter.RegisterCallback(
 		func(ctx context.Context, o metric.Observer) error {
-			sbxCount := so.sandboxes.Count()
+			// Size the limit from the snapshot it iterates: a limit of 0 blocks the
+			// first Go forever, and with it this callback and the SDK pipeline.
+			sbxs := so.sandboxes.Items()
 
 			wg := errgroup.Group{}
 			// Run concurrently to prevent blocking if there are many sandboxes other callbacks
-			limit := math.Ceil(float64(sbxCount) / metricsParallelismFactor)
-			wg.SetLimit(int(limit))
+			limit := math.Ceil(float64(len(sbxs)) / metricsParallelismFactor)
+			wg.SetLimit(max(1, int(limit)))
 
-			for _, sbx := range so.sandboxes.Items() {
+			for _, sbx := range sbxs {
 				ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForMetrics)
 				if err != nil {
 					logger.L().Error(ctx, "Failed to check envd version", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
@@ -180,7 +217,7 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 				wg.Go(func() error {
 					// Make sure the sandbox doesn't change while we are getting metrics (the slot could be assigned to another sandbox)
-					sbxMetrics, err := sbx.Checks.GetMetrics(ctx, timeoutGetMetrics)
+					sbxMetrics, err := sbx.Checks().GetMetrics(ctx, timeoutGetMetrics)
 					if err != nil {
 						// Sandbox has stopped
 						if errors.Is(err, sandbox.ErrChecksStopped) {
@@ -220,27 +257,35 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 					o.ObserveInt64(so.cpuTotal, sbxMetrics.CPUCount, attributes)
 					o.ObserveFloat64(so.cpuUsed, sbxMetrics.CPUUsedPercent, attributes)
+					// An envd that predates CPU hotplug reports none of these. One that does reports cpu_possible,
+					// except when its sysfs read fails: then it still carries the target, so both are checked.
+					if sbxMetrics.CPUPossible > 0 || sbxMetrics.CPUTarget > 0 {
+						o.ObserveInt64(so.cpuPossible, sbxMetrics.CPUPossible, attributes)
+						o.ObserveInt64(so.cpuTarget, sbxMetrics.CPUTarget, attributes)
+						o.ObserveInt64(so.cpuAttempts, sbxMetrics.CPUTargetAttempts, attributes)
+						o.ObserveInt64(so.cpuPending, sbxMetrics.CPUWritePendingMs, attributes)
 
-					var memoryTotal int64
-					var memoryUsed int64
+						// Logged on entering the stuck state only; the gauge carries it from there.
+						stuck := sbxMetrics.CPUWritePendingMs >= sbxCpuWriteStuckMs
+						if sbx.CPUWriteStuck.Swap(stuck) != stuck && stuck {
+							sbxlogger.E(sbx).Warn(ctx, "CPU hotplug write stuck in the guest kernel",
+								zap.Int64("cpu_write_pending_ms", sbxMetrics.CPUWritePendingMs),
+								zap.Int64("cpu_online", sbxMetrics.CPUCount),
+								zap.Int64("cpu_target", sbxMetrics.CPUTarget),
+							)
+						}
+					}
 
-					ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForMemoryPrecise)
+					memoryTotal, memoryUsed, memoryReported, err := sandboxMemory(sbx.Config.Envd.Version, sbxMetrics)
 					if err != nil {
 						logger.L().Error(ctx, "Failed to check envd version for memory metrics", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
 					}
-
-					if ok {
-						memoryTotal = sbxMetrics.MemTotal
-						memoryUsed = sbxMetrics.MemUsed
-					} else {
-						memoryTotal = sbxMetrics.MemTotalMiB << shiftFromMiBToBytes
-						memoryUsed = sbxMetrics.MemUsedMiB << shiftFromMiBToBytes
+					if memoryReported {
+						o.ObserveInt64(so.memoryTotal, memoryTotal, attributes)
+						o.ObserveInt64(so.memoryUsed, memoryUsed, attributes)
 					}
 
-					o.ObserveInt64(so.memoryTotal, memoryTotal, attributes)
-					o.ObserveInt64(so.memoryUsed, memoryUsed, attributes)
-
-					ok, err = utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForCacheMetrics)
+					ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForCacheMetrics)
 					if err != nil {
 						logger.L().Error(ctx, "Failed to check envd version for cache metrics", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
 					}
@@ -259,12 +304,14 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 					// Log warnings if memory or CPU usage exceeds thresholds
 					// Round percentage to 2 decimal places
-					memUsedPct := float32(math.Floor(float64(memoryUsed)/float64(memoryTotal)*10000) / 100)
-					if memUsedPct >= sbxMemThresholdPct {
-						sbxlogger.E(sbx).Warn(ctx, "Memory usage threshold exceeded",
-							zap.Float32("mem_used_percent", memUsedPct),
-							zap.Float32("mem_threshold_percent", sbxMemThresholdPct),
-						)
+					if memoryReported {
+						memUsedPct := float32(math.Floor(float64(memoryUsed)/float64(memoryTotal)*10000) / 100)
+						if memUsedPct >= sbxMemThresholdPct {
+							sbxlogger.E(sbx).Warn(ctx, "Memory usage threshold exceeded",
+								zap.Float32("mem_used_percent", memUsedPct),
+								zap.Float32("mem_threshold_percent", sbxMemThresholdPct),
+							)
+						}
 					}
 
 					if sbxMetrics.CPUUsedPercent >= sbxCpuThresholdPct {
@@ -272,6 +319,16 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 							zap.Float32("cpu_used_percent", float32(sbxMetrics.CPUUsedPercent)),
 							zap.Float32("cpu_threshold_percent", sbxCpuThresholdPct),
 						)
+					}
+
+					kills, more := unseenOOMKills(sbx, sbxMetrics)
+					for _, kill := range kills {
+						sbxlogger.E(sbx).Warn(ctx, "Out of memory: process was killed", zap.String("process", kill.Process))
+					}
+					if more > 0 {
+						// envd lists only its latest kills, so there may have been more.
+						sbxlogger.E(sbx).Warn(ctx, "Out of memory: at least this many more processes were killed",
+							zap.Int("processes", more))
 					}
 
 					return nil
@@ -285,7 +342,8 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 			}
 
 			return nil
-		}, so.cpuTotal, so.cpuUsed, so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed)
+		}, so.cpuTotal, so.cpuUsed, so.cpuPossible, so.cpuTarget, so.cpuAttempts, so.cpuPending,
+		so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed)
 	if err != nil {
 		return nil, err
 	}
@@ -317,4 +375,34 @@ func (so *SandboxObserver) Close(ctx context.Context) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// unseenOOMKills returns up to maxOomKillsLogged kills not yet logged for sbx, names capped, and
+// how many more it saw; envd lists only its latest kills, so there may have been more. Builds log none.
+func unseenOOMKills(sbx *sandbox.Sandbox, m *sandbox.Metrics) ([]envd.OOMKill, int) {
+	if !sbx.LogsOOMKills() || m.OomKills == nil {
+		return nil, 0
+	}
+
+	kills := sbx.OOMKills.Unseen(*m.OomKills)
+	for i := range kills {
+		kills[i].Process = utils.Truncate(kills[i].Process, maxOomProcessLen)
+	}
+
+	if len(kills) > maxOomKillsLogged {
+		return kills[:maxOomKillsLogged], len(kills) - maxOomKillsLogged
+	}
+
+	return kills, 0
+}
+
+// sandboxMemory returns the sandbox's memory in bytes. envd reports bytes since
+// minEnvdVersionForMemoryMetrics; older envd reports only MiB, so reported is false.
+func sandboxMemory(envdVersion string, m *sandbox.Metrics) (total, used int64, reported bool, err error) {
+	reported, err = utils.IsGTEVersion(envdVersion, minEnvdVersionForMemoryMetrics)
+	if err != nil || !reported {
+		return 0, 0, false, err
+	}
+
+	return m.MemTotal, m.MemUsed, true, nil
 }

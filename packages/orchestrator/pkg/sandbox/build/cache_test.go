@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,33 +107,37 @@ func TestDiffStoreTTLEviction(t *testing.T) {
 	c, err := cfg.Parse()
 	require.NoError(t, err)
 
+	// Created outside the bubble: the client's background goroutines must not
+	// join it, and flag evaluation from inside is synchronous.
 	flags := flagsWithMaxBuildCachePercentage(t, 100)
 
-	ttl := 1 * time.Second
-	delay := 60 * time.Second
-	store, err := NewDiffStore(
-		c,
-		flags,
-		cachePath,
-		ttl,
-		delay,
-	)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		ttl := 1 * time.Second
+		delay := 60 * time.Second
+		store, err := NewDiffStore(
+			c,
+			flags,
+			cachePath,
+			ttl,
+			delay,
+		)
+		require.NoError(t, err)
 
-	store.Start(t.Context())
-	t.Cleanup(store.Close)
+		store.Start(t.Context())
+		t.Cleanup(store.Close)
 
-	// Add an item to the cache
-	diff := newRootFSDiff(t, cachePath, "build-test-id")
+		// Add an item to the cache
+		diff := newRootFSDiff(t, cachePath, "build-test-id")
 
-	// Add an item to the cache
-	store.Add(diff)
+		// Add an item to the cache
+		store.Add(diff)
 
-	// Expire diff
-	time.Sleep(ttl + time.Second)
+		// Expire diff
+		time.Sleep(ttl + time.Second)
 
-	found := store.Has(diff)
-	assert.False(t, found)
+		found := store.Has(diff)
+		assert.False(t, found)
+	})
 }
 
 func TestDiffStoreRefreshTTLEviction(t *testing.T) {
@@ -144,37 +149,40 @@ func TestDiffStoreRefreshTTLEviction(t *testing.T) {
 
 	flags := flagsWithMaxBuildCachePercentage(t, 100)
 
-	ttl := 1 * time.Second
-	delay := 60 * time.Second
-	store, err := NewDiffStore(
-		c,
-		flags,
-		cachePath,
-		ttl,
-		delay,
-	)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		ttl := 1 * time.Second
+		delay := 60 * time.Second
+		store, err := NewDiffStore(
+			c,
+			flags,
+			cachePath,
+			ttl,
+			delay,
+		)
+		require.NoError(t, err)
 
-	// Add an item to the cache
-	diff := newRootFSDiff(t, cachePath, "build-test-id")
+		// Add an item to the cache
+		diff := newRootFSDiff(t, cachePath, "build-test-id")
 
-	// Add an item to the cache
-	store.Add(diff)
+		// Add an item to the cache
+		store.Add(diff)
 
-	// Refresh diff expiration
-	time.Sleep(ttl / 2)
-	_, ok := store.Get(diff.CacheKey())
-	require.True(t, ok)
+		// Refresh diff expiration
+		time.Sleep(ttl / 2)
+		_, ok := store.Get(diff.CacheKey())
+		require.True(t, ok)
 
-	// Try to expire diff
-	time.Sleep(ttl/2 + time.Microsecond)
+		// Try to expire diff
+		time.Sleep(ttl/2 + time.Microsecond)
 
-	// Is still in cache
-	found2 := store.Has(diff)
-	assert.True(t, found2)
+		// Is still in cache
+		found2 := store.Has(diff)
+		assert.True(t, found2)
+	})
 }
 
-func TestDiffStoreDelayEviction(t *testing.T) { //nolint:paralleltest // very timing sensitive
+func TestDiffStoreDelayEviction(t *testing.T) {
+	t.Parallel()
 	cachePath := t.TempDir()
 
 	c, err := cfg.Parse()
@@ -182,45 +190,48 @@ func TestDiffStoreDelayEviction(t *testing.T) { //nolint:paralleltest // very ti
 
 	flags := flagsWithMaxBuildCachePercentage(t, 0)
 
-	ttl := 60 * time.Second
-	delay := 4 * time.Second
-	store, err := NewDiffStore(
-		c,
-		flags,
-		cachePath,
-		ttl,
-		delay,
-	)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		ttl := 60 * time.Second
+		delay := 4 * time.Second
+		store, err := NewDiffStore(
+			c,
+			flags,
+			cachePath,
+			ttl,
+			delay,
+		)
+		require.NoError(t, err)
 
-	store.Start(t.Context())
-	t.Cleanup(store.Close)
+		store.Start(t.Context())
+		t.Cleanup(store.Close)
 
-	// Add an item to the cache
-	diff := newRootFSDiff(t, cachePath, "build-test-id")
+		// Add an item to the cache
+		diff := newRootFSDiff(t, cachePath, "build-test-id")
 
-	// Add an item to the cache
-	store.Add(diff)
+		// Add an item to the cache
+		store.Add(diff)
 
-	// Wait for removal trigger of diff
-	time.Sleep(2 * time.Second)
+		// Wait for removal trigger of diff
+		time.Sleep(2 * time.Second)
 
-	// Verify still in cache
-	found := store.Has(diff)
-	assert.True(t, found)
-	dFound := store.isBeingDeleted(diff.CacheKey())
-	assert.True(t, dFound)
+		// Verify still in cache
+		found := store.Has(diff)
+		assert.True(t, found)
+		dFound := store.isBeingDeleted(diff.CacheKey())
+		assert.True(t, dFound)
 
-	// Wait for complete removal of diff
-	time.Sleep(delay)
+		// Wait for complete removal of diff
+		time.Sleep(delay)
 
-	found = store.Has(diff)
-	assert.False(t, found)
-	dFound = store.isBeingDeleted(diff.CacheKey())
-	assert.False(t, dFound)
+		found = store.Has(diff)
+		assert.False(t, found)
+		dFound = store.isBeingDeleted(diff.CacheKey())
+		assert.False(t, dFound)
+	})
 }
 
-func TestDiffStoreDelayEvictionAbort(t *testing.T) { //nolint:paralleltest // very timing sensitive
+func TestDiffStoreDelayEvictionAbort(t *testing.T) {
+	t.Parallel()
 	cachePath := t.TempDir()
 
 	c, err := cfg.Parse()
@@ -228,57 +239,59 @@ func TestDiffStoreDelayEvictionAbort(t *testing.T) { //nolint:paralleltest // ve
 
 	flags := flagsWithMaxBuildCachePercentage(t, 100)
 
-	ttl := 60 * time.Second
-	delay := 4 * time.Second
-	store, err := NewDiffStore(
-		c,
-		flags,
-		cachePath,
-		ttl,
-		delay,
-	)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		ttl := 60 * time.Second
+		delay := 4 * time.Second
+		store, err := NewDiffStore(
+			c,
+			flags,
+			cachePath,
+			ttl,
+			delay,
+		)
+		require.NoError(t, err)
 
-	// The store is deliberately not Start()ed: the disk-space eviction loop
-	// would otherwise re-schedule a deletion of the diff (depending on the
-	// host's actual disk usage) and race with the abort below. The delayed
-	// deletion is instead scheduled explicitly via deleteOldestFromCache,
-	// the same code path the eviction loop uses.
+		// The store is deliberately not Start()ed: the disk-space eviction loop
+		// would otherwise re-schedule a deletion of the diff (depending on the
+		// host's actual disk usage) and race with the abort below. The delayed
+		// deletion is instead scheduled explicitly via deleteOldestFromCache,
+		// the same code path the eviction loop uses.
 
-	// Add an item to the cache
-	diff := newRootFSDiff(t, cachePath, "build-test-id")
+		// Add an item to the cache
+		diff := newRootFSDiff(t, cachePath, "build-test-id")
 
-	// Add an item to the cache
-	store.Add(diff)
+		// Add an item to the cache
+		store.Add(diff)
 
-	// Schedule delayed deletion of the diff
-	scheduled, err := store.deleteOldestFromCache(t.Context())
-	require.NoError(t, err)
-	require.True(t, scheduled)
+		// Schedule delayed deletion of the diff
+		scheduled, err := store.deleteOldestFromCache(t.Context())
+		require.NoError(t, err)
+		require.True(t, scheduled)
 
-	// Wait a part of the delay period before aborting the removal
-	time.Sleep(delay / 2)
+		// Wait a part of the delay period before aborting the removal
+		time.Sleep(delay / 2)
 
-	// Verify still in cache
-	found := store.Has(diff)
-	assert.True(t, found)
-	dFound := store.isBeingDeleted(diff.CacheKey())
-	assert.True(t, dFound)
+		// Verify still in cache
+		found := store.Has(diff)
+		assert.True(t, found)
+		dFound := store.isBeingDeleted(diff.CacheKey())
+		assert.True(t, dFound)
 
-	// Abort removal of diff
-	_, ok := store.Get(diff.CacheKey())
-	require.True(t, ok)
+		// Abort removal of diff
+		_, ok := store.Get(diff.CacheKey())
+		require.True(t, ok)
 
-	found = store.Has(diff)
-	assert.True(t, found)
-	dFound = store.isBeingDeleted(diff.CacheKey())
-	assert.False(t, dFound)
+		found = store.Has(diff)
+		assert.True(t, found)
+		dFound = store.isBeingDeleted(diff.CacheKey())
+		assert.False(t, dFound)
 
-	// Check insufficient delay cancellation of diff and verify it's still in the cache
-	// after the delay period
-	time.Sleep(delay/2 + time.Second)
-	found = store.Has(diff)
-	assert.True(t, found)
+		// Check insufficient delay cancellation of diff and verify it's still in the cache
+		// after the delay period
+		time.Sleep(delay/2 + time.Second)
+		found = store.Has(diff)
+		assert.True(t, found)
+	})
 }
 
 // A pinned entry must be skipped by disk-pressure eviction (the next-oldest is
@@ -323,34 +336,34 @@ func TestDiffStorePinnedSurvivesScheduledDelete(t *testing.T) {
 	c, err := cfg.Parse()
 	require.NoError(t, err)
 	flags := flagsWithMaxBuildCachePercentage(t, 100)
-	// Short pdDelay so the scheduled delete fires within the test.
-	store, err := NewDiffStore(c, flags, cachePath, 60*time.Second, 150*time.Millisecond)
-	require.NoError(t, err)
 
-	diff := newRootFSDiff(t, cachePath, "pin-after-schedule")
-	store.Add(diff)
+	synctest.Test(t, func(t *testing.T) {
+		delay := 150 * time.Millisecond
+		store, err := NewDiffStore(c, flags, cachePath, 60*time.Second, delay)
+		require.NoError(t, err)
 
-	// Delete scheduled first (as disk pressure would), then the Pin lands.
-	store.scheduleDelete(t.Context(), diff.CacheKey(), 1024)
-	require.True(t, store.isBeingDeleted(diff.CacheKey()))
-	store.Pin(diff.CacheKey())
+		diff := newRootFSDiff(t, cachePath, "pin-after-schedule")
+		store.Add(diff)
 
-	// After the delay elapses the fire-time isPinned re-check must have skipped
-	// the eviction: the entry is still cached and no longer marked for deletion.
-	require.Eventually(t, func() bool {
-		return !store.isBeingDeleted(diff.CacheKey())
-	}, 2*time.Second, 10*time.Millisecond)
-	_, found := store.Lookup(diff.CacheKey())
-	assert.True(t, found, "pinned entry must survive the scheduled delete")
+		// Delete scheduled first (as disk pressure would), then the Pin lands.
+		store.scheduleDelete(t.Context(), diff.CacheKey(), 1024)
+		require.True(t, store.isBeingDeleted(diff.CacheKey()))
+		store.Pin(diff.CacheKey())
 
-	// Unpin → a freshly scheduled delete now evicts it.
-	store.Unpin(diff.CacheKey())
-	store.scheduleDelete(t.Context(), diff.CacheKey(), 1024)
-	require.Eventually(t, func() bool {
-		_, ok := store.Lookup(diff.CacheKey())
+		// After the delay elapses the fire-time isPinned re-check must have skipped
+		// the eviction: the entry is still cached and no longer marked for deletion.
+		time.Sleep(delay + time.Millisecond)
+		require.False(t, store.isBeingDeleted(diff.CacheKey()))
+		_, found := store.Lookup(diff.CacheKey())
+		assert.True(t, found, "pinned entry must survive the scheduled delete")
 
-		return !ok
-	}, 2*time.Second, 10*time.Millisecond)
+		// Unpin → a freshly scheduled delete now evicts it.
+		store.Unpin(diff.CacheKey())
+		store.scheduleDelete(t.Context(), diff.CacheKey(), 1024)
+		time.Sleep(delay + time.Millisecond)
+		_, found = store.Lookup(diff.CacheKey())
+		require.False(t, found)
+	})
 }
 
 func TestDiffStoreOldestFromCache(t *testing.T) {
@@ -362,59 +375,61 @@ func TestDiffStoreOldestFromCache(t *testing.T) {
 
 	flags := flagsWithMaxBuildCachePercentage(t, 100)
 
-	ttl := 60 * time.Second
-	delay := 4 * time.Second
-	store, err := NewDiffStore(
-		c,
-		flags,
-		cachePath,
-		ttl,
-		delay,
-	)
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		ttl := 60 * time.Second
+		delay := 4 * time.Second
+		store, err := NewDiffStore(
+			c,
+			flags,
+			cachePath,
+			ttl,
+			delay,
+		)
+		require.NoError(t, err)
 
-	// Add items to the cache
-	diff := newRootFSDiff(t, cachePath, "build-test-id")
-	store.Add(diff)
-	diff2 := newRootFSDiff(t, cachePath, "build-test-id-2")
-	store.Add(diff2)
+		// Add items to the cache
+		diff := newRootFSDiff(t, cachePath, "build-test-id")
+		store.Add(diff)
+		diff2 := newRootFSDiff(t, cachePath, "build-test-id-2")
+		store.Add(diff2)
 
-	found := store.Has(diff)
-	assert.True(t, found)
+		found := store.Has(diff)
+		assert.True(t, found)
 
-	// Delete oldest item
-	_, err = store.deleteOldestFromCache(t.Context())
-	require.NoError(t, err)
+		// Delete oldest item
+		_, err = store.deleteOldestFromCache(t.Context())
+		require.NoError(t, err)
 
-	assert.True(t, store.isBeingDeleted(diff.CacheKey()))
-	// Wait for removal trigger of diff
-	time.Sleep(delay + time.Second)
+		assert.True(t, store.isBeingDeleted(diff.CacheKey()))
+		// Wait for removal trigger of diff
+		time.Sleep(delay + time.Second)
 
-	// Verify oldest item is deleted
-	found = store.Has(diff)
-	assert.False(t, found)
+		// Verify oldest item is deleted
+		found = store.Has(diff)
+		assert.False(t, found)
 
-	found = store.Has(diff2)
-	assert.True(t, found)
+		found = store.Has(diff2)
+		assert.True(t, found)
 
-	// Add another item to the cache
-	diff3 := newRootFSDiff(t, cachePath, "build-test-id-3")
-	store.Add(diff3)
+		// Add another item to the cache
+		diff3 := newRootFSDiff(t, cachePath, "build-test-id-3")
+		store.Add(diff3)
 
-	// Delete oldest item
-	_, err = store.deleteOldestFromCache(t.Context())
-	require.NoError(t, err)
+		// Delete oldest item
+		_, err = store.deleteOldestFromCache(t.Context())
+		require.NoError(t, err)
 
-	assert.True(t, store.isBeingDeleted(diff2.CacheKey()))
-	// Wait for removal trigger of diff
-	time.Sleep(delay + time.Second)
+		assert.True(t, store.isBeingDeleted(diff2.CacheKey()))
+		// Wait for removal trigger of diff
+		time.Sleep(delay + time.Second)
 
-	// Verify oldest item is deleted
-	found = store.Has(diff2)
-	assert.False(t, found)
+		// Verify oldest item is deleted
+		found = store.Has(diff2)
+		assert.False(t, found)
 
-	found = store.Has(diff3)
-	assert.True(t, found)
+		found = store.Has(diff3)
+		assert.True(t, found)
+	})
 }
 
 // TestDiffStoreConcurrentEvictionRace simulates the data race condition where

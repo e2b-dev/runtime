@@ -106,15 +106,20 @@ unescaped() {
   [ -z "$output" ]
 }
 
-# The parity and content tests above read both snippets as text, so a syntax
-# error in either passes them. `/bin/sh` is what runs both; `-n` is that same
-# parser, stopped before it does anything.
-@test "both secret snippets parse" {
+# The parity and content tests above read each snippet as text, so a syntax
+# error in any of them passes them. `/bin/sh` is what runs both; `-n` is
+# that same parser, stopped before it does anything.
+@test "every secret snippet parses" {
   unescaped '.services["api-secrets"].command[2]' > "$BATS_TEST_TMPDIR/api-secrets"
   unescaped '.services.api.entrypoint[2]' > "$BATS_TEST_TMPDIR/api-entrypoint"
   local snippet
   for snippet in api-secrets api-entrypoint; do
     [ -s "$BATS_TEST_TMPDIR/$snippet" ]
+    # jq -r prints "null" for a snippet that is not there at all, and `sh -n`
+    # reads that as a command name and exits 0. Without this line the loop
+    # would pass for a service whose entrypoint had been deleted outright.
+    [ "$(cat "$BATS_TEST_TMPDIR/$snippet")" != "null" ] || {
+      echo "the $snippet snippet is absent from the rendered file"; return 1; }
     run sh -n "$BATS_TEST_TMPDIR/$snippet"
     [ "$status" -eq 0 ] || { echo "the $snippet snippet does not parse:"; echo "$output"; return 1; }
   done

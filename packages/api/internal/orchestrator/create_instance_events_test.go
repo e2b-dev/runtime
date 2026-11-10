@@ -57,7 +57,7 @@ func newOrchestratorWithCounter(t *testing.T) (*Orchestrator, *eventCounter) {
 	ec := &eventCounter{}
 
 	client := redis_utils.SetupInstance(t)
-	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider(), nil)
+	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
 	require.NoError(t, err)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
@@ -66,13 +66,13 @@ func newOrchestratorWithCounter(t *testing.T) (*Orchestrator, *eventCounter) {
 		storage,
 		redisreservations.NewReservationStorage(client, storage.Notifier()),
 		sandbox.Callbacks{
-			AddSandboxToRoutingTable: func(context.Context, sandbox.Sandbox) {},
 			AsyncNewlyCreatedSandbox: ec.callback(),
 		},
 	)
 
 	meter := noop.NewMeterProvider().Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator")
 	counter, _ := meter.Int64Counter("test-created")
+	noCeilingCounter, _ := meter.Int64Counter("test-placements-without-hugepage-ceiling")
 
 	ffClient, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
 	require.NoError(t, err)
@@ -83,11 +83,12 @@ func newOrchestratorWithCounter(t *testing.T) (*Orchestrator, *eventCounter) {
 	node.ClusterID = uuid.Nil
 
 	o := &Orchestrator{
-		sandboxStore:            store,
-		nodes:                   smap.New[*nodemanager.Node](),
-		placementAlgorithm:      algo,
-		featureFlagsClient:      ffClient,
-		createdSandboxesCounter: counter,
+		sandboxStore:               store,
+		nodes:                      smap.New[*nodemanager.Node](),
+		placementAlgorithm:         algo,
+		featureFlagsClient:         ffClient,
+		createdSandboxesCounter:    counter,
+		noCeilingPlacementsCounter: noCeilingCounter,
 	}
 	o.registerNode(node)
 

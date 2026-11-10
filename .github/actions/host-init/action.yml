@@ -1,5 +1,5 @@
 name: "Host Initialization"
-description: "Sets up the host environment, including authentication and dependencies."
+description: "Sets up the host environment, including dependencies."
 
 runs:
   using: "composite"
@@ -20,15 +20,19 @@ runs:
       shell: bash
 
     # Exact-key only, no restore-keys: the key hashes the files that pin the
-    # kernel and Firecracker versions plus the pull script itself, so a
-    # restored cache always holds exactly the pin-referenced artifacts and a
-    # pin bump repulls fresh. On runners with an accelerated actions cache
-    # the restore is a few seconds; a miss costs the plain pulls, nothing
-    # more. A busybox republish under the same path is not reflected in the
-    # key — delete the cache entry (or bump the pins) to pick it up.
-    # Restore and save are split so the save can be skipped when the init
-    # script fell back to a full prefix pull: only pin-referenced artifacts
-    # are ever cached, never the multi-GiB everything-pull.
+    # kernel and Firecracker versions (the build-sandbox-template action)
+    # and the busybox version (packages/orchestrator/pkg/cfg/model.go, read
+    # by the in-test template builds; the busybox prefix is pulled whole, so
+    # a version bump reaches a warm cache only through this roll), plus the
+    # pull script itself, so a restored cache always holds exactly the
+    # pin-referenced artifacts and a pin bump repulls fresh. On runners with
+    # an accelerated actions cache the restore is a few seconds; a miss
+    # costs the plain pulls, nothing more. A busybox republish under the
+    # same path is not reflected in the key — delete the cache entry (or
+    # bump the pins) to pick it up. Restore and save are split so the save
+    # can be skipped when the init script fell back to a full prefix pull:
+    # only pin-referenced artifacts are ever cached, never the multi-GiB
+    # everything-pull.
     - name: Restore sandbox artifacts
       id: artifacts-restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -40,14 +44,17 @@ runs:
         # KERNEL_VERSIONS in the key: a job overriding the kernel list must
         # not save its narrowed pull under the default key for other jobs to
         # restore. Unset (the normal case) contributes an empty segment.
-        key: fc-artifacts-${{ env.KERNEL_VERSIONS }}-${{ env.FC_VERSIONS }}-${{ hashFiles('.github/actions/build-sandbox-template/action.yml', 'packages/shared/pkg/featureflags/flags.go', 'packages/orchestrator/pkg/cfg/model.go', '.github/actions/host-init/init-client.sh') }}
+        key: fc-artifacts-${{ env.KERNEL_VERSIONS }}-${{ env.FC_VERSIONS }}-${{ hashFiles('.github/actions/build-sandbox-template/action.yml', 'packages/orchestrator/pkg/cfg/model.go', '.github/actions/host-init/init-client.sh') }}
 
     - name: Initialize Host
       env:
         INIT_SCRIPT_PATH: "./.github/actions/host-init/init-client.sh"
       run: |
         chmod +x "${INIT_SCRIPT_PATH}"
-        sudo -E bash -c "${INIT_SCRIPT_PATH}"
+        # The script reads the job's variables (KERNEL_VERSIONS, NBDS_MAX,
+        # GITHUB_ENV, ...); an explicit --preserve-env list carries them, since
+        # sudo-rs on Ubuntu 25.10 and later images ignores a bare -E.
+        sudo --preserve-env="$(compgen -e | paste -sd,)" bash -c "${INIT_SCRIPT_PATH}"
       shell: bash
 
     - name: Save sandbox artifacts

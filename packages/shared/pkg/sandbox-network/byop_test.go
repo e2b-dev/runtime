@@ -2,10 +2,18 @@ package sandbox_network
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,6 +220,170 @@ func TestValidateEgressProxy_NilResolverFallsBackToDefault(t *testing.T) {
 	got, err := ValidateEgressProxy(t.Context(), &EgressProxyConfig{Address: "203.0.113.5:1080"}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "203.0.113.5:1080", got.Address)
+}
+
+// testCACertPEM builds a self-signed certificate, the shape a private-CA
+// bundle takes. Nothing here verifies a chain, only that the bundle parses.
+func testCACertPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "sandbox-network test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// Every block pem.Decode reads must be a certificate that parses.
+func TestParseCACertPool(t *testing.T) {
+	t.Parallel()
+
+	good := testCACertPEM(t)
+	second := testCACertPEM(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+
+	accepted := []struct {
+		name   string
+		bundle string
+	}{
+		{name: "one certificate", bundle: good},
+		{name: "a chain", bundle: good + second},
+		{name: "comments around the blocks", bundle: "# root\n" + good + "subject=CN=intermediate\n" + second + "# end\n"},
+	}
+	for _, tt := range accepted {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool, err := ParseCACertPool(tt.bundle)
+			require.NoError(t, err)
+			assert.NotNil(t, pool)
+		})
+	}
+
+	rejected := []struct {
+		name   string
+		bundle string
+	}{
+		{name: "empty", bundle: ""},
+		{name: "no PEM at all", bundle: "not a certificate"},
+		{name: "a block that is not DER", bundle: "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----\n"},
+		{name: "a private key", bundle: good + keyPEM},
+	}
+	for _, tt := range rejected {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ParseCACertPool(tt.bundle)
+			require.ErrorIs(t, err, ErrInvalidCACertificates)
+		})
+	}
+}
+
+func TestValidateEgressProxy_TLS(t *testing.T) {
+	t.Parallel()
+
+	caCertPEM := testCACertPEM(t)
+
+	base := func(tlsCfg *EgressProxyTLSConfig) *EgressProxyConfig {
+		return &EgressProxyConfig{Address: "203.0.113.5:1080", TLS: tlsCfg}
+	}
+
+	t.Run("nil block passes through", func(t *testing.T) {
+		t.Parallel()
+		got, err := ValidateEgressProxy(t.Context(), base(nil), literalOnlyResolver())
+		require.NoError(t, err)
+		assert.Nil(t, got.TLS)
+	})
+
+	t.Run("enabled with no options is accepted", func(t *testing.T) {
+		t.Parallel()
+		got, err := ValidateEgressProxy(t.Context(), base(&EgressProxyTLSConfig{Enabled: true}), literalOnlyResolver())
+		require.NoError(t, err)
+		require.NotNil(t, got.TLS)
+		assert.True(t, got.TLS.Enabled)
+	})
+
+	t.Run("server name is canonicalized", func(t *testing.T) {
+		t.Parallel()
+		got, err := ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: true, ServerName: "  Proxy.Example.COM "}), literalOnlyResolver())
+		require.NoError(t, err)
+		assert.Equal(t, "proxy.example.com", got.TLS.ServerName)
+	})
+
+	t.Run("disabled block canonicalizes to absent", func(t *testing.T) {
+		t.Parallel()
+		got, err := ValidateEgressProxy(t.Context(), base(&EgressProxyTLSConfig{Enabled: false}), literalOnlyResolver())
+		require.NoError(t, err)
+		assert.Nil(t, got.TLS, "an explicitly disabled block is the same as no block")
+	})
+
+	t.Run("disabled block must carry nothing else", func(t *testing.T) {
+		t.Parallel()
+		// Accepting these would store a config that reads as though it
+		// verifies something while the hop stays in the clear.
+		_, err := ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: false, ServerName: "proxy.example.com"}), literalOnlyResolver())
+		require.Error(t, err)
+
+		_, err = ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: false, CACert: caCertPEM}), literalOnlyResolver())
+		require.Error(t, err)
+	})
+
+	t.Run("ca bundle must parse", func(t *testing.T) {
+		t.Parallel()
+		_, err := ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: true, CACert: "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----"}),
+			literalOnlyResolver())
+		require.ErrorIs(t, err, ErrInvalidCACertificates)
+	})
+
+	t.Run("parseable ca bundle is kept", func(t *testing.T) {
+		t.Parallel()
+		got, err := ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: true, CACert: caCertPEM}), literalOnlyResolver())
+		require.NoError(t, err)
+		assert.Equal(t, strings.TrimSpace(caCertPEM), got.TLS.CACert)
+	})
+
+	t.Run("oversized fields are rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: true, ServerName: strings.Repeat("a", maxServerNameLen+1)}),
+			literalOnlyResolver())
+		require.Error(t, err)
+
+		_, err = ValidateEgressProxy(t.Context(),
+			base(&EgressProxyTLSConfig{Enabled: true, CACert: strings.Repeat("a", maxCACertLen+1)}),
+			literalOnlyResolver())
+		require.Error(t, err)
+	})
+
+	t.Run("input is not mutated", func(t *testing.T) {
+		t.Parallel()
+		in := base(&EgressProxyTLSConfig{Enabled: true, ServerName: "PROXY.EXAMPLE.COM"})
+		_, err := ValidateEgressProxy(t.Context(), in, literalOnlyResolver())
+		require.NoError(t, err)
+		assert.Equal(t, "PROXY.EXAMPLE.COM", in.TLS.ServerName)
+	})
 }
 
 func TestIsIPInDeniedSandboxCIDRs_Exported(t *testing.T) {

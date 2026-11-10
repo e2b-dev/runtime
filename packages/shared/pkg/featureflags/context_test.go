@@ -1,8 +1,10 @@
 package featureflags
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
@@ -259,5 +261,39 @@ func TestSetContext(t *testing.T) {
 		assert.Equal(t, "sandbox-123", embedded.Key())
 		assert.Equal(t, SandboxKind, embedded.Kind())
 		require.NoError(t, embedded.Err())
+	})
+}
+
+type detachTestKey struct{}
+
+func TestDetachContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("keeps the flag contexts and nothing else of the request", func(t *testing.T) {
+		t.Parallel()
+		team := TeamContext("team-detached")
+		request, cancel := context.WithTimeout(t.Context(), time.Hour)
+		defer cancel()
+		request = context.WithValue(AddToContext(request, team), detachTestKey{}, "request value")
+
+		detached := DetachContext(request)
+
+		got, ok := getContext(detached)
+		require.True(t, ok)
+		assert.Equal(t, team, got)
+		assert.Nil(t, detached.Value(detachTestKey{}), "a value of the request is not carried")
+		_, hasDeadline := detached.Deadline()
+		assert.False(t, hasDeadline)
+		cancel()
+		assert.NoError(t, detached.Err(), "the request's cancellation does not reach it")
+	})
+
+	t.Run("carries no flag context when the request has none", func(t *testing.T) {
+		t.Parallel()
+		detached := DetachContext(context.WithValue(t.Context(), detachTestKey{}, "request value"))
+
+		_, ok := getContext(detached)
+		assert.False(t, ok)
+		assert.Nil(t, detached.Value(detachTestKey{}))
 	})
 }

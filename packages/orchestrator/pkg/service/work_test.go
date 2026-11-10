@@ -16,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 )
 
@@ -65,10 +66,12 @@ func TestServiceInfoReportsOutstandingWork(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			info := &ServiceInfo{Roles: roles}
+			info := testInfo()
+			info.Roles = roles
 			listener := bufconn.Listen(1 << 20)
 			server := grpc.NewServer()
-			orchestratorinfo.RegisterInfoServiceServer(server, NewInfoService(info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics()))
+			infoService := NewInfoService(info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics(), nil)
+			orchestratorinfo.RegisterInfoServiceServer(server, infoService)
 			go func() { _ = server.Serve(listener) }()
 			t.Cleanup(func() {
 				server.Stop()
@@ -88,9 +91,6 @@ func TestServiceInfoReportsOutstandingWork(t *testing.T) {
 
 				response, err := client.ServiceInfo(t.Context(), &emptypb.Empty{})
 				require.NoError(t, err)
-				require.NotNil(t, response.OutstandingWork)
-				message := response.ProtoReflect()
-				require.True(t, message.Has(message.Descriptor().Fields().ByName("outstanding_work")))
 				require.Equal(t, want, response.GetOutstandingWork())
 				require.Zero(t, response.GetMetricSandboxesRunning())
 			}
@@ -103,6 +103,13 @@ func TestServiceInfoReportsOutstandingWork(t *testing.T) {
 			assertCount(1)
 			childDone()
 			assertCount(0)
+
+			require.NoError(t, info.OverrideStatus(t.Context(), servicestatus.Request{Status: standby, Owner: "x"}))
+			response, err := client.ServiceInfo(t.Context(), &emptypb.Empty{})
+			require.NoError(t, err)
+			require.Equal(t, standby, response.GetServiceStatus())
+			require.Equal(t, "x", response.GetStatusOwner())
+			require.Equal(t, []string{"park-owner"}, response.GetCapabilities())
 		})
 	}
 }

@@ -6,7 +6,7 @@ Daemon that runs inside a sandbox that allows interacting with the sandbox via c
 
 ### Versioning
 
-The envd version in `pkg/version.go` must be bumped on every change that affects behavior (code changes, dependency updates, etc.). Pure comment or documentation changes that don't affect the compiled binary don't require a version bump.
+The envd version in `pkg/version.go` is maintained by release-please from the Conventional Commits merged since the last envd release; do not edit it by hand. A change that affects behavior (code, dependencies) ships under a `feat` or `fix` commit type, so that a version the orchestrator can gate on is cut. Pure comment or documentation changes use `docs`, a type the changelog hides, and cut no release; `chore` and `refactor` are visible in it and do cut one.
 
 ### Running locally
 

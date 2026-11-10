@@ -50,10 +50,10 @@ type Service struct {
 	// with no carried handler and be left unconnectable/unreaped. RWMutex so
 	// concurrent Starts don't serialize against each other, only against Upgrade.
 	snapshotMu sync.RWMutex
-	// cgroupManager places spawned processes into their cgroup; workloadFreezer
-	// freezes/thaws the workload during a live-upgrade handover. The freezer is
-	// shared with the HTTP API so both serialize on one lock.
-	cgroupManager   cgroups.Manager
+	// workloadFreezer places spawned processes into their cgroup (through its
+	// manager), admits each fork, and freezes/thaws the workload during a
+	// live-upgrade handover. It is shared with the HTTP API so every freeze,
+	// thaw and spawn serializes against the same state.
 	workloadFreezer *cgroups.WorkloadFreezer
 
 	// handoverMaxWait bounds how long the pre-handover freeze waits for the
@@ -68,41 +68,17 @@ func newService(l *zerolog.Logger, defaults *execcontext.Defaults, workloadFreez
 		processes:       utils.NewMap[uint32, *handler.Handler](),
 		terminated:      utils.NewMap[uint32, *retainedExit](),
 		defaults:        defaults,
-		cgroupManager:   workloadFreezer.Manager(),
 		workloadFreezer: workloadFreezer,
 		handoverMaxWait: cgroups.HandoverMaxWait,
 	}
 }
 
-// trackTermination subscribes to a handler's terminal event so the exit code
-// survives even if no client is attached when the process exits. On exit it
-// caches the EndEvent (retained for terminatedRetentionTTL) and removes the
-// process from the live map. This is what lets a Connect issued after a
-// live-upgrade handover gap still return the exit code.
-//
-// It must be called once, right after the handler is registered in
-// s.processes (both the fresh-Start and the readopt paths).
-func (s *Service) trackTermination(pid uint32, proc *handler.Handler) {
-	endCh, cancel := proc.EndEvent.Fork()
-
-	go func() {
-		defer cancel()
-
-		ev, ok := <-endCh
-		var end *rpc.ProcessEvent_EndEvent
-		if ok {
-			end = ev.End
-		}
-		s.finalizeTermination(pid, proc, end)
-	}()
-}
-
 // finalizeTermination caches the terminal event for the retention window and
-// then removes the process from the live map, guarded against PID reuse. It is
-// shared by the asynchronous live-exit watcher (trackTermination) and the
-// synchronous re-adopt reaper hook (Handler.OnExit). The exit is cached before
-// the process is removed so a racing Connect that still finds it live can fall
-// back to the cache instead of blocking on an EndEvent that will never re-fire.
+// then removes the process from the live map, guarded against PID reuse. Both
+// the fresh-start and the re-adopt paths call it from Handler.OnExit, before
+// the handler closes EndEvent. The exit is cached before the process is removed
+// so a racing Connect that still finds it live can fall back to the cache
+// instead of blocking on an EndEvent that will never re-fire.
 func (s *Service) finalizeTermination(pid uint32, proc *handler.Handler, end *rpc.ProcessEvent_EndEvent) {
 	// If the PID was already reused by a newer process, this exit is not ours to
 	// cache or evict — leave the successor untouched.
@@ -122,7 +98,7 @@ func (s *Service) finalizeTermination(pid uint32, proc *handler.Handler, end *rp
 }
 
 // retain stores a terminal event in the retention cache and schedules its
-// eviction at r.expiry. Shared by the live exit path (trackTermination) and the
+// eviction at r.expiry. Shared by the live exit path (finalizeTermination) and the
 // live-upgrade handover restore, so a process that exited shortly before the
 // upgrade still has its exit code available on the new envd.
 func (s *Service) retain(pid uint32, r *retainedExit) {
@@ -184,17 +160,13 @@ func (s *Service) getProcess(selector *rpc.ProcessSelector) (*handler.Handler, e
 		tag := selector.GetTag()
 
 		s.processes.Range(func(_ uint32, value *handler.Handler) bool {
-			if value.Tag == nil {
-				return true
-			}
-
-			if *value.Tag == tag {
+			if value.Tag != nil && *value.Tag == tag {
 				proc = value
 
-				return true
+				return false
 			}
 
-			return false
+			return true
 		})
 
 		if proc == nil {

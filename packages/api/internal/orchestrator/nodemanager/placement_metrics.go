@@ -1,6 +1,7 @@
 package nodemanager
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -9,10 +10,16 @@ import (
 type SandboxResources struct {
 	CPUs      int64
 	MiBMemory int64
+	// HugePages reports whether the sandbox's RAM comes from the node's
+	// hugepage pool rather than ordinary pages.
+	HugePages bool
 }
 
 type PlacementMetrics struct {
 	sandboxesInProgress *smap.Map[SandboxResources]
+
+	// startMu makes StartPlacingIf's check and insert one step per node.
+	startMu sync.Mutex
 
 	createSuccess atomic.Uint64
 	createFails   atomic.Uint64
@@ -48,8 +55,20 @@ func (p *PlacementMetrics) InProgressCount() uint32 {
 	return uint32(p.sandboxesInProgress.Count())
 }
 
-func (p *PlacementMetrics) StartPlacing(sandboxID string, resources SandboxResources) {
+// StartPlacingIf records the placement only if fits holds, checking and
+// inserting under one lock so concurrent placements cannot all pass a check
+// that counts in-flight placements. fits must not call StartPlacingIf.
+func (p *PlacementMetrics) StartPlacingIf(sandboxID string, resources SandboxResources, fits func() bool) bool {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
+
+	if !fits() {
+		return false
+	}
+
 	p.sandboxesInProgress.Insert(sandboxID, resources)
+
+	return true
 }
 
 func (p *PlacementMetrics) removeSandbox(sandboxID string) {

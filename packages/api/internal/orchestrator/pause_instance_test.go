@@ -29,8 +29,24 @@ func TestBuildUpsertSnapshotParams_PreservesIam(t *testing.T) {
 			Iam:            in,
 		}
 
-		params := buildUpsertSnapshotParams(sbx, node, false)
+		params := buildUpsertSnapshotParams(sbx, node, false, false)
 
 		assert.Equal(t, in, params.Config.Iam)
+	}
+}
+
+// TestBuildUpsertSnapshotParams_FilesystemOnly verifies the snapshot kind is
+// written into the paused-sandbox config: the resume and create paths read it
+// to pick a cold boot over a memory restore.
+func TestBuildUpsertSnapshotParams_FilesystemOnly(t *testing.T) {
+	t.Parallel()
+
+	node := &nodemanager.Node{ID: "node-1"}
+	sbx := sandbox.Sandbox{SandboxID: "sbx-1", BaseTemplateID: "tmpl", BuildID: uuid.New()}
+
+	for _, filesystemOnly := range []bool{true, false} {
+		params := buildUpsertSnapshotParams(sbx, node, filesystemOnly, filesystemOnly)
+
+		assert.Equal(t, filesystemOnly, params.Config.FilesystemOnly)
 	}
 }

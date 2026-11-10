@@ -54,7 +54,7 @@ func TestTemplateCache_InvalidateDoesNotInvalidateAliases(t *testing.T) {
 func TestTemplateCache_InvalidateAllTagsDeletesRedisEntries(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
-	redisClient := redis_utils.SetupInstance(t)
+	redisClient := redis_utils.SetupContainerInstance(t)
 	ctx := t.Context()
 
 	teamID := testutils.CreateTestTeam(t, db)
@@ -137,7 +137,7 @@ func TestTemplateCache_Get_ExistingTagWithoutReadyBuildIsTagNotFound(t *testing.
 func TestTemplateCache_InvalidateAllTagsAlsoInvalidatesMetadata(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
-	redis := redis_utils.SetupInstance(t)
+	redis := redis_utils.SetupContainerInstance(t)
 	ctx := t.Context()
 
 	teamID := testutils.CreateTestTeam(t, db)

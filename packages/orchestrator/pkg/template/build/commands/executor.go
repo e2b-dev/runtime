@@ -49,6 +49,14 @@ func (ce *CommandExecutor) getCommand(
 ) (Command, error) {
 	cmdType := strings.ToUpper(step.GetType())
 
+	if renderer := ce.Config.GuestTemplate().Renderer; renderer != nil {
+		return &Rendered{
+			Renderer:     renderer,
+			FilesStorage: ce.buildStorage,
+			CacheScope:   ce.CacheScope,
+		}, nil
+	}
+
 	var cmd Command
 	switch cmdType {
 	case "ADD", "COPY":
@@ -85,8 +93,8 @@ func (ce *CommandExecutor) Execute(
 	ctx, span := tracer.Start(ctx, "apply-command", trace.WithAttributes(
 		attribute.String("prefix", prefix),
 		attribute.String("sandbox.id", sbx.Runtime.SandboxID),
+		// The step's arguments are the user's and stay out of traces.
 		attribute.String("step.type", step.GetType()),
-		attribute.StringSlice("step.args", step.GetArgs()),
 		attribute.String("step.files.hash", utils.Sprintp(step.FilesHash)), //nolint:protogetter // we need the nil check too
 	))
 	defer span.End()

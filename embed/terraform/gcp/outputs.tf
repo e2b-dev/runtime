@@ -8,6 +8,11 @@ output "sandbox_url" {
   value       = "http://${google_compute_address.this.address}:3002"
 }
 
+output "dashboard_url" {
+  description = "The dashboard, for a browser: sign in with e2b_api_key."
+  value       = "http://${google_compute_address.this.address}:3001"
+}
+
 output "e2b_api_key" {
   description = "E2B_API_KEY for the SDK: the team API key the seed inserted."
   value       = local.team_api_key

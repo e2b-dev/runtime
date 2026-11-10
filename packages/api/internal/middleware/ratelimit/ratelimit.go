@@ -20,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors/httperror"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -105,6 +106,13 @@ func Middleware(limiter requestLimiter, cfg Config, ff *featureflags.Client, met
 		}
 
 		mode := ff.StringFlag(c.Request.Context(), featureflags.RateLimitV2Mode)
+		if middleware.APIGroupFromContext(c) == "delete" &&
+			(mode == featureflags.APIGroupRateLimitEnabled || mode == featureflags.APIGroupRateLimitShadow) {
+			// An enabled delete flag inherits the global mode.
+			if deleteMode := ff.StringFlag(c.Request.Context(), featureflags.RateLimitDeleteMode); deleteMode != featureflags.APIGroupRateLimitEnabled {
+				mode = deleteMode
+			}
+		}
 		switch mode {
 		case featureflags.APIGroupRateLimitEnabled, featureflags.APIGroupRateLimitShadow:
 			checkLimitV2(c, limiter, requests, l, mode)
@@ -170,7 +178,8 @@ func checkLimitV1(c *gin.Context, limiter requestLimiter, cfg Config, ff *featur
 }
 
 var apiGroupRPSFields = map[string]func(*types.TeamLimits) int64{
-	"list": func(limits *types.TeamLimits) int64 { return limits.APITeamRPSList },
+	"list":   func(limits *types.TeamLimits) int64 { return limits.APITeamRPSList },
+	"delete": func(limits *types.TeamLimits) int64 { return limits.APITeamRPSDelete },
 }
 
 // Keys combine a team hash tag with an escaped method and route template to keep
@@ -250,8 +259,12 @@ func writeRateLimitResult(c *gin.Context, burst int64, result *redis_rate.Result
 	}
 
 	c.Header("Retry-After", strconv.Itoa(retryAfterSecs))
-	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-		"code":    http.StatusTooManyRequests,
-		"message": "Rate limit exceeded",
-	})
+	apiErr := &httperror.APIError{Code: http.StatusTooManyRequests, ClientMsg: "Rate limit exceeded"}
+	if c.Request.Method == http.MethodPost && c.FullPath() == "/v2/sandboxes" {
+		apiErr.Retryable = httperror.CanRetry
+	}
+	c.Abort()
+	if err := httperror.Write(c.Writer, apiErr); err != nil {
+		_ = c.Error(err)
+	}
 }

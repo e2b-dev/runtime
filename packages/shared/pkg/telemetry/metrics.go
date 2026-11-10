@@ -90,11 +90,17 @@ var uploadBytesView = sdkmetric.NewView(
 )
 
 func NewMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod time.Duration, res *resource.Resource, extraOption ...sdkmetric.Option) (*sdkmetric.MeterProvider, error) {
+	return newMeterProvider(metricsExporter, metricExportPeriod, res, nil, extraOption)
+}
+
+// newMeterProvider is NewMeterProvider with options for the periodic reader
+// it creates.
+func newMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod time.Duration, res *resource.Resource, readerOptions []sdkmetric.PeriodicReaderOption, extraOption []sdkmetric.Option) (*sdkmetric.MeterProvider, error) {
 	opts := []sdkmetric.Option{
 		sdkmetric.WithReader(
 			sdkmetric.NewPeriodicReader(
 				metricsExporter,
-				sdkmetric.WithInterval(metricExportPeriod),
+				append([]sdkmetric.PeriodicReaderOption{sdkmetric.WithInterval(metricExportPeriod)}, readerOptions...)...,
 			),
 		),
 		// Disable exemplars: they count 1:1 against the Mimir tenant items/s
@@ -109,6 +115,36 @@ func NewMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod tim
 
 	opts = append(opts, extraOption...)
 	opts = append(opts, sdkmetric.WithView(snapshotBytesView, uploadBytesView))
+	// Export these as explicit histograms so collectors can forward them to
+	// Prometheus without adding them to an exponential-conversion allowlist.
+	for _, name := range []HistogramType{
+		NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName, OrchestratorBlockCacheCloseDuration,
+	} {
+		opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
+			sdkmetric.Instrument{Name: string(name), Kind: sdkmetric.InstrumentKindHistogram},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: []float64{0, 1, 10, 100, 500, 1000, 3000, 5000, 10000, 30000, 60000, 120000, 300000, 600000},
+			}},
+		)))
+	}
+	// Same reason, with sub-millisecond edges first: a healthy punch takes a few
+	// µs and a contended one tens of µs, so those land in separate buckets
+	// below the second-scale stalls the rest of the edges are for.
+	opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
+		sdkmetric.Instrument{Name: string(OrchestratorBlockCachePunchDuration), Kind: sdkmetric.InstrumentKindHistogram},
+		sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+			Boundaries: []float64{0.01, 0.05, 0.25, 1, 10, 100, 500, 1000, 3000, 5000, 10000, 30000, 60000, 120000, 300000, 600000},
+		}},
+	)))
+	// Same reason, with its own buckets: a hit's age is bounded by the lag
+	// flag, a read's duration by the 70 s request timeout, and the flag is
+	// tuned in the second or two the 250 ms steps resolve.
+	opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
+		sdkmetric.Instrument{Name: string(ApiSandboxListAge), Kind: sdkmetric.InstrumentKindHistogram},
+		sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+			Boundaries: []float64{1, 10, 50, 100, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 4000, 5000, 10000, 30000, 70000},
+		}},
+	)))
 
 	return sdkmetric.NewMeterProvider(opts...), nil
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
-	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string) {
@@ -55,6 +54,12 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 		return
 	}
 
+	if apiErr := validateDNSServers(body.DnsServers); apiErr != nil {
+		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+
+		return
+	}
+
 	var egressProxy *sandbox_network.EgressProxyConfig
 	if ep := body.EgressProxy; ep != nil {
 		if !a.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
@@ -65,11 +70,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		canonical, err := sandbox_network.ValidateEgressProxy(ctx, &sandbox_network.EgressProxyConfig{
-			Address:  ep.Address,
-			Username: sharedUtils.DerefOrDefault(ep.Username, ""),
-			Password: sharedUtils.DerefOrDefault(ep.Password, ""),
-		}, nil)
+		canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
 		if err != nil {
 			telemetry.ReportError(ctx, "invalid egress proxy config", err)
 			a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))
@@ -93,8 +94,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamID.String()))
-		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, maxDomains, body.Rules); apiErr != nil {
+		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, a.networkRuleLimits(ctx, teamID), body.Rules); apiErr != nil {
 			a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 			return
@@ -103,7 +103,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 
 	rules := apiRulesToDBRules(body.Rules)
 
-	if apiErr := a.orchestrator.UpdateSandboxNetworkConfig(ctx, teamID, sandboxID, allowedEntries, deniedEntries, rules, body.AllowInternetAccess, egressProxy); apiErr != nil {
+	if apiErr := a.orchestrator.UpdateSandboxNetworkConfig(ctx, teamID, sandboxID, allowedEntries, deniedEntries, rules, body.AllowInternetAccess, body.DnsServers, egressProxy); apiErr != nil {
 		telemetry.ReportErrorByCode(ctx, apiErr.Code, "error updating sandbox network config", apiErr.Err)
 		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
@@ -116,7 +116,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			domains = append(domains, domain)
 		}
 
-		a.posthog.CreateAnalyticsTeamEvent(ctx, teamID.String(), "sandbox with network transform rules updated",
+		a.posthog.CreateAnalyticsSandboxEvent(ctx, teamID.String(), sandboxID, "sandbox with network transform rules updated",
 			a.posthog.GetPackageToPosthogProperties(&c.Request.Header).
 				Set("sandbox_id", sandboxID).
 				Set("domains", domains),
@@ -126,7 +126,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 	// Reported off the canonical config rather than the request body, so the
 	// event describes the proxy the sandbox actually runs with.
 	if egressProxy != nil {
-		a.posthog.CreateAnalyticsTeamEvent(ctx, teamID.String(), "sandbox with egress proxy updated",
+		a.posthog.CreateAnalyticsSandboxEvent(ctx, teamID.String(), sandboxID, "sandbox with egress proxy updated",
 			a.posthog.GetPackageToPosthogProperties(&c.Request.Header).
 				Set("sandbox_id", sandboxID).
 				Set("egress_proxy_auth", egressProxy.Username != ""),

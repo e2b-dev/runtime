@@ -55,7 +55,10 @@ func (r *Run) Execute(
 		cmdMetadata,
 	)
 	if err != nil {
-		return metadata.Context{}, fmt.Errorf("failed to run command '%s': %w", cmd, err)
+		// The command is not repeated here: the build log already shows it
+		// on the step's own line, and this error is also logged by the
+		// orchestrator, where a user's command does not belong.
+		return metadata.Context{}, fmt.Errorf("failed to run command: %w", err)
 	}
 
 	return originalMetadata, nil

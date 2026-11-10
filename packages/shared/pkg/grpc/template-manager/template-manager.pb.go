@@ -675,8 +675,9 @@ type TemplateConfig struct {
 	TemplateID string                 `protobuf:"bytes,1,opt,name=templateID,proto3" json:"templateID,omitempty"`
 	BuildID    string                 `protobuf:"bytes,2,opt,name=buildID,proto3" json:"buildID,omitempty"`
 	MemoryMB   int32                  `protobuf:"varint,3,opt,name=memoryMB,proto3" json:"memoryMB,omitempty"`
-	VCpuCount  int32                  `protobuf:"varint,4,opt,name=vCpuCount,proto3" json:"vCpuCount,omitempty"`
-	DiskSizeMB int32                  `protobuf:"varint,5,opt,name=diskSizeMB,proto3" json:"diskSizeMB,omitempty"`
+	// CPUs online during the build and in the final template.
+	VCpuCount  int32 `protobuf:"varint,4,opt,name=vCpuCount,proto3" json:"vCpuCount,omitempty"`
+	DiskSizeMB int32 `protobuf:"varint,5,opt,name=diskSizeMB,proto3" json:"diskSizeMB,omitempty"`
 	// Deprecated: template-manager now selects the kernel and firecracker versions itself
 	//
 	// Deprecated: Marked as deprecated in template-manager.proto.
@@ -684,7 +685,7 @@ type TemplateConfig struct {
 	// Deprecated: Marked as deprecated in template-manager.proto.
 	FirecrackerVersion string `protobuf:"bytes,7,opt,name=firecrackerVersion,proto3" json:"firecrackerVersion,omitempty"`
 	StartCommand       string `protobuf:"bytes,8,opt,name=startCommand,proto3" json:"startCommand,omitempty"`
-	// Deprecated: hugePages is derived from the resolved firecracker version locally
+	// Deprecated: every template build uses huge pages
 	//
 	// Deprecated: Marked as deprecated in template-manager.proto.
 	HugePages    bool            `protobuf:"varint,9,opt,name=hugePages,proto3" json:"hugePages,omitempty"`
@@ -701,8 +702,12 @@ type TemplateConfig struct {
 	// Optional during the rolling upgrade. When absent, the template manager
 	// uses diskSizeMB as the post-build free-space target.
 	FreeDiskSizeMB *int32 `protobuf:"varint,17,opt,name=freeDiskSizeMB,proto3,oneof" json:"freeDiskSizeMB,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Capacity of the final template VM, of which vCpuCount are online.
+	// Provisioning and step VMs boot with vCpuCount; absent means the final VM does too.
+	// On x86, both counts must be 1 or even because each is a physical VM size.
+	MaxVCpuCount  *int32 `protobuf:"varint,18,opt,name=maxVCpuCount,proto3,oneof" json:"maxVCpuCount,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TemplateConfig) Reset() {
@@ -864,6 +869,13 @@ func (x *TemplateConfig) GetTeamID() string {
 func (x *TemplateConfig) GetFreeDiskSizeMB() int32 {
 	if x != nil && x.FreeDiskSizeMB != nil {
 		return *x.FreeDiskSizeMB
+	}
+	return 0
+}
+
+func (x *TemplateConfig) GetMaxVCpuCount() int32 {
+	if x != nil && x.MaxVCpuCount != nil {
+		return *x.MaxVCpuCount
 	}
 	return 0
 }
@@ -1412,7 +1424,7 @@ const file_template_manager_proto_rawDesc = "" +
 	"\x03aws\x18\x01 \x01(\v2\f.AWSRegistryH\x00R\x03aws\x12 \n" +
 	"\x03gcp\x18\x02 \x01(\v2\f.GCPRegistryH\x00R\x03gcp\x12,\n" +
 	"\ageneral\x18\x03 \x01(\v2\x10.GeneralRegistryH\x00R\ageneralB\x06\n" +
-	"\x04type\"\xd0\x05\n" +
+	"\x04type\"\x8a\x06\n" +
 	"\x0eTemplateConfig\x12\x1e\n" +
 	"\n" +
 	"templateID\x18\x01 \x01(\tR\n" +
@@ -1435,11 +1447,13 @@ const file_template_manager_proto_rawDesc = "" +
 	"\ffromTemplate\x18\x0e \x01(\v2\x13.FromTemplateConfigH\x00R\ffromTemplate\x12E\n" +
 	"\x11fromImageRegistry\x18\x0f \x01(\v2\x12.FromImageRegistryH\x02R\x11fromImageRegistry\x88\x01\x01\x12\x16\n" +
 	"\x06teamID\x18\x10 \x01(\tR\x06teamID\x12+\n" +
-	"\x0efreeDiskSizeMB\x18\x11 \x01(\x05H\x03R\x0efreeDiskSizeMB\x88\x01\x01B\b\n" +
+	"\x0efreeDiskSizeMB\x18\x11 \x01(\x05H\x03R\x0efreeDiskSizeMB\x88\x01\x01\x12'\n" +
+	"\fmaxVCpuCount\x18\x12 \x01(\x05H\x04R\fmaxVCpuCount\x88\x01\x01B\b\n" +
 	"\x06sourceB\b\n" +
 	"\x06_forceB\x14\n" +
 	"\x12_fromImageRegistryB\x11\n" +
-	"\x0f_freeDiskSizeMB\"\xa3\x01\n" +
+	"\x0f_freeDiskSizeMBB\x0f\n" +
+	"\r_maxVCpuCount\"\xa3\x01\n" +
 	"\x15TemplateCreateRequest\x12+\n" +
 	"\btemplate\x18\x01 \x01(\v2\x0f.TemplateConfigR\btemplate\x12#\n" +
 	"\n" +
@@ -1515,7 +1529,7 @@ const file_template_manager_proto_rawDesc = "" +
 	"\x0eTemplateCreate\x12\x16.TemplateCreateRequest\x1a\x16.google.protobuf.Empty\x12K\n" +
 	"\x13TemplateBuildStatus\x12\x16.TemplateStatusRequest\x1a\x1c.TemplateBuildStatusResponse\x12J\n" +
 	"\x13TemplateBuildDelete\x12\x1b.TemplateBuildDeleteRequest\x1a\x16.google.protobuf.Empty\x12P\n" +
-	"\x13InitLayerFileUpload\x12\x1b.InitLayerFileUploadRequest\x1a\x1c.InitLayerFileUploadResponseB3Z1https://github.com/e2b-dev/infra/template-managerb\x06proto3"
+	"\x13InitLayerFileUpload\x12\x1b.InitLayerFileUploadRequest\x1a\x1c.InitLayerFileUploadResponseBUZSgithub.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager;template_managerb\x06proto3"
 
 var (
 	file_template_manager_proto_rawDescOnce sync.Once

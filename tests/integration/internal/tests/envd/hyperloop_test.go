@@ -31,7 +31,7 @@ func TestAccessingHyperloopServerViaIP(t *testing.T) {
 	readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &readPath, Username: new("user")},
-		setup.WithSandbox(t, sbx.SandboxID),
+		setup.WithSandbox(t, sbx),
 	)
 
 	require.NoError(t, readErr)
@@ -56,7 +56,7 @@ func TestAccessingHyperloopServerViaDomain(t *testing.T) {
 	readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &readPath, Username: new("user")},
-		setup.WithSandbox(t, sbx.SandboxID),
+		setup.WithSandbox(t, sbx),
 	)
 
 	require.NoError(t, readErr)
@@ -81,7 +81,7 @@ func TestAccessingHyperloopServerViaIPWithBlockedInternet(t *testing.T) {
 	readRes, readErr := envdClient.HTTPClient.GetFilesWithResponse(
 		ctx,
 		&envd.GetFilesParams{Path: &readPath, Username: new("user")},
-		setup.WithSandbox(t, sbx.SandboxID),
+		setup.WithSandbox(t, sbx),
 	)
 
 	require.NoError(t, readErr)

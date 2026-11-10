@@ -89,7 +89,7 @@ spec:
           image: clickhouse/clickhouse-server:25.8.30.16
           restartPolicy: Always
           env:
-            - { name: CLICKHOUSE_DB, value: default }
+            # No CLICKHOUSE_DB: see the compose service.
             - { name: CLICKHOUSE_USER, value: clickhouse }
             - { name: CLICKHOUSE_PASSWORD, value: clickhouse }
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
@@ -165,7 +165,11 @@ spec:
             - { name: REDIS_URL, value: 127.0.0.1:6379 }
             - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
             - { name: LOGS_COLLECTOR_ADDRESS, value: "http://127.0.0.1:20006" }
+            # The kustomization's e2b-settings map; empty exports nothing.
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
             - { name: TEMPLATE_STORAGE_URL, value: "file:///var/lib/e2b/storage/templates" }
+            - { name: PAUSE_ADMISSION_DISK_HEADROOM_MIB, value: "1024" }
+            - { name: CREATE_MEMORY_REFUSAL, value: "true" }
             - { name: BUILD_CACHE_STORAGE_URL, value: "file:///var/lib/e2b/storage/build-cache" }
             - { name: ARTIFACTS_REGISTRY_PROVIDER, value: Local }
             - { name: LOCAL_UPLOAD_BASE_URL, value: "http://127.0.0.1:5008" }
@@ -206,7 +210,9 @@ spec:
             - { name: REDIS_URL, value: 127.0.0.1:6379 }
             - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
             - { name: LOGS_READ_CONFIG, value: "true" }
+            - { name: PAUSE_REFUSAL_RESTORE, value: "true" }
             - { name: LOGS_COLLECTOR_ADDRESS, value: "http://127.0.0.1:20006" }
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
             - { name: API_INTERNAL_GRPC_PORT, value: "5009" }
             - { name: API_EDGE_GRPC_PORT, value: "5109" }
             - { name: PPROF_PORT, value: "6060" }
@@ -229,6 +235,7 @@ spec:
             - { name: API_INTERNAL_GRPC_ADDRESS, value: 127.0.0.1:5009 }
             - { name: PROXY_PORT, value: "3002" }
             - { name: HEALTH_PORT, value: "3003" }
+            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
           startupProbe:
             httpGet: { host: 127.0.0.1, port: 3003, path: / }
             periodSeconds: 10
@@ -252,6 +259,29 @@ spec:
                 exit 2
               }
               E2B_API_KEY="$(cat /run/e2b/team-api-key)" exec node /app/build-base-template.mjs
+        # --- the dashboard. Last on purpose: a sidecar gates the next init
+        # container on its startup probe, and only `ready` should wait for the
+        # dashboard, as on compose ---
+        # The browser reaches sandboxes through client-proxy at the node's own
+        # IP, the address ready prints; NODE_IP is declared first so the
+        # $(NODE_IP) below expands. The image refuses E2B_SANDBOX_URL and the
+        # NEXT_PUBLIC_* names, so none is set.
+        - name: dashboard
+          image: E2B_DASHBOARD_IMAGE
+          restartPolicy: Always
+          env:
+            - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
+            - { name: PORT, value: "3001" }
+            - { name: HOSTNAME, value: 0.0.0.0 }
+            - { name: PUBLIC_E2B_DOMAIN, value: localhost }
+            - { name: E2B_INFRA_API_URL, value: "http://127.0.0.1:3000" }
+            - { name: PUBLIC_SANDBOX_URL, value: "http://$(NODE_IP):3002" }
+            - { name: DASHBOARD_COOKIE_SECURE, value: "false" }
+          startupProbe:
+            httpGet: { host: 127.0.0.1, port: 3001, path: /api/health }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
       containers:
         # The only main container: prints the SDK variables, re-renders them on
         # a key rotation, and is the pod's readiness.
@@ -287,9 +317,9 @@ spec:
               while :; do
                 key="$(cat /run/e2b/team-api-key 2>/dev/null)"
                 if [ -n "$key" ] && [ "$key" != "$last" ]; then
-                  printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\n' "$key" "$E2B_HOST" "$E2B_HOST" > /run/e2b/sdk.env
+                  printf 'export E2B_API_KEY=%s\nexport E2B_API_URL=http://%s:3000\nexport E2B_SANDBOX_URL=http://%s:3002\nexport E2B_DASHBOARD_URL=http://%s:3001\n' "$key" "$E2B_HOST" "$E2B_HOST" "$E2B_HOST" > /run/e2b/sdk.env
                   if [ -z "$last" ]; then
-                    echo "E2B stack is up. Point the SDK at it (this install's own key):"
+                    echo "E2B stack is up. Point the SDK at it (this install's own key). Open E2B_DASHBOARD_URL in a browser and paste E2B_API_KEY into its key form."
                   else
                     echo "Team API key rotated; the earlier key stops working within five minutes. The SDK variables are now:"
                   fi

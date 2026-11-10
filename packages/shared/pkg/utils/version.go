@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"regexp"
 
 	"golang.org/x/mod/semver"
 )
@@ -35,6 +36,12 @@ const MinEnvdVersionForFsFreeze = "0.6.6"
 // skipped.
 const MinEnvdVersionForUpgrade = "0.6.12"
 
+// MinEnvdVersionForHeldInit is the first envd that corrects the /init timestamp by its own
+// time from reading the body to the clock step, honours /init's thaw: "skip", and withholds
+// the inline thaw of an /init a freeze overtook. The held envd init request runs only at or
+// above it.
+const MinEnvdVersionForHeldInit = "0.10.0"
+
 func sanitizeVersion(version string) string {
 	if len(version) > 0 && version[0] != 'v' {
 		version = "v" + version
@@ -56,17 +63,61 @@ func CheckEnvdVersionForSnapshot(envdVersion string) error {
 	return nil
 }
 
-func IsGTEVersion(curVersion, minVersion string) (bool, error) {
+// IsValidVersion reports whether version parses as semver, with or without its leading v.
+func IsValidVersion(version string) bool {
+	return semver.IsValid(sanitizeVersion(version))
+}
+
+// timestampedBuild matches a build version, MAJOR.MINOR.YYYYMMDDHHMM with an
+// optional suffix. The timestamp takes the patch position, so as plain semver a
+// build sorts above every release of its line, including releases cut after it.
+var timestampedBuild = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]{12}([-+]|$)`)
+
+func parseVersions(curVersion, minVersion string) (string, string, error) {
 	curVersion = sanitizeVersion(curVersion)
 	minVersion = sanitizeVersion(minVersion)
 
 	if !semver.IsValid(curVersion) {
-		return false, fmt.Errorf("invalid current version format: %s", curVersion)
+		return "", "", fmt.Errorf("invalid current version format: %s", curVersion)
 	}
 
 	if !semver.IsValid(minVersion) {
-		return false, fmt.Errorf("invalid minimum version format: %s", minVersion)
+		return "", "", fmt.Errorf("invalid minimum version format: %s", minVersion)
+	}
+
+	return curVersion, minVersion, nil
+}
+
+// IsGTEVersion reports whether curVersion is at or above minVersion as semver.
+func IsGTEVersion(curVersion, minVersion string) (bool, error) {
+	curVersion, minVersion, err := parseVersions(curVersion, minVersion)
+	if err != nil {
+		return false, err
 	}
 
 	return semver.Compare(curVersion, minVersion) >= 0, nil
+}
+
+// IsGTEVersionWithTimestamp is IsGTEVersion for versions that may be a release or a
+// timestamped build. Two versions of the same form compare as semver. Across forms
+// only what is certain counts: a later line is above an earlier line, and a build
+// is above its line's first release, nothing else. A gate in the middle of a line
+// therefore names two floors, a release and a build, and passes when either is met.
+func IsGTEVersionWithTimestamp(curVersion, minVersion string) (bool, error) {
+	curVersion, minVersion, err := parseVersions(curVersion, minVersion)
+	if err != nil {
+		return false, err
+	}
+
+	curBuild := timestampedBuild.MatchString(curVersion)
+	if curBuild == timestampedBuild.MatchString(minVersion) {
+		return semver.Compare(curVersion, minVersion) >= 0, nil
+	}
+
+	minLine := semver.MajorMinor(minVersion)
+	if lines := semver.Compare(semver.MajorMinor(curVersion), minLine); lines != 0 {
+		return lines > 0, nil
+	}
+
+	return curBuild && semver.Compare(minVersion, minLine+".0") <= 0, nil
 }

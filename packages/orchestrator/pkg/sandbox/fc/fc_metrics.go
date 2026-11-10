@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -29,6 +30,12 @@ const (
 
 	// metricsFlushInterval controls how often we trigger a Firecracker metrics flush.
 	metricsFlushInterval = 5 * time.Second
+
+	// metricsDrainTimeout caps how long the exit handler waits for the reader
+	// to reach the end of the FIFO. Firecracker writes its last line on the
+	// way out, so the end arrives right after the reap unless something else
+	// still holds a write end.
+	metricsDrainTimeout = 2 * time.Second
 )
 
 var (
@@ -58,6 +65,17 @@ var (
 	// Block counters.
 	fcBlockFails         = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCBlockFails))
 	fcBlockNoAvailBuffer = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCBlockNoAvailBuffer))
+
+	// Refused snapshot loads, by reason. Recorded from the API error rather
+	// than from the metrics FIFO: a refused load stops the Firecracker process
+	// before it flushes, so its own metrics never carry the failure.
+	fcSnapshotLoadFailures = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCSnapshotLoadFailures))
+
+	// How long a cold boot's InstanceStart request stayed open.
+	fcInstanceStartDuration = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCInstanceStartDuration))
+
+	// How a start that needs a CPU limit got it, so the rollout can see fallbacks and failures.
+	vcpuLimitStarts = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxVcpuLimit))
 
 	// Block histograms.
 	fcBlockBytes                 = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCBlockBytes))
@@ -183,11 +201,50 @@ type firecrackerBalloonMetrics struct {
 	FreePageReportFails uint64 `json:"free_page_report_fails"`
 }
 
+// firecrackerI8042Metrics is the subset of Firecracker's i8042 metrics that
+// records the guest's resets. On x86 the guest resets through the i8042
+// controller, after which Firecracker exits 0. A per-flush delta.
+type firecrackerI8042Metrics struct {
+	ResetCount uint64 `json:"reset_count"`
+}
+
+// firecrackerAcpiPmMetrics is the subset of the ACPI power-management
+// device's metrics that records the guest's power-offs. Older Firecracker
+// builds have no such device and omit the group. A per-flush delta.
+type firecrackerAcpiPmMetrics struct {
+	PowerOffCount uint64 `json:"poweroff_count"`
+}
+
+// crashReportOf reads the crash counter group the guest profile names from
+// one metrics line: the crashes since the last flush and the last crash's
+// code, which a flush does not reset. A line without the group reads as none.
+func crashReportOf(line []byte, report guest.CrashReport) (count, code uint64) {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(line, &groups); err != nil {
+		return 0, 0
+	}
+
+	var group map[string]json.RawMessage
+	if err := json.Unmarshal(groups[report.Group], &group); err != nil {
+		return 0, 0
+	}
+
+	_ = json.Unmarshal(group[report.CountField], &count)
+	_ = json.Unmarshal(group[report.CodeField], &code)
+
+	return count, code
+}
+
 // firecrackerMetrics is the top-level structure of one Firecracker metrics JSON line.
 type firecrackerMetrics struct {
-	Net     firecrackerNetMetrics     `json:"net"`
-	Block   firecrackerBlockMetrics   `json:"block"`
-	Balloon firecrackerBalloonMetrics `json:"balloon"`
+	// UtcTimestampMs is when FC serialized the line; a flush requested at time
+	// T produces a line stamped at or after T.
+	UtcTimestampMs int64                     `json:"utc_timestamp_ms"`
+	Net            firecrackerNetMetrics     `json:"net"`
+	Block          firecrackerBlockMetrics   `json:"block"`
+	Balloon        firecrackerBalloonMetrics `json:"balloon"`
+	I8042          firecrackerI8042Metrics   `json:"i8042"`
+	AcpiPm         firecrackerAcpiPmMetrics  `json:"acpi_pm"`
 }
 
 // BalloonMetricsSnapshot is the cumulative-since-FC-start view of
@@ -240,27 +297,39 @@ func (p *Process) FlushMetrics(ctx context.Context) error {
 	return p.client.flushMetrics(ctx)
 }
 
-// FlushAndReadBalloonMetrics flushes and waits for the reader to ingest the
-// resulting line, returning the updated cumulative snapshot. On flush error
-// (e.g. FC already torn down) returns the last observed snapshot.
+// FlushAndReadBalloonMetrics flushes and waits for the reader to ingest a
+// line FC serialized at or after the request, returning the updated cumulative
+// snapshot. The periodic flusher runs concurrently, so "the accumulator moved"
+// is not enough: the line that moved it may predate this request and leave the
+// caller's own discards for the next reader. On flush error (e.g. FC already
+// torn down) returns the last observed snapshot.
 func (p *Process) FlushAndReadBalloonMetrics(ctx context.Context) (BalloonMetricsSnapshot, error) {
-	pre := p.balloonAccum.Load()
+	sinceMs := time.Now().UnixMilli()
 	if err := p.client.flushMetrics(ctx); err != nil {
 		return p.BalloonMetrics(), fmt.Errorf("flush metrics: %w", err)
 	}
+	if err := p.waitMetricsLineSince(ctx, sinceMs); err != nil {
+		return p.BalloonMetrics(), err
+	}
 
+	return p.BalloonMetrics(), nil
+}
+
+// waitMetricsLineSince blocks until the reader has ingested a metrics line
+// stamped at or after sinceMs, fphFlushReadTimeout at most.
+func (p *Process) waitMetricsLineSince(ctx context.Context, sinceMs int64) error {
 	deadline := time.Now().Add(fphFlushReadTimeout)
 	for {
-		if cur := p.balloonAccum.Load(); cur != pre {
-			return p.BalloonMetrics(), nil
+		if p.metricsLineMs.Load() >= sinceMs {
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return p.BalloonMetrics(), errors.New("timeout waiting for fresh balloon metrics line")
+			return errors.New("timeout waiting for fresh balloon metrics line")
 		}
 		select {
 		case <-time.After(5 * time.Millisecond):
 		case <-ctx.Done():
-			return p.BalloonMetrics(), ctx.Err()
+			return ctx.Err()
 		}
 	}
 }
@@ -313,7 +382,6 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 	// but still inherits trace values for logging.
 	ctx = context.WithoutCancel(ctx)
 	sandboxID := p.files.SandboxID
-	metricsPath := p.metricsPath
 
 	// Flusher: periodically triggers a Firecracker metrics flush so the reader receives
 	// fresh data at metricsFlushInterval instead of the default 60 s.
@@ -329,12 +397,26 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 		})
 	}()
 
+	p.startMetricsFIFOReader(ctx)
+}
+
+// startMetricsFIFOReader starts the goroutine that reads the metrics FIFO
+// until its end. It closes metricsDone when it stops, so the exit handler
+// can tell the counters it folds into ExitInfo are complete.
+func (p *Process) startMetricsFIFOReader(ctx context.Context) {
+	sandboxID := p.files.SandboxID
+	metricsPath := p.metricsPath
+
+	p.metricsStarted.Store(true)
+
 	go func() {
+		defer close(p.metricsDone)
+
 		// O_RDWR opens without blocking (no need to wait for a writer).
 		// We keep this FD solely to unblock the open; the scanner reads from
-		// a separate O_RDONLY FD below. On process exit we close the O_RDWR FD
-		// to drop our write reference — once Firecracker also exits, the
-		// O_RDONLY read receives EOF and the goroutine exits cleanly.
+		// a separate O_RDONLY FD below. Once the leader is reaped we close the
+		// O_RDWR FD to drop our write reference — Firecracker has exited too,
+		// so the O_RDONLY read receives EOF and the goroutine exits cleanly.
 		rwFd, err := os.OpenFile(metricsPath, os.O_RDWR, os.ModeNamedPipe)
 		if err != nil {
 			logger.L().Warn(ctx, "failed to open fc metrics FIFO",
@@ -358,11 +440,15 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 		}
 		defer rFd.Close()
 
-		// Drop our write reference on exit so the scanner can receive EOF.
+		// Drop our write reference on the reap so the scanner can receive
+		// EOF. Not on Exit: the exit handler waits for that EOF before it
+		// resolves Exit.
 		go func() {
-			<-p.Exit.Done()
+			<-p.reaped
 			rwFd.Close()
 		}()
+
+		crash := p.Versions.GuestProfile().Reset().Crash
 
 		scanner := bufio.NewScanner(rFd)
 		scanner.Buffer(make([]byte, metricsReaderBufSize), metricsReaderBufSize)
@@ -451,9 +537,21 @@ func (p *Process) startMetricsReader(ctx context.Context) {
 				fcBlockNoAvailBuffer.Add(ctx, int64(b.NoAvailBuffer))
 			}
 
-			// Balloon: SharedIncMetric resets on flush, so accumulate.
+			// Balloon: SharedIncMetric resets on flush, so accumulate. The
+			// stamp goes last so a waiter that sees it also sees the balloon
+			// counters of that line.
 			next := accumulateBalloon(p.balloonAccum.Load(), m.Balloon)
 			p.balloonAccum.Store(&next)
+			p.guestResets.Add(m.I8042.ResetCount)
+			p.guestPowerOffs.Add(m.AcpiPm.PowerOffCount)
+			if crash.Group != "" {
+				count, code := crashReportOf(scanner.Bytes(), crash)
+				p.guestCrashes.Add(count)
+				if code != 0 {
+					p.guestCrashCode.Store(code)
+				}
+			}
+			p.metricsLineMs.Store(m.UtcTimestampMs)
 		}
 
 		if err := scanner.Err(); err != nil {
