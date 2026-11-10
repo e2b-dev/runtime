@@ -333,6 +333,7 @@ type UsersTeam struct {
 	AddedBy   *uuid.UUID
 	CreatedAt pgtype.Timestamp
 	UuidID    uuid.UUID
+	Role      string
 }
 
 type Volume struct {
