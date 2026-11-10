@@ -45,10 +45,6 @@ func NewAdminJWTAuthenticator(verifier *JWKSVerifier) Authenticator {
 	return internalauthmiddleware.NewAdminJWTAuthenticator(verifier)
 }
 
-func NewTelemetryJWTAuthenticator(verifier *JWKSVerifier) Authenticator {
-	return internalauthmiddleware.NewTelemetryJWTAuthenticator(verifier)
-}
-
 func NewAdminApiKeyAuthenticator(adminToken string) Authenticator {
 	return internalauthmiddleware.NewAdminApiKeyAuthenticator(adminToken)
 }

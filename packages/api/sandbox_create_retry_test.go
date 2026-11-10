@@ -49,7 +49,7 @@ func TestSandboxCreateRetryBeforeHandler(t *testing.T) {
 				flags, err := featureflags.NewClientWithDatasource(source)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
-				server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, nil, flags, spec)
+				server := NewGinServer(t.Context(), cfg.Config{}, telemetry.NewNoopClient(), logger.NewNopLogger(), nil, nil, nil, flags, spec)
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(tc.body))
 				req.Header.Set("Content-Type", "application/json")
 				if tc.key != "" {

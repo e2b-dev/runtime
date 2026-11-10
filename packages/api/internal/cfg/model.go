@@ -157,6 +157,7 @@ type Config struct {
 
 	AuthProvider      sharedauth.ProviderConfig `env:"AUTH_PROVIDER_CONFIG"`
 	AdminAuthProvider sharedauth.ProviderConfig `env:"ADMIN_AUTH_PROVIDER_CONFIG"`
+	TelemetryReaderID string                    `env:"TELEMETRY_READER_ID"`
 
 	DefaultPersistentVolumeType     string `env:"DEFAULT_PERSISTENT_VOLUME_TYPE"`
 	PlaceholderPersistentVolumeType string `env:"PLACEHOLDER_PERSISTENT_VOLUME_TYPE" envDefault:"__DEFAULT_VOLUME_TYPE__"`

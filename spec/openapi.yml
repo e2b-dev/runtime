@@ -28,11 +28,6 @@ components:
       type: apiKey
       in: header
       name: X-Admin-Token
-    TelemetryJWTAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Service JWT with the telemetry:read scope and a regional audience suffixed with :telemetry-names.
     AdminJWTAuth:
       type: http
       scheme: bearer
@@ -7704,10 +7699,10 @@ paths:
     get:
       operationId: managementTelemetryNames
       summary: Read team and cluster names for telemetry.
-      description: Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+      description: Requires a direct mutual TLS connection from the configured telemetry reader service identity. Bearer tokens and forwarded identity headers are not accepted. Returns regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
       tags: [admin]
-      security:
-        - TelemetryJWTAuth: []
+      security: []
+      x-mutual-tls-required: true
       responses:
         "200":
           description: Current regional names.

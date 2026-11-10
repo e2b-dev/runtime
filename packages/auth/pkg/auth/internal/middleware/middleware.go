@@ -268,16 +268,8 @@ func NewAuthProviderTeamAuthenticator(validationFunc func(ctx context.Context, g
 
 // NewAdminJWTAuthenticator creates an authenticator for the AdminJWTAuth security scheme.
 func NewAdminJWTAuthenticator(verifier *token.JWKSVerifier) Authenticator {
-	return newServiceJWTAuthenticator(verifier, "AdminJWTAuth", false)
-}
-
-func NewTelemetryJWTAuthenticator(verifier *token.JWKSVerifier) Authenticator {
-	return newServiceJWTAuthenticator(verifier, "TelemetryJWTAuth", true)
-}
-
-func newServiceJWTAuthenticator(verifier *token.JWKSVerifier, scheme string, telemetryOnly bool) Authenticator {
 	return &commonAuthenticator[string]{
-		schemeName: scheme,
+		schemeName: "AdminJWTAuth",
 		header: headerKey{
 			name:         HeaderAuthorization,
 			removePrefix: PrefixBearer,
@@ -292,7 +284,7 @@ func newServiceJWTAuthenticator(verifier *token.JWKSVerifier, scheme string, tel
 			for value := range strings.FieldsSeq(scope) {
 				limited = limited || value == "telemetry:read"
 			}
-			if limited != telemetryOnly {
+			if limited {
 				return "", &APIError{Code: http.StatusUnauthorized, ClientMsg: "Invalid service token scope."}
 			}
 			issuer, err := claims.GetIssuer()

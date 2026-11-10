@@ -1,27 +1,21 @@
 package handlers
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
-	jose "github.com/go-jose/go-jose/v4"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	middleware "github.com/oapi-codegen/gin-middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/api/internal/utils"
-	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 )
 
 func TestTelemetryNamesExcludeCredentialsAndDeletedRecords(t *testing.T) {
@@ -30,11 +24,11 @@ func TestTelemetryNamesExcludeCredentialsAndDeletedRecords(t *testing.T) {
 	teamID := insertAdminTestTeam(t, db, adminTestTeam{name: "Team name", createdAt: time.Now()})
 	clusterID := uuid.New()
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `INSERT INTO public.clusters(id,name,endpoint,token,telemetry_client_id,deletion_protection) VALUES ($1,'Cluster name','private.example:443','private-token','client_test',false)`, clusterID))
-	store := &APIStore{sqlcReadDB: db.SqlcClient}
+	store := &APIStore{sqlcReadDB: db.SqlcClient, config: cfg.Config{TelemetryReaderID: "spiffe://test.internal/ns/observability/sa/reader"}}
 	read := func() api.TelemetryNames {
 		recorder := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(recorder)
-		ctx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unstable/management/telemetry/names", nil)
+		ctx.Request = httptest.NewRequestWithContext(mtls.ContextWithPeer(t.Context(), mtls.Peer{ID: store.config.TelemetryReaderID, TLS: true, ChainVerified: true}), http.MethodGet, "/unstable/management/telemetry/names", nil)
 		store.ManagementTelemetryNames(ctx)
 		require.Equal(t, http.StatusOK, recorder.Code)
 		assert.NotContains(t, recorder.Body.String(), "private-token")
@@ -62,60 +56,30 @@ func TestTelemetryNamesExcludeCredentialsAndDeletedRecords(t *testing.T) {
 	assert.Empty(t, names.Clusters)
 }
 
-func TestTelemetryNamesRequiresServiceJWT(t *testing.T) {
+func TestTelemetryNamesRejectsUnverifiedReaders(t *testing.T) {
 	t.Parallel()
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: publicKey, KeyID: "service", Algorithm: "EdDSA", Use: "sig"}}})
-	}))
-	t.Cleanup(keys.Close)
-	var config auth.ProviderConfig
-	require.NoError(t, json.Unmarshal([]byte(`{"jwt":[{"issuer":{"url":"`+keys.URL+`","audiences":["regional-api"]}}]}`), &config))
-	verifier, err := auth.NewJWKSVerifier(t.Context(), config, keys.Client())
-	require.NoError(t, err)
-	telemetryVerifier, err := auth.NewTelemetryJWKSVerifier(t.Context(), config, keys.Client())
-	require.NoError(t, err)
-	sign := func(audience, scope string) string {
-		token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims{"iss": keys.URL, "aud": audience, "scope": scope, "exp": time.Now().Add(time.Minute).Unix()})
-		token.Header["kid"] = "service"
-		signed, err := token.SignedString(privateKey)
-		require.NoError(t, err)
-
-		return signed
-	}
-	swagger, err := api.GetSwagger()
-	require.NoError(t, err)
-	swagger.Servers = nil
-	router := gin.New()
-	router.Use(middleware.OapiRequestValidatorWithOptions(swagger, &middleware.Options{
-		ErrorHandler: func(c *gin.Context, message string, status int) {
-			utils.ErrorHandler(c, message, max(c.Writer.Status(), status))
-		},
-		Options: openapi3filter.Options{AuthenticationFunc: auth.CreateAuthenticationFunc([]auth.Authenticator{auth.NewAdminJWTAuthenticator(verifier), auth.NewTelemetryJWTAuthenticator(telemetryVerifier), auth.NewAdminApiKeyAuthenticator("admin-key")}, nil)},
-	}))
-	router.GET("/unstable/management/telemetry/names", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	const reader = "spiffe://test.internal/ns/observability/sa/reader"
 	for _, tc := range []struct {
-		name, token, apiKey string
-		status              int
+		name    string
+		allowed string
+		peer    mtls.Peer
 	}{
-		{"service JWT", sign("regional-api:telemetry-names", "telemetry:read"), "", http.StatusNoContent},
-		{"wrong audience", sign("other-api", "telemetry:read"), "", http.StatusUnauthorized},
-		{"admin JWT", sign("regional-api", ""), "", http.StatusUnauthorized},
-		{"missing JWT", "", "", http.StatusUnauthorized},
-		{"admin key alone", "", "admin-key", http.StatusUnauthorized},
+		{name: "missing certificate", allowed: reader},
+		{name: "unverified certificate", allowed: reader, peer: mtls.Peer{ID: reader, TLS: true}},
+		{name: "different service", allowed: reader, peer: mtls.Peer{ID: "spiffe://test.internal/ns/edge/sa/proxy", TLS: true, ChainVerified: true}},
+		{name: "disabled reader", peer: mtls.Peer{ID: reader, TLS: true, ChainVerified: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unstable/management/telemetry/names", nil)
-			if tc.token != "" {
-				req.Header.Set("Authorization", "Bearer "+tc.token)
-			}
-			req.Header.Set("X-Admin-Token", tc.apiKey)
+			store := &APIStore{config: cfg.Config{TelemetryReaderID: tc.allowed}}
 			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, req)
-			assert.Equal(t, tc.status, recorder.Code)
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequestWithContext(mtls.ContextWithPeer(t.Context(), tc.peer), http.MethodGet, "/unstable/management/telemetry/names", nil)
+			c.Request.Header.Set("Authorization", "Bearer telemetry-token")
+			c.Request.Header.Set("X-Admin-Token", "admin-token")
+			c.Request.Header.Set("X-Forwarded-Client-Cert", reader)
+			store.ManagementTelemetryNames(c)
+			assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 		})
 	}
 }

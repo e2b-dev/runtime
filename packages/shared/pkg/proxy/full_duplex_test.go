@@ -492,10 +492,7 @@ func TestProxyAnswersWhenSandboxCannotBeDialled(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			closed, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-			require.NoError(t, err)
-			require.NoError(t, closed.Close())
-			sandbox, err := url.Parse("http://" + closed.Addr().String())
+			sandbox, err := url.Parse("http://127.0.0.1:0")
 			require.NoError(t, err)
 
 			port, serverLog := startProxy(t, destinationFor(sandbox, "unreachable-sandbox"))

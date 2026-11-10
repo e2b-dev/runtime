@@ -5744,7 +5744,7 @@ type ClientInterface interface {
 
 	// ManagementTelemetryNames Read team and cluster names for telemetry.
 	//
-	// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+	// Requires a direct mutual TLS connection from the configured telemetry reader service identity. Bearer tokens and forwarded identity headers are not accepted. Returns regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
 	//
 	// Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
 	ManagementTelemetryNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8659,7 +8659,7 @@ func (c *Client) ManagementSetProjectSettings(ctx context.Context, projectID ope
 
 // ManagementTelemetryNames Read team and cluster names for telemetry.
 //
-// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+// Requires a direct mutual TLS connection from the configured telemetry reader service identity. Bearer tokens and forwarded identity headers are not accepted. Returns regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
 //
 // Corresponds with GET /unstable/management/telemetry/names (the `ManagementTelemetryNames` operationId).
 func (c *Client) ManagementTelemetryNames(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17091,7 +17091,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementTelemetryNamesWithResponse Read team and cluster names for telemetry.
 	//
-	// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+	// Requires a direct mutual TLS connection from the configured telemetry reader service identity. Bearer tokens and forwarded identity headers are not accepted. Returns regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -29734,7 +29734,7 @@ func (c *ClientWithResponses) ManagementSetProjectSettingsWithResponse(ctx conte
 
 // ManagementTelemetryNamesWithResponse Read team and cluster names for telemetry.
 //
-// Returns the regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
+// Requires a direct mutual TLS connection from the configured telemetry reader service identity. Bearer tokens and forwarded identity headers are not accepted. Returns regional team and cluster names without connection credentials. Deleted projects and clusters being deleted are omitted.
 //
 // Returns a wrapper object for the known response body format(s).
 //
