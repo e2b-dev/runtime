@@ -13,6 +13,106 @@ import (
 	"github.com/google/uuid"
 )
 
+const getTeamBuildingBuildsPage = `-- name: GetTeamBuildingBuildsPage :many
+SELECT
+  b.id,
+  b.status_group,
+  b.reason,
+  b.created_at,
+  b.finished_at,
+  b.vcpu,
+  b.ram_mb,
+  b.total_disk_size_mb,
+  b.envd_version,
+  eba.env_id AS template_id,
+  COALESCE(ea.alias, '') AS template_alias
+FROM public.env_builds b
+JOIN LATERAL (
+  SELECT a.env_id
+  FROM public.env_build_assignments a
+  -- active_envs (not envs): the build's template must exist and not be soft-deleted
+  JOIN public.active_envs e ON e.id = a.env_id
+  WHERE a.build_id = b.id
+  ORDER BY a.created_at DESC, a.id DESC
+  LIMIT 1
+) eba ON TRUE
+LEFT JOIN LATERAL (
+  SELECT x.alias
+  FROM public.env_aliases x
+  WHERE x.env_id = eba.env_id
+  ORDER BY x.alias ASC
+  LIMIT 1
+) ea ON TRUE
+WHERE b.team_id = $1::uuid
+  AND (b.created_at, b.id) < (
+    $2::timestamptz,
+    $3::uuid
+  )
+  -- Keep this list identical to the predicate of idx_env_builds_team_active:
+  -- with a parameter here the planner cannot use that partial index.
+  AND b.status_group IN ('pending', 'in_progress')
+ORDER BY b.created_at DESC, b.id DESC
+LIMIT $4::int
+`
+
+type GetTeamBuildingBuildsPageParams struct {
+	TeamID          uuid.UUID
+	CursorCreatedAt time.Time
+	CursorID        uuid.UUID
+	LimitPlusOne    int32
+}
+
+type GetTeamBuildingBuildsPageRow struct {
+	ID              uuid.UUID
+	StatusGroup     types.BuildStatusGroup
+	Reason          types.BuildReason
+	CreatedAt       time.Time
+	FinishedAt      *time.Time
+	Vcpu            int64
+	RamMb           int64
+	TotalDiskSizeMb *int64
+	EnvdVersion     *string
+	TemplateID      string
+	TemplateAlias   string
+}
+
+func (q *Queries) GetTeamBuildingBuildsPage(ctx context.Context, arg GetTeamBuildingBuildsPageParams) ([]GetTeamBuildingBuildsPageRow, error) {
+	rows, err := q.db.Query(ctx, getTeamBuildingBuildsPage,
+		arg.TeamID,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.LimitPlusOne,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTeamBuildingBuildsPageRow
+	for rows.Next() {
+		var i GetTeamBuildingBuildsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StatusGroup,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.FinishedAt,
+			&i.Vcpu,
+			&i.RamMb,
+			&i.TotalDiskSizeMb,
+			&i.EnvdVersion,
+			&i.TemplateID,
+			&i.TemplateAlias,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTeamBuildsPage = `-- name: GetTeamBuildsPage :many
 SELECT
   b.id,

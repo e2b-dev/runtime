@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -139,6 +140,14 @@ func TestListBuilds_FiltersByStatus(t *testing.T) {
 		})
 	}
 
+	t.Run("building with another status lists both", func(t *testing.T) {
+		t.Parallel()
+
+		builds, _ := listBuilds(t, testDB, teamID, api.GetUnstableBuildsParams{Statuses: &api.BuildStatuses{api.BuildStatusFailed, api.BuildStatusBuilding}})
+
+		assert.Equal(t, []uuid.UUID{pending, building, failed}, buildIDs(builds))
+	})
+
 	t.Run("no status lists every build", func(t *testing.T) {
 		t.Parallel()
 
@@ -159,6 +168,69 @@ func TestListBuilds_FiltersByStatus(t *testing.T) {
 				assert.Nil(t, build.StatusMessage)
 			}
 		}
+	})
+}
+
+func TestListBuilds_PaginatesBuildingBuilds(t *testing.T) {
+	t.Parallel()
+
+	testDB := testutils.SetupDatabase(t)
+	ctx := t.Context()
+	teamID := testutils.CreateTestTeam(t, testDB)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
+	oldest := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupPending, now.Add(-5*time.Hour))
+	insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, now.Add(-4*time.Hour))
+	middle := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupInProgress, now.Add(-3*time.Hour))
+	insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed, now.Add(-2*time.Hour))
+	newest := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupPending, now.Add(-time.Hour))
+
+	deletedTemplateID := testutils.CreateTestTemplate(t, testDB, teamID)
+	insertAssignedTestBuild(t, ctx, testDB, deletedTemplateID, dbtypes.BuildStatusGroupInProgress, now.Add(-90*time.Minute))
+	softDeleteTestTemplate(t, ctx, testDB, deletedTemplateID)
+
+	otherTemplateID := testutils.CreateTestTemplate(t, testDB, testutils.CreateTestTeam(t, testDB))
+	insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, dbtypes.BuildStatusGroupInProgress, now)
+
+	statuses := &api.BuildStatuses{api.BuildStatusBuilding}
+
+	first, cursor := listBuilds(t, testDB, teamID, api.GetUnstableBuildsParams{Statuses: statuses, Limit: new(int32(2))})
+	require.Equal(t, []uuid.UUID{newest, middle}, buildIDs(first))
+	require.NotEmpty(t, cursor)
+
+	second, cursor := listBuilds(t, testDB, teamID, api.GetUnstableBuildsParams{Statuses: statuses, Limit: new(int32(2)), Cursor: &cursor})
+	assert.Equal(t, []uuid.UUID{oldest}, buildIDs(second))
+	assert.Empty(t, cursor, "the last page has no next cursor")
+}
+
+func TestIsBuildingStatusGroups(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		statuses *api.BuildStatuses
+		want     bool
+	}{
+		"building":                 {statuses: &api.BuildStatuses{api.BuildStatusBuilding}, want: true},
+		"building twice":           {statuses: &api.BuildStatuses{api.BuildStatusBuilding, api.BuildStatusBuilding}, want: true},
+		"building and failed":      {statuses: &api.BuildStatuses{api.BuildStatusBuilding, api.BuildStatusFailed}},
+		"success":                  {statuses: &api.BuildStatuses{api.BuildStatusSuccess}},
+		"no status lists them all": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, isBuildingStatusGroups(buildStatusGroupsFilter(tc.statuses)))
+		})
+	}
+
+	t.Run("the order of the groups does not matter", func(t *testing.T) {
+		t.Parallel()
+
+		groups := buildStatusGroupsFilter(&api.BuildStatuses{api.BuildStatusBuilding})
+		slices.Reverse(groups)
+
+		assert.True(t, isBuildingStatusGroups(groups))
 	})
 }
 

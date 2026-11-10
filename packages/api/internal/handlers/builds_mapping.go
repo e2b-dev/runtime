@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"slices"
+
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -56,6 +58,21 @@ func buildStatusGroups(status api.BuildStatus) []types.BuildStatusGroup {
 	default:
 		return nil
 	}
+}
+
+func isBuildingStatusGroups(groups []string) bool {
+	building := buildStatusGroups(api.BuildStatusBuilding)
+	if len(groups) != len(building) {
+		return false
+	}
+
+	for _, group := range building {
+		if !slices.Contains(groups, string(group)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func buildStatusFromStatusGroup(group types.BuildStatusGroup) api.BuildStatus {
