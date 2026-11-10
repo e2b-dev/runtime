@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 )
 
 var (
@@ -44,7 +45,13 @@ type TemplateRef struct {
 }
 
 func ErrorToAPIError(err error, fallbackIdentifier string) *api.APIError {
-	return ToAPIError(err, fallbackIdentifier)
+	apiErr := ToAPIError(err, fallbackIdentifier)
+	apiErr.Retryable = apierrors.NoRetry
+	if apiErr.Code == http.StatusInternalServerError {
+		apiErr.Retryable = apierrors.CanRetry
+	}
+
+	return apiErr
 }
 
 func ToAPIError(err error, identifier string) *api.APIError {

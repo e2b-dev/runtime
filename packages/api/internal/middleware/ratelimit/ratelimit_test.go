@@ -32,7 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -81,7 +81,7 @@ func newRouterWithTeam(t *testing.T, limiter *redis_rate.Limiter, cfg Config, ff
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		auth.SetTeamInfoForTest(t, c, &types.Team{
-			Team: &authqueries.Team{ID: teamID},
+			Team: &dbtypes.Team{ID: teamID},
 		})
 		c.Next()
 	})
@@ -370,7 +370,7 @@ func TestSandboxCreateRetryRateLimit(t *testing.T) {
 			})
 			router := gin.New()
 			router.Use(func(c *gin.Context) {
-				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: uuid.New()}})
+				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
 			}, newTestMiddleware(t, limiter, Config{FailOpen: true}, flags))
 			router.POST(tc.path, func(*gin.Context) { t.Error("rate-limited request executed") })
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tc.path, nil)
@@ -392,7 +392,7 @@ func (f groupLimiterFunc) Allow(ctx context.Context, key string, limit redis_rat
 
 func groupTeam(rate int64) *types.Team {
 	return &types.Team{
-		Team:   &authqueries.Team{ID: uuid.New()},
+		Team:   &dbtypes.Team{ID: uuid.New()},
 		Limits: &types.TeamLimits{APITeamRPSList: rate},
 	}
 }
@@ -555,7 +555,7 @@ func TestAPIGroupBypass(t *testing.T) {
 		{"missing flag", "", http.MethodGet, "/sandboxes", groupTeam(1)},
 		{"invalid mode", "enabeld", http.MethodGet, "/sandboxes", groupTeam(1)},
 		{"unauthenticated", "enabled", http.MethodGet, "/sandboxes", nil},
-		{"missing cached limits", "enabled", http.MethodGet, "/sandboxes", &types.Team{Team: &authqueries.Team{ID: uuid.New()}}},
+		{"missing cached limits", "enabled", http.MethodGet, "/sandboxes", &types.Team{Team: &dbtypes.Team{ID: uuid.New()}}},
 		{"unconfigured", "enabled", http.MethodGet, "/sandboxes", groupTeam(0)},
 		{"negative", "enabled", http.MethodGet, "/sandboxes", groupTeam(-1)},
 		{"sandbox creation", "enabled", http.MethodPost, "/sandboxes", groupTeam(1)},

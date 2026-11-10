@@ -11,7 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
@@ -34,7 +34,7 @@ func TestGenerateVolumeContentToken_SetsTokidHeader(t *testing.T) {
 	// Arrange a team and volume
 	teamID := uuid.New()
 	clusterID := uuid.New()
-	team := &types.Team{Team: &authqueries.Team{ID: teamID, ClusterID: &clusterID}}
+	team := &types.Team{Team: &dbtypes.Team{ID: teamID, ClusterID: &clusterID}}
 
 	volID := uuid.New()
 	volume := queries.Volume{

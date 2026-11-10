@@ -15,8 +15,8 @@
 //		e2bgrpc.WithStreamInterceptors(mtls.StreamServerInterceptor(cfg)))
 //
 // An HTTP server is served through Listener, with HTTPGuard wrapped around
-// the application handler before any h2c configuration, so every HTTP/2
-// stream passes the guard. The guard takes the listener's ConnState, which
+// the application handler, so every request, each HTTP/2 stream included,
+// passes the guard. The guard takes the listener's ConnState, which
 // carries each connection's chain verdict, something r.TLS cannot tell it;
 // without it a required listener treats every TLS request as unverified:
 //

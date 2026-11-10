@@ -81,15 +81,14 @@ func (q *Queries) CopyTeamAliasesToNamespace(ctx context.Context, arg CopyTeamAl
 }
 
 const insertManagedTeam = `-- name: InsertManagedTeam :one
-INSERT INTO public.teams (id, name, slug, tier, email, is_blocked, cluster_id)
+INSERT INTO public.teams (id, name, slug, email, is_blocked, cluster_id)
 VALUES (
     $1::uuid,
     $2::text,
     $3::text,
     $4::text,
-    $5::text,
     false,
-    $6::uuid
+    $5::uuid
 )
 ON CONFLICT (id) DO NOTHING
 RETURNING id, name, slug, email, cluster_id
@@ -99,7 +98,6 @@ type InsertManagedTeamParams struct {
 	ID        uuid.UUID
 	Name      string
 	Slug      string
-	Tier      string
 	Email     string
 	ClusterID *uuid.UUID
 }
@@ -112,16 +110,14 @@ type InsertManagedTeamRow struct {
 	ClusterID *uuid.UUID
 }
 
-// Tier is assigned here and only here. DO NOTHING covers the case where the
-// lock above found nothing and another request inserted the same id before
-// this ran: no row means that happened. A slug collision is a different
-// constraint and still raises.
+// DO NOTHING covers the case where the lock above found nothing and another
+// request inserted the same id before this ran: no row means that happened. A
+// slug collision is a different constraint and still raises.
 func (q *Queries) InsertManagedTeam(ctx context.Context, arg InsertManagedTeamParams) (InsertManagedTeamRow, error) {
 	row := q.db.QueryRow(ctx, insertManagedTeam,
 		arg.ID,
 		arg.Name,
 		arg.Slug,
-		arg.Tier,
 		arg.Email,
 		arg.ClusterID,
 	)
@@ -183,9 +179,8 @@ type UpdateManagedTeamRow struct {
 	ClusterID *uuid.UUID
 }
 
-// Touches only the properties the caller synchronizes. Tier stays because it is
-// this side's to assign; is_blocked stays because an operator's decision must
-// outlive a routine push.
+// Touches only the properties the caller synchronizes. is_blocked stays because
+// an operator's decision must outlive a routine push.
 func (q *Queries) UpdateManagedTeam(ctx context.Context, arg UpdateManagedTeamParams) (UpdateManagedTeamRow, error) {
 	row := q.db.QueryRow(ctx, updateManagedTeam,
 		arg.Name,

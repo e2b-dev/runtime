@@ -39,6 +39,48 @@ func (e AWSRegistryType) Valid() bool {
 	}
 }
 
+// Defines values for AdminSandboxBuildStatusGroup.
+const (
+	AdminSandboxBuildStatusGroupFailed     AdminSandboxBuildStatusGroup = "failed"
+	AdminSandboxBuildStatusGroupInProgress AdminSandboxBuildStatusGroup = "in_progress"
+	AdminSandboxBuildStatusGroupPending    AdminSandboxBuildStatusGroup = "pending"
+	AdminSandboxBuildStatusGroupReady      AdminSandboxBuildStatusGroup = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AdminSandboxBuildStatusGroup enum.
+func (e AdminSandboxBuildStatusGroup) Valid() bool {
+	switch e {
+	case AdminSandboxBuildStatusGroupFailed:
+		return true
+	case AdminSandboxBuildStatusGroupInProgress:
+		return true
+	case AdminSandboxBuildStatusGroupPending:
+		return true
+	case AdminSandboxBuildStatusGroupReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminSandboxPauseKind.
+const (
+	AdminSandboxPauseKindFilesystem AdminSandboxPauseKind = "filesystem"
+	AdminSandboxPauseKindMemory     AdminSandboxPauseKind = "memory"
+)
+
+// Valid indicates whether the value is a known member of the AdminSandboxPauseKind enum.
+func (e AdminSandboxPauseKind) Valid() bool {
+	switch e {
+	case AdminSandboxPauseKindFilesystem:
+		return true
+	case AdminSandboxPauseKindMemory:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AdminSandboxState.
 const (
 	AdminSandboxStateKilled  AdminSandboxState = "killed"
@@ -78,6 +120,27 @@ func (e AdminTeamListSortField) Valid() bool {
 	case AdminTeamListSortFieldName:
 		return true
 	case AdminTeamListSortFieldRunningSandboxes:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildStatus.
+const (
+	BuildStatusBuilding BuildStatus = "building"
+	BuildStatusFailed   BuildStatus = "failed"
+	BuildStatusSuccess  BuildStatus = "success"
+)
+
+// Valid indicates whether the value is a known member of the BuildStatus enum.
+func (e BuildStatus) Valid() bool {
+	switch e {
+	case BuildStatusBuilding:
+		return true
+	case BuildStatusFailed:
+		return true
+	case BuildStatusSuccess:
 		return true
 	default:
 		return false
@@ -178,6 +241,7 @@ func (e LogsSource) Valid() bool {
 const (
 	NodeStatusConnecting   NodeStatus = "connecting"
 	NodeStatusDraining     NodeStatus = "draining"
+	NodeStatusNotReady     NodeStatus = "not_ready"
 	NodeStatusReady        NodeStatus = "ready"
 	NodeStatusShuttingDown NodeStatus = "shutting_down"
 	NodeStatusStandby      NodeStatus = "standby"
@@ -190,6 +254,8 @@ func (e NodeStatus) Valid() bool {
 	case NodeStatusConnecting:
 		return true
 	case NodeStatusDraining:
+		return true
+	case NodeStatusNotReady:
 		return true
 	case NodeStatusReady:
 		return true
@@ -459,6 +525,81 @@ func (e GetTemplatesTemplateIDTagsGroupsParamsSort) Valid() bool {
 	}
 }
 
+// Defines values for AdminListClustersParamsSortBy.
+const (
+	AdminListClustersParamsSortByEndpoint  AdminListClustersParamsSortBy = "endpoint"
+	AdminListClustersParamsSortByName      AdminListClustersParamsSortBy = "name"
+	AdminListClustersParamsSortByTeamCount AdminListClustersParamsSortBy = "teamCount"
+)
+
+// Valid indicates whether the value is a known member of the AdminListClustersParamsSortBy enum.
+func (e AdminListClustersParamsSortBy) Valid() bool {
+	switch e {
+	case AdminListClustersParamsSortByEndpoint:
+		return true
+	case AdminListClustersParamsSortByName:
+		return true
+	case AdminListClustersParamsSortByTeamCount:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminListClustersParamsSortOrder.
+const (
+	AdminListClustersSortOrderAsc  AdminListClustersParamsSortOrder = "asc"
+	AdminListClustersSortOrderDesc AdminListClustersParamsSortOrder = "desc"
+)
+
+// Valid indicates whether the value is a known member of the AdminListClustersParamsSortOrder enum.
+func (e AdminListClustersParamsSortOrder) Valid() bool {
+	switch e {
+	case AdminListClustersSortOrderAsc:
+		return true
+	case AdminListClustersSortOrderDesc:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminListClusterTeamsParamsSortBy.
+const (
+	AdminListClusterTeamsParamsSortByCreatedAt AdminListClusterTeamsParamsSortBy = "createdAt"
+	AdminListClusterTeamsParamsSortByName      AdminListClusterTeamsParamsSortBy = "name"
+)
+
+// Valid indicates whether the value is a known member of the AdminListClusterTeamsParamsSortBy enum.
+func (e AdminListClusterTeamsParamsSortBy) Valid() bool {
+	switch e {
+	case AdminListClusterTeamsParamsSortByCreatedAt:
+		return true
+	case AdminListClusterTeamsParamsSortByName:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminListClusterTeamsParamsSortOrder.
+const (
+	AdminListClusterTeamsSortOrderAsc  AdminListClusterTeamsParamsSortOrder = "asc"
+	AdminListClusterTeamsSortOrderDesc AdminListClusterTeamsParamsSortOrder = "desc"
+)
+
+// Valid indicates whether the value is a known member of the AdminListClusterTeamsParamsSortOrder enum.
+func (e AdminListClusterTeamsParamsSortOrder) Valid() bool {
+	switch e {
+	case AdminListClusterTeamsSortOrderAsc:
+		return true
+	case AdminListClusterTeamsSortOrderDesc:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetUnstableTemplatesSearchParamsSort.
 const (
 	GetUnstableTemplatesSearchParamsSortCreatedAtAsc  GetUnstableTemplatesSearchParamsSort = "created_at_asc"
@@ -510,6 +651,43 @@ type AdminBuildCancelResult struct {
 	FailedCount int `json:"failedCount"`
 }
 
+// AdminClusterCreateRequest defines model for AdminClusterCreateRequest.
+type AdminClusterCreateRequest struct {
+	AuthOrgId *string `json:"auth_org_id,omitempty"`
+
+	// ClusterId Optional stable identifier for idempotent creation. Reuse succeeds only when the immutable configuration is identical.
+	ClusterId          *openapi_types.UUID `json:"cluster_id,omitempty"`
+	Endpoint           string              `json:"endpoint"`
+	EndpointTls        bool                `json:"endpoint_tls"`
+	Name               string              `json:"name"`
+	SandboxProxyDomain *string             `json:"sandbox_proxy_domain,omitempty"`
+	Token              string              `json:"token"`
+}
+
+// AdminDefaultTemplate defines model for AdminDefaultTemplate.
+type AdminDefaultTemplate struct {
+	// Description Description of the default template
+	Description *string `json:"description"`
+
+	// TemplateID Identifier of the default template
+	TemplateID string `json:"templateID"`
+}
+
+// AdminDefaultTemplateCreateRequest defines model for AdminDefaultTemplateCreateRequest.
+type AdminDefaultTemplateCreateRequest struct {
+	// Description Description of the default template; blank is stored as none
+	Description *string `json:"description,omitempty"`
+
+	// TemplateID Identifier of the template to make a default template
+	TemplateID string `json:"templateID"`
+}
+
+// AdminDefaultTemplateUpdateRequest defines model for AdminDefaultTemplateUpdateRequest.
+type AdminDefaultTemplateUpdateRequest struct {
+	// Description New description of the default template; null or blank clears it
+	Description *string `json:"description"`
+}
+
 // AdminSandbox defines model for AdminSandbox.
 type AdminSandbox struct {
 	// SandboxID Identifier of the sandbox
@@ -522,6 +700,83 @@ type AdminSandbox struct {
 	TeamID openapi_types.UUID `json:"teamID"`
 }
 
+// AdminSandboxBuild A build assigned to a sandbox's snapshot template under a tag
+type AdminSandboxBuild struct {
+	// AssignedAt When the build was assigned to the template under this tag
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Identifier of the build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// ClusterNodeID Node that produced the build, null when it was not recorded
+	ClusterNodeID *string `json:"clusterNodeID"`
+
+	// IsCurrent Whether this build is the template's newest ready assignment under
+	// the tag, the build a resume uses, regardless of the status filter
+	IsCurrent bool `json:"isCurrent"`
+
+	// Restorable Whether the restore route would accept this build: it is ready,
+	// assigned under the default tag, not the current build, and its
+	// snapshot template is not deleted
+	Restorable bool `json:"restorable"`
+
+	// Status Build status as stored, for example ready, snapshotting or waiting
+	Status string `json:"status"`
+
+	// StatusGroup Coarse build state derived from the build status: pending (pending,
+	// waiting), in_progress (in_progress, building, snapshotting), ready
+	// (ready, uploaded, success) or failed (any other status)
+	StatusGroup AdminSandboxBuildStatusGroup `json:"statusGroup"`
+
+	// Tag Tag the build is assigned under
+	Tag string `json:"tag"`
+
+	// TemplateID Identifier of the snapshot template the build is assigned to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildList defines model for AdminSandboxBuildList.
+type AdminSandboxBuildList struct {
+	Items []AdminSandboxBuild `json:"items"`
+
+	// SnapshotTemplateID Identifier of the template that holds the sandbox's snapshot, null
+	// when the sandbox has no snapshot
+	SnapshotTemplateID *string `json:"snapshotTemplateID"`
+
+	// Total Number of assignments matching the tag and status filter, ignoring limit and offset
+	Total int64 `json:"total"`
+}
+
+// AdminSandboxBuildRestoreRequest defines model for AdminSandboxBuildRestoreRequest.
+type AdminSandboxBuildRestoreRequest struct {
+	// BuildID Build to make current. It must be ready and already assigned to the
+	// sandbox's snapshot template under the default tag.
+	BuildID openapi_types.UUID `json:"buildID"`
+}
+
+// AdminSandboxBuildRestoreResult defines model for AdminSandboxBuildRestoreResult.
+type AdminSandboxBuildRestoreResult struct {
+	// AssignedAt When the new assignment was written
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Build that is now the template's current default build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// PreviousBuildID Build that was current before the restore, null when there was none
+	PreviousBuildID *openapi_types.UUID `json:"previousBuildID"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// TemplateID Identifier of the snapshot template that received the assignment
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildStatusGroup Coarse build state derived from the build status: pending (pending,
+// waiting), in_progress (in_progress, building, snapshotting), ready
+// (ready, uploaded, success) or failed (any other status)
+type AdminSandboxBuildStatusGroup string
+
 // AdminSandboxKillResult defines model for AdminSandboxKillResult.
 type AdminSandboxKillResult struct {
 	// FailedCount Number of sandboxes that failed to kill
@@ -530,6 +785,91 @@ type AdminSandboxKillResult struct {
 	// KilledCount Number of sandboxes successfully killed
 	KilledCount int `json:"killedCount"`
 }
+
+// AdminSandboxLastPause The snapshot as the most recent pause left it. A resume can change
+// whether the sandbox auto-pauses without rewriting it, and restoring an
+// older build does not change it.
+type AdminSandboxLastPause struct {
+	// AutoPause Whether the sandbox pauses instead of being killed on timeout, as of the most recent pause
+	AutoPause bool `json:"autoPause"`
+
+	// AutoPauseKind Kind of snapshot an auto-pause takes, as of the most recent pause
+	AutoPauseKind AdminSandboxPauseKind `json:"autoPauseKind"`
+
+	// Kind Kind of snapshot the most recent pause took
+	Kind AdminSandboxPauseKind `json:"kind"`
+}
+
+// AdminSandboxOverview Who owns a sandbox and what its snapshot holds, read from the database:
+// the team, the snapshot template and its most recent pause, and the
+// newest default-tag build assignment of that template
+type AdminSandboxOverview struct {
+	// BuildCount Number of default-tag build assignments of the snapshot template
+	BuildCount int64 `json:"buildCount"`
+
+	// LastPause What the most recent pause recorded, null when the sandbox has no snapshot
+	LastPause *AdminSandboxLastPause `json:"lastPause"`
+
+	// LatestBuild Newest default-tag build assignment of the snapshot template, null
+	// when there is no snapshot or no assignment
+	LatestBuild *AdminSandboxOverviewBuild `json:"latestBuild"`
+
+	// SandboxId Identifier of the sandbox
+	SandboxId string `json:"sandboxId"`
+
+	// SnapshotTemplateId Template that holds the sandbox's snapshot, null when the sandbox has no snapshot
+	SnapshotTemplateId *string `json:"snapshotTemplateId"`
+
+	// Team The team the sandbox belongs to
+	Team AdminSandboxOverviewTeam `json:"team"`
+}
+
+// AdminSandboxOverviewBuild The newest default-tag build assignment of a sandbox's snapshot template
+type AdminSandboxOverviewBuild struct {
+	// AssignedAt When the build was assigned to the template under the tag
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildId Identifier of the build
+	BuildId openapi_types.UUID `json:"buildId"`
+
+	// ClusterNodeId Node that produced the build, null when it was not recorded
+	ClusterNodeId *string `json:"clusterNodeId"`
+
+	// IsCurrent Always true, the newest assignment is the one the template resolves to
+	IsCurrent bool `json:"isCurrent"`
+
+	// Restorable Always false, the newest assignment is already current
+	Restorable bool `json:"restorable"`
+
+	// Status Build status as stored, for example ready, snapshotting or waiting
+	Status string `json:"status"`
+
+	// StatusGroup Coarse build state, null when the stored group is not one of the known values
+	StatusGroup *AdminSandboxBuildStatusGroup `json:"statusGroup"`
+
+	// Tag Tag the build is assigned under
+	Tag string `json:"tag"`
+
+	// TemplateId Identifier of the snapshot template the build is assigned to
+	TemplateId string `json:"templateId"`
+}
+
+// AdminSandboxOverviewTeam The team the sandbox belongs to
+type AdminSandboxOverviewTeam struct {
+	// Email Contact email of the team
+	Email *string `json:"email"`
+
+	// Id Identifier of the team
+	Id openapi_types.UUID `json:"id"`
+
+	// Name Name of the team
+	Name *string `json:"name"`
+}
+
+// AdminSandboxPauseKind What a pause kept: memory is a full snapshot that resumes where the
+// sandbox left off, filesystem keeps only the root filesystem and boots
+// it again on resume
+type AdminSandboxPauseKind string
 
 // AdminSandboxState State after the sandbox's latest create, resume, pause or kill event
 type AdminSandboxState string
@@ -547,6 +887,36 @@ type AdminTeam struct {
 	Name                    string              `json:"name"`
 	SandboxSchedulingLabels []string            `json:"sandboxSchedulingLabels"`
 	Slug                    string              `json:"slug"`
+}
+
+// AdminTeamBanFailure defines model for AdminTeamBanFailure.
+type AdminTeamBanFailure struct {
+	Error  string             `json:"error"`
+	TeamID openapi_types.UUID `json:"teamID"`
+}
+
+// AdminTeamBanResult The outcome of banning one team. The ban is stored before the team's
+// sandboxes are killed and its builds cancelled, so it holds even when
+// either step fails.
+type AdminTeamBanResult struct {
+	// BuildCancelError Set when the cancel step failed or ran out of time; the counts cover what it did until then.
+	BuildCancelError *string `json:"buildCancelError,omitempty"`
+
+	// BuildsCancelled Number of the team's builds cancelled
+	BuildsCancelled int `json:"buildsCancelled"`
+
+	// BuildsFailedToCancel Number of the team's builds that failed to cancel
+	BuildsFailedToCancel int `json:"buildsFailedToCancel"`
+
+	// SandboxKillError Set when the kill step failed or ran out of time; the counts cover what it did until then.
+	SandboxKillError *string `json:"sandboxKillError,omitempty"`
+
+	// SandboxesFailedToKill Number of the team's sandboxes that failed to kill
+	SandboxesFailedToKill int `json:"sandboxesFailedToKill"`
+
+	// SandboxesKilled Number of the team's sandboxes killed
+	SandboxesKilled int                `json:"sandboxesKilled"`
+	TeamID          openapi_types.UUID `json:"teamID"`
 }
 
 // AdminTeamList defines model for AdminTeamList.
@@ -622,6 +992,121 @@ type AdminTeamSchedulingLabels struct {
 	Labels []string `json:"labels"`
 }
 
+// AdminTeamsBanRequest defines model for AdminTeamsBanRequest.
+type AdminTeamsBanRequest struct {
+	TeamIDs []openapi_types.UUID `json:"teamIDs"`
+}
+
+// AdminTeamsBanResult defines model for AdminTeamsBanResult.
+type AdminTeamsBanResult struct {
+	// Banned Teams whose ban is stored, with the outcome of killing their sandboxes and cancelling their builds
+	Banned []AdminTeamBanResult `json:"banned"`
+
+	// Failed Teams whose ban could not be stored or put into force; retrying repeats every step
+	Failed []AdminTeamBanFailure `json:"failed"`
+
+	// NotFound Requested teams that do not exist
+	NotFound []openapi_types.UUID `json:"notFound"`
+}
+
+// AdminTemplateAlias defines model for AdminTemplateAlias.
+type AdminTemplateAlias struct {
+	// Alias The alias
+	Alias string `json:"alias"`
+
+	// Id Identifier of the alias
+	Id openapi_types.UUID `json:"id"`
+
+	// IsRenamable Whether building the template under another name replaces the alias
+	IsRenamable bool `json:"isRenamable"`
+
+	// Namespace Namespace of the alias, or null for an alias that resolves for every team
+	Namespace *string `json:"namespace"`
+
+	// TemplateID Identifier of the template the alias resolves to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminTemplateAliasCreateRequest defines model for AdminTemplateAliasCreateRequest.
+type AdminTemplateAliasCreateRequest struct {
+	// Alias The alias, without a namespace or tag
+	Alias string `json:"alias"`
+
+	// TemplateID Identifier of the template the alias resolves to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminTemplateAliasDeleted defines model for AdminTemplateAliasDeleted.
+type AdminTemplateAliasDeleted struct {
+	// Alias The removed alias
+	Alias string `json:"alias"`
+
+	// AliasID Identifier of the removed alias
+	AliasID openapi_types.UUID `json:"aliasID"`
+
+	// TemplateID Identifier of the template the alias resolved to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminTemplateAliases defines model for AdminTemplateAliases.
+type AdminTemplateAliases struct {
+	// Aliases All aliases of the template, those without a namespace first
+	Aliases []AdminTemplateAlias `json:"aliases"`
+
+	// Public Whether the template is public
+	Public bool              `json:"public"`
+	Team   AdminTemplateTeam `json:"team"`
+
+	// TemplateID Identifier of the template
+	TemplateID string `json:"templateID"`
+}
+
+// AdminTemplateLookup defines model for AdminTemplateLookup.
+type AdminTemplateLookup struct {
+	// Builds The template's newest builds of any tag and status, newest first, at most 100
+	Builds []TemplateBuild `json:"builds"`
+
+	// CreatedAt Time when the template was created
+	CreatedAt time.Time `json:"createdAt"`
+
+	// IsSnapshot Whether the template is a snapshot of a sandbox
+	IsSnapshot bool `json:"isSnapshot"`
+
+	// LastSpawnedAt Time when the template was last used
+	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
+
+	// MatchedBuildID The build the query matched, when it was a build ID
+	MatchedBuildID *openapi_types.UUID `json:"matchedBuildID"`
+
+	// Names Names of the template (namespace/alias format when namespaced)
+	Names []string `json:"names"`
+
+	// Public Whether the template is public
+	Public bool `json:"public"`
+
+	// SnapshotSandboxID The sandbox a snapshot template was taken from
+	SnapshotSandboxID *string `json:"snapshotSandboxID"`
+
+	// SpawnCount Number of times the template was used
+	SpawnCount int64             `json:"spawnCount"`
+	Team       AdminTemplateTeam `json:"team"`
+
+	// TemplateID Identifier of the template
+	TemplateID string `json:"templateID"`
+}
+
+// AdminTemplateTeam defines model for AdminTemplateTeam.
+type AdminTemplateTeam struct {
+	// Email Contact email of the team
+	Email string `json:"email"`
+
+	// Id Identifier of the team that owns the template
+	Id openapi_types.UUID `json:"id"`
+
+	// Name Name of the team
+	Name string `json:"name"`
+}
+
 // AssignTemplateTagsRequest defines model for AssignTemplateTagsRequest.
 type AssignTemplateTagsRequest struct {
 	// Tags Tags to assign to the template
@@ -640,6 +1125,24 @@ type AssignedTemplateTags struct {
 	Tags []string `json:"tags"`
 }
 
+// BuildInfo defines model for BuildInfo.
+type BuildInfo struct {
+	// CreatedAt Build creation timestamp in RFC3339 format.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// FinishedAt Build completion timestamp in RFC3339 format, if finished.
+	FinishedAt *time.Time `json:"finishedAt"`
+
+	// Names Template names related to this build, if available.
+	Names *[]string `json:"names,omitempty"`
+
+	// Status Build status as the builds list reports it.
+	Status BuildStatus `json:"status"`
+
+	// StatusMessage Failure message when status is `failed`, otherwise `null`.
+	StatusMessage *string `json:"statusMessage"`
+}
+
 // BuildLogEntry defines model for BuildLogEntry.
 type BuildLogEntry struct {
 	// Level State of the sandbox
@@ -655,6 +1158,24 @@ type BuildLogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// BuildStatus Build status as the builds list reports it.
+type BuildStatus string
+
+// BuildStatusItem defines model for BuildStatusItem.
+type BuildStatusItem struct {
+	// FinishedAt Build completion timestamp in RFC3339 format, if finished.
+	FinishedAt *time.Time `json:"finishedAt"`
+
+	// Id Identifier of the build.
+	Id openapi_types.UUID `json:"id"`
+
+	// Status Build status as the builds list reports it.
+	Status BuildStatus `json:"status"`
+
+	// StatusMessage Failure message when status is `failed`, otherwise `null`.
+	StatusMessage *string `json:"statusMessage"`
+}
+
 // BuildStatusReason defines model for BuildStatusReason.
 type BuildStatusReason struct {
 	// LogEntries Log entries related to the status reason
@@ -667,12 +1188,105 @@ type BuildStatusReason struct {
 	Step *string `json:"step,omitempty"`
 }
 
+// BuildsListResponse defines model for BuildsListResponse.
+type BuildsListResponse struct {
+	Data []ListedBuild `json:"data"`
+
+	// NextCursor Cursor to pass to the next list request, or `null` if there is no next page.
+	NextCursor *string `json:"nextCursor"`
+}
+
+// BuildsStatusesResponse defines model for BuildsStatusesResponse.
+type BuildsStatusesResponse struct {
+	// BuildStatuses List of build statuses
+	BuildStatuses []BuildStatusItem `json:"buildStatuses"`
+}
+
 // CPUCount CPU cores for the sandbox
 type CPUCount = int32
 
+// ClusterDetail A cluster's configuration. The cluster's token is never returned.
+type ClusterDetail struct {
+	AuthOrgId *string `json:"authOrgId,omitempty"`
+
+	// DeletionProtection While true, deleting the cluster is refused.
+	DeletionProtection bool               `json:"deletionProtection"`
+	Endpoint           string             `json:"endpoint"`
+	EndpointTls        bool               `json:"endpointTls"`
+	Id                 openapi_types.UUID `json:"id"`
+	Name               string             `json:"name"`
+	SandboxProxyDomain *string            `json:"sandboxProxyDomain,omitempty"`
+}
+
+// ClusterDetailWithTeams defines model for ClusterDetailWithTeams.
+type ClusterDetailWithTeams struct {
+	// Cluster A cluster's configuration. The cluster's token is never returned.
+	Cluster ClusterDetail `json:"cluster"`
+
+	// TeamCount Teams assigned to the cluster. Must be 0 before the cluster can be deleted.
+	TeamCount int64                   `json:"teamCount"`
+	Teams     ClusterTeamListResponse `json:"teams"`
+
+	// TemplateCount Live templates on the cluster. Deleting the cluster deletes them.
+	TemplateCount int64 `json:"templateCount"`
+}
+
+// ClusterListItem defines model for ClusterListItem.
+type ClusterListItem struct {
+	Endpoint           string             `json:"endpoint"`
+	Id                 openapi_types.UUID `json:"id"`
+	Name               string             `json:"name"`
+	SandboxProxyDomain *string            `json:"sandboxProxyDomain,omitempty"`
+
+	// TeamCount Number of teams assigned to the cluster.
+	TeamCount int64 `json:"teamCount"`
+}
+
+// ClusterListResponse defines model for ClusterListResponse.
+type ClusterListResponse struct {
+	Items []ClusterListItem `json:"items"`
+
+	// Total Number of clusters matching the search, ignoring limit and offset
+	Total int64 `json:"total"`
+}
+
+// ClusterTeamListItem defines model for ClusterTeamListItem.
+type ClusterTeamListItem struct {
+	CreatedAt time.Time          `json:"createdAt"`
+	Email     string             `json:"email"`
+	Id        openapi_types.UUID `json:"id"`
+	IsBanned  bool               `json:"isBanned"`
+	Name      *string            `json:"name,omitempty"`
+	Slug      *string            `json:"slug,omitempty"`
+}
+
+// ClusterTeamListResponse defines model for ClusterTeamListResponse.
+type ClusterTeamListResponse struct {
+	Items []ClusterTeamListItem `json:"items"`
+
+	// Total Number of teams assigned to the cluster, ignoring limit and offset
+	Total int64 `json:"total"`
+}
+
+// ClusterTokenRotateRequest defines model for ClusterTokenRotateRequest.
+type ClusterTokenRotateRequest struct {
+	// Token New cluster access token. Write-only.
+	Token string `json:"token"`
+}
+
+// ClusterUpdateRequest Partial update; only the properties present are written. An explicit null or an empty string clears `sandboxProxyDomain` or `authOrgId`.
+type ClusterUpdateRequest struct {
+	AuthOrgId          *string `json:"authOrgId,omitempty"`
+	DeletionProtection *bool   `json:"deletionProtection,omitempty"`
+	Endpoint           *string `json:"endpoint,omitempty"`
+	EndpointTls        *bool   `json:"endpointTls,omitempty"`
+	Name               *string `json:"name,omitempty"`
+	SandboxProxyDomain *string `json:"sandboxProxyDomain,omitempty"`
+}
+
 // ConnectSandbox defines model for ConnectSandbox.
 type ConnectSandbox struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -681,7 +1295,7 @@ type ConnectSandbox struct {
 
 // ConnectSandboxV2 defines model for ConnectSandboxV2.
 type ConnectSandboxV2 struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -741,6 +1355,9 @@ type DiskSizeMB = int32
 // EnvVars defines model for EnvVars.
 type EnvVars map[string]string
 
+// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+type EnvdUnresponsiveAtPause = bool
+
 // EnvdVersion Version of the envd running in the sandbox
 type EnvdVersion = string
 
@@ -749,7 +1366,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown.
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -803,6 +1420,42 @@ type IdentifierMaskingDetails struct {
 	ValueLength int `json:"valueLength"`
 }
 
+// ListedBuild defines model for ListedBuild.
+type ListedBuild struct {
+	// CpuCount CPU cores configured for the build.
+	CpuCount int64 `json:"cpuCount"`
+
+	// CreatedAt Build creation timestamp in RFC3339 format.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// DiskSizeMB Disk size in MiB configured for the build, if recorded.
+	DiskSizeMB *int64 `json:"diskSizeMB"`
+
+	// EnvdVersion envd version the build was created with, if recorded.
+	EnvdVersion *string `json:"envdVersion"`
+
+	// FinishedAt Build completion timestamp in RFC3339 format, if finished.
+	FinishedAt *time.Time `json:"finishedAt"`
+
+	// Id Identifier of the build.
+	Id openapi_types.UUID `json:"id"`
+
+	// MemoryMB Memory in MiB configured for the build.
+	MemoryMB int64 `json:"memoryMB"`
+
+	// Status Build status as the builds list reports it.
+	Status BuildStatus `json:"status"`
+
+	// StatusMessage Failure message when status is `failed`, otherwise `null`.
+	StatusMessage *string `json:"statusMessage"`
+
+	// Template Template alias when present, otherwise template ID.
+	Template string `json:"template"`
+
+	// TemplateId Identifier of the template.
+	TemplateId string `json:"templateId"`
+}
+
 // ListedSandbox defines model for ListedSandbox.
 type ListedSandbox struct {
 	// Alias Alias of the template
@@ -820,6 +1473,9 @@ type ListedSandbox struct {
 
 	// EndAt Time when the sandbox will expire
 	EndAt time.Time `json:"endAt"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -866,6 +1522,128 @@ type MachineInfo struct {
 	CpuModelName string `json:"cpuModelName"`
 }
 
+// ManagementClusterProjects defines model for ManagementClusterProjects.
+type ManagementClusterProjects struct {
+	ProjectIds []openapi_types.UUID `json:"project_ids"`
+}
+
+// ManagementClusterRegistrationRequest defines model for ManagementClusterRegistrationRequest.
+type ManagementClusterRegistrationRequest struct {
+	AuthOrgId          *string `json:"auth_org_id,omitempty"`
+	Endpoint           string  `json:"endpoint"`
+	EndpointTls        bool    `json:"endpoint_tls"`
+	Name               string  `json:"name"`
+	SandboxProxyDomain *string `json:"sandbox_proxy_domain,omitempty"`
+	Token              string  `json:"token"`
+}
+
+// ManagementDecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+type ManagementDecidedAt = time.Time
+
+// ManagementProject defines model for ManagementProject.
+type ManagementProject struct {
+	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
+
+	// Email Contact address recorded on the project.
+	Email string             `json:"email"`
+	Id    openapi_types.UUID `json:"id"`
+	Name  string             `json:"name"`
+
+	// Slug Changing it renames the project, and its template names follow: each name held under an earlier slug is also given under the new one, and the old names keep working. A name the new slug already holds is left as it is. A slug already held on this control plane is a 409, on a rename as much as on a create.
+	Slug string `json:"slug"`
+}
+
+// ManagementProjectBanRequest Desired project ban state. A newer revision replaces the state, including any intervening manual ban or unban.
+type ManagementProjectBanRequest struct {
+	// Banned Whether the project is refused at authentication.
+	Banned bool `json:"banned"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
+
+	// Revision Monotonic per-project revision. Older or duplicate revisions succeed without changing stored state.
+	Revision int64 `json:"revision"`
+}
+
+// ManagementProjectBlockRequest Desired project block state. A newer revision replaces the state, including any intervening manual block or unblock.
+type ManagementProjectBlockRequest struct {
+	// Blocked Whether the project is refused billable work.
+	Blocked bool `json:"blocked"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
+
+	// Reason Reason included in blocked-request errors. Cleared when blocked is false.
+	Reason *string `json:"reason,omitempty"`
+
+	// Revision Monotonic per-project revision. Older or duplicate revisions succeed without changing stored state.
+	Revision int64 `json:"revision"`
+}
+
+// ManagementProjectLimits A project's effective limits, already resolved by the caller. Every field is absolute: this side stores what it is given and performs no arithmetic of its own.
+//
+// The minimums below are the contract for what a limit may be, at least as strict as the CHECK constraints on default_limits. project_limits stores the same values under looser constraints on purpose — it is a push target, and a floor that only rejects the impossible keeps a future decision about what is allowed a change to this schema rather than a migration.
+//
+// `max_disk_size_mb` and `max_free_disk_size_mb` are one ceiling under two names, and either name alone carries it. A caller that sends both must send them equal; a caller that sends neither is refused. Sending both is what a caller does while receivers older than the second name are still running.
+type ManagementProjectLimits struct {
+	// ApiTeamRpsDelete Requests per second a project may make to each delete endpoint. Zero disables the limit.
+	ApiTeamRpsDelete int64 `json:"api_team_rps_delete"`
+
+	// ApiTeamRpsList Requests per second a project may make to each list endpoint. Zero disables the limit.
+	ApiTeamRpsList           int64 `json:"api_team_rps_list"`
+	ConcurrentSandboxes      int32 `json:"concurrent_sandboxes"`
+	ConcurrentTemplateBuilds int32 `json:"concurrent_template_builds"`
+
+	// DecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
+	DecidedAt *ManagementDecidedAt `json:"decided_at,omitempty"`
+
+	// DefaultFreeDiskSizeMb The default free-space growth target when a template build request omits one. May sit anywhere at or below the maximum free-space growth target, and usually sits well below it; a delivery whose default exceeds the maximum is rejected.
+	DefaultFreeDiskSizeMb int64 `json:"default_free_disk_size_mb"`
+	DiskMb                int64 `json:"disk_mb"`
+	EventsTtlDays         int32 `json:"events_ttl_days"`
+
+	// MaxDiskSizeMb The same ceiling as max_free_disk_size_mb, under the name it was first published with. Kept until every deployed sender and receiver speaks the other name.
+	MaxDiskSizeMb *int64 `json:"max_disk_size_mb,omitempty"`
+
+	// MaxFreeDiskSizeMb The most a template build may request as its free-space growth target.
+	MaxFreeDiskSizeMb     *int64 `json:"max_free_disk_size_mb,omitempty"`
+	MaxRamMb              int64  `json:"max_ram_mb"`
+	MaxSandboxLengthHours int32  `json:"max_sandbox_length_hours"`
+
+	// MaxSecrets Live secrets the project may hold.
+	MaxSecrets int32 `json:"max_secrets"`
+	MaxVcpu    int32 `json:"max_vcpu"`
+
+	// Revision The caller's version of this answer, raised whenever the limits it resolved for the project change. Delivery is over a network, so two pushes can be in flight at once and arrive in either order: this side stores the revision it accepted and drops a delivery at or below it, which is what keeps a delayed retry from putting the project back on limits it has already left.
+	//
+	// Comparable only against earlier revisions for the same project.
+	Revision int64 `json:"revision"`
+	union    json.RawMessage
+}
+
+// ManagementProjectLimits0 defines model for ManagementProjectLimits.0.
+type ManagementProjectLimits0 = interface{}
+
+// ManagementProjectLimits1 defines model for ManagementProjectLimits.1.
+type ManagementProjectLimits1 = interface{}
+
+// ManagementProjectMemberApplyRequest defines model for ManagementProjectMemberApplyRequest.
+type ManagementProjectMemberApplyRequest struct {
+	Identities *[]ManagementProjectMemberIdentity `json:"identities,omitempty"`
+
+	// IsDefault Whether this membership is the user's default team. Omitted requests from older sources remain non-default.
+	IsDefault *bool `json:"is_default,omitempty"`
+	Present   bool  `json:"present"`
+	Revision  int64 `json:"revision"`
+}
+
+// ManagementProjectMemberIdentity defines model for ManagementProjectMemberIdentity.
+type ManagementProjectMemberIdentity struct {
+	Issuer  string `json:"issuer"`
+	Subject string `json:"subject"`
+}
+
 // ManagementProjectSettingsRequest defines model for ManagementProjectSettingsRequest.
 type ManagementProjectSettingsRequest struct {
 	// Revision Monotonic per-project revision. Older or duplicate revisions succeed without changing stored state.
@@ -873,6 +1651,21 @@ type ManagementProjectSettingsRequest struct {
 
 	// Settings The project's stored settings. PUT replaces the complete document.
 	Settings ProjectSettings `json:"settings"`
+}
+
+// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every push. The optional cluster assignment is preserved when omitted.
+//
+// A project's tier is not among them, and this side assigns none. Limits arrive separately and in full through managementUpsertProjectLimits.
+type ManagementProjectUpsertRequest struct {
+	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
+
+	// Email Contact address recorded on the project.
+	Email string `json:"email"`
+	Name  string `json:"name"`
+
+	// Slug Changing it renames the project, and its template names follow: each name held under an earlier slug is also given under the new one, and the old names keep working. A name the new slug already holds is left as it is. A slug already held on this control plane is a 409, on a rename as much as on a create.
+	Slug string `json:"slug"`
 }
 
 // MaxTeamMetric Team metric with timestamp
@@ -910,7 +1703,10 @@ type NewSandbox struct {
 
 	// AutoResume Auto-resume configuration for paused sandboxes.
 	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
-	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// CpuCount Online vCPU target for the sandbox. Defaults to the template's cpuCount; at most its maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+	EnvVars  *EnvVars  `json:"envVars,omitempty"`
 
 	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
 	Iam *SandboxIam `json:"iam,omitempty"`
@@ -945,7 +1741,10 @@ type NewSandboxV2 struct {
 
 	// AutoResume Auto-resume configuration for paused sandboxes.
 	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
-	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// CpuCount Online vCPU target for the sandbox. Defaults to the template's cpuCount; at most its maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+	EnvVars  *EnvVars  `json:"envVars,omitempty"`
 
 	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
 	Iam *SandboxIam `json:"iam,omitempty"`
@@ -989,6 +1788,9 @@ type NewVolume struct {
 
 // Node defines model for Node.
 type Node struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1024,11 +1826,15 @@ type Node struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1036,6 +1842,9 @@ type Node struct {
 
 // NodeDetail defines model for NodeDetail.
 type NodeDetail struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1068,11 +1877,15 @@ type NodeDetail struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1114,8 +1927,35 @@ type NodeMetrics struct {
 	MemoryUsedBytes uint64 `json:"memoryUsedBytes"`
 }
 
+// NodeSandbox defines model for NodeSandbox.
+type NodeSandbox struct {
+	// ExecutionID Identifier of the running execution
+	ExecutionID openapi_types.UUID `json:"executionID"`
+
+	// LifecycleHoldUntil Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
+	LifecycleHoldUntil *time.Time `json:"lifecycleHoldUntil,omitempty"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// TeamID Identifier of the team
+	TeamID openapi_types.UUID `json:"teamID"`
+}
+
+// NodeSandboxes The sandboxes the API confirms are running on a node, as the node and the API's records agree on them when read. A guest the node runs for an execution the API records elsewhere, or does not record, is left out.
+type NodeSandboxes struct {
+	Items []NodeSandbox `json:"items"`
+
+	// NodeID Identifier of the node
+	NodeID string `json:"nodeID"`
+
+	// ObservedAt Time the node's sandboxes were read
+	ObservedAt time.Time `json:"observedAt"`
+}
+
 // NodeStatus Status of the node.
-// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 type NodeStatus string
 
 // NodeStatusChange defines model for NodeStatusChange.
@@ -1123,8 +1963,15 @@ type NodeStatusChange struct {
 	// ClusterID Identifier of the cluster
 	ClusterID *openapi_types.UUID `json:"clusterID,omitempty"`
 
+	// Force Apply the status and owner regardless of the recorded owner
+	Force *bool `json:"force,omitempty"`
+
+	// Owner Owner of a standby override; required to release a standby that carries one
+	Owner *string `json:"owner,omitempty"`
+
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 }
 
@@ -1142,7 +1989,10 @@ type ResumedSandbox struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AutoPause *bool `json:"autoPause,omitempty"`
 
-	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// CpuCount Online vCPU target for the resumed sandbox. Defaults to the snapshot's cpuCount; at most the template's maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
+	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
@@ -1275,6 +2125,9 @@ type SandboxDetail struct {
 
 	// EnvdAccessToken Access token used for envd communication
 	EnvdAccessToken *string `json:"envdAccessToken,omitempty"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -1556,6 +2409,45 @@ type SandboxPauseMode string
 type SandboxPauseRequest struct {
 	// Memory Whether to capture a full memory snapshot. When false, only the filesystem is persisted and resuming the sandbox cold-boots (reboots) it from disk, losing in-memory state, running processes, and open connections. Resume it with an explicit request (connect or resume); auto-resume, which can be triggered by arbitrary traffic, refuses such a sandbox. Defaults to true.
 	Memory *bool `json:"memory,omitempty"`
+
+	// RequireHealthyGuest The pause checks that the sandbox guest agent answers before it takes the snapshot. By default an unresponsive agent is recorded on the snapshot and the pause proceeds; the sandbox then shows `envdUnresponsiveAtPause` and a later resume must ask for `memory: false`, since restoring that memory would bring the unresponsive agent back. With this true, the pause is instead refused with 503 while the agent does not answer, and the sandbox keeps running. A filesystem-only pause (`memory: false`) is always refused while the agent does not answer, whatever this says.
+	RequireHealthyGuest *bool `json:"requireHealthyGuest,omitempty"`
+}
+
+// SandboxRecord defines model for SandboxRecord.
+type SandboxRecord struct {
+	// Alias Alias of the template
+	Alias *string `json:"alias,omitempty"`
+
+	// CpuCount CPU cores for the sandbox
+	CpuCount CPUCount `json:"cpuCount"`
+
+	// DiskSizeMB Disk size for the sandbox in MiB
+	DiskSizeMB DiskSizeMB `json:"diskSizeMB"`
+
+	// Domain Base domain where the sandbox traffic is accessible
+	Domain *string `json:"domain,omitempty"`
+
+	// EventsRetentionExpired Whether the sandbox ended more than the team's events retention window ago, so its events data is no longer available
+	EventsRetentionExpired bool `json:"eventsRetentionExpired"`
+
+	// MemoryMB Memory for the sandbox in MiB
+	MemoryMB MemoryMB `json:"memoryMB"`
+
+	// RetentionExpired Whether the sandbox ended more than the fixed retention window ago, so its monitoring and logs data is no longer available
+	RetentionExpired bool `json:"retentionExpired"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// StartedAt Time when the sandbox was started
+	StartedAt time.Time `json:"startedAt"`
+
+	// StoppedAt Time when the sandbox was stopped
+	StoppedAt *time.Time `json:"stoppedAt,omitempty"`
+
+	// TemplateID Identifier of the template from which is the sandbox created
+	TemplateID string `json:"templateID"`
 }
 
 // SandboxRefreshRequest defines model for SandboxRefreshRequest.
@@ -1708,6 +2600,9 @@ type TeamLimits struct {
 	// MaxRamMb Maximum memory per sandbox, in MiB
 	MaxRamMb int64 `json:"maxRamMb"`
 
+	// MaxSecrets Maximum number of secrets the team may store
+	MaxSecrets int64 `json:"maxSecrets"`
+
 	// MaxVcpu Maximum vCPUs per sandbox
 	MaxVcpu int64 `json:"maxVcpu"`
 }
@@ -1793,6 +2688,9 @@ type Template struct {
 	// LastSpawnedAt Time when the template was last used
 	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
 
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
+
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
 
@@ -1840,6 +2738,9 @@ type TemplateBuild struct {
 
 	// FinishedAt Time when the build was finished
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
@@ -1897,6 +2798,9 @@ type TemplateBuildRequestV3 struct {
 
 	// CpuCount CPU cores for the sandbox
 	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
+	// MaxCpuCount Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
@@ -2109,6 +3013,9 @@ type TemplateWithBuilds struct {
 
 	// LastSpawnedAt Time when the template was last used
 	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
+
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
@@ -2324,14 +3231,35 @@ type WebhookDetail struct {
 	Url    string `json:"url"`
 }
 
+// AliasID defines model for aliasID.
+type AliasID = openapi_types.UUID
+
 // ApiKeyID defines model for apiKeyID.
 type ApiKeyID = string
 
 // BuildID defines model for buildID.
 type BuildID = string
 
+// BuildIDOrTemplate defines model for buildIDOrTemplate.
+type BuildIDOrTemplate = string
+
+// BuildIDs defines model for buildIDs.
+type BuildIDs = []openapi_types.UUID
+
+// BuildStatuses defines model for buildStatuses.
+type BuildStatuses = []BuildStatus
+
+// BuildsCursor defines model for buildsCursor.
+type BuildsCursor = string
+
+// BuildsLimit defines model for buildsLimit.
+type BuildsLimit = int32
+
 // ClusterID defines model for clusterID.
 type ClusterID = openapi_types.UUID
+
+// IdempotencyKey defines model for idempotencyKey.
+type IdempotencyKey = string
 
 // NodeID defines model for nodeID.
 type NodeID = string
@@ -2514,6 +3442,12 @@ type GetNodesNodeIDParams struct {
 	ClusterID *openapi_types.UUID `form:"clusterID,omitempty" json:"clusterID,omitempty"`
 }
 
+// GetNodesNodeIDSandboxesParams defines parameters for GetNodesNodeIDSandboxes.
+type GetNodesNodeIDSandboxesParams struct {
+	// ClusterID Identifier of the cluster
+	ClusterID *openapi_types.UUID `form:"clusterID,omitempty" json:"clusterID,omitempty"`
+}
+
 // GetSandboxesParams defines parameters for GetSandboxes.
 type GetSandboxesParams struct {
 	// Metadata Metadata query used to filter the sandboxes (e.g. "user=abc&app=prod"). Each key and values must be URL encoded.
@@ -2540,6 +3474,26 @@ type GetSandboxesSandboxIDMetricsParams struct {
 	// Start Unix timestamp for the start of the interval, in seconds, for which the metrics
 	Start *int64 `form:"start,omitempty" json:"start,omitempty"`
 	End   *int64 `form:"end,omitempty" json:"end,omitempty"`
+}
+
+// PostSandboxesSandboxIDSnapshotsParams defines parameters for PostSandboxesSandboxIDSnapshots.
+type PostSandboxesSandboxIDSnapshotsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // GetSecretsParams defines parameters for GetSecrets.
@@ -2659,6 +3613,113 @@ type GetTemplatesTemplateIDTagsTagAssignmentsParams struct {
 	Limit *TagAssignmentsLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// AdminListClustersParams defines parameters for AdminListClusters.
+type AdminListClustersParams struct {
+	// Limit Maximum number of clusters to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Number of matching clusters to skip
+	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Search Case-insensitive substring match on the cluster name or endpoint
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// SortBy Column to order by
+	SortBy    *AdminListClustersParamsSortBy    `form:"sortBy,omitempty" json:"sortBy,omitempty"`
+	SortOrder *AdminListClustersParamsSortOrder `form:"sortOrder,omitempty" json:"sortOrder,omitempty"`
+}
+
+// AdminListClustersParamsSortBy defines parameters for AdminListClusters.
+type AdminListClustersParamsSortBy string
+
+// AdminListClustersParamsSortOrder defines parameters for AdminListClusters.
+type AdminListClustersParamsSortOrder string
+
+// AdminGetClusterParams defines parameters for AdminGetCluster.
+type AdminGetClusterParams struct {
+	// TeamsLimit Page size for the embedded teams page
+	TeamsLimit *int32 `form:"teamsLimit,omitempty" json:"teamsLimit,omitempty"`
+
+	// TeamsOffset Offset for the embedded teams page
+	TeamsOffset *int32 `form:"teamsOffset,omitempty" json:"teamsOffset,omitempty"`
+}
+
+// AdminListClusterTeamsParams defines parameters for AdminListClusterTeams.
+type AdminListClusterTeamsParams struct {
+	// Limit Maximum number of teams to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Number of teams to skip
+	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// SortBy Column to order by
+	SortBy    *AdminListClusterTeamsParamsSortBy    `form:"sortBy,omitempty" json:"sortBy,omitempty"`
+	SortOrder *AdminListClusterTeamsParamsSortOrder `form:"sortOrder,omitempty" json:"sortOrder,omitempty"`
+}
+
+// AdminListClusterTeamsParamsSortBy defines parameters for AdminListClusterTeams.
+type AdminListClusterTeamsParamsSortBy string
+
+// AdminListClusterTeamsParamsSortOrder defines parameters for AdminListClusterTeams.
+type AdminListClusterTeamsParamsSortOrder string
+
+// GetUnstableAdminSandboxesSandboxIDBuildsParams defines parameters for GetUnstableAdminSandboxesSandboxIDBuilds.
+type GetUnstableAdminSandboxesSandboxIDBuildsParams struct {
+	// StatusGroup Only list builds in these status groups, comma-separated. Omit to list every group.
+	StatusGroup *[]AdminSandboxBuildStatusGroup `form:"statusGroup,omitempty" json:"statusGroup,omitempty"`
+
+	// Tag Tag whose assignments are listed
+	Tag *string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Order Direction of the assignment time order
+	Order *OrderDirection `form:"order,omitempty" json:"order,omitempty"`
+
+	// Limit Maximum number of builds to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Number of matching builds to skip
+	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetUnstableAdminTemplatesAliasesParams defines parameters for GetUnstableAdminTemplatesAliases.
+type GetUnstableAdminTemplatesAliasesParams struct {
+	// Search Exact template ID or alias
+	Search string `form:"search" json:"search"`
+
+	// NextToken Cursor to start the list from
+	NextToken *PaginationNextToken `form:"nextToken,omitempty" json:"nextToken,omitempty"`
+
+	// Limit Maximum number of items to return per page
+	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetUnstableAdminTemplatesLookupParams defines parameters for GetUnstableAdminTemplatesLookup.
+type GetUnstableAdminTemplatesLookupParams struct {
+	// Query Build ID, template ID, or template name
+	Query string `form:"query" json:"query"`
+}
+
+// GetUnstableBuildsParams defines parameters for GetUnstableBuilds.
+type GetUnstableBuildsParams struct {
+	// BuildIdOrTemplate Optional filter by build identifier, template identifier, or template alias.
+	BuildIdOrTemplate *BuildIDOrTemplate `form:"build_id_or_template,omitempty" json:"build_id_or_template,omitempty"`
+
+	// Statuses Comma-separated list of build statuses to include.
+	Statuses *BuildStatuses `form:"statuses,omitempty" json:"statuses,omitempty"`
+
+	// Limit Maximum number of builds to return per page.
+	Limit *BuildsLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Cursor returned by the previous list response in `created_at|build_id` format.
+	Cursor *BuildsCursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// GetUnstableBuildsStatusesParams defines parameters for GetUnstableBuildsStatuses.
+type GetUnstableBuildsStatusesParams struct {
+	// BuildIds Comma-separated list of build IDs to get statuses for.
+	BuildIds BuildIDs `form:"build_ids" json:"build_ids"`
+}
+
 // GetUnstableTemplatesSearchParams defines parameters for GetUnstableTemplatesSearch.
 type GetUnstableTemplatesSearchParams struct {
 	// Search Case-insensitive substring match on the template ID, its aliases and its names.
@@ -2708,11 +3769,15 @@ type GetV2SandboxesParams struct {
 type PostV2SandboxesParams struct {
 	// IdempotencyKey Optional team-scoped key for retrying sandbox creation. Use 1 to 255 lowercase ASCII
 	// letters, digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. When idempotency is enabled,
-	// matching retries replay the original status and body, including errors, for the retention period.
+	// matching retries replay a completed status and body for the retention period. A creation
+	// failure explicitly classified as safe to retry (Should-Retry: true) permits a fresh
+	// attempt with the same key and parameters. Only one attempt can run at a time.
 	// Different request parameters return 409 with error_code idempotency_request_mismatch.
 	// An in-progress request returns 409 with error_code idempotency_in_progress; an unknown
 	// outcome returns 422 with error_code idempotency_outcome_unknown. These retries do not execute the request again.
-	// Retries do not extend retention. After the key expires, it can start a new creation.
+	// Retries do not extend retention. If a fresh attempt's request deadline plus response
+	// persistence budget would exceed the remaining retention, the previous error is replayed.
+	// After the key expires, it can start a new creation.
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
 
@@ -2743,6 +3808,46 @@ type GetV2TemplatesParams struct {
 
 	// Limit Maximum number of items to return per page
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDParams defines parameters for PostV2TemplatesTemplateIDBuildsBuildID.
+type PostV2TemplatesTemplateIDBuildsBuildIDParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// PostV3TemplatesParams defines parameters for PostV3Templates.
+type PostV3TemplatesParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // PostAdminTeamsTeamIDApiKeysJSONRequestBody defines body for PostAdminTeamsTeamIDApiKeys for application/json ContentType.
@@ -2816,11 +3921,53 @@ type PostTemplatesTagsJSONRequestBody = AssignTemplateTagsRequest
 // Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type PatchTemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
 
+// AdminCreateClusterJSONRequestBody defines body for AdminCreateCluster for application/json ContentType.
+type AdminCreateClusterJSONRequestBody = AdminClusterCreateRequest
+
+// AdminUpdateClusterJSONRequestBody defines body for AdminUpdateCluster for application/json ContentType.
+type AdminUpdateClusterJSONRequestBody = ClusterUpdateRequest
+
+// AdminRotateClusterTokenJSONRequestBody defines body for AdminRotateClusterToken for application/json ContentType.
+type AdminRotateClusterTokenJSONRequestBody = ClusterTokenRotateRequest
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody defines body for PostUnstableAdminSandboxesSandboxIDBuildsRestore for application/json ContentType.
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody = AdminSandboxBuildRestoreRequest
+
+// AdminBanTeamsJSONRequestBody defines body for AdminBanTeams for application/json ContentType.
+type AdminBanTeamsJSONRequestBody = AdminTeamsBanRequest
+
 // PostUnstableAdminTeamsQueryJSONRequestBody defines body for PostUnstableAdminTeamsQuery for application/json ContentType.
 type PostUnstableAdminTeamsQueryJSONRequestBody = AdminTeamListRequest
 
 // PutUnstableAdminTeamsTeamIDSchedulingLabelsJSONRequestBody defines body for PutUnstableAdminTeamsTeamIDSchedulingLabels for application/json ContentType.
 type PutUnstableAdminTeamsTeamIDSchedulingLabelsJSONRequestBody = AdminTeamSchedulingLabels
+
+// PostUnstableAdminTemplatesAliasesJSONRequestBody defines body for PostUnstableAdminTemplatesAliases for application/json ContentType.
+type PostUnstableAdminTemplatesAliasesJSONRequestBody = AdminTemplateAliasCreateRequest
+
+// PostUnstableAdminTemplatesDefaultsJSONRequestBody defines body for PostUnstableAdminTemplatesDefaults for application/json ContentType.
+type PostUnstableAdminTemplatesDefaultsJSONRequestBody = AdminDefaultTemplateCreateRequest
+
+// PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody defines body for PatchUnstableAdminTemplatesDefaultsTemplateID for application/json ContentType.
+type PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody = AdminDefaultTemplateUpdateRequest
+
+// ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
+type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
+
+// ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
+type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
+
+// ManagementApplyProjectBanJSONRequestBody defines body for ManagementApplyProjectBan for application/json ContentType.
+type ManagementApplyProjectBanJSONRequestBody = ManagementProjectBanRequest
+
+// ManagementApplyProjectBlockJSONRequestBody defines body for ManagementApplyProjectBlock for application/json ContentType.
+type ManagementApplyProjectBlockJSONRequestBody = ManagementProjectBlockRequest
+
+// ManagementUpsertProjectLimitsJSONRequestBody defines body for ManagementUpsertProjectLimits for application/json ContentType.
+type ManagementUpsertProjectLimitsJSONRequestBody = ManagementProjectLimits
+
+// ManagementApplyProjectMemberJSONRequestBody defines body for ManagementApplyProjectMember for application/json ContentType.
+type ManagementApplyProjectMemberJSONRequestBody = ManagementProjectMemberApplyRequest
 
 // ManagementSetProjectSettingsJSONRequestBody defines body for ManagementSetProjectSettings for application/json ContentType.
 type ManagementSetProjectSettingsJSONRequestBody = ManagementProjectSettingsRequest
@@ -2977,6 +4124,275 @@ func (t FromImageRegistry) MarshalJSON() ([]byte, error) {
 
 func (t *FromImageRegistry) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsManagementProjectLimits0 returns the union data inside the ManagementProjectLimits as a ManagementProjectLimits0
+func (t ManagementProjectLimits) AsManagementProjectLimits0() (ManagementProjectLimits0, error) {
+	var body ManagementProjectLimits0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagementProjectLimits0 overwrites any union data inside the ManagementProjectLimits as the provided ManagementProjectLimits0
+func (t *ManagementProjectLimits) FromManagementProjectLimits0(v ManagementProjectLimits0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagementProjectLimits0 performs a merge with any union data inside the ManagementProjectLimits, using the provided ManagementProjectLimits0
+func (t *ManagementProjectLimits) MergeManagementProjectLimits0(v ManagementProjectLimits0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsManagementProjectLimits1 returns the union data inside the ManagementProjectLimits as a ManagementProjectLimits1
+func (t ManagementProjectLimits) AsManagementProjectLimits1() (ManagementProjectLimits1, error) {
+	var body ManagementProjectLimits1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromManagementProjectLimits1 overwrites any union data inside the ManagementProjectLimits as the provided ManagementProjectLimits1
+func (t *ManagementProjectLimits) FromManagementProjectLimits1(v ManagementProjectLimits1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeManagementProjectLimits1 performs a merge with any union data inside the ManagementProjectLimits, using the provided ManagementProjectLimits1
+func (t *ManagementProjectLimits) MergeManagementProjectLimits1(v ManagementProjectLimits1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ManagementProjectLimits) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["api_team_rps_delete"], err = json.Marshal(t.ApiTeamRpsDelete)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'api_team_rps_delete': %w", err)
+	}
+
+	object["api_team_rps_list"], err = json.Marshal(t.ApiTeamRpsList)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'api_team_rps_list': %w", err)
+	}
+
+	object["concurrent_sandboxes"], err = json.Marshal(t.ConcurrentSandboxes)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'concurrent_sandboxes': %w", err)
+	}
+
+	object["concurrent_template_builds"], err = json.Marshal(t.ConcurrentTemplateBuilds)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'concurrent_template_builds': %w", err)
+	}
+
+	if t.DecidedAt != nil {
+		object["decided_at"], err = json.Marshal(t.DecidedAt)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'decided_at': %w", err)
+		}
+	}
+
+	object["default_free_disk_size_mb"], err = json.Marshal(t.DefaultFreeDiskSizeMb)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'default_free_disk_size_mb': %w", err)
+	}
+
+	object["disk_mb"], err = json.Marshal(t.DiskMb)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'disk_mb': %w", err)
+	}
+
+	object["events_ttl_days"], err = json.Marshal(t.EventsTtlDays)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'events_ttl_days': %w", err)
+	}
+
+	if t.MaxDiskSizeMb != nil {
+		object["max_disk_size_mb"], err = json.Marshal(t.MaxDiskSizeMb)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'max_disk_size_mb': %w", err)
+		}
+	}
+
+	if t.MaxFreeDiskSizeMb != nil {
+		object["max_free_disk_size_mb"], err = json.Marshal(t.MaxFreeDiskSizeMb)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'max_free_disk_size_mb': %w", err)
+		}
+	}
+
+	object["max_ram_mb"], err = json.Marshal(t.MaxRamMb)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'max_ram_mb': %w", err)
+	}
+
+	object["max_sandbox_length_hours"], err = json.Marshal(t.MaxSandboxLengthHours)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'max_sandbox_length_hours': %w", err)
+	}
+
+	object["max_secrets"], err = json.Marshal(t.MaxSecrets)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'max_secrets': %w", err)
+	}
+
+	object["max_vcpu"], err = json.Marshal(t.MaxVcpu)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'max_vcpu': %w", err)
+	}
+
+	object["revision"], err = json.Marshal(t.Revision)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'revision': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *ManagementProjectLimits) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["api_team_rps_delete"]; found {
+		err = json.Unmarshal(raw, &t.ApiTeamRpsDelete)
+		if err != nil {
+			return fmt.Errorf("error reading 'api_team_rps_delete': %w", err)
+		}
+	}
+
+	if raw, found := object["api_team_rps_list"]; found {
+		err = json.Unmarshal(raw, &t.ApiTeamRpsList)
+		if err != nil {
+			return fmt.Errorf("error reading 'api_team_rps_list': %w", err)
+		}
+	}
+
+	if raw, found := object["concurrent_sandboxes"]; found {
+		err = json.Unmarshal(raw, &t.ConcurrentSandboxes)
+		if err != nil {
+			return fmt.Errorf("error reading 'concurrent_sandboxes': %w", err)
+		}
+	}
+
+	if raw, found := object["concurrent_template_builds"]; found {
+		err = json.Unmarshal(raw, &t.ConcurrentTemplateBuilds)
+		if err != nil {
+			return fmt.Errorf("error reading 'concurrent_template_builds': %w", err)
+		}
+	}
+
+	if raw, found := object["decided_at"]; found {
+		err = json.Unmarshal(raw, &t.DecidedAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'decided_at': %w", err)
+		}
+	}
+
+	if raw, found := object["default_free_disk_size_mb"]; found {
+		err = json.Unmarshal(raw, &t.DefaultFreeDiskSizeMb)
+		if err != nil {
+			return fmt.Errorf("error reading 'default_free_disk_size_mb': %w", err)
+		}
+	}
+
+	if raw, found := object["disk_mb"]; found {
+		err = json.Unmarshal(raw, &t.DiskMb)
+		if err != nil {
+			return fmt.Errorf("error reading 'disk_mb': %w", err)
+		}
+	}
+
+	if raw, found := object["events_ttl_days"]; found {
+		err = json.Unmarshal(raw, &t.EventsTtlDays)
+		if err != nil {
+			return fmt.Errorf("error reading 'events_ttl_days': %w", err)
+		}
+	}
+
+	if raw, found := object["max_disk_size_mb"]; found {
+		err = json.Unmarshal(raw, &t.MaxDiskSizeMb)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_disk_size_mb': %w", err)
+		}
+	}
+
+	if raw, found := object["max_free_disk_size_mb"]; found {
+		err = json.Unmarshal(raw, &t.MaxFreeDiskSizeMb)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_free_disk_size_mb': %w", err)
+		}
+	}
+
+	if raw, found := object["max_ram_mb"]; found {
+		err = json.Unmarshal(raw, &t.MaxRamMb)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_ram_mb': %w", err)
+		}
+	}
+
+	if raw, found := object["max_sandbox_length_hours"]; found {
+		err = json.Unmarshal(raw, &t.MaxSandboxLengthHours)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_sandbox_length_hours': %w", err)
+		}
+	}
+
+	if raw, found := object["max_secrets"]; found {
+		err = json.Unmarshal(raw, &t.MaxSecrets)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_secrets': %w", err)
+		}
+	}
+
+	if raw, found := object["max_vcpu"]; found {
+		err = json.Unmarshal(raw, &t.MaxVcpu)
+		if err != nil {
+			return fmt.Errorf("error reading 'max_vcpu': %w", err)
+		}
+	}
+
+	if raw, found := object["revision"]; found {
+		err = json.Unmarshal(raw, &t.Revision)
+		if err != nil {
+			return fmt.Errorf("error reading 'revision': %w", err)
+		}
+	}
+
 	return err
 }
 
@@ -3316,9 +4732,16 @@ type ClientInterface interface {
 	// Corresponds with POST /nodes/{nodeID} (the `PostNodesNodeID` operationId).
 	PostNodesNodeID(ctx context.Context, nodeID NodeID, body PostNodesNodeIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetNodesNodeIDSandboxes Node sandboxes
+	//
+	// List the sandboxes the API confirms are running on the node.
+	//
+	// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+	GetNodesNodeIDSandboxes(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSandboxes List running sandboxes
 	//
-	// List all running sandboxes. Use GET /v2/sandboxes instead.
+	// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
 	//
 	// Corresponds with GET /sandboxes (the `GetSandboxes` operationId).
 	//
@@ -3370,7 +4793,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBody Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3381,7 +4804,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnect Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3444,7 +4867,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBody Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3453,7 +4876,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPause Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3480,7 +4903,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBody Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3491,7 +4914,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResume Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3507,7 +4930,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDSnapshots Create snapshot
 	//
@@ -3516,7 +4939,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBody Set sandbox timeout
 	//
@@ -3623,7 +5046,7 @@ type ClientInterface interface {
 
 	// GetTemplates List templates
 	//
-	// List all templates.
+	// List all templates. Returns 400 when the team has more than 5000 templates; use /v2/templates to page through them.
 	//
 	// Corresponds with GET /templates (the `GetTemplates` operationId).
 	//
@@ -3761,6 +5184,173 @@ type ClientInterface interface {
 	// Corresponds with GET /templates/{templateID}/tags/{tag}/assignments (the `GetTemplatesTemplateIDTagsTagAssignments` operationId).
 	GetTemplatesTemplateIDTagsTagAssignments(ctx context.Context, templateID TemplateID, tag Tag, params *GetTemplatesTemplateIDTagsTagAssignmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminListClusters List clusters as admin
+	//
+	// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
+	//
+	// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
+	AdminListClusters(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminCreateClusterWithBody Create a cluster as admin
+	//
+	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+	AdminCreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminCreateCluster Create a cluster as admin
+	//
+	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+	AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminDeleteCluster Delete a cluster and its environments as admin
+	//
+	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	//
+	// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
+	AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminGetCluster Cluster as admin
+	//
+	// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
+	//
+	// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
+	AdminGetCluster(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminUpdateClusterWithBody Update a cluster as admin
+	//
+	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+	AdminUpdateClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminUpdateCluster Update a cluster as admin
+	//
+	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+	AdminUpdateCluster(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminListClusterTeams List a cluster's teams as admin
+	//
+	// Lists the teams assigned to the cluster.
+	//
+	// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
+	AdminListClusterTeams(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminRotateClusterTokenWithBody Rotate a cluster's token as admin
+	//
+	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+	AdminRotateClusterTokenWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminRotateClusterToken Rotate a cluster's token as admin
+	//
+	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+	AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminSandboxesSandboxIDOverview Sandbox overview
+	//
+	// Reads a sandbox's team, snapshot template, most recent pause and newest
+	// default-tag build from the database. The team comes from the
+	// stopped-sandbox log, or from the snapshot when the sandbox has not
+	// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+	// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+	// `latestBuild`.
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+	GetUnstableAdminSandboxesSandboxIDOverview(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminBanTeamsWithBody Ban teams
+	//
+	// Bans up to 100 teams at once, as
+	// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+	// team's ban is stored before any team's sandboxes are killed or builds
+	// cancelled, and the kills and cancellations of all teams share one time
+	// budget. One team's failure does not stop the others; the response sorts
+	// every requested team into banned, not found or failed. The work
+	// continues if the caller disconnects.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+	AdminBanTeamsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminBanTeams Ban teams
+	//
+	// Bans up to 100 teams at once, as
+	// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+	// team's ban is stored before any team's sandboxes are killed or builds
+	// cancelled, and the kills and cancellations of all teams share one time
+	// budget. One team's failure does not stop the others; the response sorts
+	// every requested team into banned, not found or failed. The work
+	// continues if the caller disconnects.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+	AdminBanTeams(ctx context.Context, body AdminBanTeamsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PostUnstableAdminTeamsQueryWithBody List teams as admin
 	//
 	// Lists teams matching the filters in the request body, with each team's
@@ -3792,6 +5382,26 @@ type ClientInterface interface {
 	// Corresponds with GET /unstable/admin/teams/{teamID} (the `GetUnstableAdminTeamsTeamID` operationId).
 	GetUnstableAdminTeamsTeamID(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminUnbanTeam Unban a team
+	//
+	// Clears the team's ban. Idempotent.
+	//
+	// Corresponds with DELETE /unstable/admin/teams/{teamID}/ban (the `AdminUnbanTeam` operationId).
+	AdminUnbanTeam(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminBanTeam Ban a team
+	//
+	// Marks the team as banned so its API keys stop authenticating, then
+	// kills its sandboxes and cancels its builds. The ban is stored first:
+	// a failure to kill or cancel is reported in the result and does not
+	// undo it. Killing and cancelling stop after a fixed time budget, and a
+	// step cut short is reported as failed. Banning an already banned team
+	// repeats the kill and cancel. The work continues if the caller
+	// disconnects.
+	//
+	// Corresponds with PUT /unstable/admin/teams/{teamID}/ban (the `AdminBanTeam` operationId).
+	AdminBanTeam(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PutUnstableAdminTeamsTeamIDSchedulingLabelsWithBody Replace a team's sandbox scheduling labels
 	//
 	// Replaces the labels that place the team's new sandboxes on matching
@@ -3812,6 +5422,258 @@ type ClientInterface interface {
 	// Corresponds with PUT /unstable/admin/teams/{teamID}/scheduling-labels (the `PutUnstableAdminTeamsTeamIDSchedulingLabels` operationId).
 	PutUnstableAdminTeamsTeamIDSchedulingLabels(ctx context.Context, teamID openapi_types.UUID, body PutUnstableAdminTeamsTeamIDSchedulingLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetUnstableAdminTemplatesAliases Search template aliases as admin
+	//
+	// Finds the templates whose ID equals `search`, or that own an alias equal to `search` in any namespace, with their owning team and all their aliases. Deleted templates are left out. Results are ordered by template ID; the next page's token is returned in `X-Next-Token`.
+	//
+	// Corresponds with GET /unstable/admin/templates/aliases (the `GetUnstableAdminTemplatesAliases` operationId).
+	GetUnstableAdminTemplatesAliases(ctx context.Context, params *GetUnstableAdminTemplatesAliasesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminTemplatesAliasesWithBody Add a template alias without a namespace as admin
+	//
+	// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+	PostUnstableAdminTemplatesAliasesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminTemplatesAliases Add a template alias without a namespace as admin
+	//
+	// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+	PostUnstableAdminTemplatesAliases(ctx context.Context, body PostUnstableAdminTemplatesAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUnstableAdminTemplatesAliasesAliasID Remove a template alias without a namespace as admin
+	//
+	// Removes an alias without a namespace. A namespaced alias is not removed and answers 404.
+	//
+	// Corresponds with DELETE /unstable/admin/templates/aliases/{aliasID} (the `DeleteUnstableAdminTemplatesAliasesAliasID` operationId).
+	DeleteUnstableAdminTemplatesAliasesAliasID(ctx context.Context, aliasID AliasID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminTemplatesDefaultsWithBody Add a default template as admin
+	//
+	// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+	PostUnstableAdminTemplatesDefaultsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminTemplatesDefaults Add a default template as admin
+	//
+	// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+	PostUnstableAdminTemplatesDefaults(ctx context.Context, body PostUnstableAdminTemplatesDefaultsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUnstableAdminTemplatesDefaultsTemplateID Remove a default template as admin
+	//
+	// Stops a template being one of the platform's default templates. The template itself is not changed. Returns 404 when the template is not a default template.
+	//
+	// Corresponds with DELETE /unstable/admin/templates/defaults/{templateID} (the `DeleteUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	DeleteUnstableAdminTemplatesDefaultsTemplateID(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchUnstableAdminTemplatesDefaultsTemplateIDWithBody Update a default template as admin
+	//
+	// Updates the description of a default template. Returns 404 when the template is not a default template.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	PatchUnstableAdminTemplatesDefaultsTemplateIDWithBody(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchUnstableAdminTemplatesDefaultsTemplateID Update a default template as admin
+	//
+	// Updates the description of a default template. Returns 404 when the template is not a default template.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	PatchUnstableAdminTemplatesDefaultsTemplateID(ctx context.Context, templateID TemplateID, body PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminTemplatesLookup Look up a template as admin
+	//
+	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+	//
+	// Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
+	GetUnstableAdminTemplatesLookup(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableBuilds List team builds
+	//
+	// Lists the team's builds, newest first, with an optional filter by build ID, template ID or template alias and by status. `nextCursor` continues the listing. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Corresponds with GET /unstable/builds (the `GetUnstableBuilds` operationId).
+	GetUnstableBuilds(ctx context.Context, params *GetUnstableBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableBuildsStatuses Build statuses
+	//
+	// Returns the statuses of the team's builds with the given IDs; IDs of other teams' builds are left out. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Corresponds with GET /unstable/builds/statuses (the `GetUnstableBuildsStatuses` operationId).
+	GetUnstableBuildsStatuses(ctx context.Context, params *GetUnstableBuildsStatusesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableBuildsBuildID Build details
+	//
+	// Returns a build of the team with the names of its template. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Corresponds with GET /unstable/builds/{buildID} (the `GetUnstableBuildsBuildID` operationId).
+	GetUnstableBuildsBuildID(ctx context.Context, buildID BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementDeleteCluster Delete a cluster and its environments.
+	//
+	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
+	ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementRegisterClusterWithBody Register a cluster.
+	//
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+	ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementRegisterCluster Register a cluster.
+	//
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+	ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementRequestClusterDeletion Record that a cluster is being deleted.
+	//
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before the deletion is recorded, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
+	ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementClusterDestroyReadiness Check cluster destroy readiness.
+	//
+	// Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
+	//
+	// Corresponds with GET /unstable/management/clusters/{clusterID}/destroy-readiness (the `ManagementClusterDestroyReadiness` operationId).
+	ManagementClusterDestroyReadiness(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementListClusterProjects List the projects assigned to a cluster.
+	//
+	// Returns the ID of every project whose team is assigned to the cluster, whichever way it was assigned. A deleted project is never assigned. An absent cluster has no projects.
+	//
+	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
+	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementDeleteProject Soft-delete a project.
+	//
+	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+	//
+	// Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
+	ManagementDeleteProject(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpsertProjectWithBody Create or reconcile a project.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+	ManagementUpsertProjectWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpsertProject Create or reconcile a project.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+	ManagementUpsertProject(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBanWithBody Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBan Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBan(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBlockWithBody Apply a project's block state.
+	//
+	// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+	ManagementApplyProjectBlockWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectBlock Apply a project's block state.
+	//
+	// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+	ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementDetachProjectCluster Detach a cluster assignment from a project.
+	//
+	// Answers 404 when the project is missing or deleted.
+	//
+	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
+	ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementAssignProjectCluster Assign a cluster to a project.
+	//
+	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
+	ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpsertProjectLimitsWithBody Reconcile effective limits for a project.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+	ManagementUpsertProjectLimitsWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementUpsertProjectLimits Reconcile effective limits for a project.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+	ManagementUpsertProjectLimits(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectMemberWithBody Apply one versioned project member projection.
+	//
+	// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+	ManagementApplyProjectMemberWithBody(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementApplyProjectMember Apply one versioned project member projection.
+	//
+	// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+	ManagementApplyProjectMember(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, body ManagementApplyProjectMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ManagementSetProjectSettingsWithBody Apply a project's settings revision.
 	//
 	// Replaces the complete project settings document when the revision is newer than the stored revision. Omitted settings are removed. Older and duplicate revisions leave the stored document unchanged. Every successful delivery invalidates the cached team. Answers 404 when the project is missing or deleted.
@@ -3829,6 +5691,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettings(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableSandboxesSandboxIDRecord Sandbox record
+	//
+	// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+	//
+	// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+	GetUnstableSandboxesSandboxIDRecord(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetUnstableTeamsTeamIDLimits Team limits
 	//
@@ -3878,7 +5747,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3887,7 +5756,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -3928,21 +5797,21 @@ type ClientInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3TemplatesWithBody Create template (v3)
 	//
@@ -3951,7 +5820,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3Templates Create template (v3)
 	//
@@ -3960,7 +5829,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVolumes List team volumes
 	//
@@ -4634,9 +6503,26 @@ func (c *Client) PostNodesNodeID(ctx context.Context, nodeID NodeID, body PostNo
 	return c.Client.Do(req)
 }
 
+// GetNodesNodeIDSandboxes Node sandboxes
+//
+// List the sandboxes the API confirms are running on the node.
+//
+// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+func (c *Client) GetNodesNodeIDSandboxes(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNodesNodeIDSandboxesRequest(c.Server, nodeID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetSandboxes List running sandboxes
 //
-// List all running sandboxes. Use GET /v2/sandboxes instead.
+// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
 //
 // Corresponds with GET /sandboxes (the `GetSandboxes` operationId).
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -4745,7 +6631,7 @@ func (c *Client) GetSandboxesSandboxID(ctx context.Context, sandboxID SandboxID,
 
 // PostSandboxesSandboxIDConnectWithBody Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -4765,7 +6651,7 @@ func (c *Client) PostSandboxesSandboxIDConnectWithBody(ctx context.Context, sand
 
 // PostSandboxesSandboxIDConnect Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4896,7 +6782,7 @@ func (c *Client) PutSandboxesSandboxIDNetwork(ctx context.Context, sandboxID San
 
 // PostSandboxesSandboxIDPauseWithBody Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type.
 //
@@ -4915,7 +6801,7 @@ func (c *Client) PostSandboxesSandboxIDPauseWithBody(ctx context.Context, sandbo
 
 // PostSandboxesSandboxIDPause Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4972,7 +6858,7 @@ func (c *Client) PostSandboxesSandboxIDRefreshes(ctx context.Context, sandboxID 
 
 // PostSandboxesSandboxIDResumeWithBody Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type.
 //
@@ -4992,7 +6878,7 @@ func (c *Client) PostSandboxesSandboxIDResumeWithBody(ctx context.Context, sandb
 
 // PostSandboxesSandboxIDResume Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5017,8 +6903,8 @@ func (c *Client) PostSandboxesSandboxIDResume(ctx context.Context, sandboxID San
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, contentType, body)
+func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5036,8 +6922,8 @@ func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sa
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, body)
+func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5283,7 +7169,7 @@ func (c *Client) GetTeamsTeamIDMetricsMax(ctx context.Context, teamID TeamID, pa
 
 // GetTemplates List templates
 //
-// List all templates.
+// List all templates. Returns 400 when the team has more than 5000 templates; use /v2/templates to page through them.
 //
 // Corresponds with GET /templates (the `GetTemplates` operationId).
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -5598,6 +7484,333 @@ func (c *Client) GetTemplatesTemplateIDTagsTagAssignments(ctx context.Context, t
 	return c.Client.Do(req)
 }
 
+// AdminListClusters List clusters as admin
+//
+// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
+//
+// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
+func (c *Client) AdminListClusters(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListClustersRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminCreateClusterWithBody Create a cluster as admin
+//
+// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+func (c *Client) AdminCreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreateClusterRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminCreateCluster Create a cluster as admin
+//
+// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+func (c *Client) AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreateClusterRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminDeleteCluster Delete a cluster and its environments as admin
+//
+// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+//
+// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
+func (c *Client) AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminDeleteClusterRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminGetCluster Cluster as admin
+//
+// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
+//
+// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
+func (c *Client) AdminGetCluster(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminGetClusterRequest(c.Server, clusterID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminUpdateClusterWithBody Update a cluster as admin
+//
+// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+func (c *Client) AdminUpdateClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminUpdateClusterRequestWithBody(c.Server, clusterID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminUpdateCluster Update a cluster as admin
+//
+// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+func (c *Client) AdminUpdateCluster(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminUpdateClusterRequest(c.Server, clusterID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminListClusterTeams List a cluster's teams as admin
+//
+// Lists the teams assigned to the cluster.
+//
+// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
+func (c *Client) AdminListClusterTeams(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListClusterTeamsRequest(c.Server, clusterID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminRotateClusterTokenWithBody Rotate a cluster's token as admin
+//
+// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+func (c *Client) AdminRotateClusterTokenWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminRotateClusterTokenRequestWithBody(c.Server, clusterID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminRotateClusterToken Rotate a cluster's token as admin
+//
+// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+func (c *Client) AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminRotateClusterTokenRequest(c.Server, clusterID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *Client) GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(c.Server, sandboxID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(c.Server, sandboxID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(c.Server, sandboxID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverview Sandbox overview
+//
+// Reads a sandbox's team, snapshot template, most recent pause and newest
+// default-tag build from the database. The team comes from the
+// stopped-sandbox log, or from the snapshot when the sandbox has not
+// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+// `latestBuild`.
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+func (c *Client) GetUnstableAdminSandboxesSandboxIDOverview(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminSandboxesSandboxIDOverviewRequest(c.Server, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminBanTeamsWithBody Ban teams
+//
+// Bans up to 100 teams at once, as
+// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+// team's ban is stored before any team's sandboxes are killed or builds
+// cancelled, and the kills and cancellations of all teams share one time
+// budget. One team's failure does not stop the others; the response sorts
+// every requested team into banned, not found or failed. The work
+// continues if the caller disconnects.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+func (c *Client) AdminBanTeamsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminBanTeamsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminBanTeams Ban teams
+//
+// Bans up to 100 teams at once, as
+// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+// team's ban is stored before any team's sandboxes are killed or builds
+// cancelled, and the kills and cancellations of all teams share one time
+// budget. One team's failure does not stop the others; the response sorts
+// every requested team into banned, not found or failed. The work
+// continues if the caller disconnects.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+func (c *Client) AdminBanTeams(ctx context.Context, body AdminBanTeamsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminBanTeamsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PostUnstableAdminTeamsQueryWithBody List teams as admin
 //
 // Lists teams matching the filters in the request body, with each team's
@@ -5659,6 +7872,46 @@ func (c *Client) GetUnstableAdminTeamsTeamID(ctx context.Context, teamID openapi
 	return c.Client.Do(req)
 }
 
+// AdminUnbanTeam Unban a team
+//
+// Clears the team's ban. Idempotent.
+//
+// Corresponds with DELETE /unstable/admin/teams/{teamID}/ban (the `AdminUnbanTeam` operationId).
+func (c *Client) AdminUnbanTeam(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminUnbanTeamRequest(c.Server, teamID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminBanTeam Ban a team
+//
+// Marks the team as banned so its API keys stop authenticating, then
+// kills its sandboxes and cancels its builds. The ban is stored first:
+// a failure to kill or cancel is reported in the result and does not
+// undo it. Killing and cancelling stop after a fixed time budget, and a
+// step cut short is reported as failed. Banning an already banned team
+// repeats the kill and cancel. The work continues if the caller
+// disconnects.
+//
+// Corresponds with PUT /unstable/admin/teams/{teamID}/ban (the `AdminBanTeam` operationId).
+func (c *Client) AdminBanTeam(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminBanTeamRequest(c.Server, teamID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PutUnstableAdminTeamsTeamIDSchedulingLabelsWithBody Replace a team's sandbox scheduling labels
 //
 // Replaces the labels that place the team's new sandboxes on matching
@@ -5699,6 +7952,578 @@ func (c *Client) PutUnstableAdminTeamsTeamIDSchedulingLabels(ctx context.Context
 	return c.Client.Do(req)
 }
 
+// GetUnstableAdminTemplatesAliases Search template aliases as admin
+//
+// Finds the templates whose ID equals `search`, or that own an alias equal to `search` in any namespace, with their owning team and all their aliases. Deleted templates are left out. Results are ordered by template ID; the next page's token is returned in `X-Next-Token`.
+//
+// Corresponds with GET /unstable/admin/templates/aliases (the `GetUnstableAdminTemplatesAliases` operationId).
+func (c *Client) GetUnstableAdminTemplatesAliases(ctx context.Context, params *GetUnstableAdminTemplatesAliasesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminTemplatesAliasesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminTemplatesAliasesWithBody Add a template alias without a namespace as admin
+//
+// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+func (c *Client) PostUnstableAdminTemplatesAliasesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminTemplatesAliasesRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminTemplatesAliases Add a template alias without a namespace as admin
+//
+// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+func (c *Client) PostUnstableAdminTemplatesAliases(ctx context.Context, body PostUnstableAdminTemplatesAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminTemplatesAliasesRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUnstableAdminTemplatesAliasesAliasID Remove a template alias without a namespace as admin
+//
+// Removes an alias without a namespace. A namespaced alias is not removed and answers 404.
+//
+// Corresponds with DELETE /unstable/admin/templates/aliases/{aliasID} (the `DeleteUnstableAdminTemplatesAliasesAliasID` operationId).
+func (c *Client) DeleteUnstableAdminTemplatesAliasesAliasID(ctx context.Context, aliasID AliasID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUnstableAdminTemplatesAliasesAliasIDRequest(c.Server, aliasID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminTemplatesDefaultsWithBody Add a default template as admin
+//
+// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+func (c *Client) PostUnstableAdminTemplatesDefaultsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminTemplatesDefaultsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminTemplatesDefaults Add a default template as admin
+//
+// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+func (c *Client) PostUnstableAdminTemplatesDefaults(ctx context.Context, body PostUnstableAdminTemplatesDefaultsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminTemplatesDefaultsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUnstableAdminTemplatesDefaultsTemplateID Remove a default template as admin
+//
+// Stops a template being one of the platform's default templates. The template itself is not changed. Returns 404 when the template is not a default template.
+//
+// Corresponds with DELETE /unstable/admin/templates/defaults/{templateID} (the `DeleteUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *Client) DeleteUnstableAdminTemplatesDefaultsTemplateID(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUnstableAdminTemplatesDefaultsTemplateIDRequest(c.Server, templateID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchUnstableAdminTemplatesDefaultsTemplateIDWithBody Update a default template as admin
+//
+// Updates the description of a default template. Returns 404 when the template is not a default template.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *Client) PatchUnstableAdminTemplatesDefaultsTemplateIDWithBody(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequestWithBody(c.Server, templateID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchUnstableAdminTemplatesDefaultsTemplateID Update a default template as admin
+//
+// Updates the description of a default template. Returns 404 when the template is not a default template.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *Client) PatchUnstableAdminTemplatesDefaultsTemplateID(ctx context.Context, templateID TemplateID, body PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequest(c.Server, templateID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminTemplatesLookup Look up a template as admin
+//
+// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+//
+// Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
+func (c *Client) GetUnstableAdminTemplatesLookup(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminTemplatesLookupRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableBuilds List team builds
+//
+// Lists the team's builds, newest first, with an optional filter by build ID, template ID or template alias and by status. `nextCursor` continues the listing. For E2B's own clients: it may change or disappear without notice.
+//
+// Corresponds with GET /unstable/builds (the `GetUnstableBuilds` operationId).
+func (c *Client) GetUnstableBuilds(ctx context.Context, params *GetUnstableBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableBuildsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableBuildsStatuses Build statuses
+//
+// Returns the statuses of the team's builds with the given IDs; IDs of other teams' builds are left out. For E2B's own clients: it may change or disappear without notice.
+//
+// Corresponds with GET /unstable/builds/statuses (the `GetUnstableBuildsStatuses` operationId).
+func (c *Client) GetUnstableBuildsStatuses(ctx context.Context, params *GetUnstableBuildsStatusesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableBuildsStatusesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableBuildsBuildID Build details
+//
+// Returns a build of the team with the names of its template. For E2B's own clients: it may change or disappear without notice.
+//
+// Corresponds with GET /unstable/builds/{buildID} (the `GetUnstableBuildsBuildID` operationId).
+func (c *Client) GetUnstableBuildsBuildID(ctx context.Context, buildID BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableBuildsBuildIDRequest(c.Server, buildID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementDeleteCluster Delete a cluster and its environments.
+//
+// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
+func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementDeleteClusterRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementRegisterClusterWithBody Register a cluster.
+//
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+func (c *Client) ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRegisterClusterRequestWithBody(c.Server, clusterID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementRegisterCluster Register a cluster.
+//
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+func (c *Client) ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRegisterClusterRequest(c.Server, clusterID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementRequestClusterDeletion Record that a cluster is being deleted.
+//
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before the deletion is recorded, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
+func (c *Client) ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRequestClusterDeletionRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementClusterDestroyReadiness Check cluster destroy readiness.
+//
+// Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
+//
+// Corresponds with GET /unstable/management/clusters/{clusterID}/destroy-readiness (the `ManagementClusterDestroyReadiness` operationId).
+func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementClusterDestroyReadinessRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementListClusterProjects List the projects assigned to a cluster.
+//
+// Returns the ID of every project whose team is assigned to the cluster, whichever way it was assigned. A deleted project is never assigned. An absent cluster has no projects.
+//
+// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
+func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementDeleteProject Soft-delete a project.
+//
+// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+//
+// Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
+func (c *Client) ManagementDeleteProject(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementDeleteProjectRequest(c.Server, projectID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpsertProjectWithBody Create or reconcile a project.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+func (c *Client) ManagementUpsertProjectWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpsertProjectRequestWithBody(c.Server, projectID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpsertProject Create or reconcile a project.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+func (c *Client) ManagementUpsertProject(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpsertProjectRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBanWithBody Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *Client) ManagementApplyProjectBanWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBanRequestWithBody(c.Server, projectID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBan Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *Client) ManagementApplyProjectBan(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBanRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBlockWithBody Apply a project's block state.
+//
+// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+func (c *Client) ManagementApplyProjectBlockWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBlockRequestWithBody(c.Server, projectID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectBlock Apply a project's block state.
+//
+// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+func (c *Client) ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectBlockRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementDetachProjectCluster Detach a cluster assignment from a project.
+//
+// Answers 404 when the project is missing or deleted.
+//
+// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
+func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementDetachProjectClusterRequest(c.Server, projectID, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementAssignProjectCluster Assign a cluster to a project.
+//
+// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
+func (c *Client) ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementAssignProjectClusterRequest(c.Server, projectID, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpsertProjectLimitsWithBody Reconcile effective limits for a project.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+func (c *Client) ManagementUpsertProjectLimitsWithBody(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpsertProjectLimitsRequestWithBody(c.Server, projectID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementUpsertProjectLimits Reconcile effective limits for a project.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+func (c *Client) ManagementUpsertProjectLimits(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementUpsertProjectLimitsRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectMemberWithBody Apply one versioned project member projection.
+//
+// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+func (c *Client) ManagementApplyProjectMemberWithBody(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectMemberRequestWithBody(c.Server, projectID, userID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementApplyProjectMember Apply one versioned project member projection.
+//
+// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+func (c *Client) ManagementApplyProjectMember(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, body ManagementApplyProjectMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementApplyProjectMemberRequest(c.Server, projectID, userID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ManagementSetProjectSettingsWithBody Apply a project's settings revision.
 //
 // Replaces the complete project settings document when the revision is newer than the stored revision. Omitted settings are removed. Older and duplicate revisions leave the stored document unchanged. Every successful delivery invalidates the cached team. Answers 404 when the project is missing or deleted.
@@ -5727,6 +8552,23 @@ func (c *Client) ManagementSetProjectSettingsWithBody(ctx context.Context, proje
 // Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 func (c *Client) ManagementSetProjectSettings(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementSetProjectSettingsRequest(c.Server, projectID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableSandboxesSandboxIDRecord Sandbox record
+//
+// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+//
+// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+func (c *Client) GetUnstableSandboxesSandboxIDRecord(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableSandboxesSandboxIDRecordRequest(c.Server, sandboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -5845,7 +8687,7 @@ func (c *Client) PostV2Sandboxes(ctx context.Context, params *PostV2SandboxesPar
 
 // PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -5864,7 +8706,7 @@ func (c *Client) PostV2SandboxesSandboxIDConnectWithBody(ctx context.Context, sa
 
 // PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5955,13 +8797,13 @@ func (c *Client) PatchV2TemplatesTemplateID(ctx context.Context, templateID Temp
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, contentType, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5974,13 +8816,13 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Cont
 
 // PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5998,8 +8840,8 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, tem
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6017,8 +8859,8 @@ func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequest(c.Server, body)
+func (c *Client) PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7569,6 +10411,67 @@ func NewPostNodesNodeIDRequestWithBody(server string, nodeID NodeID, contentType
 	return req, nil
 }
 
+// NewGetNodesNodeIDSandboxesRequest constructs an http.Request for the GetNodesNodeIDSandboxes method
+func NewGetNodesNodeIDSandboxesRequest(server string, nodeID NodeID, params *GetNodesNodeIDSandboxesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "nodeID", nodeID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/nodes/%s/sandboxes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ClusterID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "clusterID", *params.ClusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetSandboxesRequest constructs an http.Request for the GetSandboxes method
 func NewGetSandboxesRequest(server string, params *GetSandboxesParams) (*http.Request, error) {
 	var err error
@@ -8214,18 +11117,18 @@ func NewPostSandboxesSandboxIDResumeRequestWithBody(server string, sandboxID San
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequest calls the generic PostSandboxesSandboxIDSnapshots builder with application/json body
-func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, "application/json", bodyReader)
+	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, params, "application/json", bodyReader)
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequestWithBody constructs an http.Request for the PostSandboxesSandboxIDSnapshots method, with any body, and a specified content type
-func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -8256,6 +11159,21 @@ func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -9684,6 +12602,676 @@ func NewGetTemplatesTemplateIDTagsTagAssignmentsRequest(server string, templateI
 	return req, nil
 }
 
+// NewAdminListClustersRequest constructs an http.Request for the AdminListClusters method
+func NewAdminListClustersRequest(server string, params *AdminListClustersParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Search != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "search", *params.Search, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SortBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortBy", *params.SortBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SortOrder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortOrder", *params.SortOrder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminCreateClusterRequest calls the generic AdminCreateCluster builder with application/json body
+func NewAdminCreateClusterRequest(server string, body AdminCreateClusterJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminCreateClusterRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAdminCreateClusterRequestWithBody constructs an http.Request for the AdminCreateCluster method, with any body, and a specified content type
+func NewAdminCreateClusterRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminDeleteClusterRequest constructs an http.Request for the AdminDeleteCluster method
+func NewAdminDeleteClusterRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminGetClusterRequest constructs an http.Request for the AdminGetCluster method
+func NewAdminGetClusterRequest(server string, clusterID ClusterID, params *AdminGetClusterParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.TeamsLimit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "teamsLimit", *params.TeamsLimit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.TeamsOffset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "teamsOffset", *params.TeamsOffset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminUpdateClusterRequest calls the generic AdminUpdateCluster builder with application/json body
+func NewAdminUpdateClusterRequest(server string, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminUpdateClusterRequestWithBody(server, clusterID, "application/json", bodyReader)
+}
+
+// NewAdminUpdateClusterRequestWithBody constructs an http.Request for the AdminUpdateCluster method, with any body, and a specified content type
+func NewAdminUpdateClusterRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminListClusterTeamsRequest constructs an http.Request for the AdminListClusterTeams method
+func NewAdminListClusterTeamsRequest(server string, clusterID ClusterID, params *AdminListClusterTeamsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s/teams", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SortBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortBy", *params.SortBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SortOrder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortOrder", *params.SortOrder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminRotateClusterTokenRequest calls the generic AdminRotateClusterToken builder with application/json body
+func NewAdminRotateClusterTokenRequest(server string, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminRotateClusterTokenRequestWithBody(server, clusterID, "application/json", bodyReader)
+}
+
+// NewAdminRotateClusterTokenRequestWithBody constructs an http.Request for the AdminRotateClusterToken method, with any body, and a specified content type
+func NewAdminRotateClusterTokenRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s/token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableAdminSandboxesSandboxIDBuildsRequest constructs an http.Request for the GetUnstableAdminSandboxesSandboxIDBuilds method
+func NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(server string, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.StatusGroup != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "statusGroup", *params.StatusGroup, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Tag != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tag", *params.Tag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Order != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "order", *params.Order, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest calls the generic PostUnstableAdminSandboxesSandboxIDBuildsRestore builder with application/json body
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(server string, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server, sandboxID, "application/json", bodyReader)
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody constructs an http.Request for the PostUnstableAdminSandboxesSandboxIDBuildsRestore method, with any body, and a specified content type
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableAdminSandboxesSandboxIDOverviewRequest constructs an http.Request for the GetUnstableAdminSandboxesSandboxIDOverview method
+func NewGetUnstableAdminSandboxesSandboxIDOverviewRequest(server string, sandboxID SandboxID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/overview", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminBanTeamsRequest calls the generic AdminBanTeams builder with application/json body
+func NewAdminBanTeamsRequest(server string, body AdminBanTeamsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminBanTeamsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAdminBanTeamsRequestWithBody constructs an http.Request for the AdminBanTeams method, with any body, and a specified content type
+func NewAdminBanTeamsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/teams/bans")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPostUnstableAdminTeamsQueryRequest calls the generic PostUnstableAdminTeamsQuery builder with application/json body
 func NewPostUnstableAdminTeamsQueryRequest(server string, body PostUnstableAdminTeamsQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9758,6 +13346,74 @@ func NewGetUnstableAdminTeamsTeamIDRequest(server string, teamID openapi_types.U
 	return req, nil
 }
 
+// NewAdminUnbanTeamRequest constructs an http.Request for the AdminUnbanTeam method
+func NewAdminUnbanTeamRequest(server string, teamID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "teamID", teamID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/teams/%s/ban", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminBanTeamRequest constructs an http.Request for the AdminBanTeam method
+func NewAdminBanTeamRequest(server string, teamID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "teamID", teamID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/teams/%s/ban", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPutUnstableAdminTeamsTeamIDSchedulingLabelsRequest calls the generic PutUnstableAdminTeamsTeamIDSchedulingLabels builder with application/json body
 func NewPutUnstableAdminTeamsTeamIDSchedulingLabelsRequest(server string, teamID openapi_types.UUID, body PutUnstableAdminTeamsTeamIDSchedulingLabelsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9786,6 +13442,1044 @@ func NewPutUnstableAdminTeamsTeamIDSchedulingLabelsRequestWithBody(server string
 	}
 
 	operationPath := fmt.Sprintf("/unstable/admin/teams/%s/scheduling-labels", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableAdminTemplatesAliasesRequest constructs an http.Request for the GetUnstableAdminTemplatesAliases method
+func NewGetUnstableAdminTemplatesAliasesRequest(server string, params *GetUnstableAdminTemplatesAliasesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/aliases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "search", params.Search, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.NextToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "nextToken", *params.NextToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostUnstableAdminTemplatesAliasesRequest calls the generic PostUnstableAdminTemplatesAliases builder with application/json body
+func NewPostUnstableAdminTemplatesAliasesRequest(server string, body PostUnstableAdminTemplatesAliasesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostUnstableAdminTemplatesAliasesRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostUnstableAdminTemplatesAliasesRequestWithBody constructs an http.Request for the PostUnstableAdminTemplatesAliases method, with any body, and a specified content type
+func NewPostUnstableAdminTemplatesAliasesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/aliases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteUnstableAdminTemplatesAliasesAliasIDRequest constructs an http.Request for the DeleteUnstableAdminTemplatesAliasesAliasID method
+func NewDeleteUnstableAdminTemplatesAliasesAliasIDRequest(server string, aliasID AliasID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "aliasID", aliasID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/aliases/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostUnstableAdminTemplatesDefaultsRequest calls the generic PostUnstableAdminTemplatesDefaults builder with application/json body
+func NewPostUnstableAdminTemplatesDefaultsRequest(server string, body PostUnstableAdminTemplatesDefaultsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostUnstableAdminTemplatesDefaultsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostUnstableAdminTemplatesDefaultsRequestWithBody constructs an http.Request for the PostUnstableAdminTemplatesDefaults method, with any body, and a specified content type
+func NewPostUnstableAdminTemplatesDefaultsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/defaults")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteUnstableAdminTemplatesDefaultsTemplateIDRequest constructs an http.Request for the DeleteUnstableAdminTemplatesDefaultsTemplateID method
+func NewDeleteUnstableAdminTemplatesDefaultsTemplateIDRequest(server string, templateID TemplateID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/defaults/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequest calls the generic PatchUnstableAdminTemplatesDefaultsTemplateID builder with application/json body
+func NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequest(server string, templateID TemplateID, body PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequestWithBody(server, templateID, "application/json", bodyReader)
+}
+
+// NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequestWithBody constructs an http.Request for the PatchUnstableAdminTemplatesDefaultsTemplateID method, with any body, and a specified content type
+func NewPatchUnstableAdminTemplatesDefaultsTemplateIDRequestWithBody(server string, templateID TemplateID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/defaults/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableAdminTemplatesLookupRequest constructs an http.Request for the GetUnstableAdminTemplatesLookup method
+func NewGetUnstableAdminTemplatesLookupRequest(server string, params *GetUnstableAdminTemplatesLookupParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/templates/lookup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "query", params.Query, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUnstableBuildsRequest constructs an http.Request for the GetUnstableBuilds method
+func NewGetUnstableBuildsRequest(server string, params *GetUnstableBuildsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/builds")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.BuildIdOrTemplate != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_id_or_template", *params.BuildIdOrTemplate, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Statuses != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "statuses", *params.Statuses, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUnstableBuildsStatusesRequest constructs an http.Request for the GetUnstableBuildsStatuses method
+func NewGetUnstableBuildsStatusesRequest(server string, params *GetUnstableBuildsStatusesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/builds/statuses")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.BuildIds != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "build_ids", params.BuildIds, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUnstableBuildsBuildIDRequest constructs an http.Request for the GetUnstableBuildsBuildID method
+func NewGetUnstableBuildsBuildIDRequest(server string, buildID BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "buildID", buildID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementDeleteClusterRequest constructs an http.Request for the ManagementDeleteCluster method
+func NewManagementDeleteClusterRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementRegisterClusterRequest calls the generic ManagementRegisterCluster builder with application/json body
+func NewManagementRegisterClusterRequest(server string, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementRegisterClusterRequestWithBody(server, clusterID, "application/json", bodyReader)
+}
+
+// NewManagementRegisterClusterRequestWithBody constructs an http.Request for the ManagementRegisterCluster method, with any body, and a specified content type
+func NewManagementRegisterClusterRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewManagementRequestClusterDeletionRequest constructs an http.Request for the ManagementRequestClusterDeletion method
+func NewManagementRequestClusterDeletionRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/deletion", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementClusterDestroyReadinessRequest constructs an http.Request for the ManagementClusterDestroyReadiness method
+func NewManagementClusterDestroyReadinessRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/destroy-readiness", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementListClusterProjectsRequest constructs an http.Request for the ManagementListClusterProjects method
+func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/projects", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementDeleteProjectRequest constructs an http.Request for the ManagementDeleteProject method
+func NewManagementDeleteProjectRequest(server string, projectID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementUpsertProjectRequest calls the generic ManagementUpsertProject builder with application/json body
+func NewManagementUpsertProjectRequest(server string, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementUpsertProjectRequestWithBody(server, projectID, "application/json", bodyReader)
+}
+
+// NewManagementUpsertProjectRequestWithBody constructs an http.Request for the ManagementUpsertProject method, with any body, and a specified content type
+func NewManagementUpsertProjectRequestWithBody(server string, projectID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewManagementApplyProjectBanRequest calls the generic ManagementApplyProjectBan builder with application/json body
+func NewManagementApplyProjectBanRequest(server string, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementApplyProjectBanRequestWithBody(server, projectID, "application/json", bodyReader)
+}
+
+// NewManagementApplyProjectBanRequestWithBody constructs an http.Request for the ManagementApplyProjectBan method, with any body, and a specified content type
+func NewManagementApplyProjectBanRequestWithBody(server string, projectID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/ban", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewManagementApplyProjectBlockRequest calls the generic ManagementApplyProjectBlock builder with application/json body
+func NewManagementApplyProjectBlockRequest(server string, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementApplyProjectBlockRequestWithBody(server, projectID, "application/json", bodyReader)
+}
+
+// NewManagementApplyProjectBlockRequestWithBody constructs an http.Request for the ManagementApplyProjectBlock method, with any body, and a specified content type
+func NewManagementApplyProjectBlockRequestWithBody(server string, projectID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/block", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewManagementDetachProjectClusterRequest constructs an http.Request for the ManagementDetachProjectCluster method
+func NewManagementDetachProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementAssignProjectClusterRequest constructs an http.Request for the ManagementAssignProjectCluster method
+func NewManagementAssignProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewManagementUpsertProjectLimitsRequest calls the generic ManagementUpsertProjectLimits builder with application/json body
+func NewManagementUpsertProjectLimitsRequest(server string, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementUpsertProjectLimitsRequestWithBody(server, projectID, "application/json", bodyReader)
+}
+
+// NewManagementUpsertProjectLimitsRequestWithBody constructs an http.Request for the ManagementUpsertProjectLimits method, with any body, and a specified content type
+func NewManagementUpsertProjectLimitsRequestWithBody(server string, projectID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/limits", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewManagementApplyProjectMemberRequest calls the generic ManagementApplyProjectMember builder with application/json body
+func NewManagementApplyProjectMemberRequest(server string, projectID openapi_types.UUID, userID openapi_types.UUID, body ManagementApplyProjectMemberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManagementApplyProjectMemberRequestWithBody(server, projectID, userID, "application/json", bodyReader)
+}
+
+// NewManagementApplyProjectMemberRequestWithBody constructs an http.Request for the ManagementApplyProjectMember method, with any body, and a specified content type
+func NewManagementApplyProjectMemberRequestWithBody(server string, projectID openapi_types.UUID, userID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "userID", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/projects/%s/members/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9848,6 +14542,40 @@ func NewManagementSetProjectSettingsRequestWithBody(server string, projectID ope
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableSandboxesSandboxIDRecordRequest constructs an http.Request for the GetUnstableSandboxesSandboxIDRecord method
+func NewGetUnstableSandboxesSandboxIDRecordRequest(server string, sandboxID SandboxID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/sandboxes/%s/record", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -10485,18 +15213,18 @@ func NewPatchV2TemplatesTemplateIDRequestWithBody(server string, templateID Temp
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequest calls the generic PostV2TemplatesTemplateIDBuildsBuildID builder with application/json body
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, "application/json", bodyReader)
+	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, params, "application/json", bodyReader)
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody constructs an http.Request for the PostV2TemplatesTemplateIDBuildsBuildID method, with any body, and a specified content type
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10535,22 +15263,37 @@ func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, tem
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewPostV3TemplatesRequest calls the generic PostV3Templates builder with application/json body
-func NewPostV3TemplatesRequest(server string, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
+func NewPostV3TemplatesRequest(server string, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV3TemplatesRequestWithBody(server, "application/json", bodyReader)
+	return NewPostV3TemplatesRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostV3TemplatesRequestWithBody constructs an http.Request for the PostV3Templates method, with any body, and a specified content type
-func NewPostV3TemplatesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV3TemplatesRequestWithBody(server string, params *PostV3TemplatesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -10574,6 +15317,21 @@ func NewPostV3TemplatesRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -11069,9 +15827,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /nodes/{nodeID} (the `PostNodesNodeID` operationId).
 	PostNodesNodeIDWithResponse(ctx context.Context, nodeID NodeID, body PostNodesNodeIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostNodesNodeIDResponse, error)
 
+	// GetNodesNodeIDSandboxesWithResponse Node sandboxes
+	//
+	// List the sandboxes the API confirms are running on the node.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+	GetNodesNodeIDSandboxesWithResponse(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*GetNodesNodeIDSandboxesResponse, error)
+
 	// GetSandboxesWithResponse List running sandboxes
 	//
-	// List all running sandboxes. Use GET /v2/sandboxes instead.
+	// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -11131,7 +15898,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11142,7 +15909,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11209,7 +15976,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11218,7 +15985,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11245,7 +16012,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11256,7 +16023,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11272,7 +16039,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDSnapshotsWithResponse Create snapshot
 	//
@@ -11281,7 +16048,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBodyWithResponse Set sandbox timeout
 	//
@@ -11402,7 +16169,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetTemplatesWithResponse List templates
 	//
-	// List all templates.
+	// List all templates. Returns 400 when the team has more than 5000 templates; use /v2/templates to page through them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -11564,6 +16331,185 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /templates/{templateID}/tags/{tag}/assignments (the `GetTemplatesTemplateIDTagsTagAssignments` operationId).
 	GetTemplatesTemplateIDTagsTagAssignmentsWithResponse(ctx context.Context, templateID TemplateID, tag Tag, params *GetTemplatesTemplateIDTagsTagAssignmentsParams, reqEditors ...RequestEditorFn) (*GetTemplatesTemplateIDTagsTagAssignmentsResponse, error)
 
+	// AdminListClustersWithResponse List clusters as admin
+	//
+	// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
+	AdminListClustersWithResponse(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*AdminListClustersResponse, error)
+
+	// AdminCreateClusterWithBodyWithResponse Create a cluster as admin
+	//
+	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+	AdminCreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error)
+
+	// AdminCreateClusterWithResponse Create a cluster as admin
+	//
+	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+	AdminCreateClusterWithResponse(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error)
+
+	// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
+	//
+	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
+	AdminDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminDeleteClusterResponse, error)
+
+	// AdminGetClusterWithResponse Cluster as admin
+	//
+	// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
+	AdminGetClusterWithResponse(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*AdminGetClusterResponse, error)
+
+	// AdminUpdateClusterWithBodyWithResponse Update a cluster as admin
+	//
+	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+	AdminUpdateClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error)
+
+	// AdminUpdateClusterWithResponse Update a cluster as admin
+	//
+	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+	AdminUpdateClusterWithResponse(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error)
+
+	// AdminListClusterTeamsWithResponse List a cluster's teams as admin
+	//
+	// Lists the teams assigned to the cluster.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
+	AdminListClusterTeamsWithResponse(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*AdminListClusterTeamsResponse, error)
+
+	// AdminRotateClusterTokenWithBodyWithResponse Rotate a cluster's token as admin
+	//
+	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+	AdminRotateClusterTokenWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
+
+	// AdminRotateClusterTokenWithResponse Rotate a cluster's token as admin
+	//
+	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+	AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
+
+	// GetUnstableAdminSandboxesSandboxIDOverviewWithResponse Sandbox overview
+	//
+	// Reads a sandbox's team, snapshot template, most recent pause and newest
+	// default-tag build from the database. The team comes from the
+	// stopped-sandbox log, or from the snapshot when the sandbox has not
+	// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+	// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+	// `latestBuild`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+	GetUnstableAdminSandboxesSandboxIDOverviewWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error)
+
+	// AdminBanTeamsWithBodyWithResponse Ban teams
+	//
+	// Bans up to 100 teams at once, as
+	// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+	// team's ban is stored before any team's sandboxes are killed or builds
+	// cancelled, and the kills and cancellations of all teams share one time
+	// budget. One team's failure does not stop the others; the response sorts
+	// every requested team into banned, not found or failed. The work
+	// continues if the caller disconnects.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+	AdminBanTeamsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminBanTeamsResponse, error)
+
+	// AdminBanTeamsWithResponse Ban teams
+	//
+	// Bans up to 100 teams at once, as
+	// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+	// team's ban is stored before any team's sandboxes are killed or builds
+	// cancelled, and the kills and cancellations of all teams share one time
+	// budget. One team's failure does not stop the others; the response sorts
+	// every requested team into banned, not found or failed. The work
+	// continues if the caller disconnects.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+	AdminBanTeamsWithResponse(ctx context.Context, body AdminBanTeamsJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminBanTeamsResponse, error)
+
 	// PostUnstableAdminTeamsQueryWithBodyWithResponse List teams as admin
 	//
 	// Lists teams matching the filters in the request body, with each team's
@@ -11597,6 +16543,30 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /unstable/admin/teams/{teamID} (the `GetUnstableAdminTeamsTeamID` operationId).
 	GetUnstableAdminTeamsTeamIDWithResponse(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetUnstableAdminTeamsTeamIDResponse, error)
 
+	// AdminUnbanTeamWithResponse Unban a team
+	//
+	// Clears the team's ban. Idempotent.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/admin/teams/{teamID}/ban (the `AdminUnbanTeam` operationId).
+	AdminUnbanTeamWithResponse(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*AdminUnbanTeamResponse, error)
+
+	// AdminBanTeamWithResponse Ban a team
+	//
+	// Marks the team as banned so its API keys stop authenticating, then
+	// kills its sandboxes and cancels its builds. The ban is stored first:
+	// a failure to kill or cancel is reported in the result and does not
+	// undo it. Killing and cancelling stop after a fixed time budget, and a
+	// step cut short is reported as failed. Banning an already banned team
+	// repeats the kill and cancel. The work continues if the caller
+	// disconnects.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/admin/teams/{teamID}/ban (the `AdminBanTeam` operationId).
+	AdminBanTeamWithResponse(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*AdminBanTeamResponse, error)
+
 	// PutUnstableAdminTeamsTeamIDSchedulingLabelsWithBodyWithResponse Replace a team's sandbox scheduling labels
 	//
 	// Replaces the labels that place the team's new sandboxes on matching
@@ -11617,6 +16587,286 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /unstable/admin/teams/{teamID}/scheduling-labels (the `PutUnstableAdminTeamsTeamIDSchedulingLabels` operationId).
 	PutUnstableAdminTeamsTeamIDSchedulingLabelsWithResponse(ctx context.Context, teamID openapi_types.UUID, body PutUnstableAdminTeamsTeamIDSchedulingLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*PutUnstableAdminTeamsTeamIDSchedulingLabelsResponse, error)
 
+	// GetUnstableAdminTemplatesAliasesWithResponse Search template aliases as admin
+	//
+	// Finds the templates whose ID equals `search`, or that own an alias equal to `search` in any namespace, with their owning team and all their aliases. Deleted templates are left out. Results are ordered by template ID; the next page's token is returned in `X-Next-Token`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/templates/aliases (the `GetUnstableAdminTemplatesAliases` operationId).
+	GetUnstableAdminTemplatesAliasesWithResponse(ctx context.Context, params *GetUnstableAdminTemplatesAliasesParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminTemplatesAliasesResponse, error)
+
+	// PostUnstableAdminTemplatesAliasesWithBodyWithResponse Add a template alias without a namespace as admin
+	//
+	// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+	PostUnstableAdminTemplatesAliasesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesAliasesResponse, error)
+
+	// PostUnstableAdminTemplatesAliasesWithResponse Add a template alias without a namespace as admin
+	//
+	// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+	PostUnstableAdminTemplatesAliasesWithResponse(ctx context.Context, body PostUnstableAdminTemplatesAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesAliasesResponse, error)
+
+	// DeleteUnstableAdminTemplatesAliasesAliasIDWithResponse Remove a template alias without a namespace as admin
+	//
+	// Removes an alias without a namespace. A namespaced alias is not removed and answers 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/admin/templates/aliases/{aliasID} (the `DeleteUnstableAdminTemplatesAliasesAliasID` operationId).
+	DeleteUnstableAdminTemplatesAliasesAliasIDWithResponse(ctx context.Context, aliasID AliasID, reqEditors ...RequestEditorFn) (*DeleteUnstableAdminTemplatesAliasesAliasIDResponse, error)
+
+	// PostUnstableAdminTemplatesDefaultsWithBodyWithResponse Add a default template as admin
+	//
+	// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+	PostUnstableAdminTemplatesDefaultsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesDefaultsResponse, error)
+
+	// PostUnstableAdminTemplatesDefaultsWithResponse Add a default template as admin
+	//
+	// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+	PostUnstableAdminTemplatesDefaultsWithResponse(ctx context.Context, body PostUnstableAdminTemplatesDefaultsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesDefaultsResponse, error)
+
+	// DeleteUnstableAdminTemplatesDefaultsTemplateIDWithResponse Remove a default template as admin
+	//
+	// Stops a template being one of the platform's default templates. The template itself is not changed. Returns 404 when the template is not a default template.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/admin/templates/defaults/{templateID} (the `DeleteUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	DeleteUnstableAdminTemplatesDefaultsTemplateIDWithResponse(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse, error)
+
+	// PatchUnstableAdminTemplatesDefaultsTemplateIDWithBodyWithResponse Update a default template as admin
+	//
+	// Updates the description of a default template. Returns 404 when the template is not a default template.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	PatchUnstableAdminTemplatesDefaultsTemplateIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUnstableAdminTemplatesDefaultsTemplateIDResponse, error)
+
+	// PatchUnstableAdminTemplatesDefaultsTemplateIDWithResponse Update a default template as admin
+	//
+	// Updates the description of a default template. Returns 404 when the template is not a default template.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+	PatchUnstableAdminTemplatesDefaultsTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUnstableAdminTemplatesDefaultsTemplateIDResponse, error)
+
+	// GetUnstableAdminTemplatesLookupWithResponse Look up a template as admin
+	//
+	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
+	GetUnstableAdminTemplatesLookupWithResponse(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminTemplatesLookupResponse, error)
+
+	// GetUnstableBuildsWithResponse List team builds
+	//
+	// Lists the team's builds, newest first, with an optional filter by build ID, template ID or template alias and by status. `nextCursor` continues the listing. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/builds (the `GetUnstableBuilds` operationId).
+	GetUnstableBuildsWithResponse(ctx context.Context, params *GetUnstableBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableBuildsResponse, error)
+
+	// GetUnstableBuildsStatusesWithResponse Build statuses
+	//
+	// Returns the statuses of the team's builds with the given IDs; IDs of other teams' builds are left out. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/builds/statuses (the `GetUnstableBuildsStatuses` operationId).
+	GetUnstableBuildsStatusesWithResponse(ctx context.Context, params *GetUnstableBuildsStatusesParams, reqEditors ...RequestEditorFn) (*GetUnstableBuildsStatusesResponse, error)
+
+	// GetUnstableBuildsBuildIDWithResponse Build details
+	//
+	// Returns a build of the team with the names of its template. For E2B's own clients: it may change or disappear without notice.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/builds/{buildID} (the `GetUnstableBuildsBuildID` operationId).
+	GetUnstableBuildsBuildIDWithResponse(ctx context.Context, buildID BuildID, reqEditors ...RequestEditorFn) (*GetUnstableBuildsBuildIDResponse, error)
+
+	// ManagementDeleteClusterWithResponse Delete a cluster and its environments.
+	//
+	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
+	ManagementDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDeleteClusterResponse, error)
+
+	// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
+	//
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+	ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
+
+	// ManagementRegisterClusterWithResponse Register a cluster.
+	//
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+	ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
+
+	// ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
+	//
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before the deletion is recorded, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
+	ManagementRequestClusterDeletionWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRequestClusterDeletionResponse, error)
+
+	// ManagementClusterDestroyReadinessWithResponse Check cluster destroy readiness.
+	//
+	// Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/management/clusters/{clusterID}/destroy-readiness (the `ManagementClusterDestroyReadiness` operationId).
+	ManagementClusterDestroyReadinessWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementClusterDestroyReadinessResponse, error)
+
+	// ManagementListClusterProjectsWithResponse List the projects assigned to a cluster.
+	//
+	// Returns the ID of every project whose team is assigned to the cluster, whichever way it was assigned. A deleted project is never assigned. An absent cluster has no projects.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
+	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
+
+	// ManagementDeleteProjectWithResponse Soft-delete a project.
+	//
+	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
+	ManagementDeleteProjectWithResponse(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*ManagementDeleteProjectResponse, error)
+
+	// ManagementUpsertProjectWithBodyWithResponse Create or reconcile a project.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+	ManagementUpsertProjectWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectResponse, error)
+
+	// ManagementUpsertProjectWithResponse Create or reconcile a project.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+	ManagementUpsertProjectWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectResponse, error)
+
+	// ManagementApplyProjectBanWithBodyWithResponse Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error)
+
+	// ManagementApplyProjectBanWithResponse Apply a project's ban state.
+	//
+	// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+	ManagementApplyProjectBanWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error)
+
+	// ManagementApplyProjectBlockWithBodyWithResponse Apply a project's block state.
+	//
+	// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+	ManagementApplyProjectBlockWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error)
+
+	// ManagementApplyProjectBlockWithResponse Apply a project's block state.
+	//
+	// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+	ManagementApplyProjectBlockWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error)
+
+	// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
+	//
+	// Answers 404 when the project is missing or deleted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
+	ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error)
+
+	// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
+	//
+	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
+	ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error)
+
+	// ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+	ManagementUpsertProjectLimitsWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectLimitsResponse, error)
+
+	// ManagementUpsertProjectLimitsWithResponse Reconcile effective limits for a project.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+	ManagementUpsertProjectLimitsWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectLimitsResponse, error)
+
+	// ManagementApplyProjectMemberWithBodyWithResponse Apply one versioned project member projection.
+	//
+	// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+	ManagementApplyProjectMemberWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectMemberResponse, error)
+
+	// ManagementApplyProjectMemberWithResponse Apply one versioned project member projection.
+	//
+	// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+	ManagementApplyProjectMemberWithResponse(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, body ManagementApplyProjectMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectMemberResponse, error)
+
 	// ManagementSetProjectSettingsWithBodyWithResponse Apply a project's settings revision.
 	//
 	// Replaces the complete project settings document when the revision is newer than the stored revision. Omitted settings are removed. Older and duplicate revisions leave the stored document unchanged. Every successful delivery invalidates the cached team. Answers 404 when the project is missing or deleted.
@@ -11634,6 +16884,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettingsWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementSetProjectSettingsResponse, error)
+
+	// GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
+	//
+	// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+	GetUnstableSandboxesSandboxIDRecordWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableSandboxesSandboxIDRecordResponse, error)
 
 	// GetUnstableTeamsTeamIDLimitsWithResponse Team limits
 	//
@@ -11691,7 +16950,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11700,7 +16959,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -11745,21 +17004,21 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV3TemplatesWithBodyWithResponse Create template (v3)
 	//
@@ -11768,7 +17027,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// PostV3TemplatesWithResponse Create template (v3)
 	//
@@ -11777,7 +17036,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// GetVolumesWithResponse List team volumes
 	//
@@ -13939,6 +19198,8 @@ type PostNodesNodeIDResponse429Headers struct {
 type PostNodesNodeIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -13951,6 +19212,11 @@ type PostNodesNodeIDResponse struct {
 	JSON500 *N500
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostNodesNodeIDResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostNodesNodeIDResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -14001,6 +19267,82 @@ func (r PostNodesNodeIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PostNodesNodeIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetNodesNodeIDSandboxesResponse429Headers the declared response headers of an HTTP 429 response for GetNodesNodeIDSandboxes
+type GetNodesNodeIDSandboxesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetNodesNodeIDSandboxesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NodeSandboxes
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetNodesNodeIDSandboxesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON200() *NodeSandboxes {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetNodesNodeIDSandboxesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNodesNodeIDSandboxesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNodesNodeIDSandboxesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetNodesNodeIDSandboxesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14261,6 +19603,8 @@ type DeleteSandboxesSandboxIDResponse struct {
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -14277,6 +19621,11 @@ func (r DeleteSandboxesSandboxIDResponse) GetJSON401() *N401 {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteSandboxesSandboxIDResponse) GetJSON404() *N404 {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteSandboxesSandboxIDResponse) GetJSON409() *N409 {
+	return r.JSON409
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -14838,6 +20187,8 @@ type PostSandboxesSandboxIDPauseResponse429Headers struct {
 type PostSandboxesSandboxIDPauseResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -14852,6 +20203,11 @@ type PostSandboxesSandboxIDPauseResponse struct {
 	JSON503 *N503
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesSandboxIDPauseResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostSandboxesSandboxIDPauseResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -15079,9 +20435,39 @@ func (r PostSandboxesSandboxIDResumeResponse) ContentType() string {
 	return ""
 }
 
+// PostSandboxesSandboxIDSnapshotsResponse400Headers the declared response headers of an HTTP 400 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse404Headers the declared response headers of an HTTP 404 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse409Headers the declared response headers of an HTTP 409 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse422Headers the declared response headers of an HTTP 422 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostSandboxesSandboxIDSnapshotsResponse429Headers the declared response headers of an HTTP 429 response for PostSandboxesSandboxIDSnapshots
 type PostSandboxesSandboxIDSnapshotsResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse500Headers the declared response headers of an HTTP 500 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse503Headers the declared response headers of an HTTP 503 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostSandboxesSandboxIDSnapshotsResponse struct {
@@ -15090,17 +20476,35 @@ type PostSandboxesSandboxIDSnapshotsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *SnapshotInfo
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostSandboxesSandboxIDSnapshotsResponse400Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostSandboxesSandboxIDSnapshotsResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostSandboxesSandboxIDSnapshotsResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostSandboxesSandboxIDSnapshotsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesSandboxIDSnapshotsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostSandboxesSandboxIDSnapshotsResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostSandboxesSandboxIDSnapshotsResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -15109,7 +20513,7 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON201() *SnapshotInfo {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *N400 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -15119,8 +20523,18 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON401() *N401 {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *N404 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *Error {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -15129,8 +20543,13 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *N500 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -16107,6 +21526,8 @@ type GetTemplatesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Template
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON429 the response for an HTTP 429 `application/json` response
@@ -16120,6 +21541,11 @@ type GetTemplatesResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetTemplatesResponse) GetJSON200() *[]Template {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetTemplatesResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -17286,6 +22712,800 @@ func (r GetTemplatesTemplateIDTagsTagAssignmentsResponse) ContentType() string {
 	return ""
 }
 
+type AdminListClustersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterListResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminListClustersResponse) GetJSON200() *ClusterListResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminListClustersResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminListClustersResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminListClustersResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminListClustersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListClustersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListClustersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminListClustersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminCreateClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ClusterDetail
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON201() *ClusterDetail {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminCreateClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminCreateClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminCreateClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminCreateClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminDeleteClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminDeleteClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminDeleteClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AdminDeleteClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminDeleteClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminDeleteClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminDeleteClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminDeleteClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminDeleteClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminGetClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterDetailWithTeams
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminGetClusterResponse) GetJSON200() *ClusterDetailWithTeams {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminGetClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminGetClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminGetClusterResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminGetClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminGetClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminGetClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminGetClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminGetClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminUpdateClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterDetail
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON200() *ClusterDetail {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminUpdateClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminUpdateClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminUpdateClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminUpdateClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminListClusterTeamsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterTeamListResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON200() *ClusterTeamListResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminListClusterTeamsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListClusterTeamsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListClusterTeamsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminListClusterTeamsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdminRotateClusterTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminRotateClusterTokenResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminRotateClusterTokenResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminRotateClusterTokenResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminRotateClusterTokenResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminRotateClusterTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminRotateClusterTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminRotateClusterTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminRotateClusterTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableAdminSandboxesSandboxIDBuilds
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON200() *AdminSandboxBuildList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers the declared response headers of an HTTP 429 response for PostUnstableAdminSandboxesSandboxIDBuildsRestore
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildRestoreResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON200() *AdminSandboxBuildRestoreResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableAdminSandboxesSandboxIDOverview
+type GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableAdminSandboxesSandboxIDOverviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxOverview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON200() *AdminSandboxOverview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AdminBanTeamsResponse429Headers the declared response headers of an HTTP 429 response for AdminBanTeams
+type AdminBanTeamsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type AdminBanTeamsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminTeamsBanResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *AdminBanTeamsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminBanTeamsResponse) GetJSON200() *AdminTeamsBanResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminBanTeamsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminBanTeamsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r AdminBanTeamsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminBanTeamsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminBanTeamsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminBanTeamsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminBanTeamsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminBanTeamsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PostUnstableAdminTeamsQueryResponse429Headers the declared response headers of an HTTP 429 response for PostUnstableAdminTeamsQuery
 type PostUnstableAdminTeamsQueryResponse429Headers struct {
 	RetryAfter *int
@@ -17445,6 +23665,165 @@ func (r GetUnstableAdminTeamsTeamIDResponse) ContentType() string {
 	return ""
 }
 
+// AdminUnbanTeamResponse429Headers the declared response headers of an HTTP 429 response for AdminUnbanTeam
+type AdminUnbanTeamResponse429Headers struct {
+	RetryAfter *int
+}
+
+type AdminUnbanTeamResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *AdminUnbanTeamResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminUnbanTeamResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminUnbanTeamResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminUnbanTeamResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r AdminUnbanTeamResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminUnbanTeamResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminUnbanTeamResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminUnbanTeamResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminUnbanTeamResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminUnbanTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AdminBanTeamResponse429Headers the declared response headers of an HTTP 429 response for AdminBanTeam
+type AdminBanTeamResponse429Headers struct {
+	RetryAfter *int
+}
+
+type AdminBanTeamResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminTeamBanResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *AdminBanTeamResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminBanTeamResponse) GetJSON200() *AdminTeamBanResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AdminBanTeamResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminBanTeamResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AdminBanTeamResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r AdminBanTeamResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminBanTeamResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminBanTeamResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminBanTeamResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminBanTeamResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminBanTeamResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PutUnstableAdminTeamsTeamIDSchedulingLabelsResponse429Headers the declared response headers of an HTTP 429 response for PutUnstableAdminTeamsTeamIDSchedulingLabels
 type PutUnstableAdminTeamsTeamIDSchedulingLabelsResponse429Headers struct {
 	RetryAfter *int
@@ -17528,6 +23907,1586 @@ func (r PutUnstableAdminTeamsTeamIDSchedulingLabelsResponse) ContentType() strin
 	return ""
 }
 
+// GetUnstableAdminTemplatesAliasesResponse200Headers the declared response headers of an HTTP 200 response for GetUnstableAdminTemplatesAliases
+type GetUnstableAdminTemplatesAliasesResponse200Headers struct {
+	XNextToken *string
+}
+
+type GetUnstableAdminTemplatesAliasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AdminTemplateAliases
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetUnstableAdminTemplatesAliasesResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminTemplatesAliasesResponse) GetJSON200() *[]AdminTemplateAliases {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminTemplatesAliasesResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminTemplatesAliasesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminTemplatesAliasesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminTemplatesAliasesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminTemplatesAliasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminTemplatesAliasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminTemplatesAliasesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostUnstableAdminTemplatesAliasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AdminTemplateAlias
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON201() *AdminTemplateAlias {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostUnstableAdminTemplatesAliasesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostUnstableAdminTemplatesAliasesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostUnstableAdminTemplatesAliasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostUnstableAdminTemplatesAliasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostUnstableAdminTemplatesAliasesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUnstableAdminTemplatesAliasesAliasIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminTemplateAliasDeleted
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetJSON200() *AdminTemplateAliasDeleted {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUnstableAdminTemplatesAliasesAliasIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostUnstableAdminTemplatesDefaultsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AdminDefaultTemplate
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON201() *AdminDefaultTemplate {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostUnstableAdminTemplatesDefaultsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostUnstableAdminTemplatesDefaultsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostUnstableAdminTemplatesDefaultsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostUnstableAdminTemplatesDefaultsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchUnstableAdminTemplatesDefaultsTemplateIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminDefaultTemplate
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON200() *AdminDefaultTemplate {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchUnstableAdminTemplatesDefaultsTemplateIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetUnstableAdminTemplatesLookupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminTemplateLookup
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminTemplatesLookupResponse) GetJSON200() *AdminTemplateLookup {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminTemplatesLookupResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminTemplatesLookupResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableAdminTemplatesLookupResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminTemplatesLookupResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminTemplatesLookupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminTemplatesLookupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminTemplatesLookupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminTemplatesLookupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableBuildsResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableBuilds
+type GetUnstableBuildsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BuildsListResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableBuildsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON200() *BuildsListResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableBuildsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableBuildsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableBuildsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableBuildsStatusesResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableBuildsStatuses
+type GetUnstableBuildsStatusesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableBuildsStatusesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BuildsStatusesResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableBuildsStatusesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON200() *BuildsStatusesResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableBuildsStatusesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableBuildsStatusesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableBuildsStatusesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableBuildsStatusesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableBuildsStatusesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableBuildsBuildIDResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableBuildsBuildID
+type GetUnstableBuildsBuildIDResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableBuildsBuildIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BuildInfo
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableBuildsBuildIDResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON200() *BuildInfo {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableBuildsBuildIDResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableBuildsBuildIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableBuildsBuildIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableBuildsBuildIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableBuildsBuildIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementDeleteClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementDeleteClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementDeleteClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementDeleteClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementDeleteClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementDeleteClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementDeleteClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementDeleteClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementDeleteClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementRegisterClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementRegisterClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementRegisterClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementRegisterClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementRegisterClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementRegisterClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementRegisterClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementRegisterClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementRegisterClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementRequestClusterDeletionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementRequestClusterDeletionResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementRequestClusterDeletionResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementRequestClusterDeletionResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementRequestClusterDeletionResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementRequestClusterDeletionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementRequestClusterDeletionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementRequestClusterDeletionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementRequestClusterDeletionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementClusterDestroyReadinessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementClusterDestroyReadinessResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementClusterDestroyReadinessResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementClusterDestroyReadinessResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementClusterDestroyReadinessResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementClusterDestroyReadinessResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementClusterDestroyReadinessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementClusterDestroyReadinessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementClusterDestroyReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementListClusterProjectsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ManagementClusterProjects
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ManagementListClusterProjectsResponse) GetJSON200() *ManagementClusterProjects {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementListClusterProjectsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementListClusterProjectsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementListClusterProjectsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementListClusterProjectsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementListClusterProjectsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementListClusterProjectsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementListClusterProjectsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementDeleteProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementDeleteProjectResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementDeleteProjectResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementDeleteProjectResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementDeleteProjectResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementDeleteProjectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementDeleteProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementDeleteProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementDeleteProjectResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementUpsertProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ManagementProject
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ManagementProject
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON200() *ManagementProject {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON201() *ManagementProject {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementUpsertProjectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementUpsertProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementUpsertProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementUpsertProjectResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementApplyProjectBanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementApplyProjectBanResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementApplyProjectBanResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementApplyProjectBanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementApplyProjectBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementApplyProjectBanResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementApplyProjectBlockResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementApplyProjectBlockResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementApplyProjectBlockResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementApplyProjectBlockResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementApplyProjectBlockResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementApplyProjectBlockResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementApplyProjectBlockResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementApplyProjectBlockResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementApplyProjectBlockResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementDetachProjectClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementDetachProjectClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementDetachProjectClusterResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementDetachProjectClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementDetachProjectClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementDetachProjectClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementDetachProjectClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementDetachProjectClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementDetachProjectClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementAssignProjectClusterResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementAssignProjectClusterResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementAssignProjectClusterResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementAssignProjectClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementAssignProjectClusterResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementUpsertProjectLimitsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementUpsertProjectLimitsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementUpsertProjectLimitsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementUpsertProjectLimitsResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementUpsertProjectLimitsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementUpsertProjectLimitsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementUpsertProjectLimitsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementUpsertProjectLimitsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementUpsertProjectLimitsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManagementApplyProjectMemberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManagementApplyProjectMemberResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManagementApplyProjectMemberResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManagementApplyProjectMemberResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementApplyProjectMemberResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementApplyProjectMemberResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementApplyProjectMemberResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementApplyProjectMemberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementApplyProjectMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementApplyProjectMemberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementSetProjectSettingsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -17584,6 +25543,96 @@ func (r ManagementSetProjectSettingsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ManagementSetProjectSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableSandboxesSandboxIDRecordResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableSandboxesSandboxIDRecord
+type GetUnstableSandboxesSandboxIDRecordResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableSandboxesSandboxIDRecordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SandboxRecord
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableSandboxesSandboxIDRecordResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON200() *SandboxRecord {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableSandboxesSandboxIDRecordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableSandboxesSandboxIDRecordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableSandboxesSandboxIDRecordResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18458,34 +26507,120 @@ func (r PatchV2TemplatesTemplateIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers the declared response headers of an HTTP 400 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers the declared response headers of an HTTP 401 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers the declared response headers of an HTTP 403 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers the declared response headers of an HTTP 404 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers the declared response headers of an HTTP 409 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers the declared response headers of an HTTP 422 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers the declared response headers of an HTTP 429 response for PostV2TemplatesTemplateIDBuildsBuildID
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers the declared response headers of an HTTP 500 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers the declared response headers of an HTTP 503 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *N400 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *N401 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *Error {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -18494,8 +26629,13 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *N500 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -18527,9 +26667,45 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV3TemplatesResponse400Headers the declared response headers of an HTTP 400 response for PostV3Templates
+type PostV3TemplatesResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse401Headers the declared response headers of an HTTP 401 response for PostV3Templates
+type PostV3TemplatesResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse403Headers the declared response headers of an HTTP 403 response for PostV3Templates
+type PostV3TemplatesResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse409Headers the declared response headers of an HTTP 409 response for PostV3Templates
+type PostV3TemplatesResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse422Headers the declared response headers of an HTTP 422 response for PostV3Templates
+type PostV3TemplatesResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV3TemplatesResponse429Headers the declared response headers of an HTTP 429 response for PostV3Templates
 type PostV3TemplatesResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter  *int
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse500Headers the declared response headers of an HTTP 500 response for PostV3Templates
+type PostV3TemplatesResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse503Headers the declared response headers of an HTTP 503 response for PostV3Templates
+type PostV3TemplatesResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV3TemplatesResponse struct {
@@ -18538,19 +26714,37 @@ type PostV3TemplatesResponse struct {
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *TemplateRequestResponseV3
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
 	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *N403
+	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
+	JSON429 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV3TemplatesResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV3TemplatesResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV3TemplatesResponse403Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV3TemplatesResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV3TemplatesResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV3TemplatesResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV3TemplatesResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV3TemplatesResponse503Headers
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -18559,33 +26753,43 @@ func (r PostV3TemplatesResponse) GetJSON202() *TemplateRequestResponseV3 {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON400() *N400 {
+func (r PostV3TemplatesResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON401() *N401 {
+func (r PostV3TemplatesResponse) GetJSON401() *Error {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON403() *N403 {
+func (r PostV3TemplatesResponse) GetJSON403() *Error {
 	return r.JSON403
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON409() *N409 {
+func (r PostV3TemplatesResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON429() *N429 {
+func (r PostV3TemplatesResponse) GetJSON429() *Error {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON500() *N500 {
+func (r PostV3TemplatesResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -19441,9 +27645,24 @@ func (c *ClientWithResponses) PostNodesNodeIDWithResponse(ctx context.Context, n
 	return ParsePostNodesNodeIDResponse(rsp)
 }
 
+// GetNodesNodeIDSandboxesWithResponse Node sandboxes
+//
+// List the sandboxes the API confirms are running on the node.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+func (c *ClientWithResponses) GetNodesNodeIDSandboxesWithResponse(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*GetNodesNodeIDSandboxesResponse, error) {
+	rsp, err := c.GetNodesNodeIDSandboxes(ctx, nodeID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNodesNodeIDSandboxesResponse(rsp)
+}
+
 // GetSandboxesWithResponse List running sandboxes
 //
-// List all running sandboxes. Use GET /v2/sandboxes instead.
+// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -19538,7 +27757,7 @@ func (c *ClientWithResponses) GetSandboxesSandboxIDWithResponse(ctx context.Cont
 
 // PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19555,7 +27774,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDConnectWithBodyWithResponse(
 
 // PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19663,7 +27882,7 @@ func (c *ClientWithResponses) PutSandboxesSandboxIDNetworkWithResponse(ctx conte
 
 // PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19678,7 +27897,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDPauseWithBodyWithResponse(ct
 
 // PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19723,7 +27942,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDRefreshesWithResponse(ctx co
 
 // PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19740,7 +27959,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithBodyWithResponse(c
 
 // PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -19761,8 +27980,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithResponse(ctx conte
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -19776,8 +27995,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithRespons
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -19981,7 +28200,7 @@ func (c *ClientWithResponses) GetTeamsTeamIDMetricsMaxWithResponse(ctx context.C
 
 // GetTemplatesWithResponse List templates
 //
-// List all templates.
+// List all templates. Returns 400 when the team has more than 5000 templates; use /v2/templates to page through them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -20250,6 +28469,281 @@ func (c *ClientWithResponses) GetTemplatesTemplateIDTagsTagAssignmentsWithRespon
 	return ParseGetTemplatesTemplateIDTagsTagAssignmentsResponse(rsp)
 }
 
+// AdminListClustersWithResponse List clusters as admin
+//
+// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
+func (c *ClientWithResponses) AdminListClustersWithResponse(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*AdminListClustersResponse, error) {
+	rsp, err := c.AdminListClusters(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListClustersResponse(rsp)
+}
+
+// AdminCreateClusterWithBodyWithResponse Create a cluster as admin
+//
+// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+func (c *ClientWithResponses) AdminCreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error) {
+	rsp, err := c.AdminCreateClusterWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreateClusterResponse(rsp)
+}
+
+// AdminCreateClusterWithResponse Create a cluster as admin
+//
+// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
+func (c *ClientWithResponses) AdminCreateClusterWithResponse(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error) {
+	rsp, err := c.AdminCreateCluster(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreateClusterResponse(rsp)
+}
+
+// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
+//
+// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
+func (c *ClientWithResponses) AdminDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminDeleteClusterResponse, error) {
+	rsp, err := c.AdminDeleteCluster(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminDeleteClusterResponse(rsp)
+}
+
+// AdminGetClusterWithResponse Cluster as admin
+//
+// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
+func (c *ClientWithResponses) AdminGetClusterWithResponse(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*AdminGetClusterResponse, error) {
+	rsp, err := c.AdminGetCluster(ctx, clusterID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminGetClusterResponse(rsp)
+}
+
+// AdminUpdateClusterWithBodyWithResponse Update a cluster as admin
+//
+// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+func (c *ClientWithResponses) AdminUpdateClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error) {
+	rsp, err := c.AdminUpdateClusterWithBody(ctx, clusterID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminUpdateClusterResponse(rsp)
+}
+
+// AdminUpdateClusterWithResponse Update a cluster as admin
+//
+// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
+func (c *ClientWithResponses) AdminUpdateClusterWithResponse(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error) {
+	rsp, err := c.AdminUpdateCluster(ctx, clusterID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminUpdateClusterResponse(rsp)
+}
+
+// AdminListClusterTeamsWithResponse List a cluster's teams as admin
+//
+// Lists the teams assigned to the cluster.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
+func (c *ClientWithResponses) AdminListClusterTeamsWithResponse(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*AdminListClusterTeamsResponse, error) {
+	rsp, err := c.AdminListClusterTeams(ctx, clusterID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListClusterTeamsResponse(rsp)
+}
+
+// AdminRotateClusterTokenWithBodyWithResponse Rotate a cluster's token as admin
+//
+// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+func (c *ClientWithResponses) AdminRotateClusterTokenWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error) {
+	rsp, err := c.AdminRotateClusterTokenWithBody(ctx, clusterID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminRotateClusterTokenResponse(rsp)
+}
+
+// AdminRotateClusterTokenWithResponse Rotate a cluster's token as admin
+//
+// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
+func (c *ClientWithResponses) AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error) {
+	rsp, err := c.AdminRotateClusterToken(ctx, clusterID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminRotateClusterTokenResponse(rsp)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *ClientWithResponses) GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	rsp, err := c.GetUnstableAdminSandboxesSandboxIDBuilds(ctx, sandboxID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx, sandboxID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverviewWithResponse Sandbox overview
+//
+// Reads a sandbox's team, snapshot template, most recent pause and newest
+// default-tag build from the database. The team comes from the
+// stopped-sandbox log, or from the snapshot when the sandbox has not
+// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+// `latestBuild`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+func (c *ClientWithResponses) GetUnstableAdminSandboxesSandboxIDOverviewWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error) {
+	rsp, err := c.GetUnstableAdminSandboxesSandboxIDOverview(ctx, sandboxID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse(rsp)
+}
+
+// AdminBanTeamsWithBodyWithResponse Ban teams
+//
+// Bans up to 100 teams at once, as
+// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+// team's ban is stored before any team's sandboxes are killed or builds
+// cancelled, and the kills and cancellations of all teams share one time
+// budget. One team's failure does not stop the others; the response sorts
+// every requested team into banned, not found or failed. The work
+// continues if the caller disconnects.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+func (c *ClientWithResponses) AdminBanTeamsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminBanTeamsResponse, error) {
+	rsp, err := c.AdminBanTeamsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminBanTeamsResponse(rsp)
+}
+
+// AdminBanTeamsWithResponse Ban teams
+//
+// Bans up to 100 teams at once, as
+// `PUT /unstable/admin/teams/{teamID}/ban` does, except that every
+// team's ban is stored before any team's sandboxes are killed or builds
+// cancelled, and the kills and cancellations of all teams share one time
+// budget. One team's failure does not stop the others; the response sorts
+// every requested team into banned, not found or failed. The work
+// continues if the caller disconnects.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/teams/bans (the `AdminBanTeams` operationId).
+func (c *ClientWithResponses) AdminBanTeamsWithResponse(ctx context.Context, body AdminBanTeamsJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminBanTeamsResponse, error) {
+	rsp, err := c.AdminBanTeams(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminBanTeamsResponse(rsp)
+}
+
 // PostUnstableAdminTeamsQueryWithBodyWithResponse List teams as admin
 //
 // Lists teams matching the filters in the request body, with each team's
@@ -20301,6 +28795,42 @@ func (c *ClientWithResponses) GetUnstableAdminTeamsTeamIDWithResponse(ctx contex
 	return ParseGetUnstableAdminTeamsTeamIDResponse(rsp)
 }
 
+// AdminUnbanTeamWithResponse Unban a team
+//
+// Clears the team's ban. Idempotent.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/admin/teams/{teamID}/ban (the `AdminUnbanTeam` operationId).
+func (c *ClientWithResponses) AdminUnbanTeamWithResponse(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*AdminUnbanTeamResponse, error) {
+	rsp, err := c.AdminUnbanTeam(ctx, teamID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminUnbanTeamResponse(rsp)
+}
+
+// AdminBanTeamWithResponse Ban a team
+//
+// Marks the team as banned so its API keys stop authenticating, then
+// kills its sandboxes and cancels its builds. The ban is stored first:
+// a failure to kill or cancel is reported in the result and does not
+// undo it. Killing and cancelling stop after a fixed time budget, and a
+// step cut short is reported as failed. Banning an already banned team
+// repeats the kill and cancel. The work continues if the caller
+// disconnects.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/admin/teams/{teamID}/ban (the `AdminBanTeam` operationId).
+func (c *ClientWithResponses) AdminBanTeamWithResponse(ctx context.Context, teamID openapi_types.UUID, reqEditors ...RequestEditorFn) (*AdminBanTeamResponse, error) {
+	rsp, err := c.AdminBanTeam(ctx, teamID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminBanTeamResponse(rsp)
+}
+
 // PutUnstableAdminTeamsTeamIDSchedulingLabelsWithBodyWithResponse Replace a team's sandbox scheduling labels
 //
 // Replaces the labels that place the team's new sandboxes on matching
@@ -20333,6 +28863,478 @@ func (c *ClientWithResponses) PutUnstableAdminTeamsTeamIDSchedulingLabelsWithRes
 	return ParsePutUnstableAdminTeamsTeamIDSchedulingLabelsResponse(rsp)
 }
 
+// GetUnstableAdminTemplatesAliasesWithResponse Search template aliases as admin
+//
+// Finds the templates whose ID equals `search`, or that own an alias equal to `search` in any namespace, with their owning team and all their aliases. Deleted templates are left out. Results are ordered by template ID; the next page's token is returned in `X-Next-Token`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/templates/aliases (the `GetUnstableAdminTemplatesAliases` operationId).
+func (c *ClientWithResponses) GetUnstableAdminTemplatesAliasesWithResponse(ctx context.Context, params *GetUnstableAdminTemplatesAliasesParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminTemplatesAliasesResponse, error) {
+	rsp, err := c.GetUnstableAdminTemplatesAliases(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminTemplatesAliasesResponse(rsp)
+}
+
+// PostUnstableAdminTemplatesAliasesWithBodyWithResponse Add a template alias without a namespace as admin
+//
+// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+func (c *ClientWithResponses) PostUnstableAdminTemplatesAliasesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesAliasesResponse, error) {
+	rsp, err := c.PostUnstableAdminTemplatesAliasesWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminTemplatesAliasesResponse(rsp)
+}
+
+// PostUnstableAdminTemplatesAliasesWithResponse Add a template alias without a namespace as admin
+//
+// Adds an alias without a namespace to a template, so the template resolves by that name for every team. The alias follows the rules of template names (lowercase letters, digits, `-` and `_`) and cannot equal a template ID. Returns 404 when the template does not exist and 409 when the alias is taken.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/templates/aliases (the `PostUnstableAdminTemplatesAliases` operationId).
+func (c *ClientWithResponses) PostUnstableAdminTemplatesAliasesWithResponse(ctx context.Context, body PostUnstableAdminTemplatesAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesAliasesResponse, error) {
+	rsp, err := c.PostUnstableAdminTemplatesAliases(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminTemplatesAliasesResponse(rsp)
+}
+
+// DeleteUnstableAdminTemplatesAliasesAliasIDWithResponse Remove a template alias without a namespace as admin
+//
+// Removes an alias without a namespace. A namespaced alias is not removed and answers 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/admin/templates/aliases/{aliasID} (the `DeleteUnstableAdminTemplatesAliasesAliasID` operationId).
+func (c *ClientWithResponses) DeleteUnstableAdminTemplatesAliasesAliasIDWithResponse(ctx context.Context, aliasID AliasID, reqEditors ...RequestEditorFn) (*DeleteUnstableAdminTemplatesAliasesAliasIDResponse, error) {
+	rsp, err := c.DeleteUnstableAdminTemplatesAliasesAliasID(ctx, aliasID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUnstableAdminTemplatesAliasesAliasIDResponse(rsp)
+}
+
+// PostUnstableAdminTemplatesDefaultsWithBodyWithResponse Add a default template as admin
+//
+// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+func (c *ClientWithResponses) PostUnstableAdminTemplatesDefaultsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesDefaultsResponse, error) {
+	rsp, err := c.PostUnstableAdminTemplatesDefaultsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminTemplatesDefaultsResponse(rsp)
+}
+
+// PostUnstableAdminTemplatesDefaultsWithResponse Add a default template as admin
+//
+// Makes a template one of the platform's default templates. Returns 404 when the template does not exist and 409 when it is already a default template.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/templates/defaults (the `PostUnstableAdminTemplatesDefaults` operationId).
+func (c *ClientWithResponses) PostUnstableAdminTemplatesDefaultsWithResponse(ctx context.Context, body PostUnstableAdminTemplatesDefaultsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminTemplatesDefaultsResponse, error) {
+	rsp, err := c.PostUnstableAdminTemplatesDefaults(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminTemplatesDefaultsResponse(rsp)
+}
+
+// DeleteUnstableAdminTemplatesDefaultsTemplateIDWithResponse Remove a default template as admin
+//
+// Stops a template being one of the platform's default templates. The template itself is not changed. Returns 404 when the template is not a default template.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/admin/templates/defaults/{templateID} (the `DeleteUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *ClientWithResponses) DeleteUnstableAdminTemplatesDefaultsTemplateIDWithResponse(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse, error) {
+	rsp, err := c.DeleteUnstableAdminTemplatesDefaultsTemplateID(ctx, templateID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUnstableAdminTemplatesDefaultsTemplateIDResponse(rsp)
+}
+
+// PatchUnstableAdminTemplatesDefaultsTemplateIDWithBodyWithResponse Update a default template as admin
+//
+// Updates the description of a default template. Returns 404 when the template is not a default template.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *ClientWithResponses) PatchUnstableAdminTemplatesDefaultsTemplateIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUnstableAdminTemplatesDefaultsTemplateIDResponse, error) {
+	rsp, err := c.PatchUnstableAdminTemplatesDefaultsTemplateIDWithBody(ctx, templateID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchUnstableAdminTemplatesDefaultsTemplateIDResponse(rsp)
+}
+
+// PatchUnstableAdminTemplatesDefaultsTemplateIDWithResponse Update a default template as admin
+//
+// Updates the description of a default template. Returns 404 when the template is not a default template.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /unstable/admin/templates/defaults/{templateID} (the `PatchUnstableAdminTemplatesDefaultsTemplateID` operationId).
+func (c *ClientWithResponses) PatchUnstableAdminTemplatesDefaultsTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUnstableAdminTemplatesDefaultsTemplateIDResponse, error) {
+	rsp, err := c.PatchUnstableAdminTemplatesDefaultsTemplateID(ctx, templateID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchUnstableAdminTemplatesDefaultsTemplateIDResponse(rsp)
+}
+
+// GetUnstableAdminTemplatesLookupWithResponse Look up a template as admin
+//
+// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
+func (c *ClientWithResponses) GetUnstableAdminTemplatesLookupWithResponse(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminTemplatesLookupResponse, error) {
+	rsp, err := c.GetUnstableAdminTemplatesLookup(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminTemplatesLookupResponse(rsp)
+}
+
+// GetUnstableBuildsWithResponse List team builds
+//
+// Lists the team's builds, newest first, with an optional filter by build ID, template ID or template alias and by status. `nextCursor` continues the listing. For E2B's own clients: it may change or disappear without notice.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/builds (the `GetUnstableBuilds` operationId).
+func (c *ClientWithResponses) GetUnstableBuildsWithResponse(ctx context.Context, params *GetUnstableBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableBuildsResponse, error) {
+	rsp, err := c.GetUnstableBuilds(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableBuildsResponse(rsp)
+}
+
+// GetUnstableBuildsStatusesWithResponse Build statuses
+//
+// Returns the statuses of the team's builds with the given IDs; IDs of other teams' builds are left out. For E2B's own clients: it may change or disappear without notice.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/builds/statuses (the `GetUnstableBuildsStatuses` operationId).
+func (c *ClientWithResponses) GetUnstableBuildsStatusesWithResponse(ctx context.Context, params *GetUnstableBuildsStatusesParams, reqEditors ...RequestEditorFn) (*GetUnstableBuildsStatusesResponse, error) {
+	rsp, err := c.GetUnstableBuildsStatuses(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableBuildsStatusesResponse(rsp)
+}
+
+// GetUnstableBuildsBuildIDWithResponse Build details
+//
+// Returns a build of the team with the names of its template. For E2B's own clients: it may change or disappear without notice.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/builds/{buildID} (the `GetUnstableBuildsBuildID` operationId).
+func (c *ClientWithResponses) GetUnstableBuildsBuildIDWithResponse(ctx context.Context, buildID BuildID, reqEditors ...RequestEditorFn) (*GetUnstableBuildsBuildIDResponse, error) {
+	rsp, err := c.GetUnstableBuildsBuildID(ctx, buildID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableBuildsBuildIDResponse(rsp)
+}
+
+// ManagementDeleteClusterWithResponse Delete a cluster and its environments.
+//
+// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
+func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDeleteClusterResponse, error) {
+	rsp, err := c.ManagementDeleteCluster(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementDeleteClusterResponse(rsp)
+}
+
+// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
+//
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+func (c *ClientWithResponses) ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
+	rsp, err := c.ManagementRegisterClusterWithBody(ctx, clusterID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementRegisterClusterResponse(rsp)
+}
+
+// ManagementRegisterClusterWithResponse Register a cluster.
+//
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same name and auth organization updates its endpoint, TLS setting, sandbox proxy domain and token and keeps its stored deletion protection; a different name or auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
+func (c *ClientWithResponses) ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
+	rsp, err := c.ManagementRegisterCluster(ctx, clusterID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementRegisterClusterResponse(rsp)
+}
+
+// ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
+//
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before the deletion is recorded, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
+func (c *ClientWithResponses) ManagementRequestClusterDeletionWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRequestClusterDeletionResponse, error) {
+	rsp, err := c.ManagementRequestClusterDeletion(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementRequestClusterDeletionResponse(rsp)
+}
+
+// ManagementClusterDestroyReadinessWithResponse Check cluster destroy readiness.
+//
+// Checks whether the cluster has deletion protection turned on, or more than one team uses this exact cluster, either as an assigned team or as the owner of active templates or snapshots on it. One team's own templates and snapshots do not block this check, because deleting the cluster soft-deletes them. Soft-deleted history does not count. Returns success if the cluster is absent. This read does not change resources or prevent later assignments or template creation.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/management/clusters/{clusterID}/destroy-readiness (the `ManagementClusterDestroyReadiness` operationId).
+func (c *ClientWithResponses) ManagementClusterDestroyReadinessWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementClusterDestroyReadinessResponse, error) {
+	rsp, err := c.ManagementClusterDestroyReadiness(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementClusterDestroyReadinessResponse(rsp)
+}
+
+// ManagementListClusterProjectsWithResponse List the projects assigned to a cluster.
+//
+// Returns the ID of every project whose team is assigned to the cluster, whichever way it was assigned. A deleted project is never assigned. An absent cluster has no projects.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
+func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error) {
+	rsp, err := c.ManagementListClusterProjects(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementListClusterProjectsResponse(rsp)
+}
+
+// ManagementDeleteProjectWithResponse Soft-delete a project.
+//
+// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
+func (c *ClientWithResponses) ManagementDeleteProjectWithResponse(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*ManagementDeleteProjectResponse, error) {
+	rsp, err := c.ManagementDeleteProject(ctx, projectID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementDeleteProjectResponse(rsp)
+}
+
+// ManagementUpsertProjectWithBodyWithResponse Create or reconcile a project.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+func (c *ClientWithResponses) ManagementUpsertProjectWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectResponse, error) {
+	rsp, err := c.ManagementUpsertProjectWithBody(ctx, projectID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpsertProjectResponse(rsp)
+}
+
+// ManagementUpsertProjectWithResponse Create or reconcile a project.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID} (the `ManagementUpsertProject` operationId).
+func (c *ClientWithResponses) ManagementUpsertProjectWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectResponse, error) {
+	rsp, err := c.ManagementUpsertProject(ctx, projectID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpsertProjectResponse(rsp)
+}
+
+// ManagementApplyProjectBanWithBodyWithResponse Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBanWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error) {
+	rsp, err := c.ManagementApplyProjectBanWithBody(ctx, projectID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBanResponse(rsp)
+}
+
+// ManagementApplyProjectBanWithResponse Apply a project's ban state.
+//
+// Records whether the project is banned. Authentication refuses a banned project's API keys and members. A revision that turns the ban on also kills the project's running sandboxes and cancels its builds in the background, and retries while the project stays banned and any of them remain. The newest revision wins: an older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/ban (the `ManagementApplyProjectBan` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBanWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBanJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBanResponse, error) {
+	rsp, err := c.ManagementApplyProjectBan(ctx, projectID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBanResponse(rsp)
+}
+
+// ManagementApplyProjectBlockWithBodyWithResponse Apply a project's block state.
+//
+// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBlockWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error) {
+	rsp, err := c.ManagementApplyProjectBlockWithBody(ctx, projectID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBlockResponse(rsp)
+}
+
+// ManagementApplyProjectBlockWithResponse Apply a project's block state.
+//
+// Records whether the project is refused billable work, which the auth path reads before it lets a sandbox start. An older or duplicate revision is accepted without changing target state. Answers 404 when the project is missing or deleted.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectBlockWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error) {
+	rsp, err := c.ManagementApplyProjectBlock(ctx, projectID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectBlockResponse(rsp)
+}
+
+// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
+//
+// Answers 404 when the project is missing or deleted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
+func (c *ClientWithResponses) ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error) {
+	rsp, err := c.ManagementDetachProjectCluster(ctx, projectID, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementDetachProjectClusterResponse(rsp)
+}
+
+// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
+//
+// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
+func (c *ClientWithResponses) ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error) {
+	rsp, err := c.ManagementAssignProjectCluster(ctx, projectID, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementAssignProjectClusterResponse(rsp)
+}
+
+// ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+func (c *ClientWithResponses) ManagementUpsertProjectLimitsWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectLimitsResponse, error) {
+	rsp, err := c.ManagementUpsertProjectLimitsWithBody(ctx, projectID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpsertProjectLimitsResponse(rsp)
+}
+
+// ManagementUpsertProjectLimitsWithResponse Reconcile effective limits for a project.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/limits (the `ManagementUpsertProjectLimits` operationId).
+func (c *ClientWithResponses) ManagementUpsertProjectLimitsWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpsertProjectLimitsResponse, error) {
+	rsp, err := c.ManagementUpsertProjectLimits(ctx, projectID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementUpsertProjectLimitsResponse(rsp)
+}
+
+// ManagementApplyProjectMemberWithBodyWithResponse Apply one versioned project member projection.
+//
+// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectMemberWithBodyWithResponse(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementApplyProjectMemberResponse, error) {
+	rsp, err := c.ManagementApplyProjectMemberWithBody(ctx, projectID, userID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectMemberResponse(rsp)
+}
+
+// ManagementApplyProjectMemberWithResponse Apply one versioned project member projection.
+//
+// Applies the newest desired presence for one project member. An older or duplicate revision is accepted without changing target state.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /unstable/management/projects/{projectID}/members/{userID} (the `ManagementApplyProjectMember` operationId).
+func (c *ClientWithResponses) ManagementApplyProjectMemberWithResponse(ctx context.Context, projectID openapi_types.UUID, userID openapi_types.UUID, body ManagementApplyProjectMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectMemberResponse, error) {
+	rsp, err := c.ManagementApplyProjectMember(ctx, projectID, userID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementApplyProjectMemberResponse(rsp)
+}
+
 // ManagementSetProjectSettingsWithBodyWithResponse Apply a project's settings revision.
 //
 // Replaces the complete project settings document when the revision is newer than the stored revision. Omitted settings are removed. Older and duplicate revisions leave the stored document unchanged. Every successful delivery invalidates the cached team. Answers 404 when the project is missing or deleted.
@@ -20361,6 +29363,21 @@ func (c *ClientWithResponses) ManagementSetProjectSettingsWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseManagementSetProjectSettingsResponse(rsp)
+}
+
+// GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
+//
+// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+func (c *ClientWithResponses) GetUnstableSandboxesSandboxIDRecordWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableSandboxesSandboxIDRecordResponse, error) {
+	rsp, err := c.GetUnstableSandboxesSandboxIDRecord(ctx, sandboxID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableSandboxesSandboxIDRecordResponse(rsp)
 }
 
 // GetUnstableTeamsTeamIDLimitsWithResponse Team limits
@@ -20455,7 +29472,7 @@ func (c *ClientWithResponses) PostV2SandboxesWithResponse(ctx context.Context, p
 
 // PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -20470,7 +29487,7 @@ func (c *ClientWithResponses) PostV2SandboxesSandboxIDConnectWithBodyWithRespons
 
 // PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -20545,13 +29562,13 @@ func (c *ClientWithResponses) PatchV2TemplatesTemplateIDWithResponse(ctx context
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -20560,13 +29577,13 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWith
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -20580,8 +29597,8 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3TemplatesWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3TemplatesWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -20595,8 +29612,8 @@ func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3Templates(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3Templates(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -22322,9 +31339,6 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	}
 
 	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22501,6 +31515,13 @@ func ParsePostNodesNodeIDResponse(rsp *http.Response) (*PostNodesNodeIDResponse,
 	case rsp.StatusCode == 204:
 		break // No content-type
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22541,6 +31562,73 @@ func ParsePostNodesNodeIDResponse(rsp *http.Response) (*PostNodesNodeIDResponse,
 	switch {
 	case rsp.StatusCode == 429:
 		var headers PostNodesNodeIDResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetNodesNodeIDSandboxesResponse parses an HTTP response from a GetNodesNodeIDSandboxesWithResponse call
+func ParseGetNodesNodeIDSandboxesResponse(rsp *http.Response) (*GetNodesNodeIDSandboxesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNodesNodeIDSandboxesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NodeSandboxes
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetNodesNodeIDSandboxesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -22799,6 +31887,13 @@ func ParseDeleteSandboxesSandboxIDResponse(rsp *http.Response) (*DeleteSandboxes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -23310,6 +32405,13 @@ func ParsePostSandboxesSandboxIDPauseResponse(rsp *http.Response) (*PostSandboxe
 	case rsp.StatusCode == 204:
 		break // No content-type
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23543,7 +32645,7 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23557,11 +32659,25 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -23571,15 +32687,62 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostSandboxesSandboxIDSnapshotsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostSandboxesSandboxIDSnapshotsResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostSandboxesSandboxIDSnapshotsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostSandboxesSandboxIDSnapshotsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSandboxesSandboxIDSnapshotsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -23590,6 +32753,26 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostSandboxesSandboxIDSnapshotsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostSandboxesSandboxIDSnapshotsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -24472,6 +33655,13 @@ func ParseGetTemplatesResponse(rsp *http.Response) (*GetTemplatesResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
@@ -25518,6 +34708,665 @@ func ParseGetTemplatesTemplateIDTagsTagAssignmentsResponse(rsp *http.Response) (
 	return response, nil
 }
 
+// ParseAdminListClustersResponse parses an HTTP response from a AdminListClustersWithResponse call
+func ParseAdminListClustersResponse(rsp *http.Response) (*AdminListClustersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListClustersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminCreateClusterResponse parses an HTTP response from a AdminCreateClusterWithResponse call
+func ParseAdminCreateClusterResponse(rsp *http.Response) (*AdminCreateClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminCreateClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ClusterDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminDeleteClusterResponse parses an HTTP response from a AdminDeleteClusterWithResponse call
+func ParseAdminDeleteClusterResponse(rsp *http.Response) (*AdminDeleteClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminDeleteClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminGetClusterResponse parses an HTTP response from a AdminGetClusterWithResponse call
+func ParseAdminGetClusterResponse(rsp *http.Response) (*AdminGetClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminGetClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterDetailWithTeams
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminUpdateClusterResponse parses an HTTP response from a AdminUpdateClusterWithResponse call
+func ParseAdminUpdateClusterResponse(rsp *http.Response) (*AdminUpdateClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminUpdateClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminListClusterTeamsResponse parses an HTTP response from a AdminListClusterTeamsWithResponse call
+func ParseAdminListClusterTeamsResponse(rsp *http.Response) (*AdminListClusterTeamsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListClusterTeamsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterTeamListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminRotateClusterTokenResponse parses an HTTP response from a AdminRotateClusterTokenWithResponse call
+func ParseAdminRotateClusterTokenResponse(rsp *http.Response) (*AdminRotateClusterTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminRotateClusterTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse parses an HTTP response from a GetUnstableAdminSandboxesSandboxIDBuildsWithResponse call
+func ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp *http.Response) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminSandboxesSandboxIDBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse parses an HTTP response from a PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse call
+func ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp *http.Response) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildRestoreResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse parses an HTTP response from a GetUnstableAdminSandboxesSandboxIDOverviewWithResponse call
+func ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse(rsp *http.Response) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminSandboxesSandboxIDOverviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxOverview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAdminBanTeamsResponse parses an HTTP response from a AdminBanTeamsWithResponse call
+func ParseAdminBanTeamsResponse(rsp *http.Response) (*AdminBanTeamsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminBanTeamsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminTeamsBanResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers AdminBanTeamsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParsePostUnstableAdminTeamsQueryResponse parses an HTTP response from a PostUnstableAdminTeamsQueryWithResponse call
 func ParsePostUnstableAdminTeamsQueryResponse(rsp *http.Response) (*PostUnstableAdminTeamsQueryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25659,6 +35508,150 @@ func ParseGetUnstableAdminTeamsTeamIDResponse(rsp *http.Response) (*GetUnstableA
 	return response, nil
 }
 
+// ParseAdminUnbanTeamResponse parses an HTTP response from a AdminUnbanTeamWithResponse call
+func ParseAdminUnbanTeamResponse(rsp *http.Response) (*AdminUnbanTeamResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminUnbanTeamResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers AdminUnbanTeamResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAdminBanTeamResponse parses an HTTP response from a AdminBanTeamWithResponse call
+func ParseAdminBanTeamResponse(rsp *http.Response) (*AdminBanTeamResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminBanTeamResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminTeamBanResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers AdminBanTeamResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParsePutUnstableAdminTeamsTeamIDSchedulingLabelsResponse parses an HTTP response from a PutUnstableAdminTeamsTeamIDSchedulingLabelsWithResponse call
 func ParsePutUnstableAdminTeamsTeamIDSchedulingLabelsResponse(rsp *http.Response) (*PutUnstableAdminTeamsTeamIDSchedulingLabelsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25733,6 +35726,1301 @@ func ParsePutUnstableAdminTeamsTeamIDSchedulingLabelsResponse(rsp *http.Response
 	return response, nil
 }
 
+// ParseGetUnstableAdminTemplatesAliasesResponse parses an HTTP response from a GetUnstableAdminTemplatesAliasesWithResponse call
+func ParseGetUnstableAdminTemplatesAliasesResponse(rsp *http.Response) (*GetUnstableAdminTemplatesAliasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminTemplatesAliasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AdminTemplateAliases
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetUnstableAdminTemplatesAliasesResponse200Headers
+		if values := rsp.Header.Values("X-Next-Token"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Next-Token", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XNextToken = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePostUnstableAdminTemplatesAliasesResponse parses an HTTP response from a PostUnstableAdminTemplatesAliasesWithResponse call
+func ParsePostUnstableAdminTemplatesAliasesResponse(rsp *http.Response) (*PostUnstableAdminTemplatesAliasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostUnstableAdminTemplatesAliasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AdminTemplateAlias
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUnstableAdminTemplatesAliasesAliasIDResponse parses an HTTP response from a DeleteUnstableAdminTemplatesAliasesAliasIDWithResponse call
+func ParseDeleteUnstableAdminTemplatesAliasesAliasIDResponse(rsp *http.Response) (*DeleteUnstableAdminTemplatesAliasesAliasIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUnstableAdminTemplatesAliasesAliasIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminTemplateAliasDeleted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostUnstableAdminTemplatesDefaultsResponse parses an HTTP response from a PostUnstableAdminTemplatesDefaultsWithResponse call
+func ParsePostUnstableAdminTemplatesDefaultsResponse(rsp *http.Response) (*PostUnstableAdminTemplatesDefaultsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostUnstableAdminTemplatesDefaultsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AdminDefaultTemplate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUnstableAdminTemplatesDefaultsTemplateIDResponse parses an HTTP response from a DeleteUnstableAdminTemplatesDefaultsTemplateIDWithResponse call
+func ParseDeleteUnstableAdminTemplatesDefaultsTemplateIDResponse(rsp *http.Response) (*DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUnstableAdminTemplatesDefaultsTemplateIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchUnstableAdminTemplatesDefaultsTemplateIDResponse parses an HTTP response from a PatchUnstableAdminTemplatesDefaultsTemplateIDWithResponse call
+func ParsePatchUnstableAdminTemplatesDefaultsTemplateIDResponse(rsp *http.Response) (*PatchUnstableAdminTemplatesDefaultsTemplateIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchUnstableAdminTemplatesDefaultsTemplateIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminDefaultTemplate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableAdminTemplatesLookupResponse parses an HTTP response from a GetUnstableAdminTemplatesLookupWithResponse call
+func ParseGetUnstableAdminTemplatesLookupResponse(rsp *http.Response) (*GetUnstableAdminTemplatesLookupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminTemplatesLookupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminTemplateLookup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableBuildsResponse parses an HTTP response from a GetUnstableBuildsWithResponse call
+func ParseGetUnstableBuildsResponse(rsp *http.Response) (*GetUnstableBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BuildsListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableBuildsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableBuildsStatusesResponse parses an HTTP response from a GetUnstableBuildsStatusesWithResponse call
+func ParseGetUnstableBuildsStatusesResponse(rsp *http.Response) (*GetUnstableBuildsStatusesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableBuildsStatusesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BuildsStatusesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableBuildsStatusesResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableBuildsBuildIDResponse parses an HTTP response from a GetUnstableBuildsBuildIDWithResponse call
+func ParseGetUnstableBuildsBuildIDResponse(rsp *http.Response) (*GetUnstableBuildsBuildIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableBuildsBuildIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BuildInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableBuildsBuildIDResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseManagementDeleteClusterResponse parses an HTTP response from a ManagementDeleteClusterWithResponse call
+func ParseManagementDeleteClusterResponse(rsp *http.Response) (*ManagementDeleteClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementDeleteClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementRegisterClusterResponse parses an HTTP response from a ManagementRegisterClusterWithResponse call
+func ParseManagementRegisterClusterResponse(rsp *http.Response) (*ManagementRegisterClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementRegisterClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementRequestClusterDeletionResponse parses an HTTP response from a ManagementRequestClusterDeletionWithResponse call
+func ParseManagementRequestClusterDeletionResponse(rsp *http.Response) (*ManagementRequestClusterDeletionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementRequestClusterDeletionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementClusterDestroyReadinessResponse parses an HTTP response from a ManagementClusterDestroyReadinessWithResponse call
+func ParseManagementClusterDestroyReadinessResponse(rsp *http.Response) (*ManagementClusterDestroyReadinessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementClusterDestroyReadinessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementListClusterProjectsResponse parses an HTTP response from a ManagementListClusterProjectsWithResponse call
+func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*ManagementListClusterProjectsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementListClusterProjectsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ManagementClusterProjects
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementDeleteProjectResponse parses an HTTP response from a ManagementDeleteProjectWithResponse call
+func ParseManagementDeleteProjectResponse(rsp *http.Response) (*ManagementDeleteProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementDeleteProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementUpsertProjectResponse parses an HTTP response from a ManagementUpsertProjectWithResponse call
+func ParseManagementUpsertProjectResponse(rsp *http.Response) (*ManagementUpsertProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementUpsertProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ManagementProject
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ManagementProject
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementApplyProjectBanResponse parses an HTTP response from a ManagementApplyProjectBanWithResponse call
+func ParseManagementApplyProjectBanResponse(rsp *http.Response) (*ManagementApplyProjectBanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementApplyProjectBanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementApplyProjectBlockResponse parses an HTTP response from a ManagementApplyProjectBlockWithResponse call
+func ParseManagementApplyProjectBlockResponse(rsp *http.Response) (*ManagementApplyProjectBlockResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementApplyProjectBlockResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementDetachProjectClusterResponse parses an HTTP response from a ManagementDetachProjectClusterWithResponse call
+func ParseManagementDetachProjectClusterResponse(rsp *http.Response) (*ManagementDetachProjectClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementDetachProjectClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementAssignProjectClusterResponse parses an HTTP response from a ManagementAssignProjectClusterWithResponse call
+func ParseManagementAssignProjectClusterResponse(rsp *http.Response) (*ManagementAssignProjectClusterResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementAssignProjectClusterResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementUpsertProjectLimitsResponse parses an HTTP response from a ManagementUpsertProjectLimitsWithResponse call
+func ParseManagementUpsertProjectLimitsResponse(rsp *http.Response) (*ManagementUpsertProjectLimitsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementUpsertProjectLimitsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseManagementApplyProjectMemberResponse parses an HTTP response from a ManagementApplyProjectMemberWithResponse call
+func ParseManagementApplyProjectMemberResponse(rsp *http.Response) (*ManagementApplyProjectMemberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementApplyProjectMemberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseManagementSetProjectSettingsResponse parses an HTTP response from a ManagementSetProjectSettingsWithResponse call
 func ParseManagementSetProjectSettingsResponse(rsp *http.Response) (*ManagementSetProjectSettingsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25778,6 +37066,87 @@ func ParseManagementSetProjectSettingsResponse(rsp *http.Response) (*ManagementS
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableSandboxesSandboxIDRecordResponse parses an HTTP response from a GetUnstableSandboxesSandboxIDRecordWithResponse call
+func ParseGetUnstableSandboxesSandboxIDRecordResponse(rsp *http.Response) (*GetUnstableSandboxesSandboxIDRecordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableSandboxesSandboxIDRecordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SandboxRecord
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableSandboxesSandboxIDRecordResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil
@@ -26630,18 +37999,46 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -26651,15 +38048,82 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -26670,6 +38134,26 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -26697,50 +38181,114 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 		response.JSON202 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest N403
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV3TemplatesResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV3TemplatesResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV3TemplatesResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV3TemplatesResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV3TemplatesResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV3TemplatesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -26750,7 +38298,34 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 			}
 			headers.RetryAfter = &value
 		}
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV3TemplatesResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV3TemplatesResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -27105,6 +38680,9 @@ type ServerInterface interface {
 	// PostNodesNodeID Change node status
 	// (POST /nodes/{nodeID})
 	PostNodesNodeID(c *gin.Context, nodeID NodeID)
+	// GetNodesNodeIDSandboxes Node sandboxes
+	// (GET /nodes/{nodeID}/sandboxes)
+	GetNodesNodeIDSandboxes(c *gin.Context, nodeID NodeID, params GetNodesNodeIDSandboxesParams)
 	// GetSandboxes List running sandboxes
 	// (GET /sandboxes)
 	//
@@ -27156,7 +38734,7 @@ type ServerInterface interface {
 	PostSandboxesSandboxIDResume(c *gin.Context, sandboxID SandboxID)
 	// PostSandboxesSandboxIDSnapshots Create snapshot
 	// (POST /sandboxes/{sandboxID}/snapshots)
-	PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID SandboxID)
+	PostSandboxesSandboxIDSnapshots(c *gin.Context, sandboxID SandboxID, params PostSandboxesSandboxIDSnapshotsParams)
 	// PostSandboxesSandboxIDTimeout Set sandbox timeout
 	// (POST /sandboxes/{sandboxID}/timeout)
 	PostSandboxesSandboxIDTimeout(c *gin.Context, sandboxID SandboxID)
@@ -27236,18 +38814,129 @@ type ServerInterface interface {
 	// GetTemplatesTemplateIDTagsTagAssignments List template tag assignments
 	// (GET /templates/{templateID}/tags/{tag}/assignments)
 	GetTemplatesTemplateIDTagsTagAssignments(c *gin.Context, templateID TemplateID, tag Tag, params GetTemplatesTemplateIDTagsTagAssignmentsParams)
+	// AdminListClusters List clusters as admin
+	// (GET /unstable/admin/clusters)
+	AdminListClusters(c *gin.Context, params AdminListClustersParams)
+	// AdminCreateCluster Create a cluster as admin
+	// (POST /unstable/admin/clusters)
+	AdminCreateCluster(c *gin.Context)
+	// AdminDeleteCluster Delete a cluster and its environments as admin
+	// (DELETE /unstable/admin/clusters/{clusterID})
+	AdminDeleteCluster(c *gin.Context, clusterID ClusterID)
+	// AdminGetCluster Cluster as admin
+	// (GET /unstable/admin/clusters/{clusterID})
+	AdminGetCluster(c *gin.Context, clusterID ClusterID, params AdminGetClusterParams)
+	// AdminUpdateCluster Update a cluster as admin
+	// (PATCH /unstable/admin/clusters/{clusterID})
+	AdminUpdateCluster(c *gin.Context, clusterID ClusterID)
+	// AdminListClusterTeams List a cluster's teams as admin
+	// (GET /unstable/admin/clusters/{clusterID}/teams)
+	AdminListClusterTeams(c *gin.Context, clusterID ClusterID, params AdminListClusterTeamsParams)
+	// AdminRotateClusterToken Rotate a cluster's token as admin
+	// (PUT /unstable/admin/clusters/{clusterID}/token)
+	AdminRotateClusterToken(c *gin.Context, clusterID ClusterID)
+	// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+	// (GET /unstable/admin/sandboxes/{sandboxID}/builds)
+	GetUnstableAdminSandboxesSandboxIDBuilds(c *gin.Context, sandboxID SandboxID, params GetUnstableAdminSandboxesSandboxIDBuildsParams)
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+	// (POST /unstable/admin/sandboxes/{sandboxID}/builds/restore)
+	PostUnstableAdminSandboxesSandboxIDBuildsRestore(c *gin.Context, sandboxID SandboxID)
+	// GetUnstableAdminSandboxesSandboxIDOverview Sandbox overview
+	// (GET /unstable/admin/sandboxes/{sandboxID}/overview)
+	GetUnstableAdminSandboxesSandboxIDOverview(c *gin.Context, sandboxID SandboxID)
+	// AdminBanTeams Ban teams
+	// (POST /unstable/admin/teams/bans)
+	AdminBanTeams(c *gin.Context)
 	// PostUnstableAdminTeamsQuery List teams as admin
 	// (POST /unstable/admin/teams/query)
 	PostUnstableAdminTeamsQuery(c *gin.Context)
 	// GetUnstableAdminTeamsTeamID Team as admin
 	// (GET /unstable/admin/teams/{teamID})
 	GetUnstableAdminTeamsTeamID(c *gin.Context, teamID openapi_types.UUID)
+	// AdminUnbanTeam Unban a team
+	// (DELETE /unstable/admin/teams/{teamID}/ban)
+	AdminUnbanTeam(c *gin.Context, teamID openapi_types.UUID)
+	// AdminBanTeam Ban a team
+	// (PUT /unstable/admin/teams/{teamID}/ban)
+	AdminBanTeam(c *gin.Context, teamID openapi_types.UUID)
 	// PutUnstableAdminTeamsTeamIDSchedulingLabels Replace a team's sandbox scheduling labels
 	// (PUT /unstable/admin/teams/{teamID}/scheduling-labels)
 	PutUnstableAdminTeamsTeamIDSchedulingLabels(c *gin.Context, teamID openapi_types.UUID)
+	// GetUnstableAdminTemplatesAliases Search template aliases as admin
+	// (GET /unstable/admin/templates/aliases)
+	GetUnstableAdminTemplatesAliases(c *gin.Context, params GetUnstableAdminTemplatesAliasesParams)
+	// PostUnstableAdminTemplatesAliases Add a template alias without a namespace as admin
+	// (POST /unstable/admin/templates/aliases)
+	PostUnstableAdminTemplatesAliases(c *gin.Context)
+	// DeleteUnstableAdminTemplatesAliasesAliasID Remove a template alias without a namespace as admin
+	// (DELETE /unstable/admin/templates/aliases/{aliasID})
+	DeleteUnstableAdminTemplatesAliasesAliasID(c *gin.Context, aliasID AliasID)
+	// PostUnstableAdminTemplatesDefaults Add a default template as admin
+	// (POST /unstable/admin/templates/defaults)
+	PostUnstableAdminTemplatesDefaults(c *gin.Context)
+	// DeleteUnstableAdminTemplatesDefaultsTemplateID Remove a default template as admin
+	// (DELETE /unstable/admin/templates/defaults/{templateID})
+	DeleteUnstableAdminTemplatesDefaultsTemplateID(c *gin.Context, templateID TemplateID)
+	// PatchUnstableAdminTemplatesDefaultsTemplateID Update a default template as admin
+	// (PATCH /unstable/admin/templates/defaults/{templateID})
+	PatchUnstableAdminTemplatesDefaultsTemplateID(c *gin.Context, templateID TemplateID)
+	// GetUnstableAdminTemplatesLookup Look up a template as admin
+	// (GET /unstable/admin/templates/lookup)
+	GetUnstableAdminTemplatesLookup(c *gin.Context, params GetUnstableAdminTemplatesLookupParams)
+	// GetUnstableBuilds List team builds
+	// (GET /unstable/builds)
+	GetUnstableBuilds(c *gin.Context, params GetUnstableBuildsParams)
+	// GetUnstableBuildsStatuses Build statuses
+	// (GET /unstable/builds/statuses)
+	GetUnstableBuildsStatuses(c *gin.Context, params GetUnstableBuildsStatusesParams)
+	// GetUnstableBuildsBuildID Build details
+	// (GET /unstable/builds/{buildID})
+	GetUnstableBuildsBuildID(c *gin.Context, buildID BuildID)
+	// ManagementDeleteCluster Delete a cluster and its environments.
+	// (DELETE /unstable/management/clusters/{clusterID})
+	ManagementDeleteCluster(c *gin.Context, clusterID ClusterID)
+	// ManagementRegisterCluster Register a cluster.
+	// (PUT /unstable/management/clusters/{clusterID})
+	ManagementRegisterCluster(c *gin.Context, clusterID ClusterID)
+	// ManagementRequestClusterDeletion Record that a cluster is being deleted.
+	// (PUT /unstable/management/clusters/{clusterID}/deletion)
+	ManagementRequestClusterDeletion(c *gin.Context, clusterID ClusterID)
+	// ManagementClusterDestroyReadiness Check cluster destroy readiness.
+	// (GET /unstable/management/clusters/{clusterID}/destroy-readiness)
+	ManagementClusterDestroyReadiness(c *gin.Context, clusterID ClusterID)
+	// ManagementListClusterProjects List the projects assigned to a cluster.
+	// (GET /unstable/management/clusters/{clusterID}/projects)
+	ManagementListClusterProjects(c *gin.Context, clusterID ClusterID)
+	// ManagementDeleteProject Soft-delete a project.
+	// (DELETE /unstable/management/projects/{projectID})
+	ManagementDeleteProject(c *gin.Context, projectID openapi_types.UUID)
+	// ManagementUpsertProject Create or reconcile a project.
+	// (PUT /unstable/management/projects/{projectID})
+	ManagementUpsertProject(c *gin.Context, projectID openapi_types.UUID)
+	// ManagementApplyProjectBan Apply a project's ban state.
+	// (PUT /unstable/management/projects/{projectID}/ban)
+	ManagementApplyProjectBan(c *gin.Context, projectID openapi_types.UUID)
+	// ManagementApplyProjectBlock Apply a project's block state.
+	// (PUT /unstable/management/projects/{projectID}/block)
+	ManagementApplyProjectBlock(c *gin.Context, projectID openapi_types.UUID)
+	// ManagementDetachProjectCluster Detach a cluster assignment from a project.
+	// (DELETE /unstable/management/projects/{projectID}/cluster/{clusterID})
+	ManagementDetachProjectCluster(c *gin.Context, projectID openapi_types.UUID, clusterID ClusterID)
+	// ManagementAssignProjectCluster Assign a cluster to a project.
+	// (PUT /unstable/management/projects/{projectID}/cluster/{clusterID})
+	ManagementAssignProjectCluster(c *gin.Context, projectID openapi_types.UUID, clusterID ClusterID)
+	// ManagementUpsertProjectLimits Reconcile effective limits for a project.
+	// (PUT /unstable/management/projects/{projectID}/limits)
+	ManagementUpsertProjectLimits(c *gin.Context, projectID openapi_types.UUID)
+	// ManagementApplyProjectMember Apply one versioned project member projection.
+	// (PUT /unstable/management/projects/{projectID}/members/{userID})
+	ManagementApplyProjectMember(c *gin.Context, projectID openapi_types.UUID, userID openapi_types.UUID)
 	// ManagementSetProjectSettings Apply a project's settings revision.
 	// (PUT /unstable/management/projects/{projectID}/settings)
 	ManagementSetProjectSettings(c *gin.Context, projectID openapi_types.UUID)
+	// GetUnstableSandboxesSandboxIDRecord Sandbox record
+	// (GET /unstable/sandboxes/{sandboxID}/record)
+	GetUnstableSandboxesSandboxIDRecord(c *gin.Context, sandboxID SandboxID)
 	// GetUnstableTeamsTeamIDLimits Team limits
 	// (GET /unstable/teams/{teamID}/limits)
 	GetUnstableTeamsTeamIDLimits(c *gin.Context, teamID TeamID)
@@ -27277,10 +38966,10 @@ type ServerInterface interface {
 	PatchV2TemplatesTemplateID(c *gin.Context, templateID TemplateID)
 	// PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 	// (POST /v2/templates/{templateID}/builds/{buildID})
-	PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID TemplateID, buildID BuildID)
+	PostV2TemplatesTemplateIDBuildsBuildID(c *gin.Context, templateID TemplateID, buildID BuildID, params PostV2TemplatesTemplateIDBuildsBuildIDParams)
 	// PostV3Templates Create template (v3)
 	// (POST /v3/templates)
-	PostV3Templates(c *gin.Context)
+	PostV3Templates(c *gin.Context, params PostV3TemplatesParams)
 	// GetVolumes List team volumes
 	// (GET /volumes)
 	GetVolumes(c *gin.Context)
@@ -28189,6 +39878,42 @@ func (siw *ServerInterfaceWrapper) PostNodesNodeID(c *gin.Context) {
 	siw.Handler.PostNodesNodeID(c, nodeID)
 }
 
+// GetNodesNodeIDSandboxes operation middleware
+func (siw *ServerInterfaceWrapper) GetNodesNodeIDSandboxes(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "nodeID" -------------
+	var nodeID NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "nodeID", c.Param("nodeID"), &nodeID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter nodeID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetNodesNodeIDSandboxesParams
+
+	// ------------- Optional query parameter "clusterID" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "clusterID", c.Request.URL.Query(), &params.ClusterID, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetNodesNodeIDSandboxes(c, nodeID, params)
+}
+
 // GetSandboxes operation middleware
 func (siw *ServerInterfaceWrapper) GetSandboxes(c *gin.Context) {
 
@@ -28559,6 +40284,30 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDSnapshots(c *gin.Contex
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostSandboxesSandboxIDSnapshotsParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -28566,7 +40315,7 @@ func (siw *ServerInterfaceWrapper) PostSandboxesSandboxIDSnapshots(c *gin.Contex
 		}
 	}
 
-	siw.Handler.PostSandboxesSandboxIDSnapshots(c, sandboxID)
+	siw.Handler.PostSandboxesSandboxIDSnapshots(c, sandboxID, params)
 }
 
 // PostSandboxesSandboxIDTimeout operation middleware
@@ -29428,6 +41177,388 @@ func (siw *ServerInterfaceWrapper) GetTemplatesTemplateIDTagsTagAssignments(c *g
 	siw.Handler.GetTemplatesTemplateIDTagsTagAssignments(c, templateID, tag, params)
 }
 
+// AdminListClusters operation middleware
+func (siw *ServerInterfaceWrapper) AdminListClusters(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AdminListClustersParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "search" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "search", c.Request.URL.Query(), &params.Search, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter search: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "sortBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sortBy", c.Request.URL.Query(), &params.SortBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sortBy: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "sortOrder" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sortOrder", c.Request.URL.Query(), &params.SortOrder, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sortOrder: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminListClusters(c, params)
+}
+
+// AdminCreateCluster operation middleware
+func (siw *ServerInterfaceWrapper) AdminCreateCluster(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminCreateCluster(c)
+}
+
+// AdminDeleteCluster operation middleware
+func (siw *ServerInterfaceWrapper) AdminDeleteCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminDeleteCluster(c, clusterID)
+}
+
+// AdminGetCluster operation middleware
+func (siw *ServerInterfaceWrapper) AdminGetCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AdminGetClusterParams
+
+	// ------------- Optional query parameter "teamsLimit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "teamsLimit", c.Request.URL.Query(), &params.TeamsLimit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamsLimit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "teamsOffset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "teamsOffset", c.Request.URL.Query(), &params.TeamsOffset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamsOffset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminGetCluster(c, clusterID, params)
+}
+
+// AdminUpdateCluster operation middleware
+func (siw *ServerInterfaceWrapper) AdminUpdateCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminUpdateCluster(c, clusterID)
+}
+
+// AdminListClusterTeams operation middleware
+func (siw *ServerInterfaceWrapper) AdminListClusterTeams(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AdminListClusterTeamsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "sortBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sortBy", c.Request.URL.Query(), &params.SortBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sortBy: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "sortOrder" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sortOrder", c.Request.URL.Query(), &params.SortOrder, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sortOrder: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminListClusterTeams(c, clusterID, params)
+}
+
+// AdminRotateClusterToken operation middleware
+func (siw *ServerInterfaceWrapper) AdminRotateClusterToken(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminRotateClusterToken(c, clusterID)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuilds operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableAdminSandboxesSandboxIDBuilds(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUnstableAdminSandboxesSandboxIDBuildsParams
+
+	// ------------- Optional query parameter "statusGroup" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "statusGroup", c.Request.URL.Query(), &params.StatusGroup, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter statusGroup: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "tag" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tag", c.Request.URL.Query(), &params.Tag, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter tag: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "order", c.Request.URL.Query(), &params.Order, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter order: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", c.Request.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter offset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableAdminSandboxesSandboxIDBuilds(c, sandboxID, params)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestore operation middleware
+func (siw *ServerInterfaceWrapper) PostUnstableAdminSandboxesSandboxIDBuildsRestore(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostUnstableAdminSandboxesSandboxIDBuildsRestore(c, sandboxID)
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableAdminSandboxesSandboxIDOverview(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableAdminSandboxesSandboxIDOverview(c, sandboxID)
+}
+
+// AdminBanTeams operation middleware
+func (siw *ServerInterfaceWrapper) AdminBanTeams(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminBanTeams(c)
+}
+
 // PostUnstableAdminTeamsQuery operation middleware
 func (siw *ServerInterfaceWrapper) PostUnstableAdminTeamsQuery(c *gin.Context) {
 
@@ -29466,6 +41597,56 @@ func (siw *ServerInterfaceWrapper) GetUnstableAdminTeamsTeamID(c *gin.Context) {
 	siw.Handler.GetUnstableAdminTeamsTeamID(c, teamID)
 }
 
+// AdminUnbanTeam operation middleware
+func (siw *ServerInterfaceWrapper) AdminUnbanTeam(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "teamID" -------------
+	var teamID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminUnbanTeam(c, teamID)
+}
+
+// AdminBanTeam operation middleware
+func (siw *ServerInterfaceWrapper) AdminBanTeam(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "teamID" -------------
+	var teamID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "teamID", c.Param("teamID"), &teamID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter teamID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.AdminBanTeam(c, teamID)
+}
+
 // PutUnstableAdminTeamsTeamIDSchedulingLabels operation middleware
 func (siw *ServerInterfaceWrapper) PutUnstableAdminTeamsTeamIDSchedulingLabels(c *gin.Context) {
 
@@ -29491,6 +41672,632 @@ func (siw *ServerInterfaceWrapper) PutUnstableAdminTeamsTeamIDSchedulingLabels(c
 	siw.Handler.PutUnstableAdminTeamsTeamIDSchedulingLabels(c, teamID)
 }
 
+// GetUnstableAdminTemplatesAliases operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableAdminTemplatesAliases(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUnstableAdminTemplatesAliasesParams
+
+	// ------------- Required query parameter "search" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "search", c.Request.URL.Query(), &params.Search, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter search: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "nextToken" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "nextToken", c.Request.URL.Query(), &params.NextToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter nextToken: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableAdminTemplatesAliases(c, params)
+}
+
+// PostUnstableAdminTemplatesAliases operation middleware
+func (siw *ServerInterfaceWrapper) PostUnstableAdminTemplatesAliases(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostUnstableAdminTemplatesAliases(c)
+}
+
+// DeleteUnstableAdminTemplatesAliasesAliasID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUnstableAdminTemplatesAliasesAliasID(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "aliasID" -------------
+	var aliasID AliasID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "aliasID", c.Param("aliasID"), &aliasID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter aliasID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteUnstableAdminTemplatesAliasesAliasID(c, aliasID)
+}
+
+// PostUnstableAdminTemplatesDefaults operation middleware
+func (siw *ServerInterfaceWrapper) PostUnstableAdminTemplatesDefaults(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PostUnstableAdminTemplatesDefaults(c)
+}
+
+// DeleteUnstableAdminTemplatesDefaultsTemplateID operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUnstableAdminTemplatesDefaultsTemplateID(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "templateID" -------------
+	var templateID TemplateID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "templateID", c.Param("templateID"), &templateID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter templateID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteUnstableAdminTemplatesDefaultsTemplateID(c, templateID)
+}
+
+// PatchUnstableAdminTemplatesDefaultsTemplateID operation middleware
+func (siw *ServerInterfaceWrapper) PatchUnstableAdminTemplatesDefaultsTemplateID(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "templateID" -------------
+	var templateID TemplateID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "templateID", c.Param("templateID"), &templateID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter templateID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.PatchUnstableAdminTemplatesDefaultsTemplateID(c, templateID)
+}
+
+// GetUnstableAdminTemplatesLookup operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableAdminTemplatesLookup(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUnstableAdminTemplatesLookupParams
+
+	// ------------- Required query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "query", c.Request.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter query: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableAdminTemplatesLookup(c, params)
+}
+
+// GetUnstableBuilds operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableBuilds(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUnstableBuildsParams
+
+	// ------------- Optional query parameter "build_id_or_template" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "build_id_or_template", c.Request.URL.Query(), &params.BuildIdOrTemplate, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter build_id_or_template: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "statuses" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "statuses", c.Request.URL.Query(), &params.Statuses, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter statuses: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableBuilds(c, params)
+}
+
+// GetUnstableBuildsStatuses operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableBuildsStatuses(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUnstableBuildsStatusesParams
+
+	// ------------- Required query parameter "build_ids" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, true, "build_ids", c.Request.URL.Query(), &params.BuildIds, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter build_ids: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableBuildsStatuses(c, params)
+}
+
+// GetUnstableBuildsBuildID operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableBuildsBuildID(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "buildID" -------------
+	var buildID BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildID", c.Param("buildID"), &buildID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter buildID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableBuildsBuildID(c, buildID)
+}
+
+// ManagementDeleteCluster operation middleware
+func (siw *ServerInterfaceWrapper) ManagementDeleteCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementDeleteCluster(c, clusterID)
+}
+
+// ManagementRegisterCluster operation middleware
+func (siw *ServerInterfaceWrapper) ManagementRegisterCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementRegisterCluster(c, clusterID)
+}
+
+// ManagementRequestClusterDeletion operation middleware
+func (siw *ServerInterfaceWrapper) ManagementRequestClusterDeletion(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementRequestClusterDeletion(c, clusterID)
+}
+
+// ManagementClusterDestroyReadiness operation middleware
+func (siw *ServerInterfaceWrapper) ManagementClusterDestroyReadiness(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementClusterDestroyReadiness(c, clusterID)
+}
+
+// ManagementListClusterProjects operation middleware
+func (siw *ServerInterfaceWrapper) ManagementListClusterProjects(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementListClusterProjects(c, clusterID)
+}
+
+// ManagementDeleteProject operation middleware
+func (siw *ServerInterfaceWrapper) ManagementDeleteProject(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementDeleteProject(c, projectID)
+}
+
+// ManagementUpsertProject operation middleware
+func (siw *ServerInterfaceWrapper) ManagementUpsertProject(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementUpsertProject(c, projectID)
+}
+
+// ManagementApplyProjectBan operation middleware
+func (siw *ServerInterfaceWrapper) ManagementApplyProjectBan(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementApplyProjectBan(c, projectID)
+}
+
+// ManagementApplyProjectBlock operation middleware
+func (siw *ServerInterfaceWrapper) ManagementApplyProjectBlock(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementApplyProjectBlock(c, projectID)
+}
+
+// ManagementDetachProjectCluster operation middleware
+func (siw *ServerInterfaceWrapper) ManagementDetachProjectCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementDetachProjectCluster(c, projectID, clusterID)
+}
+
+// ManagementAssignProjectCluster operation middleware
+func (siw *ServerInterfaceWrapper) ManagementAssignProjectCluster(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementAssignProjectCluster(c, projectID, clusterID)
+}
+
+// ManagementUpsertProjectLimits operation middleware
+func (siw *ServerInterfaceWrapper) ManagementUpsertProjectLimits(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementUpsertProjectLimits(c, projectID)
+}
+
+// ManagementApplyProjectMember operation middleware
+func (siw *ServerInterfaceWrapper) ManagementApplyProjectMember(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectID" -------------
+	var projectID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectID", c.Param("projectID"), &projectID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter projectID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "userID" -------------
+	var userID openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userID", c.Param("userID"), &userID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter userID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementApplyProjectMember(c, projectID, userID)
+}
+
 // ManagementSetProjectSettings operation middleware
 func (siw *ServerInterfaceWrapper) ManagementSetProjectSettings(c *gin.Context) {
 
@@ -29514,6 +42321,31 @@ func (siw *ServerInterfaceWrapper) ManagementSetProjectSettings(c *gin.Context) 
 	}
 
 	siw.Handler.ManagementSetProjectSettings(c, projectID)
+}
+
+// GetUnstableSandboxesSandboxIDRecord operation middleware
+func (siw *ServerInterfaceWrapper) GetUnstableSandboxesSandboxIDRecord(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandboxID" -------------
+	var sandboxID SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxID", c.Param("sandboxID"), &sandboxID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter sandboxID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetUnstableSandboxesSandboxIDRecord(c, sandboxID)
 }
 
 // GetUnstableTeamsTeamIDLimits operation middleware
@@ -29925,6 +42757,30 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV2TemplatesTemplateIDBuildsBuildIDParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -29932,12 +42788,39 @@ func (siw *ServerInterfaceWrapper) PostV2TemplatesTemplateIDBuildsBuildID(c *gin
 		}
 	}
 
-	siw.Handler.PostV2TemplatesTemplateIDBuildsBuildID(c, templateID, buildID)
+	siw.Handler.PostV2TemplatesTemplateIDBuildsBuildID(c, templateID, buildID, params)
 }
 
 // PostV3Templates operation middleware
 func (siw *ServerInterfaceWrapper) PostV3Templates(c *gin.Context) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV3TemplatesParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -29945,7 +42828,7 @@ func (siw *ServerInterfaceWrapper) PostV3Templates(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.PostV3Templates(c)
+	siw.Handler.PostV3Templates(c, params)
 }
 
 // GetVolumes operation middleware
@@ -30067,6 +42950,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.DELETE(options.BaseURL+"/sandboxes/:sandboxID", wrapper.DeleteSandboxesSandboxID)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID", wrapper.GetSandboxesSandboxID)
 	router.GET(options.BaseURL+"/sandboxes/:sandboxID/metrics", wrapper.GetSandboxesSandboxIDMetrics)
+	router.GET(options.BaseURL+"/unstable/sandboxes/:sandboxID/record", wrapper.GetUnstableSandboxesSandboxIDRecord)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/pause", wrapper.PostSandboxesSandboxIDPause)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/resume", wrapper.PostSandboxesSandboxIDResume)
 	router.POST(options.BaseURL+"/sandboxes/:sandboxID/fork", wrapper.PostSandboxesSandboxIDFork)
@@ -30083,6 +42967,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/templates", wrapper.GetTemplates)
 	router.GET(options.BaseURL+"/default-templates", wrapper.GetDefaultTemplates)
 	router.GET(options.BaseURL+"/unstable/templates/search", wrapper.GetUnstableTemplatesSearch)
+	router.GET(options.BaseURL+"/unstable/builds", wrapper.GetUnstableBuilds)
+	router.GET(options.BaseURL+"/unstable/builds/statuses", wrapper.GetUnstableBuildsStatuses)
+	router.GET(options.BaseURL+"/unstable/builds/:buildID", wrapper.GetUnstableBuildsBuildID)
 	router.DELETE(options.BaseURL+"/templates/:templateID", wrapper.DeleteTemplatesTemplateID)
 	router.GET(options.BaseURL+"/templates/:templateID", wrapper.GetTemplatesTemplateID)
 	router.PATCH(options.BaseURL+"/templates/:templateID", wrapper.PatchTemplatesTemplateID)
@@ -30101,17 +42988,51 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/nodes", wrapper.GetNodes)
 	router.GET(options.BaseURL+"/nodes/:nodeID", wrapper.GetNodesNodeID)
 	router.POST(options.BaseURL+"/nodes/:nodeID", wrapper.PostNodesNodeID)
+	router.GET(options.BaseURL+"/nodes/:nodeID/sandboxes", wrapper.GetNodesNodeIDSandboxes)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/sandboxes/kill", wrapper.PostAdminTeamsTeamIDSandboxesKill)
 	router.GET(options.BaseURL+"/admin/sandboxes/running-counts", wrapper.GetAdminSandboxesRunningCounts)
 	router.GET(options.BaseURL+"/admin/sandboxes/:sandboxID", wrapper.GetAdminSandboxesSandboxID)
+	router.GET(options.BaseURL+"/unstable/admin/sandboxes/:sandboxID/overview", wrapper.GetUnstableAdminSandboxesSandboxIDOverview)
+	router.GET(options.BaseURL+"/unstable/admin/sandboxes/:sandboxID/builds", wrapper.GetUnstableAdminSandboxesSandboxIDBuilds)
+	router.POST(options.BaseURL+"/unstable/admin/sandboxes/:sandboxID/builds/restore", wrapper.PostUnstableAdminSandboxesSandboxIDBuildsRestore)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/builds/cancel", wrapper.PostAdminTeamsTeamIDBuildsCancel)
 	router.GET(options.BaseURL+"/admin/teams/:teamID/api-keys", wrapper.GetAdminTeamsTeamIDApiKeys)
 	router.POST(options.BaseURL+"/admin/teams/:teamID/api-keys", wrapper.PostAdminTeamsTeamIDApiKeys)
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/api-keys/:apiKeyID", wrapper.DeleteAdminTeamsTeamIDApiKeysApiKeyID)
+	router.DELETE(options.BaseURL+"/unstable/management/clusters/:clusterID", wrapper.ManagementDeleteCluster)
+	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID", wrapper.ManagementRegisterCluster)
+	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/projects", wrapper.ManagementListClusterProjects)
+	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID/deletion", wrapper.ManagementRequestClusterDeletion)
+	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/destroy-readiness", wrapper.ManagementClusterDestroyReadiness)
+	router.DELETE(options.BaseURL+"/unstable/management/projects/:projectID/cluster/:clusterID", wrapper.ManagementDetachProjectCluster)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/cluster/:clusterID", wrapper.ManagementAssignProjectCluster)
+	router.DELETE(options.BaseURL+"/unstable/management/projects/:projectID", wrapper.ManagementDeleteProject)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID", wrapper.ManagementUpsertProject)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/members/:userID", wrapper.ManagementApplyProjectMember)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/limits", wrapper.ManagementUpsertProjectLimits)
 	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/settings", wrapper.ManagementSetProjectSettings)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/block", wrapper.ManagementApplyProjectBlock)
+	router.PUT(options.BaseURL+"/unstable/management/projects/:projectID/ban", wrapper.ManagementApplyProjectBan)
 	router.POST(options.BaseURL+"/unstable/admin/teams/query", wrapper.PostUnstableAdminTeamsQuery)
+	router.POST(options.BaseURL+"/unstable/admin/teams/bans", wrapper.AdminBanTeams)
 	router.GET(options.BaseURL+"/unstable/admin/teams/:teamID", wrapper.GetUnstableAdminTeamsTeamID)
 	router.PUT(options.BaseURL+"/unstable/admin/teams/:teamID/scheduling-labels", wrapper.PutUnstableAdminTeamsTeamIDSchedulingLabels)
+	router.DELETE(options.BaseURL+"/unstable/admin/teams/:teamID/ban", wrapper.AdminUnbanTeam)
+	router.PUT(options.BaseURL+"/unstable/admin/teams/:teamID/ban", wrapper.AdminBanTeam)
+	router.GET(options.BaseURL+"/unstable/admin/clusters", wrapper.AdminListClusters)
+	router.POST(options.BaseURL+"/unstable/admin/clusters", wrapper.AdminCreateCluster)
+	router.DELETE(options.BaseURL+"/unstable/admin/clusters/:clusterID", wrapper.AdminDeleteCluster)
+	router.GET(options.BaseURL+"/unstable/admin/clusters/:clusterID", wrapper.AdminGetCluster)
+	router.PATCH(options.BaseURL+"/unstable/admin/clusters/:clusterID", wrapper.AdminUpdateCluster)
+	router.GET(options.BaseURL+"/unstable/admin/clusters/:clusterID/teams", wrapper.AdminListClusterTeams)
+	router.PUT(options.BaseURL+"/unstable/admin/clusters/:clusterID/token", wrapper.AdminRotateClusterToken)
+	router.GET(options.BaseURL+"/unstable/admin/templates/aliases", wrapper.GetUnstableAdminTemplatesAliases)
+	router.POST(options.BaseURL+"/unstable/admin/templates/aliases", wrapper.PostUnstableAdminTemplatesAliases)
+	router.DELETE(options.BaseURL+"/unstable/admin/templates/aliases/:aliasID", wrapper.DeleteUnstableAdminTemplatesAliasesAliasID)
+	router.POST(options.BaseURL+"/unstable/admin/templates/defaults", wrapper.PostUnstableAdminTemplatesDefaults)
+	router.DELETE(options.BaseURL+"/unstable/admin/templates/defaults/:templateID", wrapper.DeleteUnstableAdminTemplatesDefaultsTemplateID)
+	router.PATCH(options.BaseURL+"/unstable/admin/templates/defaults/:templateID", wrapper.PatchUnstableAdminTemplatesDefaultsTemplateID)
+	router.GET(options.BaseURL+"/unstable/admin/templates/lookup", wrapper.GetUnstableAdminTemplatesLookup)
 	router.GET(options.BaseURL+"/api-keys", wrapper.GetApiKeys)
 	router.POST(options.BaseURL+"/api-keys", wrapper.PostApiKeys)
 	router.DELETE(options.BaseURL+"/api-keys/:apiKeyID", wrapper.DeleteApiKeysApiKeyID)
@@ -30146,418 +43067,632 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7L2Lcts4tij6KyjdqUqyjyw7TtI1na5dtxw76fGePHxsp3vOGeckMAlJGFMABwBta7JTdT/ifuH9kltY",
-	"CwBBEZQov+L0uKZqOhZJPNf7+XWQyVkpBRNGD15+HUwZzZmCfx5NZVXkh8youf0zZzpTvDRcisHLwe9T",
-	"ZqZMETNlJJMi5/Z3csqmXOTETLkmTCmpyIzOSVYwqoZES2Km1BBlR+RiAt8q9s+KaUMyO9eJ0FWWMZaP",
-	"iFEVIzOqzjShxCgqNGfCkDHlRaUY0VU2JVSTGdfaDpXRkmbczIeEEkUNIwWfcTMkUhF6IjLFKKxPG14U",
-	"hAtSKjlRTOuXuBpCx4YpAnvd2IF/X0yZfY1pJuw4drMXXDNywc30RLBLPDNOC3JKszM5Ho/ImBa6XrRf",
-	"KnVTZFQIaciYXw7D8imZ0WIs1Yzl/iROhF2zPdMxn1QK1z2mVeF2I4isTCZnDA+Ta1KJMyEvxNAuOZ7P",
-	"niiBrTN7CJrZeyKaivxUXo7IkT1qrcdVQRTTpRSaaUJFjhenYaOyMnZGdlkWPOOGZAXVmo95hsuSM25O",
-	"hL1GBJvRiRgMBzqbshm1IGPmJRu8HJxKWTAqBt++DQd/e88uzbE8Y6INU7uV0lIRI8mYmWwK8CHYpSEl",
-	"nTAix3adVWH0kPAxmUnFCLvk2qSm1EZxMcEZj6WhxWElhP2lNen7anbKFIyOr/gTYprMqMmmHlLHvDBM",
-	"6SE5ZWM7d0knXOA5cE1oWRbcAu4HUcw93CAQtce9sPfk7pvli6dm4YGawcsBF+bZ9mDo98SFYROmBt/s",
-	"rkqq6IwZh6q05H9l8/09+29ud1VSMx0MB4LO7Jfh8XBgZ+WK5YOXFsOWn9xpxYu8c1D/dL0xs6LShikc",
-	"tXkT+7lFqDHH2wDCgi8Phqn565GWrSAcZlXxvD7LaEVC5qxzk+7henusIeOtpULtnb6jl3xWzYgIsMcN",
-	"m2kL+YqZSglSMgVQ77f+z4qpeb0soG4NoMkZ0IjBy6dbW8M2CM1wRvd4xoX7KwFc8fp7Ias2VBm4r4Jr",
-	"Q8ZKzjqWLcJwyw9Q8UkKQA75hPAaSB6z0WRETvzWTwZP0oCCo613hQ5XO+Gifr7muCxTzHQP6x8vG3UV",
-	"1uAg5LFm2WdLicb8kuVPgHtwoy0fkoJntCCFvGBqI6OaETs/kKH2kg2ddKzWPum/0GM6gWm6JtnRmk/E",
-	"jAnTG2sUo/mc0PAhUfJiEYsMnYw6wJEuzJjEp5+WYdP2i5XI1NiZRqzpxCZcN8vJ6RyuslTsnMtKI2Z5",
-	"Nm0FmC+4eJZ/pua/64185vkXguvt2nWGS1gOp81V976Q5VdhCdpofYr24toEzdDJr0pW5Q0e/1ctlfn2",
-	"318Lapg2n6Pb+PbfXw2dfPPXQB7bNzcMnUxYPiSHb3afPXv283sq5JOuszB04le68pZwX70vKOfacJEZ",
-	"ixbrXI99fQmSWDy4oSs6YlRl0/ZejqpT3LkTxIgUdhNAUkZkp7DELCfZlCqaWbGIUMXIF7rxry9D8mVr",
-	"42f7n5H9v8/2/za+dO1U4/zxNmf08i0TEzMdvPzpuWWPxjBlP/0/f6cb/9ra+Hn0eePTf/ypi7C5fUmV",
-	"uCH7K5EqZ8qCi9OIHBDa3U3g28612jGTFzJwcGlnGwwHTNiT//vCrwF2Mzdk/E9451PHlv4nrKNN4tms",
-	"tIOGi7EQlk1ZdrYErpaykBkX/uifJtfC6KyfLGnfHFqdy/LAjx/39zw/LKvTgmdWI/wHywzZ3yOPS/WP",
-	"zx3ChJtwPa5v3Ll08v3ohauNfGXKBqpVTNDOaVExS8PCkgIpG5FDZs+I5VYBs2dnvyG5ZJpY1RbUpVir",
-	"R83m6kzIb643eQtf3BvO4xd0AFDW3gOoi8BeHBw+tpf+xAKntI+EFBv+CdgXntSb7NoRvr9KEw/DdFHc",
-	"XarZBheaCc0NP2dEBxKMN20pMGCWw/r9vSFABS049cYE+7ddlr4avd1+8dNwGWQsoaqZLKqZgEXkXLHM",
-	"PrsCIUUDimXsi8S0/ST6BSlpVeYLr0S/0C4Ce25X3k0swuP1SMUFO51KedY5bP38Ovq01d68Ncm+/3xr",
-	"y/4nk8IwYdBWURbOgLT5Dy1BtazH/5Ni48HLwf+1WZslN/Gp3nytlHTmj+Z9v6LBfDb4Nhw833p6+3Pu",
-	"VGZqeYwzhTF8z07+7PYnfyPVKc9zJnDG57c/43tpyFhWIscZf779GXelGBc8wxvdvoMJj6UkMyrmHpT0",
-	"YBibwyPjcNIcHlmLwXAZmBIaXoElXVBuvP0wZQa39Ild0llZsMHLZ1sLkhAymq2UQfDbcPDiLjDtiKlz",
-	"pmpof3EXqGZhj9szsYqll2G4JjkrCzm3P+JStu+C0mRnzNvIcdZnd3PqPGOkEvSc8oKeFgznfn53OzZ8",
-	"xmRl0IqFH9kxd34/OmQTrp2TqFSyZMpwJP70Qu+Ak+GvbL6ft7Fm5/cjgi+Qv7K5Fb2tEvR695DQBnVt",
-	"85mhHdtOLEV6WHzmXCIWw+yoyq2UcE0KmVlG3DH0EdjQwuLTc+BL8Q76Lx9/aClQ89I5OtxCWwN54YNe",
-	"6LTwULPuv+PT4eI1JDcYH2g9rjy18r5d704+4+JVxYt8l4qMFYfgimlfeQZPC5bvykqYZe4W8B9oooMb",
-	"qgAfGX6d8HoMB2PK1xgY3GP4CaihMPQgKaXHZ7awgeasn/xJHKH9t73/huF4paXWjZKAD22oYauQNl7K",
-	"EXywtkqMxyQvhF5Y0WrHSXxqsT08qMi4h05ocgv/Ky86oannjdeetYVLP+NFkQQl+2CtgRtgil+vhqV4",
-	"luWAdOSve4HwG3DegkM6up5HmqDtxrl3h+AZnbEhKWmlmVUe7dSEnTOY2RMN54kcDAfwnt2B20qLlAwH",
-	"lxv2s41zqkB/s9+3VnwYBmw9OvAztJ781U3pj+CY0Vn76k8LmZ2x/JBRx8dEVSDnczpJC2W8QzBP6Sl9",
-	"v34PylCf2VDX2zGN2axyt2FZZQqn2YzyIqGcDQc876FbDQdcv6JCsDyl0cNTPLP0Y+F21iY17m6yKcur",
-	"govJW3rKCrgEcEsmP3I/UKXoHAYpqkmHMy9CCNgWHoNbkPsyPs94J9GeuxfaSWEsZL3lOkFYwsbCP1bS",
-	"WT/YvmGz1AkYaWixjJhYutgVU8AnQoJlBaxRYLSQ47FmZtC0QP30fDXVwS35Ba08HNhPm4//aOA9Y/ac",
-	"V1L0SjOlCReBAfY54CXI40iqo28d0x+2IkDGSs4cRZ8xklEL0kQLWuqpNIRq8uXX18dkk9qL2gyfbbrZ",
-	"NjI7j/4yIgcu0ARshRBtEvzwHM2zqC99aa6TafB/tDa+VMlcjcoRrsYoHKN2fE0rQfPQ2XQ6oTOtjNc2",
-	"VUQ59zaxgo4K3JRr4iC5H3i7UV6B9r7upE7nX3/WKc9ZjRXBLAmm4EVV7S2j54zIypBT+AJXUo8aYQsM",
-	"W6NT73HxkyUDF7WpPjKir7bb0zj8ZXAts/tw4EhnvIrWImqSUFNkvwp9xsvkGpagx3DgPEj7uV4KHVOm",
-	"kfLoEdkRhM1K4x7BQsCXAs9/gfg6wo1dErzAzpmawzMwZHvWtZKwtph1h8V/B1WC/b0hBid6N1nLRTYM",
-	"awWBG75ilzQzxdxuao7xksSwy3pXNPIfOAUEyMcQPYVSESsJRKwwoxqcNm2BRSrzar4W0z6SyrzhrMj9",
-	"9x9UjqSDFsWH8eDl35cPBq/veTfC4NunRXDat6tmOdLgL7jCL5YG2zs0LB+h32IpuasX2fbFoDPDSOcs",
-	"Pp0PIUCTCHYBB20hd8yVNoTOpJgQ9s+KFgSceXpEPiAgnQgPSRhaecECuYJv0V/ntQVH1D2Nj6n4IjdZ",
-	"R39o7fY9zpN++NrNnn66G60p/cZha6XxqR+2uTcarnIMaKbFQVMf7WSYSTq06E8DLl+AKw1nJFzk7JIA",
-	"OydnbO6Mm4iEI4ILghjqU8XZuJifCC6yospZrPNCdLSdBFCrMlEw6y/uen0wL8zH8hNRf04VC0Aah4Al",
-	"gDSlIjQZcxF+XzBsOWnrkSZWhSaawSrx9RHZ8QZw0Gztb0SxsqAZ2u6ySimUcpwf0VO+ODLj2XAhWqAd",
-	"p/HpsfvHxqf/8D89+b//lKIxM3q5j7Nsby0S0AVJqFiihUBYkA+LOKYT3SnSGDrRyaA54EgYX2T/FXtc",
-	"46NYSfQNVRNmUlPY32svLhfkBHD/paGTk4Hz/a+0ALnhh7iRT2HzLI+3n9Dz6yDjVfYqeNUehcw4yFZA",
-	"AR1DtYMPe7DC5DH7pWJYVDCPrX3KrTOBRfkt2kMBE+pbOXktkhbzgp2zYhVneysnb+E9UHu0ppOEPPpW",
-	"Toh7SLyHIGlnZGXK7sRKryThqZdKgpVbsQKO3kFiISeEwVZSZ81nTBs6S0xw7B/5w44H6iMZL550mKo+",
-	"kqE7zXDsR4aaStcWpYWjx0txfwXB8e8tVv/WLZWz1nFomIEonGLYz7rQBIkE5nbe8Tt3vx4PmvMPPd0s",
-	"5paaSmWAP1hJdCydD899sSZkRFbWlTfjF29vYffgY4eGvHvwkWRSWc1Yqi5LdEsMTzLdXSkEy0ynhX7G",
-	"ZjIVvLaHNw7k1qiKjQg4dTGph0JWU8S3NZpac296RY0+5/oMjpTBOb9sfJPJIt84ldJY9Z/pKQxKxZzg",
-	"ijy+BSsA1ygL20mEFf3JTOaWIOZWWM5ZwSzLJnv1nFNq9U6qpxuKZRKUBc1mVBieafL//T//L7lQ3Lhg",
-	"rXFRaSuOBM2UOeMxSBsWIbWxjFnIDVnCrfiFOaHfEhXKhdVWcANReBgAJHVREXZjTJxzJTGaODjluIa8",
-	"rVNecAM+ObsuJuhpUW9Z8wIhOJcXYqJojshG/aEppo1UsZ4QKaPeZ5kkPygOBe98sMh4YcN+7IwFF1Pu",
-	"Atv8XWrIjSPssuSKrasqJmiXXWVKgGgC82/bD+D8AM4N9vRsq2XZuEPg7gh6bEExqmlWhdg52Hf+9CX2",
-	"5iWyws7BvlWUiE/pXNt8N++v9Nv1ftR2U58WHUjBqL1KZnXr7SOanqXiDA7pBWrx7QFbAxRUm4+aJdb1",
-	"lmp35wCm/hAvqCbOS5c8xJVOsBnVZ6vEm/pM3lF9xsVkjxnKCx2b1RdMc2APWrHdlDkaX4RFBZt0DVhW",
-	"AtkDMtNLIVu9tkhB6KlneHUOqd3VFQufR+VVLUs03zGjeJbQsHJ2zjOW4hAQVJTOyRoOxrxgeq4Nmx0n",
-	"Y1XehOfEfovpeEPCLs3zIbkc6ydJtdqKfweSp2TAd2AFKe1Df8KWASVPVxpavJobljpj+4zokmagy57C",
-	"WzH6dXt5LC50jGrx6iqDLkrD9f6H/mJaRx0vpLFXf9VH/F/s3avEjQLv5P9ii1K0XfM7/mp9m/Zrcf4b",
-	"VUttYs0lvK45IzmnilvykRLq29j8WpznvzGlkyFd7kEwHIvzPORVe0GjO5gGg9vaPEfmCbiGlwk8G67O",
-	"xR4OQCj4nB7rHc2mXLANxWhuTyLIL06UsF+NyHtpCCVZIQHGmPmFcMGhtADab1/6vX32ZQ4+R5GAw/AU",
-	"DGaQBegkhfqRkJ8taaaGnxbss5B59BlSyM8uauYxJfaxKx9gRRhXQiAGp+DH+gXDWJ+0RlNsbIE4DOf/",
-	"jkcZQ6UDVFat3OXqFkypmDAdF0k4z8rKGUmdefNUVlau8VdvwPYOlopfCCU6ilIdEs2FJXMy1JoYc1bk",
-	"dt7agwFJSk+GxN6rErT4jEN89kNAtNxncG59xg/zIeE5m5XSMJHNP7uxP8+4BodH8ykXn33FieYDV8vh",
-	"s6vhkHR3dKr/CNarOKOD5FgPf6PkbH9GJywO3cy5HXvGBTWILDNalq5kAr3QnW6WKAB0OJhkZdeLv+4e",
-	"RC+qMHPH20wwRYvwBfrXLPLO37ucKbvrb8OBFKyHLBcv89tw+bvxSle+u7hOe77xAO0IQQzm3ckAoP9L",
-	"p8idD/h1L5H/OvrwHtDl192DOwgutbfYN7g0sZ2UIrt4Tq1jKanWF1IlhNcD98QKTlajqxMlAzTd+AmE",
-	"sT8lBq80U2np8KN70n+p6UMNMwzrc0mdaqds3TYTUH3G8t8sPzmAkgCJc4bfQSGwhBW/IOdNzmvkGRMQ",
-	"YJjWQaJ5jqpxch78/ZrzlMs3gbVx/Ono1pDEHXRrXOC43onUUqPg9+VL7JL83IKbMwwT95I6Q0tU3nJt",
-	"WN5p1oSku4Rnw/7cR2HJCs6E8Y6YUjEMj3ea3+pKLbzDwZCVVbD5LiOkwTb8bWhZUSTjLvsqkoatKCY6",
-	"DQh1cJSXPi4gQrZl41ge4taUUZcmVESvYniaVPPVG3rn34NvDM2pWZm74WDinX99sX7J9cLQ1RKzTOJU",
-	"qSbuo96n2ivWvR3mHudUrw51d95NsIShyYvrpj0TDQVJogAZl+9CeEAvt4632dbfrvYXxmngcUh9QM74",
-	"RiLciuCrgT0eJfwZNyEYqIr3JXbEnrdAxHPInJ1C3C4XYzkYDi4ohG1hXlSKab6VE10H0CRUV/cocgg6",
-	"2dyZI0/r0gjRMsZSXVBlfzml2Rn8s18sSmM9b8IojZ9fhSHdBo5kpVKmFPx9zaXb25aKglRQ2ivR4KTt",
-	"v3yc9Tgapv71IBrw29Arovv2stp6cFntqGzKDctMlYpt3D34SGj0ht+oQNUiRfPf0Bkv5umhxvCsxyDv",
-	"ZJ6CTDvGzD7qO8T7pLBWDyMio156rEWdKmwwWufCfMPWueJFCDoBJf0Ao+mOmDFcLLFDKnbO00aRd1JI",
-	"IwXPSMnUho/O8++PyIcitxRQkbzCtEAWHrqEFufbsEo1qN0QpIzKNBCM5UHCSferdvtZRR4Xtt864rDt",
-	"aMiUCPyOXh4zOkPrZ6okCZ2RGTx0bvIoUmAhAqcZrrBcBGoFMLg51olhiCIkPoqUMLt0Eis728/Qrv/Y",
-	"u3rQ2sFKmU2f9IttB4E0HbLlgm6bHohQuNAvx1lhJvycCbSgnNMo7QrDfJeGbDTPwS8J8CUrlxgfWzF2",
-	"73YPFktntkyPHV6NCKQiWW0x4AK8dFewrj7d/nPq7N9x8UYxBvb704T3pz5qHIiMFWPODl2nhXm54ZF2",
-	"0TrasFIP3bpc+KdTSU0dieeciCNyxODxFkZgo5FMyMacG+ALnih5YaYjcoy5K97+z7V3b05VJc7sxFlR",
-	"5WicnTLFDTp5aQEV2zYKqiZMRSPoEfkVhrZDndrp2XgslYGisdFEXiImGRWkgLB0u59gC3Unows+mZpi",
-	"Tk5ZIS8WgRZ3NVrfGP6eXSxRvwp58RnNh8x8ppAtmFLH7IKCGVUSfBGW6D92nnqNl4IR+QTqBkzpOdN1",
-	"2ogVtUuW8TGUEciZmH+o8CJH8L/NLY+agpkLqc4caqS9y7QyEpL2VicE7FRGzqjhGS2KOfrZm7J0BJrO",
-	"Z710xndRDIObN0Vzd6UwSha6GVdwBhWHqdXFW9qInWHDrU8KvxjyGIKgFCvYOfVVWsNiQC9QFXsSR0xg",
-	"TYd6OJIrWfpr23DOe4xaoCInTpzTGG1lmtjymEZ/bcAbfjNPfsH4C8AcE4dYPFYM/vGkaUH3URpQzndK",
-	"aH0srtzwqVs1hnVgeLGi4zHPYKGzShsUT/Gxr/RbzAH1eDxOJmenXIRwiMrIQ/hqRBZjTchjCPL1x+I3",
-	"1w13OFBPjWonfLAL4OwUc++nWqGUw2vfhgOOSac95tunkO83Q060VHnPymvq7Q5Re375Ht+uj0GzLAjw",
-	"K0w4GIoDlfOIA8xMzmaV8BVt6qDCOkiIFhd0rglOk/+yyHzALecNeQBauipLqYz/wpG7jvCWtTR6L0os",
-	"98InImaevkjJcphjc570nDrR6goc4zsYDj41GBVGjC0oq7HBw96ULz7z3WDhgZU+sNIHVvrASu8TK70j",
-	"btQRv3ltdvT0nrEjCKBIRS/3vF/4vnG9K8PzMGhjSCrB/1lhkoSj4c5UNiL2dcyAq2uhhxhibaSiE6RC",
-	"oX4qjEBNVEXd3sEvfkJfcN1SPsUgiCTHaGOsFVWXr9eYbBdlsIGJYGkK287G/97a+Pnzxqf/8adO32Wy",
-	"+gCYiGZUnVkdHe17VEeH9MgnjzqGjRq+ch8qpmVh2SVaEagzB1EToJJBaMtopd3U+bSdeSdhennPLpZF",
-	"Cd9cvCiM5IATQfsqsyFCDda7qORKUmfhQsoWjPVXa6DRto3LWbKo7i787geQKpsybRTEBHVGVb/xMQcr",
-	"6ij5ULIxvN8vJhM/cc1q2Dqz6PBNv5n6BXR3+RpmTQ/LUt4WvYqppnV6cqIKL2QN22k3dCZLltciWQ7t",
-	"j6TAqjEj8l6KUrpivRg6SBTkMARZf9TPJDyrY4mXbcRCqA87/jYcyMpoQ0XOxeR3x3mTe3GRfGMCgvRU",
-	"Frn2tYQFBET+b6YkmTEqNOF5AbUBrOA0Z8Ylsll9g0eVp0/nhBvNijFE9EjF/8Uwxnpxy1WfSifB97pG",
-	"fTAfjBrtY3HejvhRHRzbkKC3ek73IqmBpnmn6VkwTGtf2BvKklKNDzrj7p2418oK4HdZhD3ABXMw6292",
-	"IdqzR4ABRJG6/MYLqklBtXNarRFpcN4zvng52UulHrTPd9joUBTyLBe3vQBsbSxaIBA1crZpY5Med4BW",
-	"fQqBCTSp1yfHezCW7IEDPXCgBw70x+ZAD7zhj8IbVnGEFOkP7CTFBKKsssWi3LmPR9BJEy44H3YPPi6D",
-	"3vAeCQUAesJs+BINnh1ZWzszj+j1THV68jqpYXEYayrfrK5lVpcyWB8Ts7I6YCpjSZy3B24Hr6DmQ4nv",
-	"YaGLPmPnXJ/pVBagwcQfd5dYG4JmUzCGbs7qpLy+9SziZMRENYtpNWEHdMKO+L9Yx7XZR3BpRHMxKRix",
-	"3/hONevcmp9LHzpbzNL+n95e42fT5DFiCRRRrExgAWC7Y/mTdVdxnC4RughBpWI1uNaLWQJOqyZOZwXX",
-	"W68n4QKiRB5D1iHZgNiPvvtEzDpemZspkHRcBQ3xq4/deZrvo7F9hsGVszUbZKyD5jSQtr3ARJBudEAe",
-	"K1swsnh3KVBOoZIn20eB6baDeisds+zRidggwFROXYEHuB5XvoBmVpQr8CyHgAToyPDdlSBiCLowihxq",
-	"KHBRMUjAg4qK6B9p1pWD9+3WFeWuenSGZS7wj0pMGS3MdI4c0S7M/mtaQRTg51xeiJ5BsvVJHLo561/2",
-	"6tnrH3fjddQ/f4xWVP96FNYW/eZWuQeLbFwGsvUbU6dWlhNYX+5arOmOP9tdLJQ/bDRIco2NEh2YQtul",
-	"uG9BeDkZJb4YFZqMSnTm+0c6xKq610fk4OOxrxynXW/yWVkww0gus2rGhGn7m72W3DNw9Wjh9Y5S+EfL",
-	"glbR57YkmafpQF4eynFDLuSrFJJ5KBfzg5WLubvgF4sWhzzRcH1HNFQoZDellNhIH/3qUlhSJ6uc6IwW",
-	"lpNAI8wW6vp8+F0sa7NMxPGaq46qolFj0B7gyrcpPumX8+/n3WMa0b6NNPAg7vAd5neQvvZk7+hldw9E",
-	"/xJhYixVZrEkTGMJZXyMGBBsfLVaIQ2UP3Zfap9c//jX3QPybv/XkCJAhZMHIGLBDsnUE+Tt62yDp1IZ",
-	"XKjx/d9GykbXpzF5IoNVnvM8Vb98FyDfPwe0CH3C+IQ8PhnQC30ysHTwZDDJyo4JFNOQCpSSLHaD+xrR",
-	"zL9L9veC+zw+6/Yidg7f27vZ+f1oSDQrxhsFF2f2l193D570s4uEE2istY1dwxaef0Lisut/DqJVGgsD",
-	"VBmJlWc7YapFYfIuDN851bKorGBxZVRfo0acX4bbeChosiB1ua0g4+ne5ZAAhFLfKSdY9UJIYF4xFO0d",
-	"WLDLKa20fQR4siCtdOT07WBC3ymzE5dM2QPw2ApVXHCZGRDk3KHN7uHrneP9978+SbsMUlVWDhwcbWAI",
-	"X6O6ihv1f394//rz4eujDx8Pd19/Pvjw4e3n13/7y87Ho+PXe0PyBo4hOaM/moRw7g+t3gpWA7WS0pDw",
-	"sZVu1qrn8ZdqRkVdKwbHrKuZrlNf9ff0GV+/uGqimsghn+x3ntKOqKErZre0F/YtqQoXdhjopO+4gJGE",
-	"OGfMI3jBGs8wOjGqnT3qbStOMQEPhfX4+3vk8evd7cYPnmSG3zD3EMnmkNBCy1oJ399rWZyd+yFZsdUw",
-	"BeVbXNGWtuIU71wK6M17Qee+pg7kcAGxB12eCieEnrJMzhhxKjChE8pFWuCMD7NTdXOH5DpkcDEZOkeJ",
-	"/Zdi/lfogGymTF1wK5ZXBn+NLzCxiBSbaS6reUwWfn+4kgq5nNGUEPWKaqvn2odR48MQIe1iVbl2kdL8",
-	"tOhV5I+J8xwbBR7LM5ak8xh4DfUwwOgGNmRxnjfDyG+2osJNlTi4y0IC7g6Wnib8XAeUQpEsvK+6gxA5",
-	"59Ti0uV8tPoGr1BkYLFKQFe4cBsU6gDpRB4m1pitfZZtW4zTf9cOX37tvlvcrB8vZYTpHKRX0L7fpZuB",
-	"jAs6SW/Sx3SjySStq7u1dIVcXJcSQUrFvkuK2OlIqPh9yqBri0+e8AkVF1RHwexhw1KRnGu3+abdYETe",
-	"Y9A6+M8NjADWjXoUzcwS0I1O5o9Ql+bOCfYdlMG5hxyh4GOWzbOib/bD2/D+3RfouWZ2AhCZd04b6jHA",
-	"QXj/oTjQQ3GgvsWB3CpfQ3T/gRU3uvj+0Yfdvx69QJEEzeXNzADyoTJgjyPHuwdwuJUQDLr0TpWsJlOv",
-	"yl3OnbsCWNZmzsTcdcnEbkbNHMRK0Auq2IjsARHdwF5jlhnLCyhtTRSbScPI3vsj8njn+H8d/CeS2ycp",
-	"5rPAc/NcJflkY6/uLcIFmUptXkKGI0J2sAOioOb6+o8yOXv5dOvPWyeDJ8lyn92FED+UWAKD+BX4woiP",
-	"D9/skqc/b//8ZEhm9JJsv3iBTu9RM8Nk+8WLlFBa9AXXCBCO3x7V1Ki7IOLikv2b11ryopfeXdQSGS+5",
-	"8DbRensUJBnvkZah6VJ87Zgf434RbCINRynXN1aowdsx8VNppkRVYA3hOTJ6O59mED8JKYI1CmSKAZWi",
-	"BWYnWeEJ+nw6g2JWMKrsIrhPwI3yI6ey9GuG0X4hF9CkL4wOQYtSXFCVg5vNaCIvhN1yxpQYkR0ypcV4",
-	"AwoSx51KEe3qurkBYTWhsBn44rOQho/nQ4wfAHx/s/9+iP4+9wV2DbQ0VTc+wqEg4xFnzyqjXYJdaaXG",
-	"qVRmNepmdJcpk+rCCJGcM6kYOXj9boOJTOYsJ5n9dAwVksDNec6UXUy0wwnlQpuhK1nsyJySwrVXtT/x",
-	"c8tCdncANjRrNDDzddIV5EEbqdiw5jNwOxwr8Xueaa+l7h0I0NYeg+SsZKIOXbUEKGEwqoR9AyAMEqGh",
-	"drMk0PTL5z/Djn22N7SZBHl0ARn//PTn7aTEFulNC1nGFoka0EjkOVMWWpp+ZCFdz0gszszdISAme6+s",
-	"UxraSgJWa37fna+VutTo1usLBgS2ByUgRe7o/f5CTq4/55IqDCxE6uOK6MCaG71441lCtDDwKcyDdvyj",
-	"XhZkDqKdlJoWNXy2ihr20Hhfnyd9pb4ugO8av6CZ2193qWGTECWwXBnz74aa7XYA3yXgUZDVHw3JI9dc",
-	"7NGQMJONknZ4+HrPydodPAaqJEN5oESPuLCtleWf4EVocNhnm/BirQAHDwTsNm6M8MhXSHdCWrTxz1LO",
-	"lm0+ZW6GS/S5rbXzsVdkEC4E+o7tJ4b+uDhoKy4AqkzFU4UorK7JXl+yrLLjX21C5j9fa9IrzbXWDMeM",
-	"zlKzQNm5aI4UQCbmW3Fjvm/J1c4wMhD12OA6zfs8avUsepeszY3w3NWMpDM4Hz/TRlVYmbIOcO/hgF54",
-	"edjwdNUwlATi1KW0UGsRTiKl6o1UZ939zetQcx+4092/eizVWWxwtGwK9VWs6GKfa3IqpVloO+9DmoLw",
-	"GQdfZbQ0UKbFSoVEsQlVeWE5lRxj+syIvKbZFEb3xSS1la4gtQoazVrhBAJtUG9zvQ7sABBfDowOc2ks",
-	"v7diKBY2DDUVdCmFxnb2o+v2BL9GNJRgF+1Dvk5oVDdrRqjQsLp2MUD7uz0dKeKCdnZpI/Ia22/DsygT",
-	"LTR6BE3BvKxtMV5AwQtEnuQz1qwEPh+6L+FN7hs+gnRk304Y731UwlKbHbxU07SequfSU9vHAiRpceZC",
-	"qrNC0tyRRjNvOiYwyk9sQB/2ITmnBc/RcKnJjJbO3K0TwywavdsFRWGU/qVRjvH9FTsNJtfFkNGcs7QL",
-	"3j3xeBV2Ausb+iBa17/dSr3OS5uP0r2XzphIt4T6vTEySD+ra0KEhcdDf1p9BEubEq1x4O1G3VZjyMMx",
-	"beBmcjaGrjxS6GHdqpuSjBYFUxvZVGq7ZXjXcrHRoHsLb2NDdRpqg3xMSlnwbF5XIDmdR+GZY5mon9Wo",
-	"ApT28TRsm1TEhY3SGpYUxzUB7XG6H8L77fsOy4uHXXLjb+Uk3d8Y2UWzrC9ocAUXrHUu8GNyHPtkWZPk",
-	"79TIGBb8qXEOHW2jQWleihBd/eXqw77z1tPf61Rh/XGbaHd6zZPWqztENxNrnASaY/n3lvdkHbfAsmbQ",
-	"hUylRby9iTlXuiBg7mF8Dgtn9tv2oRPakqe3qrN2IH52N0Gmz2/s9FLbiXbwLnLn9et2579Y6SxrTJIs",
-	"VP4uLu3dl6R1Z6W+b+ej9gzTLquPmuUHWUeX7mXZp+NCUtMu/I1ep6XJj5g60tlesTsh0H6Yzm6EzJDO",
-	"FMClKYZQJaCzeIDLvXgMCamZ/e3J+lMsPY0luZFLB00fxLsV2ZDdQ/57VsRfo0595GON8Ka+i+iqI8CK",
-	"oDZGjYgSNf396WLjH1KNzd9yHdLdL1hOcqYNxDpK4TK7J2hudomZqMPj6Vk58JQRSnb39w7JaSGzs+DC",
-	"/PMI/rf5bPtk8GRIKDmlipH9g2C/XngR3gJfiQtvQaefeylyhZ4MhuRk8B+jxk9PwHABG2DIaHy1WUPP",
-	"GLFwyHJUac6ZIjkTvH7V+RX8GflMLR3WMnSF79Q5U6DH50Ifub8eu/VbKdsxqifggYPAXHeqozUa97rY",
-	"q4PqtODZMZ56t1juRfKPh28x6Kc0wYPo01ciPvNI1xVIo4gbdwLOewS1S6qiIFI4s9AwLoJY9wEgtCwL",
-	"znTkmoIKpJUoIg8FFnPBEhWE9wzicgV1u+HVXWENeWBKquGLpaF3rwauyFGKdYZd0BFEEKiqQM9y/2ur",
-	"gSLBWt4fBfhZ1KTAd+Pq4HaCYAPvfOFYKsj+wflzv2XnMS2KcMcGqshC6WWEQ2zs4KoyFr7Vgb9OOBXs",
-	"hOqgGlCypFpDduKsNHOwrdWfCymYcysHXxXe9QLYbTKTbWJdyFEmxXj52c7o5T4+fLrVPmlWO+fXj0Oo",
-	"gxCmxpT6AGLjO7VqCJ13rZnsyZC/HB8fHBFFnVJMBSkLajnBpYFnI7IzHrPMaDJ1p4tOutgJruvaON6z",
-	"7w4K7Z4l4L7FaXt3OCPjMOMFnY/Ibux99kCMDlmWO7dtMd7QfCLAHOuMUegVhpg6CDp5/Pznn//87ElU",
-	"ZbiAjoGNq2kXCgk21J9evHj2YpUVNbrJqKEJXuVwgN4o94Jrkz+j2tu5/yJ1yu2IdbfRq2rfduQHAhNP",
-	"WR0+aFGhDkKAEZNpEIDsy2T4dZQJx4kPK4wSbFGJZgoIUxuO30HSgT1tpD2OtoL1FJy/kOHgY6IcFLo9",
-	"jchf2Vx7nzeY5SB+CancY6CDyC0t66QlX2CeyHcLRqEBywUv8oyqvPXhIs919AbgT81owf+Fy4XKuBnV",
-	"kKUCKdQj8rsbVDtPtq5Ocd+aUANZ3TkrzTQUTQFPd8kuHfn7xQsQJ4P/OBlADIoAw6szY7szW2D2QzKW",
-	"Tio4nTurgJgwbeoTDZvV0DcTtxSe2lGJZqbGshlTE0tHXylJ8/C1Dq2n7SnB6TgZAGfHQeeEXZZSs/qq",
-	"Wd4I3DESIynqBUTS2EJuvDA0szd/CBvPJaxuoqgwoeA8cvhfgvWa1fxFs5IqalgBGY4lU9DvB1hBmBAT",
-	"XBesPksszTHgt8XwBnTHwO04tIfleu9BEnSlchPmcj/oeqgZ1tJnO8fxHB17ctJyCmMXd+fKB7gmhC6F",
-	"rLmrKaM5U+vZ5hbSAo+PD4gbBmQAATKYVCD9KstzoI2uh/JARnYEYZdcQ94Ufh87n2cu9wzdcAXNLCL8",
-	"hjX7LLQDIyS4KP2LL2ANPB98oGRKy5IJ7WLsN4D5+dLZDGqU+YCZnYP9K4Lfx9Jqi10Be+8bvRh8pkkF",
-	"3/ju8q4qXshMOGxUB8F84nCvgH3hjLwbZNFhBCmFCNMYrQTheNpJww+q2o+tqv3QnUceFK1bV7QUc5f6",
-	"b6xr/fgidmADFNKfHJd0DMDCVPCBL5XGgW66IoUPEveDxH0diftD7GJPVtLoaM0EVmkL6qOo0NoZL4qB",
-	"SxRLllprZYYlrJJ00dwI9S2Mq5Wl6bm9yi/jqii+4F+LDZp8PgR6NIaul4pry+SqVzVJO+ZBckMKNrYc",
-	"a2wnCAP6aRLNoFqDY7Gxjh5Phz6cwkX0N5J2MeaNG+02OqWajLngespynEY2qkogs9CGFwV84RSB0KO8",
-	"gquol7ryPjoDA2f92nuFMA/p4/h8WsVCI6lmEH6qxRbXvgWXw8Nwwh3V3er2WtzUJz4khdTYELbR42sY",
-	"JHQXC80cP5YlE1EWDpBsSLjmpi6w5vKJQ9Pax+4DAoUy7OtPfoljW7xp28nPRvHJhCkXyqNOuVFUha5e",
-	"Q6LYGIrpadcQzOsQrZJ46UoUXYh+yKACXucl507TSMhDcTY9biW+hbrd/BkrDaEQxVgHKsbWvmc/NUIm",
-	"14tSjEslLpZLgpPZWcPnIdhFFFYZFekKt+vo8ajtSenykdAOv8gHX64+1Eh0xtnQCvm1FwXCknyNQw1g",
-	"icG0Z4yV9nOu6tqT68HAkUPAXph+B6j9shUArGcQ2Ya7ptrgnJYFIYLWd+YL7wCyx732yGOIFHUFHwMt",
-	"eAIVXBjNXdVlIy0NDDwCg5GtuDXhoun2wmJUNTtK0I4WfUkTk+PWcHCp9ZBcYM6elcN0P5TvakoWElRA",
-	"sw5ho/6sfVz+iOyP47aDIS3ZGSS4xgFcF22UWi21BBTCxt/eaE61cxc4PSVIuGHQ6ApCyR0cyeolyQiW",
-	"Tlj2KdrtWsOsHRkTygDjQXsZJV/GFJ1g1Ikspktwch9GRLCOgffGH4gWwKTjTpLaLpBwhSJuZnWoY5wQ",
-	"fp1+ZImsYjNN1KyiZrrq23QLNxhvyUaY/p2badQ9IFlzl103iNdFU33rKMLrI9RC98Hu8C3qLJwjsm9c",
-	"4auMKjBo1X3ysKfJaJ06ZQuVEHCYC6qjkgL9ImMcuP62qk2FK2LvCnOj5YQar+G4cmOsdxeW79eeMZkI",
-	"BR/1rFyBt54YBS3E610X9BRxH14tCDWsfeiRaOFKo/MeRiAVrzeJcc3DX4JQcbPJre3nw1Weh91KGzlj",
-	"iswW4xwdquygqbdUTDNhhs7OBcdXCQ1vGDKT2pBn297o+ws5Y3PXdJPPuEFYfbr9Z4xMG/q+QfbHre3n",
-	"/ldMHw/tKsOKjCR/fvrzNr4GplJpaBGaa8YH8Gy78/TQz3CT/Umv1YzTsuFbbsXZ3YPTi6a+kVSbCSUs",
-	"tW+sBOpsYuO0fEO4yIoK/UKMzvBtCPkEKwGdOKeDfbihi2qyOZtv+FFenm8/Wcus7D/sSSuWLXbK7OpG",
-	"5KNVGsKqN6EolzNAI129iHJnlm7G+yuGUYnDMS0KDXV2QzlqelGvZ3/PjUhPs6fbz8IQq286Oomhu77U",
-	"tR8zzKJa8F+V3HViXbBIYZ/VIM3afSZTl/WeN1Qsy0UBgHA1d7xNvTnkSik75i1dq7G/960JlBqhVZIH",
-	"hgv03B1WvOtP7mS7OtqukBxCrKs/b1+ht7/YgBO8mjtv5Ifx4OXflxMzu96P2koAnxaD+3o3qav78K5M",
-	"bracNR25/NbyXKB7oP34M7BoVuluNryyQNqM6pWVt+otvaP6jIsJ1ubT/QCwbxtiOBEHPbCqmPF72Hlr",
-	"2WRHLwwLgo80YRClxs9ZXbK5wK+GbYS2Yx6Weg96KKTyTF10Q8mU05pqHJ3ROZnRM0iSxSYMhIkc+kP1",
-	"DCqvF/CWa3ON6cGdtubkmRRO6FrS8NDX1BdLuuxRA0bidWf1yeKQIN5r6sAAQMG/4gIcSX2jGAuVCU8T",
-	"TFwxFqdi0IXZyYQZHfKBQxSMkIINrej1jr/qn7WRWgB28+D/Ynj5eOrrDQ21CPSxKfbofGmvztxKrjqu",
-	"eYJC6RkrTU/tiF6uOlF/n+NVJ2sB2x3oevsNMv1fZKWWQJSOEkstnRxiyTL7Td95Duls2R6d2e3KNzej",
-	"l79lZdU9wfnuwUcdj3+FbI6F40pThCUYWy8zOpIA0Ivg14V5KdhpUcZhm1Y3OcKSXLvAMVbxecdbWqlx",
-	"+LOfrytpDcqcuBScZs5a20TSh/JajlaTvvqTiAAvCJw9MtriLsiHSUtlqp2qr4hQc6FemW4PKVOrUqaS",
-	"+Na6Iw95vn1bF6RDDBPLDxnVKaPY79N5Q79wr2N7BqLgK5AnFcukykGmXCk+cv2KCpESWFMqzSm+m1Jk",
-	"uH6F6+k5knt5ddl7v8B4iuHCWfkTBkm/da5s5gpRr4Lh1/ZFD1qVhgpUq0+wlw7hRluhQKQkalw97tAV",
-	"PUrX1PZEaEWHNXw1UWm7vz0C2PzKZF0M5WgUpbXQaT82/agdzNNPxwWTZl3xxUkilsBO+DkTSyuKw7tH",
-	"vVoMNjho3eP5KgW4e9vZG6e3tqX9plXmxkoTTYr8X31KuV+1BvnVy2r3NuF4y5n2RYjAmF9QY489yjP0",
-	"b+oR2Wn9SOSFq3JCBVaEBPLnfTH/YkqGjEbMRcfyDeTxF13SCwGw8mVIvtQIZ/+ysH5kn1vosT+ES/7y",
-	"pBGoFZHnxjdrQRw6C65lorhCOfIO0+z72Coblvl40ZDpihZjLzX/LF/P6IrRFP3hxEVfQLOqYh6Vuffx",
-	"hp02wPqur0BOF29mSQb8lQqJX8vnlACk63idGmXDPXPoVR3cXWaXKyqmk4u40rifBu9rEqJh4MIeepuc",
-	"JebgwIS7BcG7A72bgollF+V2E+8f2GdCAO7P71tVO7sssrfKml2gyhX48t2zPh/0uc6u/De9t3UVUq+v",
-	"I3n1JkX1pq5Ph2rS49a+hK4kaFMLE97wgn0sC0kTOHH9nDtnhK7T7qbUhPwRqMQessQqWIQ33qWqvjn3",
-	"+HLaNIZAYh2iu9xHoeK7qxzSJkeVStSR+aiKqKMMjF0Hh+KKwe++8tr82lvnn/YOX4Eatf1BC2W2OstF",
-	"wTquWiwKPu5XaKuxgOWaYrSkxy4PDmMi0KJi9/3bU4dXJTVTZ3uYyXOWD6FhRb379UQvFSwgK3cdWuJr",
-	"10ntOsTkLrhhgnakS5E11vhWTvS1ypHdJnx1lSJr7MBRod+eLe0I1sN2sXj8I7IXPkOww1RgjAldKDof",
-	"V3q4noxwpR5LXHhDOTofln7YeLlnqIA/kl0qXNQH+GfoBGl8JguIqoOEH1l3d57NN/y3vhdz9NPL86eQ",
-	"HLs/hpEg4QqGzoeYwYBxusaFTlNN+NhHmjTjSBwDMHSiCQBPr+uxryfYux3ESBce7ONMmq6otahOHFCx",
-	"bm82++0Qdm40+fhxf88eIiTdoGjuiw3t75HHpfrH51RX6UWMAQPyb9uJOuHN8shjJWf7MzqBfiD2Dz9K",
-	"YPJoAqMir6sDt+M+odP46n6BMZ+/mMrCS1Y1S3bNzo2EHjHNatvL2X/YSYL8wgaNBASHziqnVLPIg7Jw",
-	"7TMuAlAlQCrMdMgmXLs6pMuw8U3rAzdKbJRddCi5Nd3YqkGa2p2luraDnJVNWXYGXelc6w9sNcAC3vn5",
-	"MEJ8qeQCPqPkXACXNzYLK1exLp/uDe8um6+F8n1EgCPDyiRLSwSVtYWGZKJA1bZQ+aX5hAH4GzMGLig3",
-	"+C+4XvsSlBVPpRD4JThm6iWCTqZ6xy6B2zfVr2MWvKfWviXcbDHT5VrM7C5F2WBea5vAYLuxNHjEqMqm",
-	"3cKsD1FeC4tTRyDYpdmtlMY6/ovR4PZ3v337JinphA3jAoMBVkssDbtea2IX+h4tonEIluokiAcr01TN",
-	"Z4W1Q+DUStF/R02qGYQEhXQtO/s60ASJdn+hOpF2Y3/15wivheKsfibyuC4CMGWX5OgvOxvbL356gpk3",
-	"hik7zP/5+9bGz3Rj/OnrT8+//SmF+leQT2D2mxBM0m1ejudlnQGCR7oCe6AdQAQGx3RyfbtDoiEP11bG",
-	"7mUe7e2FdLK8p1H9QzpoR/98O2K6R87iscFWInv/QlRpOMsdWNuMpRLO/LrX36mnxrCAUe9907CY/V4R",
-	"Anba+huM4hv1uUL0SPS9x7Crlu26/9ZO0WjZ1568MKU3Ko+u7FA87er21T7V5tyjtUMwGrdYzzyM4al1",
-	"Be0T+rREnmwArl7NGFOS/yLgRLFldDIkGksbuYoXY66wCdFaLLaJX1fjt0ZiGSGHUcB3IfQ5hItKRb4I",
-	"qMGBNgQF0paQNY8e3QQrXn4dkDi/5CYwW7mnsGjxekqhtE3BrDiBHY+at9aRgh1K6RyniOj7qNJOPNtC",
-	"y5au5oq4icVZVhzNr0pWZRd1BQBeF0SRV90RjE6pfifVkmYy0E9VdSwYjoycsrmP468bV0UvQ7zpqEv2",
-	"X2Yn6H13yBHjQ6+31ucCl8D2GlhMNflixXv8+UvUYywWp6+PzrXOtC4wILSu7EZOwf7enz5osAJ3n6FZ",
-	"0R7CcJEZB2VgC100CI2uEqiKhfeXrBwTQzsLD9yVCvwtsaROaPzOYUCJggFNbfZ3bqZ1AkzfALugtCZl",
-	"f91d8tAlzizCy7p0EuMvVu3WLaYNUvYA8OaWpQN2+CvYRbN2SN/0MhjOzox1JW62pAQ+SSpde2sWlQhD",
-	"OY9NCiNxCzsi72iAh4XuEvGVrlpgMCgvlGmDQ8UF+G5VIbVpeCKwNq7PA/bRil9oyUcn1dbWs+z19qvP",
-	"ex/e7ey/h7/ZlxH5YHE7NGzzMv2J8IHcrhINqkmUZJBmTx6/+l8fdp+QrKi0YeoXQk8hACBkCA8JFyfC",
-	"F7DSrLEgVxPRtRFvRDQ2LYFXvW3jT32xuaBVnrHdH56wPU6ogkozgxUCzXThfO8YmvziU1D1OzudSuk6",
-	"rXTW3Wo8hh1CvAqUhPaVdS5wpLa5KWqP3pZuUEpq8OmVlqX0NbqdQNQ8GSvORF7MOxvqWimImkqxrtoo",
-	"+Dsapowk6C+cMr9NUtJ5IWmerMDvQlJqrVHxtO/Onz5ogX2OXYEniUG9KMEueh36QqW8m72D+3iwyYI9",
-	"9tOw1fYyPy3cRhINPIj5JPTQovfqBXGuFah/45iVyksJeJVotd6Twq6Hmqajp3h3h++ucgdXAZc4Iz0O",
-	"0HOrCoDkjj6ccwRAe6zg50xxBnmMBwjPqeJTE8uCLYd055Pjh3NCjYULo8nEKiOYDuCbjF/D89Fc37xD",
-	"07k5qwx4RTyo35JVpnXs8274Wzzf9mk6WvsuVYvbf+yLbfqXofsALwpel5nskacEDtvdgupkznI25YJt",
-	"WG3PHg6EYEAbBKmgkjP0oq4UIxkMUPuIp8aUn9EXDJXFw7997bUhtpkopTLhmdtQ+DvQxvBLRkXGCqxR",
-	"t1Lxho/edTVHhf7XoT3q2DVMr1Rc+9ISinFV1B3QTyU4uVdPfd5hOj+K89ybNGylrRy+STd8bg7rm+j3",
-	"yfbbWwDFNdfkruyVPZcEh1Xc2fg8ZfEw6w6ya7y/1IHDzSH/6+jD+w0mMpmzEOobgoNBwtVMaA4VOFz9",
-	"KsVymhm2bPkfk6G7h2/9objyxGDv87jbOJ0UPbejI9ikT+dYVQICG5rgFVJi3W8uKZbx835Jsf7Dvkfo",
-	"pnFneGOzG1NiOMlusqQ1EI8wC0aTErukFQtoEbSOFbXTzpdh43JZQneEy7RQJwTFeiroAkXsuqFnfzIu",
-	"pkvMgJz+9bBxRSfnWtrLE0tX60h8Dp/3l8hpzWYw62wkJQkFsaeeuSaz8SXHdDKKU444apNqtWhOgyo0",
-	"+GN8wAl+74tCW7jXPZh/4Nt2kVZ5zXSChS/4Ks6ZcuysvihZWQRIFEEIVab7ve0rqPZ4e7Gah/t0GBZY",
-	"T544qeCI6SceNcTPRqWY9vm4L64qiqak0IiZr8ej25QkJkUrPFwBtBvgHIF52GrigPuCIJ1MFJtYtU/D",
-	"F8OWSTc7Y1c/TVjGKxgj2VGkIeWuMW4T074F8hrf0JJcUu/hWNdL4U/DDxHmbWyl6zrcOay+FLgK1w8B",
-	"yoHgvCuUhLs7vpjJ9AyjueqJNwqY9D1zEypmpI/ZPn+wmPxBLSZBTkiYTjotJljQuFLczI8syiAk7OQz",
-	"LnaglOROhVW7ud0Nisp+ipeDv23AmxvoD6mvBotQfhviQP/1+7Ef5ZRRxdQbv7f/+v3YknaY2AICPK3H",
-	"sap0GAV8VssXY1/ZAKN7eyG9NnOwv/HX2KcVfV+Z6QHmw6hXsMyOLaE/9bNxJ7J6b9HA19mivUnuEiIN",
-	"N1YtGLzefkV2DvYHw8G5zz0ebI2ejrbsxLJkgpZ88HLwbLQ12nIF1eH6N6k98M1QiWrTVfzbyGTl0HPC",
-	"knUTTaWg9ZmeUsXyuqYtBquASwo6MbDcpRmMrbrqRL4R2TkRoaOQoqDNSuGaaEGnBld5EJuvgbsJlsRy",
-	"UgkDtG0mz33tZUvbgExaxBz8ygzAUaj5dIiD7eKeagUO9re9teVKhhkXlwi9vTIYb/MfLs8RucwqHhTA",
-	"183oVuAmhptrVWiOO0biHjU5Y3PXBsvqR/t79hafbz3tmj7sZ9O+ZN/d/rnHu9s/23df4P6Xv2tfiikI",
-	"uNBbtOPvn74Nvy5Qgr9/+vZpONDVbEbVHNwslTCLnTKZ9pv1Aekv/z4A0ETC1QLTr15I3Pu2BEZpruua",
-	"VtBGxHeJoM02TdyEblMFH7NsnhXMBXieCOjeAR8WkNHW6B/FC4b52s7YBdrNuOCTqRmRHf/iibiYSs18",
-	"mNKUnjPX5SFHO60hY1mJvBc0H/mtAyIrOmMGbCAdQQ31K5vh0KBy0O1igVtlCuiP6xMcwtGH+7F/wFEj",
-	"wG/1AfittZFj63mfd5/fc0T6lZkajB/pBSBfikf2Vb35FfMpv23Skm+csXk3tX/LtdFQRhTq/7qAEF17",
-	"3wUtQmf6C6nOxoW80CPyURT8jJEvv74+JmGWL5CTGrpQuiLzUZKmhoaY2FhV6AumvJ6Axe3grVEnmljq",
-	"q49hZ3iiuo0mCRsUYBNwYmg2EvhwqLpdC2Fog6tRYZWh57qo1jNwKMT5tKOGWhh4FJK74tgRU5d49ld8",
-	"m3h4x/gCEVqAJAF+qSaIHG1kGQ5KmSoYjdEDHhlIXJl+CSa0oPVA6nsNrg2Hx40whffsIobRpl7jStct",
-	"oMnTG5vcRf4vLiBxsI3S91aujTDldpnSsz7vPvsDMTC8lCYeLcHIlexr8ytqSE4mzDsqzmN142tjMA7T",
-	"gcM7biHfG5eHK0VCf2QpifB5h7/GHxme8F3iyB8C7hFyrg/3GP27ieECEKKa5ljwHHtPc7FRKont1q2o",
-	"WDIBXWcWopaxRzx3slYv5oUh1jjXjy5wrdRtYLO410Omq8KslLHwkgqf5qb/TUEfzwxAMQI5ulrzXwD9",
-	"2hAAnac7Yf+vvHCQ367pfgUgDyr4X32/6z8ylLvd2r32hHJ7GSxq1vpvCuX2xBJAtxzM++jgMGhDhUmq",
-	"wUGP+DHUzvam7qe1s8Mv8PdPXab9CFaaINTyc6ShKvXaCpU2hi4PUZ+Gg8sN+9cEIxIGBddYKnKJhuva",
-	"88aDp0lkBGwPSmOn0viHAOZV2lsS+BrUbS0VbUFD69LAVmlc30UB+qF53v0jdAmVKQ1s4NrMElVwMBty",
-	"FUgd2I9vGKJuniq2Mjt7EcatFcDsiiI/APNtA7MDxX6U0yVo6s2v7l9W/VF8skJQtAqOVNmUaYOFRIXM",
-	"GSmlLDR5fDKwA5wMnqAn1A2MkeW09uRjHiRXRGe04GKCAYp6RN5IdUFVXhfecSM80oTlE+atZ78sji0k",
-	"UXxCZlTQCYNKDD58FoK0XUSBcEWMrZSCnZihzpfMaBGG836hF1tPO1ymu+7cdv2pHfKJXhuVw5kP7saL",
-	"c8gn13Pf2IsN1bJw8T8eDtt3n/Z59+lNuob80QWg7dDUOjFykwttqMiY3vzq/7lC0DlmagZpaQTKAeM3",
-	"hAsCidfsnCm7rEe6iYKEG3LKCimgvi727M5oUTBFsqmUmkHbzFASwuKcniouzjRxto96Kk0w55wlYw+Q",
-	"7yZxad9vdj9s9TroNWwl7DnCXK+1y5bC4wV021MStvFWGQ1B4CuSMw2xGRktacbNnEBOTKaAarGcPI7O",
-	"9MkvGC6Jxe7QtNS4rYJWwlJiyPiAs55hrX1cNhw7bOufFabcuH2FCfdwNX12V9fwaNOrRKFif3fEOEDk",
-	"UkCdkNKw/N6Y8rf6EJmtn/9ABClNF4A4KT5ZmzB9VXxi//DgjMVkkunixleswNgkPzXEpfmamwmShEQI",
-	"ktGg8gzVOhYPZJX7GuOKWGygYsLyX8g5lwUAXWBaMNojTU5lJXKgV1ZGKDiWd4iadAZCpYmu1Bj63GoC",
-	"iSw6RcoOqrRMcGiPZtcfzPUo2IqX4RZuTSs45BO/jV04335qwXbKY+SoHt7TA0H4/gTBI2ZgSNemBYgp",
-	"y7UIxTLoh+swHT9ZQgVcuwJMXoiIh6vgoEleQbH10DaeXU5ppe2zJ0Mi2EVdWG4NqR4w+DVu5y7wd7i6",
-	"j7o7Kdiqlc47ODwUohvEbDyUD9neSuSBhlS3F1tRJtvTRIbJXWkrcOzXU1kWoWvsoeuPHUrwnZScNEZf",
-	"l5gEzWe1VSK8SqgxNJvWYkKKoPjGV1zVdWAgXQzsAiFxAGNeQ4nK03msNaxNS4Jqc3fiwB2gqt/V9bC1",
-	"vr4HRL1NRO1GlWWY6thHaAy0KqR7Vc/cIZEqZ8rnorhcwP29Edlzro/wKqGKkYKNDZGVGZHj8DtkR9iH",
-	"QhpfkhLe5VCXFUpTIgXgisgLUQey283azTnjhkYlAwJHhkGGwEAmJs5z4lKfYHQD+RahfQBIFljPE2tc",
-	"GzqZsJx8cVv+goq7FCxKDfFd+SFFpJENqSqh0TZp5/JtgtFuuViCR7BfXH9grBXxheBNnLpmsW5x6WUR",
-	"LggVmC7LRuTjzfQghlUrViK1hBvwUTF41I+0u4lwuanrSNNV1785AMAdxSF0tZlYh7i14P+eOm/bBKXT",
-	"y9Hhy+hJhdoHUtOd+jekPZjbVIdmdZIeSFypo2Na9dAB/VsdE1in0+5XZl7DECE8q823U9K3HI816xC/",
-	"k9K3F7i3UindX9eV8J8ulfCfbq0S8TtmBIK9o7P0pK4jR8ta2NJp3vDCMOXvxklooU1cXYIJKsFclgUU",
-	"wEGjZGpV/tUEWq/M+tZmDjmu9rDuSFxykARgdU3tpgHk90VSuhvac8ceVk+Y4oz3FlXqlTlqKdTCxa0m",
-	"OjeSljl8IFUPpOqBVP07k6pQZXiFaRZrE9dlB/Wom0j9Xlcuvn2IbNao6QGSvnZ+ck8PoHU10Apg1J3L",
-	"eujO25NO90k6WzUBSDfvw2qW6L7jeN/FitQrc3pctG84tgeKeadgnaCZm1995cSeAcZtktOV6dmE/9/9",
-	"NGsLe2GBnfLBEpDzAcdNkHsAo+tRx24rRS/4aHHZ2wSOm6R0nkOvIyRepAqfPsDhzXDpFaHrbWBcvIZk",
-	"PPttAeftsf9Gf5T+we3fATd80PyDDHAvZYDNPHSHWK5OdTaFWIfc160oroNbLfvGh5L+s2Ikw14QwRlV",
-	"KnbOZaVDlc9HmtS9GtBJNOoIPMGxBivCY9cNWXlxn61E+yIrqjxUBefgVSVSueqE2ObSV2LtOjfwCA6S",
-	"WdpLKqH2WswpG0vwW/ZZBxP5DazCGc7iRcybFXqrhs3MnXU6VrkuAlx1WM/WKxi/1LLWbyuNRhF9dtGo",
-	"Qv3dzX/9ix0vNL9ZYmLp3/zmgZXdM1amfbnzTnXlYkXl83V42ZEvlX5jbAxonoYisFD7W0FsMVDUEXFB",
-	"A2C+335OprJSmtCJvG1C/PoytSgm8uaShLy4UVJ8d6TBVclPkIR0SfYHVe6GUHnKaIH1nZP4+hd4TLIp",
-	"y85SaInPB71S0qch5ZJwTXDiW6w78C0OE2nsAzYuZM56lDHB1xI7f+8eLC2us19XWV/IduwQeENg5r2r",
-	"3Gn3e73iKXiUf5wS0QAjHj5SYY7wbPOr/c8qNz7kPUO19C5Qew+jrM3qcPIUn/shQHMVRF7FNigcJP8b",
-	"lnx6H4FZ71KyUy8BmcrF4MMJprxvNwGpt1XYVebMdUELaWff+vItQE93AtBiBDMD764IxXdPJbuZunoI",
-	"StFpdlDOdHRmqRg06fNhMR0su1W0f0Q+akaguvf5dj02BK4zmif1jSVBmgtZVczQnBpKgF6GFsZj1PSj",
-	"gBWmXd7ZyaDSTP0nPc1Oqq2t7Z9oWf5nqWR+MngyIq9pNsVSmyL3XRNnlTbklJGPh2+JaxbYJebP3GqW",
-	"2szuRF54C3Hzobz+dQSH1oXeqs5/72Kjv2/dtvbh1yhb/9ajeNty7A3l3BoNL+JshhHZKQqi59qwGcnk",
-	"bFYJB6J17LX/mGsCx81yxP2DD0e9kd/ysRj7b6lgXKPxxN1Fj/TrdxH30bq7usm3lhf1rM+7z/Dd533e",
-	"ff6DYrTDMnfLaUxuMuDNGTOKZys0ZfcSJEdM+DkTDXLRzVzfucFX8NhdOZvRDc3sSxYiC2cm9tC6vwfm",
-	"rwlrrKSnNd0N8pnnemnpkm77+oxe7uND8B41GN1wgB3f3AuA3reqFYWz/Z2bqT/f67FbpK8eEB54753x",
-	"Xg/fs4AmvTlvE4kXsgm64s2wInBEHlIRZrfd4KnLdBhxJl/A+Y9VAvBHAEuAkKXsYxEcHawtj1/zl3s6",
-	"J2BG6uYY976rmFvgVQxTulaWHkD51kH5aA0hKKKfm5kUgmWmWc1/uXLj21B6MMe+t3pE9seLaktJK81y",
-	"6D12YXHtlBHFdDWzmszx8Vv7CiRCs0vDRN6t36SW3FPnCSi263Z6XUy7ef3JrWwtHWrre+hQtMBsfidT",
-	"WbT6Ttqcg6L72QXnXlTKetASQ+9TJBf6ihRyLNVZd7OTN1KdxVTvJXplS8kF1hNZ0D8IFwTKUZLHHDqX",
-	"nirOxsU8kEpfCThk4XOjiYVvMmMz6SIGGNbB8FggBbwlZM6G5Iyx0k5of9nfw0IdlyVH+kgqYWSVTVn+",
-	"BJ6gVcRVGhTsIu6egSYrasKSRsSTfimQkBeGlEwRRxRZbhXVsyFhNJuSjCo1h3pHPFRFDUYYdxiu+gBU",
-	"RMK5SgXhOCy3PAOWAFEnXExGZIcIKTa2t55658WMUYH1PNwKfBU0F9dHBdTYOEPihUFXrDfDsFd7D7mF",
-	"W59d3SEOn3b+PL21tFecGpvTrLaEL5LuGMB9oWl7SZpcMHtn/pp+QTBiwqi5q5uCgGdffqSJrEwmZ+yB",
-	"kntK/kNSZ6CfVyXNhZys41OLKwzYT1Ha7BY07Tv93GqBZryVVyh43ixFsKBfOepXhyf7AAdYHdLnqayK",
-	"HIVrp4BxQWa8KLhr/b5+QB8X5qfnPYoarCrKuGyV6xdofLq1tXblhTtQj+HWr5T2DxD8oCHfoYaMR74u",
-	"pVnlN4hJS23f7EEwOn0G16AZHwW/jOhF6L1nsd1TD+i6ek6LoSUVjkoM4VWogg/v1Bu5JeLRJ7S319aY",
-	"yK+2sfWWfJe1RRAwbqa4yF04Ox6I0nWI0lKfyBK6JJi58Pppqra8b3sDJQ/h1Wb2quuRuKCkWkUPlFRU",
-	"rnz1d4Y9bFVVeC9ao+hPMy2WfJhxA5ILJMWRrGBUacLNKFUlvk0Y37ud3VsFzC0QTxizZ/uZ7p6vqDfg",
-	"01tjDE5e3r9ZjN6PgM8O3xaubW20BmNQt9HpwD5uOFn6WTTgu/uLUbC8pTaNHt5UtKM1DMNo6aIicj88",
-	"WA1+aKsBIsBVzQaKjRXTUwSqripN8EqzRBs4qbxpFQqiG0kKfs56ot9hmPfeoqBb4rpIuCCC4jbvoRv4",
-	"hwR2D4tXB3dL8tbz8NovrsBg8MN7CN64sDzyMN6TsNQHR+aDI7M3HQCsvCoZ8H6XJVwvhK2XTGmuDXQt",
-	"8Z1JQwi7G/ORDoqhK5R/5GfwwpZPH3FexqZ/0Qplbh5yyubSuYKk4hMuaBFNU/Axs+y2r+MurOP+8lm/",
-	"xIjR3mncvJt+X4xl0qTkL/3Oo+YfzEjXiYR317Y2bbDYJSvTTRl8KzT3Ym1T9gajBl/jRYExB4xcehts",
-	"lAJjJWffyAbhf0R2aQEdiKAUz4yZqczJrCoMLwv8QhN5ztSF4sZZpY6P37pIAxiw0vh5ba6qzcRU1wZw",
-	"+5aLzpBkxqiuFGtsLe8u7JakNsfu7O4trXELvJZMr939+yv2APOA3ndiJY68SyaAWyeKs0wx06MrWKnk",
-	"P1hmHkF6mf1kRN7LUNkMAnigYpd7jAmcaUe4m3JdHCjpxDXAfc8uzbE8Y6JPE6/6s7fgK74jxwxscm2P",
-	"jGu5lDzwwXAwZTRn2BPybxv2FDbwGDoW417f/Ft0YN9ulSE/6/Pusx9Tt9ju8+72v4FuATTBgWcEnIHE",
-	"uF96JMam02CRgJzOiTZSWRYMPidg3DOqzpiyPBoiHbnSxjcVQ7GiRZB8WjjEjnew6bCF20p4dcTgjuX2",
-	"aNYeRdKBYweq9YOSiBUHxy7prCzwqHGvwBMOGfTus78C28KRcjZ4+Xzr5+EAIk4/4w/us88Qd/RZuQ+H",
-	"gxnTmk4YtsUHxJiCwQabAlpghS+sKPtiC+zAAXPggvpdqWvmmrhRxBlBZyy04yZSBSy1E244xMKFuKWN",
-	"yA75ZyUNrTFn6rt0w5ZJasNWHx9iH73QpO50DiB0SrMzZp9CqMV4zDJjN5vREuLM8JhGD5T6LlU9T1NT",
-	"RDqWAje/4j9W5EoesnN5xiKCAeYZC6N5VTAAdkeTMS06KxgVVdlVt9+R3yM39fq6kf+wX0Zlslz/H4L4",
-	"PchH9wPrQu+KJVi3JCdUCg+Lj2rxZUg0K1jmeydHFcwUUP1lmtatYNbWXcspihnF2fkDsj4g600iq8vC",
-	"XoapXV5/TM2qodGq6kYqlns15XROaFm6OAAKLo2bUlZuCqdvwZAIE2Bs052np/YjJY2guQdC8kBIbjCa",
-	"b7WsHbtWl1fgDa82Wi8nOX23F3NJ4Z+FiqbJgv31Gk7nBBu6R8WH1mhi0BgIFFWpyP7ekEh4kVrENHSy",
-	"8c+KFla0yUPNwNl8w398MhjiD/YgNhsP7HCNd1+ePz0ZPOkqFwj/WdFeY13L8vBqNuy7MUg3vLhXTRTQ",
-	"EZzdmDH6oUrSlaskRdcRqE34bUl9JIs+PQgQvpagN8fuwe3DrZ3pejU0cRP3E9I64Spx2f4yQtVY++qn",
-	"+jo3v9r/9E1Ai+vWLeMscNPHMPBV089wWQ+5Z3+w3DMLFDeReGbB426yztaQwx8Yjac9x/H1rEF9Nmf0",
-	"cikFAgB3OeApamTxwv4bq2p6dOlHo97Rywcyde/J1DBRUVzxjBgZrH0NKAHnnKtv2lEC3FKjZaVMfYuz",
-	"TAoX+vU5rtfqK6LCZXxW1LBE77NbtYa+o5cxYX0gpH8YQurrXZgeBBXrfl+pB0D9cZJS1g972AkcSeym",
-	"H+1WKvaToQ/Q+Phxf8/q5fbfZXVa8Cx4pPf3yONS/ePzk+/V1ccfxXWVC3+gD6rstVTZGGw9StS/LVVl",
-	"3UubtODUnsRX+Ed316HdKcvOCB+HOTE/HeUM+JawS67NcgzawdngPx3YVFJoEOaQibo3u5nTQvaPX53/",
-	"8C7ZkJ8ctnfoZlmJGpZ8cMuN/NJP5271a7OjW7KZP2Bd3ZHGYoFpAVkb9xbQDN/oDg9x7u86IJ9OfEB/",
-	"J2vCbwJuHdPJbYXjNWeyE62VVpNKKrf784EkD7kvP0JoRoB6Qxv1neC/3S7fHa35RNiPHusnVkuhEaWr",
-	"eJEnPbZ3AdW4sitD9dMbXgjL46UkU1vphFD37gPS3G+k8WC/HGmaTOKr/+eKWMIQK+XfX8kawrhXMPCE",
-	"T/s3X6hlRLqMyj8I/tenxv0k/xVdFYIeDARZu5pVndAVS/Q3BFrDHyaTqY8C8Ds301dwlOsao2Ldihvt",
-	"LuTBcXyftO36Unrr3BY1TDbtY5PyBeW6kO/ADnQrlP3mJSy/OtzTWtLVVg/O4kPSfuyOcz9y4NZyLrRE",
-	"vNlEHNr8Cv9Nlppuub4a6OerzPbhTEiKX+FMVyogvR6rcnu662LTWaU0uHl+pGrTqWLTOKt7fBX/Xc4V",
-	"y2APfZPELFTsha86By7YOSvWGfQtfJA42iOMCuxz+2MlZ13+TxhlrV3ixHdkCQWcs7P2toam5aEI5R/U",
-	"17sJYEgR2+vSeNfEew0q75rPr03lj3y78O9D5/dFzi49coeqKOEsO1E91PyNGGuSDsmJ/jAea9ZBWNeu",
-	"4f+HIf1XptB3Rg47S0KtJIMPtO970D7tScma1G/MC/vTlOrpt6UkjwpSlYWkOSm4OPPGF6qIHYFYAKRc",
-	"RPSDzhk+6yv/vrHv/oXq6XXpYcJBO8Vh+/pn7So8XYQtkMeFvGAqo5qRKbskR3/Z2dh+8dMTWKoxTNmv",
-	"/s/ftzZ+phvjT19/ev7tT728uk9vB3ntUX6Ey+qqPRlf5cWUKahh634EZHYX+2Czv++ID+jnbu7j4dv1",
-	"KYB3+q7IFwBX71Usrs43dpMG/VuMGTqmk+vGPMe+lPuSUPiAPmkjadLh1SciqYVCm9A8sRORfMtEaMER",
-	"pNWca8NFZhC9QpydX5wVY6f0nBFqSMGoNq7jIs3niP11K8bnW8+xaktjhFwyTYQ0GPVEpCKnrJDCisiS",
-	"UCGxIyOjs9GJWAOdd2Gr3xOne6IyrvSKaj2dYEPMByS+h81cK2Gu7rZGhHWRgEtjCbVFKsASCgCxiKJT",
-	"6Ch6r5DztQ9wvE2jgqGT/wkq7V1hMu6qNyZD990akX/IIgAP6N4R0GgvdG1sB2a+XNDVDfx8pJErr+bC",
-	"rv5wcIfPpDZEsYwJ417DeKiZvZAhcc5+lkMpY5wEvqXkjM01MwR9JN+JfvyKB3Xr9GMnnEnvHHtDJ7i6",
-	"9b/YRbfTOp8cMaqy6XqfSGXujCTilFcQbiI8Ig4tHujjH0qn8de6NpX8aujk22ZErnoQzBaJs1KSJZEJ",
-	"gWlIBLuADu1caTNEutegeqSOhfpOBPA4pk13QAjXppfrEbPouzsMLmse4tU1sBgUH4jUH4tI0QaWJShV",
-	"JbShpwXbpHZol42OrrTOFhWOLtlXyYyabOr7QYyhWJH2uecukoycynzu6BB2kWB09kifiBkDIw1YAIZQ",
-	"BtWKdgsdUvExkiYdiuW6l05EyD8ekR0gkyRnuuSuE+vBh6Pjl1hZV+bzqM5+lEhZcG1OhJGSWMLmDLBw",
-	"AgTdCinSdiC1+eiOLlyK/p/OBXkrSQp+Fnv660fQ3fwauvweJZ1AOEsNGQAo1HUdqi1ztCgWXvoDxOy1",
-	"kTuFyV0FagjVBBAxTm2Gv5dgq68dsdIwSjF7OihRHsNc8WF7DQU9ZQVeVlZU2jA1IvuG0EJbdq8vLHYj",
-	"hpxSYZmIlQgKiYYAKwakhIA2ohz71OgFvr+Yw0lnWCYt4W8M2dXdHscQVVBVPL/jFNCw1y40Ma4007+R",
-	"6+8quAEwcB2s2KyhewOhu7OFd6MVt8MEME3UtUqRdS30V5Mi0LETIWRumdFbh0iKkZzlFYIRy4fkjLGy",
-	"5pfKCtUZFtPAKEDLIZMcp+rEo6OwQ5z1XuDVLXLA1n6/FxtML6SN656qanKhuDFMPCD+SsT3FYKpx7lO",
-	"brWKKsyooBNmZeBNJ/bpza/uX0AgGHTPR7qwshBB+PC6KLKaBNkThhyvul0MrpTkMqvshmqNXbFzrrkU",
-	"hAN1slr5lAoXdghllf0bI/JhZoEwr4ezVEqxmTxn+Yh8KHKmQAIIZCt8q0nBqKsr5IYNS6lENqViYod4",
-	"fQ7Sc9A6Sc4KDr9xcU4LnlPfWi7DjhggOpAdJ2A0TBF+71yTGdfQek4qn0vYFjfehcs+YsZ1EznyF3w7",
-	"dKmecmG+6+bGHyxeu70nWCcKXrRAu5CuSqY0y+153BPCck1i0UkVdsqymNf6G/T3cocT4HsVPViQDyA2",
-	"VfeKKnCUqG7Mopgr6ouDWB3UvrNBKzNlwiDPD3rwjM5RRZWimIMELi/EarE54vRvca1XLc52u1Ypqxba",
-	"5V01xJ/O3DE+WKHWL3m6ts2pp+hdeIhLVNrqwqgV0f0eo7zbvy5ZqNtaJdqFLqYWX+AF/PnWMe3KeQN3",
-	"g2m4vGtgGoWnPqb5AeHuDcI1L2YV3nk3k0ZHah/XO7Cw8CUxcoJoGFJO7AMrvz4KZedcskb91dDVr8yo",
-	"UnPyhes9fOMlscLNF2fsxUUNCSWWM5/ygpu5sxFj0yupLM/cWxwd5BwhTWjoKZ11TApCrTrtsN1ZqIbO",
-	"tig1s2iOBuLYN+WW+S+mJHT8qYqCVJpOrALOilyPyCHTVWHcxJH3jFSisLfxxS71C9F0rgmMe8E1+4V8",
-	"EezSoKfoC8Tnc1F58wGEHU7Qqq2RDoHoW5+zpjPmRh6RN1KR19uvHiGlygpuofOlJXqWlqFkDYIv17Qs",
-	"GcX7kpWxB8Uz1uF/qymbO1vncb+qx20dj334BDz2a3xwAFC31if9oxX8F97BdxeeOjy066U+6oeE9jvq",
-	"AG3vKllR0dPdZeHL59t14/cePUqi6rkt3P1t+yh6vNSi9863PkK/VaWRajpaG7UTZzo0Bqk0U/9JT7OT",
-	"amtr+ydalv9ZKpmfDJ6MyGuaQcgAUC+oG6zJrNKGnDLy8fAtYSKTOWrfHZWEYTWrOoSkO52EhZ7OIcRB",
-	"KjKTCrIn8TrYZVlAO9ExLTTrrAdtmunQ/fp84ORHJlnadDjQZl7YHyx7TGX1S2VIyDmHni/eaAXlrg2f",
-	"scDvIITCfk8exyyns+eKVDlTvRMaP9i3FxLZU2J4dN6wRpYTCnEedIygw3Vdo2C0rPo2y3fsJ+myAzk1",
-	"bMOOs07PmxgSomJxWBUXSi52LSjKn7mZHjU/QNP0tyAsOQi+Xl3eBRc8u6G6Q8PB3zaOpaHFxiFOsPJj",
-	"eNu/fLvd1x84YLM5Ts0vzrefxB1yAkxcuUW5o4lY1TQScUZkx/LEuTZsRjI5m1XC4UQsNOPHHDr7Vypl",
-	"Az6Qeh3m+cG10EKDgs5kyXLgfmOpoJT+vBGOYrcBZvSPmpGnlohvv3hB6uTVnaPd/f0TUTBj5xuSnE+4",
-	"0UNLs6bzcsqEJo/pxr+GZGvj5yHZeDIkusqm4OOMRvn4cX9vRH6fMkF4zmalNExkc7ttJqwMkg9PRAie",
-	"wHr/mihWFhQ7SUvFLREqnCIJnBzjcLjIigqaKkKfatePAH0IlhzZ4y6Z4jIfnYg9Ph4zhVHWaFqpj9LR",
-	"DPJ862cX3FP3vY7W/Nl9+XnGNax4dCJ2BOFio1Ryoqx65cdWIRZx+YhcfPbf/gJZ0+JMyAtxImRlMjlj",
-	"9UDb20sHcu9/dgNAY0nNwnnm0sU+sqxyEUV+qXRCuRidiMPFVw0TeX2SI7Iz9iKYBSl2WXJl9WduSEaF",
-	"kwuwu2WALFDlgK0hIaz52n699o2/snmDvc3o5VsmJhajt1+8gKIJ/u+nzRxquvGvrY2fNz79jz/dnfP2",
-	"PbtwCPnb9p338vc8Me2d9Zh9QXXo599RSexGltPZh/4VDRbMJsM9gjobGxbW5qt4Jr6Lr65f6Q+Ndbe7",
-	"zTdSnfI8Z+JGN/n89hf+XhoylhX0hLm5hf98+wu3UL5AOkgmxbjgmQmJMXmL1D/uSdCfAHPDXjOOIwX2",
-	"48eaUk2EJIplVo/J6+69c9cBn+NCuABzPbsssV93eO+Ci1xedK4pYglPfkG1xU99QXVMxnOk3Td5h9vb",
-	"d3OHVzheH1XbPtCc0bzgAhMsS6o1+l249uy086wXuOZ3OO+7wBkpyYyKud/Wgg4Ey9lAjbcl6oLYViqm",
-	"mTDDhahXV7rPyo0XlBtyysZSsVrOjISMERg76Kws2ODls60Gs19aEel6x/viLnjdEVPnTKFcdoOg8eIu",
-	"GJhdO88YqQQ9p7wAk+BNbuH5XYga2ZkVVA2fMVndnLjxY+a+ombq5cBuhbdl4d38GppBf9vMpBAsM915",
-	"E97x7SfKmaG80COyP17UbUtaaZaDmnDBiwJLrOlqxvIROT5+G1xKqG/ArwsJF/CK02xBSZIu6stduXfq",
-	"ASV6trXlCdNKdfrI73jX7XftJvqhf/ZtKRtuZQ2F41Y75/dXMHzMlvJGreH3UnUcPN3P/hH3ojv/sz7v",
-	"Pvs36M7v8OnaFHJlaWc/QVdN5xQZulId54gGPdRmXlmgc1WFzq111xwcU31OtmPJN1LbeeEocRNQmRXq",
-	"h7pmqpUSI2K/huznC1R38AWqGGGXWVHl3Wd7Y7Wid6lmG5oJzSH6VFenaLZDxZBIASufMQ3BLZ6hdPjs",
-	"fCBIhwXxp7vNl3LobA/5t+2rRUo0iMdDocQ7CZaIjrwHV0i3Zl2/Eetv2z9GK9Y/mIf5ppu+3mAzm4de",
-	"zfe2Je0iXejVlzYmFq12aFELnbUb5kSk44/dMudWFtHNlh968tzbnjxLEHA5rrX6NnSbto4wvm26rJVn",
-	"EvUazRruqk3DLaMs7AZOpK+vezvd5ArLT09piM17QKC7EWsRmptVwFdh0bOmeLsiCEqwiyWcymLLs1jG",
-	"vXVwdQzmt2drAOyNrsItwPMYv5AupEALJnxypzbMdZKZvrcN80d2xkTM69lStJNFNeunUNIZ8W+ndMrw",
-	"6PYVKZxrbTXKpUO1dvNA6K+pqTQgw0Oa/+WqYa5I4cPQaSIfAd2txNx5SLvbgDucdUfkkY6+rJK0C7pr",
-	"n9mDuHOnJDcG1hYaxOR28yv+o39/8m48wJccJvzmhl1bE/Dr6dmcvAF/vjE5bcPegwX5rrqYL4e94bJG",
-	"geHTzi6BtwldW9+LbGKU+vkD4H6nHlErqCXsSp17CKtUMXg5mBpT6pebm7TkI7Z9OqJlCTDlvv+6mMCm",
-	"wa7hXXbBoxL9CHUB4r9LvnHG5o13XJ+k8HctONZjs0wxowffPn37/wMAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -2,7 +2,6 @@ package mtls
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -18,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/hpack"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/httpserver"
 )
@@ -351,6 +349,9 @@ func TestHTTPGuardChecksEveryPriorKnowledgeH2CStream(t *testing.T) {
 	assert.Equal(t, int32(1), business.Load())
 }
 
+// An h2c upgrade asked for on a health path is answered over HTTP/1.1: the
+// connection never becomes HTTP/2, and the next request on it passes the guard
+// on its own.
 func TestHTTPGuardUpgradeOnHealthCarriesNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -364,68 +365,20 @@ func TestHTTPGuardUpgradeOnHealthCarriesNothingElse(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
+	reader := bufio.NewReader(conn)
 
-	// Stream 1 is the GET /health that carries the upgrade.
 	_, err = fmt.Fprintf(conn, "GET /health HTTP/1.1\r\nHost: example\r\nConnection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQAAP__\r\n\r\n")
 	require.NoError(t, err)
-	reader := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(reader, nil)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode, "the health request is served, not switched")
 
-	_, err = io.WriteString(conn, http2.ClientPreface)
+	_, err = io.WriteString(conn, "GET /admin HTTP/1.1\r\nHost: example\r\n\r\n")
 	require.NoError(t, err)
-	framer := http2.NewFramer(conn, reader)
-	require.NoError(t, framer.WriteSettings())
-	decoder := hpack.NewDecoder(4096, nil)
-	assert.Equal(t, "204", readStatus(t, framer, decoder, 1), "the upgraded health request is served")
-
-	// Stream 3 rides the same plaintext connection to a business path.
-	var block bytes.Buffer
-	encoder := hpack.NewEncoder(&block)
-	for _, field := range []hpack.HeaderField{
-		{Name: ":method", Value: "GET"},
-		{Name: ":path", Value: "/admin"},
-		{Name: ":scheme", Value: "http"},
-		{Name: ":authority", Value: "example"},
-	} {
-		require.NoError(t, encoder.WriteField(field))
-	}
-	require.NoError(t, framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 3, BlockFragment: block.Bytes(), EndStream: true, EndHeaders: true}))
-	assert.Equal(t, "403", readStatus(t, framer, decoder, 3), "the second stream is refused")
-	assert.Zero(t, business.Load(), "the application never saw the second stream")
-}
-
-// readStatus reads frames until the HEADERS of streamID and returns its
-// :status, acknowledging SETTINGS and decoding every header block on the way
-// so the HPACK table stays in step.
-func readStatus(t *testing.T, framer *http2.Framer, decoder *hpack.Decoder, streamID uint32) string {
-	t.Helper()
-
-	for {
-		frame, err := framer.ReadFrame()
-		require.NoError(t, err)
-
-		switch f := frame.(type) {
-		case *http2.SettingsFrame:
-			if !f.IsAck() {
-				require.NoError(t, framer.WriteSettingsAck())
-			}
-		case *http2.HeadersFrame:
-			fields, err := decoder.DecodeFull(f.HeaderBlockFragment())
-			require.NoError(t, err)
-			if f.StreamID != streamID {
-				continue
-			}
-			for _, field := range fields {
-				if field.Name == ":status" {
-					return field.Value
-				}
-			}
-			t.Fatalf("no :status on stream %d", streamID)
-		case *http2.GoAwayFrame:
-			t.Fatalf("server sent GOAWAY: %v", f.ErrCode)
-		}
-	}
+	resp, err = http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "the next request on the connection is refused")
+	assert.Zero(t, business.Load(), "the application never saw the second request")
 }

@@ -17,8 +17,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetDefaultTemplates_UsesNewestReadyDefaultBuildForResources(t *testing.T) {
@@ -223,7 +223,7 @@ func asTeam(teamID uuid.UUID) defaultTemplatesTestCaller {
 	return func(t *testing.T, c *gin.Context) {
 		t.Helper()
 
-		auth.SetTeamInfoForTest(t, c, &authtypes.Team{Team: &authqueries.Team{ID: teamID}})
+		auth.SetTeamInfoForTest(t, c, &authtypes.Team{Team: &dbtypes.Team{ID: teamID}})
 	}
 }
 

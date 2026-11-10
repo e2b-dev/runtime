@@ -32,9 +32,9 @@ func CreateTeamWithUser(
 	slug := fmt.Sprintf("test-%s", teamID.String()[:8])
 
 	err := db.AuthDb.TestsRawSQL(t.Context(), `
-INSERT INTO teams (id, email, name, tier, is_blocked, slug)
-VALUES ($1, $2, $3, $4, $5, $6)
-`, teamID, fmt.Sprintf("test-integration-%s@e2b.dev", teamID), teamName, "base_v1", false, slug)
+INSERT INTO teams (id, email, name, is_blocked, slug)
+VALUES ($1, $2, $3, $4, $5)
+`, teamID, fmt.Sprintf("test-integration-%s@e2b.dev", teamID), teamName, false, slug)
 	require.NoError(t, err)
 
 	if userID != "" {

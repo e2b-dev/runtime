@@ -117,7 +117,9 @@ func newMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod tim
 	opts = append(opts, sdkmetric.WithView(snapshotBytesView, uploadBytesView))
 	// Export these as explicit histograms so collectors can forward them to
 	// Prometheus without adding them to an exponential-conversion allowlist.
-	for _, name := range []HistogramType{NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName} {
+	for _, name := range []HistogramType{
+		NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName, OrchestratorBlockCacheCloseDuration,
+	} {
 		opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
 			sdkmetric.Instrument{Name: string(name), Kind: sdkmetric.InstrumentKindHistogram},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
@@ -125,6 +127,15 @@ func newMeterProvider(metricsExporter sdkmetric.Exporter, metricExportPeriod tim
 			}},
 		)))
 	}
+	// Same reason, with sub-millisecond edges first: a healthy punch takes a few
+	// µs and a contended one tens of µs, so those land in separate buckets
+	// below the second-scale stalls the rest of the edges are for.
+	opts = append(opts, sdkmetric.WithView(sdkmetric.NewView(
+		sdkmetric.Instrument{Name: string(OrchestratorBlockCachePunchDuration), Kind: sdkmetric.InstrumentKindHistogram},
+		sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+			Boundaries: []float64{0.01, 0.05, 0.25, 1, 10, 100, 500, 1000, 3000, 5000, 10000, 30000, 60000, 120000, 300000, 600000},
+		}},
+	)))
 	// Same reason, with its own buckets: a hit's age is bounded by the lag
 	// flag, a read's duration by the 70 s request timeout, and the flag is
 	// tuned in the second or two the 250 ms steps resolve.

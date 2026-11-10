@@ -615,6 +615,12 @@ func TestNewCacheFromMemfdKeepOpen(t *testing.T) {
 	_, err = second.ReadAt(got2, 0)
 	require.NoError(t, err)
 	require.Equal(t, expected, got2)
+
+	// The first exported cache remains readable after the source memfd closes.
+	got = make([]byte, size)
+	_, err = kept.ReadAt(got, 0)
+	require.NoError(t, err)
+	require.Equal(t, expected, got)
 }
 
 // swapDeadStructureCounters points the package-level dead-structure counters

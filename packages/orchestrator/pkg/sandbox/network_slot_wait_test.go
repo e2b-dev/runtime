@@ -117,7 +117,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 		})
 
 		getCleanup := NewCleanup()
-		getPromise := getNetworkSlot(
+		getPromise, _ := getNetworkSlot(
 			getCtx,
 			pool,
 			getCleanup,

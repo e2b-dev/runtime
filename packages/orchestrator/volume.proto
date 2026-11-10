@@ -44,6 +44,20 @@ enum UserErrorCode {
   // retry changes (its vcpu request is out of bounds); the API reports it as
   // a refusal, not a failure to retry.
   SANDBOX_CREATE_REFUSED = 8;
+  // A snapshot refused because another checkpoint of the same sandbox is in
+  // flight; the sandbox keeps running and the request can be retried once
+  // that checkpoint ends. The API tells it apart from a busy node (Pause) and
+  // from a rejected artifact (Checkpoint) by this detail, not by the message.
+  CHECKPOINT_IN_PROGRESS = 10;
+  // A memory pause refused because the sandbox's guest agent (envd) did not
+  // answer its health probe; a snapshot taken now would record a hung agent
+  // and never resume. The sandbox keeps running and the pause can be retried.
+  ENVD_UNRESPONSIVE = 11;
+  // A sandbox create refused because the node's status admits nothing new
+  // (Standby, Draining, Unhealthy). It clears when the node is set Healthy
+  // again, not on a retry, so the API leaves the node out of its next sample.
+  // A capacity refusal carries no detail and is retried as before.
+  NODE_NOT_ACCEPTING_SANDBOXES = 12;
 }
 
 message UserError {

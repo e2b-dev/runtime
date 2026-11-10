@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.30.0 (2026-11-06)
+
+
+### Features
+
+* **clean-nfs-cache:** run budget and multi-sample runs (9fd10b7)
+* **client-proxy:** restore a forwarded sandbox host from X-Forwarded-Host (7167ea6)
+* **orchestrator,api:** record a pause taken over an unresponsive guest agent and refuse its memory resume (edc7e25)
+* **proxy:** answer sandbox probe requests without forwarding (bc9e90c)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.27.3 toolchain (839f8d7)
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.6 [security] (f018c23)
+* **deps:** update module github.com/oapi-codegen/gin-middleware to v1.2.1 (3e6356e)
+* **orchestrator:** keep routing records owned by their lifecycle (ddfc1e2)
+* **orchestrator:** the volume mount test passes the envd version its request takes (5a1c076)
+* **proxy:** forward execution identity with each routed request (3484c4c)
+
 ## 0.3.0 (2026-09-11)
 
 

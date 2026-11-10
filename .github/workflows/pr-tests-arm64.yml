@@ -221,7 +221,7 @@ jobs:
       # mise downloads the release binary pinned in .tool-versions rather than
       # building it from source.
       - name: Install gotestsum
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           version: ${{ env.TOOL_VERSION_MISE }}
           install_args: gotestsum
@@ -237,7 +237,7 @@ jobs:
         if: matrix.sudo == true
 
       # sudo strips PATH; pass it through so gotestsum/go resolve to the runner's
-      # toolchain (1.26.10) instead of /usr/bin/go.
+      # toolchain (1.27.3) instead of /usr/bin/go.
       - name: Run tests that require sudo
         working-directory: ${{ matrix.package }}
         run: |

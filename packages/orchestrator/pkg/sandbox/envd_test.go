@@ -18,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 func TestClassifyEnvdInitExit(t *testing.T) {
@@ -50,6 +51,12 @@ func TestClassifyEnvdInitExit(t *testing.T) {
 			fmt.Errorf("%w with cause: %w", context.Canceled, ErrFcProcessExited),
 			envdInitExitOther,
 		},
+		{"memory_backend_exited", ErrMemoryBackendExited, envdInitExitOther},
+		{
+			"wrapped_memory_backend_exited",
+			fmt.Errorf("%w with cause: %w", context.Canceled, ErrMemoryBackendExited),
+			envdInitExitOther,
+		},
 		{"other", errors.New("connection refused"), envdInitExitOther},
 	}
 
@@ -62,17 +69,27 @@ func TestClassifyEnvdInitExit(t *testing.T) {
 	}
 }
 
-// mockEgressProxy is a test EgressProxy that returns a fixed CA bundle string.
+// mockEgressProxy is a test EgressProxy whose CA bundle is bundle, followed by roots for an
+// envd at mockRootsFromEnvdVersion or later.
 type mockEgressProxy struct {
 	network.NoopEgressProxy
 
 	bundle string
+	roots  string
 }
 
-func (m *mockEgressProxy) CABundle(_ string) string { return m.bundle }
+// mockRootsFromEnvdVersion splits the test versions 0.10.0 and 0.10.2.
+const mockRootsFromEnvdVersion = "0.10.1"
 
-// newTestSandboxWithBundle builds a minimal Sandbox with CABundle set —
-// mirroring how Factory.CreateSandbox sets the bundle for the template version.
+func (m *mockEgressProxy) CABundle(envdVersion string) string {
+	if ok, err := utils.IsGTEVersion(envdVersion, mockRootsFromEnvdVersion); err != nil || !ok {
+		return m.bundle
+	}
+
+	return m.bundle + m.roots
+}
+
+// newTestSandboxWithBundle builds a minimal Sandbox whose egress proxy gives every envd bundle.
 func newTestSandboxWithBundle(bundle string) *Sandbox {
 	return &Sandbox{
 		Metadata: &Metadata{
@@ -80,20 +97,19 @@ func newTestSandboxWithBundle(bundle string) *Sandbox {
 			Config:         NewConfig(Config{}),
 			Runtime:        sandboxtypes.RuntimeMetadata{SandboxID: "test-sandbox"},
 		},
-		CABundle: bundle,
+		egressProxy: &mockEgressProxy{bundle: bundle},
 	}
 }
 
 // TestEnvdInitSendsCaBundle verifies the full injection chain:
-// EgressProxy.CABundle() → Sandbox.CABundle → POST /init body caBundle field.
+// EgressProxy.CABundle() → newEnvdInitRequest → POST /init body caBundle field.
 //
 // Not parallel: overrides the package-level sandboxHttpClient.
 func TestEnvdInitSendsCaBundle(t *testing.T) { //nolint:paralleltest
 	const pemBundle = "-----BEGIN CERTIFICATE-----\nPROXY\n-----END CERTIFICATE-----\n" +
 		"-----BEGIN CERTIFICATE-----\nCUSTOM\n-----END CERTIFICATE-----\n"
 
-	proxy := &mockEgressProxy{bundle: pemBundle}
-	sbx := newTestSandboxWithBundle(proxy.CABundle("0.11.0"))
+	sbx := newTestSandboxWithBundle(pemBundle)
 
 	var captured envd.PostInitJSONBody
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +130,7 @@ func TestEnvdInitSendsCaBundle(t *testing.T) { //nolint:paralleltest
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init"))
+	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init", ""))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -140,7 +156,7 @@ func TestEnvdInitEmptyCaBundle(t *testing.T) { //nolint:paralleltest
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init"))
+	resp, _, err := sbx.doRequestWithInfiniteRetries(ctx, sbx.newEnvdInitRequest(server.URL+"/init", ""))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

@@ -67,13 +67,15 @@ type Node struct {
 	// count as unreachable.
 	unreachableSince time.Time
 
-	metrics         Metrics
-	metricsMu       sync.RWMutex
-	lastHugePageAdd time.Time
+	metrics             Metrics
+	metricsMu           sync.RWMutex
+	lastHugePageAdd     time.Time
+	lastOrdinaryPageAdd time.Time
 
-	machineInfo machineinfo.MachineInfo
-	labels      map[string]struct{}
-	meta        NodeMetadata
+	machineInfo  machineinfo.MachineInfo
+	labels       map[string]struct{}
+	capabilities []string
+	meta         NodeMetadata
 
 	PlacementMetrics PlacementMetrics
 
@@ -100,17 +102,6 @@ func New(
 		return nil, fmt.Errorf("failed to get node service info: %w", err)
 	}
 
-	nodeStatus, ok := OrchestratorToApiNodeStateMapper[nodeInfo.GetServiceStatus()]
-	if !ok {
-		logger.L().Error(ctx, "Unknown service info status", zap.String("status", nodeInfo.GetServiceStatus().String()), logger.WithNodeID(nodeInfo.GetNodeId()))
-		nodeStatus = api.NodeStatusUnhealthy
-	}
-
-	var nodeStatusChangedAt time.Time
-	if ts := nodeInfo.GetServiceStatusChangedAt(); ts.IsValid() {
-		nodeStatusChangedAt = ts.AsTime()
-	}
-
 	nodeMetadata := NodeMetadata{
 		ServiceInstanceID: nodeInfo.GetServiceId(),
 		Commit:            nodeInfo.GetServiceCommit(),
@@ -127,7 +118,7 @@ func New(
 		Backend:       discoveredNode.Backend,
 
 		client: client,
-		status: StatusInfo{Status: nodeStatus, ChangedAt: nodeStatusChangedAt},
+		status: reportedStatus(ctx, nodeInfo.GetNodeId(), nodeInfo),
 		meta:   nodeMetadata,
 
 		PlacementMetrics: PlacementMetrics{
@@ -140,6 +131,7 @@ func New(
 	n.UpdateMetricsFromServiceInfoResponse(nodeInfo)
 	n.setMachineInfo(nodeInfo.GetMachineInfo())
 	n.setLabels(nodeInfo.GetLabels())
+	n.setCapabilities(nodeInfo.GetCapabilities())
 
 	return n, nil
 }
@@ -189,6 +181,10 @@ func NewClusterNode(ctx context.Context, client *clusters.GRPCClient, clusterID 
 	n.UpdateMetricsFromServiceInfoResponse(nodeInfo)
 	n.setMachineInfo(nodeInfo.GetMachineInfo())
 	n.setLabels(nodeInfo.GetLabels())
+	n.setCapabilities(nodeInfo.GetCapabilities())
+	// The report is fresher than the registry entry the node was built from.
+	reported := reportedStatus(ctx, n.ID, nodeInfo)
+	n.setStatus(ctx, reported.Status, reported.Owner, reported.ChangedAt)
 
 	return n, nil
 }
@@ -233,7 +229,23 @@ func (n *Node) OptimisticAdd(res SandboxResources) {
 	if res.HugePages {
 		n.metrics.HugePagesReserved += HugePagesFor(res.MiBMemory, n.metrics.HugePageSizeBytes)
 		n.lastHugePageAdd = time.Now()
+	} else {
+		// The whole RAM, though ordinary pages fault in on use: the next
+		// sync replaces it with what the guest has touched.
+		n.metrics.MemoryUsedBytes += uint64(units.MBToBytes(res.MiBMemory))
+		n.lastOrdinaryPageAdd = time.Now()
 	}
+}
+
+// CompletePlacement moves a successful placement from in flight into the node
+// view under the lock StartPlacingIf checks under, so a check made there counts
+// it exactly once.
+func (n *Node) CompletePlacement(sandboxID string, res SandboxResources) {
+	n.PlacementMetrics.startMu.Lock()
+	defer n.PlacementMetrics.startMu.Unlock()
+
+	n.OptimisticAdd(res)
+	n.PlacementMetrics.Success(sandboxID)
 }
 
 func (n *Node) OptimisticRemove(ctx context.Context, res SandboxResources) {
@@ -243,8 +255,9 @@ func (n *Node) OptimisticRemove(ctx context.Context, res SandboxResources) {
 	cpu := uint32(res.CPUs)
 	memory := uint64(res.MiBMemory) * 1024 * 1024
 
-	// Hugepage counts wait for the next sync: a sandbox whose balloon returned
-	// free pages holds fewer than its RAM, so its full size would undercount.
+	// Hugepage counts and used memory wait for the next sync: a sandbox whose
+	// balloon returned free pages holds fewer than its RAM, so its full size
+	// would undercount.
 	// Each counter subtracts on its own, so one underflow cannot stick the other.
 	cpuSkipped := cpu > n.metrics.CpuAllocated
 	if !cpuSkipped {

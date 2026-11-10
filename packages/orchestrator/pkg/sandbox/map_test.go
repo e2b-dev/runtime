@@ -1356,3 +1356,160 @@ func TestMapNetworkReleasedJoinsSubscriberErrors(t *testing.T) {
 	require.NoError(t, sandboxes.NetworkReleased(t.Context(), ip), "a repeated release notifies nobody")
 	assert.Len(t, released, 1)
 }
+
+// A migration holds a live lifecycle against every lifecycle change a caller
+// asks for, once the update in flight committed, and lets its holder, once it
+// ended the migration, and the lifecycle's own teardown remove it. Ended, the
+// lifecycle is ordinary again.
+func TestMapMigrationHoldsALiveLifecycle(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+
+	// An update in flight commits before the migration begins.
+	updating, finish := make(chan struct{}), make(chan struct{})
+	var committed bool
+	go func() {
+		_ = sbx.RunUpdate(func() error {
+			close(updating)
+			<-finish
+			committed = true
+
+			return nil
+		})
+	}()
+	<-updating
+	begun := make(chan *Sandbox)
+	go func() {
+		migrating, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+		assert.NoError(t, err)
+		begun <- migrating
+	}()
+	select {
+	case <-begun:
+		t.Fatal("the migration did not wait for the update in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(finish)
+	require.Same(t, sbx, <-begun)
+	require.True(t, committed)
+
+	require.True(t, sbx.MigrationInFlight())
+	require.ErrorIs(t, sbx.RunUpdate(func() error { return nil }), ErrSandboxMigrating)
+	require.False(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID))
+	_, err := sandboxes.MarkStoppingReserved(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.ErrorIs(t, err, ErrSandboxMigrating)
+	require.False(t, sbx.BeginCheckpoint(), "a checkpoint of a sandbox being migrated is refused")
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.ErrorIs(t, err, ErrSandboxMigrating)
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.True(t, live, "a sandbox being migrated stays live")
+
+	sbx.EndMigration()
+	sbx.EndMigration()
+	require.False(t, sbx.MigrationInFlight())
+	require.False(t, sbx.CheckpointInFlight())
+	require.NoError(t, sbx.RunUpdate(func() error { return nil }))
+
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	require.False(t, sandboxes.EndMigrationStopping(t.Context(), sbx.Runtime.SandboxID, "lifecycle-other"), "another lifecycle is not the migrated one")
+	require.True(t, sbx.MigrationInFlight(), "a refused end leaves the migration marked")
+	require.True(t, sandboxes.EndMigrationStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID), "the holder ends the migration and removes the sandbox in one step")
+	require.False(t, sbx.MigrationInFlight())
+	_, live = sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.Error(t, err, "only a live lifecycle is migrated")
+}
+
+// A sandbox being migrated whose process ended still leaves the live map
+// through its own teardown.
+func TestMapMigrationLetsTheTeardownReclaim(t *testing.T) {
+	t.Parallel()
+	serializeUnstoppedCounter(t)
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	attachOwnedCleanup(t, sandboxes, sbx)
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	_, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+
+	require.NoError(t, sbx.Close(t.Context()))
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+}
+
+// A lifecycle went live once it was registered, reserved or not, and stays so
+// through its stop: a restore never promoted never does.
+func TestMapWentLive(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	restored := testMapSandbox(t, "lifecycle-restored")
+	sandboxes.TrackLifecycle(t.Context(), restored)
+	require.False(t, restored.WentLive(), "tracked, not registered")
+
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.False(t, sbx.WentLive())
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	require.True(t, sbx.WentLive())
+	require.True(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID))
+	require.True(t, sbx.WentLive(), "a stop does not unmake it")
+
+	reserved := testMapSandbox(t, "lifecycle-2")
+	reserved.Runtime.SandboxID = "sbx-reserved"
+	reservation, err := sandboxes.Reserve(reserved.Runtime.SandboxID)
+	require.NoError(t, err)
+	require.NoError(t, reservation.MarkRunningUnlessEnded(t.Context(), reserved))
+	require.True(t, reserved.WentLive())
+}
+
+// The teardown bypasses whatever migration is in flight when it removes the
+// entry, not one it read before: one ended and another begun after the
+// teardown started still lets it remove the entry, while every other caller
+// stays refused.
+func TestMapTeardownBypassesAMigrationBegunAfterItStarted(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	sbx.updateAdmission.initialize()
+	require.NoError(t, sandboxes.MarkRunning(t.Context(), sbx))
+	_, err := sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+
+	// The teardown starts under the first migration, which is then replaced.
+	sbx.EndMigration()
+	_, err = sandboxes.BeginMigration(sbx.Runtime.SandboxID, sbx.LifecycleID)
+	require.NoError(t, err)
+	defer sbx.EndMigration()
+
+	require.False(t, sandboxes.MarkStopping(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID), "another caller is refused")
+	require.True(t, sandboxes.markStoppingAs(t.Context(), sbx.Runtime.SandboxID, sbx.LifecycleID, true, false), "the teardown removes the entry")
+	_, live := sandboxes.Get(sbx.Runtime.SandboxID)
+	require.False(t, live)
+}
+
+// LifecycleTracked answers for the sandbox and lifecycle pair it was tracked
+// under, from TrackLifecycle until MarkStopped.
+func TestMapLifecycleTracked(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := NewSandboxesMap()
+	sbx := testMapSandbox(t, "lifecycle-1")
+	require.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
+
+	sandboxes.TrackLifecycle(t.Context(), sbx)
+	assert.True(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
+	assert.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, "lifecycle-2"), "another lifecycle of the sandbox")
+	assert.False(t, sandboxes.LifecycleTracked("sandbox-2", sbx.LifecycleID), "the lifecycle under another sandbox")
+
+	sandboxes.MarkStopped(t.Context(), sbx)
+	assert.False(t, sandboxes.LifecycleTracked(sbx.Runtime.SandboxID, sbx.LifecycleID))
+}

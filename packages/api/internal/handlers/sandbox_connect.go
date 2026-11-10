@@ -53,9 +53,9 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 		return
 	}
 
-	timeout := time.Duration(body.Timeout) * time.Second
-	if timeout > time.Duration(teamInfo.Limits.MaxLengthHours)*time.Hour {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Timeout cannot be greater than %d hours", teamInfo.Limits.MaxLengthHours))
+	timeout, apiErr := validateAndParseTimeout(&body.Timeout, teamInfo.Limits.MaxLengthHours)
+	if apiErr != nil {
+		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 		return
 	}
@@ -207,8 +207,9 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 
 	// Pre-flight of the fetcher's authoritative gate so a disabled flag answers
 	// 400 even when the start would otherwise join an in-flight one (409).
-	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, memory, lastSnapshot.Snapshot); apiErr != nil {
+	if _, apiErr := resolveFilesystemBoot(ctx, a.featureFlags, memory, lastSnapshot.Snapshot, lastSnapshot.EnvBuild); apiErr != nil {
 		setMemoryOverrideOutcome(c, memory, apiErr)
+		setResumeGateOutcome(c, memory, lastSnapshot.EnvBuild, apiErr)
 		apierrors.SendAPIError(c, apiErr)
 
 		return
@@ -232,6 +233,7 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		nil, // mcp
 	)
 	setMemoryOverrideOutcome(c, memory, createErr)
+	setResumeGateOutcome(c, memory, lastSnapshot.EnvBuild, createErr)
 	if createErr != nil {
 		responseErr := *createErr
 		responseErr.Retryable = apierrors.UndefinedRetry

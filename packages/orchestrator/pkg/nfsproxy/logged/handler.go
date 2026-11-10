@@ -69,14 +69,17 @@ func (e loggedHandler) ToHandle(ctx context.Context, fs billy.Filesystem, path [
 }
 
 func (e loggedHandler) FromHandle(ctx context.Context, fh []byte) (fs billy.Filesystem, paths []string, err error) {
-	if !e.config.RecordHandleCalls {
-		return e.inner.FromHandle(ctx, fh)
+	if e.config.RecordHandleCalls {
+		finish := logStart(ctx, "Handler.FromHandle", fh)
+		defer func() { finish(ctx, err, paths) }()
 	}
 
-	finish := logStart(ctx, "Handler.FromHandle", fh)
-	defer func() { finish(ctx, err, paths) }()
+	fs, paths, err = e.inner.FromHandle(ctx, fh)
+	if fs != nil {
+		fs = wrapFS(ctx, fs, e.config)
+	}
 
-	return e.inner.FromHandle(ctx, fh)
+	return
 }
 
 func (e loggedHandler) InvalidateHandle(ctx context.Context, filesystem billy.Filesystem, bytes []byte) (err error) {

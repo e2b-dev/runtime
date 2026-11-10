@@ -11,6 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -48,6 +49,25 @@ func (a *APIStore) GetNodesNodeID(c *gin.Context, nodeID api.NodeID, params api.
 	c.JSON(http.StatusOK, result)
 }
 
+func (a *APIStore) GetNodesNodeIDSandboxes(c *gin.Context, nodeID api.NodeID, params api.GetNodesNodeIDSandboxesParams) {
+	ctx := c.Request.Context()
+	clusterID := clusters.WithClusterFallback(params.ClusterID)
+	result, err := a.orchestrator.AdminNodeSandboxes(ctx, clusterID, nodeID)
+	if errors.Is(err, orchestrator.ErrNodeNotFound) {
+		c.Status(http.StatusNotFound)
+
+		return
+	}
+	if err != nil {
+		telemetry.ReportError(ctx, "error when listing the node's sandboxes", err)
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when listing the node's sandboxes")
+
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 func (a *APIStore) PostNodesNodeID(c *gin.Context, nodeId api.NodeID) {
 	ctx := c.Request.Context()
 
@@ -68,10 +88,23 @@ func (a *APIStore) PostNodesNodeID(c *gin.Context, nodeId api.NodeID) {
 		return
 	}
 
-	err = node.SendStatusChange(ctx, body.Status)
+	change := nodemanager.StatusChange{Status: body.Status}
+	if body.Owner != nil {
+		change.Owner = *body.Owner
+	}
+	if body.Force != nil {
+		change.Force = *body.Force
+	}
+
+	err = node.SendStatusChange(ctx, change)
 	if err != nil {
 		if status.Code(err) == codes.FailedPrecondition {
 			a.sendAPIStoreError(c, http.StatusConflict, status.Convert(err).Message())
+
+			return
+		}
+		if status.Code(err) == codes.InvalidArgument {
+			a.sendAPIStoreError(c, http.StatusBadRequest, status.Convert(err).Message())
 
 			return
 		}

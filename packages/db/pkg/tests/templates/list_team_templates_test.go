@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 // createReadyBuildWithAssignment creates a ready build with the given
@@ -50,11 +50,11 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 	createReadyBuildWithAssignment(t, ctx, db, templateID, 2, 2048, 0)
 
 	farFuture := time.Now().Add(100 * 365 * 24 * time.Hour)
-	d := db.SqlcClient.Dashboard
+	d := db.SqlcClient
 
 	variants := map[string]func() (int, error){
 		"CreatedAtAsc": func() (int, error) {
-			rows, err := d.ListTeamTemplatesByCreatedAtAsc(ctx, dashboardqueries.ListTeamTemplatesByCreatedAtAscParams{
+			rows, err := d.ListTeamTemplatesByCreatedAtAsc(ctx, queries.ListTeamTemplatesByCreatedAtAscParams{
 				TeamID: teamID, IncludeDefaults: true, FilterPublic: -1, LimitPlusOne: 10,
 				CursorCreatedAt: time.Time{}, CursorID: "",
 			})
@@ -62,7 +62,7 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 			return len(rows), err
 		},
 		"CreatedAtDesc": func() (int, error) {
-			rows, err := d.ListTeamTemplatesByCreatedAtDesc(ctx, dashboardqueries.ListTeamTemplatesByCreatedAtDescParams{
+			rows, err := d.ListTeamTemplatesByCreatedAtDesc(ctx, queries.ListTeamTemplatesByCreatedAtDescParams{
 				TeamID: teamID, IncludeDefaults: true, FilterPublic: -1, LimitPlusOne: 10,
 				CursorCreatedAt: farFuture, CursorID: "",
 			})
@@ -70,7 +70,7 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 			return len(rows), err
 		},
 		"UpdatedAtAsc": func() (int, error) {
-			rows, err := d.ListTeamTemplatesByUpdatedAtAsc(ctx, dashboardqueries.ListTeamTemplatesByUpdatedAtAscParams{
+			rows, err := d.ListTeamTemplatesByUpdatedAtAsc(ctx, queries.ListTeamTemplatesByUpdatedAtAscParams{
 				TeamID: teamID, IncludeDefaults: true, FilterPublic: -1, LimitPlusOne: 10,
 				CursorUpdatedAt: time.Time{}, CursorID: "",
 			})
@@ -78,7 +78,7 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 			return len(rows), err
 		},
 		"UpdatedAtDesc": func() (int, error) {
-			rows, err := d.ListTeamTemplatesByUpdatedAtDesc(ctx, dashboardqueries.ListTeamTemplatesByUpdatedAtDescParams{
+			rows, err := d.ListTeamTemplatesByUpdatedAtDesc(ctx, queries.ListTeamTemplatesByUpdatedAtDescParams{
 				TeamID: teamID, IncludeDefaults: true, FilterPublic: -1, LimitPlusOne: 10,
 				CursorUpdatedAt: farFuture, CursorID: "",
 			})
@@ -94,8 +94,8 @@ func TestListTeamTemplates_AllVariantsExecute(t *testing.T) {
 	}
 }
 
-func listCreatedAtAscParams(teamID uuid.UUID, limitPlusOne int32) dashboardqueries.ListTeamTemplatesByCreatedAtAscParams {
-	return dashboardqueries.ListTeamTemplatesByCreatedAtAscParams{
+func listCreatedAtAscParams(teamID uuid.UUID, limitPlusOne int32) queries.ListTeamTemplatesByCreatedAtAscParams {
+	return queries.ListTeamTemplatesByCreatedAtAscParams{
 		TeamID:          teamID,
 		IncludeDefaults: false,
 		FilterPublic:    -1,
@@ -124,12 +124,12 @@ func TestListTeamTemplatesByCreatedAt_SortsAndPaginates(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	rows, err := db.SqlcClient.Dashboard.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 10))
+	rows, err := db.SqlcClient.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 10))
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
 	require.Equal(t, []string{rows[0].TemplateID, rows[1].TemplateID, rows[2].TemplateID}, templateIDs)
 
-	descRows, err := db.SqlcClient.Dashboard.ListTeamTemplatesByCreatedAtDesc(ctx, dashboardqueries.ListTeamTemplatesByCreatedAtDescParams{
+	descRows, err := db.SqlcClient.ListTeamTemplatesByCreatedAtDesc(ctx, queries.ListTeamTemplatesByCreatedAtDescParams{
 		TeamID:          teamID,
 		IncludeDefaults: false,
 		FilterPublic:    -1,
@@ -142,14 +142,14 @@ func TestListTeamTemplatesByCreatedAt_SortsAndPaginates(t *testing.T) {
 	require.Equal(t, templateIDs[2], descRows[0].TemplateID)
 
 	// Keyset pagination: page of 2, then continue from the last row's cursor.
-	firstPage, err := db.SqlcClient.Dashboard.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 2))
+	firstPage, err := db.SqlcClient.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 2))
 	require.NoError(t, err)
 	require.Len(t, firstPage, 2)
 
 	params := listCreatedAtAscParams(teamID, 10)
 	params.CursorCreatedAt = firstPage[1].CreatedAt
 	params.CursorID = firstPage[1].TemplateID
-	secondPage, err := db.SqlcClient.Dashboard.ListTeamTemplatesByCreatedAtAsc(ctx, params)
+	secondPage, err := db.SqlcClient.ListTeamTemplatesByCreatedAtAsc(ctx, params)
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 	require.Equal(t, templateIDs[2], secondPage[0].TemplateID)
@@ -169,7 +169,7 @@ func TestListTeamTemplates_BuildDisplayFields(t *testing.T) {
 	require.NoError(t, err)
 	buildID := createReadyBuildWithAssignment(t, ctx, db, builtTemplate, 4, 4096, 0)
 
-	rows, err := db.SqlcClient.Dashboard.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 10))
+	rows, err := db.SqlcClient.ListTeamTemplatesByCreatedAtAsc(ctx, listCreatedAtAscParams(teamID, 10))
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 

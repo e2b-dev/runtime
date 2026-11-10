@@ -1,4 +1,4 @@
-FROM golang:1.26.10
+FROM golang:1.27.3
 # Fall through to a retry on any module proxy error; see
 # .github/actions/go-setup-cache/action.yml for the mechanism.
 ENV GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.golang.org/|direct

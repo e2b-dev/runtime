@@ -121,4 +121,9 @@ func TestStartErrorClientObservedCode(t *testing.T) {
 	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(connect.NewError(StartErrorCode(badRequest), badRequest)))
 }
 
-// Handler.Start must wrap the spawn failure with %w — %v would silently turn
+func TestCommandErrorCode(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, connect.CodeInvalidArgument, CommandErrorCode(fmt.Errorf("%w: the request", unsupportedCommandError("this command cannot run here"))))
+	assert.Equal(t, connect.CodeInternal, CommandErrorCode(errors.New("error creating the command's directory")))
+}

@@ -194,13 +194,31 @@ func TestTeamEventCarriesTeamID(t *testing.T) {
 	recorder := &captureRecorder{}
 	p := newTestPosthogClient(t, recorder, teamIdentifyTTL)
 
-	p.CreateAnalyticsTeamEvent(t.Context(), "team-uuid", "created_instance", posthog.NewProperties().Set("environment", "tpl"))
+	p.CreateAnalyticsTeamEvent(t.Context(), "team-uuid", "listed sandboxes", posthog.NewProperties().Set("environment", "tpl"))
 
 	capture := recorder.capture(t)
+	assert.Equal(t, "team_team-uuid", capture.DistinctId)
 	assert.Equal(t, "team-uuid", capture.Properties[teamIDKey])
 	assert.Equal(t, "team-uuid", capture.Groups[teamGroup])
 	assert.Equal(t, "tpl", capture.Properties["environment"])
 	assert.Equal(t, infraVersion, capture.Properties[infraVersionKey])
+	assert.Equal(t, false, capture.Properties[processPersonProfileKey])
+}
+
+func TestSandboxEventIsKeyedBySandbox(t *testing.T) {
+	t.Parallel()
+
+	recorder := &captureRecorder{}
+	p := newTestPosthogClient(t, recorder, teamIdentifyTTL)
+
+	p.CreateAnalyticsSandboxEvent(t.Context(), "team-uuid", "sbx-id", "created_instance", posthog.NewProperties().Set("instance_id", "sbx-id"))
+
+	capture := recorder.capture(t)
+	assert.Equal(t, "sandbox_sbx-id", capture.DistinctId)
+	assert.Equal(t, "team-uuid", capture.Properties[teamIDKey])
+	assert.Equal(t, "team-uuid", capture.Groups[teamGroup])
+	assert.Equal(t, "sbx-id", capture.Properties["instance_id"])
+	assert.Equal(t, false, capture.Properties[processPersonProfileKey])
 }
 
 func TestIdentifyAnalyticsTeamSendsOncePerTeam(t *testing.T) {
@@ -286,7 +304,7 @@ func TestIdentifyAnalyticsTeamResendsAfterFailedUpload(t *testing.T) {
 	require.Len(t, recorder.messages, 1)
 
 	// A failed capture upload does not forget the team.
-	capture := posthog.Capture{DistinctId: placeholderTeamGroupUser, Event: "created_instance"}
+	capture := posthog.Capture{DistinctId: teamDistinctIDPrefix + "team-a", Event: "created_instance"}
 	callback.Failure(capture.APIfy(), errors.New("upload failed"))
 	p.IdentifyAnalyticsTeam(t.Context(), "team-a", "Team A")
 	require.Len(t, recorder.messages, 1)

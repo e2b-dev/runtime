@@ -77,6 +77,10 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 		return
 	}
 	filesystemOnly := body.Memory != nil && !*body.Memory
+	// By default the node takes a memory snapshot over a guest agent that does
+	// not answer and records it; the caller can ask to be refused instead.
+	requireEnvdHealthy := body.RequireHealthyGuest != nil && *body.RequireHealthyGuest
+	setPauseMode(c, filesystemOnly, requireEnvdHealthy)
 
 	// Version-gate filesystem-only snapshots HERE, before the pause chain
 	// commits: RemoveSandbox tears down routing and store state regardless of
@@ -89,7 +93,11 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 
 	pause.LogInitiated(ctx, sandboxID, teamID.String(), pause.ReasonRequest, filesystemOnly)
 
-	err = a.pauseWithinRateLimit(ctx, backend, teamID, sandboxID, filesystemOnly)
+	err = a.pauseWithinRateLimit(ctx, backend, teamID, sandboxID, sandbox.RemoveOpts{
+		Action:             sandbox.StateActionPause,
+		FilesystemOnly:     filesystemOnly,
+		RequireEnvdHealthy: requireEnvdHealthy,
+	})
 	var transErr *sandbox.InvalidStateTransitionError
 	var limitErr pauseRateLimitedError
 
@@ -101,6 +109,17 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 		retryAfterSecs := max(int(math.Ceil(limitErr.retryAfter.Seconds())), 1)
 		c.Header("Retry-After", strconv.Itoa(retryAfterSecs))
 		a.sendAPIStoreError(c, http.StatusTooManyRequests, fmt.Sprintf("Sandbox '%s' reached its pause rate limit, please retry in %d seconds", sandboxID, retryAfterSecs))
+
+		return
+	case errors.Is(err, orchestrator.ErrSandboxLifecycleHeld):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonLifecycleHeld, filesystemOnly)
+		// Released SDKs read a pause 409 as already paused.
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is busy with another operation, please retry", sandboxID))
+
+		return
+	case errors.Is(err, sandbox.ErrLockLost):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonStateChanged, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is busy with another operation, please retry", sandboxID))
 
 		return
 	case errors.Is(err, orchestrator.ErrExecutionChanged):
@@ -124,6 +143,30 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 	case errors.As(err, &transErr):
 		pause.LogFailure(ctx, sandboxID, teamID.String(), pause.ReasonRequest, filesystemOnly, err)
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox '%s' cannot be paused while in '%s' state", sandboxID, transErr.CurrentState))
+
+		return
+	// Reached for a filesystem-only pause, one that asked for a healthy
+	// guest, or a guest that powered off while the probe waited, after the
+	// API restored the sandbox; the node left the VM running, or the disk
+	// held, so a retry can succeed once the guest agent answers again or
+	// as the disk-only capture of the held guest.
+	case errors.Is(err, orchestrator.PauseRefusedEnvdUnresponsiveError{}):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonEnvdUnresponsive, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because the sandbox guest agent is not responding, please retry", sandboxID))
+
+		return
+	// Reached only after the API restored the sandbox; the checkpoint that
+	// refused the pause ends on its own, so a plain retry succeeds.
+	case errors.Is(err, orchestrator.PauseRefusedCheckpointInProgressError{}):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonCheckpointInProgress, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, fmt.Sprintf("Sandbox '%s' cannot be paused right now because it is being snapshotted, please retry", sandboxID))
+
+		return
+	// The API restored the sandbox; the same request will never succeed, a
+	// memory pause will. Not 409: the SDKs read every 409 here as already paused.
+	case errors.Is(err, orchestrator.PauseUnsupportedError{}):
+		pause.LogSkipped(ctx, sandboxID, teamID.String(), pause.ReasonRequest, pause.SkipReasonUnsupported, filesystemOnly)
+		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Sandbox '%s' cannot be paused filesystem-only: its guest does not support it, pause it with memory instead", sandboxID))
 
 		return
 	// Reached only after the API restored the sandbox, so the retry can succeed.
@@ -150,6 +193,21 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 	c.Status(http.StatusNoContent)
 }
 
+// setPauseMode labels the request metric with what the pause asked for,
+// before the pause runs so every answer carries it: a filesystem-only
+// snapshot, a memory snapshot that requires a healthy guest (strict), or the
+// default memory snapshot that proceeds past an unresponsive one.
+func setPauseMode(c *gin.Context, filesystemOnly, requireEnvdHealthy bool) {
+	mode := "default"
+	switch {
+	case filesystemOnly:
+		mode = "filesystem_only"
+	case requireEnvdHealthy:
+		mode = "strict"
+	}
+	c.Set(metricPauseMode, mode)
+}
+
 // pauseAttempts bounds the re-checks after a resume replaces the execution a
 // pause was pinned to. Each one needs a whole resume to land between the
 // lookup and the pause.
@@ -172,8 +230,9 @@ func (e pauseRateLimitedError) Error() string {
 // pause, so a refusal leaves the sandbox running. The pause is pinned to the
 // record the limiter looked at: a request cannot count against, or join, one
 // execution and then pause the next one a resume created. A changed execution
-// goes through the limiter again.
-func (a *APIStore) pauseWithinRateLimit(ctx context.Context, backend pauseOrchestrator, teamID uuid.UUID, sandboxID string, filesystemOnly bool) error {
+// goes through the limiter again. opts carries what the pause asks of the
+// node; its pin is set here.
+func (a *APIStore) pauseWithinRateLimit(ctx context.Context, backend pauseOrchestrator, teamID uuid.UUID, sandboxID string, opts sandbox.RemoveOpts) error {
 	var err error
 	for range pauseAttempts {
 		check := a.checkPauseRateLimit(ctx, backend, teamID, sandboxID)
@@ -181,11 +240,8 @@ func (a *APIStore) pauseWithinRateLimit(ctx context.Context, backend pauseOrches
 			return pauseRateLimitedError{retryAfter: check.retryAfter}
 		}
 
-		err = backend.RemoveSandbox(ctx, teamID, sandboxID, sandbox.RemoveOpts{
-			Action:            sandbox.StateActionPause,
-			FilesystemOnly:    filesystemOnly,
-			ExpectExecutionID: check.executionID,
-		})
+		opts.ExpectExecutionID = check.executionID
+		err = backend.RemoveSandbox(ctx, teamID, sandboxID, opts)
 		if !errors.Is(err, orchestrator.ErrExecutionChanged) {
 			return err
 		}

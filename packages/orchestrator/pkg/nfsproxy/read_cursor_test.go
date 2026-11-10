@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -44,9 +45,10 @@ func TestProxyReadAdvancesTerminalCursor(t *testing.T) {
 			payload := []byte("payload")
 			require.NoError(t, os.WriteFile(path, payload, 0o600))
 
+			lifecycleID := uuid.NewString()
 			sandboxes := sandbox.NewSandboxesMap()
 			sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
-				LifecycleID: uuid.NewString(),
+				LifecycleID: lifecycleID,
 				Metadata: &sandbox.Metadata{
 					Config: sandbox.NewConfig(sandbox.Config{
 						VolumeMounts: []sandbox.VolumeMountConfig{{ID: volumeID, Name: "volume", Path: "/volume", Type: "test"}},
@@ -57,7 +59,10 @@ func TestProxyReadAdvancesTerminalCursor(t *testing.T) {
 			})
 			proxy, err := NewProxy(t.Context(), builder, sandboxes, nfscfg.Config{})
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, sandboxes.NetworkReleased(context.WithoutCancel(t.Context()), "127.0.0.1")) })
+			t.Cleanup(func() {
+				require.NoError(t, sandboxes.NetworkReleased(context.WithoutCancel(t.Context()), "127.0.0.1"))
+				require.Eventually(t, func() bool { return proxy.retirement.count() == 0 }, time.Second, time.Millisecond)
+			})
 
 			var lc net.ListenConfig
 			listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -72,7 +77,7 @@ func TestProxyReadAdvancesTerminalCursor(t *testing.T) {
 			})
 			require.NoError(t, err)
 			t.Cleanup(client.Close)
-			target, err := (&nfs.Mount{Client: client}).Mount("/volume", rpc.NewAuthUnix("test", 1000, 1000).Auth())
+			target, err := (&nfs.Mount{Client: client}).Mount("/"+lifecycleID+"/volume", rpc.NewAuthUnix("test", 1000, 1000).Auth())
 			require.NoError(t, err)
 			file, err := target.Open("/payload")
 			require.NoError(t, err)

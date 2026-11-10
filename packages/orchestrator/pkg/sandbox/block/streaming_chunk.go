@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 const (
@@ -29,6 +31,9 @@ type Chunker struct {
 	fetchTimeout time.Duration
 	featureFlags *featureflags.Client
 	objType      storage.SeekableObjectType
+	// buildID names the build whose file this chunker reads. It goes on every
+	// fetch span, so a fetch can be keyed by (build, file type, offset).
+	buildID string
 
 	size int64
 
@@ -42,6 +47,7 @@ func NewChunker(
 	cachePath string,
 	metrics metrics.Metrics,
 	objType storage.SeekableObjectType,
+	buildID string,
 ) (*Chunker, error) {
 	cache, err := NewCache(size, blockSize, cachePath, false)
 	if err != nil {
@@ -55,6 +61,7 @@ func NewChunker(
 		featureFlags: ff,
 		fetchTimeout: defaultFetchTimeout,
 		objType:      objType,
+		buildID:      buildID,
 	}, nil
 }
 
@@ -77,6 +84,7 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 	b, err := c.cache.Slice(off, length)
 	if err == nil {
 		c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, storage.SourceMmap, ct))
+		storage.ReportSource(ctx, storage.SourceMmap)
 
 		return b, nil
 	}
@@ -118,6 +126,7 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 	}
 
 	c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, src, ct))
+	storage.ReportSource(ctx, src)
 
 	return b, nil
 }
@@ -207,6 +216,8 @@ func (c *Chunker) runFetch(ctx context.Context, s *fetchSession, upstream storag
 	span.SetAttributes(
 		attribute.Int64("off", s.chunkOff),
 		attribute.Int64("len", s.chunkLen),
+		telemetry.WithBuildID(c.buildID),
+		attribute.String(storage.AttrFileType, c.objType.String()),
 	)
 
 	defer c.releaseSession(s)
@@ -280,6 +291,13 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 	openStart := time.Now()
 	reader, source, err := upstream.OpenRangeReader(ctx, s.chunkOff, s.chunkLen, ft)
 	res.source = source
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.String(storage.AttrSource, source.String()))
+	// A peer serves the uncompressed format, so without a compressed table the
+	// stored size of the chunk is unknown and left out.
+	if ft.IsCompressed() || source != storage.SourcePeer {
+		span.SetAttributes(attribute.Int64("stored_len", storedLen(ft, s.chunkOff, s.chunkLen)))
+	}
 	res.openDuration = time.Since(openStart)
 	s.setSource(source)
 	if err != nil {
@@ -320,7 +338,16 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 		// Read in batches of max(blockSize, minReadBatchSize) to align notification
 		// granularity with the read size and minimize lock/notify overhead.
 		readEnd := min(totalRead+readBatch, s.chunkLen)
-		n, readErr := io.ReadFull(reader, mmapSlice[totalRead:readEnd])
+		// A Go copy into a cache page the filesystem cannot back raises SIGBUS.
+		var n int
+		var readErr error
+		if faultErr := RunFaultSafe(ctx, func() error {
+			n, readErr = io.ReadFull(reader, mmapSlice[totalRead:readEnd])
+
+			return nil
+		}); faultErr != nil {
+			readErr = faultErr
+		}
 		totalRead += int64(n)
 
 		if n > 0 && !ft.IsCompressed() {
@@ -339,7 +366,7 @@ func (c *Chunker) progressiveFetch(ctx context.Context, s *fetchSession, mmapSli
 				break // all bytes received; trailing EOF is expected
 			}
 
-			return res, fmt.Errorf("failed reading at offset %d after %d bytes: %w", s.chunkOff, totalRead, readErr)
+			return res, fmt.Errorf("failed reading at offset %d after %d bytes: %w", s.chunkOff, totalRead, classifyBackingError(c.cache.filePath, readErr))
 		}
 	}
 
@@ -366,6 +393,20 @@ func (c *Chunker) releaseSession(s *fetchSession) {
 // For compressed data the frame table defines chunk boundaries; for
 // uncompressed data chunks are MemoryChunkSize-aligned (for backwards
 // compatibility) and clamped to file size.
+// storedLen returns how many bytes the chunk at off occupies in storage: its
+// compressed frame, or length itself when the data is uncompressed.
+func storedLen(ft *storage.FrameTable, off, length int64) int64 {
+	if !ft.IsCompressed() {
+		return length
+	}
+	r, err := ft.LocateCompressed(off)
+	if err != nil {
+		return 0
+	}
+
+	return int64(r.Length)
+}
+
 func (c *Chunker) locateChunk(off int64, ft *storage.FrameTable) (chunkOff, chunkLen int64, err error) {
 	if ft.IsCompressed() {
 		r, err := ft.LocateUncompressed(off)

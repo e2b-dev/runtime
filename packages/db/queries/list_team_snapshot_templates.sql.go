@@ -20,6 +20,7 @@ SELECT
     e.team_id,
     eb.id as build_id,
     eb.vcpu,
+    eb.max_vcpu,
     eb.ram_mb,
     eb.total_disk_size_mb,
     eb.envd_version,
@@ -33,7 +34,7 @@ JOIN "public"."snapshot_templates" st ON st.env_id = e.id
 JOIN LATERAL (
     -- When a tag filter is set, pick the newest build with that tag; the inner
     -- join then also drops snapshots with no successful build for the tag.
-    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only, ba.tag
+    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only, b.envd_unresponsive, b.max_vcpu, ba.tag
     FROM "public"."env_build_assignments" ba
     JOIN "public"."env_builds" b ON b.id = ba.build_id
     WHERE ba.env_id = e.id
@@ -80,6 +81,7 @@ type ListTeamSnapshotTemplatesRow struct {
 	TeamID             uuid.UUID
 	BuildID            uuid.UUID
 	Vcpu               int64
+	MaxVcpu            *int64
 	RamMb              int64
 	TotalDiskSizeMb    *int64
 	EnvdVersion        *string
@@ -116,6 +118,7 @@ func (q *Queries) ListTeamSnapshotTemplates(ctx context.Context, arg ListTeamSna
 			&i.TeamID,
 			&i.BuildID,
 			&i.Vcpu,
+			&i.MaxVcpu,
 			&i.RamMb,
 			&i.TotalDiskSizeMb,
 			&i.EnvdVersion,

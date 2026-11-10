@@ -53,12 +53,19 @@ func New(
 	getDestination func(r *http.Request) (*pool.Destination, error),
 	connLimitConfig *ConnectionLimitConfig,
 	disableKeepAlives bool,
+	opts ...Option,
 ) *Proxy {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	p := pool.New(
 		maxClientConns,
 		int(maxConnectionAttempts),
 		idleTimeout,
 		disableKeepAlives,
+		pool.WithTransportWrap(o.transportWrap),
 	)
 
 	proxy := &Proxy{
@@ -70,7 +77,7 @@ func New(
 			// otherwise there's a chance for a race condition when the server closes and the client tries to use the connection
 			IdleTimeout:       idleTimeout + idleTimeoutBufferUpstreamDownstream,
 			ReadHeaderTimeout: 0,
-			Handler:           handler(p, getDestination, connLimitConfig),
+			Handler:           handler(p, getDestination, connLimitConfig, o),
 		},
 		pool:              p,
 		serverConnections: smap.New[*tracking.Connection](),
@@ -121,7 +128,7 @@ func (p *Proxy) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	// net/http does not wait for hijacked H2C and upgraded connections.
+	// net/http does not wait for upgraded connections, which it hands off by hijacking.
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for p.CurrentServerConnections() != 0 {

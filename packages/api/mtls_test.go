@@ -145,9 +145,10 @@ func TestHopsReportUnderTheirKeysAndReadTheirFlags(t *testing.T) {
 	}, true)
 	require.NoError(t, err)
 
-	for _, hop := range []string{"secrets_store", "analytics", "orchestrator"} {
+	for _, hop := range []string{"secrets_store", "orchestrator"} {
 		assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, hop, "off", mtls.SourceFallback), hop)
 	}
+	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "analytics", "off", mtls.SourceRefused))
 	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "webhooks", "on", mtls.SourceFlag))
 }
 

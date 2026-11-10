@@ -52,6 +52,10 @@ install_dependencies() {
 # rather than by tag creation date also makes the choice a property of the tag
 # names alone, so anything that only has the tag list — an automated bump
 # deciding what to propose — resolves the same tag this build will check out.
+#
+# Only names that end on the distro field, the grammar the bump's resolver
+# reads. The glob's open end also matches withdrawn builds, which upstream
+# renames with a -dontuse suffix and which can carry the highest release.
 get_tag() {
   local kernel_version="$1" prefix tag
   for prefix in microvm-kernel kernel; do
@@ -59,7 +63,8 @@ get_tag() {
     # text there (microvm-kernel6.18-6.18.33-65.128.amzn2023). The glob is
     # anchored, so the 'kernel' pass still does not match microvm tags, and the
     # '-' after the version keeps 6.1.177 from matching 6.1.1770.
-    tag="$(git --no-pager tag -l "${prefix}*${kernel_version}-*.amzn2*" | sort -V | tail -n1)"
+    tag="$(git --no-pager tag -l "${prefix}*${kernel_version}-*.amzn2*" \
+      | sed -En '/\.amzn2[[:alnum:]_]*$/p' | sort -V | tail -n1)"
     if [ -n "$tag" ]; then
       echo "$tag"
       return 0
@@ -89,10 +94,8 @@ build_salt() {
     arm64) rpm_arch="aarch64" ;;
     *)     rpm_arch="$target_arch" ;;
   esac
-  # The distro field get_tag matched on, found by name rather than by position:
-  # its glob ends open, so this field is not always the tag's last. A tag
-  # without one is not one get_tag returns, so fail rather than salt with
-  # whatever happens to sit there.
+  # The distro field get_tag matched on. A tag without one is not one get_tag
+  # returns, so fail rather than salt with whatever happens to sit there.
   [[ "$tag" =~ amzn2[0-9]* ]] || return 1
   echo "${version}-${BASH_REMATCH[0]}.${rpm_arch}"
 }
@@ -204,7 +207,13 @@ build_version() {
 
 ensure_linux_repo() {
   cd "$SCRIPT_DIR"
-  [ -d linux ] || git clone --no-checkout --filter=tree:0 https://github.com/amazonlinux/linux
+  if [ -d linux ]; then
+    # A reused clone would keep the tag of a build upstream has since withdrawn,
+    # and miss every tag cut after it was cloned.
+    git -C linux fetch --quiet --force --prune --prune-tags origin
+  else
+    git clone --no-checkout --filter=tree:0 https://github.com/amazonlinux/linux
+  fi
   cd linux
   make distclean || true
 }

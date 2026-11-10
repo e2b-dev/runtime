@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 )
@@ -100,22 +102,22 @@ func TestRequireBearerToken(t *testing.T) {
 		name      string
 		md        metadata.MD
 		wantToken string
-		wantErr   bool
+		wantCode  codes.Code
 	}{
 		{
-			name:    "missing authorization",
-			md:      metadata.MD{},
-			wantErr: true,
+			name:     "missing authorization",
+			md:       metadata.MD{},
+			wantCode: codes.Unauthenticated,
 		},
 		{
-			name:    "malformed authorization",
-			md:      metadata.Pairs(proxygrpc.MetadataAuthorization, "token"),
-			wantErr: true,
+			name:     "malformed authorization",
+			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "token"),
+			wantCode: codes.Unauthenticated,
 		},
 		{
-			name:    "empty bearer token",
-			md:      metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer "),
-			wantErr: true,
+			name:     "empty bearer token",
+			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer "),
+			wantCode: codes.Unauthenticated,
 		},
 		{
 			name:      "bearer token",
@@ -129,8 +131,8 @@ func TestRequireBearerToken(t *testing.T) {
 			t.Parallel()
 
 			token, err := requireBearerToken(tt.md)
-			if tt.wantErr {
-				require.Error(t, err)
+			if tt.wantCode != codes.OK {
+				require.Equal(t, tt.wantCode, status.Code(err))
 
 				return
 			}
@@ -148,7 +150,7 @@ func TestRequireClaims(t *testing.T) {
 		md       metadata.MD
 		verifier Verifier
 		want     Claims
-		wantErr  bool
+		wantCode codes.Code
 	}{
 		{
 			name:     "valid bearer token",
@@ -160,18 +162,18 @@ func TestRequireClaims(t *testing.T) {
 			name:     "missing bearer token",
 			md:       metadata.MD{},
 			verifier: fakeVerifier{claims: Claims{Subject: "client_123", OrgID: "org_123", Scopes: []string{RequiredScope}}},
-			wantErr:  true,
+			wantCode: codes.Unauthenticated,
 		},
 		{
-			name:    "configured auth requires verifier",
-			md:      metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"),
-			wantErr: true,
+			name:     "configured auth requires verifier",
+			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"),
+			wantCode: codes.Internal,
 		},
 		{
 			name:     "verifier error",
 			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"),
 			verifier: fakeVerifier{err: errors.New("invalid token")},
-			wantErr:  true,
+			wantCode: codes.Unauthenticated,
 		},
 	}
 
@@ -180,8 +182,8 @@ func TestRequireClaims(t *testing.T) {
 			t.Parallel()
 
 			claims, err := RequireClaims(t.Context(), tt.md, tt.verifier)
-			if tt.wantErr {
-				require.Error(t, err)
+			if tt.wantCode != codes.OK {
+				require.Equal(t, tt.wantCode, status.Code(err))
 
 				return
 			}
@@ -198,7 +200,7 @@ func TestRequireScopeClaims(t *testing.T) {
 		name          string
 		claims        Claims
 		requiredScope string
-		wantErr       bool
+		wantCode      codes.Code
 	}{
 		{
 			name:          "matching scope",
@@ -214,13 +216,13 @@ func TestRequireScopeClaims(t *testing.T) {
 			name:          "missing scope",
 			claims:        Claims{Scopes: []string{"other"}},
 			requiredScope: RequiredScope,
-			wantErr:       true,
+			wantCode:      codes.Unauthenticated,
 		},
 		{
 			name:          "missing required scope",
 			claims:        Claims{Scopes: []string{RequiredScope}},
 			requiredScope: "",
-			wantErr:       true,
+			wantCode:      codes.Unauthenticated,
 		},
 	}
 
@@ -229,8 +231,8 @@ func TestRequireScopeClaims(t *testing.T) {
 			t.Parallel()
 
 			err := RequireScopeClaims(tt.claims, tt.requiredScope)
-			if tt.wantErr {
-				require.Error(t, err)
+			if tt.wantCode != codes.OK {
+				require.Equal(t, tt.wantCode, status.Code(err))
 
 				return
 			}
@@ -246,7 +248,7 @@ func TestRequireOrgClaims(t *testing.T) {
 		name          string
 		claims        Claims
 		expectedOrgID string
-		wantErr       bool
+		wantCode      codes.Code
 	}{
 		{
 			name:          "matching org",
@@ -262,19 +264,19 @@ func TestRequireOrgClaims(t *testing.T) {
 			name:          "wrong org",
 			claims:        Claims{OrgID: "org_456"},
 			expectedOrgID: "org_123",
-			wantErr:       true,
+			wantCode:      codes.PermissionDenied,
 		},
 		{
 			name:          "missing expected org",
 			claims:        Claims{OrgID: "org_123"},
 			expectedOrgID: "",
-			wantErr:       true,
+			wantCode:      codes.PermissionDenied,
 		},
 		{
 			name:          "missing claim org",
 			claims:        Claims{},
 			expectedOrgID: "org_123",
-			wantErr:       true,
+			wantCode:      codes.PermissionDenied,
 		},
 	}
 
@@ -283,8 +285,8 @@ func TestRequireOrgClaims(t *testing.T) {
 			t.Parallel()
 
 			err := RequireOrgClaims(tt.claims, tt.expectedOrgID)
-			if tt.wantErr {
-				require.Error(t, err)
+			if tt.wantCode != codes.OK {
+				require.Equal(t, tt.wantCode, status.Code(err))
 
 				return
 			}

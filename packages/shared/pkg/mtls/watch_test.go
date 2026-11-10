@@ -84,7 +84,7 @@ func TestWatchedHopRefusesAnOnFlipWithoutExpectedNames(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		return slices.Contains(logMessages(logs), "mtls: hop mode flag asks for on with no expected server names; staying")
 	}, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(1), mustPoint(t, reader, MetricClientMode, attribute.String(AttrClientHop, "peers"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceFlag)), "the hop stays off")
+	awaitPoint(t, reader, 1, MetricClientMode, attribute.String(AttrClientHop, "peers"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceRefused))
 	_, on := pointValue(t, reader, MetricClientMode, attribute.String(AttrClientHop, "peers"), attribute.String(AttrMode, "on"), attribute.String(AttrSource, SourceFlag))
 	assert.False(t, on, "on was never in force")
 }

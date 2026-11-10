@@ -34,9 +34,8 @@ func TestServiceInfoSandboxLimit(t *testing.T) {
 
 			listener := bufconn.Listen(1 << 20)
 			server := grpc.NewServer()
-			orchestratorinfo.RegisterInfoServiceServer(server, NewInfoService(
-				info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics(),
-			))
+			infoService := NewInfoService(info, sandbox.NewSandboxesMap(), metrics.NewHostMetrics(), nil)
+			orchestratorinfo.RegisterInfoServiceServer(server, infoService)
 			go func() { _ = server.Serve(listener) }()
 			t.Cleanup(func() {
 				server.Stop()

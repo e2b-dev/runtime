@@ -109,6 +109,7 @@ SELECT
     p.is_default,
     COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) AS build_id,
     COALESCE(eb.vcpu, 0)::bigint AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     COALESCE(eb.ram_mb, 0)::bigint AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
@@ -133,7 +134,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+    SELECT b.id, b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = p.id AND ba.tag = 'default' AND b.status_group = 'ready'
@@ -234,6 +235,7 @@ SELECT
     p.is_default,
     COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) AS build_id,
     COALESCE(eb.vcpu, 0)::bigint AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     COALESCE(eb.ram_mb, 0)::bigint AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
@@ -258,7 +260,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+    SELECT b.id, b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = p.id AND ba.tag = 'default' AND b.status_group = 'ready'
@@ -359,6 +361,7 @@ SELECT
     p.is_default,
     COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) AS build_id,
     COALESCE(eb.vcpu, 0)::bigint AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     COALESCE(eb.ram_mb, 0)::bigint AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
@@ -383,7 +386,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+    SELECT b.id, b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = p.id AND ba.tag = 'default' AND b.status_group = 'ready'
@@ -484,6 +487,7 @@ SELECT
     p.is_default,
     COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) AS build_id,
     COALESCE(eb.vcpu, 0)::bigint AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     COALESCE(eb.ram_mb, 0)::bigint AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
@@ -508,7 +512,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+    SELECT b.id, b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = p.id AND ba.tag = 'default' AND b.status_group = 'ready'

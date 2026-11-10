@@ -163,7 +163,7 @@ func TestGetTeamTemplates_AssignmentOrderDifferentFromBuildOrder(t *testing.T) {
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build1ID, "default")
 
 	// GetTeamTemplates should return build1 (latest assignment)
-	results, err := db.SqlcClient.GetTeamTemplates(ctx, teamID)
+	results, err := db.SqlcClient.GetTeamTemplates(ctx, queries.GetTeamTemplatesParams{TeamID: teamID})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 

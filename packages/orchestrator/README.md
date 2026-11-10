@@ -49,189 +49,18 @@ Flags:
 >
 > If you are using Mise, you can run the command as `sudo $(which go) run ./cmd/create-build -to-build <uuid> -storage .local-build`.
 
-### Resume Build
+---
 
-Resume a sandbox from a build.
+## Service status
 
-```bash
-# Local storage
-sudo go run ./cmd/resume-build -from-build <uuid> -storage .local-build -iterations 10
+`ServiceInfo` reports one of six statuses. `Healthy` and `NotReady` (the startup hold until the edition's egress answers ready) are the process's own; `ShuttingDown` is entered only by the shutdown and is terminal. `Draining`, `Unhealthy` and `Standby` are set by an operator or a sizer through `ServiceStatusOverride`, which the API exposes as its admin `POST /nodes/{nodeID}` route.
 
-# Remote GCS storage (pass credentials to sudo)
-sudo GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud/application_default_credentials.json \
-  go run ./cmd/resume-build -from-build <uuid> -storage gs://bucket -iterations 10
+- **Owner.** A `Standby` override may carry an owner: at most 63 characters of `[a-z0-9-]`, starting and ending alphanumeric. While an owner is recorded, a `Standby` under another owner is refused with `FailedPrecondition`; a `Healthy`, `Draining` or `Unhealthy` from anyone applies and clears the owner, so a person's actions work as before and the owner says whose park it is and nothing more; `force` applies the carried status and owner regardless. The response reports the owner as `status_owner`, and the build advertises `capabilities: ["park-owner"]` beside its labels, never among them.
+- **Persistence.** A `Standby` is written to `$ORCHESTRATOR_BASE_PATH/service-status.json` (status, owner, change time) and restored at start, so a parked node stays parked across a restart until a `Healthy` carrying its owner arrives. The file is removed when the status leaves `Standby`; a shutdown keeps it, and an unreadable file is logged and ignored. A park also outlives the startup hold: a release before the node's egress is ready lands on `NotReady` and becomes `Healthy` once it is.
+- **Create refusal.** `Create` answers `ResourceExhausted` while the status is not `Healthy`, with a `NODE_NOT_ACCEPTING_SANDBOXES` detail that tells it from a full node; the API places the sandbox on another node and leaves this one out of its next sample, while a capacity refusal is retried on the same node as before.
+- **Shutdown bound.** Once the sandboxes are drained, every closer runs under one 30 s deadline and the final wait for the service goroutines is bounded by another 30 s. A closer or wait cut at its deadline is logged with `forced=true` and makes the process exit 1, as a failing closer does.
 
-# Pause mode: resume, run command, then snapshot
-sudo go run ./cmd/resume-build -from-build <uuid> -to-build <new-uuid> \
-  -storage .local-build -cmd-pause "pip install numpy"
-
-# Pause mode: start command through envd, then wait for SIGUSR1 before snapshot
-sudo go run ./cmd/resume-build -from-build <uuid> -to-build <new-uuid> \
-  -storage .local-build -cmd-signal-pause "python3 /home/user/workspace/job.py"
-```
-
-Flags:
-
-- `-from-build <uuid>` - Build ID (UUID) to resume from (required)
-- `-to-build <uuid>` - Output build ID (UUID) for pause snapshot (auto-generated if not specified)
-- `-storage <path>` - Local path or `gs://bucket` (default: `.local-build`)
-- `-sandbox-dir <path>` - Override `SANDBOX_DIR` (the rootfs path baked into the snapshot)
-- `-iterations <n>` - Number of iterations, 0 = interactive (default: `0`)
-- `-cold` - Clear cache between iterations (cold start each time)
-- `-no-prefetch` - Disable memory prefetching
-- `-v` - Verbose logging
-- `-pause` - Start and immediately pause (create snapshot)
-- `-signal-pause <signal>` - Wait for signal before pause (e.g., `SIGTERM`, `SIGUSR1`)
-- `-cmd-pause <cmd>` - Execute command in sandbox, then pause on success
-- `-cmd-signal-pause <cmd>` - Execute command in sandbox, then wait for `SIGUSR1` before pause
-- `-envd-version <version>` - The guest's envd version (default: a placeholder — see the caveat below)
-
-**envd version caveat:**
-
-`resume-build` has no database and the snapshot metadata does not record the build's envd
-version (only the kernel and Firecracker ones), so unless `-envd-version` is given the tool
-reports a fixed placeholder (`1.0.0`). Every `envd.version` field in its output and logs is
-then that placeholder, **not** the guest's version — don't reason from it. To read the real
-one, mount the build's rootfs (`mount-build-rootfs`) and run its `/usr/bin/envd -version`,
-or read `X-Envd-Version`, which a running envd reports on `/init`.
-
-The placeholder sits above every envd version gate, so the gated capabilities (`/freeze`,
-`/fsfreeze`, `/collapse`, the KVM clock, the upgrade `from_version`) stay on. Against an
-older guest that is a path production would not take, so pass `-envd-version` with the
-guest's real version when the behavior under test depends on one of those gates. The tool
-prints which of the two it is using when it loads the build.
-
-**Pause mode example:**
-
-```bash
-# Chain builds with explicit build IDs
-sudo go run ./cmd/resume-build -from-build $BUILD1 -to-build $BUILD2 \
-  -storage .local-build -cmd-pause "apt install curl"
-
-sudo go run ./cmd/resume-build -from-build $BUILD2 -to-build $BUILD3 \
-  -storage .local-build -cmd-pause "pip install requests"
-
-# Start a long-running command through envd, then trigger pause from the host
-sudo go run ./cmd/resume-build -from-build $BUILD3 -to-build $BUILD4 \
-  -storage .local-build -cmd-signal-pause "python3 /home/user/workspace/job.py"
-# In another shell:
-ps -ef | grep 'cmd/resume-build' | grep -v grep
-sudo kill -SIGUSR1 <resume-build-pid>
-```
-
-### Copy Build
-
-Copy a build between storage locations (local or GCS).
-
-```bash
-# Local to local
-go run ./cmd/copy-build -build <uuid> -from .local-build -to /other/path
-
-# Local to GCS
-go run ./cmd/copy-build -build <uuid> -from .local-build -to gs://bucket
-
-# GCS to GCS
-go run ./cmd/copy-build -build <uuid> -from gs://bucket1 -to gs://bucket2
-```
-
-Flags:
-
-- `-build <uuid>` - Build ID (UUID, required)
-- `-from <path>` - Source: local path or `gs://bucket`
-- `-to <path>` - Destination: local path or `gs://bucket`
-- `-team <uuid>` - Team UUID (if set, prints SQL to populate DB on stdout)
-- `-envd-version <version>` - Envd version (required if team provided) — must match the version present in the template
-- `-vcpu <n>` - vCPUs (default: `2`)
-- `-memory <mb>` - Memory in MB (default: `1024`)
-- `-disk <mb>` - Disk in MB (default: `1024`)
-- `-tag <name>` - Build assignment tag (default: `default`)
-
-**Print DB seed SQL:**
-
-When `-team` is set, the command reads `metadata.json` from the destination to get `kernel_version` and `firecracker_version`, generates a new env ID, and prints SQL statements (`BEGIN`/`COMMIT` wrapped) to stdout. Pipe directly to `psql` to populate the database:
-
-```bash
-go run ./cmd/copy-build -build <uuid> -from .local-build -to gs://bucket \
-  -team <team-uuid> -envd-version 0.2.11 -vcpu 2 -memory 1024 -disk 1024 \
-  | psql $POSTGRES_CONNECTION_STRING
-```
-
-### Mount Build Rootfs
-
-```bash
-# Local storage
-sudo go run ./cmd/mount-build-rootfs -build <uuid> -storage .local-build -mount /mnt/rootfs
-
-# Remote GCS storage (pass credentials to sudo)
-sudo GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud/application_default_credentials.json \
-  go run ./cmd/mount-build-rootfs -build <uuid> -storage gs://bucket -mount /mnt/rootfs
-```
-
-Flags:
-
-- `-build <uuid>` - Build ID (UUID, required unless `-empty`)
-- `-storage <path>` - Local path or `gs://bucket` (default: `.local-build`)
-- `-mount <path>` - Mount path
-- `-verify` - Verify rootfs integrity (requires `-mount`)
-- `-log` - Enable logging
-- `-empty` - Create an empty rootfs instead of loading a build
-- `-size <bytes>` - Size of empty rootfs (default: 1GB)
-- `-block-size <bytes>` - Block size (default: 4096)
-
-### Inspect Build
-
-Inspect build artifacts (headers and data blocks).
-
-```bash
-# Inspect memfile header (default)
-go run ./cmd/inspect-build -build <uuid> -storage .local-build
-
-# Inspect rootfs header
-go run ./cmd/inspect-build -build <uuid> -storage .local-build -rootfs
-
-# Inspect header + data blocks
-go run ./cmd/inspect-build -build <uuid> -storage .local-build -data
-
-# Inspect first 100 data blocks
-go run ./cmd/inspect-build -build <uuid> -storage .local-build -data -end 100
-
-# Remote GCS storage
-go run ./cmd/inspect-build -build <uuid> -storage gs://bucket -rootfs -data
-```
-
-Flags:
-
-- `-build <uuid>` - Build ID (UUID, required)
-- `-storage <path>` - Local path or `gs://bucket` (default: `.local-build`)
-- `-memfile` - Inspect memfile artifact (default)
-- `-rootfs` - Inspect rootfs artifact
-- `-data` - Also inspect data blocks (not just header)
-- `-start <n>` - Start block index (default: `0`, only with `-data`)
-- `-end <n>` - End block index (default: all, only with `-data`)
-
-### Show Build Diff
-
-Show the diff between two builds and preview merge result.
-
-```bash
-# Memfile (default)
-go run ./cmd/show-build-diff -from-build <uuid> -to-build <uuid> -storage .local-build
-
-# Rootfs
-go run ./cmd/show-build-diff -from-build <uuid> -to-build <uuid> -storage .local-build -rootfs
-
-# With visualization
-go run ./cmd/show-build-diff -from-build <uuid> -to-build <uuid> -storage gs://bucket -visualize
-```
-
-Flags:
-
-- `-from-build <uuid>` - Base build ID (required)
-- `-to-build <uuid>` - Diff build ID (required)
-- `-storage <path>` - Local path or `gs://bucket` (default: `.local-build`)
-- `-memfile` - Inspect memfile artifact (default)
-- `-rootfs` - Inspect rootfs artifact
-- `-visualize` - Visualize the headers
+The dummy orchestrator (`cmd/dummy-orchestrator`) runs the same status machine; `STATE_DIR` gives it the record file (the directory is created when missing) and `MAX_SANDBOXES` its sandbox limit.
 
 ---
 
@@ -319,5 +148,5 @@ Automatically set in local mode. Set before running to override:
 
 ## Limitations
 
-- Custom template builds support base images from the declared distro families: **Debian/Ubuntu** (apt), the **RHEL family** — Fedora, CentOS Stream, Rocky, Alma — (dnf/microdnf/yum), **Arch** (pacman), and **Alpine** (apk, OpenRC). The distro is resolved from the image's `/etc/os-release` `ID` — never by probing for package managers. Images without an os-release identity (distroless, scratch) or from an undeclared family are rejected fast, with a build-log error naming the reason and the supported families (see `pkg/template/build/phases/base/distro`). Minimal/restricted-repo images may fail provisioning if their repos don't carry the required packages; the failure is surfaced in the build log.
+- Custom template builds support base images from the declared distro families: **Debian/Ubuntu** (apt), the **RHEL family** — Fedora, CentOS Stream, Rocky, Alma — (dnf/microdnf/yum), **TencentOS Server** 3+ and **OpenCloudOS** 8+ (dnf/microdnf/yum; TencentOS Server 2.x repos lack socat, fuse3, nftables and jq, so its builds fail at package install), **Arch** (pacman), and **Alpine** (apk, OpenRC). The distro is resolved from the image's `/etc/os-release` `ID` — never by probing for package managers. Images without an os-release identity (distroless, scratch) or from an undeclared family are rejected fast, with a build-log error naming the reason and the supported families (see `pkg/template/build/phases/base/distro`). Minimal/restricted-repo images may fail provisioning if their repos don't carry the required packages; the failure is surfaced in the build log.
 - Sandboxes always boot the kernel E2B supplies, never one from the base image: `/lib/modules` is empty, no kernel modules can be loaded, and SELinux is disabled on the kernel command line (`selinux=0`), so a base image that ships an SELinux policy boots without it. `kernel-devel` from a distro's repos resolves against a kernel that isn't running. **RHEL** (`rhel`, incl. UBI), **Oracle Linux** (`ol`) and **Amazon Linux** (`amzn`) are therefore not accepted even though they are RPM/dnf images — they are chosen for kABI, signed kernel modules and UEK, which this cannot honour. The community rebuilds above are supported because they are chosen for the userland.

@@ -64,7 +64,7 @@ func TestRedisSandboxCatalog(t *testing.T) {
 		got, err := catalog.GetSandbox(ctx, id)
 		require.NoError(t, err)
 		require.Equal(t, want, got)
-		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", "lifecycle-1"))
 	})
 
 	t.Run("get on an absent key returns ErrSandboxNotFound", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestRedisSandboxCatalog(t *testing.T) {
 
 		id := "sbx-delete-match"
 		require.NoError(t, catalog.StoreSandbox(ctx, id, testSandboxInfo("exec-1", "orch-A"), time.Minute))
-		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", ""))
 
 		_, err := catalog.GetSandbox(ctx, id)
 		require.ErrorIs(t, err, ErrSandboxNotFound)
@@ -92,7 +92,7 @@ func TestRedisSandboxCatalog(t *testing.T) {
 		// the routing entry a newer exec-2 stored under the same id.
 		id := "sbx-delete-mismatch"
 		require.NoError(t, catalog.StoreSandbox(ctx, id, testSandboxInfo("exec-2", "orch-B"), time.Minute))
-		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1"))
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", ""))
 
 		got, err := catalog.GetSandbox(ctx, id)
 		require.NoError(t, err)
@@ -100,10 +100,45 @@ func TestRedisSandboxCatalog(t *testing.T) {
 		require.Equal(t, "orch-B", got.OrchestratorID)
 	})
 
+	t.Run("delete keeps an entry the same execution stored under another lifecycle", func(t *testing.T) {
+		t.Parallel()
+
+		// A moved execution: the late teardown of its old lifecycle must not
+		// remove the record its new lifecycle stored.
+		id := "sbx-delete-moved"
+		moved := testSandboxInfo("exec-1", "orch-B")
+		moved.LifecycleID = "lifecycle-target"
+		require.NoError(t, catalog.StoreSandbox(ctx, id, moved, time.Minute))
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", "lifecycle-source"))
+		got, err := catalog.GetSandbox(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, moved, got)
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", ""), "a caller that names no lifecycle")
+		got, err = catalog.GetSandbox(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, moved, got)
+
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", "lifecycle-target"))
+		_, err = catalog.GetSandbox(ctx, id)
+		require.ErrorIs(t, err, ErrSandboxNotFound)
+	})
+
+	t.Run("an entry without a lifecycle is owned by its execution", func(t *testing.T) {
+		t.Parallel()
+
+		// Stored by a writer that predates lifecycle IDs.
+		id := "sbx-delete-legacy"
+		require.NoError(t, client.Set(ctx, catalog.getCatalogKey(id),
+			`{"orchestrator_id":"orch-A","orchestrator_ip":"10.0.0.1","execution_id":"exec-1"}`, time.Minute).Err())
+		require.NoError(t, catalog.DeleteSandbox(ctx, id, "exec-1", "lifecycle-any"))
+		_, err := catalog.GetSandbox(ctx, id)
+		require.ErrorIs(t, err, ErrSandboxNotFound)
+	})
+
 	t.Run("delete on an absent key is a no-op", func(t *testing.T) {
 		t.Parallel()
 
-		require.NoError(t, catalog.DeleteSandbox(ctx, "sbx-never-stored", "exec-1"))
+		require.NoError(t, catalog.DeleteSandbox(ctx, "sbx-never-stored", "exec-1", ""))
 	})
 
 	t.Run("keys live under the routing prefix", func(t *testing.T) {
@@ -121,7 +156,7 @@ func TestDeleteSandboxReturnsRedisError(t *testing.T) {
 	broken := NewRedisSandboxCatalog(client)
 	ctx := t.Context()
 
-	require.Error(t, broken.DeleteSandbox(ctx, "sbx-closed", "exec-1"))
+	require.Error(t, broken.DeleteSandbox(ctx, "sbx-closed", "exec-1", ""))
 }
 
 func TestDeleteIfSameExecutionOutcomes(t *testing.T) {
@@ -133,7 +168,7 @@ func TestDeleteIfSameExecutionOutcomes(t *testing.T) {
 
 	run := func(t *testing.T, id, executionID string) int {
 		t.Helper()
-		outcome, err := deleteIfSameExecution.Run(ctx, client, []string{catalog.getCatalogKey(id)}, executionID).Int()
+		outcome, err := deleteIfSameOwner.Run(ctx, client, []string{catalog.getCatalogKey(id)}, executionID, "").Int()
 		require.NoError(t, err)
 
 		return outcome

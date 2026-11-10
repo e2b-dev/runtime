@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -18,7 +19,7 @@ func (a *APIStore) PostAdminTeamsTeamIDBuildsCancel(c *gin.Context, teamID uuid.
 
 	logger.L().Info(ctx, "Admin cancelling all builds for team", logger.WithTeamID(teamID.String()))
 
-	cancelledCount, failedCount, err := a.templateManager.CancelTeamBuilds(ctx, teamID, "cancelled by admin")
+	cancelledCount, failedCount, err := a.templateManager.CancelTeamBuilds(ctx, teamID, template_manager.CancelledByAdminReason)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to get builds")
 

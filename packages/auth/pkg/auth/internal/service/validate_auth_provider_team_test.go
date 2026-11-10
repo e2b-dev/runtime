@@ -36,7 +36,7 @@ func (s *recordingMemberStore) GetTeamByIDAndUserID(_ context.Context, _ uuid.UU
 		return nil, err
 	}
 
-	return types.NewTeam(authqueries.GetTeamByTeamIDRow{Team: authqueries.Team{ID: parsed}}), nil
+	return types.NewTeam(authqueries.GetTeamByTeamIDRow{ID: parsed}), nil
 }
 
 func (s *recordingMemberStore) lookups() []string {

@@ -10,17 +10,15 @@ SELECT slug FROM public.teams
 WHERE id = sqlc.arg(id)::uuid
 FOR UPDATE;
 
--- Tier is assigned here and only here. DO NOTHING covers the case where the
--- lock above found nothing and another request inserted the same id before
--- this ran: no row means that happened. A slug collision is a different
--- constraint and still raises.
+-- DO NOTHING covers the case where the lock above found nothing and another
+-- request inserted the same id before this ran: no row means that happened. A
+-- slug collision is a different constraint and still raises.
 -- name: InsertManagedTeam :one
-INSERT INTO public.teams (id, name, slug, tier, email, is_blocked, cluster_id)
+INSERT INTO public.teams (id, name, slug, email, is_blocked, cluster_id)
 VALUES (
     sqlc.arg(id)::uuid,
     sqlc.arg(name)::text,
     sqlc.arg(slug)::text,
-    sqlc.arg(tier)::text,
     sqlc.arg(email)::text,
     false,
     sqlc.narg(cluster_id)::uuid
@@ -28,9 +26,8 @@ VALUES (
 ON CONFLICT (id) DO NOTHING
 RETURNING id, name, slug, email, cluster_id;
 
--- Touches only the properties the caller synchronizes. Tier stays because it is
--- this side's to assign; is_blocked stays because an operator's decision must
--- outlive a routine push.
+-- Touches only the properties the caller synchronizes. is_blocked stays because
+-- an operator's decision must outlive a routine push.
 -- name: UpdateManagedTeam :one
 UPDATE public.teams
 SET

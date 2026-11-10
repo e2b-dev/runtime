@@ -178,6 +178,13 @@ func WithOrchestratorVersion(version string) TestOptions {
 	}
 }
 
+// WithServiceInstanceID sets the orchestrator process the test node reports.
+func WithServiceInstanceID(id string) TestOptions {
+	return func(node *TestNode) {
+		node.meta.ServiceInstanceID = id
+	}
+}
+
 func WithLabels(labels []string) TestOptions {
 	return func(node *TestNode) {
 		labelsSet := make(map[string]struct{}, len(labels))
@@ -213,6 +220,20 @@ func WithSandboxCreateError(err error) TestOptions {
 func WithAllocatedMemoryBytes(bytes uint64) TestOptions {
 	return func(node *TestNode) {
 		node.metrics.MemoryAllocatedBytes = bytes
+	}
+}
+
+// WithMemoryTotalBytes sets the total host memory the test node reports.
+func WithMemoryTotalBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryTotalBytes = bytes
+	}
+}
+
+// WithMemoryUsedBytes sets the used host memory the test node reports.
+func WithMemoryUsedBytes(bytes uint64) TestOptions {
+	return func(node *TestNode) {
+		node.metrics.MemoryUsedBytes = bytes
 	}
 }
 
@@ -293,4 +314,59 @@ func NewTestNode(id string, status api.NodeStatus, cpuAllocated int64, cpuCount 
 	}
 
 	return node
+}
+
+// WithStatusOwner sets the owner the test node records for its status.
+func WithStatusOwner(owner string) TestOptions {
+	return func(node *TestNode) {
+		node.status.Owner = owner
+	}
+}
+
+// WithCapabilities sets the capabilities the test node reports.
+func WithCapabilities(capabilities ...string) TestOptions {
+	return func(node *TestNode) {
+		node.capabilities = capabilities
+	}
+}
+
+// mockInfoClientResponse answers every ServiceInfo call with one response.
+type mockInfoClientResponse struct {
+	infogrpc.InfoServiceClient
+
+	response *infogrpc.ServiceInfoResponse
+}
+
+func (c *mockInfoClientResponse) ServiceInfo(_ context.Context, _ *emptypb.Empty, _ ...grpc.CallOption) (*infogrpc.ServiceInfoResponse, error) {
+	return c.response, nil
+}
+
+// WithServiceInfoResponse makes every ServiceInfo call answer response.
+func WithServiceInfoResponse(response *infogrpc.ServiceInfoResponse) TestOptions {
+	return func(node *TestNode) {
+		node.client.Info = &mockInfoClientResponse{response: response}
+	}
+}
+
+// RecordingInfoClient answers ServiceInfo as a healthy orchestrator and records
+// every status override it is sent, failing each with Err when set.
+type RecordingInfoClient struct {
+	mockInfoClient
+
+	Requests []*infogrpc.ServiceStatusChangeRequest
+	Err      error
+}
+
+func (c *RecordingInfoClient) ServiceStatusOverride(_ context.Context, req *infogrpc.ServiceStatusChangeRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	c.Requests = append(c.Requests, req)
+	if c.Err != nil {
+		return nil, c.Err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// SetInfoClient replaces the test node's info client.
+func (n *TestNode) SetInfoClient(client infogrpc.InfoServiceClient) {
+	n.client.Info = client
 }

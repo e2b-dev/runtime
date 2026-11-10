@@ -27,10 +27,10 @@ This project builds custom Linux kernels for Firecracker microVMs from the same 
 
 ## Adding a patch release
 
-A version is built from the newest `microvm-kernel*<version>-*.amzn*` tag of [amazonlinux/linux](https://github.com/amazonlinux/linux), so that is where the available patch releases come from. Match the prefix loosely: upstream puts the series there on some tags (`microvm-kernel-6.1.158-15.288.amzn2023`, but `microvm-kernel6.18-6.18.36-71.136.amzn2023`), and a pattern that assumes the hyphen quietly hides the newest releases of a series.
+A version is built from the newest `microvm-kernel*<version>-*.amzn*` tag of [amazonlinux/linux](https://github.com/amazonlinux/linux), or from the newest general `kernel*<version>-*.amzn*` tag when the microvm line has none, so those tags are where the available patch releases come from. Upstream tags the general build first and the microvm one days later, when at all; the weekly bump proposes from either. A tag upstream renamed with a `-dontuse` suffix is never built. Match the prefix loosely: upstream puts the series there on some tags (`microvm-kernel-6.1.158-15.288.amzn2023`, but `microvm-kernel6.18-6.18.36-71.136.amzn2023`), and a pattern that assumes the hyphen quietly hides the newest releases of a series.
 
 ```sh
-git ls-remote --tags https://github.com/amazonlinux/linux | grep -E 'microvm-kernel[^ ]*-6\.1\.[0-9]+-'
+git ls-remote --tags https://github.com/amazonlinux/linux | grep -E 'refs/tags/(microvm-)?kernel[^ ]*-6\.1\.[0-9]+-[^ ]*\.amzn2[0-9]*$'
 ```
 
 A new version needs its own config, seeded from the version it supersedes and then settled against the tree it will be built from:

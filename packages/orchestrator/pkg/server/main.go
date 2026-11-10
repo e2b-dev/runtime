@@ -16,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/events"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
@@ -25,6 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -65,23 +67,30 @@ type Server struct {
 	orchestrator.UnimplementedSandboxServiceServer
 	orchestrator.UnimplementedChunkServiceServer
 
-	config            cfg.Config
-	sandboxFactory    *sandbox.Factory
-	info              *service.ServiceInfo
-	networkPool       network.PoolInterface
-	templateCache     *template.Cache
-	devicePool        *nbd.DevicePool
-	persistence       storage.StorageProvider
-	featureFlags      *featureflags.Client
-	sbxEventsService  *events.EventsService
-	startingSandboxes *utils.AdjustableSemaphore
-	peerRegistry      peerclient.Registry
-	uploadedBuilds    *ttlcache.Cache[string, struct{}]
-	uploads           *sandbox.Uploads
+	config         cfg.Config
+	sandboxFactory *sandbox.Factory
+	// pauseReplyMargin overrides defaultPauseReplyMargin when positive (tests).
+	pauseReplyMargin time.Duration
+	// pauseCaptureBudget overrides defaultPauseCaptureBudget when positive (tests).
+	pauseCaptureBudget time.Duration
+	info               *service.ServiceInfo
+	networkPool        network.PoolInterface
+	templateCache      *template.Cache
+	devicePool         *nbd.DevicePool
+	persistence        storage.StorageProvider
+	featureFlags       *featureflags.Client
+	sbxEventsService   *events.EventsService
+	startingSandboxes  *utils.AdjustableSemaphore
+	peerRegistry       peerclient.Registry
+	uploadedBuilds     *ttlcache.Cache[string, struct{}]
+	uploads            *sandbox.Uploads
 
 	// buildDisk is the filesystem holding the build directory, as the pause
 	// disk admission sees it (pause_disk_admission.go).
 	buildDisk *buildDisk
+
+	// hugePages is nil when the node's host metrics are not wired in.
+	hugePages *hugePageAdmission
 
 	sandboxCreateDuration     metric.Int64Histogram
 	startGateWaitDuration     metric.Int64Histogram
@@ -89,6 +98,8 @@ type Server struct {
 	sandboxPauseDuration      metric.Int64Histogram
 	sandboxKilledCounter      metric.Int64Counter
 	sandboxCrashedCounter     metric.Int64Counter
+	guestRebootsCounter       metric.Int64Counter
+	guestRebootDuration       metric.Int64Histogram
 	sandboxCheckpointCounter  metric.Int64Counter
 	sandboxCheckpointDuration metric.Int64Histogram
 	uploadFailedCounter       metric.Int64Counter
@@ -134,6 +145,8 @@ type ServiceConfig struct {
 	// TemplateStorage says where snapshots are uploaded; a directory on the
 	// build filesystem means an upload writes a second copy there.
 	TemplateStorage storage.Spec
+	// HostMetrics reads the node's hugepage pool for the create admission.
+	HostMetrics *metrics.HostMetrics
 }
 
 func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
@@ -166,6 +179,9 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		detachedCheckpoints: map[string]*detachedCheckpoint{},
 
 		buildDisk: newBuildDisk(cfg.Config.DefaultCacheDir, cfg.TemplateStorage),
+	}
+	if cfg.HostMetrics != nil {
+		server.hugePages = &hugePageAdmission{read: cfg.HostMetrics.GetMemoryMetrics}
 	}
 	server.shutdownCtx, server.shutdown = context.WithCancel(context.Background())
 	server.updateMaxSandboxesLimit(ctx)
@@ -207,6 +223,18 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to register sandbox crashes counter: %w", err)
 	}
 	server.sandboxCrashedCounter = sandboxCrashedCounter
+
+	guestRebootsCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxGuestRebootsCounterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register guest reboots counter: %w", err)
+	}
+	server.guestRebootsCounter = guestRebootsCounter
+
+	guestRebootDuration, err := telemetry.GetHistogram(meter, telemetry.GuestRebootDurationHistogramName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register guest reboot duration histogram: %w", err)
+	}
+	server.guestRebootDuration = guestRebootDuration
 
 	sandboxCheckpointCounter, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxCheckpointCounterName)
 	if err != nil {
@@ -276,6 +304,31 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to register sandbox count metric: %w", err)
 	}
+	type sandboxGroup struct {
+		teamID string
+		mode   catalog.NetworkMode
+	}
+	networkModes := []catalog.NetworkMode{catalog.NetworkModeLegacy, catalog.NetworkModeEgressRouter, catalog.NetworkModeFullRouter}
+	_, err = telemetry.GetObservableUpDownCounter(meter, telemetry.OrchestratorSandboxNetworkModeCountMeterName, func(_ context.Context, observer metric.Int64Observer) error {
+		// Every mode is observed without a project on each collection, so an idle
+		// node keeps reporting. A project reports only the modes it runs; once it
+		// has none it is no longer observed and the SDK drops its series.
+		counts := make(map[sandboxGroup]int64)
+		for _, mode := range networkModes {
+			counts[sandboxGroup{mode: mode}] = 0
+		}
+		for _, sbx := range server.sandboxFactory.Sandboxes.Items() {
+			counts[sandboxGroup{sbx.Runtime.TeamID, sbx.NetworkMode()}]++
+		}
+		for group, count := range counts {
+			observer.Observe(count, metric.WithAttributes(telemetry.WithTeamID(group.teamID), attribute.String("network_mode", string(group.mode))))
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register sandbox network mode count metric: %w", err)
+	}
 
 	sandboxLimitGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorSandboxLimitGaugeName)
 	if err != nil {
@@ -299,7 +352,7 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	_, err = meter.RegisterCallback(
 		func(_ context.Context, obs metric.Observer) error {
 			obs.ObserveInt64(statusGauge, 1, metric.WithAttributes(
-				attribute.String("status", server.info.GetStatus().Status.String()),
+				attribute.String("status", server.info.Snapshot().Status.String()),
 				attribute.String("version", server.info.SourceVersion),
 				attribute.String("commit", server.info.SourceCommit),
 			))
@@ -347,6 +400,31 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		}, cpuAllocatedGauge, memoryAllocatedGauge, diskAllocatedGauge)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register orchestrator sandbox resource gauges: %w", err)
+	}
+
+	err = registerGuestMemoryGauge(meter, server.sandboxFactory.Sandboxes.Items)
+	if err != nil {
+		return nil, err
+	}
+
+	if server.hugePages != nil {
+		hugePagesFreeGauge, err := telemetry.GetGaugeInt(meter, telemetry.OrchestratorHugePagesFreeGaugeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create free hugepages gauge: %w", err)
+		}
+
+		_, err = meter.RegisterCallback(func(ctx context.Context, obs metric.Observer) error {
+			if memory, err := server.hugePages.read(ctx); err == nil {
+				if free, ok := freeHugePages(memory); ok {
+					obs.ObserveInt64(hugePagesFreeGauge, int64(free))
+				}
+			}
+
+			return nil
+		}, hugePagesFreeGauge)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register free hugepages gauge: %w", err)
+		}
 	}
 
 	go server.refreshStartingSandboxesLimit(ctx)
@@ -410,8 +488,8 @@ func (s *Server) drainUploads(ctx context.Context, uploadsDone <-chan struct{}) 
 
 // DrainSandboxes waits for the live sandboxes on this node to exit on their own
 // during a graceful shutdown, then waits for their lifecycle cleanup to finish.
-// It does not reject new sandbox starts; that admission gating is layered in
-// separately. It returns ctx.Err() if ctx is cancelled before the node empties.
+// Creates are refused by the status gate in Create while the status is not
+// Healthy. It returns ctx.Err() if ctx is cancelled before the node empties.
 //
 // The live count alone is not enough: a resume-fresh checkpoint takes its
 // sandbox out of the live map before the resumed one goes in, and a create is

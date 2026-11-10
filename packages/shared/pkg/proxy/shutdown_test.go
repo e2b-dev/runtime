@@ -227,12 +227,6 @@ func TestProxyShutdownReleasesFailedH2CPreface(t *testing.T) {
 			proxy := New(0, SandboxProxyRetries, time.Minute, func(*http.Request) (*pool.Destination, error) {
 				return nil, errors.New("unexpected proxy request")
 			}, nil, false)
-			hijacked := make(chan struct{})
-			proxy.ConnState = func(_ net.Conn, state http.ConnState) {
-				if state == http.StateHijacked {
-					close(hijacked)
-				}
-			}
 			var listenConfig net.ListenConfig
 			listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
 			require.NoError(t, err)
@@ -247,13 +241,11 @@ func TestProxyShutdownReleasesFailedH2CPreface(t *testing.T) {
 			client, err := dialer.DialContext(t.Context(), "tcp", listener.Addr().String())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = client.Close() })
+			// Before the preface: a malformed one can be closed again before a check after it runs.
+			require.Eventually(t, func() bool { return proxy.CurrentServerConnections() == 1 }, 5*time.Second, time.Millisecond,
+				"the proxy never took the connection")
 			_, err = io.WriteString(client, "PRI * HTTP/2.0\r\n\r\n"+tt.tail)
 			require.NoError(t, err)
-			select {
-			case <-hijacked:
-			case <-time.After(5 * time.Second):
-				t.Fatal("H2C preface was not hijacked")
-			}
 			if tt.keepOpen {
 				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 				defer cancel()

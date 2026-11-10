@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 const (
@@ -101,6 +102,7 @@ func (a *APIStore) GetV2Templates(c *gin.Context, params api.GetV2TemplatesParam
 			TemplateID:    item.TemplateID,
 			BuildID:       item.BuildID.String(),
 			CpuCount:      api.CPUCount(item.BuildVcpu),
+			MaxCpuCount:   sharedUtils.CastPtr(item.BuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
 			MemoryMB:      api.MemoryMB(item.BuildRamMb),
 			DiskSizeMB:    api.DiskSizeMB(diskMB),
 			Public:        item.Public,

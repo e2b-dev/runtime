@@ -31,6 +31,7 @@ func startHTTPServerInSandbox(t *testing.T, ctx context.Context, sbx *api.Sandbo
 	setup.SetUserHeader(t, serverReq.Header(), "user")
 	serverStream, err := envdClient.ProcessClient.Start(serverCtx, serverReq)
 	require.NoError(t, err)
+	utils.RequireProcessStarted(t, serverStream)
 
 	t.Cleanup(func() {
 		serverCancel()

@@ -82,11 +82,13 @@ func (a *API) checkMMDSHash(ctx context.Context, requestToken *SecureToken) (boo
 	}
 
 	mmdsHash, err := a.mmdsClient.GetAccessTokenHash(ctx)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		// Self-heal: a user-installed PREROUTING/OUTPUT redirect on
 		// 169.254.169.254:80 in the same netns can shadow our route.
 		// Re-pin our RETURN rule at position 1 of nat PREROUTING and
-		// OUTPUT, then retry once.
+		// OUTPUT, then retry once. A read that failed because the request
+		// ended says nothing about the route, and neither iptables nor the
+		// retry could run under that context.
 		if pinErr := host.PinMMDSRoute(ctx); pinErr != nil {
 			if ok, suppressed := pinMMDSWarnLimit.Allow(); ok {
 				a.logger.Warn().Err(pinErr).Int64("suppressed", suppressed).Msg("failed to pin MMDS iptables route")
@@ -1028,7 +1030,7 @@ func (a *API) SetupHyperloop(address string) {
 	a.hyperloopLock.Lock()
 	defer a.hyperloopLock.Unlock()
 
-	if err := rewriteHostsFile(address, "/etc/hosts"); err != nil {
+	if err := rewriteHostsFile(address, hostsFilePath()); err != nil {
 		a.logger.Error().Err(err).Msg("failed to modify hosts file")
 	} else {
 		a.defaults.EnvVars.Store("E2B_EVENTS_ADDRESS", fmt.Sprintf("http://%s", address))

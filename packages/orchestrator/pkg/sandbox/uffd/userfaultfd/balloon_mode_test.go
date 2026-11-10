@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
 func TestBalloonModeString(t *testing.T) {
@@ -25,9 +27,9 @@ func TestServeStats_ModeAndDeferred(t *testing.T) {
 	u.SetBalloonMode(BalloonModeHinting)
 	assert.Equal(t, BalloonModeHinting, u.balloonMode())
 
-	u.recordServeStats(pageClassNew, faultResultDeferred, 0, time.Millisecond)
-	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, time.Millisecond)
-	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0)
+	u.recordServeStats(pageClassNew, faultResultDeferred, 0, time.Millisecond, storage.UnknownSource)
+	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, time.Millisecond, storage.UnknownSource)
+	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0, storage.UnknownSource)
 	st := u.ServeStats()
 	assert.Equal(t, int64(1), st.Deferred)
 	assert.Equal(t, int64(1), st.Deduped)

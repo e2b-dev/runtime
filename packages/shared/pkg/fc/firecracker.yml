@@ -1152,6 +1152,9 @@ definitions:
     properties:
       boot_args:
         type: string
+        # Sent even when empty: an absent boot_args makes Firecracker substitute
+        # its default Linux command line, and a firmware boot wants none.
+        x-omitempty: false
         description: Kernel boot arguments
       initrd_path:
         type: string
@@ -1355,6 +1358,15 @@ definitions:
           This field is optional for virtio-block config and should be omitted for vhost-user-block configuration.
         enum: ["Sync", "Async"]
         default: "Sync"
+      blk_size:
+        type: integer
+        x-omitempty: true
+        description:
+          Logical block size advertised to the guest via VIRTIO_BLK_F_BLK_SIZE.
+          When omitted, Firecracker reports the backing block device's own
+          logical block size, or 512 for a regular file.
+          This field is optional for virtio-block config and should be omitted
+          for vhost-user-block configuration.
 
       # VhostUserBlock specific parameters
       socket:
@@ -1610,6 +1622,14 @@ definitions:
           - None
           - 2M
         description: Which huge pages configuration (if any) should be used to back guest memory.
+      acpi_poweroff:
+        type: boolean
+        x-omitempty: true
+        description:
+          "[x86_64 only] Declare the ACPI power-off device to the guest, so a guest power-off
+          ends the Firecracker process with exit code 0 instead of halting the vCPUs. A snapshot
+          does not record it: a PATCH carrying only this field keeps snapshot loading allowed,
+          so it is set before a restore. A Firecracker without the device rejects the field."
 
   MemoryBackend:
     type: object
@@ -1846,6 +1866,14 @@ definitions:
         x-omitempty: true
         items:
           $ref: "#/definitions/NetworkOverride"
+      clock_realtime:
+        type: boolean
+        x-omitempty: true
+        description:
+          "[x86_64 only] When set to true, passes KVM_CLOCK_REALTIME to
+          KVM_SET_CLOCK on restore, advancing kvmclock by the wall-clock time
+          elapsed since the snapshot was taken. When false (default), kvmclock resumes
+          from where it was at snapshot time."
 
 
   TokenBucket:

@@ -141,6 +141,59 @@ func (c *Cleanup) run(ctx context.Context) {
 	c.error = errors.Join(errs...)
 }
 
+// handover is a release that one cleanup chain owns until another sandbox
+// takes it. Its entry keeps its place in the chain; once taken it does
+// nothing, so a resource handed to a new sandbox is released by that sandbox's
+// chain only.
+type handover struct {
+	mu       sync.Mutex
+	release  func(ctx context.Context) error
+	taken    bool
+	released bool
+}
+
+func newHandover(release func(ctx context.Context) error) *handover {
+	return &handover{release: release}
+}
+
+// set installs the release when the resource is acquired after the entry was
+// registered.
+func (h *handover) set(release func(ctx context.Context) error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.release = release
+}
+
+// run releases the resource unless it was taken or already released.
+func (h *handover) run(ctx context.Context) error {
+	h.mu.Lock()
+	if h.taken || h.released || h.release == nil {
+		h.mu.Unlock()
+
+		return nil
+	}
+	h.released = true
+	release := h.release
+	h.mu.Unlock()
+
+	return release(ctx)
+}
+
+// take moves the release to the caller. False means there is nothing to take:
+// the resource was released, taken before, or never acquired.
+func (h *handover) take() (func(ctx context.Context) error, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.taken || h.released || h.release == nil {
+		return nil, false
+	}
+	h.taken = true
+
+	return h.release, true
+}
+
 func cleanupFiles(config cfg.BuilderConfig, files *storage.SandboxFiles) func(context.Context) error {
 	return func(context.Context) error {
 		var errs []error

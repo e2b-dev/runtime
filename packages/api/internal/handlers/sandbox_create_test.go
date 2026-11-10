@@ -25,7 +25,6 @@ import (
 	handlersmocks "github.com/e2b-dev/infra/packages/api/internal/handlers/mocks"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -462,7 +461,7 @@ func TestValidateNetworkConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mockFF := handlersmocks.NewMockFeatureFlagsClient(t)
-			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", 10, tt.network)
+			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", networkRuleLimits{MaxDomains: 10, MaxHeaderValueLen: 2048}, tt.network)
 
 			if tt.wantErr {
 				if err == nil {
@@ -737,6 +736,7 @@ func TestNewSandboxFromV2(t *testing.T) {
 		v2 := api.NewSandboxV2{
 			TemplateID:          "base",
 			Timeout:             &timeout,
+			CpuCount:            new(api.CPUCount(2)),
 			AutoPause:           &autoPause,
 			AutoPauseMemory:     &autoPauseMemory,
 			AutoResume:          &api.SandboxAutoResumeConfig{Enabled: true},
@@ -815,7 +815,7 @@ func TestPostSandboxes_AlwaysRequiresSecureCapableTemplate(t *testing.T) {
 			ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 			ginCtx.Request.Header.Set("Content-Type", "application/json")
 			auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-				Team: &authqueries.Team{
+				Team: &dbtypes.Team{
 					ID:   teamID,
 					Slug: teamSlug,
 				},
@@ -880,7 +880,7 @@ func TestPostSandboxes_MissingBareAliasUsesPromotedFallbackKey(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -940,7 +940,7 @@ func TestPostSandboxes_PrivateTemplateHidesAccessDenied(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -994,7 +994,7 @@ func assertMissingTagDisclosure(t *testing.T, public bool, alias string) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -1055,7 +1055,7 @@ func assertMissingDefaultTagDisclosure(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/sandboxes", bytes.NewReader(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   requesterTeamID,
 			Slug: requesterTeamSlug,
 		},
@@ -1165,7 +1165,11 @@ func TestValidateNetworkRules(t *testing.T) {
 	t.Parallel()
 
 	teamID := uuid.New()
-	const defaultMaxDomains = 10
+	const (
+		defaultMaxDomains        = 10
+		defaultMaxHeaderValueLen = 2048
+	)
+	defaultLimits := networkRuleLimits{MaxDomains: defaultMaxDomains, MaxHeaderValueLen: defaultMaxHeaderValueLen}
 
 	rulesWithDomains := func(count int) *map[string][]api.SandboxNetworkRule {
 		rules := make(map[string][]api.SandboxNetworkRule, count)
@@ -1511,7 +1515,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen),
 				})},
 			}),
 			setupFF: ffEnabled,
@@ -1521,7 +1525,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			envdVersion: minEnvdVersionForNetworkRules,
 			rules: new(map[string][]api.SandboxNetworkRule{
 				"api.openai.com": {simpleRule(map[string]string{
-					"Authorization": strings.Repeat("x", maxNetworkRuleHeaderValueLen+1),
+					"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
 				})},
 			}),
 			setupFF:  ffEnabled,
@@ -1548,7 +1552,7 @@ func TestValidateNetworkRules(t *testing.T) {
 			t.Parallel()
 
 			ff := tt.setupFF(t)
-			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultMaxDomains, tt.rules)
+			apiErr := validateNetworkRules(t.Context(), ff, teamID, tt.envdVersion, defaultLimits, tt.rules)
 
 			if tt.wantMsg == "" {
 				assert.Nil(t, apiErr)
@@ -1567,7 +1571,18 @@ func TestValidateNetworkRules(t *testing.T) {
 		})
 	}
 
-	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, defaultMaxDomains+1, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+	customDomains := defaultLimits
+	customDomains.MaxDomains = defaultMaxDomains + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customDomains, rulesWithDomains(defaultMaxDomains+1)), "custom max domains should override the boundary")
+
+	longValue := new(map[string][]api.SandboxNetworkRule{
+		"api.openai.com": {simpleRule(map[string]string{
+			"Authorization": strings.Repeat("x", defaultMaxHeaderValueLen+1),
+		})},
+	})
+	customHeaderLen := defaultLimits
+	customHeaderLen.MaxHeaderValueLen = defaultMaxHeaderValueLen + 1
+	assert.Nil(t, validateNetworkRules(t.Context(), ffEnabled(t), teamID, minEnvdVersionForNetworkRules, customHeaderLen, longValue), "custom max header value length should override the boundary")
 }
 
 func createTestTemplateAliasWithName(ctx context.Context, t *testing.T, db *testutils.Database, templateID, aliasName string, namespace *string) {

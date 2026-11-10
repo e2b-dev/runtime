@@ -49,6 +49,14 @@ func (ce *CommandExecutor) getCommand(
 ) (Command, error) {
 	cmdType := strings.ToUpper(step.GetType())
 
+	if renderer := ce.Config.GuestTemplate().Renderer; renderer != nil {
+		return &Rendered{
+			Renderer:     renderer,
+			FilesStorage: ce.buildStorage,
+			CacheScope:   ce.CacheScope,
+		}, nil
+	}
+
 	var cmd Command
 	switch cmdType {
 	case "ADD", "COPY":

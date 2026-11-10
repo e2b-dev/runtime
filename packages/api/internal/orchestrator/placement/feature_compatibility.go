@@ -3,6 +3,7 @@ package placement
 import (
 	"github.com/Masterminds/semver/v3"
 
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
@@ -47,6 +48,17 @@ var featureGates = []featureGate{
 		feature: Feature{name: "egress-proxy-tls", minVersion: semver.New(0, 16, 202610011012, "", "")},
 		requested: func(req *orchestrator.SandboxCreateRequest) bool {
 			return req.GetSandbox().GetNetwork().GetEgress().GetEgressProxyTls().GetEnabled()
+		},
+	},
+	{
+		// An older orchestrator ignores max_vcpus: it boots the VM at vcpu and
+		// never brings a requested online count up, so a sandbox from a
+		// resizable build would report CPUs it does not have. Any build with a
+		// capacity is gated, including vcpu == max_vcpus, which a create asking
+		// for the whole capacity sends; 0 (a fixed-size build) is not.
+		feature: Feature{name: "resizable-vcpu", minVersion: clusters.ResizableTemplateBuildsMinVersion},
+		requested: func(req *orchestrator.SandboxCreateRequest) bool {
+			return req.GetSandbox().GetMaxVcpus() > 0
 		},
 	},
 }

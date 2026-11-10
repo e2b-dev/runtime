@@ -69,12 +69,10 @@ func (m *metricsHandler) ToHandle(ctx context.Context, fs billy.Filesystem, path
 }
 
 func (m *metricsHandler) FromHandle(ctx context.Context, fh []byte) (fs billy.Filesystem, paths []string, err error) {
-	if !m.config.RecordHandleCalls {
-		return m.inner.FromHandle(ctx, fh)
+	if m.config.RecordHandleCalls {
+		finish := recordCall(ctx, "NFS.FromHandle")
+		defer func() { finish(err) }()
 	}
-
-	finish := recordCall(ctx, "NFS.FromHandle")
-	defer func() { finish(err) }()
 
 	fs, paths, err = m.inner.FromHandle(ctx, fh)
 	if fs != nil {

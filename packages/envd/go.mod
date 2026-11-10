@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/envd
 
-go 1.26.10
+go 1.27.3
 
 replace github.com/e2b-dev/infra/packages/shared v0.0.0 => ../shared
 
@@ -12,12 +12,12 @@ require (
 	connectrpc.com/cors v0.1.0
 	github.com/awnumar/memguard v0.23.0
 	github.com/creack/pty v1.1.24
-	github.com/e2b-dev/fsnotify v0.0.1
+	github.com/e2b-dev/fsnotify v0.0.2
 	github.com/e2b-dev/infra/packages/shared v0.0.0
-	github.com/getkin/kin-openapi v0.149.0
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/getkin/kin-openapi v0.152.0
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/uuid v1.6.0
-	github.com/oapi-codegen/runtime v1.7.0
+	github.com/oapi-codegen/runtime v1.8.0
 	github.com/prometheus/procfs v0.20.1
 	github.com/rs/cors v1.11.1
 	github.com/rs/zerolog v1.35.1

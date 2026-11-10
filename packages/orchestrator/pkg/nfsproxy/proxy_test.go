@@ -11,12 +11,16 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	servernfs "github.com/willscott/go-nfs"
 	"github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
 	"github.com/zeldovich/go-rpcgen/rfc1057"
@@ -25,6 +29,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	nfscfg "github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
@@ -40,6 +45,61 @@ func createVolumeDir(t *testing.T, builder *chrooted.Builder, volumeType string,
 	t.Logf("creating volume dir: %s", fullVolumePath)
 	err = os.MkdirAll(fullVolumePath, 0o755)
 	require.NoError(t, err)
+}
+
+type remoteAddrConn struct {
+	net.Conn
+
+	remote net.Addr
+}
+
+func (c remoteAddrConn) RemoteAddr() net.Addr {
+	return c.remote
+}
+
+type blockingChrootBuilder struct {
+	mu sync.Mutex
+
+	inner   *chrooted.Builder
+	entered chan *chrooted.Chrooted
+	proceed chan struct{}
+}
+
+func (b *blockingChrootBuilder) arm() (<-chan *chrooted.Chrooted, chan struct{}) {
+	entered := make(chan *chrooted.Chrooted, 1)
+	proceed := make(chan struct{})
+
+	b.mu.Lock()
+	if b.entered != nil || b.proceed != nil {
+		b.mu.Unlock()
+		panic("chroot builder barrier already armed")
+	}
+	b.entered = entered
+	b.proceed = proceed
+	b.mu.Unlock()
+
+	return entered, proceed
+}
+
+func (b *blockingChrootBuilder) Chroot(volumeType string, teamID, volumeID uuid.UUID) (*chrooted.Chrooted, error) {
+	fs, err := b.inner.Chroot(volumeType, teamID, volumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	b.mu.Lock()
+	entered := b.entered
+	proceed := b.proceed
+	b.entered = nil
+	b.proceed = nil
+	b.mu.Unlock()
+
+	if entered != nil {
+		entered <- fs
+		<-proceed
+	}
+
+	return fs, nil
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -83,7 +143,9 @@ func TestRoundTrip(t *testing.T) {
 	require.Equal(t, "127.0.0.1", slot.HostIP.String(), "required for the test to work")
 
 	sandboxes := sandbox.NewSandboxesMap()
+	lifecycleID := uuid.NewString()
 	sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
+		LifecycleID: lifecycleID,
 		Metadata: &sandbox.Metadata{
 			Config: sandbox.NewConfig(sandbox.Config{
 				VolumeMounts: []sandbox.VolumeMountConfig{
@@ -172,7 +234,7 @@ func TestRoundTrip(t *testing.T) {
 	mount := &nfs.Mount{
 		Client: nfsClient,
 	}
-	target, err := mount.Mount("/"+volName1, auth.Auth())
+	target, err := mount.Mount("/"+lifecycleID+"/"+volName1, auth.Auth())
 	require.NoError(t, err)
 
 	t.Run("write file", func(t *testing.T) {
@@ -219,7 +281,7 @@ func TestRoundTrip(t *testing.T) {
 
 		// setup root dir, to prevent collisions
 		path := uuid.NewString()
-		mkdir(t, target, path, 0o755)
+		mkdir(t, target, path)
 
 		// write files
 		writeFile(t, target, filepath.Join(path, "file.txt"), "file.txt contents", 0o644)
@@ -245,7 +307,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Parallel()
 
 		path := uuid.NewString()
-		mkdir(t, target, path, 0o755)
+		mkdir(t, target, path)
 		writeFile(t, target, filepath.Join(path, "file.txt"), "file.txt contents", 0o644)
 		mode, err := target.Access(filepath.Join(path, "file.txt"), 0o644)
 		require.NoError(t, err)
@@ -262,6 +324,203 @@ func TestRoundTrip(t *testing.T) {
 		assert.Nil(t, fh1)
 		assert.Nil(t, stat1)
 	})
+}
+
+func TestHandleCacheIsolationAcrossVolumes(t *testing.T) { //nolint:paralleltest // exercises a live loopback NFS server
+	if syscall.Geteuid() != 0 {
+		t.Skip("skipping test as it requires root privileges")
+	}
+
+	teamID := uuid.New()
+	volumeType := "volume-type-cache-isolation"
+	volumeA := uuid.New()
+	volumeB := uuid.New()
+	volumeAName := "volume-a"
+	volumeBName := "volume-b"
+
+	config := cfg.Config{PersistentVolumeMounts: map[string]string{volumeType: t.TempDir()}} //nolint:exhaustruct_v5 // focused test needs only volume roots
+	builder := chrooted.NewBuilder(config)
+	createVolumeDir(t, builder, volumeType, teamID, volumeA)
+	createVolumeDir(t, builder, volumeType, teamID, volumeB)
+
+	sandboxes := sandbox.NewSandboxesMap()
+	lifecycleID := uuid.NewString()
+	sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{ //nolint:exhaustruct_v5 // focused lifecycle fixture
+		LifecycleID: lifecycleID,
+		Metadata: &sandbox.Metadata{
+			Config: sandbox.NewConfig(sandbox.Config{ //nolint:exhaustruct_v5 // focused mount fixture
+				VolumeMounts: []sandbox.VolumeMountConfig{
+					{ID: volumeA, Name: volumeAName, Path: "/mnt/a", Type: volumeType},
+					{ID: volumeB, Name: volumeBName, Path: "/mnt/b", Type: volumeType},
+				}}),
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), TeamID: teamID.String()}, //nolint:exhaustruct_v5 // only routing identity is required
+		},
+		Resources: &sandbox.Resources{Slot: &network.Slot{Key: "cache-isolation", HostIP: net.IPv4(127, 0, 0, 1)}}, //nolint:exhaustruct_v5 // only the assigned host IP is required
+	})
+
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0") //nolint:exhaustruct_v5 // default listen behavior
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, listener.Close()) })
+
+	proxy, err := newProxy(t.Context(), builder, sandboxes, nfscfg.Config{}, 2) //nolint:exhaustruct_v5 // middleware is intentionally disabled
+	require.NoError(t, err)
+	go func() { assert.NoError(t, proxy.Serve(listener)) }()
+
+	host, portText, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	auth := rpc.NewAuthUnix("", 100, 101)
+
+	mountVolume := func(name string) *nfs.Target {
+		client, err := dialRetry(func() (*rpc.Client, error) {
+			return nfs.DialServiceAtPort(host, port)
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { client.Close() })
+
+		target, err := (&nfs.Mount{Client: client}).Mount("/"+lifecycleID+"/"+name, auth.Auth()) //nolint:exhaustruct_v5 // direct-port client has no Addr
+		require.NoError(t, err)
+
+		return target
+	}
+
+	targetA := mountVolume(volumeAName)
+	targetB := mountVolume(volumeBName)
+	handleA := mkdir(t, targetA, "keep")
+
+	// More than B's ordinary-handle capacity must not consume A's shard.
+	for _, name := range []string{"one", "two", "three", "four"} {
+		mkdir(t, targetB, name)
+	}
+
+	_, err = targetA.GetAttr(handleA)
+	require.NoError(t, err, "mount B churn must not stale mount A's original raw handle")
+
+	require.NoError(t, sandboxes.NetworkReleased(t.Context(), "127.0.0.1"))
+	require.NoError(t, sandboxes.NetworkReleased(t.Context(), "127.0.0.1"), "repeated release is idempotent")
+	require.Eventually(t, func() bool { return proxy.retirement.count() == 0 }, time.Second, time.Millisecond)
+	_, _, err = proxy.cache.FromHandle(t.Context(), handleA)
+	var stale *servernfs.NFSStatusError
+	require.ErrorAs(t, err, &stale)
+	require.Equal(t, servernfs.NFSStatusStale, stale.NFSStatus)
+}
+
+func TestNetworkReleaseClosesAdmissionBeforePhysicalDrain(t *testing.T) { //nolint:paralleltest // event-controls one shared lifecycle
+	if syscall.Geteuid() != 0 {
+		t.Skip("skipping test as it requires root privileges")
+	}
+
+	teamID := uuid.New()
+	sandboxID := uuid.NewString()
+	oldLifecycleID := uuid.NewString()
+	newLifecycleID := uuid.NewString()
+	volumeType := "volume-type-lifecycle-admission"
+	volumeID := uuid.New()
+	volumeName := "volume"
+	secondVolumeID := uuid.New()
+	secondVolumeName := "second-volume"
+	ip := net.IPv4(127, 0, 0, 1)
+
+	config := cfg.Config{PersistentVolumeMounts: map[string]string{volumeType: t.TempDir()}} //nolint:exhaustruct_v5 // focused test needs only volume roots
+	rawBuilder := chrooted.NewBuilder(config)
+	createVolumeDir(t, rawBuilder, volumeType, teamID, volumeID)
+	createVolumeDir(t, rawBuilder, volumeType, teamID, secondVolumeID)
+	builder := &blockingChrootBuilder{
+		mu:      sync.Mutex{},
+		inner:   rawBuilder,
+		entered: nil,
+		proceed: nil,
+	}
+
+	newSandbox := func(lifecycleID string) *sandbox.Sandbox {
+		return &sandbox.Sandbox{ //nolint:exhaustruct_v5 // focused lifecycle fixture
+			LifecycleID: lifecycleID,
+			Metadata: &sandbox.Metadata{
+				Config: sandbox.NewConfig(sandbox.Config{ //nolint:exhaustruct_v5 // focused mount fixture
+					VolumeMounts: []sandbox.VolumeMountConfig{{ID: volumeID, Name: volumeName, Path: "/mnt/volume", Type: volumeType}, {ID: secondVolumeID, Name: secondVolumeName, Path: "/mnt/second", Type: volumeType}},
+				}),
+				Runtime: sandboxtypes.RuntimeMetadata{SandboxID: sandboxID, TeamID: teamID.String()}, //nolint:exhaustruct_v5 // only routing identity is required
+			},
+			Resources: &sandbox.Resources{Slot: &network.Slot{Key: lifecycleID, HostIP: ip}}, //nolint:exhaustruct_v5 // only the assigned host IP is required
+		}
+	}
+
+	sandboxes := sandbox.NewSandboxesMap()
+	sandboxes.AssignNetwork(t.Context(), newSandbox(oldLifecycleID))
+	proxy, err := newProxy(t.Context(), builder, sandboxes, nfscfg.Config{}, 2) //nolint:exhaustruct_v5 // middleware is intentionally disabled
+	require.NoError(t, err)
+
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, serverConn.Close())
+		require.NoError(t, clientConn.Close())
+	})
+	conn := remoteAddrConn{Conn: serverConn, remote: &net.TCPAddr{IP: ip, Port: 2049, Zone: ""}}
+	request := servernfs.MountRequest{Dirpath: []byte("/" + oldLifecycleID + "/" + volumeName)} //nolint:exhaustruct_v5 // only the requested path is required
+
+	status, oldFilesystem, _ := proxy.cache.Mount(t.Context(), conn, request)
+	require.Equal(t, servernfs.MountStatusOk, status)
+	oldHandle := proxy.cache.ToHandle(t.Context(), oldFilesystem, nil)
+	require.NotEmpty(t, oldHandle)
+
+	entered, proceed := builder.arm()
+	type mountResult struct {
+		status     servernfs.MountStatus
+		filesystem billy.Filesystem
+	}
+	mountDone := make(chan mountResult, 1)
+	go func() {
+		secondRequest := servernfs.MountRequest{Dirpath: []byte("/" + oldLifecycleID + "/" + secondVolumeName)} //nolint:exhaustruct_v5 // exercise the first actual allocation of the second volume
+		mountStatus, filesystem, _ := proxy.cache.Mount(t.Context(), conn, secondRequest)
+		mountDone <- mountResult{status: mountStatus, filesystem: filesystem}
+	}()
+
+	allocated := <-entered
+	owner := mountcache.Owner{SandboxID: sandboxID, LifecycleID: oldLifecycleID}
+	closed, ok := proxy.gate.OwnerClosed(owner)
+	require.True(t, ok)
+	releaseDone := make(chan error, 1)
+	go func() { releaseDone <- sandboxes.NetworkReleased(t.Context(), ip.String()) }()
+	<-closed
+	require.NoError(t, <-releaseDone, "closed admission and stale handles permit network release before the old MOUNT drains")
+
+	close(proceed)
+	late := <-mountDone
+	require.Equal(t, servernfs.MountStatusErrAcces, late.status)
+	require.Eventually(t, func() bool { return proxy.retirement.count() == 0 }, time.Second, time.Millisecond)
+	assert.Empty(t, proxy.cache.ToHandle(t.Context(), late.filesystem, nil), "closed lifecycle must yield no usable mount handle")
+	_, err = allocated.Stat("after-release")
+	require.Error(t, err, "the late allocation must be closed and discarded")
+
+	shards, owners := proxy.cache.Counts()
+	assert.Zero(t, shards)
+	assert.Zero(t, owners)
+	assert.Zero(t, proxy.chroots.Count())
+	_, _, err = proxy.cache.FromHandle(t.Context(), oldHandle)
+	var stale *servernfs.NFSStatusError
+	require.ErrorAs(t, err, &stale)
+	require.Equal(t, servernfs.NFSStatusStale, stale.NFSStatus)
+	require.NoError(t, sandboxes.NetworkReleased(t.Context(), ip.String()), "repeated release must remain idempotent")
+
+	sandboxes.AssignNetwork(t.Context(), newSandbox(newLifecycleID))
+	status, _, _ = proxy.cache.Mount(t.Context(), conn, request)
+	require.Equal(t, servernfs.MountStatusErrAcces, status, "the old captured export cannot mount a replacement")
+	replacementConn := remoteAddrConn{remote: &net.TCPAddr{IP: ip, Port: 32769}}
+	replacementRequest := servernfs.MountRequest{Dirpath: []byte("/" + newLifecycleID + "/" + volumeName)}
+	status, replacementFilesystem, _ := proxy.cache.Mount(t.Context(), replacementConn, replacementRequest)
+	require.Equal(t, servernfs.MountStatusOk, status)
+	replacementHandle := proxy.cache.ToHandle(t.Context(), replacementFilesystem, nil)
+	require.NotEmpty(t, replacementHandle)
+	resolved, _, err := proxy.cache.FromHandle(t.Context(), replacementHandle)
+	require.NoError(t, err)
+	require.Same(t, replacementFilesystem, resolved)
+	shards, owners = proxy.cache.Counts()
+	assert.Equal(t, 1, shards)
+	assert.Equal(t, 1, owners)
+	assert.Equal(t, 1, proxy.chroots.Count())
+	require.NoError(t, sandboxes.NetworkReleased(t.Context(), ip.String()))
+	require.Eventually(t, func() bool { return proxy.retirement.count() == 0 }, time.Second, time.Millisecond)
 }
 
 // dialRetry retries on EADDRINUSE: the nfs client library binds a random
@@ -291,10 +550,10 @@ func writeFile(t *testing.T, target *nfs.Target, path string, content string, pe
 	require.NoError(t, err)
 }
 
-func mkdir(t *testing.T, target *nfs.Target, path string, perm os.FileMode) []byte {
+func mkdir(t *testing.T, target *nfs.Target, path string) []byte {
 	t.Helper()
 
-	fh, err := target.Mkdir(path, perm)
+	fh, err := target.Mkdir(path, 0o755)
 	require.NoError(t, err)
 
 	return fh

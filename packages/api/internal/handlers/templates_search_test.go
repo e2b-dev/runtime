@@ -16,8 +16,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -131,7 +131,6 @@ func TestSearchTemplates_DefaultSortPaginates(t *testing.T) {
 	require.Len(t, first, 2)
 	require.NotEmpty(t, token)
 
-	// The cursor has dashboard-api's format: {sort}|{created_at}|{template ID}.
 	assert.Equal(t, "created_at_desc|"+first[1].CreatedAt.UTC().Format(time.RFC3339Nano)+"|"+first[1].TemplateID, token)
 
 	second, next := callSearchTemplatesHandler(t, ctx, testDB, teamTestCaller(teamID, nil), api.GetUnstableTemplatesSearchParams{Limit: &limit, Cursor: &token})
@@ -291,7 +290,7 @@ func teamTestCaller(teamID uuid.UUID, clusterID *uuid.UUID) defaultTemplatesTest
 	return func(t *testing.T, c *gin.Context) {
 		t.Helper()
 
-		auth.SetTeamInfoForTest(t, c, &authtypes.Team{Team: &authqueries.Team{ID: teamID, ClusterID: clusterID}})
+		auth.SetTeamInfoForTest(t, c, &authtypes.Team{Team: &dbtypes.Team{ID: teamID, ClusterID: clusterID}})
 	}
 }
 

@@ -86,8 +86,8 @@ func ReservedBlocksOptions(ctx context.Context, featureFlags *featureflags.Clien
 	}
 
 	return []CreateSandboxOption{
-		WithPreBootFn(func(ctx context.Context, rootfsPath string) error {
-			return filesystem.SetReservedBlocksOnHost(ctx, rootfsPath, reservedDiskSpaceMB, blockSize)
+		WithPreBootFn(func(ctx context.Context, rootfsPath string) (string, error) {
+			return "", filesystem.SetReservedBlocksOnHost(ctx, rootfsPath, reservedDiskSpaceMB, blockSize)
 		}),
 	}
 }
@@ -169,7 +169,7 @@ func (cs *CreateSandbox) Sandbox(
 			CPUTemplate: layerExecutor.Config.CPUTemplate,
 		},
 		nil,
-		preBootFn,
+		sandbox.WithPreBoot(preBootFn),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox: %w", err)

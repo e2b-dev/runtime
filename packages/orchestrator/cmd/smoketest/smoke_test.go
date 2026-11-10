@@ -274,6 +274,12 @@ func checkPrerequisites(t *testing.T) {
 		t.Skip("/dev/kvm not available")
 	}
 
+	// Without forwarding the guest has no route out, and every build fails late
+	// in apt's DNS lookups instead of here.
+	forward, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	require.NoError(t, err)
+	require.Equal(t, "1", strings.TrimSpace(string(forward)), "net.ipv4.ip_forward must be 1 for sandbox NAT")
+
 	// Firecracker host assets, shipped with the orchestrator host image.
 	builderConfig, err := cfg.ParseBuilder()
 	require.NoError(t, err)

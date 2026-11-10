@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -14,6 +15,7 @@ import (
 	containerregistry "github.com/google/go-containerregistry/pkg/v1"
 	registrygoogle "github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"golang.org/x/sync/singleflight"
@@ -56,6 +58,11 @@ func (g *GCPRemoteRepository) GetImage(ctx context.Context, tag string, platform
 
 	img, err := remote.Image(ref, remote.WithAuth(g.authToken), remote.WithPlatform(platform), remote.WithContext(ctx))
 	if err != nil {
+		if registryErr, ok := errors.AsType[*transport.Error](err); ok &&
+			(registryErr.StatusCode == http.StatusUnauthorized || registryErr.StatusCode == http.StatusForbidden) {
+			return nil, fmt.Errorf("%w: %w", ErrRepositoryAccessDenied, err)
+		}
+
 		return nil, fmt.Errorf("error pulling image: %w", err)
 	}
 

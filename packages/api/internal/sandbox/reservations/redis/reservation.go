@@ -26,6 +26,10 @@ const (
 	// and cleaned up. This handles the case where an API instance crashes mid-creation.
 	// 90 seconds is well beyond any realistic sandbox creation time.
 	StaleTTL = 90 * time.Second
+
+	// KillClaimTTL only has to outlive the snapshot delete: once the snapshot
+	// is gone, a resume fails on its own.
+	KillClaimTTL = 30 * time.Second
 )
 
 // ReapableAt is the earliest instant another reserver can purge a pending
@@ -65,8 +69,10 @@ func (s *ReservationStorage) Reserve(ctx context.Context, teamID uuid.UUID, sand
 	now := float64(time.Now().Unix())
 	staleCutoff := float64(time.Now().Add(-StaleTTL).Unix())
 
+	killClaimKey := getKillClaimKey(teamIDStr, sandboxID)
+
 	result, err := storage_redis.RunScript(ctx, s.redisClient, "reserve", reserveScript,
-		[]string{storageIndexKey, pendingSetKey, resultKeyStr},
+		[]string{storageIndexKey, pendingSetKey, resultKeyStr, killClaimKey},
 		sandboxID, limit, now, staleCutoff,
 	).Int()
 	if err != nil {
@@ -86,9 +92,59 @@ func (s *ReservationStorage) Reserve(ctx context.Context, teamID uuid.UUID, sand
 	case reserveResultLimitExceeded:
 		return nil, nil, &sandboxtypes.LimitExceededError{TeamID: teamID}
 
+	case reserveResultKilled:
+		return nil, nil, sandboxtypes.ErrSandboxKilled
+
 	default:
 		return nil, nil, fmt.Errorf("unexpected reserve script result: %d", result)
 	}
+}
+
+// ClaimKill blocks new reservations of a paused sandbox while its snapshot is
+// deleted. It returns claimed=false when a resume is in flight or the sandbox
+// is running again; otherwise claimID is what ReleaseKillClaim takes.
+func (s *ReservationStorage) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (claimID string, claimed bool, err error) {
+	teamIDStr := teamID.String()
+	storageIndexKey := getStorageIndexKey(teamIDStr)
+	pendingSetKey := getPendingSetKey(teamIDStr)
+	killClaimKey := getKillClaimKey(teamIDStr, sandboxID)
+	staleCutoff := float64(time.Now().Add(-StaleTTL).Unix())
+	claimID = uuid.NewString()
+
+	result, err := storage_redis.RunScript(ctx, s.redisClient, "claim_kill", claimKillScript,
+		[]string{storageIndexKey, pendingSetKey, killClaimKey},
+		sandboxID, int(KillClaimTTL.Seconds()), staleCutoff, claimID,
+	).Int()
+	if err != nil {
+		return "", false, fmt.Errorf("failed to run claim-kill script: %w", err)
+	}
+
+	switch result {
+	case claimKillResultClaimed:
+		return claimID, true, nil
+	case claimKillResultInFlight:
+		return "", false, nil
+	default:
+		return "", false, fmt.Errorf("unexpected claim-kill script result: %d", result)
+	}
+}
+
+func (s *ReservationStorage) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID, claimID string) error {
+	killClaimKey := getKillClaimKey(teamID.String(), sandboxID)
+
+	if err := s.redisClient.SRem(ctx, killClaimKey, claimID).Err(); err != nil {
+		return fmt.Errorf("failed to release kill claim: %w", err)
+	}
+
+	return nil
+}
+
+// WaitForStart returns once no start of the sandbox is pending. How that start
+// ended is the starter's to report, so only a ctx error is returned.
+func (s *ReservationStorage) WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+	_, _ = s.createWaitForStart(teamID, sandboxID)(ctx)
+
+	return ctx.Err()
 }
 
 func (s *ReservationStorage) Release(ctx context.Context, teamID uuid.UUID, sandboxID string) error {

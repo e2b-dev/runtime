@@ -52,3 +52,19 @@ func (c *Cleaner) statInDir(df *os.File, filename string) (*Stat, error) {
 		ATimeUnix: statx.Atime.Sec,
 	}, nil
 }
+
+// GetDiskInfo reads the size of the filesystem holding path. The block unit is
+// the fragment size, as in statvfs and GNU df; some filesystems leave it zero.
+func GetDiskInfo(path string) (DiskInfo, error) {
+	var st unix.Statfs_t
+	if err := unix.Statfs(path, &st); err != nil {
+		return DiskInfo{}, fmt.Errorf("statfs %s: %w", path, err)
+	}
+
+	blockSize := uint64(st.Frsize)
+	if blockSize == 0 {
+		blockSize = uint64(st.Bsize)
+	}
+
+	return newDiskInfo(blockSize, st.Blocks, st.Bfree)
+}

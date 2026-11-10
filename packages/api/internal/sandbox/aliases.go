@@ -17,14 +17,20 @@ type (
 	StateAction = sandboxtypes.StateAction
 	KillReason  = sandboxtypes.KillReason
 	RemoveOpts  = sandboxtypes.RemoveOpts
+	Hold        = sandboxtypes.Hold
 
 	TransitionEffect = sandboxtypes.TransitionEffect
 	StateTransition  = sandboxtypes.StateTransition
 
-	InvalidStateTransitionError = sandboxtypes.InvalidStateTransitionError
-	LimitExceededError          = sandboxtypes.LimitExceededError
-	NotRunningError             = sandboxtypes.NotRunningError
-	PauseQueueExhaustedError    = sandboxtypes.PauseQueueExhaustedError
+	InvalidStateTransitionError           = sandboxtypes.InvalidStateTransitionError
+	LimitExceededError                    = sandboxtypes.LimitExceededError
+	NotRunningError                       = sandboxtypes.NotRunningError
+	PauseQueueExhaustedError              = sandboxtypes.PauseQueueExhaustedError
+	PauseRefusedCheckpointInProgressError = sandboxtypes.PauseRefusedCheckpointInProgressError
+	PauseUnsupportedError                 = sandboxtypes.PauseUnsupportedError
+	RestoredTransitionError               = sandboxtypes.RestoredTransitionError
+	RestoreOpts                           = sandboxtypes.RestoreOpts
+	PauseRefusedEnvdUnresponsiveError     = sandboxtypes.PauseRefusedEnvdUnresponsiveError
 )
 
 // State constants.
@@ -49,6 +55,8 @@ const (
 	KillReasonOrphaned            = sandboxtypes.KillReasonOrphaned
 	KillReasonBaseTemplateMissing = sandboxtypes.KillReasonBaseTemplateMissing
 	KillReasonTeamDeleted         = sandboxtypes.KillReasonTeamDeleted
+	KillReasonGuestPowerOff       = sandboxtypes.KillReasonGuestPowerOff
+	KillReasonEndedOnNode         = sandboxtypes.KillReasonEndedOnNode
 )
 
 // Errors and pre-defined state actions / transition tables.
@@ -58,10 +66,15 @@ var (
 	ErrEvictionInProgress = sandboxtypes.ErrEvictionInProgress
 	ErrEvictionNotNeeded  = sandboxtypes.ErrEvictionNotNeeded
 	ErrExecutionMismatch  = sandboxtypes.ErrExecutionMismatch
+	ErrLifecycleHeld      = sandboxtypes.ErrLifecycleHeld
+	ErrLockLost           = sandboxtypes.ErrLockLost
+	ErrHoldConflict       = sandboxtypes.ErrHoldConflict
+	ErrNotHeld            = sandboxtypes.ErrNotHeld
 	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
 	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
 	ErrSkipRestore        = sandboxtypes.ErrSkipRestore
 	ErrDraining           = sandboxtypes.ErrDraining
+	ErrSandboxKilled      = sandboxtypes.ErrSandboxKilled
 
 	AllowedTransitions = sandboxtypes.AllowedTransitions
 

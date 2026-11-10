@@ -74,6 +74,13 @@ type slowResumeSteps struct {
 	resumed *sandbox.Sandbox
 	// panicInResume makes the resume panic, as a VM step with a bug would.
 	panicInResume bool
+	// onSnapshot runs at the start of the snapshot step, after the
+	// reservation; snapshotErr, when set, is what the step returns once any
+	// blockSnapshot wait is over. snapshotIgnoreCancel makes that wait
+	// observe the release only.
+	onSnapshot           func()
+	snapshotErr          error
+	snapshotIgnoreCancel bool
 	// onStopAsync runs inside the old sandbox's deferred stop, after the
 	// steps returned and before the checkpoint's outcome is decided.
 	onStopAsync func()
@@ -128,8 +135,17 @@ func waitStep(ctx context.Context, release <-chan struct{}, delay time.Duration)
 
 func (f *slowResumeSteps) snapshot(ctx context.Context, _ *sandbox.Sandbox, _ *orchestrator.SandboxCheckpointRequest) (*snapshotResult, error) {
 	close(f.snapshotStarted)
-	if f.blockSnapshot || f.snapshotDelay > 0 {
+	if f.onSnapshot != nil {
+		f.onSnapshot()
+	}
+	switch {
+	case f.snapshotIgnoreCancel:
+		<-f.snapshotRelease
+	case f.blockSnapshot || f.snapshotDelay > 0:
 		waitStep(ctx, f.snapshotRelease, f.snapshotDelay)
+	}
+	if f.snapshotErr != nil {
+		return nil, f.snapshotErr
 	}
 	f.snapshotCtxErr = ctx.Err()
 	if f.snapshotCtxErr != nil {
@@ -674,6 +690,7 @@ func TestCheckpointResumeFresh_CheckpointDuringTheWindowIsInProgress(t *testing.
 		_, err := s.Checkpoint(t.Context(), req)
 		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.ErrorContains(t, err, "already in progress")
+		assert.NotNil(t, checkpointInProgressDetail(t, err), "the refusal carries its typed detail for the API")
 
 		steps.releaseResume()
 		awaitCheckpoint(t, done)
@@ -726,6 +743,7 @@ func TestCheckpointResumeFresh_PauseDuringTheWindowIsRetryable(t *testing.T) {
 		_, err := s.Pause(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: sbx.Runtime.SandboxID})
 		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 		require.ErrorContains(t, err, "please retry")
+		assert.NotNil(t, checkpointInProgressDetail(t, err), "the API restores on this detail; without it the flag-off pause kills")
 
 		steps.releaseResume()
 		awaitCheckpoint(t, done)
@@ -1981,4 +1999,115 @@ func TestWithContextCause(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A resume-fresh checkpoint needs the guest's memory: once the guest powered
+// off it is refused before the reservation, the sandbox stays live and
+// untouched, and no snapshot step runs.
+func TestCheckpointResumeFresh_PoweredOffGuestIsRefusedBeforeTheReservation(t *testing.T) {
+	t.Parallel()
+
+	s, sbx, steps, _ := slowResumeServer(t)
+	defer steps.releaseAll()
+	sbx.HoldPoweredOff()
+
+	err := awaitCheckpoint(t, startSlowCheckpoint(t.Context(), s, steps, sbx))
+
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	select {
+	case <-steps.snapshotStarted:
+		t.Fatal("the snapshot step ran")
+	default:
+	}
+	assert.Zero(t, steps.stopAndCloses.Load(), "nothing was torn down")
+	assert.Zero(t, steps.asyncStops.Load())
+	_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
+	assert.True(t, live, "the sandbox keeps its live-map entry")
+	assert.Nil(t, s.detachedCheckpointFor(sbx.Runtime.SandboxID), "the claim is released")
+}
+
+// A guest that powers off after the reservation leaves the memory snapshot
+// nothing to capture: the sandbox goes back to the live map untouched, held
+// for its timeout action, with no teardown and no abandoned replacement.
+func TestCheckpointResumeFresh_PowerOffAfterTheReservationRestoresTheSandbox(t *testing.T) {
+	t.Parallel()
+
+	s, sbx, steps, _ := slowResumeServer(t)
+	defer steps.releaseAll()
+	steps.onSnapshot = func() { sbx.HoldPoweredOff() }
+	steps.snapshotErr = sandbox.ErrPoweredOffHasNoMemory
+
+	err := awaitCheckpoint(t, startSlowCheckpoint(t.Context(), s, steps, sbx))
+
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Zero(t, steps.stopAndCloses.Load(), "the original is not closed")
+	assert.Zero(t, steps.asyncStops.Load(), "the original is not stopped")
+	require.NoError(t, steps.abandonedWith, "no replacement was abandoned")
+	assert.Equal(t, sandbox.StopReasonCrashed, sbx.GetStopReason(), "no stop reason is left behind")
+	assert.True(t, sbx.GuestPoweredOff(), "the hold stays for the timeout action")
+	live, ok := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
+	require.True(t, ok, "the original is live again")
+	assert.Same(t, sbx, live)
+	assert.Nil(t, s.detachedCheckpointFor(sbx.Runtime.SandboxID), "the claim is released")
+	assert.Zero(t, s.info.OutstandingWork())
+}
+
+// A Delete that ends the checkpoint while a late power-off gives the original
+// back owns the one terminal event, whether it waits for the checkpoint or
+// answers at its deadline first: the restored original counts as live, so
+// the checkpoint publishes no kill of its own.
+func TestCheckpointResumeFresh_PowerOffRestoreAndDeletePublishOneKill(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the delete waits for the checkpoint", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			s, sbx, steps, kills := slowResumeServer(t)
+			defer steps.releaseAll()
+			steps.blockSnapshot = true
+			steps.onSnapshot = func() { sbx.HoldPoweredOff() }
+			steps.snapshotErr = sandbox.ErrPoweredOffHasNoMemory
+
+			done := startSlowCheckpoint(t.Context(), s, steps, sbx)
+			awaitStep(t, steps.snapshotStarted, "snapshot")
+
+			live, ended := s.endCheckpointForDelete(t.Context(), sbx.Runtime.SandboxID, "test-kill")
+			assert.Equal(t, codes.FailedPrecondition, status.Code(awaitCheckpoint(t, done)))
+			synctest.Wait()
+
+			assert.True(t, ended)
+			assert.Same(t, sbx, live, "the delete takes the restored original and kills it on its normal path")
+			assert.Empty(t, kills.killed(), "the checkpoint publishes no kill of its own")
+		})
+	})
+
+	t.Run("the delete answers at its deadline first", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			s, sbx, steps, kills := slowResumeServer(t)
+			defer steps.releaseAll()
+			steps.snapshotIgnoreCancel = true
+			steps.onSnapshot = func() { sbx.HoldPoweredOff() }
+			steps.snapshotErr = sandbox.ErrPoweredOffHasNoMemory
+
+			done := startSlowCheckpoint(t.Context(), s, steps, sbx)
+			awaitStep(t, steps.snapshotStarted, "snapshot")
+
+			deadline, cancel := context.WithTimeout(t.Context(), requestTimeout)
+			live, ended := s.endCheckpointForDelete(deadline, sbx.Runtime.SandboxID, "test-kill")
+			cancel()
+			assert.Nil(t, live, "the delete answers with nothing in hand")
+			assert.True(t, ended)
+
+			steps.releaseSnapshot()
+			assert.Equal(t, codes.FailedPrecondition, status.Code(awaitCheckpoint(t, done)))
+			synctest.Wait()
+
+			assert.Equal(t, []string{"test-kill"}, kills.killed(), "exactly one killed event, from the acknowledged-delete cleanup")
+			_, isLive := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
+			assert.False(t, isLive, "the acknowledged delete ended the restored original")
+		})
+	})
 }

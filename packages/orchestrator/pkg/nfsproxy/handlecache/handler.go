@@ -139,6 +139,8 @@ func (h *Handler) HandleLimit() int {
 // Release forgets every handle on the volume mounted as fs. Later requests
 // with those handles are stale.
 func (h *Handler) Release(mounted billy.Filesystem) {
+	mounted = unwrap(mounted)
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

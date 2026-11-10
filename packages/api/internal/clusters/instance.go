@@ -2,14 +2,12 @@ package clusters
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
@@ -17,7 +15,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/machineinfo"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
-	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 const (
@@ -86,21 +83,7 @@ func instanceFrom(clusterID uuid.UUID, sd servicediscovery.Instance, client *GRP
 	}
 }
 
-func newInstance(
-	ctx context.Context,
-	tel *telemetry.Client,
-	clusterAuth *instanceAuthorization,
-	clusterID uuid.UUID,
-	sd servicediscovery.Instance,
-	connAddr string,
-	connTls bool,
-	plaintext credentials.TransportCredentials,
-) (*Instance, error) {
-	client, err := createClient(tel, clusterAuth, connAddr, connTls, plaintext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cluster instance client client: %w", err)
-	}
-
+func newInstance(ctx context.Context, clusterID uuid.UUID, sd servicediscovery.Instance, client *GRPCClient) (*Instance, error) {
 	client.Init(ctx)
 
 	// Create with default values that will be updated on sync before returning the instance,
@@ -110,7 +93,7 @@ func newInstance(
 	// so it can be empty and will be filled after first sync.
 	i := instanceFrom(clusterID, sd, client)
 
-	err = i.Sync(ctx)
+	err := i.Sync(ctx)
 	if err != nil {
 		closeErr := client.Close()
 		if closeErr != nil {

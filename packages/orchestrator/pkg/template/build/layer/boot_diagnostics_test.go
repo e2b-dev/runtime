@@ -46,7 +46,7 @@ func TestBootDiagnosticsOptions(t *testing.T) {
 func TestPreBootHookOffIsPassThrough(t *testing.T) {
 	t.Parallel()
 
-	inner := func(context.Context, string) error { return nil }
+	inner := func(context.Context, string) (string, error) { return "", nil }
 
 	fn, diag := NewCreateSandbox(nil, nil, 0, WithPreBootFn(inner)).preBootHook()
 	assert.Equal(t, reflect.ValueOf(inner).Pointer(), reflect.ValueOf(fn).Pointer())
@@ -77,17 +77,17 @@ func TestPreBootHookOnRunsInner(t *testing.T) {
 			calls := 0
 			var inner sandbox.PreBootFn
 			if tt.hasInner {
-				inner = func(context.Context, string) error {
+				inner = func(context.Context, string) (string, error) {
 					calls++
 
-					return tt.innerErr
+					return "", tt.innerErr
 				}
 			}
 			fn, diag := NewCreateSandbox(nil, nil, 0, WithPreBootFn(inner), withFstabInspector(rootfs.InspectFstab)).preBootHook()
 			require.NotNil(t, fn)
 			require.NotNil(t, diag)
 
-			err := fn(t.Context(), "/nonexistent/rootfs.ext4")
+			_, err := fn(t.Context(), "/nonexistent/rootfs.ext4")
 
 			if tt.innerErr == nil {
 				require.NoError(t, err)
@@ -110,14 +110,14 @@ func TestPreBootHookFailsWhileInspectorHoldsDevice(t *testing.T) {
 		return held, rootfs.ErrInspectorRunning
 	}
 	innerCalled := false
-	inner := func(context.Context, string) error {
+	inner := func(context.Context, string) (string, error) {
 		innerCalled = true
 
-		return nil
+		return "", nil
 	}
 
 	fn, diag := NewCreateSandbox(nil, nil, 0, WithPreBootFn(inner), withFstabInspector(inspect)).preBootHook()
-	err := fn(t.Context(), "/dev/nbd4095")
+	_, err := fn(t.Context(), "/dev/nbd4095")
 
 	require.ErrorIs(t, err, rootfs.ErrInspectorRunning)
 	assert.False(t, innerCalled, "nothing else may touch the device")

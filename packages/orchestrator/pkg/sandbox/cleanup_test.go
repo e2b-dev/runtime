@@ -171,7 +171,7 @@ func TestStartRootfsProviderAfterCleanup(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		startRootfsProvider(t.Context(), t.Context(), cleanup, provider, logger.NewNopLogger())
+		startRootfsProviderVia(t.Context(), t.Context(), cleanup, provider, newHandover(nil), logger.NewNopLogger())
 		close(done)
 	}()
 

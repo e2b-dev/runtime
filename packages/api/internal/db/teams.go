@@ -20,7 +20,7 @@ func GetTeamsByUser(ctx context.Context, db *authdb.Client, userID uuid.UUID) ([
 	teamsWithLimits := make([]*types.TeamWithDefault, 0, len(teams))
 	for _, team := range teams {
 		// A deleted team keeps its memberships but must not be selectable.
-		if team.Team.DeletedAt != nil {
+		if team.DeletedAt != nil {
 			continue
 		}
 		teamsWithLimits = append(teamsWithLimits, &types.TeamWithDefault{
@@ -36,7 +36,19 @@ func GetTeamsByUser(ctx context.Context, db *authdb.Client, userID uuid.UUID) ([
 // TestTeamRowCopiesEveryColumn fails when a column is left behind.
 func teamRow(row authqueries.GetUserTeamsWithLimitsRow) authqueries.GetTeamByTeamIDRow {
 	return authqueries.GetTeamByTeamIDRow{
-		Team:                             row.Team,
+		ID:                               row.ID,
+		CreatedAt:                        row.CreatedAt,
+		IsBlocked:                        row.IsBlocked,
+		Name:                             row.Name,
+		Email:                            row.Email,
+		IsBanned:                         row.IsBanned,
+		BlockedReason:                    row.BlockedReason,
+		ClusterID:                        row.ClusterID,
+		SandboxSchedulingLabels:          row.SandboxSchedulingLabels,
+		SsoOrganizationID:                row.SsoOrganizationID,
+		SsoAutoJoin:                      row.SsoAutoJoin,
+		DeletedAt:                        row.DeletedAt,
+		Slug:                             row.Slug,
 		SandboxDefaultAllowPublicTraffic: row.SandboxDefaultAllowPublicTraffic,
 		MaxLengthHours:                   row.MaxLengthHours,
 		ConcurrentSandboxes:              row.ConcurrentSandboxes,

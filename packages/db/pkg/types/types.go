@@ -3,6 +3,9 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
 
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 )
@@ -49,6 +52,43 @@ func (m *JSONBStringMap) UnmarshalJSON(data []byte) error {
 	*m = JSONBStringMap(raw)
 
 	return nil
+}
+
+// Team holds the team columns the team lookups select. The auth cache stores
+// it as JSON that pods of adjacent releases read, so renaming, retyping or
+// tagging a field breaks the entries the other release wrote.
+type Team struct {
+	ID                      uuid.UUID
+	CreatedAt               time.Time
+	IsBlocked               bool
+	Name                    string
+	Email                   string
+	IsBanned                bool
+	BlockedReason           *string
+	ClusterID               *uuid.UUID
+	SandboxSchedulingLabels []string
+	SsoOrganizationID       *uuid.UUID
+	SsoAutoJoin             bool
+	DeletedAt               *time.Time
+	Slug                    string
+}
+
+func TeamFromRow(row authqueries.GetTeamByTeamIDRow) Team {
+	return Team{
+		ID:                      row.ID,
+		CreatedAt:               row.CreatedAt,
+		IsBlocked:               row.IsBlocked,
+		Name:                    row.Name,
+		Email:                   row.Email,
+		IsBanned:                row.IsBanned,
+		BlockedReason:           row.BlockedReason,
+		ClusterID:               row.ClusterID,
+		SandboxSchedulingLabels: row.SandboxSchedulingLabels,
+		SsoOrganizationID:       row.SsoOrganizationID,
+		SsoAutoJoin:             row.SsoAutoJoin,
+		DeletedAt:               row.DeletedAt,
+		Slug:                    row.Slug,
+	}
 }
 
 type ProjectSettings struct {

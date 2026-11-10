@@ -11,10 +11,13 @@ enum ServiceInfoStatus {
   // Draining excludes new work while existing work finishes; it can return to Healthy.
   Draining = 1;
   Unhealthy = 2;
-  // Standby means the node is not actively used, but it can return to Healthy and continues serving traffic.
+  // Standby refuses new sandboxes while the ones it holds keep serving; it can return to Healthy.
   Standby = 3;
   // ShuttingDown drains existing work before process exit and cannot be reversed.
   ShuttingDown = 4;
+  // NotReady is a starting node that cannot take new work yet. Only the node
+  // sets it, and it becomes Healthy by itself once ready.
+  NotReady = 5;
 }
 
 enum ServiceInfoRole {
@@ -51,11 +54,17 @@ message ServiceInfoResponse {
   repeated string labels = 55;
   google.protobuf.Timestamp service_status_changed_at = 56;
 
+  // Owner recorded by the current Standby override, empty when none.
+  string status_owner = 57;
+
   // Overlapping work holds, not distinct sandboxes or builds. Zero is idle.
   uint64 outstanding_work = 58;
 
   // Nonpositive values reject sandbox creation.
   int64 max_sandboxes = 59;
+
+  // Capabilities of this build, for example "park-owner".
+  repeated string capabilities = 60;
 
   int64 metric_vcpu_used = 101 [deprecated = true];
   int64 metric_memory_used_mb = 102 [deprecated = true];
@@ -92,6 +101,10 @@ message ServiceInfoResponse {
 
 message ServiceStatusChangeRequest {
   ServiceInfoStatus service_status = 2;
+  // Owner of a Standby override, at most 63 characters of [a-z0-9-] starting and ending alphanumeric; empty is no owner.
+  string owner = 3;
+  // Force applies the carried status and owner regardless of the recorded owner.
+  bool force = 4;
 }
 
 service InfoService {

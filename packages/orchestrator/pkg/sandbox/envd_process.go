@@ -5,7 +5,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process/processconnect"
 )
 
 // StartEnvdShell opens a streaming Process.Start call against the sandbox's
@@ -52,7 +50,7 @@ func (s *Sandbox) startEnvdProcess(
 	tag *string,
 ) (*connect.ServerStreamForClient[process.StartResponse], error) {
 	addr := fmt.Sprintf("http://%s:%d", s.Slot.HostIPString(), consts.DefaultEnvdServerPort)
-	pc := processconnect.NewProcessClient(&http.Client{Transport: sandboxHttpClient.Transport}, addr)
+	pc := NewEnvdProcessClient(addr, 0)
 
 	req := connect.NewRequest(&process.StartRequest{
 		Process: &process.ProcessConfig{Cmd: shell, Args: shellArgs},
@@ -66,5 +64,5 @@ func (s *Sandbox) startEnvdProcess(
 	}
 	grpc.SetUserHeader(req.Header(), user)
 
-	return pc.Start(ctx, req)
+	return pc.Start(WithEnvdSandbox(ctx, s), req)
 }

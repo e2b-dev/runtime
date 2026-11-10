@@ -17,18 +17,21 @@ import (
 const (
 	catalogRedisTimeout = time.Second * 1
 
-	// deleteIfSameExecution outcomes, distinguished for diagnostics.
+	// deleteIfSameOwner outcomes, distinguished for diagnostics.
 	catalogDeleteAbsent     = 0 // no entry
-	catalogDeleteDeleted    = 1 // entry deleted (execution matched)
-	catalogDeleteMismatch   = 2 // entry kept — a different execution owns it now
+	catalogDeleteDeleted    = 1 // entry deleted (execution and lifecycle matched)
+	catalogDeleteMismatch   = 2 // entry kept — another execution or lifecycle owns it now
 	catalogDeleteUnreadable = 3 // entry kept — value undecodable or missing execution_id
 )
 
-// deleteIfSameExecution deletes the catalog entry only if its stored execution_id
-// still matches the one passed in, as one atomic server-side script — so a stale
-// teardown can't remove an entry a concurrent StoreSandbox wrote for a newer execution.
-// Returns the catalogDelete* outcome.
-var deleteIfSameExecution = redis.NewScript(`
+// deleteIfSameOwner deletes the catalog entry only if its stored execution_id
+// still matches ARGV[1] and, when the entry names a lifecycle, its
+// lifecycle_id is ARGV[2], as one atomic server-side script: a stale teardown
+// can't remove an entry a concurrent StoreSandbox wrote for a newer
+// execution, or for the same execution moved to another lifecycle. An entry
+// without a lifecycle, which an older writer stored, is owned by its
+// execution alone. Returns the catalogDelete* outcome.
+var deleteIfSameOwner = redis.NewScript(`
 local v = redis.call('GET', KEYS[1])
 if not v then
   return 0
@@ -37,11 +40,14 @@ local ok, info = pcall(cjson.decode, v)
 if not (ok and type(info) == 'table' and type(info.execution_id) == 'string') then
   return 3
 end
-if info.execution_id == ARGV[1] then
-  redis.call('DEL', KEYS[1])
-  return 1
+if info.execution_id ~= ARGV[1] then
+  return 2
 end
-return 2
+if type(info.lifecycle_id) == 'string' and info.lifecycle_id ~= '' and info.lifecycle_id ~= ARGV[2] then
+  return 2
+end
+redis.call('DEL', KEYS[1])
+return 1
 `)
 
 // routingKeyPrefix is the orchestrator-owned routing record.
@@ -107,16 +113,17 @@ func (c *RedisSandboxCatalog) StoreSandbox(ctx context.Context, sandboxID string
 	return nil
 }
 
-// DeleteSandbox deletes the entry if its execution ID matches and returns the Redis error, if any.
-// A mismatch, an unreadable value or an absent key are not errors.
-func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID string, executionID string) error {
+// DeleteSandbox deletes the entry if its execution ID matches and, when the
+// entry names a lifecycle, it is lifecycleID, and returns the Redis error, if
+// any. A mismatch, an unreadable value or an absent key are not errors.
+func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID, executionID, lifecycleID string) error {
 	spanCtx, span := tracer.Start(ctx, "sandbox-catalog-delete")
 	defer span.End()
 
 	ctx, ctxCancel := context.WithTimeout(spanCtx, catalogRedisTimeout)
 	defer ctxCancel()
 
-	outcome, err := deleteIfSameExecution.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)}, executionID).Int()
+	outcome, err := deleteIfSameOwner.Run(ctx, c.redisClient, []string{c.getCatalogKey(sandboxID)}, executionID, lifecycleID).Int()
 	if err != nil {
 		span.RecordError(err)
 
@@ -128,9 +135,9 @@ func (c *RedisSandboxCatalog) DeleteSandbox(ctx context.Context, sandboxID strin
 		span.SetAttributes(attribute.String("delete.outcome", "deleted"))
 		logger.L().Debug(ctx, "deleted sandbox from redis catalog", logger.WithSandboxID(sandboxID))
 	case catalogDeleteMismatch:
-		// A newer execution owns the entry — the stale-teardown race the atomic delete guards against.
+		// A newer execution or lifecycle owns the entry — the stale-teardown race the atomic delete guards against.
 		span.SetAttributes(attribute.String("delete.outcome", "execution-mismatch"))
-		logger.L().Debug(ctx, "kept sandbox catalog entry owned by a different execution", logger.WithSandboxID(sandboxID))
+		logger.L().Debug(ctx, "kept sandbox catalog entry owned by a different execution or lifecycle", logger.WithSandboxID(sandboxID))
 	case catalogDeleteUnreadable:
 		span.SetAttributes(attribute.String("delete.outcome", "unreadable"))
 		logger.L().Warn(ctx, "sandbox catalog entry is unreadable; leaving it to expire via TTL", logger.WithSandboxID(sandboxID))

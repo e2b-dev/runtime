@@ -57,7 +57,8 @@ func InputErrorCode(err error) connect.Code {
 	case errors.Is(err, syscall.EPIPE),
 		errors.Is(err, os.ErrClosed),
 		errors.Is(err, io.ErrClosedPipe),
-		errors.Is(err, fs.ErrClosed):
+		errors.Is(err, fs.ErrClosed),
+		isClosedPipe(err):
 		return connect.CodeFailedPrecondition
 	default:
 		return connect.CodeInternal

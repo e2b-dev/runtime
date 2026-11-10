@@ -197,7 +197,7 @@ func TestUpdateTracksWorkWhileLockedAndPublishing(t *testing.T) {
 	require.NoError(t, <-updateDone)
 	event := <-got
 	require.Equal(t, events.SandboxUpdatedEvent, event.Type)
-	require.Equal(t, newEnd.Format(time.RFC3339), event.EventData["set_timeout"])
+	require.Equal(t, newEnd.UTC().Format(time.RFC3339), event.EventData["set_timeout"])
 	require.True(t, newEnd.Equal(sbx.GetEndAt()))
 	require.Equal(t, int64(1), s.info.OutstandingWork(), "publisher must survive Update return")
 	releasePublish()

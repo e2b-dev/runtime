@@ -256,9 +256,9 @@ docker compose down -v && docker compose --profile purge run --rm host-teardown
 
 ### Ports
 
-The thirteen ports and what each is for are in the hub. Compose binds them on
+The twelve ports and what each is for are in the hub. Compose binds them on
 every host interface: let trusted clients reach 3000, 3001 and 3002, and make
-sure the other ten are reachable on no address the host holds, its own public
+sure the other nine are reachable on no address the host holds, its own public
 one included, not only from the network edge.
 
 From another machine, tunnel rather than open, and use the same four
@@ -308,7 +308,7 @@ The api's own two secrets, `ADMIN_TOKEN` and
 `api-secrets` one-shot generates both on the first `up` and keeps them in the
 `seed-state` volume as `/run/e2b/api.env`, a file only root can read, as
 `GEN_ADMIN_TOKEN` and `GEN_SANDBOX_ACCESS_TOKEN_HASH_SEED`; a later run finds
-them again and the entrypoints of the api and dashboard-api read them;
+them again and the api's entrypoint reads them;
 nothing prints them, and `down -v` drops them with the databases. The
 reference's [Secrets](../docs/REFERENCE.md#secrets) says what the two are
 for.
@@ -327,7 +327,7 @@ the api on it:
 ```bash
 docker compose run --rm --no-deps --entrypoint rm api-secrets /run/e2b/api.env
 docker compose run --rm --no-deps api-secrets
-docker compose up -d --no-deps --force-recreate api dashboard-api
+docker compose up -d --no-deps --force-recreate api
 ```
 
 `--no-deps` throughout: the two one-shot runs need no other service, and
@@ -335,7 +335,7 @@ recreating the api's dependencies would restart the orchestrator and end every
 running sandbox. The new hash seed invalidates the traffic and envd tokens of
 the `secure` sandboxes that survive the api's restart, and the new admin token
 invalidates every admin client. A value pinned in `.env` is not rotated by
-this: change the line and recreate the api and dashboard-api.
+this: change the line and recreate the api.
 `docker compose exec api env` shows both empty: the entrypoint fills them in
 for the api process only. Read them from the volume instead:
 `docker compose run --rm --no-deps --entrypoint cat
@@ -371,8 +371,10 @@ gives you and how to forward traces and logs as well.
 ### Upgrading
 
 Download `compose.yaml` and `.env` again, with the same command as
-[Install](#install), and run `docker compose up -d --wait --pull always`.
-Before that `up`, carry the optional lines you had set, such as
+[Install](#install), and run
+`docker compose up -d --wait --pull always --remove-orphans`;
+`--remove-orphans` stops the containers of services the new `compose.yaml`
+does not define. Before that `up`, carry the optional lines you had set, such as
 `E2B_DASHBOARD_HOST` or the two under [Telemetry](#telemetry), over into the
 new `.env`: it ships them commented again, and without the Telemetry pair the
 services stop exporting. The `.env` you get pins the stack images that go with
@@ -387,10 +389,10 @@ restarts; a single machine has nowhere to drain them to.
 ### Known limitations
 
 - Nothing on this stack authenticates a network peer except api's own API key
-  and admin token check. Thirteen ports bind every host interface, and the
+  and admin token check. Twelve ports bind every host interface, and the
   orchestrator's 5008 in particular is an unauthenticated control API that
   creates and kills sandboxes. Expose 3000, 3001 and 3002 to trusted clients if
-  you must, and keep the other ten unreachable on every address the host holds,
+  you must, and keep the other nine unreachable on every address the host holds,
   its own public one included.
 - The team API key rotates only through the seed (set `TEAM_API_KEY`, or
   remove the key file, then `up`), not through an API call, and the old key
@@ -410,11 +412,9 @@ restarts; a single machine has nowhere to drain them to.
   timeout`, because no OpenTelemetry collector is configured and the endpoint
   is empty. That line stops once `E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` names a
   collector that answers ([Telemetry](#telemetry)).
-  dashboard-api also logs `ADMIN_AUTH_PROVIDER_CONFIG is not configured` once
-  at startup; the management endpoints it guards are not used here.
-- To run without the dashboard, remove the `dashboard` and `dashboard-api`
-  services from your copy of `compose.yaml`, and `dashboard` from `ready`'s
-  `depends_on`; the rest of the stack runs.
+- To run without the dashboard, remove the `dashboard` service from your copy
+  of `compose.yaml`, and `dashboard` from `ready`'s `depends_on`; the rest of
+  the stack runs.
 
 ### Troubleshooting
 

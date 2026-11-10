@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 
@@ -65,6 +66,18 @@ func isLinkNotExist(err error) bool {
 
 func isNamespaceNotExist(err error) bool {
 	return os.IsNotExist(err) || errors.Is(err, unix.ENOENT)
+}
+
+// DeleteNamespace is netns.DeleteNamed, except that an anchor whose mount is
+// already gone (EINVAL, not a mount point, as after a restart into a new mount
+// namespace) is removed instead of failing every later teardown.
+func DeleteNamespace(name string) error {
+	err := netns.DeleteNamed(name)
+	if errors.Is(err, unix.EINVAL) {
+		return os.Remove(filepath.Join(NetNamespacesDir, name))
+	}
+
+	return err
 }
 
 func appendUnlessExpectedAbsentf(errs *[]error, err error, isExpected func(error) bool, format string) {
@@ -451,7 +464,7 @@ func (s *Slot) RemoveNetwork(ctx context.Context) error {
 		return errors.Join(errs...)
 	}
 
-	err = netns.DeleteNamed(s.NamespaceID())
+	err = DeleteNamespace(s.NamespaceID())
 	appendUnlessExpectedAbsentf(&errs, err, isNamespaceNotExist, "error deleting namespace: %w")
 
 	return errors.Join(errs...)

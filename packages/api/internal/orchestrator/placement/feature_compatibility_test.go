@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
@@ -342,6 +343,73 @@ func TestNodeSatisfiesFeatures_EgressProxyTLS(t *testing.T) {
 		{name: "a later build", version: "0.16.202610021430-0123456789a-ee", want: true},
 		{name: "the build just before it", version: "0.16.202610011007-5dfa8dfb8aa-ee", want: false},
 		{name: "the last SemVer release", version: "0.16.1-ee", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, NodeSatisfiesFeatures(nodeAtVersion("node-1", tt.version), requirement))
+		})
+	}
+}
+
+// TestRequiredFeatures_ResizableVcpu exercises the live gate against the
+// request the orchestrator receives: any explicit VM capacity, including one
+// equal to the online count, needs a release that honours max_vcpus.
+func TestRequiredFeatures_ResizableVcpu(t *testing.T) {
+	t.Parallel()
+
+	floor := clusters.ResizableTemplateBuildsMinVersion.String()
+
+	tests := []struct {
+		name        string
+		vcpu        int64
+		maxVcpus    int64
+		wantVersion string
+	}{
+		{name: "fixed-size build", vcpu: 2, maxVcpus: 0, wantVersion: ""},
+		{name: "online target at the capacity", vcpu: 4, maxVcpus: 4, wantVersion: floor},
+		{name: "max below vcpu", vcpu: 4, maxVcpus: 2, wantVersion: floor},
+		{name: "max above vcpu", vcpu: 2, maxVcpus: 8, wantVersion: floor},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := testSbxRequest("sbx-1")
+			req.Sandbox.Vcpu = tt.vcpu
+			req.Sandbox.MaxVcpus = tt.maxVcpus
+
+			assert.Equal(t, tt.wantVersion, requiredFeatures(req).MinVersion())
+		})
+	}
+}
+
+// Versions as nodes with a distribution suffix report them, around the resizable floor.
+func TestNodeSatisfiesFeatures_ResizableVcpu(t *testing.T) {
+	t.Parallel()
+
+	req := testSbxRequest("sbx-1")
+	req.Sandbox.Vcpu = 2
+	req.Sandbox.MaxVcpus = 8
+	requirement := requiredFeatures(req)
+
+	floor := clusters.ResizableTemplateBuildsMinVersion
+	before := semver.New(floor.Major(), floor.Minor(), floor.Patch()-1, "", "")
+	after := semver.New(floor.Major(), floor.Minor(), floor.Patch()+1, "", "")
+
+	tests := []struct {
+		name    string
+		version string
+		want    bool
+	}{
+		{name: "the build that added the field", version: floor.String() + "-6bbb0090f80-ee", want: true},
+		{name: "a later build", version: after.String() + "-0123456789a-ee", want: true},
+		{name: "the build just before it", version: before.String() + "-5dfa8dfb8aa-ee", want: false},
+		{name: "the last SemVer release", version: "0.16.1-ee", want: false},
+		{name: "no version reported", version: "", want: false},
 	}
 
 	for _, tt := range tests {

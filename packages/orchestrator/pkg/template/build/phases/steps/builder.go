@@ -4,10 +4,12 @@ package steps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -180,15 +182,18 @@ func (sb *StepBuilder) Build(
 			Version: sb.EnvdVersion,
 		},
 
-		FirecrackerConfig: fc.Config{
-			KernelVersion:      sb.Config.KernelVersion,
-			FirecrackerVersion: sb.Config.FirecrackerVersion,
-		},
+		FirecrackerConfig: sb.Config.FirecrackerConfig(),
 	})
 
+	guestTemplate := sb.Config.GuestTemplate()
+
 	// First not cached layer is create (to change CPU, Memory, etc), subsequent are layers are resumes.
+	// A guest profile that always resumes takes the parent's machine (adoptParentMachine).
 	var sandboxCreator layer.SandboxCreator
-	if sourceLayer.Cached {
+	switch {
+	case guestTemplate.AlwaysResume:
+		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
+	case sourceLayer.Cached:
 		sandboxCreator = layer.NewCreateSandbox(
 			sbxConfig,
 			sb.sandboxFactory,
@@ -198,7 +203,7 @@ func (sb *StepBuilder) Build(
 				layer.BootDiagnosticsOptions(ctx, sb.featureFlags)...,
 			)...,
 		)
-	} else {
+	default:
 		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
 	}
 
@@ -213,15 +218,20 @@ func (sb *StepBuilder) Build(
 			meta.Context,
 		)
 		if err != nil {
-			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), err)
+			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), guestEnded(ctx, sbx, err))
 		}
 
-		err = sandboxtools.SyncChangesToDisk(
+		err = sandboxtools.SyncChangesToDiskWith(
 			ctx,
 			sb.proxy,
 			sbx.Runtime.SandboxID,
+			guestTemplate.SyncCommand,
 		)
 		if err != nil {
+			if err = guestEnded(ctx, sbx, err); errors.Is(err, ErrStepEndedGuest) {
+				return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), err)
+			}
+
 			return metadata.Template{}, fmt.Errorf("error running sync command: %w", err)
 		}
 
@@ -239,7 +249,7 @@ func (sb *StepBuilder) Build(
 			SourceTemplate: templateProvider,
 			CurrentLayer:   currentLayer.Metadata,
 			Hash:           currentLayer.Hash,
-			UpdateEnvd:     sourceLayer.Cached,
+			UpdateEnvd:     sourceLayer.Cached && !guestTemplate.KeepGuestEnvd,
 			SandboxCreator: sandboxCreator,
 			ActionExecutor: actionExecutor,
 			BuildOrigin:    storage.ObjectOriginTemplateBuildCache,
@@ -254,4 +264,48 @@ func (sb *StepBuilder) Build(
 		Cached:   false,
 		Hash:     currentLayer.Hash,
 	}, nil
+}
+
+// ErrStepEndedGuest marks a step whose command restarted or shut down the guest.
+var ErrStepEndedGuest = errors.New("the step ended the guest: a build step must leave the guest running, a restart or shutdown inside a step is not supported")
+
+// A restarting guest drops its connections seconds before it resets, and its
+// exit lands only once Firecracker is gone.
+const guestEndGrace = 30 * time.Second
+
+type stepGuest interface {
+	Exited() bool
+	Wait(ctx context.Context) error
+	FirecrackerExit() *fc.ExitInfo
+}
+
+// guestEnded wraps err in ErrStepEndedGuest when the guest ended itself. Only a
+// lost stream waits for the exit; any other error means the guest answered.
+// Firecracker exits cleanly only when the guest asks, so a clean exit counts
+// even with no reset recorded.
+func guestEnded(ctx context.Context, guest stepGuest, err error) error {
+	if !guest.Exited() {
+		if connect.CodeOf(err) != connect.CodeUnavailable {
+			return err
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, guestEndGrace)
+		defer cancel()
+		_ = guest.Wait(waitCtx)
+
+		if !guest.Exited() {
+			return err
+		}
+	}
+
+	exit := guest.FirecrackerExit()
+	switch fc.ClassifyExit(exit).GuestEvent() {
+	case fc.GuestEventFailure, fc.GuestEventUnknown:
+		return err
+	case fc.GuestEventCrashWithRestart:
+		// A crash is not the step's doing; the code goes to the log.
+		return fmt.Errorf("the guest crashed during the step (crash code %#x): %w", exit.GuestCrashCode, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrStepEndedGuest, err)
+	}
 }

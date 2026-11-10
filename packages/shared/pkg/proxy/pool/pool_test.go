@@ -70,6 +70,57 @@ func TestPoolBuildsOneClientPerConnectionKey(t *testing.T) {
 	assert.Nil(t, second.transport.TLSClientConfig)
 }
 
+// The wrap decorates the transport once per key, with that key, and the
+// client keeps the transport the wrap returns.
+func TestPoolWrapsTheTransportOncePerConnectionKey(t *testing.T) {
+	t.Parallel()
+
+	var keys []string
+	p := New(4, 1, time.Second, false, WithTransportWrap(func(key string, base *http.Transport) *http.Transport {
+		keys = append(keys, key)
+		wrapped := base.Clone()
+		wrapped.MaxResponseHeaderBytes = 1 << 10 // a mark the test can read back
+
+		return wrapped
+	}))
+	client := p.Get(t.Context(), testDestination("lifecycle-a", false))
+	assert.Same(t, client, p.Get(t.Context(), testDestination("lifecycle-a", false)))
+	assert.Equal(t, []string{"lifecycle-a"}, keys)
+	assert.Equal(t, int64(1<<10), client.transport.MaxResponseHeaderBytes)
+	assert.Same(t, client.transport, client.ReverseProxy.Transport)
+}
+
+// A wrapped dial may return a connection with CloseWrite; the pool keeps a
+// full close (tracking.Connection), so the proxy never waits on a half-close.
+func TestPoolWrappedDialHasNoCloseWrite(t *testing.T) {
+	t.Parallel()
+
+	server, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Close() })
+	go func() {
+		for {
+			c, err := server.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	p := New(4, 1, time.Second, false, WithTransportWrap(func(_ string, base *http.Transport) *http.Transport {
+		base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr) // a *net.TCPConn, which has CloseWrite
+		}
+
+		return base
+	}))
+	conn, err := p.Get(t.Context(), testDestination("lifecycle-a", false)).transport.DialContext(t.Context(), "tcp", server.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_, ok := conn.(interface{ CloseWrite() error })
+	assert.False(t, ok)
+}
+
 // ConnectDone pauses a real successful TCP dial before the transport can
 // register it. Cleanup must wait for that socket, not just its registry.
 func TestOwnerJoinsLateDial(t *testing.T) {

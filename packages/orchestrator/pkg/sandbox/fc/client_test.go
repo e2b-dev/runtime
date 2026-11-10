@@ -53,6 +53,6 @@ func TestLoadSnapshotKeepsUffdExitCause(t *testing.T) {
 		cancel(fmt.Errorf("uffd process exited: failed to wrap memfd: mmap memfd: %w", unix.ENOMEM))
 	}()
 
-	err = newApiClient(socket).loadSnapshot(ctx, dir+"/uffd.sock", make(chan struct{}), stubSnapfile(dir+"/snapfile"), false, false, "", "team-1")
+	err = newApiClient(socket).loadSnapshot(ctx, dir+"/uffd.sock", make(chan struct{}), stubSnapfile(dir+"/snapfile"), false, false, false, nil, "", "team-1")
 	require.ErrorIs(t, err, unix.ENOMEM)
 }

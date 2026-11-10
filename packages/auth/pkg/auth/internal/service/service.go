@@ -37,7 +37,7 @@ type APIError = apierrors.APIError
 
 // Service is the interface implemented by the internal AuthService. It
 // exposes the auth validation, team lookup, and cache invalidation operations
-// used by callers such as APIStore and the dashboard-api handlers.
+// used by callers such as APIStore.
 type Service interface {
 	ValidateAPIKey(ctx context.Context, ginCtx *gin.Context, apiKey string) (*types.Team, *APIError)
 	ValidateAuthProviderToken(ctx context.Context, ginCtx *gin.Context, token string) (uuid.UUID, *APIError)

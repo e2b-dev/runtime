@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"syscall"
 	"testing"
 	"time"
@@ -121,7 +120,7 @@ func TestWriteStdinPreconditionSentinels(t *testing.T) {
 func TestWriteStdinAfterExitIsPrecondition(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "/bin/sh", "-c", "exit 0")
+	cmd := exitZeroCommand(t.Context())
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())

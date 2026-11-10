@@ -4,6 +4,7 @@ package userfaultfd
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -11,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -205,6 +207,41 @@ func buildServeAttrs() [numBalloonMode][numGenerationBucket][numPageClass][numFa
 	return t
 }
 
+// serveNewAttrs is serveAttrs for page_class=new with the selected backend as
+// a fifth label, so the serve histogram splits by storage tier where the tier
+// matters. Other classes read no source and keep the four-label set.
+var serveNewAttrs = buildServeNewAttrs()
+
+func buildServeNewAttrs() [numBalloonMode][numGenerationBucket][numFaultResult][storage.NumSources]metric.MeasurementOption {
+	var t [numBalloonMode][numGenerationBucket][numFaultResult][storage.NumSources]metric.MeasurementOption
+	for m := range balloonModeNames {
+		for g := range generationBucketNames {
+			for r := range resultNames {
+				for s := range storage.NumSources {
+					t[m][g][r][s] = telemetry.PrecomputeAttrs(
+						attribute.String("balloon_mode", balloonModeNames[m]),
+						attribute.String("generation_bucket", generationBucketNames[g]),
+						attribute.String("page_class", "new"),
+						attribute.String("result", resultNames[r]),
+						attribute.String("source", s.String()),
+					)
+				}
+			}
+		}
+	}
+
+	return t
+}
+
+// serveOption is the measurement option one serve attempt records under.
+func (u *Userfaultfd) serveOption(pclass pageClass, result faultResult, src storage.Source) metric.MeasurementOption {
+	if pclass == pageClassNew {
+		return serveNewAttrs[u.balloonMode()][u.genBucket][result][src]
+	}
+
+	return serveAttrs[u.balloonMode()][u.genBucket][pclass][result]
+}
+
 // prefaultMetricName is the metric under which per-page prefault latency /
 // installed bytes / attempt count are reported (a TimerFactory triplet).
 const prefaultMetricName = "orchestrator.sandbox.uffd.prefault"
@@ -374,8 +411,8 @@ func buildWPPromoteAttrs() [numGenerationBucket][block.NumStates]metric.Measurem
 // serve loop and are not counted. Sampling it at the envd-init boundary yields
 // the pages/bytes a guest needed to start.
 type ServeSnapshot struct {
-	// Pages is the number of demand faults resolved (installed or already
-	// present) — the count of distinct pages the guest needed.
+	// Pages is the number of resolved demand faults (installed or already
+	// present). A page can be counted again if it is removed and re-faulted.
 	Pages int64
 	// SourcePages is the subset of Pages installed from the source
 	// (page_class=new); the rest were zero-filled or already resident (a
@@ -407,43 +444,77 @@ type ServeSnapshot struct {
 	// is the subset spent on SourcePages, the pages that had to be fetched.
 	ServeTime       time.Duration
 	SourceServeTime time.Duration
+	// MaxServe is the longest single resolved serve attempt so far. It excludes
+	// any time a deferred fault spent waiting for a later attempt. Cumulative;
+	// Sub cannot derive an interval max and leaves it zero.
+	MaxServe time.Duration
+	// BySource splits SourcePages by the selected backend. If a page spans
+	// several sources, the highest-ranked one is selected, not the slowest
+	// measured segment (storage.Source: zero, mmap, peer, NFS, GCS...).
+	BySource [storage.NumSources]int64
+	// ServeTimeBySource splits SourceServeTime the same way, so one trace can
+	// tell a few slow remote pages from many slow local ones.
+	ServeTimeBySource [storage.NumSources]time.Duration
 }
 
 // Sub returns the faults served between an earlier snapshot and this one.
 func (s ServeSnapshot) Sub(earlier ServeSnapshot) ServeSnapshot {
+	var bySource [storage.NumSources]int64
+	var timeBySource [storage.NumSources]time.Duration
+	for i := range bySource {
+		bySource[i] = s.BySource[i] - earlier.BySource[i]
+		timeBySource[i] = s.ServeTimeBySource[i] - earlier.ServeTimeBySource[i]
+	}
+
 	return ServeSnapshot{
-		Pages:           s.Pages - earlier.Pages,
-		SourcePages:     s.SourcePages - earlier.SourcePages,
-		Bytes:           s.Bytes - earlier.Bytes,
-		WPFaults:        s.WPFaults - earlier.WPFaults,
-		Deferred:        s.Deferred - earlier.Deferred,
-		WPDeferred:      s.WPDeferred - earlier.WPDeferred,
-		Deduped:         s.Deduped - earlier.Deduped,
-		ServeTime:       s.ServeTime - earlier.ServeTime,
-		SourceServeTime: s.SourceServeTime - earlier.SourceServeTime,
+		BySource:          bySource,
+		ServeTimeBySource: timeBySource,
+		Pages:             s.Pages - earlier.Pages,
+		SourcePages:       s.SourcePages - earlier.SourcePages,
+		Bytes:             s.Bytes - earlier.Bytes,
+		WPFaults:          s.WPFaults - earlier.WPFaults,
+		Deferred:          s.Deferred - earlier.Deferred,
+		WPDeferred:        s.WPDeferred - earlier.WPDeferred,
+		Deduped:           s.Deduped - earlier.Deduped,
+		ServeTime:         s.ServeTime - earlier.ServeTime,
+		SourceServeTime:   s.SourceServeTime - earlier.SourceServeTime,
 	}
 }
 
 // ServeStats returns a cumulative snapshot of the demand faults served so far.
 func (u *Userfaultfd) ServeStats() ServeSnapshot {
+	var bySource [storage.NumSources]int64
+	var timeBySource [storage.NumSources]time.Duration
+	var sourcePages int64
+	var sourceTime time.Duration
+	for i := range bySource {
+		bySource[i] = u.servedBySource[i].Load()
+		timeBySource[i] = time.Duration(u.servedNanosBySource[i].Load())
+		sourcePages += bySource[i]
+		sourceTime += timeBySource[i]
+	}
+
 	return ServeSnapshot{
-		Pages:       u.servedPages.Load(),
-		SourcePages: u.servedSourcePages.Load(),
-		Bytes:       u.servedBytes.Load(),
-		WPFaults:    u.wpFaultsResolved.Load(),
-		Deferred:    u.servedDeferred.Load(),
-		Deduped:     u.servedDeduped.Load(),
-		WPDeferred:  u.wpDeferred.Load(),
+		MaxServe:          time.Duration(u.servedMaxNanos.Load()),
+		BySource:          bySource,
+		ServeTimeBySource: timeBySource,
+		Pages:             u.servedPages.Load(),
+		SourcePages:       sourcePages,
+		Bytes:             u.servedBytes.Load(),
+		WPFaults:          u.wpFaultsResolved.Load(),
+		Deferred:          u.servedDeferred.Load(),
+		Deduped:           u.servedDeduped.Load(),
+		WPDeferred:        u.wpDeferred.Load(),
 
 		ServeTime:       time.Duration(u.servedNanos.Load()),
-		SourceServeTime: time.Duration(u.servedSourceNanos.Load()),
+		SourceServeTime: sourceTime,
 	}
 }
 
 // recordDropped counts a MISSING fault handled without a worker or measured serve duration.
 func (u *Userfaultfd) recordDropped(ctx context.Context, pclass pageClass, result faultResult) {
 	serveCount.Add(ctx, 1, serveAttrs[u.balloonMode()][u.genBucket][pclass][result])
-	u.recordServeStats(pclass, result, 0, 0)
+	u.recordServeStats(pclass, result, 0, 0, storage.UnknownSource)
 }
 
 // recordServeStats folds one finished serve attempt, and how long it took, into
@@ -451,16 +522,22 @@ func (u *Userfaultfd) recordDropped(ctx context.Context, pclass pageClass, resul
 // already present) count as a needed page and as serve time; deferred faults
 // are re-served and counted when they finally resolve, so they are not double
 // counted here.
-func (u *Userfaultfd) recordServeStats(pclass pageClass, result faultResult, servedBytes int64, took time.Duration) {
+// src is the backend the page's bytes came from, meaningful for an installed
+// page_class=new page only.
+func (u *Userfaultfd) recordServeStats(pclass pageClass, result faultResult, servedBytes int64, took time.Duration, src storage.Source) {
 	switch result {
 	case faultResultInstalled, faultResultPresent:
 		u.servedPages.Add(1)
 		u.servedNanos.Add(int64(took))
+		atomicMax(&u.servedMaxNanos, int64(took))
 		if servedBytes > 0 {
 			u.servedBytes.Add(servedBytes)
 			if pclass == pageClassNew {
-				u.servedSourcePages.Add(1)
-				u.servedSourceNanos.Add(int64(took))
+				if src < 0 || src >= storage.NumSources {
+					src = storage.UnknownSource
+				}
+				u.servedBySource[src].Add(1)
+				u.servedNanosBySource[src].Add(int64(took))
 			}
 		}
 	case faultResultDeferred:
@@ -488,4 +565,13 @@ func buildPrefaultAttrs() [numGenerationBucket][numFaultResult]metric.Measuremen
 	}
 
 	return t
+}
+
+func atomicMax(a *atomic.Int64, v int64) {
+	for {
+		cur := a.Load()
+		if v <= cur || a.CompareAndSwap(cur, v) {
+			return
+		}
+	}
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 )
@@ -214,7 +214,7 @@ func newWebhooksRequest(t *testing.T, method, target, body string) (*gin.Context
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 
 	teamID := uuid.New()
-	sharedauth.SetTeamInfoForTest(t, ginCtx, &types.Team{Team: &authqueries.Team{ID: teamID}})
+	sharedauth.SetTeamInfoForTest(t, ginCtx, &types.Team{Team: &dbtypes.Team{ID: teamID}})
 
 	return ginCtx, recorder, teamID
 }

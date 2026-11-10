@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,4 +292,76 @@ func TestUpsertSnapshot_ExistingSnapshot(t *testing.T) {
 	// Verify we now have 3 build assignments for the same env_id
 	finalAssignments := testutils.GetBuildAssignments(t, ctx, client, initialTemplateID)
 	assert.GreaterOrEqual(t, len(finalAssignments), 3, "Should have at least 3 build assignments after third upsert")
+}
+
+func TestUpsertSnapshot_CopiesMaxVcpuFromSourceBuild(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		sourceMax *int64
+	}{
+		{name: "source with max_vcpu", sourceMax: new(int64(8))},
+		{name: "source without max_vcpu", sourceMax: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := testutils.SetupDatabase(t)
+			ctx := t.Context()
+
+			teamID := testutils.CreateTestTeam(t, client)
+			baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
+			sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, "uploaded")
+
+			err := client.SqlcClient.TestsRawSQL(ctx,
+				"UPDATE public.env_builds SET max_vcpu = $1 WHERE id = $2", tt.sourceMax, sourceBuildID)
+			require.NoError(t, err)
+
+			totalDiskSize := int64(1024)
+			params := queries.UpsertSnapshotParams{
+				TemplateID:         "test-template-" + uuid.New().String(),
+				TeamID:             teamID,
+				SandboxID:          "sandbox-" + uuid.New().String(),
+				BaseTemplateID:     baseTemplateID,
+				StartedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				Vcpu:               2,
+				RamMb:              2048,
+				TotalDiskSizeMb:    &totalDiskSize,
+				Metadata:           types.JSONBStringMap{},
+				KernelVersion:      "6.1.0",
+				FirecrackerVersion: "1.4.0",
+				Config:             &types.PausedSandboxConfig{Version: types.PausedSandboxConfigVersion},
+				OriginNodeID:       "node-1",
+				SourceBuildID:      sourceBuildID,
+				Status:             "snapshotting",
+			}
+
+			for range 2 {
+				result, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+				require.NoError(t, err)
+
+				var got *int64
+				var online int64
+				err = client.SqlcClient.TestsRawSQLQuery(ctx,
+					"SELECT max_vcpu, vcpu FROM public.env_builds WHERE id = $1",
+					func(rows pgx.Rows) error {
+						require.True(t, rows.Next())
+
+						return rows.Scan(&got, &online)
+					},
+					result.BuildID,
+				)
+				require.NoError(t, err)
+				assert.Equal(t, tt.sourceMax, got)
+				assert.Equal(t, params.Vcpu, online)
+				params.SourceBuildID = result.BuildID
+				if tt.sourceMax != nil {
+					params.Vcpu = 4
+				}
+			}
+		})
+	}
 }

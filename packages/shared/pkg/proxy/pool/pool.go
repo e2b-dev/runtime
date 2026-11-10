@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,22 @@ const hostConnectionSplit = 4
 // by different sandboxes cause failed connections.
 const ClientProxyConnectionKey = "client-proxy"
 
+// TransportWrap returns the transport for the client the pool builds for a
+// ConnectionKey or Owner, given the pool's own. Like
+// Destination.InsecureSkipTLSVerify, it runs once, when that client is built,
+// under the pool's lock, so it must not block or dial.
+type TransportWrap func(connectionKey string, base *http.Transport) *http.Transport
+
+// Option configures a ProxyPool.
+type Option func(*ProxyPool)
+
+// WithTransportWrap makes the pool build each client's transport through w.
+func WithTransportWrap(w TransportWrap) Option {
+	return func(p *ProxyPool) {
+		p.transportWrap = w
+	}
+}
+
 type ProxyPool struct {
 	clients               atomic.Int64
 	pool                  *smap.Map[*ProxyClient]
@@ -31,16 +48,22 @@ type ProxyPool struct {
 	totalConnsCounter     atomic.Uint64
 	currentConnsCounter   atomic.Int64
 	disableKeepAlives     bool
+	transportWrap         TransportWrap
 }
 
-func New(maxClientConns int, maxConnectionAttempts int, idleTimeout time.Duration, disableKeepAlives bool) *ProxyPool {
-	return &ProxyPool{
+func New(maxClientConns int, maxConnectionAttempts int, idleTimeout time.Duration, disableKeepAlives bool, opts ...Option) *ProxyPool {
+	p := &ProxyPool{
 		pool:                  smap.New[*ProxyClient](),
 		maxClientConns:        maxClientConns,
 		maxConnectionAttempts: maxConnectionAttempts,
 		idleTimeout:           idleTimeout,
 		disableKeepAlives:     disableKeepAlives,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p
 }
 
 // NewOwner opens an admission lifetime.
@@ -103,6 +126,8 @@ func (p *ProxyPool) newClient(ctx context.Context, d *Destination, owner *Owner)
 		stdLogger,
 		p.disableKeepAlives,
 		d.InsecureSkipTLSVerify,
+		d.ConnectionKey,
+		p.transportWrap,
 	)
 }
 

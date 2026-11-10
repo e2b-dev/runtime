@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
@@ -27,13 +28,13 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	apiclusters "github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -117,6 +118,7 @@ func newCreateSandboxTestOrchestratorOnRedis(t *testing.T, client redis.Universa
 		createdSandboxesCounter:    counter,
 		noCeilingPlacementsCounter: noCeilingCounter,
 	}
+	o.featureUnsupportedCounter, _ = meter.Int64Counter("test-feature-unsupported")
 
 	o.registerNode(node)
 
@@ -125,13 +127,14 @@ func newCreateSandboxTestOrchestratorOnRedis(t *testing.T, client redis.Universa
 
 func testTeam() *teamtypes.Team {
 	return &teamtypes.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   uuid.New(),
 			Name: "test-team",
 		},
 		Limits: &teamtypes.TeamLimits{
 			SandboxConcurrency: 10,
 			MaxLengthHours:     24,
+			MaxVcpu:            8,
 		},
 	}
 }
@@ -420,7 +423,7 @@ func TestCreateSandbox_StaleDataAfterConcurrentPause(t *testing.T) {
 		assert.Equal(t, "base-tpl", sbx1.BaseTemplateID)
 
 		// Clean up reservation.
-		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID)
+		o.sandboxStore.Remove(t.Context(), team.Team.ID, sandboxID, sbx1.ExecutionID)
 
 		// Snapshot changes to V2.
 		snap.templateID = "tpl-v2"
@@ -1081,19 +1084,19 @@ func TestCreateSandbox_CreatedCounterCarriesTeam(t *testing.T) {
 	assert.Equal(t, team.ID.String(), teamID.AsString())
 }
 
-// Under a hugepage limit, a placement on a node that reports no pool ceiling
-// went unchecked; the counter is the only sign of it. A placement the limit
-// never applied to (limit off, or a sandbox without hugepages) is not one.
+// Under the hugepage limit, a placement on a node that reports no pool ceiling
+// went unchecked; the counter is the only sign of it. Nothing else counts: the
+// other memory checks bound every node.
 func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 	t.Parallel()
 
 	const pageSize = 2 << 20
 	for _, tc := range []struct {
-		name               string
-		limitPercent       int
-		firecrackerVersion string
-		nodeOpts           []nodemanager.TestOptions
-		want               map[string]int64
+		name              string
+		limitPercent      int
+		overcommitPercent int
+		nodeOpts          []nodemanager.TestOptions
+		want              map[string]int64
 	}{
 		{
 			name:         "no ceiling reported",
@@ -1112,10 +1115,10 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 			want:         map[string]int64{},
 		},
 		{
-			name:               "sandbox without hugepages",
-			limitPercent:       80,
-			firecrackerVersion: "v1.6.0_abc1234",
-			want:               map[string]int64{},
+			name:              "overcommit cap",
+			overcommitPercent: 100,
+			nodeOpts:          []nodemanager.TestOptions{nodemanager.WithHugePages(1000, 0, 0, pageSize), nodemanager.WithHugePagesBase(1000)},
+			want:              map[string]int64{},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1123,6 +1126,7 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 
 			source := ldtestdata.DataSource()
 			source.Update(source.Flag(featureflags.PlacementHugepageLimitPercent.Key()).ValueForAll(ldvalue.Int(tc.limitPercent)))
+			source.Update(source.Flag(featureflags.PlacementMemoryMaxOvercommit.Key()).ValueForAll(ldvalue.Int(tc.overcommitPercent)))
 			o := newCreateSandboxTestOrchestratorWithFlags(t, source, tc.nodeOpts...)
 
 			reader := sdkmetric.NewManualReader()
@@ -1131,9 +1135,6 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 			o.noCeilingPlacementsCounter = counter
 
 			build := testBuild()
-			if tc.firecrackerVersion != "" {
-				build.FirecrackerVersion = tc.firecrackerVersion
-			}
 			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
 				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
 			}
@@ -1148,6 +1149,151 @@ func TestCreateSandbox_CountsPlacementWithoutHugepageCeiling(t *testing.T) {
 			assert.Equal(t, tc.want, placementsWithoutCeilingByReason(t, rm, "node-1"))
 		})
 	}
+}
+
+// The cap comes from the flag on each placement: past it, the only node is a
+// capacity shortage; raised, the same node takes the sandbox.
+func TestCreateSandbox_MemoryOvercommitCapRefusesAFullNode(t *testing.T) {
+	t.Parallel()
+
+	const pageSize = 2 << 20
+	for _, tc := range []struct {
+		name              string
+		overcommitPercent int
+		allocatedMiB      uint64
+		wantErrCode       string
+	}{
+		// A base pool of 1000 pages is 2000 MiB; every build asks for 512.
+		{name: "past the pool", overcommitPercent: 100, allocatedMiB: 1600, wantErrCode: errCodeCapacityUnavailable},
+		{name: "under a raised cap", overcommitPercent: 125, allocatedMiB: 1600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := ldtestdata.DataSource()
+			source.Update(source.Flag(featureflags.PlacementMemoryMaxOvercommit.Key()).ValueForAll(ldvalue.Int(tc.overcommitPercent)))
+			o := newCreateSandboxTestOrchestratorWithFlags(t, source,
+				nodemanager.WithAllocatedMemoryBytes(tc.allocatedMiB<<20),
+				nodemanager.WithMemoryTotalBytes(4096<<20),
+				nodemanager.WithHugePages(1000, 0, 0, pageSize),
+				nodemanager.WithHugePagesBase(1000),
+			)
+
+			build := testBuild()
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+
+			now := time.Now()
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-"+uuid.New().String()[:8], uuid.New().String(), testTeam(),
+				fetcher, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{})
+
+			if tc.wantErrCode == "" {
+				require.Nil(t, apiErr)
+
+				return
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+			assert.Equal(t, tc.wantErrCode, apiErr.ErrorCode)
+		})
+	}
+}
+
+// TestCreateSandbox_ResizableBuildNeedsNewOrchestrator: a build with
+// max_vcpu sends max_vcpus and is placed only on a node at the
+// resizable floor, including equal counts; a fixed-size build places on any node.
+func TestCreateSandbox_ResizableBuildNeedsNewOrchestrator(t *testing.T) {
+	t.Parallel()
+
+	floor := apiclusters.ResizableTemplateBuildsMinVersion
+	atFloor := floor.String() + "-abc1234-ee"
+	beforeFloor := semver.New(floor.Major(), floor.Minor(), floor.Patch()-1, "", "").String() + "-abc1234-ee"
+
+	tests := []struct {
+		name        string
+		maxVcpu     *int64
+		nodeVersion string
+		wantErrCode string
+	}{
+		{"fixed-size build, old node", nil, beforeFloor, ""},
+		{"equal counts, old node", new(int64(2)), beforeFloor, errCodeFeatureUnsupported},
+		{"resizable build, old node", new(int64(8)), beforeFloor, errCodeFeatureUnsupported},
+		{"equal counts, node at the floor", new(int64(2)), atFloor, ""},
+		{"resizable build, node at the floor", new(int64(8)), atFloor, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rpc := &cpuRecordingSandboxClient{}
+			o := newCreateSandboxTestOrchestrator(t, nodemanager.WithOrchestratorVersion(tt.nodeVersion),
+				func(node *nodemanager.TestNode) { node.SetSandboxClient(rpc) })
+			reader := sdkmetric.NewManualReader()
+			counter, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator"), telemetry.ApiOrchestratorSandboxFeatureUnsupported)
+			require.NoError(t, err)
+			o.featureUnsupportedCounter = counter
+
+			build := testBuild()
+			build.MaxVcpu = tt.maxVcpu
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+			now := time.Now()
+
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-resize-"+uuid.New().String()[:8], uuid.New().String(),
+				testTeam(), fetcher, now, now.Add(time.Hour), time.Hour, false, false, sandbox.CreationMetadata{})
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(t.Context(), &rm))
+
+			if tt.wantErrCode == "" {
+				require.Nil(t, apiErr)
+				assert.Equal(t, int32(1), rpc.calls.Load())
+				request := rpc.request.Load()
+				require.NotNil(t, request)
+				assert.Equal(t, build.Vcpu, request.GetSandbox().GetVcpu())
+				var wantMax int64
+				if tt.maxVcpu != nil {
+					wantMax = *tt.maxVcpu
+				}
+				assert.Equal(t, wantMax, request.GetSandbox().GetMaxVcpus())
+				assert.Empty(t, rm.ScopeMetrics, "counter must not fire on a placed sandbox")
+
+				return
+			}
+
+			require.NotNil(t, apiErr)
+			assert.Zero(t, rpc.calls.Load(), "an incompatible node must never receive Create")
+			assert.Equal(t, tt.wantErrCode, apiErr.ErrorCode)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+
+			require.Len(t, rm.ScopeMetrics, 1)
+			require.Len(t, rm.ScopeMetrics[0].Metrics, 1)
+			sum, ok := rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			feature, ok := sum.DataPoints[0].Attributes.Value("feature")
+			require.True(t, ok)
+			assert.Equal(t, "resizable-vcpu", feature.AsString())
+		})
+	}
+}
+
+type cpuRecordingSandboxClient struct {
+	orchestrator.SandboxServiceClient
+
+	request atomic.Pointer[orchestrator.SandboxCreateRequest]
+	calls   atomic.Int32
+}
+
+func (c *cpuRecordingSandboxClient) Create(_ context.Context, req *orchestrator.SandboxCreateRequest, _ ...grpc.CallOption) (*orchestrator.SandboxCreateResponse, error) {
+	c.calls.Add(1)
+	c.request.Store(proto.Clone(req).(*orchestrator.SandboxCreateRequest))
+
+	return &orchestrator.SandboxCreateResponse{}, nil
 }
 
 // placementsWithoutCeilingByReason reads the counter's points, all of which
@@ -1352,13 +1498,13 @@ func TestCreateSandbox_RetainsWinningPlacement(t *testing.T) {
 			transition, _, finish, err := o.sandboxStore.StartRemoving(ctx, team.ID, sandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionPause})
 			require.NoError(t, err)
 			requirePlacement(t, want, transition.Sandbox.NetworkPlacement)
-			restored, err := o.sandboxStore.RestoreRunning(ctx, transition, 0)
+			restored, err := o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{})
 			require.NoError(t, err)
 			finish(ctx, sandbox.ErrTransitionRestored)
 			requirePlacement(t, want, restored.NetworkPlacement)
 			requirePlacement(t, want, storedPlacement(t, o, team.ID, sandboxID))
 
-			o.sandboxStore.Remove(ctx, team.ID, sandboxID)
+			o.sandboxStore.Remove(ctx, team.ID, sandboxID, sbx.ExecutionID)
 			rpc.placement = nil
 			sbx, apiErr = o.CreateSandbox(ctx, sandboxID, uuid.NewString(), team, plainSandboxData,
 				now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{IsResume: true})

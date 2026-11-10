@@ -61,19 +61,6 @@ sql:
             go_type: "github.com/e2b-dev/infra/packages/db/pkg/types.JSONBStringMap"
 
   - engine: "postgresql"
-    queries: "pkg/dashboard/sql_queries/**"
-    schema:
-      - "migrations"
-      - "schema"
-    gen:
-      go:
-        emit_pointers_for_null_types: true
-        package: "dashboardqueries"
-        omit_unused_structs: true
-        out: "pkg/dashboard/queries/"
-        sql_package: "pgx/v5"
-
-  - engine: "postgresql"
     queries: "pkg/auth/sql_queries/**"
     schema:
       - "migrations"

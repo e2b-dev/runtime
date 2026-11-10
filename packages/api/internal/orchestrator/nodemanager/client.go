@@ -23,6 +23,7 @@ var OrchestratorToApiNodeStateMapper = map[orchestratorinfo.ServiceInfoStatus]ap
 	orchestratorinfo.ServiceInfoStatus_Unhealthy:    api.NodeStatusUnhealthy,
 	orchestratorinfo.ServiceInfoStatus_Standby:      api.NodeStatusStandby,
 	orchestratorinfo.ServiceInfoStatus_ShuttingDown: api.NodeStatusShuttingDown,
+	orchestratorinfo.ServiceInfoStatus_NotReady:     api.NodeStatusNotReady,
 }
 
 func NewClient(tracerProvider trace.TracerProvider, meterProvider metric.MeterProvider, host string, creds credentials.TransportCredentials) (*clusters.GRPCClient, error) {

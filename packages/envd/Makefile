@@ -67,6 +67,8 @@ UPLOAD_VERSION = $(or $(ENVD_VERSION),$(VERSION))
 # Architecture for builds. Defaults to amd64; override for ARM64 builds.
 # (e.g., BUILD_ARCH=arm64 make build-local)
 BUILD_ARCH ?= amd64
+# Target OS for build. The output stays bin/envd whatever the OS.
+BUILD_OS ?= linux
 # Docker platform string. Override for cross-platform builds:
 #   BUILD_PLATFORM=linux/arm64 make start-docker
 BUILD_PLATFORM ?= linux/$(BUILD_ARCH)
@@ -98,7 +100,7 @@ endif
 endif
 
 build:
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(BUILD_ARCH) go build -trimpath -buildvcs=false -a -o bin/envd ${PROD_LDFLAGS}
+	CGO_ENABLED=0 GOOS=$(BUILD_OS) GOARCH=$(BUILD_ARCH) go build -trimpath -buildvcs=false -a -o bin/envd ${PROD_LDFLAGS}
 
 # This binary is injected into every sandbox guest, including musl ones, so it
 # must not need a dynamic loader; -race requires cgo, hence the static external

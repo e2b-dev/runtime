@@ -160,24 +160,28 @@ func newCacheFromMemfd(
 	return cache, nil
 }
 
+// copyFromMemfd copies the dirty ranges into cache's mapping. The cache file is
+// sparse, so a page the filesystem cannot back (a full disk) faults the write.
 func copyFromMemfd(ctx context.Context, cache *Cache, memfd *Memfd, dirty *roaring.Bitmap, blockSize int64) error {
-	var cacheOff int64
-	for r := range BitsetRanges(dirty, blockSize) {
-		if err := ctx.Err(); err != nil {
-			return err
+	return RunFaultSafe(ctx, func() error {
+		var cacheOff int64
+		for r := range BitsetRanges(dirty, blockSize) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			src, err := memfd.Slice(r.Start, r.Size)
+			if err != nil {
+				return fmt.Errorf("memfd slice [%d,%d): %w", r.Start, r.Start+r.Size, err)
+			}
+
+			copy((*cache.mmap)[cacheOff:cacheOff+r.Size], src)
+			cache.setIsCached(cacheOff, r.Size)
+			cacheOff += r.Size
 		}
 
-		src, err := memfd.Slice(r.Start, r.Size)
-		if err != nil {
-			return fmt.Errorf("memfd slice [%d,%d): %w", r.Start, r.Start+r.Size, err)
-		}
-
-		copy((*cache.mmap)[cacheOff:cacheOff+r.Size], src)
-		cache.setIsCached(cacheOff, r.Size)
-		cacheOff += r.Size
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // MemfdCache wraps a Cache populated from a memfd on a background

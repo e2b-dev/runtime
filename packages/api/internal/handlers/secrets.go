@@ -59,7 +59,13 @@ var (
 	errSecretsBackendResponse = errors.New("secrets backend returned an unusable response")
 )
 
-// newSecretsManagementClient dials nothing: grpc.NewClient only prepares the
+// newSecretsManagementClient dials the secrets store management backend; see
+// newReadinessBalancedClient.
+func newSecretsManagementClient(address string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	return newReadinessBalancedClient(address, creds, secretsReadinessService, "secrets store management")
+}
+
+// newReadinessBalancedClient dials nothing: grpc.NewClient only prepares the
 // connection, so a backend that is down or not yet deployed cannot keep the API
 // from starting. The hop is private and in-cluster; it dials through creds,
 // plaintext while its mutual TLS mode is off, and carries no other credential.
@@ -71,18 +77,18 @@ var (
 // the default DNS resolver. With a headless Service name every ready backend
 // address becomes its own connection. The client resolves again whenever a
 // connection closes, so a backend that rotates its connections by age lets it
-// find replicas added later.
-func newSecretsManagementClient(address string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+// find replicas added later. backend names the backend in errors.
+func newReadinessBalancedClient(address string, creds credentials.TransportCredentials, readinessService, backend string) (*grpc.ClientConn, error) {
 	// Calls are spread over every resolved backend address, and only to a
 	// backend whose readiness health service reports SERVING. A backend without
 	// the health service is still picked: gRPC treats its UNIMPLEMENTED answer
 	// as healthy. grpc-go takes a default service config only as JSON.
 	serviceConfig, err := protojson.Marshal(&scpb.ServiceConfig{
 		LoadBalancingConfig: []*scpb.LoadBalancingConfig{{Policy: &scpb.LoadBalancingConfig_RoundRobin{RoundRobin: &scpb.RoundRobinConfig{}}}},
-		HealthCheckConfig:   &scpb.ServiceConfig_HealthCheckConfig{ServiceName: wrapperspb.String(secretsReadinessService)},
+		HealthCheckConfig:   &scpb.ServiceConfig_HealthCheckConfig{ServiceName: wrapperspb.String(readinessService)},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encoding the secrets store management service config: %w", err)
+		return nil, fmt.Errorf("encoding the %s service config: %w", backend, err)
 	}
 
 	conn, err := grpc.NewClient(
@@ -97,7 +103,7 @@ func newSecretsManagementClient(address string, creds credentials.TransportCrede
 		grpc.WithDefaultServiceConfig(string(serviceConfig)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("creating the secrets store management client: %w", err)
+		return nil, fmt.Errorf("creating the %s client: %w", backend, err)
 	}
 
 	return conn, nil

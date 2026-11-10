@@ -209,33 +209,58 @@ func failingCreateClient(t *testing.T) *nodemanager.MockSandboxClientCustom {
 }
 
 // Placements racing for the last room on one node, each finishing as soon as
-// it starts, never admit more than fits: a finishing placement is counted
-// either in flight or in the node view at every moment a check can look.
+// it starts, admit exactly what fits: a finishing placement is counted either
+// in flight or in the node view at every moment a check can look, never both.
 func TestPlaceSandbox_ConcurrentPlacementsNeverOverfillANode(t *testing.T) {
 	t.Parallel()
 
-	// With few racers a placement rarely finishes inside another's check
-	// unless the race detector slows the check down.
-	const racers = 128
-	for range 75 {
-		// 768 pages hold exactly three 512 MiB sandboxes at limit 1.0.
-		node := hugepageNode("node", 1600, 0, 0, 768)
-		var placed atomic.Int32
-		var wg sync.WaitGroup
-		for i := range racers {
-			wg.Go(func() {
-				req := hugepageSbxRequest()
-				req.Sandbox.SandboxId = fmt.Sprintf("sbx-%d", i)
-				var picks []string
-				if _, err := PlaceSandbox(t.Context(), firstNotExcluded([]*nodemanager.Node{node}, &picks), []*nodemanager.Node{node}, node,
-					req, Requirements{Memory: MemoryRequirement{Limit: 1}}, false, nil); err == nil {
-					placed.Add(1)
+	for _, tc := range []struct {
+		name   string
+		node   func() *nodemanager.Node
+		memory MemoryRequirement
+	}{
+		{
+			// 768 pages hold exactly three 512 MiB sandboxes at limit 1.0.
+			name:   "limit",
+			node:   func() *nodemanager.Node { return hugepageNode("node", 1600, 0, 0, 768) },
+			memory: MemoryRequirement{Limit: 1},
+		},
+		{
+			// A 768-page base pool holds exactly three 512 MiB sandboxes at a cap of 1.
+			name: "overcommit cap",
+			node: func() *nodemanager.Node {
+				return nodemanager.NewTestNode("node", api.NodeStatusReady, 0, 8,
+					nodemanager.WithHugePages(768, 0, 0, testPageBytes),
+					nodemanager.WithHugePagesBase(768),
+				)
+			},
+			memory: MemoryRequirement{MaxOvercommit: 1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// With few racers a placement rarely finishes inside another's check
+			// unless the race detector slows the check down.
+			const racers = 128
+			for range 75 {
+				node := tc.node()
+				var placed atomic.Int32
+				var wg sync.WaitGroup
+				for i := range racers {
+					wg.Go(func() {
+						req := hugepageSbxRequest()
+						req.Sandbox.SandboxId = fmt.Sprintf("sbx-%d", i)
+						var picks []string
+						if _, err := PlaceSandbox(t.Context(), firstNotExcluded([]*nodemanager.Node{node}, &picks), []*nodemanager.Node{node}, node,
+							req, Requirements{Memory: tc.memory}, false, nil); err == nil {
+							placed.Add(1)
+						}
+					})
 				}
-			})
-		}
-		wg.Wait()
-		// A placement finishing during a check can be counted twice, which costs at most one slot.
-		require.GreaterOrEqual(t, placed.Load(), int32(2))
-		require.LessOrEqual(t, placed.Load(), int32(3))
+				wg.Wait()
+				require.Equal(t, int32(3), placed.Load())
+			}
+		})
 	}
 }

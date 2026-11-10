@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -32,6 +31,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // Resource represents a component that can be gracefully closed.
@@ -98,7 +98,7 @@ func WithMeter[T Resource](meter metric.Meter) Option[T] {
 type Switcher[T Resource] struct {
 	defaultClient T
 	alternates    []T
-	// alternateNonNil caches the results of isNil(alternates[i]) to avoid
+	// alternateNonNil caches the results of utils.IsNil(alternates[i]) to avoid
 	// reflection on the hot path (Resolve).
 	alternateNonNil []bool
 	closed          atomic.Bool
@@ -151,7 +151,7 @@ func New[T Resource](
 
 	var defaultClient T
 	if options.defaultClientSet {
-		if isNil(options.defaultClient) {
+		if utils.IsNil(options.defaultClient) {
 			return nil, errors.New("provided default client must not be nil")
 		}
 		defaultClient = options.defaultClient
@@ -162,7 +162,7 @@ func New[T Resource](
 			if err != nil {
 				return nil, fmt.Errorf("failed to create default client: %w", err)
 			}
-			if isNil(client) {
+			if utils.IsNil(client) {
 				return nil, errors.New("factory returned nil default client")
 			}
 			defaultClient = client
@@ -174,7 +174,7 @@ func New[T Resource](
 			if err != nil {
 				return nil, fmt.Errorf("failed to create noop client: %w", err)
 			}
-			if isNil(client) {
+			if utils.IsNil(client) {
 				return nil, errors.New("noopFactory returned nil default client")
 			}
 			defaultClient = client
@@ -211,7 +211,7 @@ func New[T Resource](
 
 			continue
 		}
-		if isNil(client) {
+		if utils.IsNil(client) {
 			logger.L().Error(ctx, "factory returned nil alternate client, skipping entry",
 				zap.Int("index", i),
 				zap.String("host", host),
@@ -330,29 +330,16 @@ func (s *Switcher[T]) Close(ctx context.Context) error {
 	}
 
 	var errs []error
-	if !isNil(s.defaultClient) {
+	if !utils.IsNil(s.defaultClient) {
 		errs = append(errs, s.defaultClient.Close(ctx))
 	}
 	for _, client := range s.alternates {
-		if !isNil(client) {
+		if !utils.IsNil(client) {
 			errs = append(errs, client.Close(ctx))
 		}
 	}
 
 	return errors.Join(errs...)
-}
-
-func isNil(i any) bool {
-	if i == nil {
-		return true
-	}
-	v := reflect.ValueOf(i)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.UnsafePointer, reflect.Interface, reflect.Slice:
-		return v.IsNil()
-	}
-
-	return false
 }
 
 func hashFlagValue(v string) string {

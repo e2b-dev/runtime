@@ -1,3 +1,5 @@
+//go:build linux
+
 package host
 
 import (
@@ -45,12 +47,6 @@ const (
 	kmsgPollTimeoutMs = 1000
 )
 
-// OOMKill is a process the guest kernel killed for running out of memory.
-type OOMKill struct {
-	Seq     int64  `json:"seq"`     // Kernel log sequence number
-	Process string `json:"process"` // Name of the killed process
-}
-
 // OOMWatcher keeps the latest OOM kills since the guest booted, read from the kernel log.
 type OOMWatcher struct {
 	logger *zerolog.Logger
@@ -62,6 +58,8 @@ type OOMWatcher struct {
 	lastUnnamed int64
 }
 
+// NewOOMWatcher returns a watcher of the kernel log; on a guest without one
+// (see oom_other.go) it returns nil, which the API treats as "not watched".
 func NewOOMWatcher(l *zerolog.Logger) *OOMWatcher {
 	return &OOMWatcher{logger: l}
 }

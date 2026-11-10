@@ -27,6 +27,7 @@ SELECT
     TRUE::boolean AS is_default,
     COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS build_id,
     COALESCE(eb.vcpu, 0)::bigint AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     COALESCE(eb.ram_mb, 0)::bigint AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
@@ -52,7 +53,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+    SELECT b.id, b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     LEFT JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = e.id AND ba.tag = 'default' AND b.status_group = 'ready'
@@ -75,6 +76,7 @@ type ListDefaultTemplatesRow struct {
 	IsDefault            bool
 	BuildID              uuid.UUID
 	BuildVcpu            int64
+	BuildMaxVcpu         *int64
 	BuildRamMb           int64
 	BuildTotalDiskSizeMb *int64
 	BuildEnvdVersion     *string
@@ -112,6 +114,7 @@ func (q *Queries) ListDefaultTemplates(ctx context.Context) ([]ListDefaultTempla
 			&i.IsDefault,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,

@@ -18,7 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
@@ -105,12 +105,23 @@ func (ppb *PostProcessingBuilder) Layer(
 
 	// If the start/ready commands are set,
 	// use them instead of start metadata from the template it is built from.
+	resumes := ppb.Config.GuestTemplate().AlwaysResume
+	if resumes && ppb.Config.StartCmd != "" && result.Start != nil && result.Start.StartCmd != "" {
+		// The parent's memory is resumed, so the inherited start command is still running.
+		return phases.LayerResult{}, phases.NewPhaseBuildError(ppb.Metadata(), errors.New("a template that resumes its parent's memory cannot replace the parent's start command yet: the parent's process keeps running in the resumed snapshot"))
+	}
+
 	if ppb.Config.StartCmd != "" || ppb.Config.ReadyCmd != "" {
-		result.Start = &metadata.Start{
+		start := &metadata.Start{
 			StartCmd: ppb.Config.StartCmd,
 			ReadyCmd: ppb.Config.ReadyCmd,
 			Context:  result.Context,
 		}
+		if resumes && ppb.Config.StartCmd == "" && result.Start != nil {
+			// Still running in the snapshot: kept on record so a descendant's start command is refused too.
+			start.StartCmd = result.Start.StartCmd
+		}
+		result.Start = start
 	}
 
 	// The final template is the one from the configuration
@@ -202,13 +213,19 @@ func (ppb *PostProcessingBuilder) Build(
 	}
 	sandboxOptions = append(sandboxOptions, layer.BootDiagnosticsOptions(ctx, ppb.featureFlags)...)
 
-	// Always restart the sandbox for the final layer to properly wire the rootfs path for the final template
-	sandboxCreator := layer.NewCreateSandbox(
+	// Always restart the sandbox for the final layer to properly wire the rootfs path for the final template.
+	// A guest profile that always resumes keeps resuming: its layers already carry the
+	// device names the served path addresses.
+	guestTemplate := ppb.Config.GuestTemplate()
+	var sandboxCreator layer.SandboxCreator = layer.NewCreateSandbox(
 		sbxConfig,
 		ppb.sandboxFactory,
 		finalizeTimeout,
 		sandboxOptions...,
 	)
+	if guestTemplate.AlwaysResume {
+		sandboxCreator = layer.NewResumeSandbox(sbxConfig, ppb.sandboxFactory, finalizeTimeout)
+	}
 
 	actionExecutor := layer.NewFunctionAction(recordMachineVcpus(ppb.postProcessingFn(userLogger)))
 
@@ -221,7 +238,7 @@ func (ppb *PostProcessingBuilder) Build(
 			SourceTemplate: templateProvider,
 			CurrentLayer:   currentLayer.Metadata,
 			Hash:           currentLayer.Hash,
-			UpdateEnvd:     sourceLayer.Cached,
+			UpdateEnvd:     sourceLayer.Cached && !guestTemplate.KeepGuestEnvd,
 			SandboxCreator: sandboxCreator,
 			ActionExecutor: actionExecutor,
 			BuildOrigin:    storage.ObjectOriginTemplateBuild,
@@ -254,10 +271,7 @@ func (ppb *PostProcessingBuilder) sandboxConfig(defaultUser, defaultWorkdir *str
 			DefaultWorkdir: defaultWorkdir,
 		},
 
-		FirecrackerConfig: fc.Config{
-			KernelVersion:      ppb.Config.KernelVersion,
-			FirecrackerVersion: ppb.Config.FirecrackerVersion,
-		},
+		FirecrackerConfig: ppb.Config.FirecrackerConfig(),
 	})
 }
 
@@ -279,6 +293,8 @@ func (ppb *PostProcessingBuilder) postProcessingFn(userLogger logger.Logger) lay
 		ctx, span := tracer.Start(ctx, "run postprocessing")
 		defer span.End()
 
+		guestTemplate := ppb.Config.GuestTemplate()
+
 		defer func() {
 			if e != nil {
 				return
@@ -288,19 +304,22 @@ func (ppb *PostProcessingBuilder) postProcessingFn(userLogger logger.Logger) lay
 			// configuration script, start_cmd, and ready_cmd have all run — so the
 			// tar that envd.service seeds the boot-time cert tmpfs from reflects the
 			// final trust store. Runs before the sync below so it is flushed to disk.
-			if err := packCertBundle(ctx, userLogger, ppb.proxy, sbx.Runtime.SandboxID); err != nil {
-				// The gate inside packCertBundleCmd fails on user-image state;
-				// unwrapped errors surface as internal and page ops.
-				e = phases.NewPhaseBuildError(ppb.Metadata(), err)
+			if !guestTemplate.Skips(guest.PhaseCertBundle) {
+				if err := packCertBundle(ctx, userLogger, ppb.proxy, sbx.Runtime.SandboxID); err != nil {
+					// The gate inside packCertBundleCmd fails on user-image state;
+					// unwrapped errors surface as internal and page ops.
+					e = phases.NewPhaseBuildError(ppb.Metadata(), err)
 
-				return
+					return
+				}
 			}
 
 			// Ensure all changes are synchronized to disk so the sandbox can be restarted
-			err := sandboxtools.SyncChangesToDisk(
+			err := sandboxtools.SyncChangesToDiskWith(
 				ctx,
 				ppb.proxy,
 				sbx.Runtime.SandboxID,
+				guestTemplate.SyncCommand,
 			)
 			if err != nil {
 				e = fmt.Errorf("error running sync command: %w", err)
@@ -310,20 +329,29 @@ func (ppb *PostProcessingBuilder) postProcessingFn(userLogger logger.Logger) lay
 		}()
 
 		// Run configuration script
-		configCtx, configCancel := context.WithTimeout(ctx, configurationTimeout)
-		defer configCancel()
-		err := runConfiguration(
-			configCtx,
-			userLogger,
-			ppb.BuildContext,
-			ppb.proxy,
-			sbx.Runtime.SandboxID,
-		)
-		if err != nil {
-			return metadata.Template{}, phases.NewPhaseBuildError(ppb.Metadata(), fmt.Errorf("configuration script failed: %w", err))
+		var err error
+		if !guestTemplate.Skips(guest.PhaseConfigure) {
+			configCtx, configCancel := context.WithTimeout(ctx, configurationTimeout)
+			defer configCancel()
+			err = runConfiguration(
+				configCtx,
+				userLogger,
+				ppb.BuildContext,
+				ppb.proxy,
+				sbx.Runtime.SandboxID,
+			)
+			if err != nil {
+				return metadata.Template{}, phases.NewPhaseBuildError(ppb.Metadata(), fmt.Errorf("configuration script failed: %w", err))
+			}
 		}
 
 		if meta.Start == nil {
+			return meta, nil
+		}
+		if guestTemplate.AlwaysResume && ppb.Config.StartCmd == "" && ppb.Config.ReadyCmd == "" {
+			// The parent's start command is still running in the resumed memory.
+			userLogger.Info(ctx, "The parent template's start command keeps running in the resumed snapshot")
+
 			return meta, nil
 		}
 
@@ -333,7 +361,9 @@ func (ppb *PostProcessingBuilder) postProcessingFn(userLogger logger.Logger) lay
 
 		var startCmdRun errgroup.Group
 		startCmdConfirm := make(chan struct{})
-		if meta.Start.StartCmd != "" {
+		// A resumed parent's inherited start command is already running.
+		runStart := meta.Start.StartCmd != "" && (!guestTemplate.AlwaysResume || ppb.Config.StartCmd != "")
+		if runStart {
 			userLogger.Info(ctx, fmt.Sprintf("Running start command: %s", meta.Start.StartCmd))
 			startCmdRun.Go(func() error {
 				err := sandboxtools.RunCommandWithConfirmation(

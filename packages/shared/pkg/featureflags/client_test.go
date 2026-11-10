@@ -307,3 +307,36 @@ func TestIntFlagWithErrorUnavailableClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 7, value)
 }
+
+func TestStringFlagOverride(t *testing.T) {
+	t.Parallel()
+	flag := StringFlag{name: "string-flag-override-test", fallback: "default"}
+	for _, tt := range []struct {
+		name   string
+		serve  *ldvalue.Value
+		want   string
+		served bool
+	}{
+		{name: "configured value", serve: new(ldvalue.String("configured")), want: "configured", served: true},
+		{name: "configured fallback", serve: new(ldvalue.String("default")), want: "default", served: true},
+		{name: "missing flag", want: "default"},
+		{name: "wrong type", serve: new(ldvalue.Bool(true)), want: "default"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			source := ldtestdata.DataSource()
+			if tt.serve != nil {
+				source.Update(source.Flag(flag.Key()).ValueForAll(*tt.serve))
+			}
+			client, err := NewClientWithDatasource(source)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
+			value, served := client.StringFlagOverride(t.Context(), flag)
+			assert.Equal(t, tt.want, value)
+			assert.Equal(t, tt.served, served)
+		})
+	}
+	value, served := (&Client{}).StringFlagOverride(t.Context(), flag)
+	assert.Equal(t, "default", value)
+	assert.False(t, served)
+}

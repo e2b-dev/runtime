@@ -370,7 +370,7 @@ func RemoveNetworkV2(ctx context.Context, slot *network.Slot, slotV2 *SlotV2,
 		return errors.Join(errs...)
 	}
 
-	err = netns.DeleteNamed(slot.NamespaceID())
+	err = network.DeleteNamespace(slot.NamespaceID())
 	appendUnlessAbsent(&errs, err, isNamespaceNotExist, "error deleting namespace: %w")
 
 	return errors.Join(errs...)

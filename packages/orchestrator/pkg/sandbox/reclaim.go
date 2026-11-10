@@ -93,6 +93,13 @@ func (s *Sandbox) buildReclaimScript(cfg featureflags.ReclaimConfig) (string, ti
 // fstrim/sync/drop_caches/compact_memory chain via envd before pause.
 // skipEnvdHeapCollapse leaves envd's heap alone when no memfile is exported.
 func (s *Sandbox) bestEffortReclaim(ctx context.Context, skipEnvdHeapCollapse bool) {
+	// Every step of the chain runs in the guest through envd: cgroup freeze,
+	// the envd heap collapse, fstrim, sync and the procfs knobs. A guest
+	// without them skips the chain.
+	if s.Config.GuestProfile().Capabilities().NoReclaim {
+		return
+	}
+
 	ctx, span := tracer.Start(ctx, "envd-reclaim")
 	defer span.End()
 
@@ -189,6 +196,13 @@ func (s *Sandbox) guestSyncTimeout(ctx context.Context) time.Duration {
 // can run again later; nil (a destroy-path pause discards the VM with its
 // frozen state) keeps the thaw best-effort.
 func (s *Sandbox) guestPrepareFsForPause(ctx context.Context, cleanup *Cleanup, thawOrLose *bool) (frozen bool, e error) {
+	// The quiesce is what makes a filesystem-only snapshot safe to cold-boot.
+	// Refuse on a guest that offers none rather than persist a rootfs with
+	// unflushed writes.
+	if g := s.Config.GuestProfile(); g.Capabilities().NoQuiesce {
+		return false, fmt.Errorf("filesystem-only pause is not supported for a %s guest: the guest offers no filesystem quiesce", g.Label())
+	}
+
 	supportsFsFreeze := s.envdSupportsFsFreeze(ctx)
 	// Use guestSyncTimeout here, as fsfreeze also syncs the disk
 	timeout := s.guestSyncTimeout(ctx)
@@ -576,7 +590,7 @@ func (s *Sandbox) bestEffortCollapse(ctx context.Context) {
 // only deadline so it doesn't share a timeout budget with the rest of reclaim.
 // Gated on envd version; failures are logged but never block pause.
 func (s *Sandbox) bestEffortFreeze(ctx context.Context) {
-	if !s.envdSupportsCgroupFreeze(ctx) {
+	if s.Config.GuestProfile().Capabilities().NoFreeze || !s.envdSupportsCgroupFreeze(ctx) {
 		return
 	}
 
@@ -736,7 +750,8 @@ func (s *Sandbox) bestEffortFreeze(ctx context.Context) {
 // failures are logged. Uses context.WithoutCancel because callers run it from
 // cleanup paths whose parent ctx may already be done.
 func (s *Sandbox) bestEffortUnfreeze(ctx context.Context) {
-	if !s.envdSupportsCgroupFreeze(ctx) {
+	// Nothing froze a guest without the cgroup freeze.
+	if s.Config.GuestProfile().Capabilities().NoFreeze || !s.envdSupportsCgroupFreeze(ctx) {
 		return
 	}
 

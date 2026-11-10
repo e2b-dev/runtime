@@ -7,19 +7,23 @@ package authqueries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const getTeamsWithUsersTeams = `-- name: GetTeamsWithUsersTeams :many
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.deleted_at, t.slug, ut.is_default
+SELECT t.id, t.created_at, t.name, t.deleted_at, ut.is_default
 FROM "public"."teams" t
 JOIN "public"."users_teams" ut ON ut.team_id = t.id
 WHERE ut.user_id = $1
 `
 
 type GetTeamsWithUsersTeamsRow struct {
-	Team      Team
+	ID        uuid.UUID
+	CreatedAt time.Time
+	Name      string
+	DeletedAt *time.Time
 	IsDefault bool
 }
 
@@ -33,20 +37,10 @@ func (q *Queries) GetTeamsWithUsersTeams(ctx context.Context, userID uuid.UUID) 
 	for rows.Next() {
 		var i GetTeamsWithUsersTeamsRow
 		if err := rows.Scan(
-			&i.Team.ID,
-			&i.Team.CreatedAt,
-			&i.Team.IsBlocked,
-			&i.Team.Name,
-			&i.Team.Tier,
-			&i.Team.Email,
-			&i.Team.IsBanned,
-			&i.Team.BlockedReason,
-			&i.Team.ClusterID,
-			&i.Team.SandboxSchedulingLabels,
-			&i.Team.SsoOrganizationID,
-			&i.Team.SsoAutoJoin,
-			&i.Team.DeletedAt,
-			&i.Team.Slug,
+			&i.ID,
+			&i.CreatedAt,
+			&i.Name,
+			&i.DeletedAt,
 			&i.IsDefault,
 		); err != nil {
 			return nil, err

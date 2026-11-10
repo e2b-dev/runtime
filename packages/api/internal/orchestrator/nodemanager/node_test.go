@@ -92,11 +92,106 @@ func TestNode_UpdateMetricsFromSync_KeepsPlacementsRecordedAfterTheRequest(t *te
 	node.UpdateMetricsFromSync(sample, requestedAt)
 
 	assert.Equal(t, uint64(512), node.Metrics().HugePagesReserved)
+	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryAllocatedBytes)
 	assert.Equal(t, uint64(1250), node.Metrics().HugePagesCapacity)
 
 	node.UpdateMetricsFromSync(sample, time.Now().Add(time.Second))
 
 	assert.Zero(t, node.Metrics().HugePagesReserved)
+	assert.Zero(t, node.Metrics().MemoryAllocatedBytes)
+}
+
+// Ordinary pages fault in on use, so until a sync says otherwise a placement
+// counts its whole RAM as used memory, and no hugepages.
+func TestNode_OptimisticAdd_CountsOrdinaryPagesAsUsedMemory(t *testing.T) {
+	t.Parallel()
+
+	pageBytes := uint64(units.MBToBytes(2))
+	node := NewTestNode("test-node", api.NodeStatusReady, 0, 4, WithHugePages(1000, 0, 0, pageBytes))
+
+	node.OptimisticAdd(SandboxResources{CPUs: 2, MiBMemory: 1024})
+	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryUsedBytes)
+
+	node.OptimisticAdd(SandboxResources{CPUs: 2, MiBMemory: 1024, HugePages: true})
+	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryUsedBytes, "a hugepage placement takes from the pool")
+}
+
+// An ordinary-page placement keeps the allocated and used memory it added,
+// but has no hugepage counts to keep.
+func TestNode_UpdateMetricsFromSync_KeepsOrdinaryPlacementsMemory(t *testing.T) {
+	t.Parallel()
+
+	pageBytes := uint64(units.MBToBytes(2))
+	node := NewTestNode("test-node", api.NodeStatusReady, 0, 4, WithHugePages(1000, 0, 300, pageBytes))
+	sample := &orchestratorinfo.ServiceInfoResponse{
+		MetricHugepagesTotal:    1000,
+		MetricHugepageSizeBytes: pageBytes,
+	}
+
+	node.OptimisticAdd(SandboxResources{CPUs: 2, MiBMemory: 1024})
+	node.UpdateMetricsFromSync(sample, time.Now().Add(-time.Second))
+
+	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryAllocatedBytes)
+	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryUsedBytes)
+	assert.Zero(t, node.Metrics().HugePagesReserved)
+
+	node.UpdateMetricsFromSync(sample, time.Now().Add(time.Second))
+
+	assert.Zero(t, node.Metrics().MemoryAllocatedBytes)
+	assert.Zero(t, node.Metrics().MemoryUsedBytes)
+}
+
+// The sample also carries what other sandboxes did since the view was last
+// synced, so the view keeps a placement's additions only while they are higher.
+func TestNode_UpdateMetricsFromSync_KeepsTheHigherOfViewAndSample(t *testing.T) {
+	t.Parallel()
+
+	node := NewTestNode("test-node", api.NodeStatusReady, 0, 4)
+	node.OptimisticAdd(SandboxResources{CPUs: 2, MiBMemory: 1024})
+	node.UpdateMetricsFromSync(&orchestratorinfo.ServiceInfoResponse{
+		MetricMemoryUsedBytes:      uint64(units.MBToBytes(5 * 1024)),
+		MetricMemoryAllocatedBytes: uint64(units.MBToBytes(3 * 1024)),
+	}, time.Now().Add(-time.Second))
+
+	assert.Equal(t, uint64(units.MBToBytes(5*1024)), node.Metrics().MemoryUsedBytes)
+	assert.Equal(t, uint64(units.MBToBytes(3*1024)), node.Metrics().MemoryAllocatedBytes)
+}
+
+// A placement completing while another is being checked waits for the check,
+// so the check never sees it in flight and in the node view at once.
+func TestNode_CompletePlacementWaitsForAPlacementCheck(t *testing.T) {
+	t.Parallel()
+
+	pageBytes := uint64(units.MBToBytes(2))
+	node := NewTestNode("test-node", api.NodeStatusReady, 0, 4, WithHugePages(1000, 0, 0, pageBytes))
+	res := SandboxResources{CPUs: 2, MiBMemory: 1024, HugePages: true}
+	assert.True(t, node.PlacementMetrics.StartPlacingIf("first", res, func() bool { return true }))
+
+	checking, release := make(chan struct{}), make(chan struct{})
+	go node.PlacementMetrics.StartPlacingIf("second", res, func() bool {
+		close(checking)
+		<-release
+
+		return false
+	})
+	<-checking
+
+	completed := make(chan struct{})
+	go func() {
+		node.CompletePlacement("first", res)
+		close(completed)
+	}()
+
+	select {
+	case <-completed:
+		t.Fatal("the placement completed in the middle of another's check")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	<-completed
+	assert.Equal(t, uint64(512), node.Metrics().HugePagesReserved)
+	assert.Zero(t, node.PlacementMetrics.InProgressCount())
 }
 
 func TestNode_OptimisticRemove(t *testing.T) {

@@ -2,11 +2,11 @@
 
 # One setting points the stack's telemetry at an OpenTelemetry collector:
 # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT in .env becomes OTEL_COLLECTOR_GRPC_ENDPOINT
-# on the four services that export (api, orchestrator, client-proxy and
-# dashboard-api). Empty, the default, is the runtime's "telemetry off", which
-# is how the stack ran before the setting existed. The built-in collector is
-# one more service behind the otel profile, off unless COMPOSE_PROFILES turns
-# it on, and nothing waits for it.
+# on the three services that export (api, orchestrator and client-proxy).
+# Empty, the default, is the runtime's "telemetry off", which is how the stack
+# ran before the setting existed. The built-in collector is one more service
+# behind the otel profile, off unless COMPOSE_PROFILES turns it on, and nothing
+# waits for it.
 #
 # Rendering needs Docker with the compose plugin and jq, as secrets.bats does.
 # Every render unsets the setting and COMPOSE_PROFILES first, so a value
@@ -49,18 +49,18 @@ endpoints() {
   [ "$status" -eq 1 ]
 }
 
-@test "the endpoint reaches exactly api, orchestrator, client-proxy and dashboard-api" {
+@test "the endpoint reaches exactly api, orchestrator and client-proxy" {
   got="$(endpoints E2B_OTEL_COLLECTOR_GRPC_ENDPOINT=127.0.0.1:4317)"
-  want="$(printf '%s 127.0.0.1:4317\n' api client-proxy dashboard-api orchestrator)"
+  want="$(printf '%s 127.0.0.1:4317\n' api client-proxy orchestrator)"
   [ "$got" = "$want" ] || { echo "services carrying the endpoint:"; echo "$got"; return 1; }
 }
 
 # An empty string, and not null: a null value is Compose's "take it from the
 # host environment", which would hand the services whatever the operator
 # happens to export instead of what .env says.
-@test "unset, the four carry an empty endpoint, which the runtime reads as telemetry off" {
+@test "unset, the three carry an empty endpoint, which the runtime reads as telemetry off" {
   got="$(endpoints)"
-  want="$(printf '%s \n' api client-proxy dashboard-api orchestrator)"
+  want="$(printf '%s \n' api client-proxy orchestrator)"
   [ "$got" = "$want" ] || { echo "services carrying the endpoint:"; echo "$got"; return 1; }
   types="$(render | jq -r '[.services[] | .environment
     | select(has("OTEL_COLLECTOR_GRPC_ENDPOINT")) | .OTEL_COLLECTOR_GRPC_ENDPOINT | type]

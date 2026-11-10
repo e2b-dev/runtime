@@ -111,7 +111,7 @@ func TestCompletionOwnershipLossReturnsOriginalResponse(t *testing.T) {
 		result, err := s.reserve(ctx, key, digest, "new-owner", 86400, time.Now().Add(time.Minute))
 		require.NoError(t, err)
 		require.Equal(t, stateOwner, result.state)
-		require.NoError(t, s.complete(ctx, key, "new-owner", newResponse))
+		require.NoError(t, s.complete(ctx, key, "new-owner", newResponse, false))
 		replacement, err = client.HGetAll(ctx, key).Result()
 		require.NoError(t, err)
 		expiresAt, err = client.PExpireTime(ctx, key).Result()

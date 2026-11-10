@@ -317,7 +317,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 
 		lifecycleCtx, cancel := context.WithCancel(t.Context())
 		pool := newLifecycleTestPool(lifecycleCtx, cancel)
-		remote, err := newRemoteCluster(nil, "127.0.0.1:1", false, "", uuid.New(), nil, "")
+		remote, err := newRemoteCluster(nil, nil, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
 		require.NoError(t, err)
 		require.NoError(t, pool.activateCluster(lifecycleCtx, remote, syncOnNextTick))
 		require.Equal(t, 1, pool.clusters.Count(), "an open pool must accept startup insertion")
@@ -343,6 +343,7 @@ func newLifecycleTestPool(lifecycleCtx context.Context, cancel context.CancelFun
 		localInstances: make(chan struct{}, 1),
 	}
 	p.store = clustersSyncStore{
+		tel:             telemetry.NewNoopClient(),
 		clusters:        clusters,
 		onLocalInstance: p.notifyLocalInstance,
 		localCreds:      insecure.NewCredentials(),

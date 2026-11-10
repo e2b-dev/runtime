@@ -72,6 +72,10 @@ type NetworkAssignHook interface {
 	// the latest committed state, tolerate teardown, and not wait on remote calls.
 	// It must not panic: the update has already committed and cannot be rolled back.
 	OnNetworkUpdate(ctx context.Context, sbx *Sandbox)
+	// OnEnvdReady runs once a start's envd answered /init, with the version it reported when that
+	// parses as a version, else "". An error fails the start: the guest may already have run, so
+	// the start is not retried on another network.
+	OnEnvdReady(ctx context.Context, sbx *Sandbox, envdVersion string) error
 }
 
 // NoopNetworkAssignHook is a no-op NetworkAssignHook, used when no
@@ -85,6 +89,8 @@ func (NoopNetworkAssignHook) OnNetworkAssign(context.Context, *Sandbox, NetworkA
 }
 
 func (NoopNetworkAssignHook) OnNetworkUpdate(context.Context, *Sandbox) {}
+
+func (NoopNetworkAssignHook) OnEnvdReady(context.Context, *Sandbox, string) error { return nil }
 
 // OptionalNetworkAssignError marks a NetworkAssignHook error the start can
 // go on without: the factory logs it instead of failing the start.

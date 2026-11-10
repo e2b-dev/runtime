@@ -122,7 +122,7 @@ func newParkedProxy(t *testing.T, ff *featureflags.Client, resumer SandboxResume
 
 	metrics := newMetricReader(t)
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
-	p, closer, err := NewClientProxy(metrics.provider, "parking-"+t.Name(), 0, 5007, c, resumer, ff)
+	p, closer, err := NewClientProxy(metrics.provider, "parking-"+t.Name(), 0, 5007, c, resumer, ff, nil)
 	require.NoError(t, err)
 
 	return parkedProxy{metrics: metrics, handler: p.Handler, closer: closer}
@@ -271,6 +271,24 @@ func TestResumeFlights_PermanentPlacementRefusalIsNotRetried(t *testing.T) {
 		require.Contains(t, rr.Body.String(), "no node in this cluster can run it")
 		require.Contains(t, rr.Body.String(), `"error_code":"`+proxygrpc.PlacementFeatureUnsupported+`"`)
 		require.NotContains(t, rr.Body.String(), "Failed to place sandbox")
+		require.EqualValues(t, 1, resumer.calls.Load())
+		require.Zero(t, p.metrics.parkingWaitSamples(t))
+	})
+
+	// A snapshot taken over an unresponsive guest agent is refused its memory
+	// resume for good: the page is the API's 409 with the code, so the caller
+	// learns to resume without memory, and no retry is spent on it.
+	t.Run(proxygrpc.SnapshotGuestAgentUnresponsive+" refused", func(t *testing.T) {
+		t.Parallel()
+
+		refusal := placementStatusWithHTTPStatus(t, codes.AlreadyExists, proxygrpc.SnapshotGuestAgentUnresponsive, http.StatusConflict)
+		resumer := &sequenceResumer{errs: []error{refusal, refusal}, route: testRoute}
+		p := newParkedProxy(t, newFFWithParking(t, true, 15000, 512), resumer)
+
+		rr := p.get(t)
+		require.Equal(t, http.StatusConflict, rr.Code)
+		require.Empty(t, rr.Header().Get("Retry-After"))
+		require.Contains(t, rr.Body.String(), `"error_code":"`+proxygrpc.SnapshotGuestAgentUnresponsive+`"`)
 		require.EqualValues(t, 1, resumer.calls.Load())
 		require.Zero(t, p.metrics.parkingWaitSamples(t))
 	})
@@ -1804,7 +1822,7 @@ func TestResumeFlights_CloseDuringTheFirstAttemptRendersTheUnavailablePage(t *te
 
 			var capacityErr *reverseproxy.SandboxCapacityError
 			require.ErrorAs(t, <-result, &capacityErr)
-			require.Equal(t, "sbx", capacityErr.SandboxId)
+			require.Equal(t, "sbx", capacityErr.SandboxID())
 			require.Zero(t, flightsInRegistry(flights))
 
 			_, _, err := handlePausedSandbox(t.Context(), "sbx", 8000, "token", "", flights)
@@ -1837,7 +1855,7 @@ func TestResumeFlights_CloseDuringTheFirstAttemptCountsEveryWaiterCanceled(t *te
 		case r := <-result:
 			var capacityErr *reverseproxy.SandboxCapacityError
 			require.ErrorAs(t, r.err, &capacityErr)
-			require.Equal(t, "sbx", capacityErr.SandboxId)
+			require.Equal(t, "sbx", capacityErr.SandboxID())
 			require.ErrorIs(t, r.err, errFlightClosed)
 		case <-time.After(5 * time.Second):
 			require.FailNow(t, "the flight outlived Close")
@@ -2025,11 +2043,11 @@ func TestNewClientProxy_ReturnsResumeCloserOnlyWithResumer(t *testing.T) {
 
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 
-	_, closer, err := NewClientProxy(newMetricReader(t).provider, "closer-none", 0, 5007, c, nil, newFF(t))
+	_, closer, err := NewClientProxy(newMetricReader(t).provider, "closer-none", 0, 5007, c, nil, newFF(t), nil)
 	require.NoError(t, err)
 	require.Nil(t, closer)
 
-	_, closer, err = NewClientProxy(newMetricReader(t).provider, "closer-some", 0, 5007, c, stubResumer{}, newFF(t))
+	_, closer, err = NewClientProxy(newMetricReader(t).provider, "closer-some", 0, 5007, c, stubResumer{}, newFF(t), nil)
 	require.NoError(t, err)
 	require.NotNil(t, closer)
 	require.NoError(t, closer.Close(t.Context()))

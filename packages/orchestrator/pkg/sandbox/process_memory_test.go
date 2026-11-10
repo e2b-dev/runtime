@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -147,9 +148,7 @@ func TestPauseProcessMemory_CarriesFreeIndexToRelease(t *testing.T) {
 		memfd,
 		false,
 		zeroOriginalMemfile{size: size},
-		false,
-		false,
-		block.DedupBudget{},
+		block.DedupOptions{},
 		true,
 		true,
 		false,
@@ -168,4 +167,75 @@ func TestPauseProcessMemory_CarriesFreeIndexToRelease(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return deadStructureOutcomeTotal(t, "dedup_index", "dropped") == before+1
 	}, 15*time.Second, time.Millisecond, "the memfd release never freed the index")
+}
+
+// failingOriginalMemfile is a base memfile whose reads fail, as a parent fetch that times out.
+type failingOriginalMemfile struct{ zeroOriginalMemfile }
+
+func (failingOriginalMemfile) ReadAt(context.Context, []byte, int64) (int, error) {
+	return 0, errors.New("parent fetch timed out")
+}
+
+func (failingOriginalMemfile) Slice(context.Context, int64, int64) ([]byte, error) {
+	return nil, errors.New("parent fetch timed out")
+}
+
+// A dedup that keeps the raw diff on failure does so on a memfd-backed guest
+// too, as it does after a Firecracker export. Not parallel: the dedup index
+// counter above counts only its own test's dedup.
+func TestPauseProcessMemory_MemfdDedupKeepsTheRawDiff(t *testing.T) { //nolint:paralleltest // shares the dedup index counter with the test above
+	ps := int64(header.PageSize)
+	const numPages = 16
+	size := ps * numPages
+
+	fd, err := unix.MemfdCreate("process-memory-forced-dedup", 0)
+	require.NoError(t, err)
+	require.NoError(t, unix.Ftruncate(fd, size))
+	data := make([]byte, size)
+	_, err = rand.Read(data)
+	require.NoError(t, err)
+	_, err = unix.Pwrite(fd, data, 0)
+	require.NoError(t, err)
+	memfd, err := block.NewFromFd(fd)
+	require.NoError(t, err)
+
+	originalHeader, err := header.NewHeader(&header.Metadata{
+		Version:     3,
+		BlockSize:   uint64(ps),
+		Size:        uint64(size),
+		BuildId:     uuid.New(),
+		BaseBuildId: uuid.New(),
+	}, nil)
+	require.NoError(t, err)
+
+	dirty := roaring.New()
+	dirty.AddRange(0, numPages)
+
+	diff, diffHeader, _, _, swapDone, err := pauseProcessMemory(
+		t.Context(),
+		uuid.New(),
+		originalHeader,
+		&header.DiffMetadata{Dirty: dirty, Empty: roaring.New(), BlockSize: ps},
+		t.TempDir(),
+		(*fc.Process)(nil),
+		memfd,
+		false,
+		failingOriginalMemfile{zeroOriginalMemfile{size: size}},
+		block.DedupOptions{KeepRawOnError: true},
+		false,
+		false,
+		false,
+		"none",
+		"",
+	)
+	require.NoError(t, err, "a failed dedup keeps the raw diff instead of failing the pause")
+	t.Cleanup(func() { _ = diff.Close() })
+	assert.Nil(t, swapDone, "no provisional source without in-flight serving")
+	_, err = diffHeader.WaitWithContext(t.Context())
+	require.NoError(t, err)
+
+	got := make([]byte, size)
+	_, err = diff.ReadAt(t.Context(), got, 0, nil)
+	require.NoError(t, err)
+	assert.Equal(t, data, got, "the raw diff holds every dirty page")
 }

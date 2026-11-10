@@ -29,7 +29,11 @@ type Config struct {
 	APIEdgeGRPCOAuthClientSecret string `env:"API_EDGE_GRPC_OAUTH_CLIENT_SECRET"`
 	APIEdgeGRPCOAuthTokenURL     string `env:"API_EDGE_GRPC_OAUTH_TOKEN_URL"`
 
-	// TLS is the mutual TLS settings of the hop to the api.
+	// ForwardedHostDomains are the domains under which a proxy in front may
+	// name the sandbox in X-Forwarded-Host; empty ignores the header.
+	ForwardedHostDomains []string `env:"FORWARDED_HOST_DOMAINS"`
+
+	// TLS is the mutual TLS settings of the client hops.
 	TLS TLSConfig
 }
 

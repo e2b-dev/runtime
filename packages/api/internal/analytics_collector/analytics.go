@@ -18,9 +18,19 @@ import (
 )
 
 const (
-	teamGroup                = "team"
-	placeholderTeamGroupUser = "backend"
-	placeholderProperty      = "first interaction"
+	teamGroup           = "team"
+	placeholderProperty = "first interaction"
+
+	// Server events have no user behind them. Each is keyed by the team or the
+	// sandbox it describes: PostHog reroutes a distinct ID with a high,
+	// sustained event rate to its overflow ingestion, which can lag by hours,
+	// so a single shared ID for every event put all of them there.
+	teamDistinctIDPrefix    = "team_"
+	sandboxDistinctIDPrefix = "sandbox_"
+
+	// The distinct IDs above are not people, so events must not create person
+	// profiles for them.
+	processPersonProfileKey = "$process_person_profile"
 
 	infraVersionKey = "infra_version"
 	infraVersion    = "v1"
@@ -200,11 +210,26 @@ func (p *PosthogClient) teamIdentified(teamID, teamName string) bool {
 	return sent != nil && sent.Value() == teamName
 }
 
+// CreateAnalyticsTeamEvent sends an event about a team as a whole.
 func (p *PosthogClient) CreateAnalyticsTeamEvent(ctx context.Context, teamID, event string, properties posthog.Properties) {
+	p.createAnalyticsEvent(ctx, teamDistinctIDPrefix+teamID, teamID, event, properties)
+}
+
+// CreateAnalyticsSandboxEvent sends an event about one sandbox. It is keyed by
+// the sandbox, since a team starting sandboxes at a high rate would otherwise
+// concentrate all of its sandbox events on the team's distinct ID.
+func (p *PosthogClient) CreateAnalyticsSandboxEvent(ctx context.Context, teamID, sandboxID, event string, properties posthog.Properties) {
+	p.createAnalyticsEvent(ctx, sandboxDistinctIDPrefix+sandboxID, teamID, event, properties)
+}
+
+func (p *PosthogClient) createAnalyticsEvent(ctx context.Context, distinctID, teamID, event string, properties posthog.Properties) {
 	err := p.enqueue(posthog.Capture{
-		DistinctId: placeholderTeamGroupUser,
+		DistinctId: distinctID,
 		Event:      event,
-		Properties: properties.Set(infraVersionKey, infraVersion).Set(teamIDKey, teamID),
+		Properties: properties.
+			Set(infraVersionKey, infraVersion).
+			Set(teamIDKey, teamID).
+			Set(processPersonProfileKey, false),
 		Groups: posthog.NewGroups().
 			Set("team", teamID),
 	})

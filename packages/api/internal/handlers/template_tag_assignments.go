@@ -8,7 +8,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -42,7 +42,7 @@ func (a *APIStore) GetTemplatesTemplateIDTagsTagAssignments(c *gin.Context, temp
 		return
 	}
 
-	rows, err := a.sqlcDB.Dashboard.ListTemplateTagAssignmentsByTag(ctx, dashboardqueries.ListTemplateTagAssignmentsByTagParams{
+	rows, err := a.sqlcDB.ListTemplateTagAssignmentsByTag(ctx, queries.ListTemplateTagAssignmentsByTagParams{
 		TemplateID:         templateID,
 		Tag:                normalizedTag,
 		CursorAssignedAt:   cursorTime,

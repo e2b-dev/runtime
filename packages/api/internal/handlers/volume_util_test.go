@@ -18,7 +18,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
@@ -52,7 +51,7 @@ func TestVolumeContentDomain(t *testing.T) {
 	}
 
 	teamWith := func(id *uuid.UUID) *types.Team {
-		return &types.Team{Team: &authqueries.Team{ID: uuid.New(), ClusterID: id}}
+		return &types.Team{Team: &dbtypes.Team{ID: uuid.New(), ClusterID: id}}
 	}
 
 	t.Run("no cluster returns nil domain", func(t *testing.T) {

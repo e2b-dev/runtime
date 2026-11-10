@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"slices"
 	"sync"
-	"syscall"
 )
 
 type Registry struct {
@@ -77,18 +76,4 @@ func (r *Registry) ExportHold() (pids []int32, release func()) {
 	slices.Sort(pids)
 
 	return pids, sync.OnceFunc(r.mu.Unlock)
-}
-
-// Reap waits for a child the previous envd handed over, so it does not linger as a
-// zombie once it exits. It names one pid, so it never takes an exit status from os/exec.
-func Reap(pid int) {
-	if pid <= 0 {
-		return
-	}
-	var ws syscall.WaitStatus
-	for {
-		if _, err := syscall.Wait4(pid, &ws, 0, nil); err != syscall.EINTR {
-			return
-		}
-	}
 }

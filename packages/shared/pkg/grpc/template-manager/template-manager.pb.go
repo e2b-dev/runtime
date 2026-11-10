@@ -685,7 +685,7 @@ type TemplateConfig struct {
 	// Deprecated: Marked as deprecated in template-manager.proto.
 	FirecrackerVersion string `protobuf:"bytes,7,opt,name=firecrackerVersion,proto3" json:"firecrackerVersion,omitempty"`
 	StartCommand       string `protobuf:"bytes,8,opt,name=startCommand,proto3" json:"startCommand,omitempty"`
-	// Deprecated: hugePages is derived from the resolved firecracker version locally
+	// Deprecated: every template build uses huge pages
 	//
 	// Deprecated: Marked as deprecated in template-manager.proto.
 	HugePages    bool            `protobuf:"varint,9,opt,name=hugePages,proto3" json:"hugePages,omitempty"`

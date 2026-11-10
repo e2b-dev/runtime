@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -79,9 +80,30 @@ func TestDeleteColdestRespectsGraceFloor(t *testing.T) {
 		{uuid: "hot", timestamp: now.Add(-1 * time.Hour).Unix(), size: 1 << 20},
 	}
 
-	c.deleteColdest(t.Context(), builds)
+	_, _, stop := c.deleteColdest(t.Context(), builds, c.TargetBytesToDelete, time.Time{}, false)
 
 	require.Equal(t, int64(1), c.Deleted.Load(), "cold build past the floor is deleted; hot build within Grace is not")
+	assert.Equal(t, stopAgeFloor, stop)
+}
+
+// TestDeleteColdestStopsAtDeadline: once the deadline has passed no build is
+// queued, however far the target is. Clean cannot reach this deterministically:
+// it lifts a deadline that is already spent before the first delete.
+func TestDeleteColdestStopsAtDeadline(t *testing.T) {
+	t.Parallel()
+	c := NewCleaner(Options{
+		TargetBytesToDelete: 1 << 40,
+		DryRun:              true,
+		MaxConcurrentDelete: 2,
+	}, logger.NewNopLogger(), nil)
+
+	builds := []build{{uuid: "cold", timestamp: time.Now().Add(-30 * 24 * time.Hour).Unix(), size: 1 << 20}}
+
+	queued, _, stop := c.deleteColdest(t.Context(), builds, c.TargetBytesToDelete, time.Now().Add(-time.Second), false)
+
+	assert.Equal(t, uint64(0), queued)
+	assert.Equal(t, int64(0), c.Deleted.Load())
+	assert.Equal(t, stopBudget, stop)
 }
 
 func TestClampSample(t *testing.T) {

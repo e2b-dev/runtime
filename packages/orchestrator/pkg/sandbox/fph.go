@@ -54,7 +54,9 @@ const hintFreedReadTimeout = 500 * time.Millisecond
 // starts nothing. It shares fphMu with the periodic loop, so it waits for a
 // run in flight instead of overlapping it.
 func (s *Sandbox) prePauseHintDrain(ctx context.Context, cfg featureflags.PrePauseHintConfig, runner hintRunner) {
-	if ctx.Err() != nil {
+	// A guest without a balloon device: Firecracker would answer the start
+	// with "device not found".
+	if ctx.Err() != nil || s.Config.GuestProfile().Boot().NoBalloon {
 		return
 	}
 	s.fphMu.Lock()

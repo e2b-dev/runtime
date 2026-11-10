@@ -8,7 +8,6 @@ import (
 	"io"
 	"math/rand"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,7 +50,7 @@ type Options struct {
 	Path string
 
 	// Deletion stops once builds totalling TargetBytesToDelete have been queued.
-	// TargetDiskUsagePercent is resolved to TargetBytesToDelete via df before the
+	// TargetDiskUsagePercent is resolved to TargetBytesToDelete via statfs before the
 	// run (in main); the cleaner itself only reads TargetBytesToDelete.
 	TargetBytesToDelete    uint64
 	TargetDiskUsagePercent float64
@@ -99,6 +98,25 @@ type Options struct {
 	// build and log/record its actual on-disk size and age vs the estimate, to
 	// validate the filename-size and atime-sample heuristics.
 	Verify bool
+
+	// RunBudget bounds a run's wall time from its start: once spent, no more
+	// deletes are queued and no more sample batches start. 0 = no budget.
+	RunBudget time.Duration
+}
+
+// Why a run's delete phase stopped, as logged in "deletion selected".
+const (
+	stopTarget    = "target"
+	stopAgeFloor  = "age_floor"
+	stopExhausted = "exhausted"
+	stopBudget    = "budget"
+	stopCanceled  = "canceled"
+)
+
+// batched reports whether a run scans further samples while its target is unmet.
+// The byte budget is excluded: it sizes its target from the first sample alone.
+func (o Options) batched() bool {
+	return o.RunBudget > 0 && o.BuildSampleMax > 0 && o.MaxCacheBytes == 0
 }
 
 type Counters struct {
@@ -181,6 +199,9 @@ func (o Options) Validate() error {
 	if o.MaxConcurrentDelete <= 0 {
 		errs = append(errs, errors.New("max-concurrent-delete must be > 0"))
 	}
+	if o.RunBudget < 0 {
+		errs = append(errs, errors.New("run-budget must be >= 0"))
+	}
 
 	return errors.Join(errs...)
 }
@@ -199,16 +220,18 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 	defer root.Close()
 
 	start := time.Now()
+	var deadline time.Time
+	if c.RunBudget > 0 {
+		deadline = start.Add(c.RunBudget)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	picks, total, err := c.list(ctx, root)
+	names, batchSize, total, err := c.list(ctx, root)
 	if err != nil {
 		return err
 	}
-	builds := c.scan(ctx, picks)
-	c.sizeCache(ctx, total, len(picks))
-	c.deleteColdest(ctx, builds)
+	c.cleanBatches(ctx, names, batchSize, total, deadline)
 
 	dur := time.Since(start)
 	c.metrics.recordLastRunDuration(ctx, dur)
@@ -219,6 +242,89 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 		zap.Duration("duration", dur))
 
 	return nil
+}
+
+// cleanBatches scans and deletes names one batch at a time. A scan always runs to
+// completion: a build cut off mid-sample would rank as coldest.
+func (c *Cleaner) cleanBatches(ctx context.Context, names []string, batchSize, total int, deadline time.Time) {
+	single := !c.batched() || batchSize <= 0
+
+	var scanDur, deleteDur, lastScan time.Duration
+	var queued uint64
+	var queuedBuilds, batches int
+	stop := stopExhausted
+	for off := 0; ; off += batchSize {
+		if batches > 0 {
+			if off >= len(names) {
+				break
+			}
+			if ctx.Err() != nil {
+				stop = stopCanceled
+
+				break
+			}
+			// Twice the last scan, so the next batch also has time to delete.
+			// stop keeps the last batch's reason; this log line says why no more ran.
+			if !deadline.IsZero() && time.Now().Add(2*lastScan).After(deadline) {
+				c.Info(ctx, "run budget too short for another batch",
+					zap.Duration("last_scan", lastScan), logger.Time("deadline", deadline))
+
+				break
+			}
+		}
+
+		scanStart := time.Now()
+		builds := c.scan(ctx, names[off:min(off+batchSize, len(names))])
+		lastScan = time.Since(scanStart)
+		scanDur += lastScan
+
+		if batches == 0 {
+			c.sizeCache(ctx, total, min(batchSize, len(names)))
+			if c.TargetBytesToDelete == 0 {
+				c.metrics.recordPhase(ctx, ValPhaseScan, scanDur)
+				c.Info(ctx, "no byte target, nothing to delete",
+					zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
+					zap.Uint64("max_cache_bytes", c.MaxCacheBytes))
+
+				return
+			}
+		}
+
+		deleteStart := time.Now()
+		q, n, s := c.deleteColdest(ctx, builds, c.TargetBytesToDelete-queued, deadline, batches == 0)
+		deleteDur += time.Since(deleteStart)
+		queued += q
+		queuedBuilds += n
+		stop = s
+		batches++
+
+		if single || stop == stopTarget || stop == stopBudget || stop == stopCanceled {
+			break
+		}
+	}
+
+	met := queued >= c.TargetBytesToDelete
+	// Emit only when the run came up short: it deleted everything it was allowed to
+	// (blocked by the grace floor, out of builds, or out of time) and still didn't
+	// hit the target. Any non-zero value is the signal.
+	if !met {
+		c.metrics.recordUnderTarget(ctx)
+	}
+	c.metrics.recordPhase(ctx, ValPhaseScan, scanDur)
+	c.metrics.recordPhase(ctx, ValPhaseDelete, deleteDur)
+	// One line with the whole decision — what was selected and the inputs that
+	// drove it — so a dry run is auditable from a single log entry.
+	c.Info(ctx, "deletion selected",
+		zap.Bool("dry_run", c.DryRun),
+		zap.Bool("target_met", met),
+		zap.String("stop_reason", stop),
+		zap.Int("batches", batches),
+		zap.Int("num_builds", queuedBuilds),
+		zap.Uint64("queued_bytes", queued),
+		zap.Uint64("target_bytes", c.TargetBytesToDelete),
+		zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
+		zap.Uint64("max_cache_bytes", c.MaxCacheBytes),
+		zap.Duration("grace", c.Grace))
 }
 
 // sizeCache estimates the whole cache's on-disk bytes from what the scan sized.
@@ -256,12 +362,17 @@ func (c *Cleaner) sizeCache(ctx context.Context, rootBuilds, scanned int) {
 // stream by so memory stays O(sample) not O(rootCount); the per-build work
 // downstream is then bounded too. A fixed prefix would starve the tail (NFS readdir
 // order is server-hash, not stable), so the sample is random. BuildSampleMax == 0
-// returns every build. Also returns the root's total build-dir count, so a sampled
-// scan can be scaled back up to the whole cache. A genuine readdir error aborts
-// the run (returns the error) rather than cleaning off a truncated view of the root.
-func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, error) {
+// returns every build; a batched run keeps every name, shuffled, so memory is then
+// O(rootCount). Also returns the batch size and the root's total build-dir count,
+// so a sampled scan can be scaled back up to the whole cache. A genuine readdir
+// error aborts the run rather than cleaning off a truncated view of the root.
+func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, int, error) {
 	start := time.Now()
-	capN := c.BuildSampleMax
+	sampling := c.BuildSampleMax > 0
+	capN := 0
+	if sampling && !c.batched() {
+		capN = c.BuildSampleMax
+	}
 	var reservoir []string
 	if capN > 0 {
 		reservoir = make([]string, 0, capN)
@@ -287,7 +398,7 @@ func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, error) 
 		case err != nil:
 			c.metrics.recordError(ctx, ValOpRootReaddir)
 
-			return nil, 0, fmt.Errorf("read cache root %s: %w", c.Path, err)
+			return nil, 0, 0, fmt.Errorf("read cache root %s: %w", c.Path, err)
 		case len(entries) < readdirPage:
 			// EOF: no more entries, exit the loop
 		default:
@@ -297,15 +408,17 @@ func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, error) 
 		break
 	}
 
-	// Reservoir holds a uniform sample of size min(total, capN); narrow it to the
-	// banded target. The reservoir is uniform but not order-uniform, so shuffle
-	// before taking a positional prefix.
+	// The reservoir is uniform but not order-uniform, and NFS readdir order is
+	// server-hash, so shuffle before taking positional prefixes as samples.
 	picks := reservoir
-	if capN > 0 {
-		x := clampSample(total, c.BuildSampleMin, c.BuildSamplePercent, capN)
-		if x < len(picks) {
+	batch := len(picks)
+	if sampling {
+		batch = min(clampSample(total, c.BuildSampleMin, c.BuildSamplePercent, c.BuildSampleMax), len(picks))
+		if c.batched() || batch < len(picks) {
 			rand.Shuffle(len(picks), func(i, j int) { picks[i], picks[j] = picks[j], picks[i] })
-			picks = picks[:x]
+		}
+		if !c.batched() {
+			picks = picks[:batch]
 		}
 	}
 
@@ -313,9 +426,9 @@ func (c *Cleaner) list(ctx context.Context, df *os.File) ([]string, int, error) 
 	c.metrics.recordPhase(ctx, ValPhaseList, dur)
 	c.metrics.recordLastListBuilds(ctx, total)
 	c.Info(ctx, "root listing complete",
-		zap.Int("builds", total), zap.Int("picked", len(picks)), zap.Duration("duration", dur))
+		zap.Int("builds", total), zap.Int("picked", batch), zap.Duration("duration", dur))
 
-	return picks, total, nil
+	return picks, batch, total, nil
 }
 
 // scan classifies the picked build dirs concurrently, returning the records
@@ -353,7 +466,6 @@ func (c *Cleaner) scan(ctx context.Context, picks []string) []build {
 	}
 
 	dur := time.Since(start)
-	c.metrics.recordPhase(ctx, ValPhaseScan, dur)
 	c.Info(ctx, "scan complete",
 		zap.Int64("builds_scanned", c.BuildsScanned.Load()),
 		zap.Int("live_builds", len(builds)),
@@ -365,20 +477,13 @@ func (c *Cleaner) scan(ctx context.Context, picks []string) []build {
 	return builds
 }
 
-// deleteColdest runs the delete phase: it spawns the delete pool and feeds it the
-// coldest builds, coldest-first, until the byte target is reached or the Grace
-// floor is crossed, then waits for the pool to drain.
-func (c *Cleaner) deleteColdest(ctx context.Context, builds []build) {
-	if c.TargetBytesToDelete == 0 {
-		c.Info(ctx, "no byte target, nothing to delete",
-			zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
-			zap.Uint64("max_cache_bytes", c.MaxCacheBytes))
-
-		return
-	}
-	start := time.Now()
-
-	deleteCh := make(chan build, 1024)
+// deleteColdest feeds the delete pool coldest-first until need bytes are queued,
+// the Grace floor or the deadline (zero = none) is reached, or builds run out.
+// The first batch ignores a deadline that has already passed.
+func (c *Cleaner) deleteColdest(ctx context.Context, builds []build, need uint64, deadline time.Time, first bool) (uint64, int, string) {
+	// Unbuffered, so the deadline, checked as each build is queued, bounds the
+	// overrun to the deletes already in flight.
+	deleteCh := make(chan build)
 	var deleters sync.WaitGroup
 	for range c.MaxConcurrentDelete {
 		deleters.Add(1)
@@ -394,11 +499,29 @@ func (c *Cleaner) deleteColdest(ctx context.Context, builds []build) {
 	if c.Grace > 0 {
 		floorSec = time.Now().Add(-c.Grace).Unix()
 	}
+
+	// Without this, a budget shorter than listing plus one scan would make every
+	// run delete nothing while the disk fills.
+	if first && !deadline.IsZero() && time.Now().After(deadline) {
+		c.Warn(ctx, "run budget spent before the first delete; deleting the first batch without a deadline",
+			zap.Duration("run_budget", c.RunBudget))
+		deadline = time.Time{}
+	}
+	var expired <-chan time.Time
+	if !deadline.IsZero() {
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		expired = timer.C
+	}
+
 	var queued uint64
 	var queuedBuilds int
+	stop := stopExhausted
 queueLoop:
 	for _, b := range builds {
-		if queued >= c.TargetBytesToDelete {
+		if queued >= need {
+			stop = stopTarget
+
 			break
 		}
 		if floorSec != 0 && b.timestamp > floorSec {
@@ -406,7 +529,13 @@ queueLoop:
 			// floor — stop rather than delete an active build.
 			c.Info(ctx, "reached age floor before target; under-deleting",
 				zap.Uint64("queued_bytes", queued),
-				zap.Uint64("target_bytes", c.TargetBytesToDelete))
+				zap.Uint64("target_bytes", need))
+			stop = stopAgeFloor
+
+			break
+		}
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			stop = stopBudget
 
 			break
 		}
@@ -414,34 +543,29 @@ queueLoop:
 		case deleteCh <- b:
 			queued += b.size
 			queuedBuilds++
+		case <-expired:
+			stop = stopBudget
+
+			break queueLoop
 		case <-ctx.Done():
+			stop = stopCanceled
+
 			break queueLoop
 		}
+	}
+	switch {
+	case stop == stopExhausted && queued >= need:
+		stop = stopTarget
+	case stop == stopBudget:
+		c.Info(ctx, "run budget spent; no more deletes queued",
+			zap.Uint64("queued_bytes", queued),
+			zap.Uint64("target_bytes", need))
 	}
 
 	close(deleteCh)
 	deleters.Wait()
 
-	met := queued >= c.TargetBytesToDelete
-
-	// Emit only when the run came up short: it deleted everything it was allowed to
-	// (blocked by the grace floor or simply out of builds — same actionable fact)
-	// and still didn't hit the target. Any non-zero value is the signal.
-	if !met {
-		c.metrics.recordUnderTarget(ctx)
-	}
-	c.metrics.recordPhase(ctx, ValPhaseDelete, time.Since(start))
-	// One line with the whole decision — what was selected and the inputs that
-	// drove it — so a dry run is auditable from a single log entry.
-	c.Info(ctx, "deletion selected",
-		zap.Bool("dry_run", c.DryRun),
-		zap.Bool("target_met", met),
-		zap.Int("num_builds", queuedBuilds),
-		zap.Uint64("queued_bytes", queued),
-		zap.Uint64("target_bytes", c.TargetBytesToDelete),
-		zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
-		zap.Uint64("max_cache_bytes", c.MaxCacheBytes),
-		zap.Duration("grace", c.Grace))
+	return queued, queuedBuilds, stop
 }
 
 // clampSample returns the per-build sample size for n chunks.
@@ -488,7 +612,7 @@ func chunkOnDiskBytes(name string) uint64 {
 	return n
 }
 
-// ElasticTotalThreshold is the df total above which a filesystem is treated as
+// ElasticTotalThreshold is the filesystem total above which a filesystem is treated as
 // elastic (no provisioned capacity). Amazon EFS reports 2^63 bytes (8 EiB); no
 // real disk under this cache is anywhere near 1 PiB.
 const ElasticTotalThreshold uint64 = 1 << 50
@@ -497,59 +621,21 @@ type DiskInfo struct {
 	Total, Used uint64
 }
 
-// Elastic reports whether the df total is a pseudo capacity (EFS and the like),
+// Elastic reports whether the filesystem total is a pseudo capacity (EFS and the like),
 // on which a disk-usage percent target can never fire.
 func (d DiskInfo) Elastic() bool {
 	return d.Total > ElasticTotalThreshold
 }
 
-func GetDiskInfo(ctx context.Context, path string) (DiskInfo, error) {
-	// -P (POSIX) keeps every filesystem on one line. Without it GNU df wraps a
-	// mount source longer than 20 characters onto its own line — every EFS DNS
-	// name is — and the numbers end up on the next line, shifted by one field.
-	// -k pins the unit to 1024-byte blocks: under POSIXLY_CORRECT, -P alone
-	// switches to 512-byte blocks and the parser would read half the size.
-	cmd := exec.CommandContext(ctx, "df", "-Pk", path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return DiskInfo{}, fmt.Errorf("df command failed: %w: %s", err, strings.TrimSpace(string(out)))
+// newDiskInfo matches df: reserved blocks count as used. Keep it uint64: an EFS
+// total (2^53 KiB blocks) times 1024 is exactly 2^63, which overflows int64 to
+// a negative number and silently zeroes the percent math. More free blocks than
+// blocks is an error: Used would wrap to nearly 2^64 and the percent target
+// would evict every cold build.
+func newDiskInfo(blockSize, blocks, free uint64) (DiskInfo, error) {
+	if free > blocks {
+		return DiskInfo{}, fmt.Errorf("filesystem reports %d free blocks of %d", free, blocks)
 	}
 
-	return parseDiskInfo(string(out))
-}
-
-// parseDiskInfo reads the first data row of `df -Pk` output. Sizes are parsed as
-// uint64: an EFS total (2^53 KiB) times 1024 is exactly 2^63, which overflows
-// int64 to a negative number and silently zeroes the percent math.
-func parseDiskInfo(out string) (DiskInfo, error) {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 2 {
-		return DiskInfo{}, fmt.Errorf("unexpected df output: %q", strings.TrimSpace(out))
-	}
-
-	for i := 1; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-
-		totalSize, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			return DiskInfo{}, fmt.Errorf("failed to parse total size: %w", err)
-		}
-
-		usedSpace, err := strconv.ParseUint(fields[2], 10, 64)
-		if err != nil {
-			return DiskInfo{}, fmt.Errorf("failed to parse available space: %w", err)
-		}
-
-		// "df" returns kilobytes, not bytes
-		return DiskInfo{Total: totalSize * 1024, Used: usedSpace * 1024}, nil
-	}
-
-	return DiskInfo{}, fmt.Errorf("could not parse mount point from df output: %q", strings.TrimSpace(out))
+	return DiskInfo{Total: blocks * blockSize, Used: (blocks - free) * blockSize}, nil
 }

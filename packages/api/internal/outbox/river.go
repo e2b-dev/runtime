@@ -40,12 +40,14 @@ type Config struct {
 }
 
 type Dependencies struct {
-	Pool      *pgxpool.Pool
-	Sandboxes teamSandboxes
-	Teams     *authdb.Client
-	Logger    logger.Logger
-	Telemetry *telemetry.Client
-	Config    Config
+	Pool        *pgxpool.Pool
+	Sandboxes   teamSandboxes
+	Containment teamContainer
+	TeamCache   teamCache
+	Teams       *authdb.Client
+	Logger      logger.Logger
+	Telemetry   *telemetry.Client
+	Config      Config
 }
 
 type River struct {
@@ -61,6 +63,13 @@ func New(deps Dependencies) (*River, error) {
 		sandboxes: deps.Sandboxes,
 		teams:     deps.Teams,
 		steps:     steps.Job(outbox.TeardownTeamResources{}.Kind()),
+	})
+	river.AddWorker(workers, &bannedTeamContainmentWorker{
+		teams:     deps.Teams,
+		cache:     deps.TeamCache,
+		container: deps.Containment,
+		settle:    containSettleDelay,
+		steps:     steps.Job(outbox.ContainBannedTeam{}.Kind()),
 	})
 
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
@@ -83,7 +92,7 @@ func New(deps Dependencies) (*River, error) {
 
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind()},
+		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind()},
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {
@@ -91,6 +100,12 @@ func New(deps Dependencies) (*River, error) {
 	}
 
 	return &River{client: client, backlog: backlog}, nil
+}
+
+// Client enqueues jobs in a caller's transaction, so they run only if it
+// commits.
+func (r *River) Client() *river.Client[pgx.Tx] {
+	return r.client
 }
 
 func (r *River) Start(ctx context.Context) error {

@@ -24,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -31,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 type canceledConstructionTemplate struct {
@@ -87,7 +89,7 @@ func TestFactoryFailedConstructorsPreserveCancellationCause(t *testing.T) {
 			if resume {
 				sbx, err = factory.ResumeSandbox(ctx, template, config, runtime, time.Time{}, time.Time{}, nil)
 			} else {
-				sbx, err = factory.CreateSandbox(ctx, config, runtime, template, time.Minute, "", fc.ProcessOptions{}, nil, nil)
+				sbx, err = factory.CreateSandbox(ctx, config, runtime, template, time.Minute, "", fc.ProcessOptions{}, nil)
 			}
 			if !resume {
 				select {
@@ -124,7 +126,7 @@ func TestFactoryFailedConstructorsDoNotAttributeIndependentErrorsToCancellation(
 			if resume {
 				sbx, err = factory.ResumeSandbox(ctx, template, config, runtime, time.Time{}, time.Time{}, nil)
 			} else {
-				sbx, err = factory.CreateSandbox(ctx, config, runtime, template, time.Minute, "", fc.ProcessOptions{}, nil, nil)
+				sbx, err = factory.CreateSandbox(ctx, config, runtime, template, time.Minute, "", fc.ProcessOptions{}, nil)
 			}
 			if !resume {
 				select {
@@ -234,7 +236,7 @@ func TestFactoryConstructorsRunTheNetworkAssignHook(t *testing.T) {
 		endAt time.Time
 	}{
 		{name: "create", reason: NetworkAssignReasonCreate, start: func(ctx context.Context, f *Factory, runtime sandboxtypes.RuntimeMetadata, config *Config, template bootTemplate) (*Sandbox, error) {
-			return f.CreateSandbox(ctx, config, runtime, template, time.Minute, filepath.Join(filepath.Dir(template.snapfile), "rootfs"), fc.ProcessOptions{}, nil, nil)
+			return f.CreateSandbox(ctx, config, runtime, template, time.Minute, filepath.Join(filepath.Dir(template.snapfile), "rootfs"), fc.ProcessOptions{}, nil)
 		}},
 		{name: "reboot", devices: true, reason: NetworkAssignReasonReboot, endAt: rebootEnd, start: func(ctx context.Context, f *Factory, runtime sandboxtypes.RuntimeMetadata, config *Config, template bootTemplate) (*Sandbox, error) {
 			config.RamMB = 1
@@ -248,7 +250,7 @@ func TestFactoryConstructorsRunTheNetworkAssignHook(t *testing.T) {
 			return f.ResumeSandbox(ctx, template, config, runtime, time.Time{}, time.Time{}, nil)
 		}},
 		{name: "create with an optional error", optional: true, reason: NetworkAssignReasonCreate, start: func(ctx context.Context, f *Factory, runtime sandboxtypes.RuntimeMetadata, config *Config, template bootTemplate) (*Sandbox, error) {
-			return f.CreateSandbox(ctx, config, runtime, template, time.Minute, filepath.Join(filepath.Dir(template.snapfile), "rootfs"), fc.ProcessOptions{}, nil, nil)
+			return f.CreateSandbox(ctx, config, runtime, template, time.Minute, filepath.Join(filepath.Dir(template.snapfile), "rootfs"), fc.ProcessOptions{}, nil)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -292,6 +294,150 @@ func TestFactoryConstructorsRunTheNetworkAssignHook(t *testing.T) {
 				require.ErrorIs(t, err, hookFailure, "the start fails on the hook, before Firecracker starts")
 			}
 			require.Equal(t, 1, pool.returns, "the start returned its slot")
+		})
+	}
+}
+
+// A reboot in place hands the next lifecycle the overlay with the envd an
+// offline upgrade installed on it and the start time of the execution it
+// continues, so its network admission reads that version and not the
+// template's, and sees an execution it already placed. The start stops at
+// the hook.
+func TestStartInPlaceHandsOverTheDiskVersionAndTheExecutionStart(t *testing.T) {
+	t.Parallel()
+	builder := cfg.BuilderConfig{
+		FirecrackerVersionsDir: t.TempDir(), HostKernelsDir: t.TempDir(),
+		StorageConfig: storage.Config{SandboxCacheDir: t.TempDir()},
+	}
+	versions := fc.Config{KernelVersion: "kernel", FirecrackerVersion: "firecracker"}
+	for _, path := range []string{versions.FirecrackerPath(builder), versions.HostKernelPath(builder)} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, nil, 0o755))
+	}
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
+
+	from := testMapSandbox(t, "upgraded-offline")
+	from.Config = NewConfig(Config{Vcpu: 1, RamMB: 1, Network: &orchestrator.SandboxNetworkConfig{}, FirecrackerConfig: versions, Envd: EnvdMetadata{Version: "0.9.0"}})
+	from.Runtime = sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), ExecutionID: uuid.NewString(), SandboxType: sandboxtypes.SandboxTypeSandbox}
+	from.Template = rebootHookTemplate{bootTemplate: bootTemplate{snapfile: filepath.Join(t.TempDir(), "snapfile")}, buildID: uuid.NewString()}
+	from.rootfs = &handedOverRootfs{path: filepath.Join(t.TempDir(), "rootfs")}
+	from.process = &fc.Process{Exit: utils.NewErrorOnce()}
+	require.NoError(t, from.process.Exit.SetError(nil))
+	from.sandboxes = NewSandboxesMap()
+	from.slotRelease = newHandover(func(context.Context) error { return nil })
+	rootfsClosed := false
+	from.rootfsRelease = newHandover(func(context.Context) error {
+		rootfsClosed = true
+
+		return nil
+	})
+	from.networkRelease = func(context.Context, string) error { return nil }
+	installed := "0.10.2"
+	from.offlineEnvdVersion.Store(&installed)
+	require.Equal(t, installed, from.ExpectedEnvdVersion())
+	started := time.Now().Add(-time.Minute)
+	from.SetExecutionStartedAt(started)
+
+	pool := &factoryNetworkPool{slot: from.Slot}
+	hookFailure := errors.New("stop at the hook")
+	var seen string
+	var seenStart time.Time
+	hook := networkAssignHookFunc(func(_ context.Context, next *Sandbox, reason NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+		assert.Equal(t, NetworkAssignReasonReboot, reason)
+		assert.Same(t, from.rootfs, next.rootfs, "the hook sees the handed-over overlay")
+		seen = next.ExpectedEnvdVersion()
+		seenStart = next.GetExecutionStartedAt()
+
+		return nil, hookFailure
+	})
+	factory := NewFactory(t.Context(), builder, pool, nil, flags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), hook, from.sandboxes)
+
+	next, err := factory.startInPlace(t.Context(), from, time.Now().Add(time.Hour))
+	require.Nil(t, next)
+	require.ErrorIs(t, err, hookFailure, "the start reaches the hook and stops there")
+	assert.Equal(t, installed, seen, "the hook sees the envd installed on the handed-over overlay")
+	assert.True(t, seenStart.Equal(started), "the hook sees the execution started, at %s not %s", started, seenStart)
+	assert.True(t, rootfsClosed, "a start that fails at the hook closes the handed-over overlay")
+}
+
+// handedOverRootfs is a started overlay a reboot in place hands over; only its path is read.
+type handedOverRootfs struct {
+	rootfs.Provider
+
+	path string
+}
+
+func (r *handedOverRootfs) Path() (string, error) { return r.path, nil }
+
+// The network-assign hook sees the version an offline swap put on the rootfs. Nil pre-boot
+// steps are skipped and the first failing step stops the rest.
+func TestCreateSandboxRunsTheEnvdSwapBeforeTheNetworkAssignHook(t *testing.T) {
+	t.Parallel()
+	builder := cfg.BuilderConfig{
+		FirecrackerVersionsDir: t.TempDir(), HostKernelsDir: t.TempDir(),
+		StorageConfig: storage.Config{SandboxCacheDir: t.TempDir()},
+	}
+	versions := fc.Config{KernelVersion: "kernel", FirecrackerVersion: "firecracker"}
+	for _, path := range []string{versions.FirecrackerPath(builder), versions.HostKernelPath(builder)} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, nil, 0o755))
+	}
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
+	hookFailure := errors.New("the network could not be completed")
+	recoverFailure := errors.New("the rootfs could not be recovered")
+	swapFailure := errors.New("the swap left the rootfs unbootable")
+
+	for _, tc := range []struct {
+		name       string
+		swapped    string
+		recoverErr error
+		swapErr    error
+		wantEnvd   string
+		wantErr    error
+		wantSteps  []string
+	}{
+		{name: "swapped", swapped: "0.10.2", wantEnvd: "0.10.2", wantErr: hookFailure, wantSteps: []string{"recover", "swap", "hook"}},
+		{name: "skipped or failed swap", wantEnvd: "0.9.0", wantErr: hookFailure, wantSteps: []string{"recover", "swap", "hook"}},
+		{name: "failed recovery", swapped: "0.10.2", recoverErr: recoverFailure, wantErr: recoverFailure, wantSteps: []string{"recover"}},
+		{name: "fatal swap", swapErr: swapFailure, wantErr: swapFailure, wantSteps: []string{"recover", "swap"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var steps []string
+			pool := &factoryNetworkPool{slot: testMapSandbox(t, "pool").Slot}
+			hook := networkAssignHookFunc(func(_ context.Context, sbx *Sandbox, _ NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+				steps = append(steps, "hook")
+				assert.Equal(t, tc.wantEnvd, sbx.ExpectedEnvdVersion(), "the hook sees the envd the guest will boot")
+
+				return nil, hookFailure
+			})
+			factory := NewFactory(t.Context(), builder, pool, nil, flags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), hook, NewSandboxesMap())
+			runtime := sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), ExecutionID: uuid.NewString(), SandboxType: sandboxtypes.SandboxTypeSandbox}
+			config := NewConfig(Config{Vcpu: 1, Network: &orchestrator.SandboxNetworkConfig{}, FirecrackerConfig: versions, Envd: EnvdMetadata{Version: "0.9.0"}})
+			template := bootTemplate{snapfile: filepath.Join(t.TempDir(), "snapfile")}
+			recoverFS := func(context.Context, string) (string, error) {
+				steps = append(steps, "recover")
+
+				return "", tc.recoverErr
+			}
+			swap := func(context.Context, string) (string, error) {
+				steps = append(steps, "swap")
+
+				return tc.swapped, tc.swapErr
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+
+			sbx, err := factory.CreateSandbox(ctx, config, runtime, template, time.Minute, filepath.Join(filepath.Dir(template.snapfile), "rootfs"),
+				fc.ProcessOptions{}, nil, WithPreBoot(recoverFS, nil, swap))
+			require.Nil(t, sbx)
+			require.ErrorIs(t, err, tc.wantErr)
+			assert.Equal(t, tc.wantSteps, steps)
+			assert.Equal(t, 1, pool.returns, "the start returned its slot")
 		})
 	}
 }

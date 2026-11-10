@@ -234,6 +234,15 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		return nil, status.Error(codes.FailedPrecondition, "filesystem-only snapshot must be resumed explicitly")
 	}
 
+	// Auto-resume restores memory, and this snapshot's memory holds a guest
+	// agent that did not answer at pause; only an explicit resume without
+	// memory (memory: false) brings the sandbox back. The same structured
+	// refusal as the explicit resume, so the proxy answers the 409 and its
+	// error code rather than a bare status.
+	if snapshotEnvdUnresponsive(snap.EnvBuild) {
+		return nil, resumeStatusError(ctx, snapshotGuestAgentUnresponsiveError(sandboxID))
+	}
+
 	minAutoResumeTimeout := time.Duration(s.api.featureFlags.IntFlag(ctx, featureflags.MinAutoResumeTimeoutSeconds)) * time.Second
 
 	timeout := calculateAutoResumeTimeout(autoResume, minAutoResumeTimeout, team)

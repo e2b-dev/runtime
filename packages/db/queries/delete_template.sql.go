@@ -51,10 +51,18 @@ func (q *Queries) ReleaseTemplateAliases(ctx context.Context, templateID string)
 }
 
 const softDeleteTemplate = `-- name: SoftDeleteTemplate :one
-UPDATE public.envs
-SET deleted_at = NOW(), updated_at = NOW()
-WHERE id = $1 AND team_id = $2 AND deleted_at IS NULL
-RETURNING id
+WITH deleted AS (
+    UPDATE public.envs e
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE e.id = $1 AND e.team_id = $2 AND e.deleted_at IS NULL
+    RETURNING e.id
+),
+stamped AS (
+    UPDATE public.snapshots s
+    SET env_deleted_at = NOW()
+    WHERE s.env_id = ANY (ARRAY(SELECT id FROM deleted))
+)
+SELECT id FROM deleted
 `
 
 type SoftDeleteTemplateParams struct {
@@ -67,6 +75,12 @@ type SoftDeleteTemplateParams struct {
 // soft-deletes. Returns the id (no row if already deleted or not owned). The
 // alias/active-build cleanup runs as separate statements afterwards so their
 // fresh snapshots see rows that racing registration committed during the wait.
+// The env's snapshots are stamped in the same statement, after the env row is
+// locked; nothing else keeps snapshots.env_deleted_at in step.
+// NOW() is the transaction's start time, the deleted_at just written. The
+// array keeps this an env_id index lookup per env: joining the CTE lets the
+// planner hash-join a sequential scan of every snapshot once it expects
+// many envs.
 func (q *Queries) SoftDeleteTemplate(ctx context.Context, arg SoftDeleteTemplateParams) (string, error) {
 	row := q.db.QueryRow(ctx, softDeleteTemplate, arg.TemplateID, arg.TeamID)
 	var id string

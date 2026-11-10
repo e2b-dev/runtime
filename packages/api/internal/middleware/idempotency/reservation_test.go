@@ -320,7 +320,7 @@ func TestRedisReleaseProtectsOtherReservations(t *testing.T) {
 				require.NoError(t, err)
 			}
 			if state == "complete" {
-				require.NoError(t, s.complete(t.Context(), key, "owner", cachedResponse{Status: http.StatusCreated}))
+				require.NoError(t, s.complete(t.Context(), key, "owner", cachedResponse{Status: http.StatusCreated}, false))
 			}
 			if state == "empty response" {
 				require.NoError(t, client.HSet(t.Context(), key, "response", "").Err())

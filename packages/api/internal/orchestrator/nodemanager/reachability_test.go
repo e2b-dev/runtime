@@ -115,7 +115,7 @@ func TestSelfReportedUnhealthyIsNotUnreachable(t *testing.T) {
 	t.Parallel()
 
 	n := NewTestNode("test-node", api.NodeStatusReady, 0, 1)
-	n.setStatus(t.Context(), api.NodeStatusUnhealthy, time.Now().Add(-time.Hour))
+	n.setStatus(t.Context(), api.NodeStatusUnhealthy, "", time.Now().Add(-time.Hour))
 
 	_, unreachable := n.UnreachableSince()
 	assert.False(t, unreachable)

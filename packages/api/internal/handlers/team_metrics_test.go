@@ -16,7 +16,7 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -79,7 +79,7 @@ func TestTeamMetricsAcceptPublicProjectID(t *testing.T) {
 					recorder := httptest.NewRecorder()
 					c, _ := gin.CreateTestContext(recorder)
 					c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/teams/"+tc.pathID+"/metrics", nil)
-					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: teamID}})
+					auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: teamID}})
 
 					metricsStore := &recordingTeamMetricsStore{NoopClient: clickhouse.NewNoopClient()}
 					call(&APIStore{clickhouseStore: metricsStore}, c)

@@ -335,8 +335,10 @@ func (s *Server) BeginShutdown() {
 	}
 }
 
+// errSandboxOperationInProgress is Checkpoint's answer while a checkpoint
+// claim holds the sandbox, from the claim until its resumed sandbox is live.
 func errSandboxOperationInProgress(sandboxID string) error {
-	return status.Errorf(codes.FailedPrecondition, "an operation is already in progress for sandbox '%s'", sandboxID)
+	return checkpointInProgressStatus(codes.FailedPrecondition, "an operation is already in progress for sandbox '%s'", sandboxID).Err()
 }
 
 // withContextCause names what ended ctx when err is ctx's own error, or a

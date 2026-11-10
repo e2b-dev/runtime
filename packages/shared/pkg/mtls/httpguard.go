@@ -14,11 +14,8 @@ import (
 // GET or HEAD; everything else plaintext is answered 403. A TLS request's
 // name is re-checked against the allow-list on every request, so a removed
 // name is refused at its next call. net/http hands every HTTP/2 stream to
-// the handler as its own request, so a plaintext connection upgraded on a
-// health path carries nothing else.
-//
-// Wrap the application handler before httpserver.ConfigureH2C wraps the
-// server's handler, so the guard sees each h2c stream.
+// the handler as its own request, so each stream on a plaintext h2c
+// connection is checked.
 type HTTPGuard struct {
 	cfg         ServerConfig
 	healthPaths []string

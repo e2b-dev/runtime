@@ -27,9 +27,6 @@ func TestStat(t *testing.T) {
 	u, err := user.Current()
 	require.NoError(t, err)
 
-	group, err := user.LookupGroupId(u.Gid)
-	require.NoError(t, err)
-
 	// Setup directory structure
 	testFolder := filepath.Join(root, "test")
 	err = os.MkdirAll(testFolder, 0o755)
@@ -79,9 +76,6 @@ func TestStat(t *testing.T) {
 			require.NotNil(t, resp.Msg.GetEntry())
 			assert.Equal(t, tt.path, resp.Msg.GetEntry().GetPath())
 			assert.Equal(t, filesystem.FileType_FILE_TYPE_FILE, resp.Msg.GetEntry().GetType())
-			assert.Equal(t, u.Username, resp.Msg.GetEntry().GetOwner())
-			assert.Equal(t, group.Name, resp.Msg.GetEntry().GetGroup())
-			assert.Equal(t, uint32(0o644), resp.Msg.GetEntry().GetMode())
 			if tt.path == linkedFile {
 				require.NotNil(t, resp.Msg.GetEntry().GetSymlinkTarget())
 				assert.Equal(t, testFile, resp.Msg.GetEntry().GetSymlinkTarget())

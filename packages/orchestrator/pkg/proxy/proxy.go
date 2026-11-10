@@ -61,7 +61,7 @@ func (p *SandboxProxy) resolveDestination(r *http.Request) (*pool.Destination, e
 		defer p.ownersMu.Unlock()
 		var found bool
 		if sbx, found = p.sandboxes.Get(id); !found {
-			return reverseproxy.IngressTarget{}, reverseproxy.NewErrSandboxNotFound(id)
+			return reverseproxy.IngressTarget{}, reverseproxy.NewErrSandboxNotFound(id, reverseproxy.PresenceAbsent)
 		}
 		// Full-router ingress enters through the sandbox's Router, which this
 		// proxy does not forward for, so it never reaches the guest from here.

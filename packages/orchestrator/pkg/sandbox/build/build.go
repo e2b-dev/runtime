@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -28,7 +29,8 @@ import (
 )
 
 var (
-	buildMeter = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build")
+	buildMeter            = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build")
+	residencyLookupOption = ttlcache.WithDisableTouchOnHit[DiffStoreKey, Diff]()
 
 	// frameTableRefreshTimer measures ancestor-header refresh events as the
 	// standard (duration, bytes, count) triple. A refresh is triggered when a
@@ -324,6 +326,7 @@ func (b *File) planRead(ctx context.Context, h *header.Header, p []byte, off int
 		if mappedToBuild.BuildId == uuid.Nil {
 			clear(p[n : n+int(readLength)])
 			n += int(readLength)
+			storage.ReportSource(ctx, storage.SourceZero)
 
 			continue
 		}
@@ -372,6 +375,8 @@ func (b *File) Slice(ctx context.Context, off, length int64) ([]byte, error) {
 		m, err := h.GetShiftedMapping(ctx, off)
 		if err == nil && int64(m.Length) >= length {
 			if m.BuildId == uuid.Nil && length <= int64(len(header.EmptyHugePage)) {
+				storage.ReportSource(ctx, storage.SourceZero)
+
 				return header.EmptyHugePage[:length], nil
 			}
 			if m.BuildId != uuid.Nil {
@@ -432,6 +437,43 @@ func (b *File) IsCached(ctx context.Context, off, length int64) bool {
 	}
 
 	return true
+}
+
+// PageResident reports whether one aligned 4 KiB page needs no remote fetch,
+// using metadata only. Separate from IsCached, whose answer controls dedup.
+func (b *File) PageResident(ctx context.Context, off int64) (resident, known bool) {
+	h := b.Header()
+	if h == nil {
+		return false, false
+	}
+	m, err := h.GetShiftedMapping(ctx, off)
+	if err != nil || m.Length < header.PageSize {
+		return false, false
+	}
+	if m.BuildId == uuid.Nil {
+		return true, true
+	}
+
+	// Diagnostics must not extend the lifetime of cached diff data.
+	item := b.store.cache.Get(GetDiffStoreKey(m.BuildId.String(), b.fileType), residencyLookupOption)
+	if item == nil {
+		return false, true
+	}
+	diff := item.Value()
+	if d, ok := diff.(*deferredDiff); ok {
+		diff, err = d.inner.Result()
+		if err != nil {
+			return false, false
+		}
+	}
+	switch d := diff.(type) {
+	case *localDiff:
+		return true, true
+	case block.CachePeeker:
+		return d.IsCached(ctx, int64(m.Offset), header.PageSize), true
+	default:
+		return false, false
+	}
 }
 
 // waitTransitionBackoff honors the peer's RetryAfter hint before the caller

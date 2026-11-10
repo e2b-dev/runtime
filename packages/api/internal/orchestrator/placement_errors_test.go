@@ -8,12 +8,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // createRefusedStatus is a node's refusal with the typed detail the
@@ -28,6 +30,22 @@ func createRefusedStatusWith(t *testing.T, code codes.Code, message string, http
 	t.Helper()
 
 	st, err := status.New(code, message).WithDetails(&orchestrator.UserError{Code: orchestrator.UserErrorCode_SANDBOX_CREATE_REFUSED, Message: message, HttpStatus: httpStatus})
+	require.NoError(t, err)
+
+	return st.Err()
+}
+
+// autoPauseRefusedStatus is the node's refusal of a create whose auto-pause
+// policy asks for a capture the guest cannot take: the pause refusal's
+// detail beside the create-refused one.
+func autoPauseRefusedStatus(t *testing.T, httpStatus uint32) error {
+	t.Helper()
+
+	message := "a timeout auto-pause that persists only the filesystem is not supported"
+	st, err := status.New(codes.InvalidArgument, message).WithDetails(
+		&errdetails.ErrorInfo{Reason: sandboxtypes.PauseRefusedUnsupportedReason, Domain: sandboxtypes.PauseRefusalDomain},
+		&orchestrator.UserError{Code: orchestrator.UserErrorCode_SANDBOX_CREATE_REFUSED, Message: message, HttpStatus: httpStatus},
+	)
 	require.NoError(t, err)
 
 	return st.Err()
@@ -116,6 +134,26 @@ func TestPlacementAPIError(t *testing.T) {
 			wantCode:      http.StatusInternalServerError,
 			wantErrorCode: "sandbox_create_refused",
 			wantMsg:       "Failed to place sandbox: invalid volume mount path",
+		},
+		{
+			// The auto-pause policy is a field of the request: the node's
+			// 400 is the client's when the pause refusal's detail marks it.
+			name:          "create refused for an auto-pause the guest cannot take is the client's",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: autoPauseRefusedStatus(t, http.StatusBadRequest)},
+			wantCode:      http.StatusBadRequest,
+			wantErrorCode: "sandbox_create_refused",
+			wantMsg:       "Failed to place sandbox: a timeout auto-pause that persists only the filesystem is not supported",
+		},
+		{
+			// The same detail with a server status keeps the server status:
+			// only the node's 400 is trusted on it.
+			name:          "create refused for an auto-pause the guest cannot take keeps a server status",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: autoPauseRefusedStatus(t, http.StatusInternalServerError)},
+			wantCode:      http.StatusInternalServerError,
+			wantErrorCode: "sandbox_create_refused",
+			wantMsg:       "Failed to place sandbox: a timeout auto-pause that persists only the filesystem is not supported",
 		},
 		{
 			// The orchestrator's createRefused helper answers every code

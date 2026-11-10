@@ -40,11 +40,12 @@ func (s *authStoreImpl) GetTeamByHashedAPIKey(ctx context.Context, hashedKey str
 		return nil, fmt.Errorf("failed to get team from API key: %w", err)
 	}
 
-	if err := internalauthteam.CheckTeamBanned(result.Team); err != nil {
+	team := types.NewTeam(authqueries.GetTeamByTeamIDRow(result))
+	if err := internalauthteam.CheckTeamBanned(*team.Team); err != nil {
 		return nil, err
 	}
 
-	if err := internalauthteam.CheckTeamDeleted(result.Team); err != nil {
+	if err := internalauthteam.CheckTeamDeleted(*team.Team); err != nil {
 		return nil, err
 	}
 
@@ -57,7 +58,7 @@ func (s *authStoreImpl) GetTeamByHashedAPIKey(ctx context.Context, hashedKey str
 		}
 	}()
 
-	return types.NewTeam(authqueries.GetTeamByTeamIDRow(result)), nil
+	return team, nil
 }
 
 func (s *authStoreImpl) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*types.Team, error) {
@@ -69,11 +70,12 @@ func (s *authStoreImpl) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*typ
 		return nil, fmt.Errorf("failed to get team from team ID: %w", err)
 	}
 
-	if err := internalauthteam.CheckTeamBanned(result.Team); err != nil {
+	team := types.NewTeam(result)
+	if err := internalauthteam.CheckTeamBanned(*team.Team); err != nil {
 		return nil, err
 	}
 
-	return types.NewTeam(result), nil
+	return team, nil
 }
 
 func (s *authStoreImpl) GetTeamByIDAndUserID(ctx context.Context, userID uuid.UUID, teamID string) (*types.Team, error) {
@@ -93,15 +95,16 @@ func (s *authStoreImpl) GetTeamByIDAndUserID(ctx context.Context, userID uuid.UU
 		return nil, fmt.Errorf("failed to get team from teamID and userID key: %w", err)
 	}
 
-	if err := internalauthteam.CheckTeamBanned(result.Team); err != nil {
+	team := types.NewTeam(authqueries.GetTeamByTeamIDRow(result))
+	if err := internalauthteam.CheckTeamBanned(*team.Team); err != nil {
 		return nil, err
 	}
 
-	if err := internalauthteam.CheckTeamDeleted(result.Team); err != nil {
+	if err := internalauthteam.CheckTeamDeleted(*team.Team); err != nil {
 		return nil, err
 	}
 
-	return types.NewTeam(authqueries.GetTeamByTeamIDRow(result)), nil
+	return team, nil
 }
 
 func (s *authStoreImpl) GetTeamAPIKeyHashes(ctx context.Context, teamID uuid.UUID) ([]string, error) {

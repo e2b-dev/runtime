@@ -30,6 +30,7 @@ func (a *APIStore) startSandbox(
 	isResume bool,
 	demandFilesystemBoot bool,
 	mcp api.Mcp,
+	options ...orchestrator.CreateOption,
 ) (*api.Sandbox, *api.APIError) {
 	sbx, apiErr := a.startSandboxInternal(
 		ctx,
@@ -41,6 +42,7 @@ func (a *APIStore) startSandbox(
 		isResume,
 		demandFilesystemBoot,
 		mcp,
+		options...,
 	)
 	if apiErr != nil {
 		return nil, apiErr

@@ -94,8 +94,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamID.String()))
-		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, maxDomains, body.Rules); apiErr != nil {
+		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, a.networkRuleLimits(ctx, teamID), body.Rules); apiErr != nil {
 			a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 			return
@@ -117,7 +116,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			domains = append(domains, domain)
 		}
 
-		a.posthog.CreateAnalyticsTeamEvent(ctx, teamID.String(), "sandbox with network transform rules updated",
+		a.posthog.CreateAnalyticsSandboxEvent(ctx, teamID.String(), sandboxID, "sandbox with network transform rules updated",
 			a.posthog.GetPackageToPosthogProperties(&c.Request.Header).
 				Set("sandbox_id", sandboxID).
 				Set("domains", domains),
@@ -127,7 +126,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 	// Reported off the canonical config rather than the request body, so the
 	// event describes the proxy the sandbox actually runs with.
 	if egressProxy != nil {
-		a.posthog.CreateAnalyticsTeamEvent(ctx, teamID.String(), "sandbox with egress proxy updated",
+		a.posthog.CreateAnalyticsSandboxEvent(ctx, teamID.String(), sandboxID, "sandbox with egress proxy updated",
 			a.posthog.GetPackageToPosthogProperties(&c.Request.Header).
 				Set("sandbox_id", sandboxID).
 				Set("egress_proxy_auth", egressProxy.Username != ""),

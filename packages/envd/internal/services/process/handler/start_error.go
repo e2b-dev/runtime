@@ -38,3 +38,13 @@ func StartErrorCode(err error) connect.Code {
 		return connect.CodeInvalidArgument
 	}
 }
+
+// CommandErrorCode maps a failure to build the command: a request for what
+// cannot run on this system is the caller's to fix, anything else is envd's.
+func CommandErrorCode(err error) connect.Code {
+	if _, ok := errors.AsType[unsupportedCommandError](err); ok {
+		return connect.CodeInvalidArgument
+	}
+
+	return connect.CodeInternal
+}

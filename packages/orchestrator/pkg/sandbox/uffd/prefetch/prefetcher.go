@@ -149,6 +149,9 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	activeRuns.Add(1)
+	defer activeRuns.Add(-1)
+
 	blockSize := p.mapping.BlockSize
 	totalPages := len(indices)
 
@@ -223,6 +226,9 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 	// Start fetch workers - they populate the cache and queue offsets for copy
 	for range maxFetchWorkers {
 		fetchWg.Go(func() {
+			activeFetchWorkers.Add(1)
+			defer activeFetchWorkers.Add(-1)
+
 			p.fetchWorker(ctx, fetchCh, copyCh, blockSize, &fetchedCount, &fetchSkippedCount)
 		})
 	}
@@ -248,21 +254,41 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 
 	// Export the run stats: per-stage page counts plus phase durations. The
 	// fetch and copy phases overlap; "total" spans the whole run.
-	pagesCounter.Add(ctx, int64(fetchedCount.Load()), stageFetchedAttr)
-	pagesCounter.Add(ctx, int64(fetchSkippedCount.Load()), stageFetchSkippedAttr)
-	pagesCounter.Add(ctx, int64(copiedCount.Load()), stageCopiedAttr)
-	pagesCounter.Add(ctx, int64(copySkippedCount.Load()), stageCopySkippedAttr)
+	fetched := fetchedCount.Load()
+	fetchSkipped := fetchSkippedCount.Load()
+	copied := copiedCount.Load()
+	copySkipped := copySkippedCount.Load()
+	pagesCounter.Add(ctx, int64(fetched), stageFetchedAttr)
+	pagesCounter.Add(ctx, int64(fetchSkipped), stageFetchSkippedAttr)
+	pagesCounter.Add(ctx, int64(copied), stageCopiedAttr)
+	pagesCounter.Add(ctx, int64(copySkipped), stageCopySkippedAttr)
 	durationHistogram.Record(ctx, fetchDuration.Milliseconds(), phaseFetchAttr)
+	span.SetAttributes(
+		attribute.Int64("prefetch.fetched_pages", int64(fetched)),
+		attribute.Int64("prefetch.fetch_skipped_pages", int64(fetchSkipped)),
+		attribute.Int64("prefetch.copied_pages", int64(copied)),
+		attribute.Int64("prefetch.copy_skipped_pages", int64(copySkipped)),
+		attribute.Float64("prefetch.fetch_ms", float64(fetchDuration)/float64(time.Millisecond)),
+	)
 	if cs := copyStart.Load(); cs != nil {
-		durationHistogram.Record(ctx, time.Since(*cs).Milliseconds(), phaseCopyAttr)
+		copyDuration := time.Since(*cs)
+		copyStartDelay := cs.Sub(runStart)
+		durationHistogram.Record(ctx, copyDuration.Milliseconds(), phaseCopyAttr)
+		durationHistogram.Record(ctx, copyStartDelay.Milliseconds(), phaseCopyStartDelayAttr)
+		span.SetAttributes(
+			attribute.Float64("prefetch.copy_ms", float64(copyDuration)/float64(time.Millisecond)),
+			attribute.Float64("prefetch.copy_start_delay_ms", float64(copyStartDelay)/float64(time.Millisecond)),
+		)
 	}
-	durationHistogram.Record(ctx, time.Since(runStart).Milliseconds(), phaseTotalAttr)
+	totalDuration := time.Since(runStart)
+	durationHistogram.Record(ctx, totalDuration.Milliseconds(), phaseTotalAttr)
+	span.SetAttributes(attribute.Float64("prefetch.total_ms", float64(totalDuration)/float64(time.Millisecond)))
 
 	p.logger.Debug(ctx, "prefetch: completed",
-		zap.Uint64("fetched", fetchedCount.Load()),
-		zap.Uint64("copied", copiedCount.Load()),
-		zap.Uint64("fetch_skipped", fetchSkippedCount.Load()),
-		zap.Uint64("copy_skipped", copySkippedCount.Load()),
+		zap.Uint64("fetched", fetched),
+		zap.Uint64("copied", copied),
+		zap.Uint64("fetch_skipped", fetchSkipped),
+		zap.Uint64("copy_skipped", copySkipped),
 		zap.Int("total", totalPages),
 	)
 
@@ -296,6 +322,9 @@ func (p *Prefetcher) startCopyWorkers(
 
 	for range maxCopyWorkers {
 		copyWorkerWg.Go(func() {
+			activeCopyWorkers.Add(1)
+			defer activeCopyWorkers.Add(-1)
+
 			p.copyWorker(ctx, cancelRun, copyCh, copiedCount, copySkippedCount)
 		})
 	}

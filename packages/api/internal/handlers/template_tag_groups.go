@@ -13,7 +13,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
@@ -104,7 +103,7 @@ func (a *APIStore) GetTemplatesTemplateIDTagsCount(c *gin.Context, templateID ap
 		return
 	}
 
-	total, err := a.sqlcDB.Dashboard.CountTemplateTags(ctx, templateID)
+	total, err := a.sqlcDB.CountTemplateTags(ctx, templateID)
 	if err != nil {
 		logger.L().Error(
 			ctx,
@@ -140,7 +139,7 @@ func (a *APIStore) GetTemplatesTemplateIDTagsExists(c *gin.Context, templateID a
 	}
 
 	normalizedTag := tags[0]
-	exists, err := a.sqlcDB.Dashboard.CheckReadyTemplateTagExists(ctx, dashboardqueries.CheckReadyTemplateTagExistsParams{
+	exists, err := a.sqlcDB.CheckReadyTemplateTagExists(ctx, queries.CheckReadyTemplateTagExistsParams{
 		TemplateID: templateID,
 		Tag:        normalizedTag,
 	})
@@ -211,7 +210,7 @@ func (a *APIStore) listTemplateTagGroups(
 ) ([]tagGroupRow, error) {
 	switch sort {
 	case tagGroupsSortLatestDesc:
-		rows, err := a.sqlcDB.Dashboard.ListTemplateTagGroupsByLatestDesc(ctx, dashboardqueries.ListTemplateTagGroupsByLatestDescParams{
+		rows, err := a.sqlcDB.ListTemplateTagGroupsByLatestDesc(ctx, queries.ListTemplateTagGroupsByLatestDescParams{
 			TemplateID:             templateID,
 			Search:                 search,
 			CursorTime:             cursorTime,
@@ -238,7 +237,7 @@ func (a *APIStore) listTemplateTagGroups(
 		return out, nil
 
 	case tagGroupsSortLatestAsc:
-		rows, err := a.sqlcDB.Dashboard.ListTemplateTagGroupsByLatestAsc(ctx, dashboardqueries.ListTemplateTagGroupsByLatestAscParams{
+		rows, err := a.sqlcDB.ListTemplateTagGroupsByLatestAsc(ctx, queries.ListTemplateTagGroupsByLatestAscParams{
 			TemplateID:             templateID,
 			Search:                 search,
 			CursorTime:             cursorTime,
@@ -265,7 +264,7 @@ func (a *APIStore) listTemplateTagGroups(
 		return out, nil
 
 	case tagGroupsSortNameAsc:
-		rows, err := a.sqlcDB.Dashboard.ListTemplateTagGroupsByNameAsc(ctx, dashboardqueries.ListTemplateTagGroupsByNameAscParams{
+		rows, err := a.sqlcDB.ListTemplateTagGroupsByNameAsc(ctx, queries.ListTemplateTagGroupsByNameAscParams{
 			TemplateID:             templateID,
 			Search:                 search,
 			CursorTag:              cursorTag,
@@ -291,7 +290,7 @@ func (a *APIStore) listTemplateTagGroups(
 		return out, nil
 
 	case tagGroupsSortNameDesc:
-		rows, err := a.sqlcDB.Dashboard.ListTemplateTagGroupsByNameDesc(ctx, dashboardqueries.ListTemplateTagGroupsByNameDescParams{
+		rows, err := a.sqlcDB.ListTemplateTagGroupsByNameDesc(ctx, queries.ListTemplateTagGroupsByNameDescParams{
 			TemplateID:             templateID,
 			Search:                 search,
 			CursorTag:              cursorTag,

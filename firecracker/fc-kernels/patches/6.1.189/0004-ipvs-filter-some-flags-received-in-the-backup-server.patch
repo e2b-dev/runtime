@@ -1,0 +1,98 @@
+From d7d33c9efa9d1a2f244a1a64ec9b540b0f8975a0 Mon Sep 17 00:00:00 2001
+From: Julian Anastasov <ja@ssi.bg>
+Subject: [PATCH] ipvs: filter some flags received in the backup server
+
+ipvs: filter some flags received in the backup server
+
+[ Upstream commit f96e91748f6304668fe647e686d199d7207d36f1 ]
+
+While the IPVS SYNC protocol is not secure by design
+we can still protect the backup server from messages that
+can wreak havoc.
+
+This commit addresses problems from received connection flags
+or their combinations. We now drop messages as follows:
+
+1. the NO_CPORT+TEMPLATE combination allows lookups for normal
+connections to hit template which can break in many ways.
+While the master does not sync connections with NO_CPORT flag,
+i.e. before they are established, we still accept NO_CPORT
+without TEMPLATE.
+
+2. ONE_PACKET: it is not sent by master, so we do not
+expect it in backup. Before now it was ignored by
+IP_VS_CONN_F_BACKUP_MASK for protocol v1 while protocol
+v0 created connections that are not hashed and dropped
+immediately. Better to apply the IP_VS_CONN_F_BACKUP_MASK
+also to the flags from v0 messages for consistency with v1.
+
+Fixes: 87375ab47cd0 ("[IPVS]: ip_vs_ftp breaks connections using persistence")
+Signed-off-by: Julian Anastasov <ja@ssi.bg>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+
+---
+diff --git a/net/netfilter/ipvs/ip_vs_sync.c b/net/netfilter/ipvs/ip_vs_sync.c
+--- a/net/netfilter/ipvs/ip_vs_sync.c
++++ b/net/netfilter/ipvs/ip_vs_sync.c
+@@ -950,6 +950,21 @@ static void ip_vs_proc_conn(struct netns_ipvs *ipvs, struct ip_vs_conn_param *pa
+ 	ip_vs_conn_put(cp);
+ }
+ 
++/* Check for incompatible flags */
++static bool ip_vs_sync_validate_flags(u32 flags)
++{
++	/* We do not expect NO_CPORT, especially to allow lookups
++	 * to hit templates
++	 */
++	if (flags & IP_VS_CONN_F_NO_CPORT) {
++		if (flags & IP_VS_CONN_F_TEMPLATE)
++			return false;
++	}
++	if (flags & IP_VS_CONN_F_ONE_PACKET)
++		return false;
++	return true;
++}
++
+ /*
+  *  Process received multicast message for Version 0
+  */
+@@ -973,8 +988,7 @@ static void ip_vs_process_message_v0(struct netns_ipvs *ipvs, const char *buffer
+ 			return;
+ 		}
+ 		s = (struct ip_vs_sync_conn_v0 *) p;
+-		flags = ntohs(s->flags) | IP_VS_CONN_F_SYNC;
+-		flags &= ~IP_VS_CONN_F_HASHED;
++		flags = ntohs(s->flags);
+ 		if (flags & IP_VS_CONN_F_SEQ_MASK) {
+ 			opt = (struct ip_vs_sync_conn_options *)&s[1];
+ 			p += FULL_CONN_SIZE;
+@@ -987,6 +1001,13 @@ static void ip_vs_process_message_v0(struct netns_ipvs *ipvs, const char *buffer
+ 			p += SIMPLE_CONN_SIZE;
+ 		}
+ 
++		if (!ip_vs_sync_validate_flags(flags)) {
++			IP_VS_DBG(2, "BACKUP v0, Invalid flags 0x%X\n", flags);
++			continue;
++		}
++		flags &= IP_VS_CONN_F_BACKUP_MASK;
++		flags |= IP_VS_CONN_F_SYNC;
++
+ 		state = ntohs(s->state);
+ 		if (!(flags & IP_VS_CONN_F_TEMPLATE)) {
+ 			pp = ip_vs_proto_get(s->protocol);
+@@ -1142,7 +1163,13 @@ static inline int ip_vs_proc_sync_conn(struct netns_ipvs *ipvs, __u8 *p, __u8 *m
+ 	}
+ 
+ 	/* Get flags and Mask off unsupported */
+-	flags  = ntohl(s->v4.flags) & IP_VS_CONN_F_BACKUP_MASK;
++	flags = ntohl(s->v4.flags);
++	if (!ip_vs_sync_validate_flags(flags)) {
++		IP_VS_DBG(3, "BACKUP, Invalid flags 0x%X\n", flags);
++		retc = 25;
++		goto out;
++	}
++	flags &= IP_VS_CONN_F_BACKUP_MASK;
+ 	flags |= IP_VS_CONN_F_SYNC;
+ 	state = ntohs(s->v4.state);
+ 

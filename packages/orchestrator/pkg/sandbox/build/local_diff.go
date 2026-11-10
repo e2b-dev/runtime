@@ -131,12 +131,24 @@ func (b *localDiff) Close() error {
 	return b.cache.Close()
 }
 
-func (b *localDiff) ReadAt(_ context.Context, p []byte, off int64, _ *storage.FrameTable) (int, error) {
-	return b.cache.ReadAt(p, off)
+// A local diff's bytes are on this node, in its cache file or its pause's
+// memfd, so a read is reported to the caller as served from the local cache.
+func (b *localDiff) ReadAt(ctx context.Context, p []byte, off int64, _ *storage.FrameTable) (int, error) {
+	n, err := b.cache.ReadAt(p, off)
+	if err == nil {
+		storage.ReportSource(ctx, storage.SourceMmap)
+	}
+
+	return n, err
 }
 
-func (b *localDiff) Slice(_ context.Context, off, length int64, _ *storage.FrameTable) ([]byte, error) {
-	return b.cache.Slice(off, length)
+func (b *localDiff) Slice(ctx context.Context, off, length int64, _ *storage.FrameTable) ([]byte, error) {
+	s, err := b.cache.Slice(off, length)
+	if err == nil {
+		storage.ReportSource(ctx, storage.SourceMmap)
+	}
+
+	return s, err
 }
 
 func (b *localDiff) Size(_ context.Context) (int64, error) {

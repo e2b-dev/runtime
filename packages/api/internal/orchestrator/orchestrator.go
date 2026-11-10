@@ -34,8 +34,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-const statusLogInterval = time.Second * 20
-
 // trackedWorkBound is the longest a tracked pause can hold its count: the
 // pause budget, then the terminal build-status write, which opens a fresh
 // budget once the pause context has expired. A tracked resume create fits
@@ -60,6 +58,7 @@ type Orchestrator struct {
 	httpClient                    *http.Client
 	nodeDiscovery                 servicediscovery.Discoverer
 	sandboxStore                  *sandbox.Store
+	sandboxEvictor                *evictor.Evictor
 	nodes                         *smap.Map[*nodemanager.Node]
 	placementAlgorithm            *placement.BestOfK
 	featureFlagsClient            *featureflags.Client
@@ -74,7 +73,9 @@ type Orchestrator struct {
 	createdSandboxesCounter       metric.Int64Counter
 	resumeOriginNodeRemapCounter  metric.Int64Counter
 	pauseRefusalRestoreCounter    metric.Int64Counter
+	networkUpdateUnstoredCounter  metric.Int64Counter
 	noCeilingPlacementsCounter    metric.Int64Counter
+	featureUnsupportedCounter     metric.Int64Counter
 	teamMetricsObserver           *metrics.TeamObserver
 	accessTokenGenerator          *sandbox.AccessTokenGenerator
 	createdCounter                metric.Int64Counter
@@ -219,6 +220,8 @@ func New(
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
+			EndPoweredOffSandbox:     o.endPoweredOffSandbox,
+			EndEndedSandbox:          o.endEndedSandbox,
 		},
 	)
 
@@ -230,6 +233,9 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox evictor: %w", err)
 	}
+	// Set before the sync starts, which is the only caller of
+	// endPoweredOffSandbox.
+	o.sandboxEvictor = sandboxEvictor
 	go sandboxEvictor.Start(ctx)
 
 	teamMetricsObserver, err := metrics.NewTeamObserver(ctx, o.sandboxStore)
@@ -249,8 +255,7 @@ func New(
 		return nil, fmt.Errorf("failed to setup metrics: %w", err)
 	}
 
-	go o.startStatusLogging(ctx)
-	go o.updateBestOfKConfig(ctx)
+	go o.refreshFlagConfig(ctx)
 
 	return &o, nil
 }
@@ -259,56 +264,6 @@ func New(
 // initial cluster registry gate, and projected those snapshots into placement.
 func (o *Orchestrator) StartupReady() <-chan struct{} {
 	return o.startup.Ready()
-}
-
-func (o *Orchestrator) startStatusLogging(ctx context.Context) {
-	ticker := time.NewTicker(statusLogInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			logger.L().Info(ctx, "Stopping status logging")
-
-			return
-		case <-ticker.C:
-			connectedNodes := make([]map[string]any, 0, o.nodes.Count())
-			templateManagers := make([]map[string]any, 0)
-
-			for _, nodeItem := range o.nodes.Items() {
-				if nodeItem == nil {
-					connectedNodes = append(connectedNodes, map[string]any{
-						"id": "nil",
-					})
-				} else {
-					connectedNodes = append(connectedNodes, map[string]any{
-						"id":        nodeItem.ID,
-						"status":    nodeItem.Status(),
-						"sandboxes": nodeItem.Metrics().SandboxCount,
-					})
-				}
-			}
-
-			for _, cluster := range o.clusters.GetClusters() {
-				for _, templateManager := range cluster.GetTemplateBuilders() {
-					info := templateManager.GetInfo()
-					templateManagers = append(templateManagers, map[string]any{
-						"cluster_id":          templateManager.ClusterID,
-						"node_id":             templateManager.NodeID,
-						"service_instance_id": info.ServiceInstanceID,
-						"status":              info.Status.String(),
-					})
-				}
-			}
-
-			logger.L().Info(ctx, "API internal status",
-				zap.Int("nodes_count", o.nodes.Count()),
-				zap.Any("nodes", connectedNodes),
-				zap.Int("template_managers_count", len(templateManagers)),
-				zap.Any("template_managers", templateManagers),
-			)
-		}
-	}
 }
 
 // TrackWork registers an operation that outlives its caller. It reports false
@@ -398,9 +353,10 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// updateBestOfKConfig periodically updates the BestOfK algorithm configuration from feature flags
-func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second) // Check for config updates every 30 seconds
+// refreshFlagConfig re-reads the BestOfK placement configuration from its
+// flags every 30 s.
+func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -408,10 +364,7 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			config := getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages)
-
-			// Update the config
-			o.placementAlgorithm.UpdateConfig(config)
+			o.placementAlgorithm.UpdateConfig(getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages))
 		}
 	}
 }

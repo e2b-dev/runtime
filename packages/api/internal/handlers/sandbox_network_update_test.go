@@ -13,7 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 // An update with a DNS server that is not an IP address is refused before the
@@ -27,7 +27,7 @@ func TestPutSandboxNetwork_InvalidDnsServer(t *testing.T) {
 		strings.NewReader(`{"allowOut":["example.com"],"denyOut":["0.0.0.0/0"],"dnsServers":["dns.example.com"]}`))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team: &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 	})
 
 	store := &APIStore{}

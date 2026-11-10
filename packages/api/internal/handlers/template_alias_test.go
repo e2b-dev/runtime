@@ -16,8 +16,8 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
@@ -35,7 +35,7 @@ func queryTemplateAliasForTeam(
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/templates/aliases/%s", alias), nil)
 	auth.SetTeamInfoForTest(t, c, &types.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   teamID,
 			Slug: teamSlug,
 		},
@@ -70,7 +70,7 @@ func TestQueryNotExistingTemplateAlias(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/templates/aliases/%s", alias), nil)
 	auth.SetTeamInfoForTest(t, c, &types.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   teamID,
 			Slug: teamSlug,
 		},
@@ -107,7 +107,7 @@ func TestQueryExistingTemplateAlias(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/templates/aliases/%s", alias), nil)
 	auth.SetTeamInfoForTest(t, c, &types.Team{
-		Team: &authqueries.Team{
+		Team: &dbtypes.Team{
 			ID:   teamID,
 			Slug: teamSlug,
 		},
@@ -153,7 +153,7 @@ func TestQueryExistingTemplateAliasAsNotOwnerTeam(t *testing.T) {
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/templates/aliases/%s", alias), nil)
 	auth.SetTeamInfoForTest(t, c,
 		&types.Team{
-			Team: &authqueries.Team{
+			Team: &dbtypes.Team{
 				ID:   foreignTeamID,
 				Slug: foreignTeamSlug,
 			},

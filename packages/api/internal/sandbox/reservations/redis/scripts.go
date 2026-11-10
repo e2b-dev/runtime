@@ -12,6 +12,11 @@ const (
 	reserveResultAlreadyInStorage = 1
 	reserveResultAlreadyPending   = 2
 	reserveResultLimitExceeded    = 3
+	reserveResultKilled           = 4
+
+	// ClaimKill result codes
+	claimKillResultClaimed  = 0
+	claimKillResultInFlight = 1
 )
 
 var (
@@ -22,6 +27,7 @@ var (
 	// KEYS[1] = storage index key (sandbox:storage:{teamID}:index)
 	// KEYS[2] = pending zset key (sandbox:storage:{teamID}:reservations:pending)
 	// KEYS[3] = result key (sandbox:storage:{teamID}:reservations:sandboxID:result)
+	// KEYS[4] = kill-claim key (sandbox:storage:{teamID}:reservations:sandboxID:killed)
 	// ARGV[1] = sandboxID
 	// ARGV[2] = limit (-1 means no limit)
 	// ARGV[3] = current Unix timestamp (seconds, float)
@@ -32,9 +38,14 @@ var (
 	//   1 = ALREADY_IN_STORAGE (sandbox exists in storage index)
 	//   2 = ALREADY_PENDING (sandbox already in pending zset)
 	//   3 = LIMIT_EXCEEDED (total count >= limit)
+	//   4 = KILLED (a delete claimed this sandbox ID)
 	reserveScript = redis.NewScript(fmt.Sprintf(`
 		-- Clean up stale pending entries (score < cutoff)
 		redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[4])
+
+		if redis.call('EXISTS', KEYS[4]) == 1 then
+			return %d
+		end
 
 		-- Check if sandbox already exists in storage index
 		if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then
@@ -61,7 +72,41 @@ var (
 		-- Reserve: add to pending zset with current timestamp as score
 		redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
 		return %d
-	`, reserveResultAlreadyInStorage, reserveResultAlreadyPending, reserveResultLimitExceeded, reserveResultReserved))
+	`, reserveResultKilled, reserveResultAlreadyInStorage, reserveResultAlreadyPending, reserveResultLimitExceeded, reserveResultReserved))
+
+	// claimKillScript lets a delete of a paused sandbox win against resumes.
+	// A resume holds its reservation until it has published the sandbox, so a
+	// pending entry or an index entry means the delete must back off. Otherwise
+	// it adds its claim ID to a set that reserveScript refuses while non-empty.
+	// The set lets overlapping deletes each release only their own claim.
+	//
+	// Stale entries are purged first so a crashed API instance cannot leave
+	// the sandbox undeletable.
+	//
+	// KEYS[1] = storage index key
+	// KEYS[2] = pending zset key
+	// KEYS[3] = kill-claim set key
+	// ARGV[1] = sandboxID
+	// ARGV[2] = claim TTL in seconds
+	// ARGV[3] = stale cutoff Unix timestamp (now - StaleTTL)
+	// ARGV[4] = claim ID
+	//
+	// Returns:
+	//   0 = CLAIMED (safe to delete the snapshot)
+	//   1 = IN_FLIGHT (a resume is pending or the sandbox is running)
+	claimKillScript = redis.NewScript(fmt.Sprintf(`
+		redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
+
+		if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then
+			return %d
+		end
+		if redis.call('ZSCORE', KEYS[2], ARGV[1]) then
+			return %d
+		end
+		redis.call('SADD', KEYS[3], ARGV[4])
+		redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))
+		return %d
+	`, claimKillResultInFlight, claimKillResultInFlight, claimKillResultClaimed))
 
 	// finishStartScript removes a sandbox from the pending zset and sets the result key.
 	// KEYS[1] = pending zset key

@@ -19,8 +19,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetTemplatesTemplateIDTagsGroups_ReturnsReadyAssignmentsLatestFirst(t *testing.T) {
@@ -627,7 +627,7 @@ func newTemplateTagsTestContext(t *testing.T, ctx context.Context, teamID uuid.U
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team: &authqueries.Team{ID: teamID},
+		Team: &dbtypes.Team{ID: teamID},
 	})
 
 	return recorder, ginCtx

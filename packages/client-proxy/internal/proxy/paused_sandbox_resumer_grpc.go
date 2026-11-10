@@ -114,12 +114,7 @@ func resumeRoute(resp *proxygrpc.SandboxResumeResponse) *catalog.SandboxInfo {
 	route := &catalog.SandboxInfo{OrchestratorIP: strings.TrimSpace(resp.GetOrchestratorIp())}
 	if placement := resp.GetNetworkPlacement(); placement != nil {
 		route.ExecutionID = placement.GetExecutionId()
-		route.NetworkPlacement = &catalog.NetworkPlacement{
-			NetworkMode:    catalog.NetworkMode(placement.GetNetworkMode()),
-			RouterID:       placement.GetRouterId(),
-			IngressAddress: placement.GetIngressAddress(),
-			IngressPort:    placement.GetIngressPort(),
-		}
+		route.NetworkPlacement = catalog.NetworkPlacementOf(placement)
 	}
 
 	return route

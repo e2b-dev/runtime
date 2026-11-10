@@ -69,9 +69,9 @@ func TestRedisStore(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, stateMismatch, mismatch.state)
 		want := cachedResponse{Status: 503, Headers: http.Header{"Content-Type": {"application/json"}}, Body: []byte{0, 255, '\n'}}
-		require.ErrorIs(t, s.complete(t.Context(), key, "other", want), errOwnershipLost)
+		require.ErrorIs(t, s.complete(t.Context(), key, "other", want, false), errOwnershipLost)
 		time.Sleep(20 * time.Millisecond)
-		require.NoError(t, s.complete(t.Context(), key, winner, want))
+		require.NoError(t, s.complete(t.Context(), key, winner, want, false))
 		encoded, err := client.HGet(t.Context(), key, "response").Result()
 		require.NoError(t, err)
 		require.JSONEq(t, `{"status":503,"body":"AP8K","headers":{"Content-Type":["application/json"]}}`, encoded)
@@ -85,7 +85,7 @@ func TestRedisStore(t *testing.T) {
 		replayedExpiry, err := client.PExpireTime(t.Context(), key).Result()
 		require.NoError(t, err)
 		require.Equal(t, expiresAt, replayedExpiry)
-		require.ErrorIs(t, s.complete(t.Context(), key, winner, cachedResponse{Status: 200}), errOwnershipLost)
+		require.ErrorIs(t, s.complete(t.Context(), key, winner, cachedResponse{Status: 200}, false), errOwnershipLost)
 	})
 
 	for _, state := range []recordState{statePending, stateComplete} {
@@ -96,21 +96,21 @@ func TestRedisStore(t *testing.T) {
 			_, err := s.reserve(t.Context(), key, "hash", "old", 60, responseDeadline())
 			require.NoError(t, err)
 			if state == stateComplete {
-				require.NoError(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}))
+				require.NoError(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}, false))
 			}
 			// Redis drops an expired key on its next access, so a delete is what a lapsed retention looks like to the store.
 			require.NoError(t, client.Del(t.Context(), key).Err())
-			require.ErrorIs(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}), errOwnershipLost)
+			require.ErrorIs(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}, false), errOwnershipLost)
 			require.Zero(t, client.Exists(t.Context(), key).Val())
 			result, err := s.reserve(t.Context(), key, "new-hash", "new", 60, responseDeadline())
 			require.NoError(t, err)
 			require.Equal(t, stateOwner, result.state)
-			require.ErrorIs(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}), errOwnershipLost)
+			require.ErrorIs(t, s.complete(t.Context(), key, "old", cachedResponse{Status: 201}, false), errOwnershipLost)
 			result, err = s.reserve(t.Context(), key, "new-hash", "retry", 3600, responseDeadline())
 			require.NoError(t, err)
 			require.Equal(t, statePending, result.state)
 			want := cachedResponse{Status: 202}
-			require.NoError(t, s.complete(t.Context(), key, "new", want))
+			require.NoError(t, s.complete(t.Context(), key, "new", want, false))
 			result, err = s.reserve(t.Context(), key, "new-hash", "retry", 3600, responseDeadline())
 			require.NoError(t, err)
 			require.Equal(t, stateComplete, result.state)
@@ -128,12 +128,12 @@ func TestRedisStore(t *testing.T) {
 		require.NoError(t, client.Set(t.Context(), key, "wrong type", time.Minute).Err())
 		_, err = s.reserve(t.Context(), key, "hash", "owner", 60, responseDeadline())
 		require.Error(t, err)
-		require.Error(t, s.complete(t.Context(), key, "owner", cachedResponse{Status: 201}))
+		require.Error(t, s.complete(t.Context(), key, "owner", cachedResponse{Status: 201}, false))
 		for _, values := range [][]string{
 			{},
-			{"invalid", "", "", "", ""},
-			{"false", "hash", "invalid", "", ""},
-			{"false", "hash", "", "1000", "invalid"},
+			{"invalid", "", "", "", "", ""},
+			{"false", "hash", "invalid", "", "", ""},
+			{"false", "hash", "", "1000", "invalid", ""},
 		} {
 			_, err := decodeRecord(values, "hash")
 			require.Error(t, err)
@@ -156,6 +156,64 @@ func TestRedisDeadlineDuringSocketRead(t *testing.T) {
 	require.Less(t, time.Since(start), 300*time.Millisecond)
 }
 
+func TestLegacyRecordsRemainReplayOnly(t *testing.T) {
+	t.Parallel()
+	client := redisutils.SetupInstance(t)
+	s := &redisStore{client: client}
+	for _, tc := range []struct {
+		name     string
+		encoded  string
+		response cachedResponse
+	}{
+		{
+			name:     "success",
+			encoded:  `{"status":201,"body":"Y3JlYXRlZA==","headers":{"Content-Type":["text/plain"]}}`,
+			response: cachedResponse{Status: http.StatusCreated, Body: []byte("created"), Headers: http.Header{"Content-Type": {"text/plain"}}},
+		},
+		{
+			name:     "permanent failure",
+			encoded:  `{"status":400,"body":"aW52YWxpZA==","headers":{"Should-Retry":["false"]}}`,
+			response: cachedResponse{Status: http.StatusBadRequest, Body: []byte("invalid"), Headers: http.Header{"Should-Retry": {"false"}}},
+		},
+		{
+			name:     "retryable failure",
+			encoded:  `{"status":503,"body":"YnVzeQ==","headers":{"Should-Retry":["true"]}}`,
+			response: cachedResponse{Status: http.StatusServiceUnavailable, Body: []byte("busy"), Headers: http.Header{"Should-Retry": {"true"}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			key := recordKey(uuid.NewString(), "key")
+			// Legacy hashes have no state field; their retry hints never authorize re-execution.
+			fields := map[string]string{
+				"fingerprint":          "hash",
+				"owner":                "legacy-owner",
+				"expected_response_at": "1",
+				"response":             tc.encoded,
+			}
+			require.NoError(t, client.HSet(t.Context(), key, fields).Err())
+			require.NoError(t, client.Expire(t.Context(), key, time.Hour).Err())
+			expiresAt, err := client.PExpireTime(t.Context(), key).Result()
+			require.NoError(t, err)
+			result, err := s.reserve(t.Context(), key, "hash", "new-owner", 3600, time.Now().Add(time.Minute))
+			require.NoError(t, err)
+			assert.Equal(t, stateComplete, result.state)
+			assert.Equal(t, tc.response, result.response)
+			mismatch, err := s.reserve(t.Context(), key, "changed", "new-owner", 3600, time.Now().Add(time.Minute))
+			require.NoError(t, err)
+			assert.Equal(t, stateMismatch, mismatch.state)
+			require.ErrorIs(t, s.complete(t.Context(), key, "legacy-owner", cachedResponse{Status: http.StatusCreated}, true), errOwnershipLost)
+			require.NoError(t, s.release(t.Context(), key, "legacy-owner"))
+			after, err := client.HGetAll(t.Context(), key).Result()
+			require.NoError(t, err)
+			assert.Equal(t, fields, after)
+			afterExpiry, err := client.PExpireTime(t.Context(), key).Result()
+			require.NoError(t, err)
+			assert.Equal(t, expiresAt, afterExpiry)
+		})
+	}
+}
+
 type faultStore struct {
 	store
 
@@ -172,7 +230,7 @@ func (s faultStore) reserve(ctx context.Context, key, digest, owner string, rete
 	return s.store.reserve(ctx, key, digest, owner, retentionSeconds, responseDeadline)
 }
 
-func (s faultStore) complete(ctx context.Context, key, owner string, result cachedResponse) error {
+func (s faultStore) complete(ctx context.Context, key, owner string, result cachedResponse, retryable bool) error {
 	if s.beforeComplete != nil {
 		s.beforeComplete(ctx)
 	}
@@ -180,5 +238,5 @@ func (s faultStore) complete(ctx context.Context, key, owner string, result cach
 		return s.completeErr
 	}
 
-	return errors.Join(s.store.complete(ctx, key, owner, result), s.completeErr)
+	return errors.Join(s.store.complete(ctx, key, owner, result, retryable), s.completeErr)
 }

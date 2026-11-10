@@ -2,6 +2,7 @@
 SELECT sqlc.embed(e),
        COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) as build_id,
        COALESCE(eb.vcpu, 0) as build_vcpu,
+       eb.max_vcpu as build_max_vcpu,
        COALESCE(eb.ram_mb, 0) as build_ram_mb,
        eb.total_disk_size_mb as build_total_disk_size_mb,
        eb.envd_version as build_envd_version,
@@ -35,6 +36,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) eb ON TRUE
 WHERE
-  e.team_id = $1
+  e.team_id = sqlc.arg(team_id)
   AND e.source = 'template'
-ORDER BY e.created_at ASC;
+ORDER BY e.created_at ASC
+LIMIT sqlc.narg(limit_plus_one)::int;

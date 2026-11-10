@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -28,6 +30,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/synchronization"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/clusters")
@@ -48,12 +51,35 @@ type Cluster struct {
 	instances       *smap.Map[*Instance]
 	synchronization *synchronization.Synchronize[servicediscovery.Instance, *Instance]
 	resources       ClusterResource
+
+	// connections are shared by a remote cluster's instances; nil for the
+	// local cluster, whose instances each hold their own.
+	connections *remoteConnections
 }
 
 var (
 	ErrTemplateBuilderNotFound          = errors.New("template builder not found")
 	ErrAvailableTemplateBuilderNotFound = errors.New("available template builder not found")
+	ErrTemplateBuilderVersionTooOld     = errors.New("no available template builder at the required version")
 )
+
+// ResizableTemplateBuildsMinVersion is the first orchestrator release whose
+// template builder honours TemplateConfig.maxVCpuCount; an older one drops the
+// field and builds a fixed-size template.
+var ResizableTemplateBuildsMinVersion = semver.New(0, 16, 202610191109, "", "")
+
+// InstanceAtLeast reports whether an instance's service version is at or above
+// minVersion. An empty or unparsable version fails the check. Compared without
+// the pre-release: distributions stamp a suffix onto the shared release
+// version, which semver sorts below the bare release.
+func InstanceAtLeast(version string, minVersion *semver.Version) bool {
+	parsed, err := semver.NewVersion(version)
+	if err != nil {
+		return false
+	}
+
+	return !semver.New(parsed.Major(), parsed.Minor(), parsed.Patch(), "", "").LessThan(minVersion)
+}
 
 func NewCluster(
 	clusterID uuid.UUID,
@@ -89,7 +115,12 @@ func newLocalCluster(
 	instances := smap.New[*Instance]()
 	instanceCreation := func(ctx context.Context, item servicediscovery.Instance) (*Instance, error) {
 		// For local cluster we are doing direct connection to instance IP and API port and without additional cluster auth.
-		return newInstance(ctx, tel, nil, clusterID, item, item.Address(), false, localCreds)
+		client, err := createClient(tel, item.Address(), false, localCreds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cluster instance client: %w", err)
+		}
+
+		return newInstance(ctx, clusterID, item, client)
 	}
 
 	store := instancesSyncStore{clusterID: clusterID, instances: instances, discovery: storeDiscovery, instanceCreation: instanceCreation, onInsert: onInstanceJoined}
@@ -114,15 +145,10 @@ func remoteInstanceAuthorization(secret string, tls bool, sd servicediscovery.In
 	return &instanceAuthorization{secret: secret, tls: tls, serviceInstanceID: sd.WorkloadID}
 }
 
-func newRemoteCluster(
-	tel *telemetry.Client,
-	endpoint string,
-	endpointTLS bool,
-	secret string,
-	clusterID uuid.UUID,
-	sandboxDomain *string,
-	authOrgID string,
-) (*Cluster, error) {
+func newRemoteCluster(tel *telemetry.Client, featureFlags *featureflags.Client, cluster queries.Cluster) (*Cluster, error) {
+	clusterID, endpoint, endpointTLS, secret := cluster.ID, cluster.Endpoint, cluster.EndpointTls, cluster.Token
+	authOrgID := utils.FromPtr(cluster.AuthOrgID)
+
 	scheme := "http"
 	if endpointTLS {
 		scheme = "https"
@@ -150,10 +176,16 @@ func newRemoteCluster(
 	}
 
 	instances := smap.New[*Instance]()
+	connections := newRemoteConnections(tel, featureFlags, clusterID, endpoint, endpointTLS, insecure.NewCredentials())
 	instanceCreation := func(ctx context.Context, item servicediscovery.Instance) (*Instance, error) {
 		// A remote cluster is reached through an endpoint acting as a gRPC proxy,
 		// which handles auth and routing for us.
-		return newInstance(ctx, tel, remoteInstanceAuthorization(secret, endpointTLS, item), clusterID, item, endpoint, endpointTLS, insecure.NewCredentials())
+		client, err := connections.client(ctx, remoteInstanceAuthorization(secret, endpointTLS, item))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cluster instance client: %w", err)
+		}
+
+		return newInstance(ctx, clusterID, item, client)
 	}
 
 	storeDiscovery := servicediscovery.NewRemote(httpClient)
@@ -161,13 +193,14 @@ func newRemoteCluster(
 
 	c := NewCluster(
 		clusterID,
-		sandboxDomain,
+		cluster.SandboxProxyDomain,
 		authOrgID,
 		instances,
 		synchronization.NewSynchronize("cluster-instances", "Cluster instances", store),
 		newRemoteClusterResourceProvider(clusterID, instances, httpClient),
 	)
 	c.edgeToken, c.endpoint, c.endpointTLS = secret, endpoint, endpointTLS
+	c.connections = connections
 
 	return c, nil
 }
@@ -212,6 +245,15 @@ func (c *Cluster) Close(ctx context.Context) error {
 
 	// Wait for all instances to be closed
 	wg.Wait()
+
+	if c.connections != nil {
+		if closeErr := c.connections.Close(); closeErr != nil {
+			logger.L().Error(ctx, "Failed to close remote cluster connections during cluster closing",
+				zap.Error(closeErr),
+				logger.WithClusterID(c.ID),
+			)
+		}
+	}
 
 	return nil
 }
@@ -302,14 +344,19 @@ func (c *Cluster) getRandomInstance(isMatch func(InstanceInfo, machineinfo.Machi
 	return nil, false
 }
 
-func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo) (*Instance, error) {
+// GetAvailableTemplateBuilder picks a builder matching expectedInfo. A non-nil
+// minVersion skips builders below it; when that is the only reason nothing
+// qualified, and no builder at the version is merely draining or unhealthy,
+// the error is ErrTemplateBuilderVersionTooOld.
+func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo, minVersion *semver.Version) (*Instance, error) {
 	_, span := tracer.Start(ctx, "template-builder-get-available-instance")
 	span.SetAttributes(telemetry.WithClusterID(c.ID))
 	defer span.End()
 
+	versionTooOld := false        // an available builder was skipped only for its version
+	unavailableAtVersion := false // a builder at the version exists but cannot take work now
 	instance, ok := c.getRandomInstance(func(info InstanceInfo, machineInfo machineinfo.MachineInfo) bool {
-		// Check availability and builder role
-		if !info.Status.CanAcceptNewRequests() || !info.IsBuilder {
+		if !info.IsBuilder {
 			return false
 		}
 
@@ -319,9 +366,23 @@ func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo 
 			return false
 		}
 
-		return true
+		atVersion := minVersion == nil || InstanceAtLeast(info.ServiceVersion, minVersion)
+		switch {
+		case !info.Status.CanAcceptNewRequests():
+			unavailableAtVersion = unavailableAtVersion || atVersion
+		case !atVersion:
+			versionTooOld = true
+		default:
+			return true
+		}
+
+		return false
 	})
 	if !ok {
+		if versionTooOld && !unavailableAtVersion {
+			return nil, ErrTemplateBuilderVersionTooOld
+		}
+
 		return nil, ErrAvailableTemplateBuilderNotFound
 	}
 

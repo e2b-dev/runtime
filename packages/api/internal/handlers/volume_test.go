@@ -12,7 +12,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
@@ -212,7 +212,7 @@ func TestGetVolumeType(t *testing.T) {
 					DefaultPersistentVolumeTypeByRegion: tt.regionVolumeType,
 				},
 			}
-			team := &types.Team{Team: &authqueries.Team{ID: uuid.New()}}
+			team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}}
 
 			assert.Equal(t, tt.expected, store.getVolumeType(t.Context(), team))
 		})

@@ -68,7 +68,7 @@ func TestFactoryNetworkReleaseKeepsCapturedLifecycle(t *testing.T) {
 	factory := &Factory{Sandboxes: registry, networkPool: pool}
 	cleanup := NewCleanup()
 	config := NewConfig(Config{Network: &orchestrator.SandboxNetworkConfig{}})
-	promise := factory.getNetworkSlot(t.Context(), cleanup, config, old.Runtime, old.LifecycleID)
+	promise, _, _ := factory.getNetworkSlot(t.Context(), cleanup, config, old.Runtime, old.LifecycleID)
 	slot, err := promise.Wait(t.Context())
 	require.NoError(t, err)
 	require.Same(t, old.Slot, slot)

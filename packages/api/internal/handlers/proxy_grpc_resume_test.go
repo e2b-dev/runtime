@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -13,15 +14,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
+	"github.com/e2b-dev/infra/packages/api/internal/oauth"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -66,6 +68,16 @@ func (s teamAuthServiceStub) GetTeamByID(context.Context, uuid.UUID) (*authtypes
 func newFilesystemOnlyResumeService(t *testing.T, backend *autoResumeBackendStub) (*SandboxService, string) {
 	t.Helper()
 
+	store, sandboxID := newFilesystemOnlyResumeStore(t, backend)
+
+	return NewSandboxService(store, false, nil), sandboxID
+}
+
+// newFilesystemOnlyResumeStore seeds the sandbox newFilesystemOnlyResumeService
+// serves and returns the store over the given backend.
+func newFilesystemOnlyResumeStore(t *testing.T, backend *autoResumeBackendStub) (*APIStore, string) {
+	t.Helper()
+
 	db := testutils.SetupDatabase(t)
 	redisClient := redis_utils.SetupInstance(t)
 
@@ -101,11 +113,11 @@ func newFilesystemOnlyResumeService(t *testing.T, backend *autoResumeBackendStub
 
 	store := &APIStore{
 		snapshotCache:             snapshotcache.NewSnapshotCache(db.SqlcClient, redisClient),
-		authService:               teamAuthServiceStub{team: &authtypes.Team{Team: &authqueries.Team{ID: teamID, Slug: "test-team"}}},
+		authService:               teamAuthServiceStub{team: &authtypes.Team{Team: &dbtypes.Team{ID: teamID, Slug: "test-team"}}},
 		autoResumeBackendOverride: backend,
 	}
 
-	return NewSandboxService(store, false, nil), sandboxID
+	return store, sandboxID
 }
 
 // A source that is still running after a filesystem-only snapshot template is
@@ -136,6 +148,61 @@ func TestResumeSandbox_PausedFilesystemOnlySnapshotIsRefused(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Contains(t, err.Error(), "filesystem-only snapshot must be resumed explicitly")
 	assert.Zero(t, backend.routed)
+}
+
+// verifierStub answers every token with fixed claims or a fixed error.
+type verifierStub struct {
+	claims oauth.Claims
+	err    error
+}
+
+func (v verifierStub) VerifyClaims(context.Context, string) (oauth.Claims, error) {
+	return v.claims, v.err
+}
+
+// The edge service checks the calling proxy's credentials before it looks the
+// sandbox up, and fails them as Unauthenticated even for a sandbox it holds:
+// PermissionDenied would tell the proxy the sandbox is here and refused.
+func TestResumeSandbox_EdgeCallerCredentialFailuresAreUnauthenticated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		md       metadata.MD
+		verifier oauth.Verifier
+	}{
+		{
+			name:     "missing bearer token",
+			md:       metadata.MD{},
+			verifier: verifierStub{claims: oauth.Claims{Scopes: []string{oauth.RequiredScope}}},
+		},
+		{
+			name:     "invalid bearer token",
+			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"),
+			verifier: verifierStub{err: errors.New("invalid token")},
+		},
+		{
+			name:     "token without the required scope",
+			md:       metadata.Pairs(proxygrpc.MetadataAuthorization, "Bearer token"),
+			verifier: verifierStub{claims: oauth.Claims{Scopes: []string{"other"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend := &autoResumeBackendStub{sbx: sandbox.Sandbox{State: sandbox.StateRunning}, resp: &proxygrpc.SandboxResumeResponse{OrchestratorIp: "10.0.0.1"}}
+			store, sandboxID := newFilesystemOnlyResumeStore(t, backend)
+			svc := NewSandboxService(store, true, tt.verifier)
+
+			ctx := metadata.NewIncomingContext(t.Context(), tt.md)
+			_, err := svc.ResumeSandbox(ctx, &proxygrpc.SandboxResumeRequest{SandboxId: sandboxID})
+			require.Error(t, err)
+			assert.Equal(t, codes.Unauthenticated, status.Code(err))
+			assert.Zero(t, backend.routed)
+		})
+	}
 }
 
 // The placement reaches a client over a real TCP gRPC connection, and a

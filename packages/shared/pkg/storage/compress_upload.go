@@ -198,10 +198,12 @@ func (p *part) addFrame(ctx context.Context, buf inputBuf, n int, pool *sync.Poo
 		}
 		c := pool.Get().(compressor)
 		out, err := c.compress(uncompressedData)
-		pool.Put(c)
 		if err != nil {
+			// The pool is shared across uploads; don't hand an encoder that
+			// failed mid-frame to the next one.
 			return err
 		}
+		pool.Put(c)
 		frameInPart.compressed = out
 		p.compressedSize.Add(int64(len(out)))
 		held.add(ctx, int64(cap(out)))
@@ -225,7 +227,7 @@ func compressStream(ctx context.Context, in io.Reader, cfg CompressConfig, uploa
 		}
 	}()
 
-	compressors, err := newCompressorPool(cfg)
+	compressors, err := sharedCompressorPool(cfg)
 	if err != nil {
 		return nil, [32]byte{}, err
 	}

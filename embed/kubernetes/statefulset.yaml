@@ -89,7 +89,7 @@ spec:
           image: clickhouse/clickhouse-server:25.8.30.16
           restartPolicy: Always
           env:
-            - { name: CLICKHOUSE_DB, value: default }
+            # No CLICKHOUSE_DB: see the compose service.
             - { name: CLICKHOUSE_USER, value: clickhouse }
             - { name: CLICKHOUSE_PASSWORD, value: clickhouse }
             - { name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT, value: "1" }
@@ -259,35 +259,13 @@ spec:
                 exit 2
               }
               E2B_API_KEY="$(cat /run/e2b/team-api-key)" exec node /app/build-base-template.mjs
-        # --- the dashboard: its backend, then the web UI. Last on purpose: a
-        # sidecar gates the next init container on its startup probe, and only
-        # `ready` should wait for the dashboard, as on compose ---
-        # dashboard-api holds the api's admin token (the same Secret key) and
-        # reads the same three stores on loopback. No identity provider is
-        # configured, so /v1/management answers 401; nothing here calls it.
-        - name: dashboard-api
-          image: E2B_DASHBOARD_API_IMAGE
-          restartPolicy: Always
-          env:
-            - { name: ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: e2b-api, key: ADMIN_TOKEN } } }
-            - { name: PORT, value: "3010" }
-            - { name: NODE_ID, value: dashboard-api }
-            - { name: ENVIRONMENT, value: local }
-            - { name: POSTGRES_CONNECTION_STRING, value: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" }
-            - { name: REDIS_URL, value: 127.0.0.1:6379 }
-            - { name: CLICKHOUSE_CONNECTION_STRING, value: "clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default" }
-            - { name: OTEL_COLLECTOR_GRPC_ENDPOINT, valueFrom: { configMapKeyRef: { name: e2b-settings, key: OTEL_COLLECTOR_GRPC_ENDPOINT } } }
-            - { name: AUTH_PROVIDER_CONFIG, value: '{"jwt":[]}' }
-          startupProbe:
-            httpGet: { host: 127.0.0.1, port: 3010, path: /health }
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 30
+        # --- the dashboard. Last on purpose: a sidecar gates the next init
+        # container on its startup probe, and only `ready` should wait for the
+        # dashboard, as on compose ---
         # The browser reaches sandboxes through client-proxy at the node's own
         # IP, the address ready prints; NODE_IP is declared first so the
         # $(NODE_IP) below expands. The image refuses E2B_SANDBOX_URL and the
-        # NEXT_PUBLIC_* names, so none is set. /api/health is 503 until
-        # dashboard-api answers, which is the readiness we want.
+        # NEXT_PUBLIC_* names, so none is set.
         - name: dashboard
           image: E2B_DASHBOARD_IMAGE
           restartPolicy: Always
@@ -297,7 +275,6 @@ spec:
             - { name: HOSTNAME, value: 0.0.0.0 }
             - { name: PUBLIC_E2B_DOMAIN, value: localhost }
             - { name: E2B_INFRA_API_URL, value: "http://127.0.0.1:3000" }
-            - { name: E2B_DASHBOARD_API_URL, value: "http://127.0.0.1:3010" }
             - { name: PUBLIC_SANDBOX_URL, value: "http://$(NODE_IP):3002" }
             - { name: DASHBOARD_COOKIE_SECURE, value: "false" }
           startupProbe:
