@@ -41,5 +41,6 @@ INSERT INTO public.project_limits (
 		MaxFreeDiskSizeMb:        51200,
 		ApiTeamRpsList:           40,
 		ApiTeamRpsDelete:         50,
+		MaxSecrets:               10,
 	}, body.Limits)
 }

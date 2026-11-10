@@ -206,6 +206,7 @@ func TestGRPCPausedSandboxResumer_ErrorCodeSurvivesTheWire(t *testing.T) {
 		permanent bool
 	}{
 		{proxygrpc.PlacementFeatureUnsupported, true},
+		{proxygrpc.SnapshotGuestAgentUnresponsive, true},
 		{proxygrpc.PlacementNoCompatibleNode, false},
 		{proxygrpc.PlacementCapacityUnavailable, false},
 	} {

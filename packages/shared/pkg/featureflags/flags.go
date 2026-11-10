@@ -255,6 +255,57 @@ var (
 	// sandboxes and when this flag is off.
 	InPlaceCheckpointFlag = NewBoolFlag("in-place-checkpoint", false)
 
+	// GuestRebootInPlaceFlag boots a sandbox whose guest reset itself (a
+	// reboot, or a kernel crash that restarts) again on its own disk and
+	// network slot, under the same sandbox and execution IDs, instead of
+	// stopping it. Read at the moment of the reset for a running sandbox, and
+	// at the start of a create or resume for a reset before envd answers. The
+	// fallback reads GUEST_REBOOT_IN_PLACE so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestRebootInPlaceFlag = NewBoolFlag("guest-reboot-in-place", envBoolOr("GUEST_REBOOT_IN_PLACE", false))
+
+	// GuestPowerOffEndFlag keeps a sandbox whose guest powered itself off,
+	// disk included, and lists it as powered off, so the API ends it with the
+	// sandbox's own timeout action: a kill, or a filesystem-only pause.
+	// Read when a cold boot, or a restore whose guest profile asks for it,
+	// decides whether to declare the ACPI power-off device, at an exit to
+	// decide whether to wait for the final guest counters, and again at the
+	// power-off. A process whose Firecracker took the device is held whatever
+	// the flag says then, so turning it off never costs that sandbox its disk.
+	// Off, a power-off of a process that did not take the device itself (a
+	// restore that sent no declaration, even when its snapshot's guest still
+	// has the device) stops the sandbox as a crash does.
+	// The fallback reads GUEST_POWEROFF_END so a deployment without
+	// LaunchDarkly can turn it on.
+	GuestPowerOffEndFlag = NewBoolFlag("guest-poweroff-end", envBoolOr("GUEST_POWEROFF_END", false))
+
+	// SandboxEndedOnNodeFlag lists a sandbox that ended on its node without
+	// being asked to (a crash, a reset that was not booted again) as ended for
+	// two minutes, so the API's sync ends its record with kill reason
+	// ended_on_node instead of keeping it running until its end time. A held
+	// power-off is listed under GuestPowerOffEndFlag whatever this says. Off,
+	// an unrequested end leaves the record as it did before. The fallback
+	// reads SANDBOX_ENDED_ON_NODE so a deployment without LaunchDarkly can
+	// turn it on.
+	SandboxEndedOnNodeFlag = NewBoolFlag("sandbox-ended-on-node", envBoolOr("SANDBOX_ENDED_ON_NODE", false))
+
+	// GuestProfilesFlag lets a registered non-default guest profile serve
+	// the orchestrator's builds and sandboxes on this node. Read at the
+	// start of every build FROM a parent of another guest OS and of every
+	// create or resume of a template whose guest OS is not the default; the
+	// default profile never reads it, and the standalone tools that resolve
+	// a profile outside the orchestrator are not gated. Off (the default), a
+	// create or resume is refused with a FailedPrecondition that carries no
+	// create-refused detail, so placement still tries a node that has the
+	// flag on, but a build fails its base phase: the API sends a build to one
+	// builder and never retries it on another. Turn it on for every template
+	// builder of a cluster together: target the deployment environment or the
+	// instance groups that run builders, which every evaluation carries,
+	// rather than single orchestrator nodes. An orchestrator sends no cluster
+	// context, so a cluster rule never matches. The fallback reads
+	// GUEST_PROFILES_ENABLED so a deployment without LaunchDarkly can turn it on.
+	GuestProfilesFlag = NewBoolFlag("guest-profiles-enabled", envBoolOr("GUEST_PROFILES_ENABLED", false))
+
 	// FilesystemOnlyCheckpointFlag enables the filesystem-only checkpoint:
 	// the rootfs is exported and no memfile, the SAME Firecracker process is
 	// resumed afterwards, and a sandbox created from the build cold-boots.
@@ -458,8 +509,20 @@ var (
 	// read, with the same store commands as before.
 	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
 
+	// UnpaginatedTemplateListCapFlag caps GET /templates at 5000 templates; a
+	// team above it gets a 400 pointing at GET /v2/templates. Evaluated per team.
+	UnpaginatedTemplateListCapFlag = NewBoolFlag("unpaginated-template-list-cap", true)
+
+	// UnpaginatedSandboxListCapFlag caps GET /sandboxes at 5000 running
+	// sandboxes; a team above it gets a 400 pointing at GET /v2/sandboxes.
+	// Evaluated per team.
+	UnpaginatedSandboxListCapFlag = NewBoolFlag("unpaginated-sandbox-list-cap", true)
+
 	NetworkTransformRulesFlag = NewBoolFlag("network-transform-rules", env.IsDevelopment())
 	MaxNetworkRuleDomains     = NewIntFlag("max-network-rule-domains", 10)
+	// MaxNetworkRuleHeaderValueLen caps the length of a header value in a
+	// network transform rule, before placeholders are resolved. Evaluated per team.
+	MaxNetworkRuleHeaderValueLen = NewIntFlag("max-network-rule-header-value-len", 2048)
 
 	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", true)
 
@@ -477,6 +540,15 @@ var (
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
 
+	// ResizableTemplatesFlag lets a team pass maxCpuCount on a template build.
+	// Off, a request carrying the field is refused.
+	ResizableTemplatesFlag = NewBoolFlag("resizable-templates", env.IsDevelopment())
+
+	// ResizableTemplateDefaultMaxCpuFlag is the max CPU count applied to a
+	// team's builds that omit maxCpuCount while ResizableTemplatesFlag is on;
+	// 0 applies no default.
+	ResizableTemplateDefaultMaxCpuFlag = NewIntFlag("resizable-template-default-max-cpu", 0)
+
 	// CustomerSecretsFlag gates the customer-facing secret management routes
 	// per project during rollout. It falls back to off, so a deployment that
 	// cannot reach LaunchDarkly keeps the routes dark.
@@ -492,13 +564,6 @@ var (
 	// HeaderV5WriteFlag makes Pause emit V5 headers. When enabled it also
 	// supersedes V4HeaderForUncompressedFlag for uncompressed uploads.
 	HeaderV5WriteFlag = NewBoolFlag("header-v5-write", false)
-
-	// CompressRightSizedFramesFlag is a kill switch for the exact-length
-	// compressed frame outputs. Off restores outputs that keep the encoder's
-	// frame-sized buffer until the frame is uploaded and cached. The
-	// compressed bytes are the same either way. Evaluated per upload with the
-	// compress-config file type and use case.
-	CompressRightSizedFramesFlag = NewBoolFlag("compress-right-sized-frames", true)
 
 	// SnapshotCacheAncestorStorageFallbackFlag lets a snapshot upload resolve an
 	// ancestor whose upload future fired successfully but whose template-cache
@@ -531,6 +596,10 @@ var (
 
 	// BuildEnsureFreeDiskSpace grows the rootfs after build steps and before finalize.
 	BuildEnsureFreeDiskSpace = NewBoolFlag("build-ensure-free-disk-space", false)
+
+	// BuildLayerMemfileDedupFlag gates the 4 KiB memfile dedup of a build layer whose
+	// guest profile asks for it, whatever memfile-diff-dedup's "enabled" says.
+	BuildLayerMemfileDedupFlag = NewBoolFlag("build-layer-memfile-dedup", true)
 )
 
 // envdTimeoutFallbackMs reads ENVD_TIMEOUT (Go duration string, e.g. "10s")
@@ -581,6 +650,22 @@ var (
 	// future retirements.
 	EgressRetirementTimeoutMsFlag = NewIntFlag("egress-retirement-timeout-ms", 60000)
 
+	// RemoteClusterInstancesPerConnectionFlag caps how many of a remote
+	// cluster's instances the api places on one shared gRPC connection to the
+	// cluster's edge; the pool opens another connection once every connection
+	// is full. An AWS ALB serves at most 128 concurrent streams per HTTP/2
+	// connection and a sync round calls every instance at once, so the
+	// fallback keeps half of each connection's streams for sandbox calls.
+	// Evaluated against the cluster's context as each instance joins; values
+	// below one count as one.
+	RemoteClusterInstancesPerConnectionFlag = NewIntFlag("remote-cluster-instances-per-connection", 64)
+
+	// RemoteClusterMinConnectionsFlag is the fewest shared gRPC connections the
+	// api keeps to a remote cluster's edge, however few instances it has.
+	// Evaluated against the cluster's context as each instance joins; values
+	// below one count as one.
+	RemoteClusterMinConnectionsFlag = NewIntFlag("remote-cluster-min-connections", 4)
+
 	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", 200)
 	APIIdempotencyRoutes     = NewJSONFlag("api-idempotency-routes", ldvalue.Null())
 	APIIdempotencyTTLSeconds = NewIntFlag("api-idempotency-ttl-seconds", 86400)
@@ -593,9 +678,16 @@ var (
 	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
 	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
 	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
-	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit; 0 disables the check
+	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit (of its memory outside the pool, for a sandbox without hugepages); 0 disables the check
+	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
 	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
 	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	// SandboxMigrationOperationBudgetSeconds bounds how long a sandbox migration may run, fixed per migration at acceptance.
+	SandboxMigrationOperationBudgetSeconds = NewIntFlag("sandbox-migration-operation-budget-seconds", 900)
+	// SandboxMigrationTerminationBudgetSeconds is how long the API's hold on a migrating sandbox outlives the operation deadline, fixed per migration at acceptance.
+	// The migration manager runs a termination for 30 minutes from its first call, which can start up to a grace after the operation deadline,
+	// so the hold keeps ten minutes of slack past it. A termination read after the hold lapsed is consumed by the poller without the hold.
+	SandboxMigrationTerminationBudgetSeconds = NewIntFlag("sandbox-migration-termination-budget-seconds", 2400)
 	// EnvdInitConnectTimeoutMilliseconds bounds each connect of the held envd init
 	// request. Read with EnvdInitHeldRequestFlag; a value below 1000 is raised to it, and
 	// a value at or below zero reads as the fallback.
@@ -609,6 +701,22 @@ var (
 	// 0 probes the parent header's readiness without waiting; a positive value
 	// waits up to that long before refusing retryably.
 	PauseAdmissionGraceMs = NewIntFlag("pause-admission-grace-milliseconds", -1)
+	// PauseEnvdHealthTimeoutMs gates the envd health probe every snapshot runs
+	// before anything destructive, in milliseconds. 0 or less (default -1)
+	// disables the probe: an HTTP request cannot complete inside a zero
+	// deadline, so unlike PauseAdmissionGraceMs zero is not an instant probe.
+	// A positive value probes envd's /health with that timeout, capped at the
+	// sandbox HTTP client's 10s limit. When envd does not answer, a memory
+	// pause proceeds and the snapshot is recorded as taken over an
+	// unresponsive agent, unless the caller requires a healthy guest, in
+	// which case it is refused retryably with an ENVD_UNRESPONSIVE detail;
+	// filesystem-only captures and checkpoints (forks, snapshot templates)
+	// are always refused that way, since a filesystem-only capture needs the
+	// agent to freeze the rootfs and a fork of a hung agent is born dead. A
+	// rollout brake: once production confirms the refusal rate matches the
+	// dead-guest rate, the timeout becomes a constant and the flag is
+	// retired.
+	PauseEnvdHealthTimeoutMs = NewIntFlag("pause-envd-health-timeout-milliseconds", -1)
 	// PauseAdmissionDiskHeadroomMiB makes a node refuse a pause, retryably and
 	// before anything destructive, when the filesystem holding its build
 	// directory cannot take the snapshot's capture (guest memory plus the
@@ -626,10 +734,12 @@ var (
 	OrchestratorGOGCPercentFlag = NewIntFlag("orchestrator-gogc-percent", -1)
 	// PauseRefusalRestoreFlag gates the API-side restore of a retryably
 	// refused pause: record kept, routing re-registered, state back to
-	// Running. Off (default), a refused pause still ends today's way — the
+	// Running. Off (default), a busy-node refusal still ends today's way — the
 	// record is removed, the live sandbox is reaped as an orphan shortly
 	// after, and the pause endpoint answers today's generic error rather than
-	// a 503 whose retry could not succeed. The fallback reads
+	// a 503 whose retry could not succeed. A refusal the node types as a
+	// checkpoint in flight restores whatever the flag says: the node has
+	// proven the sandbox alive and the refusal ends with the checkpoint. The fallback reads
 	// PAUSE_REFUSAL_RESTORE so a deployment without LaunchDarkly can turn it on.
 	PauseRefusalRestoreFlag = NewBoolFlag("pause-refusal-restore", envBoolOr("PAUSE_REFUSAL_RESTORE", false))
 	// CreateMemoryRefusalFlag changes what a create answers when the hugepage
@@ -641,7 +751,15 @@ var (
 	// one-node deployment turns a create sent right after a kill into a
 	// failure. The fallback reads CREATE_MEMORY_REFUSAL so a deployment
 	// without LaunchDarkly can turn it on.
-	CreateMemoryRefusalFlag       = NewBoolFlag("create-memory-refusal", envBoolOr("CREATE_MEMORY_REFUSAL", false))
+	CreateMemoryRefusalFlag = NewBoolFlag("create-memory-refusal", envBoolOr("CREATE_MEMORY_REFUSAL", false))
+	// CreateHugePageAdmissionFlag refuses a hugepage create or resume before
+	// it starts when the node cannot allocate the guest's memory in hugepages,
+	// less what the starts already admitted may still take. Off (default), the
+	// start goes ahead, and a guest that cannot fault in its pages fails its
+	// start or crashes a neighbour mid-run. The fallback reads
+	// CREATE_HUGEPAGE_ADMISSION so a deployment without LaunchDarkly can turn
+	// it on.
+	CreateHugePageAdmissionFlag   = NewBoolFlag("create-hugepage-admission", envBoolOr("CREATE_HUGEPAGE_ADMISSION", false))
 	MaxCacheWriterConcurrencyFlag = NewIntFlag("max-cache-writer-concurrency", 10)
 
 	// BuildCacheMaxUsagePercentage the maximum percentage of the cache disk storage
@@ -667,6 +785,20 @@ var (
 
 	// NBDConnectionsPerDevice the number of NBD socket connections per device
 	NBDConnectionsPerDevice = NewIntFlag("nbd-connections-per-device", 1)
+
+	// NBDAttachViaIoctlFlag attaches sandbox rootfs devices through the NBD
+	// driver's ioctl interface instead of netlink. The netlink interface runs
+	// every attach and detach on a node under one kernel-wide lock, so starts
+	// queue behind each other; the ioctl interface locks per device, at the
+	// cost of one parked OS thread per attached device. That thread waits in
+	// the driver interruptibly, so anything that stops or traps the process
+	// (a ptrace attach such as strace, gdb or dlv, SIGSTOP, a cgroup freeze)
+	// ends every ioctl session on the node and fails the guests' rootfs I/O;
+	// netlink devices have no parked thread and only pause. Never trace,
+	// stop or freeze an orchestrator that runs with this flag on. Read once
+	// per attach; a device detaches through the interface that attached it.
+	// Disabled by default.
+	NBDAttachViaIoctlFlag = NewBoolFlag("nbd-attach-via-ioctl", false)
 
 	// NBDAsyncWriteZeroesFlag, when enabled, handles NBD WRITE_ZEROES/TRIM
 	// commands in a goroutine instead of inline on the dispatch read loop.
@@ -799,16 +931,42 @@ var (
 	// refused for one). Same sign convention as PauseAdmissionGraceMs:
 	// negative = never degrade (retry for as long as the node refuses), 0 = no
 	// retries (degrade at the first refusal), positive = the budget. Only ever
-	// consulted on a refusal, and refusals only reach the evictor with
-	// PauseRefusalRestoreFlag on, so it is inert until that flag is.
+	// consulted on a busy-node refusal, which reaches the evictor only with
+	// PauseRefusalRestoreFlag on; a checkpoint-in-flight refusal reaches it
+	// regardless but never degrades and does not charge this budget.
 	AutoPauseOverstayBudgetMs = NewIntFlag("auto-pause-overstay-budget-milliseconds", 120000)
+
+	// AutoPauseEnvdGraceMs is how long the evictor honours the guest agent's
+	// refusal of an expired auto-pause, from the first envd refusal of its
+	// current episode, before retrying the memory pause once without the
+	// probe. Sign convention as AutoPauseOverstayBudgetMs: negative never,
+	// 0 at the first refusal, positive the grace. Inert until
+	// PauseEnvdHealthTimeoutMs is on. A rollout brake like that flag: once
+	// production shows how long a guest takes to recover, the grace becomes
+	// a constant and the flag is retired with it.
+	AutoPauseEnvdGraceMs = NewIntFlag("auto-pause-envd-grace-milliseconds", 120000)
 
 	// MaxConcurrentSnapshotUpserts limits concurrent UpsertSnapshot calls (pause + snapshot template paths).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotUpserts = NewIntFlag("max-concurrent-snapshot-upserts", 0)
-	// MaxConcurrentSandboxListQueries limits concurrent GetSnapshotsWithCursor calls in the sandbox list path.
+	// MaxConcurrentSandboxListQueries limits how many sandbox list pages run their paused snapshot queries at once.
+	// A page holds its slot across its GetSnapshotsWithCursor calls, which run one after another.
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSandboxListQueries = NewIntFlag("max-concurrent-sandbox-list-queries", 0)
+
+	// PausedSandboxListBatchLimit caps the rows each GetSnapshotsWithCursor call of a GET /v2/sandboxes
+	// paused page asks for, or the rows the page still misses when more. A capped page that does not
+	// fill within its calls ends early and the next page continues after the last row read.
+	// 0 or negative leaves the calls uncapped. Evaluated per team.
+	PausedSandboxListBatchLimit = NewIntFlag("paused-sandbox-list-batch-limit", 0)
+
+	// DBMaxConnLifetimeSeconds overrides pgxpool MaxConnLifetime when positive.
+	// 0 or negative keeps pgxpool's default (1h, or the value in the DSN).
+	DBMaxConnLifetimeSeconds = NewIntFlag("db-max-conn-lifetime-seconds", 0)
+	// DBMaxConnLifetimeJitterSeconds overrides pgxpool MaxConnLifetimeJitter when positive.
+	// 0 or negative keeps pgxpool's default (0, or the value in the DSN).
+	DBMaxConnLifetimeJitterSeconds = NewIntFlag("db-max-conn-lifetime-jitter-seconds", 0)
+
 	// MaxConcurrentSnapshotBuildQueries limits concurrent GetSnapshotBuilds calls (e.g. sandbox delete).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotBuildQueries = NewIntFlag("max-concurrent-snapshot-build-queries", 0)
@@ -1065,11 +1223,16 @@ const (
 	// balloon reporting-pause API; filesystem-only snapshots ship with every
 	// e2b release from 0.1.0 — the per-feature floors live in fcversion.
 	DefaultFirecrackerV1_14_0Version = "v1.14-0.2.0"
+	// The v1.17-0 release line: upstream Firecracker v1.17 with the v1.14-0
+	// patches, and it restores snapshots taken by every older line. It starts
+	// at 0.4.0 because e2b release numbers rise across lines and v1.14-0
+	// already shipped 0.3.x; the version gates key on that number.
+	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.1"
 	// New template builds get the current release; existing builds keep
 	// resolving within their own line below (cross-line upgrades are an
 	// operator decision via the firecracker-versions flag, never a baked
 	// default — the map invariant key == LDKey(value) enforces it).
-	DefaultFirecrackerVersion = DefaultFirecrackerV1_14_0Version
+	DefaultFirecrackerVersion = DefaultFirecrackerV1_17_0Version
 )
 
 var FirecrackerVersionMap = map[string]string{
@@ -1077,6 +1240,7 @@ var FirecrackerVersionMap = map[string]string{
 	"v1.12":   DefaultFirecrackerV1_12Version,
 	"v1.14":   DefaultFirecrackerV1_14Version,
 	"v1.14-0": DefaultFirecrackerV1_14_0Version,
+	"v1.17-0": DefaultFirecrackerV1_17_0Version,
 }
 
 // FirecrackerVersionsEnv overrides the firecracker-versions fallback where there is no LaunchDarkly: a JSON object of release line to served version, e.g. {"v1.14-0":"v1.14-0.3.1"}.

@@ -14,13 +14,12 @@ where c.relkind in (
 );
 
 -- name: InsertTestTeam :exec
--- Inserts a team for tests with explicit id/slug. Uses the default 'base_v1'
--- tier created in migrations.
-INSERT INTO public.teams (id, name, tier, email, slug)
+-- Inserts a team for tests with explicit id/slug and no tier, as the
+-- management API creates them.
+INSERT INTO public.teams (id, name, email, slug)
 VALUES (
     sqlc.arg(id)::uuid,
     sqlc.arg(name)::text,
-    sqlc.arg(tier)::text,
     sqlc.arg(email)::text,
     sqlc.arg(slug)::text
 );

@@ -114,3 +114,45 @@ func TestAdminNodeMaxSandboxesSchema(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminNodesStatusOwnerAndCapabilities(t *testing.T) {
+	t.Parallel()
+
+	parked := nodemanager.NewTestNode("parked", api.NodeStatusStandby, 0, 4, nodemanager.WithStatusOwner("x"), nodemanager.WithCapabilities("park-owner"))
+	bare := nodemanager.NewTestNode("bare", api.NodeStatusReady, 0, 4)
+	bare.ClusterID = parked.ClusterID
+	for _, n := range []*nodemanager.Node{parked, bare} {
+		client, _ := n.GetClient(t.Context())
+		t.Cleanup(func() { require.NoError(t, client.Close()) })
+	}
+	o := NewTestOrchestrator(parked, bare)
+
+	nodes, err := o.AdminNodes(parked.ClusterID)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	detail, err := o.AdminNodeDetail(parked.ClusterID, parked.ID)
+	require.NoError(t, err)
+
+	// Sorted by id: bare first.
+	require.Nil(t, nodes[0].StatusOwner)
+	require.Nil(t, nodes[0].Capabilities)
+	require.Equal(t, "x", *nodes[1].StatusOwner)
+	require.Equal(t, []string{"park-owner"}, *nodes[1].Capabilities)
+	require.Equal(t, "x", *detail.StatusOwner)
+	require.Equal(t, []string{"park-owner"}, *detail.Capabilities)
+
+	for i, response := range []any{nodes[0], nodes[1], detail} {
+		data, err := json.Marshal(response)
+		require.NoError(t, err)
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &fields))
+		_, hasOwner := fields["statusOwner"]
+		_, hasCapabilities := fields["capabilities"]
+		require.Equal(t, i != 0, hasOwner)
+		require.Equal(t, i != 0, hasCapabilities)
+	}
+	data, err := json.Marshal(detail)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"statusOwner":"x"`)
+	require.Contains(t, string(data), `"capabilities":["park-owner"]`)
+}

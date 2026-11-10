@@ -19,7 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -49,7 +49,7 @@ func postResume(t *testing.T, teamID uuid.UUID, sandboxID string, stub *resumeWa
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/resume", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -133,7 +133,7 @@ func TestConnect_RestoredPauseConnects(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/connect", strings.NewReader(`{"timeout":60}`))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -165,7 +165,7 @@ func TestConnect_AnswersWithTheClustersCurrentDomain(t *testing.T) {
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/connect", strings.NewReader(`{"timeout":60}`))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: teamID, Slug: "test-team", ClusterID: &clusterID},
+		Team:   &dbtypes.Team{ID: teamID, Slug: "test-team", ClusterID: &clusterID},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 

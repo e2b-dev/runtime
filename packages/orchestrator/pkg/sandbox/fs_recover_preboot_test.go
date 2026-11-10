@@ -3,7 +3,6 @@
 package sandbox
 
 import (
-	"context"
 	"testing"
 
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
@@ -41,24 +40,24 @@ func TestFsRecoverPreBoot_Gating(t *testing.T) {
 
 	rec, got := recorder()
 	assert.Nil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, true, false, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, true, fsRecoveryTrigger(false), rec),
 		"quiesced snapshot has nothing to repair")
 	assert.Equal(t, []rootfs.RecoverOutcome{rootfs.RecoverOutcomeSkippedQuiesced}, *got,
 		"quiesced records skipped_quiesced so the create metric pairs it")
 
 	rec, got = recorder()
 	assert.Nil(t,
-		recoverTestFactory(t, false).fsRecoverPreBoot(t.Context(), runtime, false, false, rec),
+		recoverTestFactory(t, false).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(false), rec),
 		"flag off keeps today's cold-boot behavior")
 	assert.Empty(t, *got, "flag off records nothing; the create metric stays none")
 
 	rec, _ = recorder()
 	assert.NotNil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, true, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(true), rec),
 		"non-quiesced with the flag on runs recovery (rescue trigger)")
 	rec, _ = recorder()
 	assert.NotNil(t,
-		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, false, rec),
+		recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(false), rec),
 		"non-quiesced with the flag on runs recovery (legacy trigger)")
 }
 
@@ -72,37 +71,12 @@ func TestFsRecoverPreBoot_ClosurePropagatesFailure(t *testing.T) {
 
 	runtime := sandboxtypes.RuntimeMetadata{SandboxID: "sbx", TemplateID: "tpl"}
 	rec, got := recorder()
-	fn := recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, true, rec)
+	fn := recoverTestFactory(t, true).fsRecoverPreBoot(t.Context(), runtime, false, fsRecoveryTrigger(true), rec)
 	require.NotNil(t, fn)
 
-	err := fn(t.Context(), "/dev/sda")
+	_, err := fn(t.Context(), "/dev/sda")
 	require.Error(t, err, "recovery failure must propagate so the boot fails")
 	require.ErrorIs(t, err, rootfs.ErrRecoveryFailed)
 	assert.Equal(t, []rootfs.RecoverOutcome{rootfs.RecoverOutcomeFailed}, *got,
 		"the failed outcome is reported so create pairs fs_recovery=failed_operational")
-}
-
-func TestChainPreBoot(t *testing.T) {
-	t.Parallel()
-
-	assert.Nil(t, chainPreBoot(nil, nil), "all-nil chain preserves the no-callback fast path")
-
-	var order []string
-	mk := func(name string, err error) PreBootFn {
-		return func(_ context.Context, _ string) error {
-			order = append(order, name)
-
-			return err
-		}
-	}
-	boom := assert.AnError
-	fn := chainPreBoot(nil, mk("recover", nil), mk("swap", nil))
-	require.NotNil(t, fn)
-	require.NoError(t, fn(t.Context(), "/dev/nbd0"))
-	assert.Equal(t, []string{"recover", "swap"}, order)
-
-	order = nil
-	fn = chainPreBoot(mk("recover", boom), mk("swap", nil))
-	require.ErrorIs(t, fn(t.Context(), "/dev/nbd0"), boom)
-	assert.Equal(t, []string{"recover"}, order, "first failure stops the chain")
 }

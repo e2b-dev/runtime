@@ -41,7 +41,7 @@ func (h *Healthcheck) CreateHandler() http.Handler {
 }
 
 func (h *Healthcheck) getStatus() e2bHealth.Status {
-	switch h.info.GetStatus().Status {
+	switch h.info.Snapshot().Status {
 	case e2borchestratorinfo.ServiceInfoStatus_Healthy:
 		return e2bHealth.Healthy
 	case e2borchestratorinfo.ServiceInfoStatus_Draining, e2borchestratorinfo.ServiceInfoStatus_Standby, e2borchestratorinfo.ServiceInfoStatus_ShuttingDown:

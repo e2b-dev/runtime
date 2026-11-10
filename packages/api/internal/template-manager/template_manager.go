@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
@@ -42,6 +45,11 @@ type TemplateManager struct {
 	sqlcDB        *sqlcdb.Client
 
 	featureFlags *featureflags.Client
+
+	builderPinFallback metric.Int64Counter
+	// builderVersionRejected counts builder lookups that failed only because no
+	// builder in the cluster is at the version the build needs.
+	builderVersionRejected metric.Int64Counter
 }
 
 type DeleteBuild struct {
@@ -63,12 +71,26 @@ func New(
 	templateCache *templatecache.TemplateCache,
 	featureFlags *featureflags.Client,
 ) (*TemplateManager, error) {
+	meter := otel.Meter("github.com/e2b-dev/infra/packages/api/internal/template-manager")
+	builderPinFallback, err := telemetry.GetCounter(meter, telemetry.ApiTemplateBuildBuilderPinFallback)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create builder pin fallback counter: %w", err)
+	}
+
+	builderVersionRejected, err := telemetry.GetCounter(meter, telemetry.ApiTemplateBuildBuilderVersionRejected)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create builder version rejected counter: %w", err)
+	}
+
 	tm := &TemplateManager{
 		sqlcDB:        sqlcDB,
 		buildCache:    buildCache,
 		templateCache: templateCache,
 		clusters:      clusters,
 		featureFlags:  featureFlags,
+
+		builderPinFallback:     builderPinFallback,
+		builderVersionRejected: builderVersionRejected,
 
 		lock:       sync.Mutex{},
 		processing: make(map[uuid.UUID]processingBuilds),
@@ -108,7 +130,10 @@ func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 	}
 }
 
-func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterID uuid.UUID) (*clusters.Instance, error) {
+// GetAvailableBuildClient picks a builder in the cluster. A non-nil minVersion
+// restricts the choice to builders at or above it; see
+// clusters.ErrTemplateBuilderVersionTooOld.
+func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterID uuid.UUID, minVersion *semver.Version) (*clusters.Instance, error) {
 	cluster, ok := tm.clusters.GetClusterById(clusterID)
 	if !ok {
 		return nil, fmt.Errorf("cluster with ID '%s' not found", clusterID)
@@ -119,20 +144,28 @@ func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterI
 
 	nodeInfoJSON := tm.featureFlags.JSONFlag(ctx, featureflags.BuildNodeInfo)
 	nodeInfo := machineinfo.FromLDValue(ctx, nodeInfoJSON)
-	builder, err := cluster.GetAvailableTemplateBuilder(ctx, nodeInfo)
-	if err != nil {
-		if errors.Is(err, clusters.ErrAvailableTemplateBuilderNotFound) {
-			// Fallback to any template builder
-			logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.String("clusterID", clusterID.String()))
-
-			builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{})
-			if err != nil {
-				return nil, fmt.Errorf("failed to get any available template builder for cluster '%s': %w", clusterID, err)
-			}
-
-			return builder, nil
+	builder, err := cluster.GetAvailableTemplateBuilder(ctx, nodeInfo, minVersion)
+	switch {
+	case errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && nodeInfo.CPUArchitecture != "":
+		logger.L().Warn(ctx, "No template builder with the pinned machine info is at the required version, falling back to any builder at that version",
+			zap.Error(err), zap.String("requiredVersion", minVersion.String()), zap.String("clusterID", clusterID.String()))
+		if tm.builderPinFallback != nil {
+			tm.builderPinFallback.Add(ctx, 1, metric.WithAttributes(attribute.String("cluster_id", clusterID.String())))
 		}
 
+		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion)
+	case errors.Is(err, clusters.ErrAvailableTemplateBuilderNotFound):
+		// Fallback to any template builder
+		logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.Error(err), zap.String("clusterID", clusterID.String()))
+
+		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion)
+	}
+
+	if errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && tm.builderVersionRejected != nil {
+		tm.builderVersionRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("cluster_id", clusterID.String())))
+	}
+
+	if err != nil {
 		return nil, fmt.Errorf("failed to get available template builder for cluster '%s': %w", clusterID, err)
 	}
 
@@ -162,6 +195,37 @@ func (tm *TemplateManager) GetClusterBuildClient(clusterID uuid.UUID, nodeID str
 	return instance.GetClient(), nil
 }
 
+// buildDispatchClient resolves the builder on nodeID that a new build is sent
+// to. The caller checked the version of the builder it picked, but only the
+// machine is carried here and the process on it can change in between (a
+// restart or rollback). A build that needs minVersion must not reach an older
+// process, which would ignore maxVCpuCount and build a fixed-size template.
+func (tm *TemplateManager) buildDispatchClient(ctx context.Context, clusterID uuid.UUID, nodeID string, minVersion *semver.Version) (*clusters.GRPCClient, error) {
+	cluster, ok := tm.clusters.GetClusterById(clusterID)
+	if !ok {
+		return nil, errors.New("cluster not found")
+	}
+
+	instance, err := cluster.GetTemplateBuilderByNodeID(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get builder by id '%s': %w", nodeID, err)
+	}
+
+	if minVersion != nil && !clusters.InstanceAtLeast(instance.GetInfo().ServiceVersion, minVersion) {
+		if tm.builderVersionRejected != nil {
+			tm.builderVersionRejected.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("cluster_id", clusterID.String()),
+				attribute.String("stage", "dispatch"),
+			))
+		}
+
+		return nil, fmt.Errorf("builder on '%s' runs %q, below the required %s: %w",
+			nodeID, instance.GetInfo().ServiceVersion, minVersion, clusters.ErrTemplateBuilderVersionTooOld)
+	}
+
+	return instance.GetClient(), nil
+}
+
 func (tm *TemplateManager) DeleteBuild(ctx context.Context, buildID uuid.UUID, templateID string, clusterID uuid.UUID, nodeID string) error {
 	ctx, span := tracer.Start(ctx, "delete-template",
 		trace.WithAttributes(
@@ -175,7 +239,7 @@ func (tm *TemplateManager) DeleteBuild(ctx context.Context, buildID uuid.UUID, t
 		// nodeID can be an orchestrator ID, if the build corresponds to a snapshot.
 		// We may want to improve this later by adding the Delete method to Orchestrator as well.
 		// This way we can remove the build (snapshot) from cache as well
-		node, err := tm.GetAvailableBuildClient(ctx, clusterID)
+		node, err := tm.GetAvailableBuildClient(ctx, clusterID, nil)
 		if err != nil {
 			return fmt.Errorf("failed to get any available node in the cluster: %w", err)
 		}

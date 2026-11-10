@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/builderrors"
@@ -35,6 +36,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases/steps"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases/user"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/storage/cache"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -301,7 +303,7 @@ func (b *Builder) useNFSCache(ctx context.Context) (string, bool) {
 	flag := b.featureFlags.BoolFlag(ctx, featureflags.UseNFSCacheForBuildingTemplatesFlag)
 
 	if flag && b.config.SharedChunkCacheDir == "" {
-		logger.L().Warn(ctx, "NFSCache feature flag is enabled but cache path is not set")
+		storage.WarnNFSCachePathUnsetOnce(ctx)
 
 		return "", false
 	}
@@ -327,6 +329,14 @@ func runBuild(
 	}
 
 	index := cache.NewHashIndex(bc.CacheScope, builder.buildStorage, templateStorage)
+
+	// The parent's guest profile and, for a profile that resumes it, the parent's
+	// machine are taken before any phase reads the configuration (every builder copies it by value).
+	bc, err := adoptParentMachine(ctx, bc, index, cacheMemorySize(builder.templateCache), builder.featureFlags, builder.logger)
+	if err != nil {
+		return nil, err
+	}
+	guestTemplate := bc.Config.GuestTemplate()
 
 	layerExecutor := layer.NewLayerExecutor(
 		bc,
@@ -418,12 +428,12 @@ func runBuild(
 	if err != nil {
 		return nil, fmt.Errorf("error checking build version: %w", err)
 	}
-	if ok {
+	if ok && !guestTemplate.Skips(guest.PhaseUser) {
 		builders = append(builders, userBuilder)
 	}
 	builders = append(builders, stepBuilders...)
 	// Grow the quiescent rootfs before finalize cold-boots it.
-	if builder.featureFlags.BoolFlag(ctx, featureflags.BuildEnsureFreeDiskSpace) {
+	if runsEnsureFreeDisk(builder.featureFlags.BoolFlag(ctx, featureflags.BuildEnsureFreeDiskSpace), guestTemplate) {
 		builders = append(builders, ensurefreedisk.New(
 			bc,
 			builder.sandboxFactory,
@@ -433,7 +443,9 @@ func runBuild(
 		))
 	}
 	builders = append(builders, postProcessingBuilder)
-	builders = append(builders, optimizeBuilder)
+	if !guestTemplate.Skips(guest.PhaseOptimize) {
+		builders = append(builders, optimizeBuilder)
+	}
 
 	lastLayerResult, err := phases.Run(ctx, builder.logger, userLogger, bc, builder.metrics, builders)
 	if err != nil {
@@ -456,7 +468,7 @@ func runBuild(
 	logger.L().Info(ctx, "rootfs size", zap.Uint64("size", rootfsSize))
 
 	return &Result{
-		EnvdVersion:        bc.EnvdVersion,
+		EnvdVersion:        templateEnvdVersion(bc.EnvdVersion, guestTemplate, lastLayerResult.Metadata),
 		KernelVersion:      bc.Config.KernelVersion,
 		FirecrackerVersion: bc.Config.FirecrackerVersion,
 		RootfsSizeMB:       units.BytesToMB(int64(rootfsSize)),
@@ -519,4 +531,23 @@ func getRootfsSize(
 	}
 
 	return h.Metadata.Size, nil
+}
+
+// runsEnsureFreeDisk is whether the build grows its rootfs before finalize: when
+// the flag asks, unless the profile skips it or resumes every layer. That layer
+// is filesystem-only, which a finalize that resumes the layer before it cannot take.
+func runsEnsureFreeDisk(flagOn bool, tb guest.TemplateBuild) bool {
+	return flagOn && !tb.Skips(guest.PhaseEnsureFreeDisk) && !tb.AlwaysResume
+}
+
+// templateEnvdVersion is the envd version the finished template reports: the
+// host binary the build installed, or, for a profile that keeps the image's own
+// envd, the version that envd reported, which a pause records on the snapshot
+// when it differs from the host's (RunningEnvdVersion).
+func templateEnvdVersion(installed string, tb guest.TemplateBuild, final metadata.Template) string {
+	if tb.KeepGuestEnvd && final.RunningEnvdVersion != "" {
+		return final.RunningEnvdVersion
+	}
+
+	return installed
 }

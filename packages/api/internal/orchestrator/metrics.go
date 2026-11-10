@@ -86,6 +86,10 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 		return fmt.Errorf("failed to create pause refusal restore counter: %w", err)
 	}
 
+	if o.networkUpdateUnstoredCounter, err = telemetry.GetCounter(meter, telemetry.ApiOrchestratorNetworkUpdateUnstored); err != nil {
+		return fmt.Errorf("failed to create network update unstored counter: %w", err)
+	}
+
 	if o.noCeilingPlacementsCounter, err = telemetry.GetCounter(meter, telemetry.ApiOrchestratorPlacementsWithoutHugepageCeiling); err != nil {
 		return fmt.Errorf("failed to create placements without hugepage ceiling counter: %w", err)
 	}
@@ -96,6 +100,10 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 
 	if o.listAgeHistogram, err = telemetry.GetHistogram(meter, telemetry.ApiSandboxListAge); err != nil {
 		return fmt.Errorf("failed to create sandbox list age histogram: %w", err)
+	}
+
+	if o.featureUnsupportedCounter, err = telemetry.GetCounter(meter, telemetry.ApiOrchestratorSandboxFeatureUnsupported); err != nil {
+		return fmt.Errorf("failed to create sandbox feature unsupported counter: %w", err)
 	}
 
 	// Observable gauge that reads sandbox counts from Redis on each collection interval.

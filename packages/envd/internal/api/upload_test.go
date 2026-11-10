@@ -39,7 +39,10 @@ func TestProcessFile(t *testing.T) {
 
 	t.Run("failed to ensure directories", func(t *testing.T) {
 		t.Parallel()
-		httpStatus, err := processFile(&emptyReq, "/proc/invalid/not-real", emptyPart, uid, gid, nil, emptyLogger)
+		// A parent that is a regular file cannot be made a directory on any platform.
+		notDir := filepath.Join(t.TempDir(), "file")
+		require.NoError(t, os.WriteFile(notDir, nil, 0o644))
+		httpStatus, err := processFile(&emptyReq, filepath.Join(notDir, "sub", "not-real"), emptyPart, uid, gid, nil, emptyLogger)
 		require.Error(t, err)
 		assert.Equal(t, http.StatusInternalServerError, httpStatus)
 		assert.ErrorContains(t, err, "error ensuring directories: ")

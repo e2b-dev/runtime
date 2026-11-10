@@ -156,6 +156,8 @@ type EnvBuild struct {
 	StatusGroup        string
 	TeamID             *uuid.UUID
 	FilesystemOnly     bool
+	EnvdUnresponsive   pgtype.Bool
+	MaxVcpu            pgtype.Int8
 }
 
 type EnvBuildAssignment struct {
@@ -188,6 +190,14 @@ type ProjectLimit struct {
 	ApiTeamRpsList           int64
 	MaxSecrets               int64
 	ApiTeamRpsDelete         int64
+}
+
+type ProjectionProjectBan struct {
+	ProjectID uuid.UUID
+	Revision  int64
+	DecidedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type ProjectionProjectBlock struct {
@@ -237,6 +247,7 @@ type Snapshot struct {
 	AutoPause           bool
 	TeamID              uuid.UUID
 	Config              []byte
+	EnvDeletedAt        *time.Time
 }
 
 type SnapshotTemplate struct {
@@ -252,7 +263,7 @@ type Team struct {
 	CreatedAt               time.Time
 	IsBlocked               bool
 	Name                    string
-	Tier                    string
+	Tier                    pgtype.Text
 	Email                   string
 	IsBanned                bool
 	BlockedReason           pgtype.Text
@@ -278,23 +289,6 @@ type TeamApiKey struct {
 	ApiKeyLength     int32
 	ApiKeyMaskPrefix string
 	ApiKeyMaskSuffix string
-}
-
-type TeamLimit struct {
-	ID                       uuid.UUID
-	MaxLengthHours           int64
-	ConcurrentSandboxes      int64
-	ConcurrentTemplateBuilds int64
-	MaxVcpu                  int64
-	MaxRamMb                 int64
-	DiskMb                   int64
-	EventsTtlDays            int64
-	DefaultFreeDiskSizeMb    int64
-	MaxDiskSizeMb            int64
-	MaxFreeDiskSizeMb        int64
-	ApiTeamRpsList           int64
-	ApiTeamRpsDelete         int64
-	MaxSecrets               int64
 }
 
 type Tier struct {

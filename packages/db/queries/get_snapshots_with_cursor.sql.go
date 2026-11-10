@@ -16,12 +16,14 @@ import (
 
 const getSnapshotsByTemplateWithCursor = `-- name: GetSnapshotsByTemplateWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -33,7 +35,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -45,6 +47,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = $3
     AND CASE
         WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
@@ -68,15 +71,17 @@ type GetSnapshotsByTemplateWithCursorParams struct {
 }
 
 type GetSnapshotsByTemplateWithCursorRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildMaxVcpu          *int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetSnapshotsByTemplateWithCursorParams) ([]GetSnapshotsByTemplateWithCursorRow, error) {
@@ -112,11 +117,14 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 			&i.Snapshot.AutoPause,
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
+			&i.Snapshot.EnvDeletedAt,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -131,12 +139,14 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 
 const getSnapshotsByTemplateWithCursorAsc = `-- name: GetSnapshotsByTemplateWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -148,7 +158,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -160,6 +170,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND s.base_env_id = $3
     AND CASE
         WHEN $4::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
@@ -186,15 +197,17 @@ type GetSnapshotsByTemplateWithCursorAscParams struct {
 }
 
 type GetSnapshotsByTemplateWithCursorAscRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildMaxVcpu          *int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg GetSnapshotsByTemplateWithCursorAscParams) ([]GetSnapshotsByTemplateWithCursorAscRow, error) {
@@ -230,11 +243,14 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 			&i.Snapshot.AutoPause,
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
+			&i.Snapshot.EnvDeletedAt,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -249,12 +265,14 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 
 const getSnapshotsWithCursor = `-- name: GetSnapshotsWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -266,7 +284,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -278,6 +296,9 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    -- Lets the live-only partial indexes serve the walk; active_envs still drops
+    -- a deleted env's snapshot the backfill has not stamped yet.
+    AND s.env_deleted_at IS NULL
     -- The order here is important, we want started_at descending, but sandbox_id ascending
     -- Short-circuit empty filters only for objects; legacy values still use containment.
     AND CASE
@@ -301,15 +322,17 @@ type GetSnapshotsWithCursorParams struct {
 }
 
 type GetSnapshotsWithCursorRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildMaxVcpu          *int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWithCursorParams) ([]GetSnapshotsWithCursorRow, error) {
@@ -344,11 +367,14 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 			&i.Snapshot.AutoPause,
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
+			&i.Snapshot.EnvDeletedAt,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err
@@ -363,12 +389,14 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 
 const getSnapshotsWithCursorAsc = `-- name: GetSnapshotsWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
+    eb.max_vcpu AS build_max_vcpu,
     eb.ram_mb AS build_ram_mb,
     eb.total_disk_size_mb AS build_total_disk_size_mb,
     eb.envd_version AS build_envd_version,
+    eb.envd_unresponsive AS build_envd_unresponsive,
     eb.created_at AS build_created_at
 FROM "public"."snapshots" s
 JOIN "public"."active_envs" e ON e.id = s.env_id
@@ -380,7 +408,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = s.base_env_id
 ) ea ON TRUE
 JOIN LATERAL (
-    SELECT eb.id, eb.vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.created_at
+    SELECT eb.id, eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version, eb.envd_unresponsive, eb.created_at
     FROM "public"."env_build_assignments" eba
     JOIN "public"."env_builds" eb ON eb.id = eba.build_id
     WHERE
@@ -392,6 +420,7 @@ JOIN LATERAL (
 ) eb ON TRUE
 WHERE
     s.team_id = $2
+    AND s.env_deleted_at IS NULL
     AND CASE
         WHEN $3::jsonb = '{}'::jsonb AND jsonb_typeof(s.metadata) = 'object'
             THEN TRUE
@@ -416,20 +445,22 @@ type GetSnapshotsWithCursorAscParams struct {
 }
 
 type GetSnapshotsWithCursorAscRow struct {
-	Aliases              []string
-	Names                []string
-	Snapshot             Snapshot
-	BuildID              uuid.UUID
-	BuildVcpu            int64
-	BuildRamMb           int64
-	BuildTotalDiskSizeMb *int64
-	BuildEnvdVersion     *string
-	BuildCreatedAt       time.Time
+	Aliases               []string
+	Names                 []string
+	Snapshot              Snapshot
+	BuildID               uuid.UUID
+	BuildVcpu             int64
+	BuildMaxVcpu          *int64
+	BuildRamMb            int64
+	BuildTotalDiskSizeMb  *int64
+	BuildEnvdVersion      *string
+	BuildEnvdUnresponsive *bool
+	BuildCreatedAt        time.Time
 }
 
 // Ascending counterpart of GetSnapshotsWithCursor. It is the exact reverse order
 // (started_at ASC, sandbox_id DESC) which maps onto a backward scan of the
-// idx_snapshots_team_time_id (team_id, sandbox_started_at DESC, sandbox_id) index.
+// idx_snapshots_team_time_id_live (team_id, sandbox_started_at DESC, sandbox_id) index.
 func (q *Queries) GetSnapshotsWithCursorAsc(ctx context.Context, arg GetSnapshotsWithCursorAscParams) ([]GetSnapshotsWithCursorAscRow, error) {
 	rows, err := q.db.Query(ctx, getSnapshotsWithCursorAsc,
 		arg.Limit,
@@ -462,11 +493,14 @@ func (q *Queries) GetSnapshotsWithCursorAsc(ctx context.Context, arg GetSnapshot
 			&i.Snapshot.AutoPause,
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
+			&i.Snapshot.EnvDeletedAt,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,
+			&i.BuildEnvdUnresponsive,
 			&i.BuildCreatedAt,
 		); err != nil {
 			return nil, err

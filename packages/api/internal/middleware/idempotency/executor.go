@@ -27,7 +27,9 @@ type executor struct {
 }
 
 // Execute runs operation only after admission; requestContent must describe every input that affects it.
-func Execute(c *gin.Context, requestContent any, operation func()) {
+// The operation writes success responses and returns errors. CanRetry permits a fresh execution
+// with the same key, so it must only describe a failure with no possible committed side effects.
+func Execute(c *gin.Context, requestContent any, operation func() *apierrors.APIError) {
 	if c.IsAborted() {
 		return
 	}
@@ -36,10 +38,32 @@ func Execute(c *gin.Context, requestContent any, operation func()) {
 
 		return
 	}
-	operation()
+	sendOperationError(c, c.Writer.Written(), operation())
 }
 
-func (e *executor) run(c *gin.Context, requestContent any, operation func()) {
+// sendOperationError sends the error an operation returned and reports whether it was sent.
+// Operations must return errors rather than write them; an error after a written response
+// breaks that contract, so it is logged and never sent or allowed to permit a fresh execution.
+func sendOperationError(c *gin.Context, written bool, apiErr *apierrors.APIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	if written {
+		logger.L().Error(c.Request.Context(), "Idempotent operation returned an error after writing a response; the error was not sent",
+			zap.Int("status", apiErr.Code),
+			zap.String("error_code", apiErr.ErrorCode),
+			zap.String("client_message", apiErr.ClientMsg),
+			zap.Error(apiErr.Err),
+		)
+
+		return false
+	}
+	apierrors.SendAPIError(c, apiErr)
+
+	return true
+}
+
+func (e *executor) run(c *gin.Context, requestContent any, operation func() *apierrors.APIError) {
 	ctx := c.Request.Context()
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -112,7 +136,7 @@ func releaseUnusedReservation(ctx context.Context, store store, key, owner strin
 	}
 }
 
-func execute(c *gin.Context, store store, key, owner string, operation func()) {
+func execute(c *gin.Context, store store, key, owner string, operation func() *apierrors.APIError) {
 	original := c.Writer
 	buffer := newResponseCapture(original)
 	defer buffer.release()
@@ -126,14 +150,15 @@ func execute(c *gin.Context, store store, key, owner string, operation func()) {
 		}
 	}()
 	// A panic can follow side effects even if nothing was written; keep the reservation.
-	operation()
+	apiErr := operation()
+	retryable := sendOperationError(c, buffer.Written(), apiErr) && apiErr.Retryable == apierrors.CanRetry
 	c.Writer = original
 
 	// Final persistence survives caller cancellation but stays inside HTTP shutdown's grace.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), completionTimeout)
 	defer cancel()
 	result := buffer.response()
-	if err := store.complete(ctx, key, owner, result); err != nil {
+	if err := store.complete(ctx, key, owner, result, retryable); err != nil {
 		logger.L().Warn(c.Request.Context(), "Failed to persist idempotency response; returning original response", zap.Error(err))
 	}
 	writeResponse(c, result)

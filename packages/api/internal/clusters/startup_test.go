@@ -324,11 +324,11 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 		err     error
 	}
 	deadlineObserved := make(chan attemptObservation, 2)
-	overlapFailure := make(chan attemptObservation, 1)
 	unexpectedAttempt := make(chan attemptObservation, 1)
 	attempts := map[uuid.UUID][]context.Context{}
 	predecessorErrors := map[uuid.UUID][]error{}
 	var mu sync.Mutex
+	testCtx := t.Context()
 
 	coordinator := newStartupCoordinator(
 		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{first, second}, nil },
@@ -346,17 +346,14 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 				switch attempt {
 				case 1:
 					close(firstStarted)
+					// Not bounded by its own 20 ms deadline: a busy runner may start
+					// the second target later than that, and the overlap is proven by
+					// it starting while this attempt is still running.
 					select {
 					case <-secondStarted:
 						return errors.New("first ordinary error")
-					case <-ctx.Done():
-						observation := attemptObservation{target: cluster.ID, attempt: attempt, err: ctx.Err()}
-						select {
-						case overlapFailure <- observation:
-						default:
-						}
-
-						return ctx.Err()
+					case <-testCtx.Done():
+						return testCtx.Err()
 					}
 				case 2:
 					<-ctx.Done()
@@ -412,12 +409,6 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 	case <-completionCtx.Done():
 		t.Fatal("second target did not start while first target was blocked")
 	}
-	select {
-	case observation := <-overlapFailure:
-		t.Fatalf("startup targets did not overlap: first target attempt %d observed %v before the second target entered the barrier", observation.attempt, observation.err)
-	default:
-	}
-
 	observed := map[uuid.UUID]attemptObservation{}
 	for range 2 {
 		select {

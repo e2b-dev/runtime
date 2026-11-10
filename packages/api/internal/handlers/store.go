@@ -12,7 +12,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	nomadapi "github.com/hashicorp/nomad/api"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
+	"github.com/riverqueue/river"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -25,10 +27,12 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/outbox"
 	"github.com/e2b-dev/infra/packages/api/internal/pauselimit"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/api/internal/team"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -43,11 +47,13 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/kube"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
@@ -207,6 +213,7 @@ type APIStore struct {
 	// pause handler's two calls — tests use it to assert the gate's wiring
 	// (refusal before RemoveSandbox) without a real orchestrator.
 	pauseBackendOverride   pauseOrchestrator
+	forkBackendOverride    forkOrchestrator
 	pauseLimiter           *pauselimit.Limiter
 	resumeBackendOverride  resumeWaitOrchestrator
 	connectBackendOverride connectOrchestrator
@@ -228,6 +235,9 @@ type APIStore struct {
 	templateBuildsCache       *templatecache.TemplatesBuildCache
 	snapshotCache             *snapshotcache.SnapshotCache
 	authService               sharedauth.Service
+	managementService         *management.Service
+	teamService               *team.Service
+	riverClient               *river.Client[pgx.Tx] // set by NewOutbox
 	templateSpawnCounter      *utils.TemplateSpawnCounter
 	clickhouseStore           clickhouse.Clickhouse
 	sandboxLogsReader         *sandboxlogs.Reader
@@ -260,7 +270,14 @@ const (
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config, hops Hops) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
 
-	sqlcDB, err := sqlcdb.NewClient(ctx, config.PostgresConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+	sqlcDB, err := sqlcdb.NewClient(
+		ctx,
+		config.PostgresConnectionString,
+		pool.WithMaxConnections(config.DBMaxOpenConnections),
+		pool.WithMinIdle(config.DBMinIdleConnections),
+		pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+		pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+	)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing SQLC client", zap.Error(err))
 	}
@@ -269,7 +286,14 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	// replica when one is configured, otherwise the primary.
 	sqlcReadDB := sqlcDB
 	if config.PostgresReadReplicaConnectionString != "" {
-		sqlcReadDB, err = sqlcdb.NewReadClient(ctx, config.PostgresReadReplicaConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+		sqlcReadDB, err = sqlcdb.NewReadClient(
+			ctx,
+			config.PostgresReadReplicaConnectionString,
+			pool.WithMaxConnections(config.DBMaxOpenConnections),
+			pool.WithMinIdle(config.DBMinIdleConnections),
+			pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+			pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+		)
 		if err != nil {
 			logger.L().Fatal(ctx, "Initializing read SQLC client", zap.Error(err))
 		}
@@ -377,7 +401,6 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
 	}
-
 	pauseLimiter, err := pauselimit.New(redisClient, featureFlags, tel.MeterProvider)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
@@ -448,6 +471,8 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		templateBuildsCache:   templateBuildsCache,
 		snapshotCache:         snapshotCache,
 		authService:           authService,
+		managementService:     management.NewService(authDB, sqlcDB, authService, tel.MeterProvider),
+		teamService:           team.NewService(sqlcDB, authService, orch, templateManager, banRequestBudget),
 		templateSpawnCounter:  templateSpawnCounter,
 		clickhouseStore:       clickhouseStore,
 		sandboxLogsReader:     sandboxLogsReader,
@@ -483,19 +508,28 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 }
 
 // NewOutbox builds the River client that works the API's outbox jobs on the
-// store's clients. Stop it before Close.
+// store's clients. Project deletion enqueues its teardown through the same
+// client. Stop it before Close.
 func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
-	return outbox.New(outbox.Dependencies{
-		Pool:      a.sqlcDB.Pool(),
-		Sandboxes: a.orchestrator,
-		Teams:     a.authDB,
-		Logger:    l,
-		Telemetry: a.Telemetry,
+	riverOutbox, err := outbox.New(outbox.Dependencies{
+		Pool:        a.sqlcDB.Pool(),
+		Sandboxes:   a.orchestrator,
+		Containment: a.teamService,
+		TeamCache:   a.authService,
+		Teams:       a.authDB,
+		Logger:      l,
+		Telemetry:   a.Telemetry,
 		Config: outbox.Config{
 			MaxWorkers:      a.config.OutboxMaxWorkers,
 			BacklogInterval: a.config.OutboxBacklogInterval,
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	a.riverClient = riverOutbox.Client()
+
+	return riverOutbox, nil
 }
 
 // Drain stops admitting sandbox work that outlives its request and waits for
@@ -704,4 +738,8 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 	}
 
 	return team, nil
+}
+
+func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
 }

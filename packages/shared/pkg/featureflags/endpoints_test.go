@@ -21,15 +21,20 @@ func TestCustomServiceEndpoints(t *testing.T) {
 	originalKey := launchDarklyApiKey
 	t.Cleanup(func() { launchDarklyApiKey = originalKey })
 	launchDarklyApiKey = "local-project"
+	t.Setenv("LAUNCH_DARKLY_OAUTH_TOKEN_URL", "")
+	t.Setenv("LAUNCH_DARKLY_OAUTH_AUDIENCE", "")
 
 	for _, constructor := range []struct {
-		name string
-		new  func(string, string, string, ...Option) (*Client, error)
+		name                             string
+		new                              func(string, string, string, ...Option) (*Client, error)
+		oauthClientID, oauthClientSecret string
 	}{
 		{name: "default", new: NewClient},
 		{name: "log level", new: func(environment, service, version string, opts ...Option) (*Client, error) {
 			return NewClientWithLogLevel(environment, service, version, ldlog.Error, opts...)
 		}},
+		{name: "SDK key overrides OAuth", new: NewClient, oauthClientID: "deployment-client", oauthClientSecret: "deployment-secret"},
+		{name: "SDK key ignores incomplete OAuth", new: NewClient, oauthClientID: "deployment-client"},
 	} {
 		t.Run(constructor.name, func(t *testing.T) {
 			updates := make(chan struct{}, 1)
@@ -72,6 +77,11 @@ data: {"path":"/flags/local-bool","data":{"key":"local-bool","on":true,"version"
 			}))
 			t.Cleanup(server.Close)
 			t.Setenv("LAUNCH_DARKLY_BASE_URL", server.URL)
+			t.Setenv("LAUNCH_DARKLY_OAUTH_CLIENT_ID", constructor.oauthClientID)
+			t.Setenv("LAUNCH_DARKLY_OAUTH_CLIENT_SECRET", constructor.oauthClientSecret)
+			if constructor.oauthClientID != "" {
+				t.Setenv("LAUNCH_DARKLY_OAUTH_TOKEN_URL", server.URL+"/token")
+			}
 			client, err := constructor.new("local", "test", "1.0.0")
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, client.Close(context.WithoutCancel(t.Context()))) })
@@ -101,6 +111,14 @@ func TestCustomEndpointWithoutKeyStaysOffline(t *testing.T) {
 	originalKey := launchDarklyApiKey
 	t.Cleanup(func() { launchDarklyApiKey = originalKey })
 	launchDarklyApiKey = ""
+	for _, name := range []string{
+		"LAUNCH_DARKLY_OAUTH_CLIENT_ID",
+		"LAUNCH_DARKLY_OAUTH_CLIENT_SECRET",
+		"LAUNCH_DARKLY_OAUTH_TOKEN_URL",
+		"LAUNCH_DARKLY_OAUTH_AUDIENCE",
+	} {
+		t.Setenv(name, "")
+	}
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)

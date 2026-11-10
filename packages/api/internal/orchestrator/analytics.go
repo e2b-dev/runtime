@@ -47,9 +47,10 @@ func (o *Orchestrator) analyticsRemove(ctx context.Context, sandbox sandbox.Sand
 	stopTime := sbxStopTime(sandbox, time.Now())
 	duration := stopTime.Sub(sandbox.StartTime).Seconds()
 
-	o.posthogClient.CreateAnalyticsTeamEvent(
+	o.posthogClient.CreateAnalyticsSandboxEvent(
 		ctx,
 		sandbox.TeamID.String(),
+		sandbox.SandboxID,
 		"closed_instance", posthog.NewProperties().
 			Set("instance_id", sandbox.SandboxID).
 			Set("environment", sandbox.TemplateID).
@@ -101,7 +102,7 @@ func (o *Orchestrator) emitCreatedInstancePosthog(ctx context.Context, sbx sandb
 		sbx, meta, startDuration,
 	)
 
-	o.posthogClient.CreateAnalyticsTeamEvent(ctx, sbx.TeamID.String(), "created_instance", props)
+	o.posthogClient.CreateAnalyticsSandboxEvent(ctx, sbx.TeamID.String(), sbx.SandboxID, "created_instance", props)
 }
 
 // createdInstanceProperties fills in the sandbox-specific properties of the

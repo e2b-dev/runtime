@@ -50,6 +50,12 @@ type MapSubscriber interface {
 //     just for sandboxes to stop being routable.
 //   - network: an IP-to-sandbox index managed by AssignNetwork and
 //     NetworkReleased, serving GetByHostPort lookups.
+//   - boots: keyed by sandboxID, the reboots in place in progress. Such a
+//     sandbox has left live and holds a reservation until its next lifecycle
+//     is live or the boot failed; AwaitBoot and CancelBoot find it there.
+//   - ended: keyed by sandboxID, the sandboxes that ended without being asked
+//     to, kept for EndedLifetime after their lifecycle closed so List reports
+//     the end to the API. They hold no resources.
 type Map struct {
 	live       *smap.Map[*Sandbox]
 	lifecycles *smap.Map[*Sandbox]
@@ -57,6 +63,8 @@ type Map struct {
 
 	registryMu   sync.Mutex
 	reservations map[string]*Reservation
+	boots        map[string]*boot
+	ended        map[string]EndedSandbox
 
 	lifecycleMu      sync.Mutex
 	lifecycleChanged chan struct{}
@@ -71,6 +79,8 @@ func NewSandboxesMap() *Map {
 		lifecycles:       smap.New[*Sandbox](),
 		network:          smap.New[*Sandbox](),
 		reservations:     map[string]*Reservation{},
+		boots:            map[string]*boot{},
+		ended:            map[string]EndedSandbox{},
 		lifecycleChanged: make(chan struct{}),
 	}
 }
@@ -112,6 +122,23 @@ func (m *Map) Stopping() int {
 	live := m.live.Count()
 
 	return max(m.lifecycles.Count()-live, 0)
+}
+
+// StoppingMatching is Stopping for the lifecycles match accepts. Lifecycles are
+// read before the live map, so a lifecycle that leaves it meanwhile counts.
+func (m *Map) StoppingMatching(match func(*Sandbox) bool) int {
+	stopping := 0
+	for _, sbx := range m.lifecycles.Items() {
+		if !match(sbx) {
+			continue
+		}
+		if live, ok := m.live.Get(sbx.Runtime.SandboxID); ok && live == sbx {
+			continue
+		}
+		stopping++
+	}
+
+	return stopping
 }
 
 func (m *Map) Get(sandboxID string) (*Sandbox, bool) {
@@ -172,6 +199,14 @@ func (m *Map) AssignNetwork(ctx context.Context, sbx *Sandbox) {
 		logger.WithLifecycleID(sbx.LifecycleID),
 		logger.WithSandboxIP(ip),
 	)
+}
+
+// LifecycleTracked reports whether lifecycleID of sandboxID is tracked
+// (TrackLifecycle) and not yet stopped.
+func (m *Map) LifecycleTracked(sandboxID, lifecycleID string) bool {
+	_, ok := m.lifecycles.Get(sandboxLifecycleKey(sandboxID, lifecycleID))
+
+	return ok
 }
 
 func (m *Map) TrackLifecycle(ctx context.Context, sbx *Sandbox) {
@@ -312,6 +347,7 @@ func (m *Map) markRunning(ctx context.Context, sbx *Sandbox, reservation *Reserv
 	}
 	m.TrackLifecycle(ctx, sbx)
 	m.live.Insert(sbx.Runtime.SandboxID, sbx)
+	sbx.wentLive.Store(true)
 	m.registryMu.Unlock()
 
 	m.trigger(ctx, func(ctx context.Context, s MapSubscriber) {
@@ -330,11 +366,68 @@ func (m *Map) markRunning(ctx context.Context, sbx *Sandbox, reservation *Reserv
 }
 
 // MarkStopping removes the sandbox from live queries (Get, Items, Count) and notifies OnStopping subscribers.
-// Returns true if the sandbox was successfully removed.
+// Returns true if the sandbox was successfully removed. A sandbox being
+// migrated is not removed (BeginMigration).
 func (m *Map) MarkStopping(ctx context.Context, sandboxID, lifecycleID string) bool {
-	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false)
+	return m.markStoppingAs(ctx, sandboxID, lifecycleID, false, false)
+}
+
+// EndMigrationStopping ends the lifecycle's migration (Sandbox.EndMigration)
+// and marks it stopping in one critical section, for the migration's own
+// end of the source: between the two as separate steps the sandbox would
+// be live and unmarked, and a kill, pause or checkpoint admitted then would
+// act on a guest whose checkpoint runs elsewhere. It reports false, with
+// the migration still marked, when the lifecycle is not live.
+func (m *Map) EndMigrationStopping(ctx context.Context, sandboxID, lifecycleID string) bool {
+	return m.markStoppingAs(ctx, sandboxID, lifecycleID, false, true)
+}
+
+// markStoppingAs is MarkStopping, on behalf of the lifecycle's own teardown
+// when ownTeardown, which a migration in flight does not refuse, or ending
+// the migration with the mark when endMigration.
+func (m *Map) markStoppingAs(ctx context.Context, sandboxID, lifecycleID string, ownTeardown, endMigration bool) bool {
+	_, err := m.markStopping(ctx, sandboxID, lifecycleID, false, nil, ownTeardown, endMigration)
 
 	return err == nil
+}
+
+// ErrSandboxMigrating reports a lifecycle change refused because the sandbox
+// is being migrated (Map.BeginMigration).
+var ErrSandboxMigrating = errors.New("sandbox is being migrated")
+
+// BeginMigration marks a migration of the live lifecycleID of sandboxID in
+// flight once no update of it is running, so every update committed before
+// it returned is in the state the caller reads after it, and none commits
+// after. Until Sandbox.EndMigration, MarkStopping, MarkStoppingReserved,
+// checkpoints and updates of the sandbox are refused. It stays live and
+// addressable, and its own teardown, once its process ended, still removes
+// it. A sandbox that is not live under lifecycleID, already being migrated,
+// or being checkpointed is refused.
+func (m *Map) BeginMigration(sandboxID, lifecycleID string) (*Sandbox, error) {
+	m.registryMu.Lock()
+	sbx, ok := m.live.Get(sandboxID)
+	switch {
+	case !ok || sbx.LifecycleID != lifecycleID:
+		m.registryMu.Unlock()
+
+		return nil, fmt.Errorf("sandbox '%s' lifecycle '%s' is not live", sandboxID, lifecycleID)
+	case sbx.MigrationInFlight():
+		m.registryMu.Unlock()
+
+		return nil, ErrSandboxMigrating
+	case !sbx.BeginCheckpoint():
+		m.registryMu.Unlock()
+
+		return nil, ErrSandboxOperationInProgress
+	}
+	sbx.migrationInFlight.Store(true)
+	active := sbx.updateAdmission.active()
+	m.registryMu.Unlock()
+	if active != nil {
+		<-active
+	}
+
+	return sbx, nil
 }
 
 // reclaimLiveEntryOnCleanup registers the teardown callback that drops this
@@ -356,8 +449,9 @@ func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, r
 	cleanup.Add(ctx, func(ctx context.Context) error {
 		// false is the normal outcome: delete, pause and a checkpoint that resumes
 		// fresh all reclaim the entry before the chain runs, and a lifecycle that
-		// never became live has no entry to reclaim.
-		if !m.MarkStopping(ctx, runtime.SandboxID, lifecycleID) {
+		// never became live has no entry to reclaim. A migration in flight does
+		// not keep a lifecycle whose teardown runs live.
+		if !m.markStoppingAs(ctx, runtime.SandboxID, lifecycleID, true, false) {
 			return nil
 		}
 
@@ -389,10 +483,209 @@ func (m *Map) reclaimLiveEntryOnCleanup(ctx context.Context, cleanup *Cleanup, r
 
 // MarkStoppingReserved exchanges the matching live entry for a checkpoint hold before notifying subscribers.
 func (m *Map) MarkStoppingReserved(ctx context.Context, sandboxID, lifecycleID string) (*Reservation, error) {
-	return m.markStopping(ctx, sandboxID, lifecycleID, true)
+	return m.markStopping(ctx, sandboxID, lifecycleID, true, nil, false, false)
 }
 
-func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool) (*Reservation, error) {
+// boot is a reboot in place in progress.
+type boot struct {
+	// from is the lifecycle whose guest reset.
+	from   *Sandbox
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+
+	mu sync.Mutex
+	// ended is set once the boot has ended, under mu with the read of kill,
+	// so a Delete's acknowledgement and the boot's end see each other.
+	ended bool
+	// kill is the reason of a Delete that cancelled the boot and stopped
+	// waiting for its end: the boot publishes that kill as it ends, since
+	// the Delete already answered and its retry finds nothing to kill. The
+	// first one is kept.
+	kill string
+}
+
+// acknowledgeKill records the kill of a Delete that stopped waiting for the
+// boot. It reports false once the boot has ended: the Delete then reads the
+// boot's end as a wait that returned.
+func (b *boot) acknowledgeKill(killReason string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.ended {
+		return false
+	}
+	if b.kill == "" {
+		b.kill = killReason
+	}
+
+	return true
+}
+
+// end marks the boot ended and returns the kill a Delete left it to publish.
+func (b *boot) end() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.ended = true
+
+	return b.kill, b.kill != ""
+}
+
+// claimKill gives the kill of the boot to the caller once it has ended,
+// unless a Delete already holds it: the one that stopped waiting, whose kill
+// the boot publishes, or an earlier one that waited the boot out.
+func (b *boot) claimKill(killReason string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.kill != "" {
+		return false
+	}
+	b.kill = killReason
+
+	return true
+}
+
+// beginBoot exchanges the live entry of the sandbox whose guest reset for a
+// reservation, as MarkStoppingReserved does, and registers the boot in the
+// same step, so a lookup never finds neither. cancel ends the boot.
+func (m *Map) beginBoot(ctx context.Context, from *Sandbox, cancel context.CancelCauseFunc) (*Reservation, *boot, error) {
+	b := &boot{from: from, cancel: cancel, done: make(chan struct{})}
+
+	reservation, err := m.markStopping(ctx, from.Runtime.SandboxID, from.LifecycleID, true, b, false, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return reservation, b, nil
+}
+
+// endBoot unregisters the boot and wakes its waiters, and returns the kill a
+// Delete left the boot to publish. On success the next lifecycle must already
+// be live, so a waiter's lookup finds it.
+func (m *Map) endBoot(b *boot) (pendingKill string, ok bool) {
+	sandboxID := b.from.Runtime.SandboxID
+
+	m.registryMu.Lock()
+	if m.boots[sandboxID] == b {
+		delete(m.boots, sandboxID)
+	}
+	m.registryMu.Unlock()
+
+	pendingKill, ok = b.end()
+	close(b.done)
+
+	return pendingKill, ok
+}
+
+func (m *Map) getBoot(sandboxID string) *boot {
+	m.registryMu.Lock()
+	defer m.registryMu.Unlock()
+
+	return m.boots[sandboxID]
+}
+
+// BeginBootForTest holds the sandbox out of the live map as a reboot in place
+// does, for tests outside this package that drive a call racing a reboot.
+// end finishes the boot and returns the kill a Delete left it to publish;
+// with next non-nil it first registers next as live.
+func (m *Map) BeginBootForTest(ctx context.Context, from *Sandbox) (end func(next *Sandbox) (pendingKill string, err error), err error) {
+	reservation, b, err := m.beginBoot(ctx, from, func(error) {})
+	if err != nil {
+		return nil, err
+	}
+
+	return func(next *Sandbox) (string, error) {
+		defer reservation.Release()
+		var registerErr error
+		if next != nil {
+			registerErr = reservation.MarkRunning(ctx, next)
+		}
+		pendingKill, _ := m.endBoot(b)
+
+		return pendingKill, registerErr
+	}, nil
+}
+
+// Rebooting reports whether a reboot in place holds the sandbox out of the
+// live map.
+func (m *Map) Rebooting(sandboxID string) bool {
+	return m.getBoot(sandboxID) != nil
+}
+
+// AwaitBoot looks the sandbox up, and if a reboot in place holds it, waits
+// for the boot to end and looks it up again. A boot that failed leaves the
+// sandbox not found, as a sandbox that stopped.
+func (m *Map) AwaitBoot(ctx context.Context, sandboxID string) (*Sandbox, bool, error) {
+	sbx, ok, _, err := m.AwaitBootWaited(ctx, sandboxID)
+
+	return sbx, ok, err
+}
+
+// AwaitBootWaited is AwaitBoot that also reports whether it waited for a boot.
+func (m *Map) AwaitBootWaited(ctx context.Context, sandboxID string) (sbx *Sandbox, ok, waited bool, err error) {
+	if sbx, ok := m.Get(sandboxID); ok {
+		return sbx, true, false, nil
+	}
+
+	b := m.getBoot(sandboxID)
+	if b == nil {
+		// A boot that ended between the two reads made its successor live
+		// first, so a second read finds it.
+		sbx, ok := m.Get(sandboxID)
+
+		return sbx, ok, false, nil
+	}
+
+	select {
+	case <-b.done:
+	case <-ctx.Done():
+		return nil, false, true, ctx.Err()
+	}
+
+	sbx, ok = m.Get(sandboxID)
+
+	return sbx, ok, true, nil
+}
+
+// ErrBootCancelled is the cause a reboot in place ends with when the sandbox
+// is killed during it.
+var ErrBootCancelled = errors.New("sandbox killed during its reboot")
+
+// CancelBoot ends a reboot in place of the sandbox, if one is running, and
+// waits until it has. It returns the lifecycle whose guest reset, or nil when
+// no boot was running. A boot that registered its sandbox as live before the
+// cancel landed keeps it; the caller looks the sandbox up again.
+//
+// publish reports that the caller publishes the kill: the boot's kill is
+// claimed by the first cancel that waits the boot out. When ctx ends before
+// the boot has, killReason is recorded on the boot instead, which carries it
+// in its result for the lifecycle to publish once it ended with nothing
+// live, and every later cancel of the same boot finds it taken. So the kill
+// is published once whichever side gets there.
+func (m *Map) CancelBoot(ctx context.Context, sandboxID, killReason string) (from *Sandbox, publish bool, err error) {
+	b := m.getBoot(sandboxID)
+	if b == nil {
+		return nil, false, nil
+	}
+
+	b.cancel(ErrBootCancelled)
+
+	select {
+	case <-b.done:
+	case <-ctx.Done():
+		if b.acknowledgeKill(killReason) {
+			return nil, false, ctx.Err()
+		}
+		// The boot ended as the context did: a wait that returned.
+	}
+
+	return b.from, b.claimKill(killReason), nil
+}
+
+// markStopping refuses a lifecycle being migrated unless ownTeardown, decided
+// under the registry lock with the removal.
+func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, reserve bool, b *boot, ownTeardown, endMigration bool) (*Reservation, error) {
 	var (
 		stopped          *Sandbox
 		reservation      *Reservation
@@ -407,6 +700,14 @@ func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, r
 		}
 
 		if sbx.LifecycleID != lifecycleID {
+			return false
+		}
+		if endMigration {
+			sbx.EndMigration()
+		}
+		if !ownTeardown && sbx.MigrationInFlight() {
+			stopErr = ErrSandboxMigrating
+
 			return false
 		}
 		if reserve && m.reservations[sandboxID] != nil {
@@ -431,6 +732,9 @@ func (m *Map) markStopping(ctx context.Context, sandboxID, lifecycleID string, r
 	if stopped != nil && reserve {
 		reservation = &Reservation{m: m, sandboxID: sandboxID}
 		m.reservations[sandboxID] = reservation
+		if b != nil {
+			m.boots[sandboxID] = b
+		}
 	}
 	m.registryMu.Unlock()
 

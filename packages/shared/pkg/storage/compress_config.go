@@ -31,11 +31,6 @@ type CompressConfig struct {
 	MinPartSizeMB      int    `env:"COMPRESS_MIN_PART_SIZE_MB"     envDefault:"0"`
 	FrameEncodeWorkers int    `env:"COMPRESS_FRAME_ENCODE_WORKERS" envDefault:"0"`
 	EncoderConcurrency int    `env:"COMPRESS_ENCODER_CONCURRENCY"  envDefault:"0"`
-
-	// FrameSizedOutput makes compressors return outputs that keep the
-	// encoder's frame-sized buffer instead of an exact-length copy. Set only
-	// by the compress-right-sized-frames kill switch.
-	FrameSizedOutput bool
 }
 
 // CompressionType returns the parsed CompressionType.

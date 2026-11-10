@@ -171,7 +171,7 @@ func TestNewRedisClientRefusesPlaintextPassword(t *testing.T) {
 func TestNewRedisClientWaitsForAnUnreachableRedis(t *testing.T) {
 	t.Parallel()
 
-	backendAddr := redis_utils.SetupInstance(t).(*redis.Client).Options().Addr
+	backendAddr := serverAddr(redis_utils.SetupInstance(t))
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
@@ -197,6 +197,16 @@ func TestNewRedisClientWaitsForAnUnreachableRedis(t *testing.T) {
 	client, err := NewRedisClient(ctx, RedisConfig{RedisURL: listener.Addr().String()})
 	require.NoError(t, err)
 	require.NoError(t, client.Close())
+}
+
+// serverAddr returns the address of the server client talks to, standalone or
+// cluster-mode.
+func serverAddr(client redis.UniversalClient) string {
+	if cluster, ok := client.(*redis.ClusterClient); ok {
+		return cluster.Options().Addrs[0]
+	}
+
+	return client.(*redis.Client).Options().Addr
 }
 
 func proxyTo(ctx context.Context, conn net.Conn, addr string) {

@@ -17,8 +17,9 @@ import (
 )
 
 type failingStorage struct {
-	attempts atomic.Int64
-	released atomic.Int64
+	attempts  atomic.Int64
+	released  atomic.Int64
+	releaseFn func(*network.Slot) error
 	// failures > 0 parks every attempt after that many until its context ends.
 	failures int64
 	mu       sync.Mutex
@@ -39,8 +40,11 @@ func (s *failingStorage) Acquire(ctx context.Context) (*network.Slot, error) {
 	return nil, errors.New("persistent acquire failure")
 }
 
-func (s *failingStorage) Release(*network.Slot) error {
+func (s *failingStorage) Release(slot *network.Slot) error {
 	s.released.Add(1)
+	if s.releaseFn != nil {
+		return s.releaseFn(slot)
+	}
 
 	return nil
 }
@@ -129,16 +133,52 @@ func TestV2Pool_FailedReleaseRetainsSlot(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	require.ErrorIs(t, pool.returnSlot(t.Context(), &network.Slot{Idx: 1}, failRelease, 0), boom)
-	err := pool.returnSlot(canceled, &network.Slot{Idx: 2}, failRelease, time.Hour)
+	require.ErrorIs(t, pool.returnSlot(t.Context(), makeTestSlot(t, reserveNSTestIdx(t)), failRelease, 0), boom)
+	err := pool.returnSlot(canceled, makeTestSlot(t, reserveNSTestIdx(t)), failRelease, time.Hour)
 	require.ErrorIs(t, err, network.ErrSlotRetained)
 	require.ErrorIs(t, err, context.Canceled)
-	require.NoError(t, pool.ReturnAsync(t.Context(), &network.Slot{Idx: 3}, failRelease, time.Hour))
-	require.NoError(t, pool.Close(t.Context()))
-	err = pool.returnSlot(t.Context(), &network.Slot{Idx: 4}, failRelease, time.Hour)
-	require.ErrorIs(t, err, network.ErrSlotRetained)
+	require.NoError(t, pool.ReturnAsync(t.Context(), makeTestSlot(t, reserveNSTestIdx(t)), failRelease, time.Hour))
+	require.ErrorIs(t, pool.Close(t.Context()), network.ErrSlotRetained)
+	err = pool.returnSlot(t.Context(), makeTestSlot(t, reserveNSTestIdx(t)), failRelease, time.Hour)
+	require.NotErrorIs(t, err, network.ErrSlotRetained)
 	require.ErrorIs(t, err, network.ErrClosed)
 
-	require.Zero(t, storage.released.Load(), "a retained slot must not be released for reuse")
+	require.Equal(t, int64(4), storage.released.Load(), "shutdown must physically remove all four slots, including earlier failed returns")
 	require.Empty(t, pool.reusedSlots)
+}
+
+// Close preserves an unresolved error of each kind without collecting every
+// later return failure. Individual callers still receive their own diagnostic.
+func TestV2Pool_CloseRetainsBoundedUnresolvedErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, notification := range []bool{true, false} {
+		name := "teardown"
+		if notification {
+			name = "notification"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			storage := &failingStorage{}
+			pool, _ := newRetryTestPool(t, storage, time.Hour)
+			close(pool.newSlots)
+			first := errors.New("first unresolved failure")
+			later := errors.New("later unresolved failure")
+			for _, failure := range []error{first, later} {
+				released := func(context.Context, string) error { return nil }
+				if notification {
+					released = func(context.Context, string) error { return failure }
+				} else {
+					storage.releaseFn = func(*network.Slot) error { return failure }
+				}
+				err := pool.returnSlot(t.Context(), makeTestSlot(t, reserveNSTestIdx(t)), released, 0)
+				require.ErrorIs(t, err, failure, "each return must report its own failure")
+			}
+			err := pool.Close(t.Context())
+			require.ErrorIs(t, err, first, "shutdown must preserve an unresolved failure")
+			require.NotErrorIs(t, err, later, "shutdown must not collect a lifetime history")
+			require.Equal(t, int64(2), storage.released.Load(), "all slots must reach physical cleanup")
+		})
+	}
 }

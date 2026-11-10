@@ -60,7 +60,7 @@ target "seed" {
   // target, so an arm64 image costs one native Go build rather than an
   // emulated one; the runtime stage is the target platform's Alpine.
   dockerfile-inline = <<-DOCKERFILE
-    FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.24 AS builder
+    FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24 AS builder
     ARG SRC=go/oss
     ARG TARGETARCH
     WORKDIR /src

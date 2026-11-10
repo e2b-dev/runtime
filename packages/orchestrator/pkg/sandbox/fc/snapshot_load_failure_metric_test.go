@@ -56,7 +56,7 @@ func TestLoadSnapshotRecordsRefusal(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 
 	// uffdReady is never closed: the load fails before it is waited on.
-	err = newApiClient(socket).loadSnapshot(t.Context(), dir+"/uffd.sock", make(chan struct{}), stubSnapfile(dir+"/snapfile"), false, false, "abc123", "team-1")
+	err = newApiClient(socket).loadSnapshot(t.Context(), dir+"/uffd.sock", make(chan struct{}), stubSnapfile(dir+"/snapfile"), false, false, false, nil, "abc123", "team-1")
 	require.Error(t, err)
 
 	assert.Equal(t, int64(1), counterValue(t, reader, string(telemetry.SandboxFCSnapshotLoadFailures), "reason", string(snapshotLoadVcpuMSR)))

@@ -27,6 +27,7 @@ func (a *APIStore) GetUnstableTeamsTeamIDLimits(c *gin.Context, teamID api.TeamI
 			MaxFreeDiskSizeMb:        row.MaxFreeDiskSizeMb,
 			ApiTeamRpsList:           row.ApiTeamRpsList,
 			ApiTeamRpsDelete:         row.ApiTeamRpsDelete,
+			MaxSecrets:               row.MaxSecrets,
 		},
 	})
 }

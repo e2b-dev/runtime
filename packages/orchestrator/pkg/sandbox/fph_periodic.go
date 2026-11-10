@@ -197,7 +197,8 @@ type hintGates struct {
 // runPeriodicHinting is launched from Checks.Start and returns when ctx is
 // cancelled or when hinting cannot apply to this sandbox.
 func (s *Sandbox) runPeriodicHinting(ctx context.Context) {
-	if s.featureFlags == nil {
+	// A guest without a balloon device has nothing to drive.
+	if s.featureFlags == nil || s.Config.GuestProfile().Boot().NoBalloon {
 		return
 	}
 	cfgFn := func() featureflags.PeriodicHintingConfig {

@@ -17,6 +17,9 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
+// CancelledByAdminReason is the status message of a build an admin cancelled.
+const CancelledByAdminReason = "cancelled by admin"
+
 // buildDeleteTimeout bounds the node-side delete once the build has been
 // recorded as failed.
 const buildDeleteTimeout = 30 * time.Second

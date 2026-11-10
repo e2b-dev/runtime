@@ -131,10 +131,19 @@ func (o *Orchestrator) CreateSnapshotTemplate(ctx context.Context, teamID uuid.U
 				if isFilesystemOnlyDisabled(err) {
 					return SnapshotTemplateResult{}, FilesystemOnlyDisabledError{}
 				}
+				if isCheckpointInProgress(err) {
+					return SnapshotTemplateResult{}, PauseRefusedCheckpointInProgressError{}
+				}
+				if refusal := pauseRefusal(err); errors.Is(refusal, PauseUnsupportedError{}) {
+					return SnapshotTemplateResult{}, refusal
+				}
 
 				return SnapshotTemplateResult{}, fmt.Errorf("checkpoint rejected: %w", err)
 			case codes.ResourceExhausted:
 				finish(nil)
+				if isEnvdUnresponsive(err) {
+					return SnapshotTemplateResult{}, PauseRefusedEnvdUnresponsiveError{}
+				}
 
 				return SnapshotTemplateResult{}, PauseQueueExhaustedError{}
 			case codes.Canceled, codes.DeadlineExceeded:
@@ -168,7 +177,7 @@ func (o *Orchestrator) CreateSnapshotTemplate(ctx context.Context, teamID uuid.U
 		return SnapshotTemplateResult{}, fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, types.BuildStatusUploaded); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, false, types.BuildStatusUploaded, false); err != nil {
 		return SnapshotTemplateResult{}, errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 
@@ -218,13 +227,33 @@ func (o *Orchestrator) upsertSnapshotKeepingKind(ctx context.Context, sbx sandbo
 // when the kind changed, the new kind on the sandbox's snapshot row in the
 // same transaction: the row's kind and its latest ready build must never be
 // observed apart, or a resume would memory-restore a memoryless build.
-func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind bool, status types.BuildStatus) error {
-	if currentKind == wantKind {
-		return o.finishSnapshotBuild(ctx, buildID, status)
-	}
-
+// finishSnapshotBuildWithKind records the build's terminal status together
+// with what the row must now say about it: the kind, when it changed, and the
+// mark that the memory snapshot was taken while the guest agent did not
+// answer, so a resume can refuse to restore that memory without asking the
+// node. One transaction, so a reader never sees the build ready without them.
+func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind, envdUnresponsive bool, status types.BuildStatus, rekindBuild bool) error {
+	// One detached budget for every write below, so finalization reports
+	// before the sandbox's state transition expires.
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
 	defer cancel()
+
+	// rekindBuild: the node captured another kind than the build was created
+	// as. Written first and on its own, through the client's retry of a
+	// transient error; the build is not ready until its status, so nothing
+	// reads the kind in between.
+	if rekindBuild {
+		if err := o.sqlcDB.UpdateEnvBuildFilesystemOnly(writeCtx, queries.UpdateEnvBuildFilesystemOnlyParams{
+			BuildID:        buildID,
+			FilesystemOnly: wantKind,
+		}); err != nil {
+			return fmt.Errorf("record build kind: %w", err)
+		}
+	}
+
+	if currentKind == wantKind && !envdUnresponsive {
+		return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+	}
 
 	txDB, tx, err := o.sqlcDB.WithTx(writeCtx)
 	if err != nil {
@@ -232,11 +261,19 @@ func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID 
 	}
 	defer func() { _ = tx.Rollback(writeCtx) }()
 
-	if err := txDB.UpdateSnapshotFilesystemOnly(writeCtx, queries.UpdateSnapshotFilesystemOnlyParams{
-		SandboxID:      sandboxID,
-		FilesystemOnly: wantKind,
-	}); err != nil {
-		return fmt.Errorf("record snapshot kind: %w", err)
+	if currentKind != wantKind {
+		if err := txDB.UpdateSnapshotFilesystemOnly(writeCtx, queries.UpdateSnapshotFilesystemOnlyParams{
+			SandboxID:      sandboxID,
+			FilesystemOnly: wantKind,
+		}); err != nil {
+			return fmt.Errorf("record snapshot kind: %w", err)
+		}
+	}
+
+	if envdUnresponsive {
+		if err := txDB.MarkSnapshotBuildEnvdUnresponsive(writeCtx, buildID); err != nil {
+			return fmt.Errorf("record unresponsive guest agent: %w", err)
+		}
 	}
 
 	if err := txDB.UpdateEnvBuildStatus(writeCtx, queries.UpdateEnvBuildStatusParams{
@@ -259,7 +296,13 @@ func (o *Orchestrator) finishSnapshotBuild(ctx context.Context, buildID uuid.UUI
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
 	defer cancel()
 
-	return o.sqlcDB.UpdateEnvBuildStatus(writeCtx, queries.UpdateEnvBuildStatusParams{
+	return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+}
+
+// writeSnapshotBuildStatus records a terminal status under ctx as given; the
+// caller owns the detached budget.
+func (o *Orchestrator) writeSnapshotBuildStatus(ctx context.Context, buildID uuid.UUID, status types.BuildStatus) error {
+	return o.sqlcDB.UpdateEnvBuildStatus(ctx, queries.UpdateEnvBuildStatusParams{
 		Status:     status,
 		FinishedAt: new(time.Now()),
 		Reason:     types.BuildReason{},
@@ -405,12 +448,29 @@ func (FilesystemOnlyDisabledError) Error() string {
 // Read through the gRPC status package: the gogo one used above for codes
 // cannot decode this detail type.
 func isFilesystemOnlyDisabled(err error) bool {
+	return hasUserErrorCode(err, orchestrator.UserErrorCode_FILESYSTEM_ONLY_CHECKPOINT_DISABLED)
+}
+
+// isCheckpointInProgress reports a node's refusal to snapshot while another
+// checkpoint of the same sandbox is in flight, by its typed detail: the Pause
+// and Checkpoint RPCs answer it with different codes and messages.
+func isCheckpointInProgress(err error) bool {
+	return hasUserErrorCode(err, orchestrator.UserErrorCode_CHECKPOINT_IN_PROGRESS)
+}
+
+// isEnvdUnresponsive reports a node's refusal of a memory pause because the
+// sandbox's guest agent did not answer its health probe, by its typed detail.
+func isEnvdUnresponsive(err error) bool {
+	return hasUserErrorCode(err, orchestrator.UserErrorCode_ENVD_UNRESPONSIVE)
+}
+
+func hasUserErrorCode(err error, code orchestrator.UserErrorCode) bool {
 	st, ok := grpcstatus.FromError(err)
 	if !ok {
 		return false
 	}
 	for _, detail := range st.Details() {
-		if userErr, ok := detail.(*orchestrator.UserError); ok && userErr.GetCode() == orchestrator.UserErrorCode_FILESYSTEM_ONLY_CHECKPOINT_DISABLED {
+		if userErr, ok := detail.(*orchestrator.UserError); ok && userErr.GetCode() == code {
 			return true
 		}
 	}

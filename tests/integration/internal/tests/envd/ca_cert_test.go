@@ -5,11 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -18,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/tests/integration/internal/api"
 	"github.com/e2b-dev/infra/tests/integration/internal/setup"
 	"github.com/e2b-dev/infra/tests/integration/internal/utils"
 )
@@ -49,17 +46,6 @@ func generateSelfSignedCA(t *testing.T, cn string) string {
 	require.NoError(t, pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: der}))
 
 	return buf.String()
-}
-
-// readBundle execs cat on the CA bundle inside the sandbox and returns its content.
-func readBundle(t *testing.T, sbx *api.Sandbox, client *setup.EnvdClient) string {
-	t.Helper()
-
-	out, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client,
-		"cat", "/etc/ssl/certs/ca-certificates.crt")
-	require.NoError(t, err, "read CA bundle")
-
-	return out
 }
 
 // TestCACertBundleOnTmpfs verifies that /etc/ssl/certs is bind-mounted from
@@ -101,19 +87,30 @@ func TestCACertPersistsThroughUpdateCACertificates(t *testing.T) {
 
 	certPEM := generateSelfSignedCA(t, "e2b-test-ca-persist")
 
-	// The file name envd uses in caCertDir (packages/envd/internal/host/cacerts.go),
-	// which this module cannot import. Change it there, change it here —
-	// otherwise this keeps passing while testing a path envd no longer writes.
-	block, _ := pem.Decode([]byte(certPEM))
-	caCertPath := fmt.Sprintf("/usr/local/share/ca-certificates/e2b-%x.crt", sha256.Sum256(block.Bytes))
+	// envd's caCertDir (packages/envd/internal/host/cacerts.go), which this module
+	// cannot import; change it there, change it here. The name must stay outside
+	// envd's managed pattern (e2b-<sha256>.crt): envd's background cleanup deletes
+	// managed files it was not asked to install, and when that ran between the
+	// upload and the rebuild the cert was gone and the test failed.
+	const caCertPath = "/usr/local/share/ca-certificates/e2b-test-ca-persist.crt"
 
 	utils.UploadFileAs(t, t.Context(), sbx, client, caCertPath, certPEM, "root")
 
-	// Rebuild the bundle from source directories.
-	err := utils.ExecCommandAsRoot(t, t.Context(), sbx, client, "update-ca-certificates")
-	require.NoError(t, err, "update-ca-certificates should succeed")
-
-	bundle := readBundle(t, sbx, client)
-	assert.Contains(t, bundle, strings.TrimRight(certPEM, "\n"),
-		"a cert in envd's local certificate directory should survive an update-ca-certificates rebuild")
+	// Rebuild the bundle from source directories. envd's startup reconcile can
+	// rename an older bundle snapshot over a rebuild it overlapped with, and stops
+	// once its pending request clears; a guest that ignored the directory never
+	// passes.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		err := utils.ExecCommandAsRoot(t, t.Context(), sbx, client, "update-ca-certificates")
+		if !assert.NoError(c, err, "update-ca-certificates should succeed") {
+			return
+		}
+		bundle, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client,
+			"cat", "/etc/ssl/certs/ca-certificates.crt")
+		if !assert.NoError(c, err, "read CA bundle") {
+			return
+		}
+		assert.Contains(c, bundle, strings.TrimRight(certPEM, "\n"),
+			"a cert in envd's local certificate directory should survive an update-ca-certificates rebuild")
+	}, 30*time.Second, time.Second)
 }

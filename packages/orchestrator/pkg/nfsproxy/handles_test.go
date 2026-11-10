@@ -32,7 +32,7 @@ type servedVolume struct {
 	hostPath  string
 
 	// mount mounts the volume again over a new connection.
-	mount func() (*nfs.Target, error)
+	mount func(*sandbox.Sandbox) (*nfs.Target, error)
 }
 
 // mountVolume serves one sandbox with one volume through a proxy built from
@@ -104,15 +104,15 @@ func serveUserspaceVolume(t *testing.T, config nfscfg.Config) servedVolume {
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 
-	mount := func() (*nfs.Target, error) {
+	mount := func(owner *sandbox.Sandbox) (*nfs.Target, error) {
 		client, err := dialRetry(func() (*rpc.Client, error) { return nfs.DialServiceAtPort(host, port) })
 		require.NoError(t, err)
 		t.Cleanup(func() { client.Close() })
 
-		return (&nfs.Mount{Client: client}).Mount("/"+volumeName, rpc.NewAuthUnix("", 0, 0).Auth())
+		return (&nfs.Mount{Client: client}).Mount(owner.NFSMountPath(volumeName), rpc.NewAuthUnix("", 0, 0).Auth())
 	}
 
-	target, err := mount()
+	target, err := mount(sbx)
 	require.NoError(t, err)
 
 	return servedVolume{target: target, sandboxes: sandboxes, sbx: sbx, hostPath: hostPath, mount: mount}
@@ -125,7 +125,7 @@ func TestHeldFileSurvivesConfiguredNumberOfNewFiles(t *testing.T) {
 
 	target := mountVolume(t, nfscfg.Config{HandleCacheLimit: 4096}).target
 
-	mkdir(t, target, "src", 0o755)
+	mkdir(t, target, "src")
 	lock, err := target.OpenFile("index.lock", 0o644)
 	require.NoError(t, err)
 
@@ -171,7 +171,7 @@ func TestCapturedNetworkReleaseMakesOnlyOldNFSHandlesStale(t *testing.T) {
 		Resources:   old.Resources,
 	}
 	volume.sandboxes.AssignNetwork(t.Context(), replacement)
-	newTarget, err := volume.mount()
+	newTarget, err := volume.mount(replacement)
 	require.NoError(t, err)
 	newHeld, err := newTarget.OpenFile("new-held", 0o644)
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestRemountingAVolumeSharesItsHandles(t *testing.T) {
 	_, before, err := volume.target.Lookup("file")
 	require.NoError(t, err)
 
-	again, err := volume.mount()
+	again, err := volume.mount(volume.sbx)
 	require.NoError(t, err)
 	_, after, err := again.Lookup("file")
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestRemountFailsWhenTheVolumeRootIsGone(t *testing.T) {
 	volume := mountVolume(t, nfscfg.Config{})
 	require.NoError(t, os.RemoveAll(volume.hostPath))
 
-	_, err := volume.mount()
+	_, err := volume.mount(volume.sbx)
 	assert.Error(t, err)
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq" //nolint:blank-imports
 
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/pool"
 	database "github.com/e2b-dev/infra/packages/db/queries"
 )
@@ -17,8 +16,7 @@ const poolName = "main"
 type Client struct {
 	*database.Queries
 
-	Dashboard *dashboardqueries.Queries
-	conn      *pgxpool.Pool
+	conn *pgxpool.Pool
 }
 
 func NewClient(ctx context.Context, databaseURL string, options ...pool.Option) (*Client, error) {
@@ -38,9 +36,8 @@ func newClient(ctx context.Context, databaseURL string, name string, options ...
 	}
 
 	return &Client{
-		Queries:   database.New(dbClient),
-		Dashboard: dashboardqueries.New(dbClient),
-		conn:      connPool,
+		Queries: database.New(dbClient),
+		conn:    connPool,
 	}, nil
 }
 
@@ -63,9 +60,8 @@ func (db *Client) WithTx(ctx context.Context) (*Client, pgx.Tx, error) {
 	}
 
 	client := &Client{
-		Queries:   db.Queries.WithTx(tx),
-		Dashboard: db.Dashboard.WithTx(tx),
-		conn:      db.conn,
+		Queries: db.Queries.WithTx(tx),
+		conn:    db.conn,
 	}
 
 	return client, tx, nil

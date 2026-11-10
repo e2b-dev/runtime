@@ -3,18 +3,124 @@
 package metrics
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
+
+// A sandbox that goes live while a collection is under way must not wedge it.
+// A wedged callback holds the SDK pipeline lock for good: the node stops
+// reporting sandbox metrics and Close blocks the orchestrator's shutdown.
+func TestSandboxObserverCollectsWhileSandboxesStartAndStop(t *testing.T) {
+	t.Parallel()
+
+	sandboxes := sandbox.NewSandboxesMap()
+	reader := sdkmetric.NewManualReader()
+	so := newTestSandboxObserver(t, sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"), sandboxes)
+	registration, err := so.startObserving()
+	require.NoError(t, err)
+	so.registration = registration
+
+	sbx := observableSandbox(t)
+
+	ctx, stopChurn := context.WithCancel(t.Context())
+	churned := make(chan struct{})
+	t.Cleanup(func() {
+		stopChurn()
+		<-churned
+	})
+	go func() {
+		defer close(churned)
+		for ctx.Err() == nil {
+			assert.NoError(t, sandboxes.MarkRunning(ctx, sbx))
+			assert.True(t, sandboxes.MarkStopping(ctx, sbx.Runtime.SandboxID, sbx.LifecycleID))
+		}
+	}()
+
+	const collections = 2000
+	collected := make(chan struct{})
+	go func() {
+		defer close(collected)
+		var rm metricdata.ResourceMetrics
+		for range collections {
+			assert.NoError(t, reader.Collect(t.Context(), &rm))
+		}
+	}()
+
+	select {
+	case <-collected:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a collection never returned while sandboxes started and stopped")
+	}
+}
+
+// observableSandbox is new enough for metrics, and its envd address refuses
+// connections at once, so each metrics request fails fast.
+func observableSandbox(t *testing.T) *sandbox.Sandbox {
+	t.Helper()
+
+	slot, err := network.NewSlot("test", 1, network.Config{}, network.NoopEgressProxy{})
+	require.NoError(t, err)
+	slot.HostIP = net.IPv4(127, 0, 0, 1)
+
+	sbx := &sandbox.Sandbox{
+		LifecycleID: "lifecycle-1",
+		Metadata: &sandbox.Metadata{
+			Config:  sandbox.NewConfig(sandbox.Config{Envd: sandbox.EnvdMetadata{Version: "0.5.0"}}),
+			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "sandbox-1"},
+		},
+		Resources: &sandbox.Resources{Slot: slot},
+	}
+	sbx.SetChecks(sandbox.NewChecks(sbx))
+
+	return sbx
+}
+
+func newTestSandboxObserver(t *testing.T, meter metric.Meter, sandboxes *sandbox.Map) *SandboxObserver {
+	t.Helper()
+
+	so := &SandboxObserver{meter: meter, sandboxes: sandboxes}
+	for _, g := range []struct {
+		dst  *metric.Int64ObservableGauge
+		name telemetry.GaugeIntType
+	}{
+		{&so.cpuTotal, telemetry.SandboxCpuTotalGaugeName},
+		{&so.cpuPossible, telemetry.SandboxCpuPossibleGaugeName},
+		{&so.cpuTarget, telemetry.SandboxCpuTargetGaugeName},
+		{&so.cpuAttempts, telemetry.SandboxCpuTargetAttemptsGaugeName},
+		{&so.cpuPending, telemetry.SandboxCpuWritePendingGaugeName},
+		{&so.memoryTotal, telemetry.SandboxRamTotalGaugeName},
+		{&so.memoryUsed, telemetry.SandboxRamUsedGaugeName},
+		{&so.memoryCache, telemetry.SandboxRamCacheGaugeName},
+		{&so.diskTotal, telemetry.SandboxDiskTotalGaugeName},
+		{&so.diskUsed, telemetry.SandboxDiskUsedGaugeName},
+	} {
+		gauge, err := telemetry.GetGaugeInt(meter, g.name)
+		require.NoError(t, err)
+		*g.dst = gauge
+	}
+	cpuUsed, err := telemetry.GetGaugeFloat(meter, telemetry.SandboxCpuUsedGaugeName)
+	require.NoError(t, err)
+	so.cpuUsed = cpuUsed
+
+	return so
+}
 
 func TestUnseenOOMKills(t *testing.T) {
 	t.Parallel()

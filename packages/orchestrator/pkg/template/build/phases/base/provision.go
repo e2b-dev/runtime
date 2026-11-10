@@ -170,7 +170,6 @@ func (bb *BaseBuilder) provisionSandbox(
 			Stderr: logsWriter,
 		},
 		nil,
-		nil, // no pre-boot hook for provisioning
 	)
 	if err != nil {
 		return fmt.Errorf("error creating sandbox: %w", err)

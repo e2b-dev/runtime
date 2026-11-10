@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
@@ -19,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 type FromTemplateError struct {
@@ -47,6 +50,7 @@ func (tm *TemplateManager) CreateTemplate(
 	diskSizeMB,
 	freeDiskSizeMB,
 	memoryMB int64,
+	maxVCpuCount *int64,
 	readyCommand *string,
 	fromImage *string,
 	fromTemplate *string,
@@ -84,12 +88,16 @@ func (tm *TemplateManager) CreateTemplate(
 		}
 	}()
 
-	features, err := fcversion.New(firecrackerVersion)
-	if err != nil {
+	if _, err := fcversion.New(firecrackerVersion); err != nil {
 		return fmt.Errorf("failed to get features for firecracker version '%s': %w", firecrackerVersion, err)
 	}
 
-	client, err := tm.GetClusterBuildClient(clusterID, nodeID)
+	var minVersion *semver.Version
+	if maxVCpuCount != nil {
+		minVersion = clusters.ResizableTemplateBuildsMinVersion
+	}
+
+	client, err := tm.buildDispatchClient(ctx, clusterID, nodeID, minVersion)
 	if err != nil {
 		return fmt.Errorf("failed to get builder: %w", err)
 	}
@@ -108,8 +116,8 @@ func (tm *TemplateManager) CreateTemplate(
 		return fmt.Errorf("failed to convert image registry: %w", err)
 	}
 
-	// TODO(ENG-3852): Remove later. KernelVersion and FirecrackerVersion are deprecated on
-	// template-manager selects its own versions and reports the ones it actually
+	// TODO(ENG-3852): Remove later. KernelVersion, FirecrackerVersion and HugePages are
+	// deprecated: template-manager selects its own versions and reports the ones it actually
 	// used via TemplateBuildMetadata. They are still populated here for
 	// backwards compatibility with older template-managers that honor them.
 	template := &templatemanagergrpc.TemplateConfig{
@@ -122,12 +130,13 @@ func (tm *TemplateManager) CreateTemplate(
 		FreeDiskSizeMB:     new(int32(freeDiskSizeMB)),
 		KernelVersion:      kernelVersion,
 		FirecrackerVersion: firecrackerVersion,
-		HugePages:          features.HasHugePages(),
+		HugePages:          true,
 		StartCommand:       startCmd,
 		ReadyCommand:       readyCmd,
 		Force:              force,
 		Steps:              convertTemplateSteps(steps),
 		FromImageRegistry:  imageRegistry,
+		MaxVCpuCount:       sharedutils.CastPtr(maxVCpuCount, func(v int64) int32 { return int32(v) }),
 	}
 
 	err = setTemplateSource(ctx, tm, teamID, teamSlug, template, fromImage, fromTemplate)

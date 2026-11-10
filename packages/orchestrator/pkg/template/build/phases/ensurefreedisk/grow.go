@@ -175,7 +175,7 @@ func (b *EnsureFreeDiskBuilder) resizeAndExport(
 	}()
 
 	// Represent the new device tail as zeroes before ext4 grows into it.
-	if _, err := cache.WriteZeroesAt(sourceSize, newSize-sourceSize); err != nil {
+	if _, err := cache.ZeroGrownTail(sourceSize, newSize-sourceSize); err != nil {
 		return nil, nil, 0, fmt.Errorf("zero-fill grown tail: %w", err)
 	}
 

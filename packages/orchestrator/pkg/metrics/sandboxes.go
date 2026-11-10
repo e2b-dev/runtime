@@ -195,14 +195,16 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 	unregister, err := so.meter.RegisterCallback(
 		func(ctx context.Context, o metric.Observer) error {
-			sbxCount := so.sandboxes.Count()
+			// Size the limit from the snapshot it iterates: a limit of 0 blocks the
+			// first Go forever, and with it this callback and the SDK pipeline.
+			sbxs := so.sandboxes.Items()
 
 			wg := errgroup.Group{}
 			// Run concurrently to prevent blocking if there are many sandboxes other callbacks
-			limit := math.Ceil(float64(sbxCount) / metricsParallelismFactor)
-			wg.SetLimit(int(limit))
+			limit := math.Ceil(float64(len(sbxs)) / metricsParallelismFactor)
+			wg.SetLimit(max(1, int(limit)))
 
-			for _, sbx := range so.sandboxes.Items() {
+			for _, sbx := range sbxs {
 				ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForMetrics)
 				if err != nil {
 					logger.L().Error(ctx, "Failed to check envd version", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
@@ -215,7 +217,7 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 				wg.Go(func() error {
 					// Make sure the sandbox doesn't change while we are getting metrics (the slot could be assigned to another sandbox)
-					sbxMetrics, err := sbx.Checks.GetMetrics(ctx, timeoutGetMetrics)
+					sbxMetrics, err := sbx.Checks().GetMetrics(ctx, timeoutGetMetrics)
 					if err != nil {
 						// Sandbox has stopped
 						if errors.Is(err, sandbox.ErrChecksStopped) {

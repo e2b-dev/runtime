@@ -2,6 +2,7 @@ package placement
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -31,7 +32,7 @@ type PlacementResult struct {
 	// Response is the successful create's RPC response; nil on failure.
 	Response *orchestrator.SandboxCreateResponse
 	// MissingHugepageCeiling is why the final memory check admitted Node
-	// unbounded (a MissingHugepageCeiling reason), "" when the check bounded
+	// unbounded (a reason MemoryAdmission names), "" when the check bounded
 	// it or no limit applied. Taken at admission: the node's metrics may
 	// change before the caller reads them.
 	MissingHugepageCeiling string
@@ -111,12 +112,18 @@ func placeSandbox(
 	defer span.End()
 
 	nodesExcluded := make(map[string]struct{})
+	// A node whose status refused a create is left out of the next sample:
+	// that refusal lasts until the node is set Healthy. It is not excluded:
+	// the sample after that may pick it again, and when nothing else fits the
+	// sample is retried without the skip. A capacity refusal skips nothing;
+	// the backoff below paces its retry on the same node.
+	skipped := make(map[string]struct{})
 	var err error
 
 	resources := nodemanager.SandboxResources{
 		CPUs:      sbxRequest.GetSandbox().GetVcpu(),
 		MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
-		HugePages: sbxRequest.GetSandbox().GetHugePages(),
+		HugePages: true,
 	}
 
 	var node *nodemanager.Node
@@ -207,7 +214,17 @@ func placeSandbox(
 				return failed(NoNodesAvailableError{})
 			}
 
-			node, err = algorithm.chooseNode(ctx, clusterNodes, nodesExcluded, resources, requirements, labelFilteringEnabled, requiredLabels)
+			candidatesExcluded := nodesExcluded
+			if len(skipped) > 0 {
+				candidatesExcluded = maps.Clone(nodesExcluded)
+				maps.Copy(candidatesExcluded, skipped)
+			}
+			node, err = algorithm.chooseNode(ctx, clusterNodes, candidatesExcluded, resources, requirements, labelFilteringEnabled, requiredLabels)
+			if err != nil && len(skipped) > 0 {
+				// The others cannot take it after all: the refusing node is the candidate.
+				node, err = algorithm.chooseNode(ctx, clusterNodes, nodesExcluded, resources, requirements, labelFilteringEnabled, requiredLabels)
+			}
+			clear(skipped)
 			if err != nil {
 				// A create was already attempted: its error explains the failure
 				// better than the empty candidate set it caused.
@@ -259,10 +276,9 @@ func placeSandbox(
 			// Optimistic update: assume resources are occupied after successful creation.
 			// Manually update node.metrics with the newly allocated resources.
 			// This will be overwritten by the next real Metrics report for auto-correction.
-			// Added before the in-flight entry is dropped, so a concurrent
-			// memory check always counts this sandbox somewhere.
-			node.OptimisticAdd(resources)
-			node.PlacementMetrics.Success(sbxRequest.GetSandbox().GetSandboxId())
+			// Moved from in flight in one step, so a concurrent memory check
+			// counts this sandbox exactly once.
+			node.CompletePlacement(sbxRequest.GetSandbox().GetSandboxId(), resources)
 
 			return PlacementResult{Node: node, Response: resp, MissingHugepageCeiling: missingCeiling}, nil
 		}
@@ -286,6 +302,9 @@ func placeSandbox(
 		case codes.ResourceExhausted:
 			refusals++
 			failedNode.PlacementMetrics.Skip(sbxRequest.GetSandbox().GetSandboxId())
+			if ok && createRefusedByStatus(st) {
+				skipped[failedNode.ID] = struct{}{}
+			}
 
 			delay := backoff.delay(refusals)
 			logger.L().Warn(ctx, "Node exhausted, trying another node", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithNodeID(failedNode.ID), zap.Int("refusals", refusals), zap.Duration("retry_in", delay), zap.Error(utils.UnwrapGRPCError(err)))
@@ -339,6 +358,19 @@ func placeSandbox(
 func createRefusedForGood(st *status.Status) bool {
 	for _, detail := range st.Details() {
 		if userErr, ok := detail.(*orchestrator.UserError); ok && userErr.GetCode() == orchestrator.UserErrorCode_SANDBOX_CREATE_REFUSED {
+			return true
+		}
+	}
+
+	return false
+}
+
+// createRefusedByStatus reports a refusal the node's status caused. It lasts
+// until the node is set Healthy, so the next sample leaves the node out; a
+// capacity refusal carries no such detail and is retried on the same node.
+func createRefusedByStatus(st *status.Status) bool {
+	for _, detail := range st.Details() {
+		if userErr, ok := detail.(*orchestrator.UserError); ok && userErr.GetCode() == orchestrator.UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES {
 			return true
 		}
 	}

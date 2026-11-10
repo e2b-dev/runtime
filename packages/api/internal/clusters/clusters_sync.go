@@ -252,20 +252,7 @@ func (d clustersSyncStore) newCluster(cluster queries.Cluster) (*Cluster, error)
 		return newLocalCluster(d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config, d.localCreds, d.onLocalInstance), nil
 	}
 
-	authOrgID := ""
-	if cluster.AuthOrgID != nil {
-		authOrgID = *cluster.AuthOrgID
-	}
-
-	return newRemoteCluster(
-		d.tel,
-		cluster.Endpoint,
-		cluster.EndpointTls,
-		cluster.Token,
-		cluster.ID,
-		cluster.SandboxProxyDomain,
-		authOrgID,
-	)
+	return newRemoteCluster(d.tel, d.featureFlags, cluster)
 }
 
 func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Context) ([]queries.Cluster, error) {

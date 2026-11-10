@@ -70,58 +70,6 @@ func TestResolveCompressConfig_V4_FlagOn(t *testing.T) {
 	require.True(t, resolveV4(t, ff))
 }
 
-func TestResolveCompressConfig_RightSizedFramesKillSwitch(t *testing.T) {
-	t.Parallel()
-
-	base := storage.CompressConfig{Enabled: true, Type: "zstd", FrameSizeKB: 2048}
-
-	newFF := func(t *testing.T, setup func(td *ldtestdata.TestDataSource)) *featureflags.Client {
-		t.Helper()
-
-		td := ldtestdata.DataSource()
-		setup(td)
-		ff, err := featureflags.NewClientWithDatasource(td)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			_ = ff.Close(context.WithoutCancel(t.Context()))
-		})
-
-		return ff
-	}
-
-	tests := []struct {
-		name  string
-		setup func(td *ldtestdata.TestDataSource)
-		want  bool
-	}{
-		{"flag unset defaults to right-sized", func(*ldtestdata.TestDataSource) {}, false},
-		{"flag on", func(td *ldtestdata.TestDataSource) {
-			td.Update(td.Flag(featureflags.CompressRightSizedFramesFlag.Key()).VariationForAll(true))
-		}, false},
-		{"flag off restores frame-sized output", func(td *ldtestdata.TestDataSource) {
-			td.Update(td.Flag(featureflags.CompressRightSizedFramesFlag.Key()).VariationForAll(false))
-		}, true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg, _, err := resolveCompressConfig(t.Context(), base, newFF(t, tc.setup), storage.RootfsName, 4096, storage.UseCasePause)
-			require.NoError(t, err)
-			require.Equal(t, tc.want, cfg.FrameSizedOutput)
-		})
-	}
-
-	t.Run("nil client", func(t *testing.T) {
-		t.Parallel()
-
-		cfg, _, err := resolveCompressConfig(t.Context(), base, nil, storage.RootfsName, 4096, storage.UseCasePause)
-		require.NoError(t, err)
-		require.False(t, cfg.FrameSizedOutput)
-	})
-}
-
 // putV3Header registers a V3 ancestor in the fake cache. V3 headers carry no
 // Builds map at all — appendAncestorBuilds must synthesize a placeholder from
 // Metadata.Size so descendants don't pay a refresh roundtrip per cold read.

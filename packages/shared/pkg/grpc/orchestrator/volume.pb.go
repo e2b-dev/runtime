@@ -39,20 +39,37 @@ const (
 	// retry changes (its vcpu request is out of bounds); the API reports it as
 	// a refusal, not a failure to retry.
 	UserErrorCode_SANDBOX_CREATE_REFUSED UserErrorCode = 8
+	// A snapshot refused because another checkpoint of the same sandbox is in
+	// flight; the sandbox keeps running and the request can be retried once
+	// that checkpoint ends. The API tells it apart from a busy node (Pause) and
+	// from a rejected artifact (Checkpoint) by this detail, not by the message.
+	UserErrorCode_CHECKPOINT_IN_PROGRESS UserErrorCode = 10
+	// A memory pause refused because the sandbox's guest agent (envd) did not
+	// answer its health probe; a snapshot taken now would record a hung agent
+	// and never resume. The sandbox keeps running and the pause can be retried.
+	UserErrorCode_ENVD_UNRESPONSIVE UserErrorCode = 11
+	// A sandbox create refused because the node's status admits nothing new
+	// (Standby, Draining, Unhealthy). It clears when the node is set Healthy
+	// again, not on a retry, so the API leaves the node out of its next sample.
+	// A capacity refusal carries no detail and is retried as before.
+	UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES UserErrorCode = 12
 )
 
 // Enum value maps for UserErrorCode.
 var (
 	UserErrorCode_name = map[int32]string{
-		0: "UNKNOWN_USER_ERROR_CODE",
-		1: "PATH_NOT_FOUND",
-		2: "PATH_ALREADY_EXISTS",
-		3: "CANNOT_DELETE_ROOT",
-		4: "NOT_SUPPORTED",
-		5: "DEPTH_OUT_OF_RANGE",
-		6: "INVALID_REQUEST",
-		7: "FILESYSTEM_ONLY_CHECKPOINT_DISABLED",
-		8: "SANDBOX_CREATE_REFUSED",
+		0:  "UNKNOWN_USER_ERROR_CODE",
+		1:  "PATH_NOT_FOUND",
+		2:  "PATH_ALREADY_EXISTS",
+		3:  "CANNOT_DELETE_ROOT",
+		4:  "NOT_SUPPORTED",
+		5:  "DEPTH_OUT_OF_RANGE",
+		6:  "INVALID_REQUEST",
+		7:  "FILESYSTEM_ONLY_CHECKPOINT_DISABLED",
+		8:  "SANDBOX_CREATE_REFUSED",
+		10: "CHECKPOINT_IN_PROGRESS",
+		11: "ENVD_UNRESPONSIVE",
+		12: "NODE_NOT_ACCEPTING_SANDBOXES",
 	}
 	UserErrorCode_value = map[string]int32{
 		"UNKNOWN_USER_ERROR_CODE":             0,
@@ -64,6 +81,9 @@ var (
 		"INVALID_REQUEST":                     6,
 		"FILESYSTEM_ONLY_CHECKPOINT_DISABLED": 7,
 		"SANDBOX_CREATE_REFUSED":              8,
+		"CHECKPOINT_IN_PROGRESS":              10,
+		"ENVD_UNRESPONSIVE":                   11,
+		"NODE_NOT_ACCEPTING_SANDBOXES":        12,
 	}
 )
 
@@ -1891,7 +1911,7 @@ const file_volume_proto_rawDesc = "" +
 	"\x04_gid\"6\n" +
 	"\x12UpdatePathResponse\x12 \n" +
 	"\x05entry\x18\x01 \x01(\v2\n" +
-	".EntryInfoR\x05entry*\xf6\x01\n" +
+	".EntryInfoR\x05entry*\xcb\x02\n" +
 	"\rUserErrorCode\x12\x1b\n" +
 	"\x17UNKNOWN_USER_ERROR_CODE\x10\x00\x12\x12\n" +
 	"\x0ePATH_NOT_FOUND\x10\x01\x12\x17\n" +
@@ -1901,7 +1921,11 @@ const file_volume_proto_rawDesc = "" +
 	"\x12DEPTH_OUT_OF_RANGE\x10\x05\x12\x13\n" +
 	"\x0fINVALID_REQUEST\x10\x06\x12'\n" +
 	"#FILESYSTEM_ONLY_CHECKPOINT_DISABLED\x10\a\x12\x1a\n" +
-	"\x16SANDBOX_CREATE_REFUSED\x10\b*i\n" +
+	"\x16SANDBOX_CREATE_REFUSED\x10\b\x12\x1a\n" +
+	"\x16CHECKPOINT_IN_PROGRESS\x10\n" +
+	"\x12\x15\n" +
+	"\x11ENVD_UNRESPONSIVE\x10\v\x12 \n" +
+	"\x1cNODE_NOT_ACCEPTING_SANDBOXES\x10\f*i\n" +
 	"\bFileType\x12\x19\n" +
 	"\x15FILE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eFILE_TYPE_FILE\x10\x01\x12\x17\n" +

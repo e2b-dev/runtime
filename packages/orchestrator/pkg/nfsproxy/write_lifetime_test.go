@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/google/uuid"
@@ -160,9 +161,10 @@ func TestWriteRetiresFileOnEveryPath(t *testing.T) {
 			require.Equal(t, 1, openWriteDescriptors(t, path), "the physical-FD oracle must see an actual open payload")
 			require.NoError(t, probe.Close())
 			require.Zero(t, openWriteDescriptors(t, path))
+			lifecycleID := uuid.NewString()
 			sandboxes := sandbox.NewSandboxesMap()
 			sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
-				LifecycleID: uuid.NewString(),
+				LifecycleID: lifecycleID,
 				Metadata: &sandbox.Metadata{
 					Config: sandbox.NewConfig(sandbox.Config{
 						VolumeMounts: []sandbox.VolumeMountConfig{{ID: volumeID, Name: "volume", Path: "/volume", Type: "test"}},
@@ -173,7 +175,10 @@ func TestWriteRetiresFileOnEveryPath(t *testing.T) {
 			})
 			proxy, err := NewProxy(t.Context(), builder, sandboxes, nfscfg.Config{})
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, sandboxes.NetworkReleased(context.WithoutCancel(t.Context()), "127.0.0.1")) })
+			t.Cleanup(func() {
+				require.NoError(t, sandboxes.NetworkReleased(context.WithoutCancel(t.Context()), "127.0.0.1"))
+				require.Eventually(t, func() bool { return proxy.retirement.count() == 0 }, time.Second, time.Millisecond)
+			})
 			faults := &writeFailureHandler{Handler: proxy.server.Handler, phase: phase}
 			proxy.server.Handler = faults
 			// Retain opened files so finalizers cannot hide a missed Close.
@@ -202,7 +207,7 @@ func TestWriteRetiresFileOnEveryPath(t *testing.T) {
 			})
 			require.NoError(t, err)
 			t.Cleanup(client.Close)
-			target, err := (&clientnfs.Mount{Client: client}).Mount("/volume", rpc.NewAuthUnix("test", 1000, 1000).Auth())
+			target, err := (&clientnfs.Mount{Client: client}).Mount("/"+lifecycleID+"/volume", rpc.NewAuthUnix("test", 1000, 1000).Auth())
 			require.NoError(t, err)
 			t.Cleanup(target.Close)
 			file, err := target.OpenFile("/payload", 0o600)

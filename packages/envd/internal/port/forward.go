@@ -77,22 +77,46 @@ func NewForwarder(
 	scanner *Scanner,
 	freezer *cgroups.WorkloadFreezer,
 ) *Forwarder {
-	scannerSub := scanner.AddSubscriber(
-		"port-forwarder",
-		// We only want to forward ports that are actively listening on localhost.
-		&ScannerFilter{
-			IPs:   []string{"127.0.0.1", "localhost", "::1"},
-			State: "LISTEN",
-		},
-	)
+	return newForwarder(logger, scanner, freezer, forwardingAvailable())
+}
 
-	return &Forwarder{
-		logger:            logger,
-		sourceIP:          defaultGatewayIP,
-		ports:             make(map[string]*PortToForward),
-		scannerSubscriber: scannerSub,
-		freezer:           freezer,
+// newForwarder builds the forwarder; unavailable is why this build cannot
+// forward ports, nil where it can.
+func newForwarder(
+	logger *zerolog.Logger,
+	scanner *Scanner,
+	freezer *cgroups.WorkloadFreezer,
+	unavailable error,
+) *Forwarder {
+	f := &Forwarder{
+		logger:   logger,
+		sourceIP: defaultGatewayIP,
+		ports:    make(map[string]*PortToForward),
+		freezer:  freezer,
 	}
+	// Where forwarding is unavailable nothing would receive the scan results,
+	// so the forwarder does not subscribe.
+	if unavailable != nil {
+		logger.Warn().Err(unavailable).Msg("port forwarding disabled")
+	} else {
+		f.scannerSubscriber = scanner.AddSubscriber(
+			"port-forwarder",
+			// We only want to forward ports that are actively listening on localhost.
+			&ScannerFilter{
+				IPs:   []string{"127.0.0.1", "localhost", "::1"},
+				State: "LISTEN",
+			},
+		)
+	}
+
+	return f
+}
+
+// Forwards reports whether the forwarder forwards ports, so whether
+// StartForwarding and the scan it consumes need to run; the scanner has no
+// other subscriber.
+func (f *Forwarder) Forwards() bool {
+	return f.scannerSubscriber != nil
 }
 
 func (f *Forwarder) StartForwarding(ctx context.Context) {
@@ -191,9 +215,7 @@ func (f *Forwarder) startPortForwarding(ctx context.Context, p *PortToForward) (
 
 	cgroupFD, ok := f.freezer.Manager().GetFileDescriptor(cgroups.ProcessTypeSocat)
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.SysProcAttr = socatProcAttr()
 	applyCgroupFD(cmd.SysProcAttr, cgroupFD, ok)
 
 	f.logger.Debug().
@@ -267,7 +289,7 @@ func (f *Forwarder) stopPortForwarding(p *PortToForward) {
 	// Kill the socat's process group. A re-adopted socat has no *exec.Cmd Wait
 	// goroutine to reap it, so ImportForwards started reaper.Reap for it; a
 	// self-spawned socat is reaped by its startPortForwarding Wait goroutine.
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+	if err := killSocat(pid); err != nil {
 		logger.Error().Err(err).Msg("Failed to kill process group")
 
 		return
@@ -341,7 +363,7 @@ func (f *Forwarder) ImportForwards(forwards []*upgrade.ForwardedPort) (readopted
 		// Only re-adopt a socat that is still alive (kill -0). One that exited
 		// during the handover window is left out so the next scan respawns rather
 		// than recording a dead socat as "forwarded".
-		if syscall.Kill(pid, 0) != nil {
+		if !processAlive(pid) {
 			continue
 		}
 		f.ports[fp.GetKey()] = &PortToForward{

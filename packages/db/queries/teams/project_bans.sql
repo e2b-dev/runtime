@@ -1,0 +1,22 @@
+-- name: LockManagedProjectBan :one
+SELECT is_banned FROM public.teams
+WHERE id = sqlc.arg(id)::uuid
+FOR UPDATE;
+
+-- name: ApplyProjectBanProjection :one
+WITH changed AS (
+    INSERT INTO projection.project_bans (project_id, revision, decided_at)
+    VALUES (
+        sqlc.arg(project_id)::uuid,
+        sqlc.arg(revision)::bigint,
+        sqlc.narg(decided_at)::timestamptz
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET
+        revision = EXCLUDED.revision,
+        decided_at = EXCLUDED.decided_at,
+        updated_at = now()
+    WHERE projection.project_bans.revision < EXCLUDED.revision
+    RETURNING project_id
+)
+SELECT EXISTS (SELECT 1 FROM changed) AS applied;

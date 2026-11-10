@@ -146,3 +146,16 @@ func TestValidateSigningRejectsInvalidAccessTokenHeader(t *testing.T) {
 	err := api.validateSigning(r, nil, nil, nil, "/files", SigningReadOperation)
 	assert.EqualError(t, err, "access token present in header but does not match")
 }
+
+// A user name with a colon is refused, even with a signature made for it.
+func TestValidateSigningRejectsAColonInTheUserName(t *testing.T) {
+	t.Parallel()
+	api := newAuthTestAPI(t, "test-token")
+
+	username := "a:b"
+	sig, err := api.generateSignature("/files", username, SigningWriteOperation, nil)
+	require.NoError(t, err)
+
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/files", nil)
+	assert.Error(t, api.validateSigning(r, &sig, nil, &username, "/files", SigningWriteOperation))
+}

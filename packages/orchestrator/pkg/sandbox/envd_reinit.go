@@ -274,13 +274,12 @@ func (s *Sandbox) cutEnvdReinitForPause(ctx context.Context, cleanup *Cleanup, p
 // resume. initCtx is detached from the request so a dying request ctx can't
 // skip it.
 //
-// The episode budget is the envd-timeout flag (~10s) — the same bound a real
-// resume gives WaitForEnvd — NOT EnvdInitRequestTimeout: that 50ms value is
-// the PER-ATTEMPT deadline inside initEnvd's retry loop, calibrated for
-// fail-fast-and-retry, and using it as the total would allow exactly one
-// attempt against a guest that is busy working through its post-freeze
-// backlog. initCtx carries the /init, so nothing of the re-init outlives that
-// budget.
+// The episode budget is the envd-timeout flag (~10s), NOT
+// EnvdInitRequestTimeout: that 50ms value is the PER-ATTEMPT deadline inside
+// initEnvd's retry loop, calibrated for fail-fast-and-retry, and using it as
+// the total would allow exactly one attempt against a guest that is busy
+// working through its post-freeze backlog. initCtx carries the /init, so
+// nothing of the re-init outlives that budget.
 func (s *Sandbox) bestEffortEnvdReinit(ctx, initCtx context.Context, r *envdReinit) {
 	defer r.cancel(nil)
 
@@ -322,7 +321,12 @@ func (s *Sandbox) bestEffortEnvdReinit(ctx, initCtx context.Context, r *envdRein
 	case held && err != nil && errors.Is(err, ErrFcProcessExited):
 		envdReinitCut.Add(ctx, 1, metric.WithAttributes(attribute.String("by", "kill"), s.teamAttr()))
 	}
-	if err != nil && !cut {
+	switch {
+	case err == nil || cut:
+	case errors.Is(err, errEnvdRefusedByNetwork):
+		// The sandbox keeps running.
+		s.log().Warn(ctx, "envd re-init: the sandbox's network refused the envd that answered", zap.Error(err))
+	default:
 		s.log().Warn(ctx, "envd re-init after in-place resume failed (guest clock may lag)", zap.Error(err))
 	}
 	// Last, after the counter and the warning: a waiter reads both once done is closed.

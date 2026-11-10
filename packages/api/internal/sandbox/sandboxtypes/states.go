@@ -56,6 +56,10 @@ const (
 	KillReasonOrphaned            KillReason = "orphaned"
 	KillReasonBaseTemplateMissing KillReason = "base_template_missing"
 	KillReasonTeamDeleted         KillReason = "team_deleted"
+	KillReasonGuestPowerOff       KillReason = "guest_poweroff"
+	// KillReasonEndedOnNode ends the record of a sandbox its node reports
+	// ended without being asked to.
+	KillReasonEndedOnNode KillReason = "ended_on_node"
 )
 
 // String returns the reason as a string, normalizing the empty value to
@@ -80,6 +84,12 @@ type RemoveOpts struct {
 	// pause. Default false = full memory snapshot.
 	FilesystemOnly bool
 
+	// RequireEnvdHealthy asks the node to refuse the memory snapshot if the
+	// sandbox's guest agent does not answer its health probe, instead of
+	// taking it and recording the miss. Ignored unless Action is a pause; a
+	// filesystem-only pause is refused on a miss whatever this says.
+	RequireEnvdHealthy bool
+
 	// ExpectExecutionID pins the removal to one incarnation of the sandbox.
 	// When set, StartRemoving fails with ErrExecutionMismatch if the stored
 	// record carries a different execution ID.
@@ -91,6 +101,11 @@ type RemoveOpts struct {
 	// was never in scope. Empty means "remove whatever is stored", which is
 	// correct for callers acting on a fresh read or on user intent.
 	ExpectExecutionID string
+
+	// BeforeEndTime lets an eviction run before the sandbox's end time, for
+	// a timeout action brought forward because the node reports the sandbox
+	// cannot run until then. Ignored unless Eviction is set.
+	BeforeEndTime bool
 }
 
 var AllowedTransitions = map[State]map[State]bool{

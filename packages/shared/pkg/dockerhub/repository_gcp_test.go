@@ -10,12 +10,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	containerregistry "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -184,4 +187,31 @@ func TestGCPRefreshCancellationDoesNotQueueRetries(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "refreshed", credentials.Password)
 	require.Equal(t, int32(2), attempts.Load(), "only a new caller should retry the failed refresh")
+}
+
+func TestGCPRepositoryAccessDenied(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v2/" {
+					w.WriteHeader(http.StatusOK)
+
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"errors":[{"code":"DENIED","message":"repository unavailable"}]}`))
+			}))
+			t.Cleanup(server.Close)
+			repository := &GCPRemoteRepository{repositoryURL: strings.TrimPrefix(server.URL, "http://") + "/project/proxy", authToken: authn.Anonymous}
+			_, err := repository.GetImage(t.Context(), "ubuntu:24.04", containerregistry.Platform{OS: "linux", Architecture: "amd64"})
+			require.Error(t, err)
+			require.Equal(t, status != http.StatusNotFound, errors.Is(err, ErrRepositoryAccessDenied))
+			registryErr, ok := errors.AsType[*transport.Error](err)
+			require.True(t, ok)
+			require.Equal(t, status, registryErr.StatusCode)
+		})
+	}
 }

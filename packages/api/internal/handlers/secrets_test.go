@@ -36,7 +36,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
@@ -260,7 +260,7 @@ func newSecretsRequest(t *testing.T, method, target, body string) (*gin.Context,
 	teamID := uuid.New()
 	ginCtx.Request.Header.Set(sharedauth.HeaderTeamID, teamID.String())
 	sharedauth.SetTeamInfoForTest(t, ginCtx, &types.Team{
-		Team:   &authqueries.Team{ID: teamID},
+		Team:   &dbtypes.Team{ID: teamID},
 		Limits: &types.TeamLimits{MaxSecrets: 10},
 	})
 
@@ -581,7 +581,7 @@ func TestPostSecretsProjectSecretsLimit(t *testing.T) {
 
 			ginCtx, recorder, teamID := newSecretsRequest(t, http.MethodPost, "/secrets", string(body))
 			sharedauth.SetTeamInfoForTest(t, ginCtx, &types.Team{
-				Team:   &authqueries.Team{ID: teamID},
+				Team:   &dbtypes.Team{ID: teamID},
 				Limits: &types.TeamLimits{MaxSecrets: tt.limit},
 			})
 

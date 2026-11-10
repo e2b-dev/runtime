@@ -18,6 +18,9 @@ import (
 // swagger:model Drive
 type Drive struct {
 
+	// Logical block size advertised to the guest via VIRTIO_BLK_F_BLK_SIZE. When omitted, Firecracker reports the backing block device's own logical block size, or 512 for a regular file. This field is optional for virtio-block config and should be omitted for vhost-user-block configuration.
+	BlkSize int64 `json:"blk_size,omitempty"`
+
 	// Represents the caching strategy for the block device.
 	// Enum: ["Unsafe","Writeback"]
 	CacheType *string `json:"cache_type,omitempty"`

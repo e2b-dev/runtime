@@ -70,6 +70,7 @@ func TestGetFileOwnership_CurrentUser(t *testing.T) {
 
 	t.Run("current user", func(t *testing.T) {
 		t.Parallel()
+		skipWithoutNumericOwner(t)
 
 		// Get current user running the tests
 		cur, err := osuser.Current()

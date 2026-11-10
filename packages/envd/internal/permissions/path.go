@@ -3,10 +3,8 @@ package permissions
 import (
 	"errors"
 	"fmt"
-	"os"
 	"os/user"
 	"path/filepath"
-	"slices"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 )
@@ -39,6 +37,19 @@ func ExpandAndResolve(path string, user *user.User, defaultPath *string) (string
 		return path, nil
 	}
 
+	if err := refuseAmbiguousRelative(path); err != nil {
+		return "", err
+	}
+
+	if rootedButNotAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve rooted path '%s': %w", path, err)
+		}
+
+		return abs, nil
+	}
+
 	// The filepath.Abs can correctly resolve paths like /home/user/../file
 	path = filepath.Join(user.HomeDir, path)
 
@@ -48,51 +59,4 @@ func ExpandAndResolve(path string, user *user.User, defaultPath *string) (string
 	}
 
 	return abs, nil
-}
-
-func getSubpaths(path string) (subpaths []string) {
-	for {
-		subpaths = append(subpaths, path)
-
-		path = filepath.Dir(path)
-		if path == "/" {
-			break
-		}
-	}
-
-	slices.Reverse(subpaths)
-
-	return subpaths
-}
-
-func EnsureDirs(path string, uid, gid int) error {
-	subpaths := getSubpaths(path)
-	for _, subpath := range subpaths {
-		info, err := os.Stat(subpath)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to stat directory: %w", err)
-		}
-
-		if err != nil && os.IsNotExist(err) {
-			err = os.Mkdir(subpath, 0o755)
-			if err != nil && !os.IsExist(err) {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-
-			// Chown even if another process created the directory (os.IsExist),
-			// since it may not have called Chown yet. Chown is idempotent.
-			err = os.Chown(subpath, uid, gid)
-			if err != nil {
-				return fmt.Errorf("failed to chown directory: %w", err)
-			}
-
-			continue
-		}
-
-		if !info.IsDir() {
-			return fmt.Errorf("path is a file: %s", subpath)
-		}
-	}
-
-	return nil
 }

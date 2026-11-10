@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -171,12 +172,13 @@ func main() {
 		return
 	}
 
-	if err := run(); err != nil {
+	if err := serve(run); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
 
-func run() error {
+// run serves until the listener fails or stop is closed (a service stop).
+func run(stop <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -289,7 +291,7 @@ func run() error {
 		oomWatcher = host.NewOOMWatcher(&envLogger)
 		go oomWatcher.Watch(ctx)
 
-		cpuManager = cpus.New(envLogger, &helpers)
+		cpuManager = newCPUManager(envLogger, &helpers)
 		cpuManager.Start(ctx)
 	}
 
@@ -353,9 +355,11 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "envd: re-adopted %d forwarded port(s) after handover\n", readopted)
 		}
 	}
-	go portForwarder.StartForwarding(ctx)
+	if portForwarder.Forwards() {
+		go portForwarder.StartForwarding(ctx)
 
-	go portScanner.ScanAndBroadcast()
+		go portScanner.ScanAndBroadcast()
+	}
 
 	// Live-upgrade outgoing trigger. doUpgrade performs the outgoing
 	// choreography: freeze the workload, then re-exec into newBin (empty
@@ -472,7 +476,25 @@ func run() error {
 		}
 	})
 
+	// A stop request closes the listener, which makes ListenAndServe return.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-stop:
+			_ = s.Close()
+		case <-stopped:
+		}
+	}()
+
 	err := s.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		select {
+		case <-stop:
+			err = nil
+		default:
+		}
+	}
 	// Signal goroutines to stop before deferred cleanup closes their resources.
 	// TODO: shutdown synchronization needs to be revisited.
 	cancel()

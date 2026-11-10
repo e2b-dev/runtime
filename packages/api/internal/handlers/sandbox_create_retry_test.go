@@ -15,8 +15,8 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
@@ -35,7 +35,7 @@ func TestSandboxCreateRetryTemplateLookup(t *testing.T) {
 			store := &APIStore{templateCache: cache}
 			router := gin.New()
 			router.Use(func(c *gin.Context) {
-				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: uuid.New(), Slug: "test-team"}})
+				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New(), Slug: "test-team"}})
 			})
 			router.POST("/sandboxes", store.PostSandboxes)
 			router.POST("/v2/sandboxes", func(c *gin.Context) { store.PostV2Sandboxes(c, api.PostV2SandboxesParams{}) })

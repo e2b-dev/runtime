@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.26.10
+ARG GOLANG_VERSION=1.27.3
 ARG DEBIAN_RUNTIME_TAG=bookworm-20260824-slim
 
 # The orchestrator binary is built with CGO and dynamically links against
@@ -49,6 +49,22 @@ FROM scratch AS artifacts
 
 COPY --from=builder /build/orchestrator/bin/clean-nfs-cache .
 COPY --from=builder /build/orchestrator/bin/orchestrator .
+
+# No libc and no tools: the binary must stay static and exec nothing. The CA
+# certificates are for the LaunchDarkly client.
+FROM gcr.io/distroless/static-debian12@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2 AS clean-nfs-cache
+
+ARG COMMIT_SHA
+
+LABEL org.opencontainers.image.title="clean-nfs-cache" \
+      org.opencontainers.image.description="E2B privileged NFS cache cleanup CronJob" \
+      org.opencontainers.image.source="https://github.com/e2b-dev/infra" \
+      org.opencontainers.image.revision="${COMMIT_SHA}"
+
+COPY --from=builder /build/orchestrator/bin/clean-nfs-cache /clean-nfs-cache
+
+USER 0
+ENTRYPOINT ["/clean-nfs-cache"]
 
 FROM debian:${DEBIAN_RUNTIME_TAG} AS runtime
 

@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.30.0 (2026-11-06)
+
+
+### Features
+
+* **api,orchestrator:** after a grace period the eviction sweep takes the memory pause without the envd probe (d588757)
+* **clean-nfs-cache:** run budget and multi-sample runs (9fd10b7)
+* **clean-nfs-cache:** run budget and multi-sample runs (28811b9)
+* **orchestrator,api:** carry standby owners and capabilities on nodes and skip a status-refusing node (2654c7d)
+* **orchestrator,api:** probe envd before a checkpoint and refuse forks and snapshots of a hung guest (a011473)
+* **orchestrator,api:** probe envd before filesystem-only pauses, checkpoints and forks too (3e49373)
+* **orchestrator,api:** record a pause taken over an unresponsive guest agent and refuse its memory resume (edc7e25)
+* **orchestrator:** add guest profiles and the guest OS build attribute (f851acb)
+* **orchestrator:** attach NBD devices through the ioctl interface behind a flag (fb05f67)
+* **orchestrator:** boot a base image again on its own disk when its first boot resets (0ca21d2)
+* **orchestrator:** build templates FROM a parent of another guest profile (4f84143)
+* **orchestrator:** consult the guest profile for boot and restore (13200e9)
+* **orchestrator:** dedup a build layer's memfile when its guest profile asks (d317288)
+* **orchestrator:** export host PSI and reclaim counters (fe2fb80)
+* **orchestrator:** gate non-default guest profiles behind a runtime flag (c3482e4)
+* **orchestrator:** gate the sandbox lifecycle on the guest profile (02c3c8b)
+* **orchestrator:** let resume-build drive snapshots made outside a build (561e1bb)
+* **orchestrator:** name the build and file type on chunk fetch spans (d9deba9)
+* **orchestrator:** name the serving tier on chunk fetch spans (70fda68)
+* **orchestrator:** name the stored size on chunk fetch spans (c08791d)
+* **orchestrator:** persist standby overrides with their owner and refuse creates while not healthy (c1e8878)
+* **orchestrator:** refuse a Firecracker version the guest profile cannot run (7262f84)
+* **orchestrator:** render template build steps through the guest profile (86d73c4)
+* **orchestrator:** report guest memory by page state (268fa53)
+* **orchestrator:** report sandbox network mode in metrics and start spans (add127d)
+* **orchestrator:** require the Firecracker features a guest profile names (de63f3f)
+* **orchestrator:** retain checkpoints and restore guests paused (cb5af74)
+* **orchestrator:** retained checkpoints and paused restore for sandbox migration (da3d356)
+* **orchestrator:** say on its trace why a resume was slow (550c7b6)
+* **orchestrator:** shared service status machine with owned standby overrides (876a8fb)
+* **orchestrator:** support TencentOS & OpenCloudOS template builds (1251c50)
+* **orchestrator:** the dummy orchestrator runs the shared status machine (91e4e09)
+* **orchestrator:** time block cache hole punches (c3fdbbd)
+* **orchestrator:** time cache unmaps and count TLB shootdowns (0c193f0)
+* **orchestrator:** trace Firecracker cold boots and time InstanceStart (86f21b7)
+* **orchestrator:** warn on and count refused envd redirects (67eda31)
+* **proxy:** answer sandbox probe requests without forwarding (bc9e90c)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.27.3 toolchain (839f8d7)
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.6 [security] (f018c23)
+* **deps:** update module github.com/oapi-codegen/gin-middleware to v1.2.1 (3e6356e)
+* **nfsproxy:** preserve mount identity through network retirement (70334cd)
+* **orchestrator:** bound the shutdown closers and the final wait (a705542)
+* **orchestrator:** classify proxy access failures as internal errors (8495793)
+* **orchestrator:** exit 0 after a graceful shutdown (eb891ae)
+* **orchestrator:** gate router networking on envd compatibility (fc8af3b)
+* **orchestrator:** hand the envd version a layer's pause recorded to the next phase (57c6dc1)
+* **orchestrator:** keep routing records owned by their lifecycle (ddfc1e2)
+* **orchestrator:** let a cold-booted build sandbox finish booting before its layer snapshot (a7d95e1)
+* **orchestrator:** let a guest profile floor the restore envd wait (9bc621a)
+* **orchestrator:** name a full cache disk and a dead page server on a failed start (b58e390)
+* **orchestrator:** remove a network namespace anchor whose mount is gone (f906df5)
+* **orchestrator:** report NotReady until a starting node can serve (ce80502)
+* **orchestrator:** return a fault in a memfd copy as an error instead of crashing (996d41b)
+* **orchestrator:** tell the user when a build step ended the guest (2f62112)
+* **orchestrator:** the volume mount test passes the envd version its request takes (5a1c076)
+* **orchestrator:** wait for Firecracker's API socket to accept, not just to exist (d2062ac)
+* **orchestrator:** warn once when an NFS cache flag is on but its cache path is unset (d175f13)
+* **orchestrator:** write and delete sandbox routing records past their caller's cancellation (630b63d)
+* **orchestrator:** write UFFD serve-loop counters at most every 30 s (58b2113)
+
+
+### Code Refactoring
+
+* **api+orchestrator:** always use huge pages for sandboxes and template builds (60af8b5)
+* **orchestrator:** download a build step's files archive without a pipe (3556f08)
+* **orchestrator:** leave first-boot retries to the caller (2061d77)
+* **orchestrator:** make resume-build an importable package (54ba0b6)
+* **orchestrator:** pass the memfile dedup settings as one value (ac4b12e)
+* **orchestrator:** stop sending sandbox config in the running sandbox list (2167547)
+* **storage:** remove compression kill switches (7fa21a8)
+
+
+### Miscellaneous Chores
+
+* **orchestrator:** remove no longer needed tools (363b515)
+
 ## 0.16.1 (2026-09-10)
 
 

@@ -10,9 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -40,17 +38,15 @@ func (s *credentialRefreshSource) SourceList(context.Context) ([]queries.Cluster
 func TestClusterSynchronizationRefreshesRemoteCredential(t *testing.T) {
 	t.Parallel()
 	var oldRequests, replacementRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	edge := &edgeServer{instances: []string{"svc-a"}, grpcClients: map[string]struct{}{}, onDiscovery: func(r *http.Request) {
 		switch r.Header.Get(consts.EdgeApiAuthHeader) {
 		case "old-test-token":
 			oldRequests.Add(1)
 		case "replacement-test-token":
 			replacementRequests.Add(1)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"orchestrators":[]}`))
-	}))
-	t.Cleanup(server.Close)
+	}}
+	endpoint := edge.start(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	pool := newLifecycleTestPool(ctx, cancel)
 	t.Cleanup(func() { pool.Close(t.Context()) })
@@ -58,7 +54,7 @@ func TestClusterSynchronizationRefreshesRemoteCredential(t *testing.T) {
 		return pool.activateCluster(ctx, cluster, syncOnNextTick)
 	}
 	source := &credentialRefreshSource{clustersSyncStore: pool.store, rows: []queries.Cluster{{
-		ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://"), Token: "old-test-token",
+		ID: uuid.New(), Endpoint: endpoint, Token: "old-test-token",
 	}}}
 	syncer := synchronization.NewSynchronize("credential-refresh", "Credential refresh", source)
 	require.NoError(t, syncer.Sync(ctx))
@@ -66,18 +62,17 @@ func TestClusterSynchronizationRefreshesRemoteCredential(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, old.SyncInstances(ctx))
 	require.Positive(t, oldRequests.Load())
+	instance, ok := old.instances.Get("svc-a")
+	require.True(t, ok, "the discovered instance joins over the shared connections")
 	require.NoError(t, syncer.Sync(ctx))
 	unchanged, _ := pool.clusters.Get(old.ID.String())
 	require.Same(t, old, unchanged)
 
-	connection, err := grpc.NewClient("passthrough:///unused", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = connection.Close() })
-	old.instances.Insert("old-instance", &Instance{client: NewGRPCClient(connection, "test")})
 	source.rows[0].Token = "replacement-test-token"
-	// One round retires the old client and adds its replacement.
+	// One round retires the old cluster, closing the connections its
+	// instances shared, and adds its replacement.
 	require.NoError(t, syncer.Sync(ctx))
-	require.Equal(t, connectivity.Shutdown, connection.GetState())
+	require.Equal(t, connectivity.Shutdown, instance.GetClient().Connection.GetState())
 	replacement, ok := pool.clusters.Get(old.ID.String())
 	require.True(t, ok, "the cluster is never missing between rounds")
 	require.Zero(t, source.removes.Load(), "the changed cluster is swapped in place, never removed first")

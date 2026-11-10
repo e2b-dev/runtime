@@ -25,8 +25,10 @@ const (
 	statePending recordState = "pending"
 	// No response was recorded by the expected deadline, or the deadline is unknown.
 	stateOutcomeUnknown recordState = "outcome_unknown"
-	// The request matches a recorded response, including errors, which can be replayed.
+	// The request matches a recorded response which can be replayed.
 	stateComplete recordState = "complete"
+	// The previous operation failed without side effects and a new owner may execute it.
+	stateRetryable recordState = "retryable"
 	// The key already belongs to a different request fingerprint.
 	stateMismatch recordState = "mismatch"
 )
@@ -49,7 +51,7 @@ type reservationResult struct {
 
 type store interface {
 	reserve(ctx context.Context, key, fingerprint, owner string, retentionSeconds int, responseDeadline time.Time) (record, error)
-	complete(ctx context.Context, key, owner string, result cachedResponse) error
+	complete(ctx context.Context, key, owner string, result cachedResponse, retryable bool) error
 	release(ctx context.Context, key, owner string) error
 }
 
@@ -70,22 +72,44 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
         redis.call('DEL', KEYS[1])
         return expiry
     end
-    return {'true', '', '', '', ''}
+    return {'true', '', '', '', '', ''}
 end
-local values = redis.call('HMGET', KEYS[1], 'fingerprint', 'response', 'expected_response_at')
-return {'false', values[1] or '', values[2] or '', values[3] or '', string.format('%.0f', nowMillis)}
+local values = redis.call('HMGET', KEYS[1], 'fingerprint', 'response', 'expected_response_at', 'state')
+if values[1] == ARGV[1] and values[4] == 'retryable' and redis.call('PTTL', KEYS[1]) > tonumber(ARGV[4]) then
+    local responseDeadline = nowMillis + tonumber(ARGV[4])
+    -- Older replicas can only replay; keep the previous response for them.
+    redis.call('HSET', KEYS[1], 'owner', ARGV[2], 'state', 'pending',
+        'expected_response_at', string.format('%.0f', responseDeadline))
+    return {'true', '', '', '', '', ''}
+end
+return {'false', values[1] or '', values[2] or '', values[3] or '', string.format('%.0f', nowMillis), values[4] or ''}
 `)
 
 var completeScript = redis.NewScript(`
 if redis.call('HGET', KEYS[1], 'owner') ~= ARGV[1] then
     return 0
 end
-return redis.call('HSETNX', KEYS[1], 'response', ARGV[2])
+local state = redis.call('HGET', KEYS[1], 'state')
+if state and state ~= 'pending' then
+    return 0
+end
+if not state and redis.call('HEXISTS', KEYS[1], 'response') == 1 then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'response', ARGV[2], 'state', ARGV[3])
+return 1
 `)
 
 var releaseScript = redis.NewScript(`
-if redis.call('HGET', KEYS[1], 'owner') == ARGV[1] and redis.call('HEXISTS', KEYS[1], 'response') == 0 then
-    return redis.call('DEL', KEYS[1])
+if redis.call('HGET', KEYS[1], 'owner') == ARGV[1] then
+    if redis.call('HGET', KEYS[1], 'state') == 'pending' then
+        redis.call('HSET', KEYS[1], 'state', 'retryable')
+        redis.call('HDEL', KEYS[1], 'owner')
+        return 1
+    end
+    if redis.call('HEXISTS', KEYS[1], 'response') == 0 then
+        return redis.call('DEL', KEYS[1])
+    end
 end
 return 0
 `)
@@ -134,7 +158,7 @@ func (s *redisStore) reserve(ctx context.Context, key, fingerprint, owner string
 }
 
 func decodeRecord(values []string, fingerprint string) (record, error) {
-	if len(values) != 5 {
+	if len(values) != 6 {
 		return record{}, errors.New("invalid idempotency record")
 	}
 	created, err := strconv.ParseBool(values[0])
@@ -147,7 +171,9 @@ func decodeRecord(values []string, fingerprint string) (record, error) {
 	if values[1] != fingerprint {
 		return record{state: stateMismatch}, nil
 	}
-	if values[2] != "" {
+	// A pending retry still stores the previous attempt's response for older replicas.
+	storedState := recordState(values[5])
+	if values[2] != "" && storedState != statePending {
 		result := record{state: stateComplete}
 		if err := json.Unmarshal([]byte(values[2]), &result.response); err != nil {
 			return record{}, fmt.Errorf("decode idempotency response: %w", err)
@@ -170,12 +196,16 @@ func decodeRecord(values []string, fingerprint string) (record, error) {
 	return record{state: statePending}, nil
 }
 
-func (s *redisStore) complete(ctx context.Context, key, owner string, result cachedResponse) error {
+func (s *redisStore) complete(ctx context.Context, key, owner string, result cachedResponse, retryable bool) error {
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
-	cmd, err := s.run(ctx, completeScript, key, owner, encoded)
+	state := stateComplete
+	if retryable {
+		state = stateRetryable
+	}
+	cmd, err := s.run(ctx, completeScript, key, owner, encoded, string(state))
 	if err != nil {
 		return err
 	}

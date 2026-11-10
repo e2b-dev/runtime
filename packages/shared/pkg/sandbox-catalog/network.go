@@ -1,5 +1,7 @@
 package sandbox_catalog
 
+import "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+
 // NetworkMode is the serialized network topology of a sandbox route.
 type NetworkMode string
 
@@ -28,4 +30,19 @@ type NetworkPlacement struct {
 	// traffic to: the router for full-router, the worker for egress-router.
 	IngressAddress string `json:"ingress_address,omitempty"`
 	IngressPort    uint32 `json:"ingress_port,omitempty"`
+}
+
+// NetworkPlacementOf is the record form of a placement an orchestrator
+// reported, nil for none. A reported placement carries no PortableIP.
+func NetworkPlacementOf(placement *orchestrator.SandboxNetworkPlacement) *NetworkPlacement {
+	if placement == nil {
+		return nil
+	}
+
+	return &NetworkPlacement{
+		NetworkMode:    NetworkMode(placement.GetNetworkMode()),
+		RouterID:       placement.GetRouterId(),
+		IngressAddress: placement.GetIngressAddress(),
+		IngressPort:    placement.GetIngressPort(),
+	}
 }

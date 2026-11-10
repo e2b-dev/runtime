@@ -10,6 +10,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	middleware "github.com/oapi-codegen/gin-middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -388,6 +389,97 @@ func TestTemplateSearchRouteStaysOutOfTheSDKs(t *testing.T) {
 	assert.Equal(t, list.Get.Security, search.Get.Security)
 }
 
+// The admin template routes change what every team resolves (aliases without a
+// namespace, default templates) or read any team's templates, and the node
+// routes park and release any node, so they accept only the admin token or an
+// admin JWT, with no team header.
+func TestAdminTemplateAndNodeRoutesAreAdminOnly(t *testing.T) {
+	t.Parallel()
+
+	swagger, err := GetSpec()
+	require.NoError(t, err)
+
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/unstable/admin/templates/aliases"},
+		{http.MethodPost, "/unstable/admin/templates/aliases"},
+		{http.MethodDelete, "/unstable/admin/templates/aliases/{aliasID}"},
+		{http.MethodPost, "/unstable/admin/templates/defaults"},
+		{http.MethodPatch, "/unstable/admin/templates/defaults/{templateID}"},
+		{http.MethodDelete, "/unstable/admin/templates/defaults/{templateID}"},
+		{http.MethodGet, "/unstable/admin/templates/lookup"},
+		{http.MethodGet, "/nodes"},
+		{http.MethodGet, "/nodes/{nodeID}"},
+		{http.MethodPost, "/nodes/{nodeID}"},
+	} {
+		pathItem := swagger.Paths.Value(route.path)
+		require.NotNil(t, pathItem, route.path)
+		operation := pathItem.GetOperation(route.method)
+		require.NotNil(t, operation, "%s %s", route.method, route.path)
+		require.NotNil(t, operation.Security, "%s %s", route.method, route.path)
+
+		var requirements [][]string
+		for _, requirement := range *operation.Security {
+			schemes := make([]string, 0, len(requirement))
+			for scheme := range requirement {
+				schemes = append(schemes, scheme)
+			}
+			requirements = append(requirements, schemes)
+		}
+		require.ElementsMatch(t, [][]string{{"AdminApiKeyAuth"}, {"AdminJWTAuth"}}, requirements, "%s %s", route.method, route.path)
+		require.Equal(t, []string{"admin"}, operation.Tags, "%s %s stays out of the SDKs", route.method, route.path)
+	}
+}
+
+// The builds routes are for E2B's own clients like the template search, take
+// the credentials of the template list, and the statuses path is not read as
+// a build ID.
+func TestBuildsRoutesStayOutOfTheSDKs(t *testing.T) {
+	t.Parallel()
+
+	swagger, err := GetSpec()
+	require.NoError(t, err)
+	swagger.Servers = nil
+
+	list := swagger.Paths.Value("/v2/templates")
+	require.NotNil(t, list)
+	require.NotNil(t, list.Get)
+
+	sdkTags := []string{"sandboxes", "snapshots", "templates", "tags", "auth", "volumes", "secrets"}
+	for _, path := range []string{"/unstable/builds", "/unstable/builds/statuses", "/unstable/builds/{buildID}"} {
+		item := swagger.Paths.Value(path)
+		require.NotNil(t, item, path)
+		require.NotNil(t, item.Get, path)
+		require.Equal(t, []string{"unstable"}, item.Get.Tags, path)
+		assert.NotContains(t, sdkTags, item.Get.Tags[0], path)
+		assert.Equal(t, list.Get.Security, item.Get.Security, path)
+	}
+
+	var matched string
+	r := gin.New()
+	r.Use(middleware.OapiRequestValidatorWithOptions(swagger, &middleware.Options{
+		Options: openapi3filter.Options{
+			AuthenticationFunc: func(_ context.Context, input *openapi3filter.AuthenticationInput) error {
+				matched = input.RequestValidationInput.Route.Path
+
+				return nil
+			},
+		},
+		SilenceServersWarning: true,
+	}))
+	r.GET("/*any", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unstable/builds/statuses?build_ids="+uuid.NewString(), nil))
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	assert.Equal(t, "/unstable/builds/statuses", matched)
+}
+
 func TestTemplateBuildMinimumFreeDiskContract(t *testing.T) {
 	t.Parallel()
 
@@ -488,6 +580,42 @@ func TestAdminTeamSchedulingLabelsRejectsMalformedLabels(t *testing.T) {
 			t.Parallel()
 
 			err := schema.VisitJSON(map[string]any{"labels": tc.labels})
+			if tc.valid {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestNodeStatusChangeOwnerSchema(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		body  map[string]any
+		valid bool
+	}{
+		"a lowercase uuid owner is accepted":            {body: map[string]any{"status": "standby", "owner": "7f3a2c1e-0b4d-4a9e-9c1f-2d3e4f5a6b7c"}, valid: true},
+		"an owner longer than 63 characters is refused": {body: map[string]any{"status": "standby", "owner": strings.Repeat("a", 64)}},
+		"an uppercase owner is refused":                 {body: map[string]any{"status": "standby", "owner": "Owner"}},
+		"an owner starting with a hyphen is refused":    {body: map[string]any{"status": "standby", "owner": "-abc"}},
+		"an owner with a space is refused":              {body: map[string]any{"status": "standby", "owner": "a b"}},
+		"force without an owner is accepted":            {body: map[string]any{"status": "ready", "force": true}, valid: true},
+		"a status alone is accepted":                    {body: map[string]any{"status": "ready"}, valid: true},
+	}
+
+	spec, err := GetSpec()
+	require.NoError(t, err)
+	schema := spec.Components.Schemas["NodeStatusChange"].Value
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := schema.VisitJSON(tc.body)
 			if tc.valid {
 				require.NoError(t, err)
 

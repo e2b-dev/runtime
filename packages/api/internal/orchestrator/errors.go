@@ -9,4 +9,7 @@ var (
 	// ErrExecutionChanged: a pause pinned with RemoveOpts.ExpectExecutionID
 	// found a different execution stored; nothing was changed.
 	ErrExecutionChanged = errors.New("sandbox execution changed")
+	// ErrSandboxLifecycleHeld: an operation outside the API's ordinary
+	// lifecycle holds the sandbox. Nothing was changed.
+	ErrSandboxLifecycleHeld = errors.New("sandbox lifecycle is held by another operation")
 )

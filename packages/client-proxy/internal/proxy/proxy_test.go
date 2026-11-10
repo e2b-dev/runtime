@@ -1,17 +1,24 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -23,7 +30,10 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/mtlstest"
 	reverseproxy "github.com/e2b-dev/infra/packages/shared/pkg/proxy"
+	"github.com/e2b-dev/infra/packages/shared/pkg/proxy/pool"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 )
@@ -210,7 +220,7 @@ func (e errorCatalog) StoreSandbox(_ context.Context, _ string, _ *catalog.Sandb
 	return nil
 }
 
-func (e errorCatalog) DeleteSandbox(_ context.Context, _ string, _ string) error {
+func (e errorCatalog) DeleteSandbox(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
@@ -276,7 +286,7 @@ func TestHandlePausedSandbox(t *testing.T) {
 		},
 		{
 			name:       "resume permission denied",
-			resumer:    stubResumer{err: status.Error(codes.PermissionDenied, "permission denied")},
+			resumer:    stubResumer{err: status.Error(codes.PermissionDenied, "team is blocked")},
 			trafficTok: "token",
 			wantResult: autoResumePermissionDenied,
 			checkErr: func(t *testing.T, err error) {
@@ -284,7 +294,10 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var deniedErr *reverseproxy.SandboxResumePermissionDeniedError
 				require.ErrorAs(t, err, &deniedErr)
-				require.Equal(t, "sbx", deniedErr.SandboxId)
+				require.Equal(t, "sbx", deniedErr.SandboxID())
+				// The API's refusal stays the cause, so the log says why.
+				require.Equal(t, codes.PermissionDenied, status.Code(err))
+				require.ErrorContains(t, err, "team is blocked")
 			},
 		},
 		{
@@ -297,7 +310,7 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var exhaustedErr *reverseproxy.SandboxResourceExhaustedError
 				require.ErrorAs(t, err, &exhaustedErr)
-				require.Equal(t, "sbx", exhaustedErr.SandboxId)
+				require.Equal(t, "sbx", exhaustedErr.SandboxID())
 				require.Equal(t, "rate limit hit", exhaustedErr.Message)
 			},
 		},
@@ -311,7 +324,7 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var transitioningErr *reverseproxy.SandboxStillTransitioningError
 				require.ErrorAs(t, err, &transitioningErr)
-				require.Equal(t, "sbx", transitioningErr.SandboxId)
+				require.Equal(t, "sbx", transitioningErr.SandboxID())
 			},
 		},
 		{
@@ -337,7 +350,7 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var capacityErr *reverseproxy.SandboxCapacityError
 				require.ErrorAs(t, err, &capacityErr)
-				require.Equal(t, "sbx", capacityErr.SandboxId)
+				require.Equal(t, "sbx", capacityErr.SandboxID())
 				require.Equal(t, "no capacity", capacityErr.Message)
 			},
 		},
@@ -360,7 +373,8 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var capacityErr *reverseproxy.SandboxCapacityError
 				require.ErrorAs(t, err, &capacityErr)
-				require.False(t, capacityErr.Permanent)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.NotErrorAs(t, err, &refusedErr)
 			},
 		},
 		{
@@ -375,7 +389,8 @@ func TestHandlePausedSandbox(t *testing.T) {
 
 				var capacityErr *reverseproxy.SandboxCapacityError
 				require.ErrorAs(t, err, &capacityErr)
-				require.False(t, capacityErr.Permanent)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.NotErrorAs(t, err, &refusedErr)
 			},
 		},
 		{
@@ -395,11 +410,10 @@ func TestHandlePausedSandbox(t *testing.T) {
 			checkErr: func(t *testing.T, err error) {
 				t.Helper()
 
-				var capacityErr *reverseproxy.SandboxCapacityError
-				require.ErrorAs(t, err, &capacityErr)
-				require.True(t, capacityErr.Permanent)
-				require.Equal(t, proxygrpc.PlacementCreateRefused, capacityErr.ErrorCode)
-				require.Equal(t, http.StatusServiceUnavailable, capacityErr.StatusCode)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.ErrorAs(t, err, &refusedErr)
+				require.Equal(t, proxygrpc.PlacementCreateRefused, refusedErr.ErrorCode)
+				require.Equal(t, http.StatusServiceUnavailable, refusedErr.StatusCode)
 			},
 		},
 		{
@@ -410,10 +424,9 @@ func TestHandlePausedSandbox(t *testing.T) {
 			checkErr: func(t *testing.T, err error) {
 				t.Helper()
 
-				var capacityErr *reverseproxy.SandboxCapacityError
-				require.ErrorAs(t, err, &capacityErr)
-				require.True(t, capacityErr.Permanent)
-				require.Equal(t, http.StatusBadRequest, capacityErr.StatusCode)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.ErrorAs(t, err, &refusedErr)
+				require.Equal(t, http.StatusBadRequest, refusedErr.StatusCode)
 			},
 		},
 		{
@@ -426,10 +439,9 @@ func TestHandlePausedSandbox(t *testing.T) {
 			checkErr: func(t *testing.T, err error) {
 				t.Helper()
 
-				var capacityErr *reverseproxy.SandboxCapacityError
-				require.ErrorAs(t, err, &capacityErr)
-				require.True(t, capacityErr.Permanent)
-				require.Equal(t, http.StatusInternalServerError, capacityErr.StatusCode)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.ErrorAs(t, err, &refusedErr)
+				require.Equal(t, http.StatusInternalServerError, refusedErr.StatusCode)
 			},
 		},
 		{
@@ -440,10 +452,9 @@ func TestHandlePausedSandbox(t *testing.T) {
 			checkErr: func(t *testing.T, err error) {
 				t.Helper()
 
-				var capacityErr *reverseproxy.SandboxCapacityError
-				require.ErrorAs(t, err, &capacityErr)
-				require.True(t, capacityErr.Permanent)
-				require.Equal(t, http.StatusServiceUnavailable, capacityErr.StatusCode)
+				var refusedErr *reverseproxy.SandboxPlacementRefusedError
+				require.ErrorAs(t, err, &refusedErr)
+				require.Equal(t, http.StatusServiceUnavailable, refusedErr.StatusCode)
 			},
 		},
 		{
@@ -504,7 +515,7 @@ func TestNewClientProxy_Construction(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "test-service", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "test-service", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	require.EqualValues(t, 0, p.CurrentServerConnections())
@@ -522,17 +533,34 @@ func (c fixedCatalog) GetSandbox(context.Context, string) (*catalog.SandboxInfo,
 }
 
 // countingServer is a real TCP HTTP server that answers body to the
-// expected request and counts the connections it accepted.
-func countingServer(t *testing.T, body string) (*net.TCPAddr, *atomic.Int32) {
+// expected request, with the customer's Host and access token, and counts
+// the connections it accepted.
+func countingServer(t *testing.T, body, executionID string) (*net.TCPAddr, *atomic.Int32) {
+	t.Helper()
+
+	server, accepted := newCountingServer(t, body, executionID)
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server.Listener.Addr().(*net.TCPAddr), accepted
+}
+
+// newCountingServer is countingServer, not started yet.
+func newCountingServer(t *testing.T, body, executionID string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 
 	var accepted atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/commands" || r.Header.Get("X-Access-Token") != "sandbox-token" {
+		if r.URL.Path != "/commands" || r.Host != "49983-sbx.e2b.app" || r.Header.Get("X-Access-Token") != "sandbox-token" {
 			w.WriteHeader(http.StatusBadRequest)
 
 			return
 		}
+		var expected []string
+		if executionID != "" {
+			expected = []string{executionID}
+		}
+		assert.Equal(t, expected, r.Header.Values(pool.ExpectedExecutionIDHeader))
 		_, _ = w.Write([]byte(body))
 	}))
 	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
@@ -540,17 +568,53 @@ func countingServer(t *testing.T, body string) (*net.TCPAddr, *atomic.Int32) {
 			accepted.Add(1)
 		}
 	}
-	server.Start()
-	t.Cleanup(server.Close)
 
-	return server.Listener.Addr().(*net.TCPAddr), &accepted
+	return server, &accepted
+}
+
+// serveMutualTLS serves server as a Router's ingress that requires mutual
+// TLS and admits only the client-proxy, and returns the hop that reaches it.
+func serveMutualTLS(t *testing.T, server *httptest.Server) (*net.TCPAddr, mtls.ClientConfig) {
+	t.Helper()
+
+	const (
+		clientProxyID = "spiffe://td.example.internal/ns/proxy/sa/client-proxy"
+		routerID      = "spiffe://td.example.internal/ns/router/sa/router"
+	)
+	root := mtlstest.NewRootCA(t, "root")
+	files := func(id string) *mtls.Files {
+		dir := mtlstest.WriteFiles(t, root.Leaf(t, mtlstest.LeafSpec{SPIFFEID: id}), root.BundlePEM())
+
+		return mtls.NewFiles(t.Context(), mtls.FileConfig{CertFile: dir.CertFile, KeyFile: dir.KeyFile, CAFile: dir.CAFile})
+	}
+	allow, err := mtls.ParseAllowList([]string{clientProxyID})
+	require.NoError(t, err)
+	expect, err := mtls.ParseAllowList([]string{routerID})
+	require.NoError(t, err)
+	listener := mtls.WrapHTTPServer(server.Config, server.Listener, mtls.ServerConfig{
+		Name: "ingress", Files: files(routerID), Mode: mtls.StaticMode(mtls.ModeRequired), Allow: allow,
+	}, nil)
+	go func() { _ = server.Config.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Config.Close() })
+
+	return server.Listener.Addr().(*net.TCPAddr), mtls.ClientConfig{
+		Name: "router", Files: files(clientProxyID), Mode: mtls.StaticClientMode(mtls.ClientOn), ExpectedServerIDs: expect,
+	}
+}
+
+func fullRouterRoute(router *net.TCPAddr) *catalog.SandboxInfo {
+	return &catalog.SandboxInfo{OrchestratorIP: "127.0.0.1", ExecutionID: "execution", NetworkPlacement: &catalog.NetworkPlacement{
+		NetworkMode: catalog.NetworkModeFullRouter, RouterID: "router", IngressAddress: router.IP.String(), IngressPort: uint32(router.Port),
+	}}
 }
 
 // Legacy and egress-router traffic reaches the orchestrator proxy at the
 // route's orchestrator IP and the configured port, never the placement's
-// ingress endpoint, whether the route came from the record or from a resume.
-// A full-router route, complete or not, an unknown mode and a route without
-// an orchestrator IP are answered before anything is dialed.
+// ingress endpoint, and full-router traffic reaches the Router's ingress
+// endpoint and never the orchestrator, whether the route came from the
+// record or from a resume. A full-router route without its endpoint, an
+// unknown mode and a route without an orchestrator IP are answered before
+// anything is dialed.
 func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 	t.Parallel()
 
@@ -559,6 +623,7 @@ func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 		route      func(node, router *net.TCPAddr) *catalog.SandboxInfo
 		wantStatus int
 		wantBody   string
+		dialed     string
 	}{
 		{
 			name: "legacy",
@@ -567,6 +632,7 @@ func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "selected-orchestrator",
+			dialed:     "node",
 		},
 		{
 			name: "egress-router",
@@ -577,24 +643,60 @@ func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "selected-orchestrator",
+			dialed:     "node",
 		},
 		{
 			name: "full-router",
-			route: func(node, router *net.TCPAddr) *catalog.SandboxInfo {
-				return &catalog.SandboxInfo{OrchestratorIP: node.IP.String(), ExecutionID: "execution", NetworkPlacement: &catalog.NetworkPlacement{
-					NetworkMode: catalog.NetworkModeFullRouter, RouterID: "router", IngressAddress: router.IP.String(), IngressPort: uint32(router.Port),
-				}}
+			route: func(_, router *net.TCPAddr) *catalog.SandboxInfo {
+				return fullRouterRoute(router)
 			},
-			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `"error_code":"` + proxygrpc.PlacementFeatureUnsupported + `"`,
+			wantStatus: http.StatusOK,
+			wantBody:   "router",
+			dialed:     "router",
 		},
 		{
-			name: "full-router without its Router",
-			route: func(node, _ *net.TCPAddr) *catalog.SandboxInfo {
-				return &catalog.SandboxInfo{OrchestratorIP: node.IP.String(), NetworkPlacement: &catalog.NetworkPlacement{NetworkMode: catalog.NetworkModeFullRouter}}
+			name: "full-router without its execution",
+			route: func(_, router *net.TCPAddr) *catalog.SandboxInfo {
+				route := fullRouterRoute(router)
+				route.ExecutionID = ""
+
+				return route
 			},
-			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `"error_code":"` + proxygrpc.PlacementFeatureUnsupported + `"`,
+			wantStatus: http.StatusBadGateway,
+			wantBody:   `"message":"The sandbox was not found"`,
+		},
+		{
+			name: "full-router without its Router's ingress address",
+			route: func(_, router *net.TCPAddr) *catalog.SandboxInfo {
+				route := fullRouterRoute(router)
+				route.NetworkPlacement.IngressAddress = ""
+
+				return route
+			},
+			wantStatus: http.StatusBadGateway,
+			wantBody:   `"message":"The sandbox was not found"`,
+		},
+		{
+			name: "full-router with zero ingress port",
+			route: func(_, router *net.TCPAddr) *catalog.SandboxInfo {
+				route := fullRouterRoute(router)
+				route.NetworkPlacement.IngressPort = 0
+
+				return route
+			},
+			wantStatus: http.StatusBadGateway,
+			wantBody:   `"message":"The sandbox was not found"`,
+		},
+		{
+			name: "full-router with oversized ingress port",
+			route: func(_, router *net.TCPAddr) *catalog.SandboxInfo {
+				route := fullRouterRoute(router)
+				route.NetworkPlacement.IngressPort = 65536
+
+				return route
+			},
+			wantStatus: http.StatusBadGateway,
+			wantBody:   `"message":"The sandbox was not found"`,
 		},
 		{
 			name: "unknown mode",
@@ -619,34 +721,379 @@ func TestNewClientProxy_RoutesByNetworkMode(t *testing.T) {
 			t.Run(tt.name+" from "+source, func(t *testing.T) {
 				t.Parallel()
 
-				node, nodeDials := countingServer(t, "selected-orchestrator")
-				router, routerDials := countingServer(t, "router")
+				node, nodeDials := countingServer(t, "selected-orchestrator", "")
+				router, routerDials := countingServer(t, "router", "execution")
 				route := tt.route(node, router)
 				var c catalog.SandboxesCatalog = fixedCatalog{route: route}
 				var resumer SandboxResumer
 				if source == "resume" {
 					c, resumer = errorCatalog{err: catalog.ErrSandboxNotFound}, stubResumer{route: route}
 				}
-				p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "network-mode", 0, uint16(node.Port), c, resumer, newFF(t))
+				p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "network-mode", 0, uint16(node.Port), c, resumer, newFF(t), nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, p.Close()) })
 
-				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx.e2b.app/commands", nil)
-				req.Header.Set("X-Access-Token", "sandbox-token")
-				rr := httptest.NewRecorder()
-				p.Handler.ServeHTTP(rr, req)
+				for _, connection := range []string{"", pool.ExpectedExecutionIDHeader} {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx.e2b.app/commands", nil)
+					req.Header.Set("X-Access-Token", "sandbox-token")
+					req.Header.Add(pool.ExpectedExecutionIDHeader, "forged-first")
+					req.Header.Add(pool.ExpectedExecutionIDHeader, "forged-second")
+					req.Header.Set("Connection", connection)
+					rr := httptest.NewRecorder()
+					p.Handler.ServeHTTP(rr, req)
 
-				require.Equal(t, tt.wantStatus, rr.Code)
-				require.Contains(t, rr.Body.String(), tt.wantBody)
-				require.Empty(t, rr.Header().Get("Retry-After"))
-				require.Zero(t, routerDials.Load(), "nothing dials the placement's ingress endpoint")
-				wantNodeDials := int32(0)
-				if tt.wantStatus == http.StatusOK {
-					wantNodeDials = 1
+					require.Equal(t, tt.wantStatus, rr.Code)
+					require.Contains(t, rr.Body.String(), tt.wantBody)
+					require.Empty(t, rr.Header().Get("Retry-After"))
+					require.Equal(t, tt.dialed == "node", nodeDials.Load() == 1, "the orchestrator is dialed only for its own ingress")
+					require.Equal(t, tt.dialed == "router", routerDials.Load() == 1, "the Router is dialed only for full-router")
+					require.LessOrEqual(t, nodeDials.Load()+routerDials.Load(), int32(1))
 				}
-				require.Equal(t, wantNodeDials, nodeDials.Load())
 			})
 		}
+	}
+}
+
+// With the Router hop on, full-router traffic completes mutual TLS with a
+// Router ingress that requires it, while legacy and egress-router traffic
+// through the same proxy still reach the orchestrator in plaintext; with
+// the hop off, full-router traffic stays plaintext.
+func TestNewClientProxy_RouterHopDialsMutualTLS(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newCountingServer(t, "router", "execution")
+	router, on := serveMutualTLS(t, server)
+	plainRouter, _ := countingServer(t, "plain-router", "execution")
+	node, _ := countingServer(t, "selected-orchestrator", "")
+	off := on
+	off.Mode = mtls.StaticClientMode(mtls.ClientOff)
+	newProxy := func(hop mtls.ClientConfig, route *catalog.SandboxInfo) *reverseproxy.Proxy {
+		p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "router-hop", 0, uint16(node.Port), fixedCatalog{route: route}, nil, newFF(t), nil,
+			WithRouterHop(func(base *http.Transport) *http.Transport { return mtls.NewHTTPTransport(hop, base) }))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+		return p
+	}
+	get := func(p *reverseproxy.Proxy, body, msg string) {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://49983-sbx.e2b.app/commands", nil)
+		req.Header.Set("X-Access-Token", "sandbox-token")
+		rr := httptest.NewRecorder()
+		p.Handler.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code, msg)
+		assert.Equal(t, body, rr.Body.String(), msg)
+	}
+
+	route := fullRouterRoute(router)
+	p := newProxy(on, route)
+	get(p, "router", "on, full-router traffic completes mutual TLS")
+	*route = catalog.SandboxInfo{OrchestratorIP: node.IP.String()}
+	get(p, "selected-orchestrator", "the hop never touches legacy traffic")
+	*route = catalog.SandboxInfo{OrchestratorIP: node.IP.String(), ExecutionID: "execution", NetworkPlacement: &catalog.NetworkPlacement{
+		NetworkMode: catalog.NetworkModeEgressRouter, RouterID: "router", IngressAddress: router.IP.String(), IngressPort: uint32(router.Port),
+	}}
+	get(p, "selected-orchestrator", "the hop never touches egress-router traffic")
+	get(newProxy(off, fullRouterRoute(plainRouter)), "plain-router", "off, full-router traffic stays plaintext")
+}
+
+func TestNewClientProxy_ExecutionChangesOnReusedConnection(t *testing.T) {
+	t.Parallel()
+
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.Header.Get(pool.ExpectedExecutionIDHeader))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+	route := fullRouterRoute(server.Listener.Addr().(*net.TCPAddr))
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "execution-routing", 0, 5008, fixedCatalog{route: route}, nil, newFF(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Close()) })
+	for _, execution := range []string{"before-resume", "after-resume"} {
+		route.ExecutionID = execution
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://8000-sbx.e2b.app/", nil)
+		r.Header.Set(pool.ExpectedExecutionIDHeader, "forged")
+		w := httptest.NewRecorder()
+		p.Handler.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, execution, w.Body.String())
+	}
+	require.Equal(t, int32(1), connections.Load(), "the execution is resolved per request, not per connection")
+}
+
+// upgradingRouter is a Router's ingress listener that switches every
+// request to an echo stream, and counts the connections it accepted.
+func upgradingRouter(t *testing.T) (*net.TCPAddr, *atomic.Int32) {
+	t.Helper()
+
+	server, accepted, _ := newUpgradingRouter(nil)
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server.Listener.Addr().(*net.TCPAddr), accepted
+}
+
+// newUpgradingRouter is upgradingRouter, not started yet, that also counts
+// the echo streams that ended; an ended stream keeps its connection open
+// until hold, when set, closes.
+func newUpgradingRouter(hold <-chan struct{}) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	var accepted, ended atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "echo" || r.Host != "49983-sbx.e2b.app" {
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+		conn, buffered, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, err := buffered.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n"); err != nil || buffered.Flush() != nil {
+			return
+		}
+		_, _ = io.Copy(conn, buffered)
+		ended.Add(1)
+		if hold != nil {
+			<-hold
+		}
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			accepted.Add(1)
+		}
+	}
+
+	return server, &accepted, &ended
+}
+
+// With the routing record in real Redis, a record naming another Router
+// endpoint serves the next request, while an upgraded stream established
+// through the old endpoint keeps working and nothing dials the old
+// endpoint again.
+func TestNewClientProxy_FullRouterFollowsANewEndpoint(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	records := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
+	old, oldDials := upgradingRouter(t)
+	moved, movedDials := countingServer(t, "moved", "execution")
+	require.NoError(t, records.StoreSandbox(ctx, "sbx", fullRouterRoute(old), time.Minute))
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "new-endpoint", 0, 1, records, nil, newFF(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Close()) })
+	frontend := httptest.NewServer(p.Handler)
+	t.Cleanup(frontend.Close)
+
+	stream, err := (&net.Dialer{}).DialContext(ctx, "tcp", frontend.Listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stream.Close() })
+	_, err = stream.Write([]byte("GET /stream HTTP/1.1\r\nHost: 49983-sbx.e2b.app\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n"))
+	require.NoError(t, err)
+	reader := bufio.NewReader(stream)
+	switched, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = switched.Body.Close() })
+	require.Equal(t, http.StatusSwitchingProtocols, switched.StatusCode)
+	echo := func(message string) {
+		t.Helper()
+		_, err := stream.Write([]byte(message))
+		require.NoError(t, err)
+		got := make([]byte, len(message))
+		_, err = io.ReadFull(reader, got)
+		require.NoError(t, err)
+		require.Equal(t, message, string(got))
+	}
+	echo("before")
+
+	require.NoError(t, records.StoreSandbox(ctx, "sbx", fullRouterRoute(moved), time.Minute))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, frontend.URL+"/commands", nil)
+	require.NoError(t, err)
+	req.Host = "49983-sbx.e2b.app"
+	req.Header.Set("X-Access-Token", "sandbox-token")
+	resp, err := frontend.Client().Do(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "moved", string(body))
+	require.EqualValues(t, 1, movedDials.Load())
+
+	echo("after")
+	require.EqualValues(t, 1, oldDials.Load(), "the old endpoint is not dialed again")
+}
+
+// When the caller closes an upgraded stream over the Router hop's mutual
+// TLS, the Router reads the end, and the proxy closes its connection to the
+// Router without waiting for the Router to close its own.
+func TestNewClientProxy_RouterHopUpgradeClosesBothSides(t *testing.T) {
+	t.Parallel()
+
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	server, _, ended := newUpgradingRouter(hold)
+	router, hop := serveMutualTLS(t, server)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "router-hop-upgrade", 0, 1, fixedCatalog{route: fullRouterRoute(router)}, nil, newFF(t), nil,
+		WithRouterHop(func(base *http.Transport) *http.Transport { return mtls.NewHTTPTransport(hop, base) }))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Close()) })
+	frontend := httptest.NewServer(p.Handler)
+	t.Cleanup(frontend.Close)
+
+	stream, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", frontend.Listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stream.Close() })
+	_, err = stream.Write([]byte("GET /stream HTTP/1.1\r\nHost: 49983-sbx.e2b.app\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n"))
+	require.NoError(t, err)
+	reader := bufio.NewReader(stream)
+	switched, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = switched.Body.Close() })
+	require.Equal(t, http.StatusSwitchingProtocols, switched.StatusCode)
+	_, err = stream.Write([]byte("line\n"))
+	require.NoError(t, err)
+	echoed, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "line\n", echoed)
+	require.EqualValues(t, 1, p.CurrentPoolConnections())
+
+	require.NoError(t, stream.Close())
+	assert.Eventually(t, func() bool { return ended.Load() == 1 }, time.Second, 10*time.Millisecond, "the Router reads the end of the stream")
+	assert.Eventually(t, func() bool { return p.CurrentPoolConnections() == 0 }, time.Second, 10*time.Millisecond, "the proxy closes its connection to the Router")
+}
+
+// A probe request is answered from the routing outcome and never dials the
+// orchestrator: "true" for a sandbox routed or held here, "false" only for one
+// the API says is not, and no answer when the outcome cannot tell. A held
+// sandbox must never answer "false", or its traffic would be sent elsewhere.
+func TestNewClientProxy_AnswersProbeRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		catalog    func(node *net.TCPAddr) catalog.SandboxesCatalog
+		resumer    func(node *net.TCPAddr) SandboxResumer
+		wantStatus int
+		wantAnswer string
+	}{
+		{
+			name: "running sandbox",
+			catalog: func(node *net.TCPAddr) catalog.SandboxesCatalog {
+				return fixedCatalog{route: &catalog.SandboxInfo{OrchestratorIP: node.IP.String()}}
+			},
+			wantStatus: http.StatusNoContent,
+			wantAnswer: "true",
+		},
+		{
+			name: "resumed sandbox",
+			resumer: func(node *net.TCPAddr) SandboxResumer {
+				return stubResumer{route: &catalog.SandboxInfo{OrchestratorIP: node.IP.String()}}
+			},
+			wantStatus: http.StatusNoContent,
+			wantAnswer: "true",
+		},
+		{
+			name:       "sandbox on another plane",
+			resumer:    resumeError(status.Error(codes.NotFound, "snapshot not found")),
+			wantStatus: http.StatusBadGateway,
+			wantAnswer: "false",
+		},
+		{
+			name: "record without an orchestrator IP is held here",
+			catalog: func(*net.TCPAddr) catalog.SandboxesCatalog {
+				return fixedCatalog{route: &catalog.SandboxInfo{}}
+			},
+			wantStatus: http.StatusBadGateway,
+			wantAnswer: "true",
+		},
+		{
+			name: "record with an unknown network mode is held here",
+			catalog: func(node *net.TCPAddr) catalog.SandboxesCatalog {
+				return fixedCatalog{route: &catalog.SandboxInfo{OrchestratorIP: node.IP.String(), NetworkPlacement: &catalog.NetworkPlacement{NetworkMode: "future-mode"}}}
+			},
+			wantStatus: http.StatusBadGateway,
+			wantAnswer: "true",
+		},
+		{
+			name: "catalog read failure cannot tell",
+			catalog: func(*net.TCPAddr) catalog.SandboxesCatalog {
+				return errorCatalog{err: errors.New("redis down")}
+			},
+			resumer:    resumeError(status.Error(codes.NotFound, "snapshot not found")),
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "resume failing without a known code cannot tell",
+			resumer:    resumeError(status.Error(codes.Internal, "failed to get team")),
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "catalog miss without a resumer cannot tell",
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "sandbox found but resume denied",
+			resumer:    resumeError(status.Error(codes.PermissionDenied, "denied")),
+			wantStatus: http.StatusForbidden,
+			wantAnswer: "true",
+		},
+		{
+			name:       "resume unavailable cannot tell",
+			resumer:    resumeError(status.Error(codes.Unavailable, "")),
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "placement the API attempted is held here",
+			resumer:    resumeError(placementStatusWithCode(t, codes.DeadlineExceeded, proxygrpc.PlacementTimeout)),
+			wantStatus: http.StatusServiceUnavailable,
+			wantAnswer: "true",
+		},
+		{
+			name:       "unavailable with a placement code is held here",
+			resumer:    resumeError(placementStatusWithCode(t, codes.Unavailable, proxygrpc.PlacementTimeout)),
+			wantStatus: http.StatusServiceUnavailable,
+			wantAnswer: "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			node, nodeDials := countingServer(t, "orchestrator", "")
+			var c catalog.SandboxesCatalog = errorCatalog{err: catalog.ErrSandboxNotFound}
+			if tt.catalog != nil {
+				c = tt.catalog(node)
+			}
+			var resumer SandboxResumer
+			if tt.resumer != nil {
+				resumer = tt.resumer(node)
+			}
+			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "probe", 0, uint16(node.Port), c, resumer, newFF(t), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, p.Close()) })
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodHead, "http://49983-sbx.e2b.app/", nil)
+			req.Header.Set(reverseproxy.HeaderProbe, "true")
+			rr := httptest.NewRecorder()
+			p.Handler.ServeHTTP(rr, req)
+
+			require.Equal(t, tt.wantStatus, rr.Code)
+			require.Equal(t, tt.wantAnswer, rr.Header().Get(reverseproxy.HeaderProbe))
+			require.Zero(t, nodeDials.Load(), "a probe request never reaches the orchestrator")
+		})
+	}
+}
+
+func resumeError(err error) func(*net.TCPAddr) SandboxResumer {
+	return func(*net.TCPAddr) SandboxResumer {
+		return stubResumer{err: err}
 	}
 }
 
@@ -665,8 +1112,8 @@ func (c *countingCatalog) GetSandbox(ctx context.Context, sandboxID string) (*ca
 
 // A sandbox without a routing record is resumed over a real gRPC connection.
 // The full-router route the API answered with is the resolution, whole, after
-// one record lookup and with no wait for the record to be published; the
-// forwarding step then refuses it.
+// one record lookup and with no wait for the record to be published, and
+// the forwarding step sends it to the Router.
 func TestCatalogResolution_MissCarriesTheResumedFullRouterRoute(t *testing.T) {
 	t.Parallel()
 
@@ -695,11 +1142,9 @@ func TestCatalogResolution_MissCarriesTheResumedFullRouterRoute(t *testing.T) {
 	require.Equal(t, []string{"traffic-token"}, srv.gotMetadata.Get(proxygrpc.MetadataTrafficAccessToken))
 	require.Equal(t, []string{"envd-token"}, srv.gotMetadata.Get(proxygrpc.MetadataEnvdAccessToken))
 
-	_, err = routeNodeIP("sbx", route)
-	var refused *reverseproxy.SandboxCapacityError
-	require.ErrorAs(t, err, &refused)
-	require.True(t, refused.Permanent)
-	require.Equal(t, proxygrpc.PlacementFeatureUnsupported, refused.ErrorCode)
+	host, err := routeHost(route, 5007)
+	require.NoError(t, err)
+	require.Equal(t, "10.8.0.2:5010", host, "the resumed route is forwarded to its Router, not the orchestrator")
 }
 
 func TestNewClientProxy_HandlerErrors(t *testing.T) {
@@ -883,7 +1328,7 @@ func TestNewClientProxy_HandlerErrors(t *testing.T) {
 
 			c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 			ff := newFF(t)
-			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "handler-errors-"+tt.name, uint16(i), 5007, c, tt.resumer, ff)
+			p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "handler-errors-"+tt.name, uint16(i), 5007, c, tt.resumer, ff, nil)
 			require.NoError(t, err)
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.url, nil)
@@ -918,7 +1363,7 @@ func TestNewClientProxy_DuplicateMetricsRegistrationReturnsErrors(t *testing.T) 
 	// noop meter provider should not error; this is a sanity test that NewClientProxy
 	// works repeatedly for separate service names without leaking metric registrations.
 	for range 3 {
-		_, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service", 0, 5007, c, nil, ff)
+		_, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service", 0, 5007, c, nil, ff, nil)
 		require.NoError(t, err)
 	}
 }
@@ -930,7 +1375,7 @@ func TestNewClientProxy_HasIdleTimeout(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-idle", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-idle", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, p.IdleTimeout, idleTimeout)
 	require.Less(t, p.IdleTimeout, 2*idleTimeout)
@@ -943,7 +1388,7 @@ func TestNewClientProxy_PoolAccessors(t *testing.T) {
 	c := catalog.NewRedisSandboxCatalog(redis_utils.SetupInstance(t))
 	ff := newFF(t)
 
-	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-pool", 0, 5007, c, nil, ff)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "service-pool", 0, 5007, c, nil, ff, nil)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, p.CurrentPoolSize(), 0)
 
@@ -953,4 +1398,46 @@ func TestNewClientProxy_PoolAccessors(t *testing.T) {
 	p.Handler.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusBadGateway, rr.Code)
 	require.Contains(t, rr.Body.String(), `"sandboxId":"sbx"`)
+}
+
+// TestClientProxyForRouterIngress is the client proxy half of a Router's
+// ingress test, which runs it in the Router's namespace with
+// E2B_CLIENT_PROXY_FOR_ROUTER naming the Router's ingress endpoint, the
+// address to serve on and a ready file. It serves the client proxy with a
+// routing record that places every sandbox in full-router mode at that
+// endpoint, and an orchestrator proxy port beside it that must never be
+// dialed, touches the ready file and serves until its stdin closes.
+func TestClientProxyForRouterIngress(t *testing.T) { //nolint:paralleltest // serves the Router test alone
+	config := strings.Split(os.Getenv("E2B_CLIENT_PROXY_FOR_ROUTER"), ",")
+	if len(config) != 3 {
+		t.Skip("NOT RUN: needs a Router ingress test to set E2B_CLIENT_PROXY_FOR_ROUTER")
+	}
+	router, serve, ready := netip.MustParseAddrPort(config[0]), netip.MustParseAddrPort(config[1]), config[2]
+	orchestratorProxy, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", netip.AddrPortFrom(serve.Addr(), 0).String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = orchestratorProxy.Close() })
+	var orchestratorDials atomic.Int32
+	go func() {
+		for {
+			conn, err := orchestratorProxy.Accept()
+			if err != nil {
+				return
+			}
+			orchestratorDials.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	route := &catalog.SandboxInfo{OrchestratorIP: serve.Addr().String(), ExecutionID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("exec-s")).String(), NetworkPlacement: &catalog.NetworkPlacement{
+		NetworkMode: catalog.NetworkModeFullRouter, RouterID: "router", IngressAddress: router.Addr().String(), IngressPort: uint32(router.Port()),
+	}}
+	orchestratorPort := uint16(orchestratorProxy.Addr().(*net.TCPAddr).Port)
+	p, _, err := NewClientProxy(noopmetric.NewMeterProvider(), "router-ingress", 0, orchestratorPort, fixedCatalog{route: route}, nil, newFF(t), nil)
+	require.NoError(t, err)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", serve.String())
+	require.NoError(t, err)
+	go func() { _ = p.Serve(listener) }()
+	t.Cleanup(func() { _ = p.Close() })
+	require.NoError(t, os.WriteFile(ready, nil, 0o600))
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	require.Zero(t, orchestratorDials.Load(), "nothing reached the orchestrator proxy")
 }

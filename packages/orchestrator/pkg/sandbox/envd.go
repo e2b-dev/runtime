@@ -31,6 +31,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -87,6 +88,9 @@ const (
 	envdInitExitTimeout  envdInitExitType = "timeout"
 	envdInitExitCanceled envdInitExitType = "canceled"
 	envdInitExitOther    envdInitExitType = "other"
+	// envdInitExitNetworkRefused is an envd that answered /init and that the sandbox's
+	// network-assign hook refused (errEnvdRefusedByNetwork).
+	envdInitExitNetworkRefused envdInitExitType = "network_refused"
 	// envdInitExitTransient marks a retried attempt that failed but was not the
 	// terminal outcome of the init episode.
 	envdInitExitTransient envdInitExitType = "transient"
@@ -99,10 +103,12 @@ func classifyEnvdInitExit(err error) envdInitExitType {
 		return envdInitExitSuccess
 	case errors.Is(err, ErrWaitForEnvdTimeout), errors.Is(err, context.DeadlineExceeded):
 		return envdInitExitTimeout
-	case errors.Is(err, ErrFcProcessExited):
+	case errors.Is(err, ErrFcProcessExited), errors.Is(err, ErrMemoryBackendExited):
 		return envdInitExitOther
 	case errors.Is(err, context.Canceled):
 		return envdInitExitCanceled
+	case errors.Is(err, errEnvdRefusedByNetwork):
+		return envdInitExitNetworkRefused
 	default:
 		return envdInitExitOther
 	}
@@ -187,6 +193,62 @@ type envdInitAttempts struct {
 	last envdInitPhase
 	// servedAge is how old the served attempt's timestamp was when its response arrived.
 	servedAge time.Duration
+	// servedDial is how long the served attempt's TCP connect took; slowDials counts
+	// the attempts, served or not, whose connect took over envdInitSlowDial.
+	servedDial time.Duration
+	slowDials  int64
+	maxDial    time.Duration
+}
+
+// dialed notes one attempt's connect time.
+func (a *envdInitAttempts) dialed(d time.Duration) {
+	a.maxDial = max(a.maxDial, d)
+	if d > envdInitSlowDial {
+		a.slowDials++
+	}
+}
+
+// spanAttrs describes the start's attempts on its envd-init span: how many were
+// sent, how many died in each phase, and what the served one cost to connect.
+func (a *envdInitAttempts) spanAttrs() []attribute.KeyValue {
+	var failed int64
+	for _, n := range a.failed {
+		failed += n
+	}
+	attrs := []attribute.KeyValue{
+		attribute.Int64("envd.init.attempts", a.count),
+		attribute.Int64("envd.init.failed", failed),
+		attribute.Int64("envd.init.slow_dials", a.slowDials),
+	}
+	if a.maxDial > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.max_dial_ms", float64(a.maxDial)/float64(time.Millisecond)))
+	}
+	if a.servedDial > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.dial_ms", float64(a.servedDial)/float64(time.Millisecond)))
+	}
+	if a.servedAge > 0 {
+		attrs = append(attrs, attribute.Float64("envd.init.served_age_ms", float64(a.servedAge)/float64(time.Millisecond)))
+	}
+	for _, phase := range []envdInitPhase{envdInitPhaseConnect, envdInitPhaseWrite, envdInitPhaseResponse} {
+		if n := a.failed[phase]; n > 0 {
+			attrs = append(attrs, attribute.Int64("envd.init.failed."+string(phase), n))
+		}
+	}
+
+	return attrs
+}
+
+// spanAttrs describes what the served /init reported, for the envd-init span.
+func (r envdInitReport) spanAttrs() []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+	if r.clockCorrection != nil {
+		attrs = append(attrs, attribute.Float64("envd.init.clock_correction_ms", float64(*r.clockCorrection)/float64(time.Millisecond)))
+	}
+	if r.unobserved != nil {
+		attrs = append(attrs, attribute.Int64("envd.init.unobserved_handlers", *r.unobserved))
+	}
+
+	return attrs
 }
 
 func (a *envdInitAttempts) fail(phase envdInitPhase) {
@@ -202,10 +264,27 @@ type attemptPhase struct {
 	connected atomic.Bool
 	wrote     atomic.Bool
 	got100    atomic.Bool
+	// dialStart and dialNanos time the TCP connect, when the transport dialed one.
+	dialStart atomic.Pointer[time.Time]
+	dialNanos atomic.Int64
+}
+
+// dial is how long the attempt's TCP connect took, zero when none completed.
+func (p *attemptPhase) dial() time.Duration {
+	return time.Duration(p.dialNanos.Load())
 }
 
 func (p *attemptPhase) trace(ctx context.Context) context.Context {
 	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		ConnectStart: func(string, string) {
+			start := time.Now()
+			p.dialStart.Store(&start)
+		},
+		ConnectDone: func(_, _ string, _ error) {
+			if start := p.dialStart.Load(); start != nil {
+				p.dialNanos.Store(int64(time.Since(*start)))
+			}
+		},
 		GotConn:        func(httptrace.GotConnInfo) { p.connected.Store(true) },
 		Got100Continue: func() { p.got100.Store(true) },
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
@@ -254,11 +333,15 @@ type envdInitRequest struct {
 	address     string
 	body        envd.PostInitJSONBody
 	accessToken *string
+	sandbox     sbxlogger.SandboxMetadata
 }
 
-func (s *Sandbox) newEnvdInitRequest(address string) *envdInitRequest {
+// newEnvdInitRequest builds the /init request whose CA bundle is the one for envd at
+// envdVersion.
+func (s *Sandbox) newEnvdInitRequest(address, envdVersion string) *envdInitRequest {
 	return &envdInitRequest{
 		address: address,
+		sandbox: s.LoggerMetadata(),
 		body: envd.PostInitJSONBody{
 			LifecycleID:    s.LifecycleID,
 			EnvVars:        s.Config.Envd.Vars,
@@ -267,12 +350,26 @@ func (s *Sandbox) newEnvdInitRequest(address string) *envdInitRequest {
 			DefaultUser:    utils.DerefOrDefault(s.Config.Envd.DefaultUser, ""),
 			DefaultWorkdir: utils.DerefOrDefault(s.Config.Envd.DefaultWorkdir, ""),
 			VolumeMounts:   s.convertMounts(s.Config.VolumeMounts),
-			CaBundle:       s.CABundle,
+			CaBundle:       envdCABundleFor(s.Config, s.egressProxy.CABundle(envdVersion)),
 			// A snapshot may resume with a different number of guest CPUs online.
 			CpuCount: s.guestCpuCount(),
 		},
 		accessToken: s.Config.Envd.AccessToken,
 	}
+}
+
+// ExpectedEnvdVersion is the envd version the guest is expected to run, read for the CA
+// bundle each /init sends and by the network-assign hook. The delivered mark never leads
+// here, because a live upgrade only runs on an envd that has already answered /init.
+func (s *Sandbox) ExpectedEnvdVersion() string {
+	if v := s.RunningEnvdVersion(); v != "" {
+		return v
+	}
+	if s.inheritedEnvdVersion != "" {
+		return s.inheritedEnvdVersion
+	}
+
+	return s.Config.Envd.Version
 }
 
 // marshal encodes the body with ts as its timestamp.
@@ -284,7 +381,7 @@ func (r *envdInitRequest) marshal(ts time.Time) ([]byte, error) {
 
 // newHTTPRequest builds the POST carrying body on ctx.
 func (r *envdInitRequest) newHTTPRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.address, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, r.sandbox), http.MethodPost, r.address, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -325,9 +422,11 @@ func (s *Sandbox) doRequestWithInfiniteRetries(
 		}
 
 		response, err := sandboxHttpClient.Do(request)
+		attempts.dialed(phase.dial())
 		if err == nil {
 			response.Body = &cancelOnClose{ReadCloser: response.Body, cancel: cancel}
 			attempts.servedAge = time.Since(timestamp)
+			attempts.servedDial = phase.dial()
 
 			return response, attempts, nil
 		}
@@ -486,7 +585,7 @@ func (s *Sandbox) CallEnvdUpgrade(ctx context.Context, localSrcPath, guestBinPat
 	}
 	defer f.Close()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.envdServerURL()+"/upgrade", f)
+	req, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, s), http.MethodPost, s.envdServerURL()+"/upgrade", f)
 	if err != nil {
 		return false, fmt.Errorf("build upgrade request: %w", err)
 	}
@@ -502,7 +601,7 @@ func (s *Sandbox) CallEnvdUpgrade(ctx context.Context, localSrcPath, guestBinPat
 	// Timeout (10s) — it would preempt the deliverTimeout ctx above and cut the
 	// upgrade off before envd finishes reading the body and exec'ing. The ctx
 	// deadline is the sole delivery budget.
-	resp, err := (&http.Client{Transport: sandboxHttpClient.Transport}).Do(req)
+	resp, err := NewEnvdHTTPClient(0).Do(req)
 	if err != nil {
 		// envd reads the whole body, then execs without responding, so a
 		// transport error AFTER the request reached it (connection reset/EOF) is
@@ -759,7 +858,7 @@ func (s *Sandbox) doEnvdPost(ctx context.Context, path string, query ...string) 
 	if len(query) > 0 && query[0] != "" {
 		address += "?" + query[0]
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, nil)
+	req, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, s), http.MethodPost, address, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build %s request: %w", path, err)
 	}
@@ -780,7 +879,7 @@ func (s *Sandbox) convertMounts(mounts []VolumeMountConfig) []envd.VolumeMount {
 
 	for _, mount := range mounts {
 		results = append(results, envd.VolumeMount{
-			NfsTarget: fmt.Sprintf("%s:/%s", s.config.NetworkConfig.OrchestratorInSandboxIPAddress, mount.Name),
+			NfsTarget: fmt.Sprintf("%s:%s", s.config.NetworkConfig.OrchestratorInSandboxIPAddress, s.NFSMountPath(mount.Name)),
 			Path:      mount.Path,
 		})
 	}
@@ -795,6 +894,9 @@ type envdInitOptions struct {
 	budget time.Duration
 	// reinit is the post-checkpoint re-init's handle, through which a Pause stops it.
 	reinit *envdReinit
+	// onResponse lets WaitForEnvd capture faults before response processing and
+	// the network-ready hook can add post-response work.
+	onResponse func()
 }
 
 func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetrics bool, opts envdInitOptions) (e error) {
@@ -839,13 +941,19 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		report   envdInitReport
 	)
 	defer func() {
+		// The span carries what the counters cannot: this start's own attempts and
+		// what its served /init reported, so a slow envd-init can be read on its trace.
+		span.SetAttributes(attempts.spanAttrs()...)
+		span.SetAttributes(attribute.Bool("envd.init.served", served))
+		span.SetAttributes(report.spanAttrs()...)
 		if countStart {
 			s.recordEnvdInitStart(ctx, attributes, attempts, served, report, e)
 		}
 	}()
 
 	baseURL := s.envdServerURL()
-	initRequest := s.newEnvdInitRequest(baseURL + "/init")
+	bundleVersion := s.ExpectedEnvdVersion()
+	initRequest := s.newEnvdInitRequest(baseURL+"/init", bundleVersion)
 
 	var (
 		response *http.Response
@@ -865,6 +973,9 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	} else {
 		response, attempts, err = s.doRequestWithInfiniteRetries(ctx, initRequest)
 	}
+	if err == nil && opts.onResponse != nil {
+		opts.onResponse()
+	}
 	if err != nil && (errors.Is(err, errEnvdReinitCut) || errors.Is(context.Cause(ctx), errEnvdReinitCut)) {
 		return fmt.Errorf("failed to init envd: %w", errEnvdReinitCut)
 	}
@@ -881,10 +992,12 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 	}
 
 	served = true
+	span.SetAttributes(attribute.Int("envd.init.http_status", response.StatusCode))
 	defer response.Body.Close()
 	// The response headers are read before the init counters are recorded, so that
 	// anything the guest reports on /init can label the counters for this start.
-	s.readEnvdInitHeaders(ctx, response.Header, startType, countStart)
+	reported, admissible := s.readEnvdInitHeaders(ctx, response.Header, startType, countStart)
+	s.recordReportedEnvdVersion(ctx, span, startType, bundleVersion, reported, admissible)
 
 	if response.StatusCode != http.StatusNoContent {
 		body := envdErrorBody(response.Body)
@@ -938,6 +1051,10 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		s.recordHarvestThaw(ctx, response.Header, gateVersion)
 	}
 
+	if err := s.networkHook.OnEnvdReady(ctx, s, reported); err != nil {
+		return fmt.Errorf("%w: %w", errEnvdRefusedByNetwork, err)
+	}
+
 	s.log().Debug(ctx, "succeeded to init envd",
 		logger.WithEnvdVersion(s.Config.Envd.Version),
 		zap.Int64("timeout_ms", s.internalConfig.EnvdInitRequestTimeout.Milliseconds()),
@@ -972,6 +1089,36 @@ const (
 	envdCpusHeaderMaxBytes = 512
 	envdCpusRejectedMaxLen = 100
 )
+
+// errEnvdRefusedByNetwork fails a start whose network-assign hook refused the envd that
+// answered /init.
+var errEnvdRefusedByNetwork = errors.New("the sandbox's network refused the envd that answered /init")
+
+// recordReportedEnvdVersion puts the expected and reported envd versions on span, and warns
+// when an admissible report is older than the expected version.
+func (s *Sandbox) recordReportedEnvdVersion(ctx context.Context, span trace.Span, startType StartType, expected, reported string, admissible bool) {
+	reportedAttr := envdRunningVersionUnknown
+	if admissible {
+		reportedAttr = reported
+	}
+	span.SetAttributes(
+		attribute.String("envd.expected_version", expected),
+		attribute.String("envd.reported_version", reportedAttr),
+	)
+	if !admissible {
+		return
+	}
+	if newer, err := utils.IsGTEVersionWithTimestamp(reported, expected); err != nil || newer {
+		return
+	}
+	span.SetAttributes(attribute.Bool("envd.version_regressed", true))
+	s.log().Warn(ctx, "envd reported an older version than expected",
+		zap.String("expected", expected),
+		zap.String("reported", reported),
+		zap.String("start_type", string(startType)),
+		zap.Bool("placed", s.NetworkPlacement != nil),
+	)
+}
 
 // errEnvdCannotSetCpus is an envd without CPU hotplug in a VM with spare vCPUs.
 var errEnvdCannotSetCpus = errors.New("envd sent no X-Envd-Cpus, so it cannot manage the spare vcpus")
@@ -1109,8 +1256,9 @@ func (s *Sandbox) recordEnvdInitStart(ctx context.Context, base []attribute.KeyV
 	}
 }
 
-// readEnvdInitHeaders records what the running envd reports on a served /init response.
-func (s *Sandbox) readEnvdInitHeaders(ctx context.Context, header http.Header, startType StartType, recordMetrics bool) {
+// readEnvdInitHeaders records what the running envd reports on a served /init response,
+// and returns the version it reported when that is admissible.
+func (s *Sandbox) readEnvdInitHeaders(ctx context.Context, header http.Header, startType StartType, recordMetrics bool) (string, bool) {
 	// Capture the version the running envd reports (X-Envd-Version). This rides
 	// on the /init call the resume path already makes — before and after an
 	// upgrade — so the upgrade trigger can decide/label/confirm against the live
@@ -1143,6 +1291,8 @@ func (s *Sandbox) readEnvdInitHeaders(ctx context.Context, header http.Header, s
 	if m := header.Get(envdMemoryHeader); m != "" {
 		s.recordEnvdMemoryProtection(ctx, m, startType, recordMetrics)
 	}
+
+	return admissibleEnvdVersion(header.Get("X-Envd-Version"))
 }
 
 // EnvdEffectiveDefaults is what the running envd reports it is ACTUALLY serving

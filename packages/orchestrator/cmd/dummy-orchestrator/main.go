@@ -30,6 +30,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/dummyserver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 // defaultVersion identifies the dummy orchestrator binary so ServiceInfo
@@ -44,6 +45,12 @@ func main() {
 	healthPort := envOrDefault("HEALTH_PORT", "5018")
 	nodeID := envOrDefault("NODE_ID", "dummy")
 	labels := splitCSV(os.Getenv("NODE_LABELS"))
+	// A state dir keeps a Standby across restarts; without one nothing persists.
+	stateDir := os.Getenv("STATE_DIR")
+	maxSandboxes, err := strconv.ParseInt(envOrDefault("MAX_SANDBOXES", "100"), 10, 64)
+	if err != nil {
+		log.Fatalf("invalid MAX_SANDBOXES: %v", err)
+	}
 
 	version := envOrDefault("SERVICE_VERSION", defaultVersion)
 	commit := commitSHA
@@ -58,8 +65,26 @@ func main() {
 		log.Fatalf("invalid HEALTH_PORT %q: %v", healthPort, err)
 	}
 
+	machine, err := dummyserver.NewMachine(context.Background(), stateDir)
+	if machine == nil {
+		log.Fatalf("state dir %q: %v", stateDir, err)
+	}
+	if err != nil {
+		log.Printf("ignoring the stored service status: %v", err)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// The status machine logs through the shared logger.
+	devLogger, err := logger.NewDevelopmentLogger()
+	if err != nil {
+		cancel()
+		//nolint:gocritic // cancel() is called explicitly above before log.Fatalf
+		log.Fatalf("logger: %v", err)
+	}
+	restoreLogger := logger.ReplaceGlobals(ctx, devLogger)
+	defer restoreLogger()
 
 	var lc net.ListenConfig
 	grpcLis, err := lc.Listen(ctx, "tcp", ":"+grpcPort)
@@ -71,13 +96,16 @@ func main() {
 
 	srv := grpc.NewServer()
 
-	sbxServer := dummyserver.NewSandbox()
+	sbxServer := dummyserver.NewSandbox(machine, maxSandboxes)
 	orchestrator.RegisterSandboxServiceServer(srv, sbxServer)
 	orchestrator.RegisterChunkServiceServer(srv, &orchestrator.UnimplementedChunkServiceServer{})
 	orchestrator.RegisterVolumeServiceServer(srv, &orchestrator.UnimplementedVolumeServiceServer{})
 
 	serviceID := uuid.NewString()
-	orchestratorinfo.RegisterInfoServiceServer(srv, dummyserver.NewInfo(nodeID, serviceID, version, commit, labels))
+	orchestratorinfo.RegisterInfoServiceServer(srv, dummyserver.NewInfo(dummyserver.InfoOptions{
+		NodeID: nodeID, ServiceID: serviceID, Version: version, Commit: commit, Labels: labels,
+		Machine: machine, MaxSandboxes: maxSandboxes, SandboxCount: sbxServer.Count,
+	}))
 
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)

@@ -31,7 +31,7 @@ func (r serverResumeFreshSteps) snapshot(ctx context.Context, sbx *sandbox.Sandb
 	// filesystem-only requests to checkpointInPlace instead). The resume is
 	// immediate, so the diff must be materialized synchronously — never defer
 	// the rootfs export here, and never maintain the paused sandbox.
-	return r.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), in.GetMetadata(), storage.ObjectOriginSnapshotTemplate, false, false, false)
+	return r.s.snapshotAndCacheSandbox(ctx, sbx, in.GetBuildId(), in.GetMetadata(), storage.ObjectOriginSnapshotTemplate, false, false, false, sandboxStops, sandbox.WithMemoryRequired())
 }
 
 func (r serverResumeFreshSteps) template(ctx context.Context, sbx *sandbox.Sandbox, buildID string) (sbxtemplate.Template, func(), error) {
@@ -45,6 +45,9 @@ func (r serverResumeFreshSteps) resume(ctx context.Context, template sbxtemplate
 	// the API, routing catalog, and analytics) but with a fresh LifecycleID
 	// so the old sandbox's cleanup goroutine won't
 	// accidentally evict the resumed sandbox from the map.
+	releaseHugePages := r.s.holdHugePages(ctx, sbx.Config)
+	defer releaseHugePages()
+
 	return r.s.sandboxFactory.ResumeSandbox(
 		ctx,
 		template,

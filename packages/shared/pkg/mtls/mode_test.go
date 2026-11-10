@@ -202,8 +202,10 @@ func TestFlagModeSourceRefusesRequiredWithAnEmptyAllowList(t *testing.T) {
 
 	flags.set("listener-mode", "required")
 	assert.Equal(t, ModePermissive, src.Mode(t.Context()), "required is refused while the list is empty")
-	assert.Equal(t, SourceFallback, src.Source())
-	assert.Contains(t, logMessages(logs), "mtls: mode flag asks for required with an empty allow-list; staying")
+	assert.Equal(t, SourceRefused, src.Source())
+	warnings := logs.FilterMessage("mtls: mode flag asks for required with an empty allow-list; staying").All()
+	require.Len(t, warnings, 1)
+	assert.Equal(t, SourceRefused, warnings[0].ContextMap()["source"])
 
 	require.NoError(t, allow.Replace([]string{clientID}))
 	assert.Equal(t, ModeRequired, src.Mode(t.Context()), "once the list has a name the flip is accepted")

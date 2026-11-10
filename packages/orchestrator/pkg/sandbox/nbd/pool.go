@@ -119,6 +119,25 @@ func NewDevicePool(maxSlotsReady int) (*DevicePool, error) {
 
 var ErrNBDModuleNotLoaded = errors.New("NBD module not loaded")
 
+// MaxDevices is the number of devices the module exposes, read once at construction.
+func (d *DevicePool) MaxDevices() uint {
+	return d.usedSlots.Len()
+}
+
+// Disown gives up a slot whose device turned out to be held by another owner
+// when it was handed out. The slot is cleared without the device check a
+// release makes, because the device is not this pool's to see freed; the
+// feeder checks the device against sysfs before it offers the slot again.
+// It counts as a release: the slot was counted as acquired when it was
+// handed out, and the dashboard reads acquired minus released as leaked.
+func (d *DevicePool) Disown(ctx context.Context, idx DeviceSlot) {
+	d.mu.Lock()
+	d.usedSlots.Clear(uint(idx))
+	d.mu.Unlock()
+
+	released.Add(ctx, 1)
+}
+
 func getMaxDevices() (uint, error) {
 	data, err := os.ReadFile("/sys/module/nbd/parameters/nbds_max")
 
