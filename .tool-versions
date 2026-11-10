@@ -12,4 +12,4 @@ protoc-gen-connect-go 1.19.2
 protoc-gen-go 1.36.11
 protoc-gen-go-grpc 1.6.1
 python 3.15.0
-azure-cli 2.91.0
+azure-cli 2.92.0
