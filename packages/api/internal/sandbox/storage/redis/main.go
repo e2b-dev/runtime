@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // TransitionKeyTTL bounds how long a removal owns its transition key. It must
@@ -53,6 +55,22 @@ type Storage struct {
 	reconcileSlots *semaphore.Weighted
 
 	metrics expirationIndexMetrics
+	// writeAnomalies counts writes that gave up after their retries, by kind.
+	writeAnomalies metric.Int64Counter
+	// listGets records the GETs one bulk record read issued.
+	listGets metric.Int64Histogram
+	// indexHeal counts the healer's repairs of records and index entries,
+	// by kind.
+	indexHeal metric.Int64Counter
+	// heals is the last two index-consistency sweeps' reports, which the
+	// census and sweep gauges observe; nil before the first sweep.
+	heals atomic.Pointer[healHistory]
+	// danglingSince is when the healer first saw each index entry without
+	// a record, so it removes one only after a grace period.
+	danglingSince map[recordRef]time.Time
+
+	// faults is the test hook of faults.go; nil in production.
+	faults func(faultPoint) error
 }
 
 // expirationIndexMetrics observes global expiration index consistency.
@@ -102,6 +120,24 @@ func newExpirationIndexMetrics(meter metric.Meter) (expirationIndexMetrics, erro
 	}, nil
 }
 
+// Write anomaly kinds, the metric's kind attribute: a record left after its
+// index entry was removed, when its delete kept failing,
+// which the healer deletes once it is stale; a record written without its
+// index entry, which the healer indexes once it is older than the grace
+// period; a record write that failed and whose cleanup failed too, so a
+// record of a killed VM may remain until the evictor removes it.
+const (
+	writeAnomalyKindAttr            = "kind"
+	writeAnomalyRemoveStranded      = "remove_stranded"
+	writeAnomalyAddUnindexed        = "add_unindexed"
+	writeAnomalyAddWriteUnconfirmed = "add_write_unconfirmed"
+)
+
+// countWriteAnomaly records a write that gave up after its retries.
+func (s *Storage) countWriteAnomaly(ctx context.Context, kind string) {
+	s.writeAnomalies.Add(ctx, 1, metric.WithAttributes(attribute.String(writeAnomalyKindAttr, kind)))
+}
+
 const meterScope = "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 
 func NewStorage(
@@ -121,22 +157,71 @@ func NewStorage(
 		return nil, fmt.Errorf("failed to create expiration index metrics: %w", err)
 	}
 
-	return &Storage{
+	// A misnamed instrument panics at construction, as the package-level
+	// instruments do.
+	s := &Storage{
 		redisClient:    redisClient,
 		locker:         newStorageLocker(redisClient, subManager, pub),
 		subManager:     subManager,
 		publisher:      pub,
 		reconcileSlots: semaphore.NewWeighted(maxConcurrentReconciles),
 		metrics:        metrics,
-	}, nil
+		writeAnomalies: utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageWriteAnomalies)),
+		listGets:       utils.Must(telemetry.GetHistogram(meter, telemetry.ApiRedisStorageListGets)),
+		indexHeal:      utils.Must(telemetry.GetCounter(meter, telemetry.ApiRedisStorageIndexHeal)),
+	}
+
+	// The census and the repairs of the last sweep, and the repairs of the
+	// one before it; nothing before the first sweep.
+	recordsForm := utils.Must(telemetry.GetGaugeInt(meter, telemetry.ApiRedisStorageRecordsForm))
+	censusComplete := utils.Must(telemetry.GetGaugeInt(meter, telemetry.ApiRedisStorageCensusComplete))
+	lastSweep := utils.Must(telemetry.GetGaugeInt(meter, telemetry.ApiRedisStorageIndexHealLastSweep))
+	previousSweep := utils.Must(telemetry.GetGaugeInt(meter, telemetry.ApiRedisStorageIndexHealPreviousSweep))
+	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		heals := s.heals.Load()
+		if heals == nil {
+			return nil
+		}
+		report := heals.last
+		o.ObserveInt64(recordsForm, int64(report.Records), metric.WithAttributes(attribute.String(recordsFormAttr, "sandbox")))
+		var complete int64
+		if report.Complete {
+			complete = 1
+		}
+		o.ObserveInt64(censusComplete, complete)
+		observeRepairs(o, lastSweep, report)
+		if heals.previous != nil {
+			observeRepairs(o, previousSweep, *heals.previous)
+		}
+
+		return nil
+	}, recordsForm, censusComplete, lastSweep, previousSweep)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register healer gauges: %w", err)
+	}
+
+	return s, nil
 }
 
-// Start subscribes to the global PubSub channel and launches the publish
-// worker and the expiration index healer. Blocks until the context is
-// cancelled or Close is called.
+// observeRepairs observes a sweep's repairs on gauge, by kind.
+func observeRepairs(o metric.Observer, gauge metric.Int64ObservableGauge, report healReport) {
+	observe := func(kind healKind, repairs int) {
+		o.ObserveInt64(gauge, int64(repairs), metric.WithAttributes(attribute.String(indexHealKindAttr, string(kind))))
+	}
+	observe(healReadded, report.Readded)
+	observe(healRemoved, report.Removed)
+	observe(healDeletedStale, report.DeletedStale)
+}
+
+// Start writes the scheme marker, subscribes to the global PubSub channel
+// and launches the publish worker and the healer. Blocks until the context
+// is cancelled or Close is called.
 func (s *Storage) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	s.initCounters(ctx)
+	s.markScheme(ctx)
 
 	pubDone := make(chan struct{})
 	go func() {
@@ -148,6 +233,35 @@ func (s *Storage) Start(ctx context.Context) {
 
 	s.subManager.start(ctx)
 	<-pubDone
+}
+
+// markScheme writes the scheme marker unless it is there. Its absence means
+// no release that reads sandbox-form records has run on this store, and a
+// replica of an older one kills every such record's sandbox as an orphan; a
+// fresh store has nothing to lose, so this warns and goes on.
+func (s *Storage) markScheme(ctx context.Context) {
+	absent, err := s.redisClient.SetNX(ctx, SchemeMarkerKey, SchemeMinRelease, 0).Result()
+	switch {
+	case err != nil:
+		logger.L().Warn(ctx, "Failed to write the sandbox store scheme marker", zap.Error(err))
+	case absent:
+		logger.L().Warn(ctx, "Sandbox store scheme marker was absent: no release that reads sandbox-form records had started on this store, and a replica of an older one kills their sandboxes as orphans")
+	}
+}
+
+// initCounters records every kind of the errors, write anomaly and index
+// heal counters at zero, so a kind's first event moves a series the alert
+// rules already see instead of starting one they would count whole.
+func (s *Storage) initCounters(ctx context.Context) {
+	for _, kind := range []string{errorKindCrossSlot, errorKindMovedExhausted, errorKindTryAgain, errorKindOther} {
+		defaultErrors.Add(ctx, 0, metric.WithAttributes(attribute.String(errorKindAttr, kind)))
+	}
+	for _, kind := range []string{writeAnomalyRemoveStranded, writeAnomalyAddUnindexed, writeAnomalyAddWriteUnconfirmed} {
+		s.writeAnomalies.Add(ctx, 0, metric.WithAttributes(attribute.String(writeAnomalyKindAttr, kind)))
+	}
+	for _, kind := range healKinds {
+		s.indexHeal.Add(ctx, 0, metric.WithAttributes(attribute.String(indexHealKindAttr, string(kind))))
+	}
 }
 
 // Close shuts down the subscription manager and the publish worker.
@@ -165,82 +279,49 @@ func (s *Storage) Reconcile(ctx context.Context, sbxs []sandboxtypes.NodeSandbox
 	now := time.Now()
 
 	// Filter out sandboxes that are too young to be considered orphans.
-	type candidate struct {
-		sbx sandboxtypes.NodeSandbox
-		key string
-	}
-
-	// Group candidates by team for per-team MGET (Redis Cluster slot compatibility).
-	teamCandidates := make(map[string][]candidate)
+	refs := make([]recordRef, 0, len(sbxs))
+	candidates := make(map[recordRef]sandboxtypes.NodeSandbox, len(sbxs))
 	for _, sbx := range sbxs {
 		if now.Sub(sbx.StartTime) < orphanGracePeriod {
 			continue
 		}
 
-		team := sbx.TeamID.String()
-		teamCandidates[team] = append(teamCandidates[team], candidate{
-			sbx: sbx,
-			key: getSandboxKey(team, sbx.SandboxID),
-		})
+		ref := recordRef{TeamID: sbx.TeamID.String(), SandboxID: sbx.SandboxID}
+		refs = append(refs, ref)
+		candidates[ref] = sbx
 	}
-	if len(teamCandidates) == 0 {
+	if len(refs) == 0 {
 		return nil
 	}
 
-	// Pipeline per-team MGET calls, each capped at sandboxScanBatchSize keys
-	// so every command's work and reply size stay bounded.
-	pipe := s.redisClient.Pipeline()
-
-	type batchInfo struct {
-		cmd        *redis.SliceCmd
-		candidates []candidate
-	}
-
-	var batches []batchInfo
-	for _, candidates := range teamCandidates {
-		for start := 0; start < len(candidates); start += sandboxScanBatchSize {
-			chunk := candidates[start:min(start+sandboxScanBatchSize, len(candidates))]
-
-			keys := make([]string, len(chunk))
-			for i, c := range chunk {
-				keys[i] = c.key
-			}
-
-			cmd := pipe.MGet(ctx, keys...)
-			batches = append(batches, batchInfo{cmd: cmd, candidates: chunk})
-		}
-	}
-
-	if err := s.reconcileSlots.Acquire(ctx, 1); err != nil {
-		logger.L().Error(ctx, "Gave up waiting to run the orphan sync, skipping",
-			zap.Error(err),
-			logger.WithNodeID(nodeID),
-		)
-
-		return nil
-	}
-	_, err := pipe.Exec(ctx)
-	s.reconcileSlots.Release(1)
-	if err != nil {
-		// Pipeline error — skip entirely to avoid mass kills.
-		logger.L().Error(ctx, "Redis pipeline error during orphan sync, skipping",
-			zap.Error(err),
-			logger.WithNodeID(nodeID),
-		)
-
-		return nil
-	}
-
+	// Read the records in chunks of sandboxScanBatchSize, so every pipeline's
+	// work and reply size stay bounded.
 	var orphans []sandboxtypes.NodeSandbox
-	for _, batch := range batches {
-		results := batch.cmd.Val()
-		for i, raw := range results {
-			if raw != nil {
-				// Sandbox exists in store, not an orphan.
-				continue
-			}
+	for start := 0; start < len(refs); start += sandboxScanBatchSize {
+		chunk := refs[start:min(start+sandboxScanBatchSize, len(refs))]
 
-			sbx := batch.candidates[i].sbx
+		if err := s.reconcileSlots.Acquire(ctx, 1); err != nil {
+			logger.L().Error(ctx, "Gave up waiting to run the orphan sync, skipping",
+				zap.Error(err),
+				logger.WithNodeID(nodeID),
+			)
+
+			return nil
+		}
+		_, absent, err := s.fetchRecords(ctx, chunk)
+		s.reconcileSlots.Release(1)
+		if err != nil {
+			// Read error — skip the whole node to avoid mass kills.
+			logger.L().Error(ctx, "Redis pipeline error during orphan sync, skipping",
+				zap.Error(err),
+				logger.WithNodeID(nodeID),
+			)
+
+			return nil
+		}
+
+		for _, ref := range absent {
+			sbx := candidates[ref]
 			logger.L().Warn(ctx, "Killing orphaned sandbox not found in store",
 				logger.WithSandboxID(sbx.SandboxID),
 				logger.WithNodeID(nodeID),

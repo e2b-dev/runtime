@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // templatesUnboundedMaxCount caps GET /templates, which returns every template
@@ -98,6 +99,7 @@ func (a *APIStore) GetTemplates(c *gin.Context, params api.GetTemplatesParams) {
 			TemplateID:    item.ActiveEnv.ID,
 			BuildID:       item.BuildID.String(),
 			CpuCount:      api.CPUCount(item.BuildVcpu),
+			MaxCpuCount:   sharedUtils.CastPtr(item.BuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
 			MemoryMB:      api.MemoryMB(item.BuildRamMb),
 			DiskSizeMB:    api.DiskSizeMB(diskMB),
 			Public:        item.ActiveEnv.Public,

@@ -7,7 +7,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 )
@@ -143,6 +142,21 @@ type Sandbox struct {
 	NetworkPlacement *orchestrator.SandboxNetworkPlacement `json:"networkPlacement,omitempty"`
 
 	State State `json:"state"`
+
+	// LifecycleHold names the operation outside the API's ordinary lifecycle
+	// that holds this running execution, until LifecycleHoldUntil in Unix
+	// milliseconds. Both are written only by the store's hold operations; an
+	// expired hold is treated as released everywhere. While the hold lasts,
+	// ordinary transitions, updates and replacements are refused with
+	// ErrLifecycleHeld.
+	LifecycleHold      string `json:"lifecycleHold,omitempty"`
+	LifecycleHoldUntil int64  `json:"lifecycleHoldUntil,omitempty"`
+}
+
+// Held reports whether the record is held at now: a hold past its deadline
+// is released.
+func (s Sandbox) Held(now time.Time) bool {
+	return s.LifecycleHold != "" && now.UnixMilli() < s.LifecycleHoldUntil
 }
 
 func (s Sandbox) ToAPISandbox() *api.Sandbox {
@@ -188,6 +202,19 @@ type NodeSandbox struct {
 	VCpu      int64
 	RamMB     int64
 	HugePages bool
+	// Ended is set by the node when the sandbox ended without being asked
+	// to; GuestEvent says what the host saw of the guest.
+	Ended      bool
+	GuestEvent string
+	// DiskKept is set with Ended when the guest powered itself off and the
+	// node keeps the sandbox for its timeout action.
+	DiskKept bool
+}
+
+// EndedOnNode reports whether the node lists the sandbox as ended with
+// nothing kept, so all that is left is to end it in the store.
+func (s NodeSandbox) EndedOnNode() bool {
+	return s.Ended && !s.DiskKept
 }
 
 // ToNodeSandbox reduces a stored sandbox to the node-reported view, so the kill
@@ -202,14 +229,8 @@ func (s Sandbox) ToNodeSandbox() NodeSandbox {
 		StartTime:   s.StartTime,
 		VCpu:        s.VCpu,
 		RamMB:       s.RamMB,
-		HugePages:   s.hugePages(),
+		HugePages:   true,
 	}
-}
-
-func (s Sandbox) hugePages() bool {
-	info, err := fcversion.New(s.FirecrackerVersion)
-
-	return err == nil && info.HasHugePages()
 }
 
 // RefusalEpisodeGap is how long after a retry window ended a further refusal

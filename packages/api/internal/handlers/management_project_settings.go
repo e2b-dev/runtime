@@ -49,7 +49,7 @@ func (a *APIStore) ManagementSetProjectSettings(c *gin.Context, projectID uuid.U
 
 		return
 	}
-	deleted, err := txDB.Dashboard.IsProjectDeleted(ctx, projectID)
+	deleted, err := txDB.IsProjectDeleted(ctx, projectID)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "check project deletion failed", err, telemetry.WithTeamID(projectID.String()))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error applying project settings")

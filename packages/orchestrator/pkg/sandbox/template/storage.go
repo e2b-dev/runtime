@@ -149,6 +149,10 @@ func (d *Storage) IsCached(ctx context.Context, off, length int64) bool {
 	return d.source.IsCached(ctx, off, length)
 }
 
+func (d *Storage) PageResident(ctx context.Context, off int64) (resident, known bool) {
+	return d.source.PageResident(ctx, off)
+}
+
 func (d *Storage) Header() *header.Header {
 	return d.source.Header()
 }

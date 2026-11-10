@@ -20,7 +20,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	sharedmiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware"
@@ -36,7 +36,7 @@ func operationRouter(t *testing.T, s store, teamID uuid.UUID, operation func(*gi
 	})))
 	r := gin.New()
 	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) { c.AbortWithStatus(http.StatusInternalServerError) }))
-	r.Use(func(c *gin.Context) { auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: teamID}}) })
+	r.Use(func(c *gin.Context) { auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: teamID}}) })
 	r.Use(sharedmiddleware.RequestTimeout(time.Minute), middleware(s, flags))
 	handler := func(c *gin.Context) {
 		var body struct {

@@ -5,9 +5,8 @@ package service
 import (
 	"context"
 
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -15,6 +14,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service/machineinfo"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
@@ -25,18 +25,24 @@ type Server struct {
 	info        *ServiceInfo
 	sandboxes   *sandbox.Map
 	hostMetrics *metrics.HostMetrics
+	refused     metric.Int64Counter
 }
 
-func NewInfoService(info *ServiceInfo, sandboxes *sandbox.Map, hostMetrics *metrics.HostMetrics) *Server {
+func NewInfoService(info *ServiceInfo, sandboxes *sandbox.Map, hostMetrics *metrics.HostMetrics, refused metric.Int64Counter) *Server {
 	return &Server{
 		info:        info,
 		sandboxes:   sandboxes,
 		hostMetrics: hostMetrics,
+		refused:     refused,
 	}
 }
 
 func (s *Server) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*orchestratorinfo.ServiceInfoResponse, error) {
 	info := s.info
+	// The status first: a create that passed the gate before a park had
+	// registered its work before the gate, so work read after a Standby
+	// snapshot includes it.
+	snap := info.Snapshot()
 
 	// Get host metrics for the orchestrator
 	cpuMetrics, err := s.hostMetrics.GetCPUMetrics()
@@ -68,18 +74,11 @@ func (s *Server) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*orchestrat
 		sandboxDiskAllocated += uint64(item.Config.TotalDiskSizeMB) * 1024 * 1024
 	}
 
-	info.statusMu.RLock()
-	serviceStatus := info.status
-	outstandingWork := uint64(info.outstandingWork)
-	info.statusMu.RUnlock()
-
-	return &orchestratorinfo.ServiceInfoResponse{
-		NodeId:                 info.ClientId,
-		ServiceId:              info.ServiceId,
-		ServiceStatus:          serviceStatus.Status,
-		ServiceStatusChangedAt: timestamppb.New(serviceStatus.ChangedAt),
-		OutstandingWork:        outstandingWork,
-		MaxSandboxes:           info.MaxSandboxes.Load(),
+	resp := &orchestratorinfo.ServiceInfoResponse{
+		NodeId:          info.ClientId,
+		ServiceId:       info.ServiceId,
+		OutstandingWork: uint64(info.OutstandingWork()),
+		MaxSandboxes:    info.MaxSandboxes.Load(),
 
 		ServiceVersion: info.SourceVersion,
 		ServiceCommit:  info.SourceCommit,
@@ -118,7 +117,10 @@ func (s *Server) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*orchestrat
 		MetricVcpuUsed:     int64(sandboxVCpuAllocated),
 		MetricMemoryUsedMb: int64(sandboxMemoryAllocated / (1024 * 1024)),
 		MetricDiskMb:       int64(sandboxDiskAllocated / (1024 * 1024)),
-	}, nil
+	}
+	servicestatus.Fill(resp, snap)
+
+	return resp, nil
 }
 
 // convertDiskMetrics converts internal DiskInfo to protobuf DiskMetrics
@@ -149,12 +151,13 @@ func convertMachineInfo(machineInfo machineinfo.MachineInfo) *orchestratorinfo.M
 }
 
 func (s *Server) ServiceStatusOverride(ctx context.Context, req *orchestratorinfo.ServiceStatusChangeRequest) (*emptypb.Empty, error) {
-	logger.L().Info(ctx, "service status override request received", zap.String("status", req.GetServiceStatus().String()))
-	if !s.info.OverrideStatus(ctx, req.GetServiceStatus()) {
-		return nil, status.Errorf(codes.FailedPrecondition, "cannot override node status to %s", req.GetServiceStatus())
-	}
+	logger.L().Info(ctx, "service status override request received",
+		zap.String("status", req.GetServiceStatus().String()),
+		zap.String("owner", req.GetOwner()),
+		zap.Bool("force", req.GetForce()),
+	)
 
-	return &emptypb.Empty{}, nil
+	return servicestatus.HandleOverride(ctx, s.info.OverrideStatus, req, s.refused)
 }
 
 // hugePagesBase leaves the field unset when the base pool could not be read,

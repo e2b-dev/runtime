@@ -645,3 +645,13 @@ func TestFailSealSetup(t *testing.T) {
 		require.Error(t, s.EnsurePausable())
 	})
 }
+
+// ResumeVM sends no flip for a caller that already ended, so nothing reaches
+// the VM after the caller's authority did.
+func TestResumeVMSendsNothingForAnEndedCaller(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	require.ErrorIs(t, (&Factory{}).ResumeVM(ctx, &Sandbox{}), ErrResumeNotStarted, "nothing reaches the VM")
+}

@@ -32,6 +32,7 @@ var blockedTeamAllowlist = auth.BlockedTeamAllowlist{
 		"/snapshots":                                    {},
 		"/teams/:teamID/metrics":                        {},
 		"/teams/:teamID/metrics/max":                    {},
+		"/unstable/sandboxes/:sandboxID/record":         {},
 		"/unstable/teams/:teamID/limits":                {},
 		"/unstable/teams/:teamID/status":                {},
 		"/templates":                                    {},

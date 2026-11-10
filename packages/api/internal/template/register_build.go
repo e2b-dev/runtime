@@ -9,23 +9,44 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/constants"
 	"github.com/e2b-dev/infra/packages/api/internal/team"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/template")
+var (
+	tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/template")
+	meter  = otel.Meter("github.com/e2b-dev/infra/packages/api/internal/template")
+
+	// maxVcpuCounter counts max CPU resolutions by source and outcome, one per registration.
+	maxVcpuCounter = mustCounter("api.template.build.max_vcpu", "Number of template build max CPU resolutions by source and outcome")
+)
+
+func mustCounter(name, description string) metric.Int64Counter {
+	counter, err := meter.Int64Counter(name, metric.WithDescription(description))
+	if err != nil {
+		return nil
+	}
+
+	return counter
+}
 
 type RegisterBuildData struct {
 	ReplacesTemplateID string
@@ -40,6 +61,7 @@ type RegisterBuildData struct {
 	StartCmd           *string
 	ReadyCmd           *string
 	CpuCount           *int32
+	MaxCpuCount        *int32
 	MemoryMB           *int32
 	Version            string
 
@@ -68,10 +90,11 @@ func RegisterBuild(
 	ctx context.Context,
 	templateCache *templatecache.TemplateCache,
 	db *sqlcdb.Client,
+	featureFlags *featureflags.Client,
 	data RegisterBuildData,
 ) (*RegisterBuildResponse, *api.APIError) {
 	return telemetry.Observe1(ctx, tracer, "register build", func(ctx context.Context) (*RegisterBuildResponse, *api.APIError) {
-		return registerBuild(ctx, templateCache, db, data)
+		return registerBuild(ctx, templateCache, db, featureFlags, data)
 	})
 }
 
@@ -79,6 +102,7 @@ func registerBuild(
 	ctx context.Context,
 	templateCache *templatecache.TemplateCache,
 	db *sqlcdb.Client,
+	featureFlags *featureflags.Client,
 	data RegisterBuildData,
 ) (*RegisterBuildResponse, *api.APIError) {
 	// On the span before the free-disk resolution below can return, so a refused
@@ -106,6 +130,7 @@ func registerBuild(
 	if apiError != nil {
 		telemetry.ReportErrorByCode(ctx, apiError.Code, "free disk space request refused", apiError.Err,
 			telemetry.WithTeamID(data.Team.ID.String()))
+		apiError.Retryable = apierrors.NoRetry
 
 		return nil, apiError
 	}
@@ -130,6 +155,7 @@ func registerBuild(
 			Err:       err,
 			ClientMsg: fmt.Sprintf("Error when checking concurrent builds: %s", err),
 			Code:      http.StatusInternalServerError,
+			Retryable: apierrors.CanRetry,
 		}
 	}
 
@@ -142,7 +168,8 @@ func registerBuild(
 			ClientMsg: fmt.Sprintf(
 				"you have reached the maximum number of concurrent template builds (%d). Please wait for existing builds to complete or contact support if you need more concurrent builds.",
 				totalConcurrentTemplateBuilds),
-			Err: fmt.Errorf("team '%s' has reached the maximum number of concurrent template builds (%d)", data.Team.ID, totalConcurrentTemplateBuilds),
+			Err:       fmt.Errorf("team '%s' has reached the maximum number of concurrent template builds (%d)", data.Team.ID, totalConcurrentTemplateBuilds),
+			Retryable: apierrors.CanRetry,
 		}
 	}
 
@@ -188,7 +215,29 @@ func registerBuild(
 		telemetry.SetAttributes(ctx, attribute.Int("env.memory_mb", int(*data.MemoryMB)))
 	}
 
+	if data.MaxCpuCount != nil {
+		telemetry.SetAttributes(ctx, attribute.Int("env.max_cpu", int(*data.MaxCpuCount)))
+	}
+
 	cpuCount, ramMB, apiError := team.LimitResources(data.Team.Limits, data.CpuCount, data.MemoryMB)
+	if apiError != nil {
+		apiError.Retryable = apierrors.NoRetry
+
+		return nil, apiError
+	}
+
+	maxVcpu, apiError := resolveMaxVcpu(ctx, featureFlags, data.Team.Limits, data.Team.ID, cpuCount, data.MaxCpuCount)
+	logger.L().Info(ctx, "template build max cpu resolved",
+		logger.WithTeamID(data.Team.ID.String()),
+		logger.WithTemplateID(data.TemplateID),
+		logger.WithBuildID(buildID.String()),
+		zap.Int64("cpu_count", cpuCount),
+		zap.Int64("max_cpu_count", utils.DerefOrDefault(maxVcpu.value, 0)),
+		zap.String("source", maxVcpu.source),
+		zap.String("outcome", maxVcpu.outcome),
+		zap.Int("default_max_cpu_flag", maxVcpu.flagValue),
+		zap.Int64("team_max_vcpu", data.Team.Limits.MaxVcpu),
+	)
 	if apiError != nil {
 		return nil, apiError
 	}
@@ -211,7 +260,7 @@ func registerBuild(
 		return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when checking the team's cluster", Err: err}
 	}
 	if clusters.WithClusterFallback(currentCluster) != data.ClusterID {
-		return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The team's cluster changed; retry the template build request", Err: errors.New("team cluster changed during template registration")}
+		return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The team's cluster changed; retry the template build request", Err: errors.New("team cluster changed during template registration"), Retryable: apierrors.CanRetry}
 	}
 	if data.ReplacesTemplateID != "" {
 		previous, err := client.GetTemplateForAliasRebuild(ctx, queries.GetTemplateForAliasRebuildParams{
@@ -219,7 +268,7 @@ func registerBuild(
 		})
 		if err != nil {
 			if dberrors.IsNotFoundError(err) {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template changed; retry the template build request", Err: err}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template changed; retry the template build request", Err: err, Retryable: apierrors.CanRetry}
 			}
 
 			return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when checking the previous template", Err: err}
@@ -247,6 +296,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Template '%s' has been deleted and cannot be rebuilt", data.TemplateID),
 				Code:      http.StatusNotFound,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -290,6 +340,7 @@ func registerBuild(
 		Status:             dbtypes.BuildStatusWaiting,
 		RamMb:              ramMB,
 		Vcpu:               cpuCount,
+		MaxVcpu:            maxVcpu.value,
 		KernelVersion:      data.KernelVersion,
 		FirecrackerVersion: data.FirecrackerVersion,
 		FreeDiskSizeMb:     freeDiskSizeMB,
@@ -337,6 +388,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Alias '%s' is already used", alias),
 				Code:      http.StatusConflict,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -356,7 +408,7 @@ func registerBuild(
 				}
 			}
 			if data.ReplacesTemplateID != "" {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: err}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: err, Retryable: apierrors.CanRetry}
 			}
 
 			aliasKeys, err := client.DeleteOtherTemplateAliases(ctx, data.TemplateID)
@@ -403,7 +455,7 @@ func registerBuild(
 				return nil, &api.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error when updating the template alias", Err: err}
 			}
 			if changed != 1 {
-				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: errors.New("template alias changed during registration")}
+				return nil, &api.APIError{Code: http.StatusConflict, ClientMsg: "The template alias changed; retry the template build request", Err: errors.New("template alias changed during registration"), Retryable: apierrors.CanRetry}
 			}
 		case aliasDB.EnvID != data.TemplateID:
 			err := fmt.Errorf("alias '%s' already used", alias)
@@ -412,6 +464,7 @@ func registerBuild(
 				Err:       err,
 				ClientMsg: fmt.Sprintf("Alias '%s' already used", alias),
 				Code:      http.StatusForbidden,
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -462,6 +515,8 @@ func registerBuild(
 			Err:       err,
 			ClientMsg: fmt.Sprintf("Error when committing transaction: %s", err),
 			Code:      http.StatusInternalServerError,
+			// The commit may have reached the database.
+			Retryable: apierrors.UndefinedRetry,
 		}
 	}
 	telemetry.ReportEvent(ctx, "committed transaction")
@@ -486,4 +541,86 @@ func registerBuild(
 		Names:      names,
 		Tags:       tags,
 	}, nil
+}
+
+type maxVcpuResolution struct {
+	value *int64
+	// source is request, team_default or none.
+	source string
+	// outcome is accepted, rejected_flag_off, rejected_validation, default_clamped or default_invalid.
+	outcome string
+	// flagValue is ResizableTemplateDefaultMaxCpuFlag as read, 0 when not read.
+	flagValue int
+}
+
+// resolveMaxVcpu requires ResizableTemplatesFlag for both explicit and default
+// capacity. An explicit value takes precedence; otherwise the team's default is
+// clamped to [cpuCount, limits.MaxVcpu]. An invalid default is ignored.
+func resolveMaxVcpu(
+	ctx context.Context,
+	featureFlags *featureflags.Client,
+	limits *types.TeamLimits,
+	teamID uuid.UUID,
+	cpuCount int64,
+	requested *int32,
+) (resolved maxVcpuResolution, apiErr *api.APIError) {
+	defer func() {
+		if maxVcpuCounter != nil {
+			maxVcpuCounter.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("source", resolved.source),
+				attribute.String("outcome", resolved.outcome),
+			))
+		}
+	}()
+
+	teamContext := featureflags.TeamContext(teamID.String())
+	enabled := featureFlags.BoolFlag(ctx, featureflags.ResizableTemplatesFlag, teamContext)
+
+	if requested != nil {
+		if !enabled {
+			return maxVcpuResolution{source: "request", outcome: "rejected_flag_off"}, &api.APIError{
+				Err:       errors.New("max CPU count requested while resizable templates are off for the team"),
+				ClientMsg: "Resizable templates are not enabled for your team",
+				Code:      http.StatusBadRequest,
+			}
+		}
+
+		value, apiErr := team.LimitMaxCPU(limits, cpuCount, *requested)
+		if apiErr != nil {
+			return maxVcpuResolution{source: "request", outcome: "rejected_validation"}, apiErr
+		}
+
+		return maxVcpuResolution{value: &value, source: "request", outcome: "accepted"}, nil
+	}
+
+	if !enabled {
+		return maxVcpuResolution{source: "none", outcome: "accepted"}, nil
+	}
+
+	n := featureFlags.IntFlag(ctx, featureflags.ResizableTemplateDefaultMaxCpuFlag, teamContext)
+	if n == 0 {
+		return maxVcpuResolution{source: "none", outcome: "accepted", flagValue: n}, nil
+	}
+
+	flagValue := int64(n)
+	if flagValue < constants.MinTemplateCPU || flagValue > constants.MaxTemplateCPU || (flagValue != 1 && flagValue%2 != 0) {
+		return maxVcpuResolution{source: "team_default", outcome: "default_invalid", flagValue: n}, nil
+	}
+
+	effective := max(cpuCount, min(flagValue, limits.MaxVcpu))
+	// The builder rejects odd counts; cpuCount is 1 or even, so rounding down keeps effective >= cpuCount.
+	if effective > 1 && effective%2 != 0 {
+		effective--
+	}
+	// The inherited CPU default can exceed a team's allowance; clamping cannot
+	// satisfy both bounds in that case. Ignore an unusable capacity default.
+	if _, apiErr := team.LimitMaxCPU(limits, cpuCount, int32(effective)); apiErr != nil {
+		return maxVcpuResolution{source: "team_default", outcome: "default_invalid", flagValue: n}, nil
+	}
+	outcome := "accepted"
+	if effective != flagValue {
+		outcome = "default_clamped"
+	}
+
+	return maxVcpuResolution{value: &effective, source: "team_default", outcome: outcome, flagValue: n}, nil
 }

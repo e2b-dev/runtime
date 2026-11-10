@@ -108,12 +108,6 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - OpenAPI code generation: `internal/api/*.gen.go`
 - Port: 80
 
-**Dashboard API (`packages/dashboard-api/`)** - REST backend for the web dashboard, not the SDK
-- Entry point: `main.go`
-- Spec: `spec/openapi-dashboard.yml`; the killed-sandbox record and admin user-profile resolution
-- Talks to Postgres and ClickHouse; never to orchestrators (see `docs/ARCHITECTURE.md`)
-- Port: 3010
-
 **Orchestrator (`packages/orchestrator/`)** - Firecracker microVM orchestration
 - Entry point: `main.go`
 - VM management: `pkg/sandbox/`
@@ -123,7 +117,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - Template caching: `pkg/sandbox/template/`
 - Template building: `pkg/template/`
 - gRPC server: `pkg/server/`
-- Utilities: `cmd/clean-nfs-cache/`, `cmd/inspect-build/`, `cmd/dummy-orchestrator/`
+- Utilities: `cmd/clean-nfs-cache/`, `cmd/dummy-orchestrator/`
 
 **Envd (`packages/envd/`)** - In-VM daemon using Connect RPC
 - Runs inside each Firecracker VM
@@ -149,11 +143,11 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 **Database (`packages/db/`)** - PostgreSQL layer
 - Migrations: `migrations/*.sql` (goose)
 - Queries: `queries/*.sql` (sqlc)
-- Generated code: `queries/` (plus `pkg/auth/queries/`, `pkg/dashboard/queries/`)
+- Generated code: `queries/` (plus `pkg/auth/queries/`)
 
 ### Key Technologies
 
-- **go 1.26.10** with workspaces (`go.work`)
+- **go 1.27.3** with workspaces (`go.work`)
 - **Firecracker** for microVM virtualization
 - **PostgreSQL** for primary data (sqlc for queries)
 - **ClickHouse** for analytics

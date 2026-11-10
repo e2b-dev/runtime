@@ -24,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd/testutils"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -31,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 type canceledConstructionTemplate struct {
@@ -295,6 +297,79 @@ func TestFactoryConstructorsRunTheNetworkAssignHook(t *testing.T) {
 		})
 	}
 }
+
+// A reboot in place hands the next lifecycle the overlay with the envd an
+// offline upgrade installed on it and the start time of the execution it
+// continues, so its network admission reads that version and not the
+// template's, and sees an execution it already placed. The start stops at
+// the hook.
+func TestStartInPlaceHandsOverTheDiskVersionAndTheExecutionStart(t *testing.T) {
+	t.Parallel()
+	builder := cfg.BuilderConfig{
+		FirecrackerVersionsDir: t.TempDir(), HostKernelsDir: t.TempDir(),
+		StorageConfig: storage.Config{SandboxCacheDir: t.TempDir()},
+	}
+	versions := fc.Config{KernelVersion: "kernel", FirecrackerVersion: "firecracker"}
+	for _, path := range []string{versions.FirecrackerPath(builder), versions.HostKernelPath(builder)} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, nil, 0o755))
+	}
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
+
+	from := testMapSandbox(t, "upgraded-offline")
+	from.Config = NewConfig(Config{Vcpu: 1, RamMB: 1, Network: &orchestrator.SandboxNetworkConfig{}, FirecrackerConfig: versions, Envd: EnvdMetadata{Version: "0.9.0"}})
+	from.Runtime = sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), ExecutionID: uuid.NewString(), SandboxType: sandboxtypes.SandboxTypeSandbox}
+	from.Template = rebootHookTemplate{bootTemplate: bootTemplate{snapfile: filepath.Join(t.TempDir(), "snapfile")}, buildID: uuid.NewString()}
+	from.rootfs = &handedOverRootfs{path: filepath.Join(t.TempDir(), "rootfs")}
+	from.process = &fc.Process{Exit: utils.NewErrorOnce()}
+	require.NoError(t, from.process.Exit.SetError(nil))
+	from.sandboxes = NewSandboxesMap()
+	from.slotRelease = newHandover(func(context.Context) error { return nil })
+	rootfsClosed := false
+	from.rootfsRelease = newHandover(func(context.Context) error {
+		rootfsClosed = true
+
+		return nil
+	})
+	from.networkRelease = func(context.Context, string) error { return nil }
+	installed := "0.10.2"
+	from.offlineEnvdVersion.Store(&installed)
+	require.Equal(t, installed, from.ExpectedEnvdVersion())
+	started := time.Now().Add(-time.Minute)
+	from.SetExecutionStartedAt(started)
+
+	pool := &factoryNetworkPool{slot: from.Slot}
+	hookFailure := errors.New("stop at the hook")
+	var seen string
+	var seenStart time.Time
+	hook := networkAssignHookFunc(func(_ context.Context, next *Sandbox, reason NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+		assert.Equal(t, NetworkAssignReasonReboot, reason)
+		assert.Same(t, from.rootfs, next.rootfs, "the hook sees the handed-over overlay")
+		seen = next.ExpectedEnvdVersion()
+		seenStart = next.GetExecutionStartedAt()
+
+		return nil, hookFailure
+	})
+	factory := NewFactory(t.Context(), builder, pool, nil, flags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), hook, from.sandboxes)
+
+	next, err := factory.startInPlace(t.Context(), from, time.Now().Add(time.Hour))
+	require.Nil(t, next)
+	require.ErrorIs(t, err, hookFailure, "the start reaches the hook and stops there")
+	assert.Equal(t, installed, seen, "the hook sees the envd installed on the handed-over overlay")
+	assert.True(t, seenStart.Equal(started), "the hook sees the execution started, at %s not %s", started, seenStart)
+	assert.True(t, rootfsClosed, "a start that fails at the hook closes the handed-over overlay")
+}
+
+// handedOverRootfs is a started overlay a reboot in place hands over; only its path is read.
+type handedOverRootfs struct {
+	rootfs.Provider
+
+	path string
+}
+
+func (r *handedOverRootfs) Path() (string, error) { return r.path, nil }
 
 // The network-assign hook sees the version an offline swap put on the rootfs. Nil pre-boot
 // steps are skipped and the first failing step stops the rest.

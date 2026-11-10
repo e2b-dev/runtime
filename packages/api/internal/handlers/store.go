@@ -47,11 +47,13 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/kube"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
@@ -276,7 +278,14 @@ const (
 func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.UniversalClient, featureFlags *featureflags.Client, config cfg.Config, hops Hops) *APIStore {
 	logger.L().Info(ctx, "Initializing API store and services")
 
-	sqlcDB, err := sqlcdb.NewClient(ctx, config.PostgresConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+	sqlcDB, err := sqlcdb.NewClient(
+		ctx,
+		config.PostgresConnectionString,
+		pool.WithMaxConnections(config.DBMaxOpenConnections),
+		pool.WithMinIdle(config.DBMinIdleConnections),
+		pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+		pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+	)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing SQLC client", zap.Error(err))
 	}
@@ -285,7 +294,14 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	// replica when one is configured, otherwise the primary.
 	sqlcReadDB := sqlcDB
 	if config.PostgresReadReplicaConnectionString != "" {
-		sqlcReadDB, err = sqlcdb.NewReadClient(ctx, config.PostgresReadReplicaConnectionString, pool.WithMaxConnections(config.DBMaxOpenConnections), pool.WithMinIdle(config.DBMinIdleConnections))
+		sqlcReadDB, err = sqlcdb.NewReadClient(
+			ctx,
+			config.PostgresReadReplicaConnectionString,
+			pool.WithMaxConnections(config.DBMaxOpenConnections),
+			pool.WithMinIdle(config.DBMinIdleConnections),
+			pool.WithMaxConnLifetime(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeSeconds))*time.Second),
+			pool.WithMaxConnLifetimeJitter(time.Duration(featureFlags.IntFlag(ctx, featureflags.DBMaxConnLifetimeJitterSeconds))*time.Second),
+		)
 		if err != nil {
 			logger.L().Fatal(ctx, "Initializing read SQLC client", zap.Error(err))
 		}
@@ -393,7 +409,6 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
 	}
-
 	pauseLimiter, err := pauselimit.New(redisClient, featureFlags, tel.MeterProvider)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
@@ -732,4 +747,8 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 	}
 
 	return team, nil
+}
+
+func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
 }

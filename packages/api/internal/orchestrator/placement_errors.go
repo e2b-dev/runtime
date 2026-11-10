@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 // The "Failed to place sandbox" prefix is load-bearing (clients may match on it).
@@ -81,18 +83,35 @@ func createRefusal(st *status.Status) *orchestrator.UserError {
 }
 
 // refusalHTTPStatus is the status a refusal for good answers with: the
-// node's own, trusted only as a server error. A client error would be right
-// only for a field the request carried, and no REST surface carries one
-// today (a create's vcpu comes from the template build row, max_vcpus is
-// never set from REST), so the node's 4xx is a stored-data defect, answered
-// as 500 like a status outside 400..599.
-func refusalHTTPStatus(refusal *orchestrator.UserError) int {
+// node's own, trusted as a client error only for a field the request
+// carried. The auto-pause policy is one, and the node marks its refusal
+// with the pause refusal's detail; a create's vcpu comes from the template
+// build row and max_vcpus is never set from REST, so any other 4xx is a
+// stored-data defect, answered as 500 like a status outside 400..599.
+func refusalHTTPStatus(st *status.Status, refusal *orchestrator.UserError) int {
 	code := int(refusal.GetHttpStatus())
+	if code == http.StatusBadRequest && unsupportedPauseRefusal(st) {
+		return code
+	}
 	if code < http.StatusInternalServerError || code > 599 {
 		return http.StatusInternalServerError
 	}
 
 	return code
+}
+
+// unsupportedPauseRefusal reports a status that carries the orchestrator's
+// detail of a capture the guest cannot take: a filesystem-only pause or
+// checkpoint, or a create whose auto-pause policy asks for one.
+func unsupportedPauseRefusal(st *status.Status) bool {
+	for _, d := range st.Details() {
+		info, ok := d.(*errdetails.ErrorInfo)
+		if ok && info.GetDomain() == sandboxtypes.PauseRefusalDomain && info.GetReason() == sandboxtypes.PauseRefusedUnsupportedReason {
+			return true
+		}
+	}
+
+	return false
 }
 
 // createRefusedByMessage reports a create a node that predates the typed
@@ -159,7 +178,7 @@ func placementAPIError(err error) *api.APIError {
 			// own wording for the client. The text-match shim for nodes
 			// that predate it stays behind the safe codes.
 			if refusal := createRefusal(st); refusal != nil {
-				return apiErr(refusalHTTPStatus(refusal), errCodeSandboxCreateRefused, fmt.Sprintf("%s: %s", placementMessagePrefix, refusal.GetMessage()))
+				return apiErr(refusalHTTPStatus(st, refusal), errCodeSandboxCreateRefused, fmt.Sprintf("%s: %s", placementMessagePrefix, refusal.GetMessage()))
 			}
 			if _, safe := safePlacementCreateCodes[st.Code()]; safe {
 				code := errCodeSandboxCreateFailed

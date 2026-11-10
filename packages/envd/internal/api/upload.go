@@ -80,7 +80,7 @@ func processFile(r *http.Request, path string, part io.Reader, uid, gid int, met
 
 	hasBeenChowned := false
 	if canBePreChowned {
-		err = os.Chown(path, uid, gid)
+		err = permissions.Chown(path, uid, gid)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				err = fmt.Errorf("error changing file ownership: %w", err)
@@ -94,7 +94,7 @@ func processFile(r *http.Request, path string, part io.Reader, uid, gid int, met
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
-		if errors.Is(err, syscall.ENOSPC) {
+		if isNoSpace(err) {
 			err = fmt.Errorf("not enough inodes available: %w", err)
 
 			return http.StatusInsufficientStorage, err
@@ -108,7 +108,7 @@ func processFile(r *http.Request, path string, part io.Reader, uid, gid int, met
 	defer file.Close()
 
 	if !hasBeenChowned {
-		err = file.Chown(uid, gid)
+		err = permissions.ChownFile(file, uid, gid)
 		if err != nil {
 			err := fmt.Errorf("error changing file ownership: %w", err)
 
@@ -118,7 +118,7 @@ func processFile(r *http.Request, path string, part io.Reader, uid, gid int, met
 
 	_, err = file.ReadFrom(part)
 	if err != nil {
-		if errors.Is(err, syscall.ENOSPC) {
+		if isNoSpace(err) {
 			err = ErrNoDiskSpace
 			if r.ContentLength > 0 {
 				err = fmt.Errorf("attempted to write %d bytes: %w", r.ContentLength, err)
@@ -312,9 +312,9 @@ func (a *API) PostFiles(w http.ResponseWriter, r *http.Request, params PostFiles
 	defer body.Close()
 	r.Body = body
 
-	u, err := user.Lookup(username)
+	u, err := permissions.GetUser(username)
 	if err != nil {
-		errMsg = fmt.Errorf("error looking up user '%s': %w", username, err)
+		errMsg = err
 		errorCode = http.StatusUnauthorized
 
 		jsonError(w, errorCode, errMsg)
@@ -334,6 +334,14 @@ func (a *API) PostFiles(w http.ResponseWriter, r *http.Request, params PostFiles
 	metadata := extractMetadataHeaders(r.Header)
 	if err := filesystem.ValidateMetadata(metadata); err != nil {
 		errMsg = fmt.Errorf("invalid metadata: %w", err)
+		errorCode = http.StatusBadRequest
+		jsonError(w, errorCode, errMsg)
+
+		return
+	}
+
+	if err := filesystem.CheckMetadataStorable(metadata); err != nil {
+		errMsg = err
 		errorCode = http.StatusBadRequest
 		jsonError(w, errorCode, errMsg)
 

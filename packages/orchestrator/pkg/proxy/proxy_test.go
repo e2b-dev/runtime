@@ -88,7 +88,7 @@ func TestResolveDestinationRefusesInternalEnvdRoutes(t *testing.T) {
 
 			require.ErrorAs(t, err, &internalRouteErr)
 			assert.Equal(t, tt.path, internalRouteErr.Path)
-			assert.Equal(t, testSandboxID, internalRouteErr.SandboxId)
+			assert.Equal(t, testSandboxID, internalRouteErr.SandboxID())
 		})
 	}
 }
@@ -245,8 +245,9 @@ func TestSandboxProxyResetAndLifecycleRetirement(t *testing.T) {
 	policyRequest := request()
 	policyRequest.Header.Del("e2b-traffic-access-token")
 	_, err = p.resolveDestination(policyRequest)
-	var missing *reverseproxy.MissingTrafficAccessTokenError
+	var missing *reverseproxy.TrafficAccessTokenError
 	require.ErrorAs(t, err, &missing)
+	require.True(t, missing.Missing)
 	policyRequest.Header.Set("e2b-traffic-access-token", token)
 	policyRequest.Host = "8443-" + testSandboxID + ".e2b.app"
 	policy, err := p.resolveDestination(policyRequest)

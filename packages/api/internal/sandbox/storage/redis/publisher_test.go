@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,7 +212,7 @@ func TestStorageLock_ReleaseUsesNotifier(t *testing.T) {
 	subManager := newSubscriptionManager(client, globalStorageNotifyChannel)
 	locker := newStorageLocker(client, subManager, fakeNot)
 
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "fake-notifier"))
+	lockKey := redis_utils.GetLockKey(recordKey("fake-notifier"))
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
 	require.NoError(t, lock.Release(context.WithoutCancel(t.Context())))

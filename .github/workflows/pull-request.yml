@@ -39,6 +39,9 @@ jobs:
               - '.github/workflows/pr-tests.yml'
               - '.github/workflows/pr-tests-arm64.yml'
               - '.github/actions/go-setup-cache/**'
+              - '.github/actions/unit-tests/**'
+              # invoked by the unit-tests action to pull the cluster-mode Valkey
+              - 'scripts/pull-retry.sh'
             # Like test-inputs, but scoped to only the .github paths that affect
             # the integration harness (its workflow + composite actions) instead
             # of all of .github/**. This keeps unrelated CI edits (e.g. other

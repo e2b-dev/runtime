@@ -103,7 +103,7 @@ compose_config_json_clean() {
 }
 
 @test "image tags equal the pins in compose/.env" {
-  for var in E2B_API_IMAGE E2B_DB_MIGRATOR_IMAGE E2B_CLIENT_PROXY_IMAGE E2B_CLICKHOUSE_MIGRATOR_IMAGE E2B_DASHBOARD_API_IMAGE E2B_DASHBOARD_IMAGE E2B_TOOLS_IMAGE E2B_NODE_E2B_IMAGE E2B_SEED_IMAGE; do
+  for var in E2B_API_IMAGE E2B_DB_MIGRATOR_IMAGE E2B_CLIENT_PROXY_IMAGE E2B_CLICKHOUSE_MIGRATOR_IMAGE E2B_DASHBOARD_IMAGE E2B_TOOLS_IMAGE E2B_NODE_E2B_IMAGE E2B_SEED_IMAGE; do
     image="$(env_value "$var")"
     [ -n "$image" ]
     echo "$RENDERED" | grep -q "image: $image\$" || { echo "missing $image"; return 1; }
@@ -191,9 +191,9 @@ compose_config_json_clean() {
 
 @test "every startup probe carries its compose healthcheck timings" {
   probes="$(startup_probes)"
-  [ "$(printf '%s\n' "$probes" | grep -c .)" -eq 9 ]
+  [ "$(printf '%s\n' "$probes" | grep -c .)" -eq 8 ]
   compose_json="$(docker compose --project-directory compose config --format json)"
-  for service in postgres redis clickhouse vector orchestrator api client-proxy dashboard-api dashboard; do
+  for service in postgres redis clickhouse vector orchestrator api client-proxy dashboard; do
     # A compose duration is "10s" here, but older plugins emit nanoseconds.
     want="$(printf '%s' "$compose_json" | jq -r --arg s "$service" '
       def secs: tostring
@@ -312,12 +312,6 @@ ALLOWED = {
         ("", "<secret:e2b-api/ADMIN_TOKEN>"),
     ("api", "SANDBOX_ACCESS_TOKEN_HASH_SEED"):
         ("", "<secret:e2b-api/SANDBOX_ACCESS_TOKEN_HASH_SEED>"),
-
-    # dashboard-api holds the same admin token as the api and takes it the
-    # same way each shape does for the api: the compose wrapper reads it from
-    # the seed-state file, the pod from the e2b-api Secret.
-    ("dashboard-api", "ADMIN_TOKEN"):
-        ("", "<secret:e2b-api/ADMIN_TOKEN>"),
 
     # The browser has to reach client-proxy at an address it can open. Compose
     # renders the E2B_DASHBOARD_HOST knob's default; the pod substitutes the
@@ -498,14 +492,14 @@ for name, key in sorted(set(ALLOWED) - used):
 
 # A parser that stopped matching would pass every container vacuously.
 for name in ("api", "orchestrator", "client-proxy", "postgres", "clickhouse",
-             "vector", "ready", "dashboard", "dashboard-api"):
+             "vector", "ready", "dashboard"):
     if name not in containers:
         problems.append("no %s container was parsed out of the manifest" % name)
 
 # The collector endpoint is empty by default on both shapes, so the comparison
 # above would also pass with the variable missing from both. Every service
 # that exports telemetry has to carry it, on each side.
-for name in ("api", "orchestrator", "client-proxy", "dashboard-api"):
+for name in ("api", "orchestrator", "client-proxy"):
     if "OTEL_COLLECTOR_GRPC_ENDPOINT" not in containers.get(name, {}):
         problems.append("the manifest's %s has no OTEL_COLLECTOR_GRPC_ENDPOINT" % name)
     if "OTEL_COLLECTOR_GRPC_ENDPOINT" not in (compose.get(name, {}).get("environment") or {}):
@@ -517,21 +511,21 @@ PY
   [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
-# The dashboard pair has to be the last two init containers. A native sidecar
-# (an init container with restartPolicy: Always) gates the next init container
-# on its startup probe, so a dashboard that never turns healthy would stop the
+# The dashboard has to be the last init container. A native sidecar (an init
+# container with restartPolicy: Always) gates the next init container on its
+# startup probe, so a dashboard that never turns healthy would stop the
 # base template from being built if it sat any earlier. On compose only `ready`
 # waits for the dashboard, and this is what keeps the two shapes agreeing.
 # Nothing else pins the order: kustomize renders the list either way.
-@test "the dashboard pair is the last two init containers" {
+@test "the dashboard is the last init container" {
   names="$(awk '/^      initContainers:$/ { f = 1; next }
                 /^      [a-zA-Z]/         { f = 0 }
                 f && /^        - name: /  { print $3 }' kubernetes/statefulset.yaml)"
   # A parser that stopped matching would pass the test vacuously.
   [ -n "$names" ]
 
-  diff <(printf '%s\n' "$names" | tail -3) \
-       <(printf '%s\n' base-template dashboard-api dashboard) || {
+  diff <(printf '%s\n' "$names" | tail -2) \
+       <(printf '%s\n' base-template dashboard) || {
     echo "the init containers now end (-) where they must end (+)"
     return 1
   }
@@ -563,9 +557,9 @@ render_with_collector() {
   printf '%s\n' "$RENDERED" | grep -q '^  name: otel-config-[a-z0-9]*$'
 }
 
-# With the patch the collector is one more native sidecar, after the dashboard
-# pair, on the image compose pins, reading the generated ConfigMap at the path
-# its --config names, and probed over HTTP since the image has no shell.
+# With the patch the collector is one more native sidecar, after the
+# dashboard, on the image compose pins, reading the generated ConfigMap at the
+# path its --config names, and probed over HTTP since the image has no shell.
 @test "the patch line adds the collector as the last sidecar with its config mounted" {
   render_with_collector > "$BATS_TEST_TMPDIR/patched.yaml"
   image="$(docker compose --project-directory compose --profile otel config --format json |
@@ -604,8 +598,8 @@ def name_of(block, indent):
 
 inits = blocks_under("initContainers")
 names = [name_of(b, 8) for b in inits]
-if names[-3:] != ["dashboard-api", "dashboard", "otel-collector"]:
-    problems.append("the init containers end %r" % names[-3:])
+if names[-2:] != ["dashboard", "otel-collector"]:
+    problems.append("the init containers end %r" % names[-2:])
 collector = inits[names.index("otel-collector")] if "otel-collector" in names else []
 text = "\n".join(collector)
 for want in ("        image: %s" % image,

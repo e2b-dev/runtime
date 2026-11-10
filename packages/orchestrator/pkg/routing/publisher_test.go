@@ -67,7 +67,7 @@ func (c *memoryCatalog) StoreSandbox(_ context.Context, sandboxID string, info *
 	return nil
 }
 
-func (c *memoryCatalog) DeleteSandbox(_ context.Context, sandboxID string, executionID string) error {
+func (c *memoryCatalog) DeleteSandbox(_ context.Context, sandboxID, executionID, lifecycleID string) error {
 	if c.deleteErr != nil {
 		return c.deleteErr
 	}
@@ -75,7 +75,7 @@ func (c *memoryCatalog) DeleteSandbox(_ context.Context, sandboxID string, execu
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if info, ok := c.records[sandboxID]; ok && info.ExecutionID == executionID {
+	if info, ok := c.records[sandboxID]; ok && info.ExecutionID == executionID && (info.LifecycleID == "" || info.LifecycleID == lifecycleID) {
 		delete(c.records, sandboxID)
 	}
 
@@ -146,6 +146,43 @@ func TestPublisher_OnInsertWritesRecord(t *testing.T) {
 	require.Equal(t, sbx.GetStartedAt(), got.StartedAt)
 	require.EqualValues(t, 2, got.MaxLengthInHours)
 	require.Equal(t, 2*time.Hour, c.ttls["sbx-1"])
+}
+
+// contextCatalog fails a write or delete whose context has ended, as Redis
+// does.
+type contextCatalog struct{ *memoryCatalog }
+
+func (c contextCatalog) StoreSandbox(ctx context.Context, sandboxID string, info *catalog.SandboxInfo, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return c.memoryCatalog.StoreSandbox(ctx, sandboxID, info, ttl)
+}
+
+func (c contextCatalog) DeleteSandbox(ctx context.Context, sandboxID string, executionID, lifecycleID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return c.memoryCatalog.DeleteSandbox(ctx, sandboxID, executionID, lifecycleID)
+}
+
+// TestPublisher_RecordOutlivesItsCallersContext: a create that ran past its
+// budget still publishes the sandbox it made live, and a stop whose caller
+// has gone still removes the record.
+func TestPublisher_RecordOutlivesItsCallersContext(t *testing.T) {
+	t.Parallel()
+	c := newMemoryCatalog()
+	p := newPublisher(t, contextCatalog{c})
+	sbx := testSandbox(t, testSandboxID, "lc-1", sandboxtypes.SandboxTypeSandbox)
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	p.OnInsert(ended, sbx)
+	require.True(t, c.has(), "the record is written though the create's context has ended")
+	p.OnStopping(ended, sbx)
+	require.False(t, c.has(), "the record is removed though the stop's caller has gone")
 }
 
 func TestPublisher_OnStoppingDeletesRecord(t *testing.T) {
@@ -307,3 +344,64 @@ func TestPublisher_ViaSandboxMap(t *testing.T) {
 	_, err = c.GetSandbox(t.Context(), "sbx-1")
 	require.ErrorIs(t, err, catalog.ErrSandboxNotFound)
 }
+
+// TestPublisher_MovedExecutionKeepsItsRecord runs the move of one execution
+// from a source lifecycle to a target lifecycle on another orchestrator, each
+// with its own publisher: the target's record survives the source's late
+// stop, and Publish confirms and repairs it. The catalog's own tests pin the
+// delete script this fake mirrors.
+func TestPublisher_MovedExecutionKeepsItsRecord(t *testing.T) {
+	t.Parallel()
+
+	records := newMemoryCatalog()
+	source, err := New(noopmetric.NewMeterProvider(), records, "orch-source", "10.1.2.3")
+	require.NoError(t, err)
+	target, err := New(noopmetric.NewMeterProvider(), records, "orch-target", "10.1.2.4")
+	require.NoError(t, err)
+	sandboxID := "sbx-moved-" + t.Name()
+	from := testSandbox(t, sandboxID, "lc-source", sandboxtypes.SandboxTypeSandbox)
+	to := testSandbox(t, sandboxID, "lc-target", sandboxtypes.SandboxTypeSandbox)
+
+	source.OnInsert(t.Context(), from)
+	require.ErrorIs(t, target.Publish(t.Context(), to), errNotPublished, "a lifecycle that is not live is not published")
+	target.OnInsert(t.Context(), to)
+	require.NoError(t, target.Publish(t.Context(), to))
+
+	// The delete outlives its canceled caller and still keys on the lifecycle.
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+	source.OnStopping(gone, from)
+	got, err := records.GetSandbox(t.Context(), sandboxID)
+	require.NoError(t, err, "the source's late stop leaves the target's record")
+	require.Equal(t, "lc-target", got.LifecycleID)
+	require.Equal(t, "orch-target", got.OrchestratorID)
+
+	require.NoError(t, records.StoreSandbox(t.Context(), sandboxID, &catalog.SandboxInfo{ExecutionID: testExecutionID, LifecycleID: "lc-source"}, time.Minute))
+	require.NoError(t, target.Publish(t.Context(), to))
+	got, err = records.GetSandbox(t.Context(), sandboxID)
+	require.NoError(t, err)
+	require.Equal(t, "lc-target", got.LifecycleID)
+
+	target.OnStopping(t.Context(), to)
+	_, err = records.GetSandbox(t.Context(), sandboxID)
+	require.ErrorIs(t, err, catalog.ErrSandboxNotFound, "the target's own stop removes its record")
+	require.ErrorIs(t, target.Publish(t.Context(), to), errNotPublished, "a stopped lifecycle is not published")
+}
+
+func TestPublisher_PublishFailsWhenTheRecordCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	c := newMemoryCatalog()
+	p := newPublisher(t, c)
+	sbx := testSandbox(t, "sbx-1", "lc-1", sandboxtypes.SandboxTypeSandbox)
+	c.storeErr = errors.New("redis down")
+	p.OnInsert(t.Context(), sbx)
+
+	require.Error(t, p.Publish(t.Context(), sbx))
+	c.storeErr = nil
+	require.NoError(t, p.Publish(t.Context(), sbx))
+	require.True(t, c.has())
+}
+
+// contextCatalog fails a write or delete whose context has ended, as Redis
+// does.

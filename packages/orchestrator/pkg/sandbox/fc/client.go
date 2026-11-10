@@ -4,12 +4,16 @@ package fc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
+	openapiruntime "github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -77,6 +81,8 @@ func (c *apiClient) loadSnapshot(
 	snapfile template.File,
 	useMemfd bool,
 	useSyncWP bool,
+	clockRealtime bool,
+	netOverride *models.NetworkOverride,
 	cpuTemplate string,
 	teamID string,
 ) error {
@@ -101,14 +107,26 @@ func (c *apiClient) loadSnapshot(
 
 	telemetry.ReportEvent(ctx, "got snapfile path")
 
+	body := &models.SnapshotLoadParams{
+		ResumeVM:            false,
+		EnableDiffSnapshots: false,
+		MemBackend:          backend,
+		SnapshotPath:        &snapfilePath,
+	}
+	// Only sent when set: SnapshotLoadParams is deny_unknown_fields, and the
+	// fleet's FC does not know the field. A guest whose envd does not step its
+	// clock after the restore needs KVM to advance kvmclock by the paused time.
+	if clockRealtime {
+		body.ClockRealtime = clockRealtime
+	}
+	// A snapshot baked with another host's tap name reopens the slot's tap.
+	if netOverride != nil {
+		body.NetworkOverrides = []*models.NetworkOverride{netOverride}
+	}
+
 	snapshotConfig := operations.LoadSnapshotParams{
 		Context: ctx,
-		Body: &models.SnapshotLoadParams{
-			ResumeVM:            false,
-			EnableDiffSnapshots: false,
-			MemBackend:          backend,
-			SnapshotPath:        &snapfilePath,
-		},
+		Body:    body,
 	}
 
 	_, err := c.client.Operations.LoadSnapshot(&snapshotConfig)
@@ -212,6 +230,18 @@ func (c *apiClient) setMmds(ctx context.Context, metadata *MmdsMetadata) error {
 	return nil
 }
 
+// mmdsStoreMissing reports Firecracker's refusal of a metadata put on a microVM
+// restored from a snapshot that carries no MMDS store: an external image, or the
+// lineage this runtime pauses from one, since a restore never configures the store.
+func mmdsStoreMissing(err error) bool {
+	var bad *operations.PutMmdsBadRequest
+	if !errors.As(err, &bad) || bad.Payload == nil {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(bad.Payload.FaultMessage), "data store is not initialized")
+}
+
 func (c *apiClient) flushMetrics(ctx context.Context) error {
 	action := models.InstanceActionInfoActionTypeFlushMetrics
 	params := operations.CreateSyncActionParams{
@@ -230,58 +260,71 @@ func (c *apiClient) flushMetrics(ctx context.Context) error {
 }
 
 func (c *apiClient) setMetrics(ctx context.Context, metricsPath string) error {
-	params := operations.PutMetricsParams{
-		Context: ctx,
-		Body: &models.Metrics{
-			MetricsPath: &metricsPath,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-metrics-fc", func(ctx context.Context) error {
+		params := operations.PutMetricsParams{
+			Context: ctx,
+			Body: &models.Metrics{
+				MetricsPath: &metricsPath,
+			},
+		}
 
-	_, err := c.client.Operations.PutMetrics(&params)
-	if err != nil {
-		return fmt.Errorf("error setting fc metrics: %w", err)
-	}
+		_, err := c.client.Operations.PutMetrics(&params)
+		if err != nil {
+			return fmt.Errorf("error setting fc metrics: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernelPath string) error {
-	bootSourceConfig := operations.PutGuestBootSourceParams{
-		Context: ctx,
-		Body: &models.BootSource{
-			BootArgs:        kernelArgs,
-			KernelImagePath: &kernelPath,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-boot-source-fc", func(ctx context.Context) error {
+		bootSourceConfig := operations.PutGuestBootSourceParams{
+			Context: ctx,
+			Body: &models.BootSource{
+				BootArgs:        kernelArgs,
+				KernelImagePath: &kernelPath,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestBootSource(&bootSourceConfig)
+		_, err := c.client.Operations.PutGuestBootSource(&bootSourceConfig)
 
-	return err
+		return err
+	})
 }
 
-func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEngine *string, rateLimiter *models.RateLimiter) error {
-	driveID := rootfsDriveID
+// setRootfsDrive attaches the rootfs. isRootDevice makes Firecracker name the
+// drive as the root device on the kernel command line; a firmware boot finds
+// its boot partition on the disk itself and does not want that.
+//
+// blkSize is the logical block size the guest sees; 0 leaves it to
+// Firecracker, which reports the backing block device's own logical block
+// size (the NBD device's, 4096) or 512 for a regular file.
+func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEngine *string, rateLimiter *models.RateLimiter, isRootDevice bool, blkSize int64) error {
+	return telemetry.Observe0(ctx, tracer, "set-rootfs-drive-fc", func(ctx context.Context) error {
+		driveID := rootfsDriveID
 
-	isRootDevice := true
-	driversConfig := operations.PutGuestDriveByIDParams{
-		Context: ctx,
-		DriveID: driveID,
-		Body: &models.Drive{
-			DriveID:      &driveID,
-			PathOnHost:   rootfsPath,
-			IsRootDevice: &isRootDevice,
-			IsReadOnly:   false,
-			IoEngine:     ioEngine,
-			RateLimiter:  rateLimiter,
-		},
-	}
+		driversConfig := operations.PutGuestDriveByIDParams{
+			Context: ctx,
+			DriveID: driveID,
+			Body: &models.Drive{
+				DriveID:      &driveID,
+				PathOnHost:   rootfsPath,
+				IsRootDevice: &isRootDevice,
+				IsReadOnly:   false,
+				IoEngine:     ioEngine,
+				RateLimiter:  rateLimiter,
+				BlkSize:      blkSize,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestDriveByID(&driversConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc drivers config: %w", err)
-	}
+		_, err := c.client.Operations.PutGuestDriveByID(&driversConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc drivers config: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // buildTokenBucket constructs a Firecracker TokenBucket from a TokenBucketConfig.
@@ -322,26 +365,28 @@ func buildRateLimiter(config RateLimiterConfig) *models.RateLimiter {
 // RateLimiter is sent to reset any limit persisted in a snapshot.
 // This always sends a PATCH so snapshot-persisted limits are overwritten.
 func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config RateLimiterConfig) error {
-	limiter := buildRateLimiter(config)
-	if limiter == nil {
-		limiter = &models.RateLimiter{} // empty = reset
-	}
+	return telemetry.Observe0(ctx, tracer, "set-tx-rate-limit-fc", func(ctx context.Context) error {
+		limiter := buildRateLimiter(config)
+		if limiter == nil {
+			limiter = &models.RateLimiter{} // empty = reset
+		}
 
-	params := operations.PatchGuestNetworkInterfaceByIDParams{
-		Context: ctx,
-		IfaceID: ifaceID,
-		Body: &models.PartialNetworkInterface{
-			IfaceID:       &ifaceID,
-			TxRateLimiter: limiter,
-		},
-	}
+		params := operations.PatchGuestNetworkInterfaceByIDParams{
+			Context: ctx,
+			IfaceID: ifaceID,
+			Body: &models.PartialNetworkInterface{
+				IfaceID:       &ifaceID,
+				TxRateLimiter: limiter,
+			},
+		}
 
-	_, err := c.client.Operations.PatchGuestNetworkInterfaceByID(&params)
-	if err != nil {
-		return fmt.Errorf("error setting TX rate limit: %w", err)
-	}
+		_, err := c.client.Operations.PatchGuestNetworkInterfaceByID(&params)
+		if err != nil {
+			return fmt.Errorf("error setting TX rate limit: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // setDriveRateLimit applies or clears a Firecracker VMM-level block device rate limit.
@@ -349,68 +394,100 @@ func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config R
 // RateLimiter is sent to reset any limit persisted in a snapshot.
 // This always sends a PATCH so snapshot-persisted limits are overwritten.
 func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, config RateLimiterConfig) error {
-	limiter := buildRateLimiter(config)
-	if limiter == nil {
-		limiter = &models.RateLimiter{} // empty = reset
-	}
+	return telemetry.Observe0(ctx, tracer, "set-drive-rate-limit-fc", func(ctx context.Context) error {
+		limiter := buildRateLimiter(config)
+		if limiter == nil {
+			limiter = &models.RateLimiter{} // empty = reset
+		}
 
-	params := operations.PatchGuestDriveByIDParams{
-		Context: ctx,
-		DriveID: driveID,
-		Body: &models.PartialDrive{
-			DriveID:     &driveID,
-			RateLimiter: limiter,
-		},
-	}
+		params := operations.PatchGuestDriveByIDParams{
+			Context: ctx,
+			DriveID: driveID,
+			Body: &models.PartialDrive{
+				DriveID:     &driveID,
+				RateLimiter: limiter,
+			},
+		}
 
-	_, err := c.client.Operations.PatchGuestDriveByID(&params)
-	if err != nil {
-		return fmt.Errorf("error setting drive rate limit: %w", err)
-	}
+		_, err := c.client.Operations.PatchGuestDriveByID(&params)
+		if err != nil {
+			return fmt.Errorf("error setting drive rate limit: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tapName string, tapMac string, txRateLimiter *models.RateLimiter) error {
-	networkConfig := operations.PutGuestNetworkInterfaceByIDParams{
-		Context: ctx,
-		IfaceID: ifaceID,
-		Body: &models.NetworkInterface{
-			IfaceID:       &ifaceID,
-			GuestMac:      tapMac,
-			HostDevName:   &tapName,
-			TxRateLimiter: txRateLimiter,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-network-interface-fc", func(ctx context.Context) error {
+		networkConfig := operations.PutGuestNetworkInterfaceByIDParams{
+			Context: ctx,
+			IfaceID: ifaceID,
+			Body: &models.NetworkInterface{
+				IfaceID:       &ifaceID,
+				GuestMac:      tapMac,
+				HostDevName:   &tapName,
+				TxRateLimiter: txRateLimiter,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestNetworkInterfaceByID(&networkConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc network config: %w", err)
-	}
+		_, err := c.client.Operations.PutGuestNetworkInterfaceByID(&networkConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc network config: %w", err)
+		}
 
-	mmdsVersion := "V2"
-	mmdsConfig := operations.PutMmdsConfigParams{
-		Context: ctx,
-		Body: &models.MmdsConfig{
-			Version:           &mmdsVersion,
-			NetworkInterfaces: []string{ifaceID},
-		},
-	}
+		mmdsVersion := "V2"
+		mmdsConfig := operations.PutMmdsConfigParams{
+			Context: ctx,
+			Body: &models.MmdsConfig{
+				Version:           &mmdsVersion,
+				NetworkInterfaces: []string{ifaceID},
+			},
+		}
 
-	_, err = c.client.Operations.PutMmdsConfig(&mmdsConfig)
-	if err != nil {
-		return fmt.Errorf("error setting network mmds data: %w", err)
-	}
+		_, err = c.client.Operations.PutMmdsConfig(&mmdsConfig)
+		if err != nil {
+			return fmt.Errorf("error setting network mmds data: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
-func (c *apiClient) setMachineConfig(
-	ctx context.Context,
-	vCPUCount int64,
-	memoryMB int64,
-	hugePages bool,
-) error {
+// newMachineConfigBody returns the PUT /machine-config body: the orchestrator's
+// model, or, when the guest profile adds machine fields (Boot().MachineConfigExtra),
+// the model's JSON object with those fields merged in; a key the model sets is refused.
+// acpiPowerOff declares the ACPI power-off device; the field is left out when
+// false, so a Firecracker without it accepts the body.
+func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra map[string]json.RawMessage, acpiPowerOff bool) (any, error) {
+	model := machineConfigModel(vCPUCount, memoryMB, hugePages, acpiPowerOff)
+	if len(extra) == 0 {
+		return model, nil
+	}
+
+	merged, err := mergeJSONFields(model, extra)
+	if err != nil {
+		return nil, err
+	}
+
+	return merged, nil
+}
+
+// setMachineConfig sends a body built by newMachineConfigBody.
+func (c *apiClient) setMachineConfig(ctx context.Context, body any) error {
+	return telemetry.Observe0(ctx, tracer, "set-machine-config-fc", func(ctx context.Context) error {
+		params := operations.PutMachineConfigurationParams{Context: ctx}
+		_, err := c.client.Operations.PutMachineConfiguration(&params, withJSONBody(body))
+		if err != nil {
+			return fmt.Errorf("error setting fc machine config: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// machineConfigModel is the machine configuration body the orchestrator decides.
+func machineConfigModel(vCPUCount int64, memoryMB int64, hugePages bool, acpiPowerOff bool) *models.MachineConfiguration {
 	// SMT (Simultaneous Multi-Threading / Hyper-Threading) must be disabled on
 	// ARM64 because ARM processors use a different core topology (big.LITTLE,
 	// efficiency/performance cores) rather than hardware threads per core.
@@ -425,17 +502,64 @@ func (c *apiClient) setMachineConfig(
 		MemSizeMib:      &memoryMB,
 		Smt:             &smt,
 		TrackDirtyPages: &trackDirtyPages,
+		AcpiPoweroff:    acpiPowerOff,
 	}
 	if hugePages {
 		machineConfig.HugePages = models.MachineConfigurationHugePagesNr2M
 	}
-	machineConfigParams := operations.PutMachineConfigurationParams{
-		Context: ctx,
-		Body:    machineConfig,
-	}
-	_, err := c.client.Operations.PutMachineConfiguration(&machineConfigParams)
+
+	return machineConfig
+}
+
+// mergeJSONFields returns the JSON object of model with the extra fields
+// added. A field the model already sets is refused, so a profile cannot
+// override what the orchestrator decides.
+func mergeJSONFields(model any, extra map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	raw, err := json.Marshal(model)
 	if err != nil {
-		return fmt.Errorf("error setting fc machine config: %w", err)
+		return nil, err
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for key, value := range extra {
+		if _, ok := fields[key]; ok {
+			return nil, fmt.Errorf("the guest profile's field %q is already set by the orchestrator", key)
+		}
+		if !json.Valid(value) {
+			return nil, fmt.Errorf("the guest profile's field %q is not valid JSON", key)
+		}
+		fields[key] = value
+	}
+
+	return fields, nil
+}
+
+// withJSONBody replaces an operation's body with body, keeping its other
+// parameters at their defaults.
+func withJSONBody(body any) operations.ClientOption {
+	return func(op *openapiruntime.ClientOperation) {
+		op.Params = openapiruntime.ClientRequestWriterFunc(func(r openapiruntime.ClientRequest, _ strfmt.Registry) error {
+			if err := r.SetTimeout(0); err != nil {
+				return err
+			}
+
+			return r.SetBodyParam(body)
+		})
+	}
+}
+
+// setACPIPowerOff declares the ACPI power-off device before a snapshot load:
+// the snapshot does not record it, and a PATCH carrying only this field
+// leaves the load allowed.
+func (c *apiClient) setACPIPowerOff(ctx context.Context) error {
+	_, err := c.client.Operations.PatchMachineConfiguration(&operations.PatchMachineConfigurationParams{
+		Context: ctx,
+		Body:    &models.MachineConfiguration{AcpiPoweroff: true},
+	})
+	if err != nil {
+		return fmt.Errorf("error setting fc acpi power-off: %w", err)
 	}
 
 	return nil
@@ -452,57 +576,66 @@ func cpuConfigBody(tmpl cputemplate.Template) *models.CPUConfig {
 // setCPUConfig installs a custom CPU template. Firecracker accepts it only before boot,
 // and in either order with PUT /machine-config as long as that omits cpu_template.
 func (c *apiClient) setCPUConfig(ctx context.Context, tmpl cputemplate.Template) error {
-	cpuConfigParams := operations.PutCPUConfigurationParams{
-		Context: ctx,
-		Body:    cpuConfigBody(tmpl),
-	}
+	return telemetry.Observe0(ctx, tracer, "set-cpu-config-fc", func(ctx context.Context) error {
+		cpuConfigParams := operations.PutCPUConfigurationParams{
+			Context: ctx,
+			Body:    cpuConfigBody(tmpl),
+		}
 
-	_, err := c.client.Operations.PutCPUConfiguration(&cpuConfigParams)
-	if err != nil {
-		return fmt.Errorf("error setting fc cpu config (template %s): %w", tmpl.Digest(), err)
-	}
+		_, err := c.client.Operations.PutCPUConfiguration(&cpuConfigParams)
+		if err != nil {
+			return fmt.Errorf("error setting fc cpu config (template %s): %w", tmpl.Digest(), err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // https://github.com/firecracker-microvm/firecracker/blob/main/docs/entropy.md#firecracker-implementation
 func (c *apiClient) setEntropyDevice(ctx context.Context) error {
-	entropyConfig := operations.PutEntropyDeviceParams{
-		Context: ctx,
-		Body: &models.EntropyDevice{
-			RateLimiter: &models.RateLimiter{
-				Bandwidth: &models.TokenBucket{
-					OneTimeBurst: new(entropyOneTimeBurst),
-					Size:         new(entropyBytesSize),
-					RefillTime:   new(entropyRefillTime),
+	return telemetry.Observe0(ctx, tracer, "set-entropy-device-fc", func(ctx context.Context) error {
+		entropyConfig := operations.PutEntropyDeviceParams{
+			Context: ctx,
+			Body: &models.EntropyDevice{
+				RateLimiter: &models.RateLimiter{
+					Bandwidth: &models.TokenBucket{
+						OneTimeBurst: new(entropyOneTimeBurst),
+						Size:         new(entropyBytesSize),
+						RefillTime:   new(entropyRefillTime),
+					},
 				},
 			},
-		},
-	}
+		}
 
-	_, err := c.client.Operations.PutEntropyDevice(&entropyConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc entropy config: %w", err)
-	}
+		_, err := c.client.Operations.PutEntropyDevice(&entropyConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc entropy config: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) startVM(ctx context.Context) error {
-	start := models.InstanceActionInfoActionTypeInstanceStart
-	startActionParams := operations.CreateSyncActionParams{
-		Context: ctx,
-		Info: &models.InstanceActionInfo{
-			ActionType: &start,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "start-vm-fc", func(ctx context.Context) error {
+		start := models.InstanceActionInfoActionTypeInstanceStart
+		startActionParams := operations.CreateSyncActionParams{
+			Context: ctx,
+			Info: &models.InstanceActionInfo{
+				ActionType: &start,
+			},
+		}
 
-	_, err := c.client.Operations.CreateSyncAction(&startActionParams)
-	if err != nil {
-		return fmt.Errorf("error starting fc: %w", err)
-	}
+		began := time.Now()
+		_, err := c.client.Operations.CreateSyncAction(&startActionParams)
+		fcInstanceStartDuration.Record(ctx, time.Since(began).Milliseconds(),
+			metric.WithAttributes(attribute.Bool("success", err == nil)))
+		if err != nil {
+			return fmt.Errorf("error starting fc: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // installBalloon attaches a zero-MiB balloon device. Individual balloon

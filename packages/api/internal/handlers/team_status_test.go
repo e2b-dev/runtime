@@ -13,8 +13,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -94,7 +94,7 @@ func callTeamRead(t *testing.T, store *APIStore, handler func(*APIStore, *gin.Co
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unstable/teams/"+pathID, nil)
 	if authedTeamID != nil {
-		auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: *authedTeamID}})
+		auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: *authedTeamID}})
 	}
 
 	handler(store, c, pathID)

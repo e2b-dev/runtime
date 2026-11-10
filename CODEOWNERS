@@ -1,5 +1,4 @@
 # These owners will be the default owners for everything in
 # the repo. Unless a later match takes precedence.
 * @ValentaTomas @jakubno @dobrac
-/packages/dashboard-api/ @ben-fornefeld
 /packages/clickhouse/migrations/ @e2b-dev/clickhouse

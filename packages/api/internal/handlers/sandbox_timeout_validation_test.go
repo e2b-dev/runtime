@@ -15,7 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func assertBadRequestTimeout(t *testing.T, recorder *httptest.ResponseRecorder) {
@@ -30,7 +30,7 @@ func assertBadRequestTimeout(t *testing.T, recorder *httptest.ResponseRecorder) 
 
 func minimalTeamInfo() *authtypes.Team {
 	return &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New()},
+		Team:   &dbtypes.Team{ID: uuid.New()},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	}
 }

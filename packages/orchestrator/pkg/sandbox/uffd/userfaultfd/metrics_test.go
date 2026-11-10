@@ -13,10 +13,21 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
+
+func BenchmarkBuildServeNewAttrs(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		attrs := buildServeNewAttrs()
+		if attrs[0][0][0][0] == nil {
+			b.Fatal("missing source attributes")
+		}
+	}
+}
 
 // TestServeMetric exercises the serve-stats recording exactly as the Serve
 // worker does — serveTimer.Begin() + RecordRaw(ctx, bytes, serveAttrs[mode][bucket][class][result])
@@ -49,10 +60,16 @@ func TestServeMetric(t *testing.T) {
 	// Record a mix of faults the way the worker would. All under one
 	// generation bucket — the per-bucket split is pinned separately by
 	// TestServeMetric_GenerationBucket.
+	var u Userfaultfd
+	u.genBucket = genBucket1To10
 	record := func(class pageClass, result faultResult, bytes int64, n int) {
 		for range n {
 			sw := serveTimer.Begin()
-			sw.RecordRaw(ctx, bytes, serveAttrs[BalloonModeUnknown][genBucket1To10][class][result])
+			src := storage.UnknownSource
+			if class == pageClassNew && result == faultResultInstalled {
+				src = storage.SourceGCS
+			}
+			sw.RecordRaw(ctx, bytes, u.serveOption(class, result, src))
 		}
 	}
 	record(pageClassNew, faultResultInstalled, pageSize, 3)
@@ -65,6 +82,26 @@ func TestServeMetric(t *testing.T) {
 	require.NoError(t, reader.Collect(ctx, &rm))
 
 	counts, bytesSum := collectTriplet(t, rm, serveMetricName)
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			data, ok := m.Data.(metricdata.Histogram[int64])
+			if m.Name != serveMetricName || !ok {
+				continue
+			}
+			for _, dp := range data.DataPoints {
+				class, _ := dp.Attributes.Value("page_class")
+				source, hasSource := dp.Attributes.Value("source")
+				if class.AsString() == "new" {
+					require.True(t, hasSource, "new-page faults need a source label")
+					if result, _ := dp.Attributes.Value("result"); result.AsString() == "installed" {
+						assert.Equal(t, "gcs", source.AsString())
+					}
+				} else {
+					assert.False(t, hasSource, "zero/resident pages read no backend")
+				}
+			}
+		}
+	}
 
 	// new+installed: 3 faults, each one page of faulted bytes.
 	assert.Equal(t, int64(3), counts[key("new", "installed")], "new+installed fault count")
@@ -222,7 +259,7 @@ func TestServeStats(t *testing.T) {
 	// show which attempts were counted.
 	fold := func(class pageClass, result faultResult, bytes int64, n int) {
 		for range n {
-			u.recordServeStats(class, result, bytes, time.Duration(class+1)*time.Millisecond)
+			u.recordServeStats(class, result, bytes, time.Duration(class+1)*time.Millisecond, storage.SourceMmap)
 		}
 	}
 	fold(pageClassNew, faultResultInstalled, pageSize, 3)  // +3 pages, +3 source, +3 pages of bytes
@@ -239,6 +276,10 @@ func TestServeStats(t *testing.T) {
 	// new 1ms x4 (3 installed + 1 present), zero 2ms x1, resident 3ms x2; deferred and error add none.
 	assert.Equal(t, 12*time.Millisecond, stats.ServeTime, "serve time of resolved faults only")
 	assert.Equal(t, 3*time.Millisecond, stats.SourceServeTime, "serve time of the faults installed from the source")
+	// resident faults took 3ms each; deferred and error attempts never count.
+	assert.Equal(t, 3*time.Millisecond, stats.MaxServe, "longest resolved serve")
+	assert.Equal(t, int64(3), stats.BySource[storage.SourceMmap], "the source pages, by backend")
+	assert.Equal(t, 3*time.Millisecond, stats.ServeTimeBySource[storage.SourceMmap], "their serve time, by backend")
 }
 
 // Sub gives what was served between two snapshots, field by field.
@@ -246,14 +287,14 @@ func TestServeSnapshotSub(t *testing.T) {
 	t.Parallel()
 
 	var u Userfaultfd
-	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, 5*time.Millisecond)
-	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0)
+	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, 5*time.Millisecond, storage.SourceMmap)
+	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0, storage.UnknownSource)
 	before := u.ServeStats()
-	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, 7*time.Millisecond)
-	u.recordServeStats(pageClassZero, faultResultInstalled, 4096, 2*time.Millisecond)
-	u.recordServeStats(pageClassNew, faultResultDeferred, 0, time.Millisecond)
-	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0)
-	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0)
+	u.recordServeStats(pageClassNew, faultResultInstalled, 4096, 7*time.Millisecond, storage.SourceGCS)
+	u.recordServeStats(pageClassZero, faultResultInstalled, 4096, 2*time.Millisecond, storage.UnknownSource)
+	u.recordServeStats(pageClassNew, faultResultDeferred, 0, time.Millisecond, storage.UnknownSource)
+	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0, storage.UnknownSource)
+	u.recordServeStats(pageClassNew, faultResultDeduped, 0, 0, storage.UnknownSource)
 
 	d := u.ServeStats().Sub(before)
 	assert.Equal(t, ServeSnapshot{
@@ -264,7 +305,19 @@ func TestServeSnapshotSub(t *testing.T) {
 		Deduped:         2,
 		ServeTime:       9 * time.Millisecond,
 		SourceServeTime: 7 * time.Millisecond,
+		BySource:        bySource(storage.SourceGCS, 1),
+		ServeTimeBySource: func() (t [storage.NumSources]time.Duration) {
+			t[storage.SourceGCS] = 7 * time.Millisecond
+
+			return t
+		}(),
 	}, d)
+}
+
+func bySource(src storage.Source, n int64) (t [storage.NumSources]int64) {
+	t[src] = n
+
+	return t
 }
 
 // bucketForGeneration pins the log-scale bucket edges: 0 is its own bucket

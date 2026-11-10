@@ -84,6 +84,7 @@ func TestGetFilesContentDisposition(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			skipUnlessFileNameAllowed(t, tt.filename)
 
 			// Create a temp directory and file
 			tempDir := t.TempDir()

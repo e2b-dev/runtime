@@ -21,7 +21,6 @@ import (
 
 type adminTestTeam struct {
 	name      string
-	tier      string
 	banned    bool
 	blocked   bool
 	createdAt time.Time
@@ -31,31 +30,15 @@ func insertAdminTestTeam(t *testing.T, db *testutils.Database, team adminTestTea
 	t.Helper()
 
 	teamID := uuid.New()
-	tier := team.tier
-	if tier == "" {
-		tier = "base_v1"
-	}
 
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.teams (id, name, tier, email, slug, is_banned, is_blocked, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		teamID, team.name, tier, strings.ToLower(strings.ReplaceAll(team.name, " ", "."))+"@example.com",
+		`INSERT INTO public.teams (id, name, email, slug, is_banned, is_blocked, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		teamID, team.name, strings.ToLower(strings.ReplaceAll(team.name, " ", "."))+"@example.com",
 		"slug-"+teamID.String()[:8], team.banned, team.blocked, team.createdAt,
 	))
 
 	return teamID
-}
-
-// insertAdminTestTier copies the base tier under another ID.
-func insertAdminTestTier(t *testing.T, db *testutils.Database, tierID string) {
-	t.Helper()
-
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.tiers
-		 SELECT (jsonb_populate_record(t, jsonb_build_object('id', $1::text, 'name', $1::text))).*
-		 FROM public.tiers t WHERE t.id = 'base_v1'`,
-		tierID,
-	))
 }
 
 func postAdminTeamsQuery(t *testing.T, store *APIStore, body string) (int, api.AdminTeamList, string) {
@@ -225,24 +208,6 @@ func TestPostUnstableAdminTeamsQueryOrdersByRunningSandboxesWithCounts(t *testin
 	code, list, body = postAdminTeamsQuery(t, store, `{"sortBy":"runningSandboxes","sortOrder":"asc","createdBefore":"2026-06-01T00:00:00Z"}`)
 	require.Equal(t, http.StatusOK, code, body)
 	require.Equal(t, []uuid.UUID{idleNew, idleOld, quiet, busy}, adminTeamIDs(list))
-}
-
-func TestPostUnstableAdminTeamsQueryDefaultOrderIgnoresTheTier(t *testing.T) {
-	t.Parallel()
-
-	testDB := testutils.SetupDatabase(t)
-	insertAdminTestTier(t, testDB, "pro_v1")
-	insertAdminTestTier(t, testDB, "enterprise_v1")
-	baseNew := insertAdminTestTeam(t, testDB, adminTestTeam{name: "Base New", createdAt: time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC)})
-	pro := insertAdminTestTeam(t, testDB, adminTestTeam{name: "Pro", tier: "pro_v1", createdAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)})
-	baseOld := insertAdminTestTeam(t, testDB, adminTestTeam{name: "Base Old", createdAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)})
-	enterprise := insertAdminTestTeam(t, testDB, adminTestTeam{name: "Enterprise", tier: "enterprise_v1", createdAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
-
-	store := &APIStore{sqlcReadDB: testDB.SqlcClient, teamSandboxCounter: fakeTeamRunningSandboxCounter{}}
-
-	code, list, body := postAdminTeamsQuery(t, store, `{"sortOrder":"asc","createdBefore":"2026-06-01T00:00:00Z"}`)
-	require.Equal(t, http.StatusOK, code, body)
-	require.Equal(t, []uuid.UUID{baseNew, pro, baseOld, enterprise}, adminTeamIDs(list))
 }
 
 func TestPostUnstableAdminTeamsQueryFailsWhenRunningCountsAreUnavailable(t *testing.T) {

@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -113,6 +115,7 @@ func (r *recordingCollector) stoppedCount() int {
 
 type refusalFixture struct {
 	o        *Orchestrator
+	client   redis.UniversalClient
 	recorder *recordingCollector
 	sbx      sandbox.Sandbox
 	reader   *sdkmetric.ManualReader
@@ -152,6 +155,40 @@ func (f refusalFixture) restoreOutcomes(t *testing.T) map[string]int64 {
 
 func refusedPauseErr() error {
 	return status.Error(codes.ResourceExhausted, "node is busy persisting sandbox, please retry")
+}
+
+type transitionReadContextKey struct{}
+
+// transitionReadHook closes ready once a command whose context carries
+// transitionReadContextKey reads a transition marker that exists. From then
+// on the reader holds the transition's ID, and the wait it starts sees the
+// transition's result however soon the transition finishes.
+type transitionReadHook struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (h *transitionReadHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *transitionReadHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *transitionReadHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if err == nil && ctx.Value(transitionReadContextKey{}) == true && cmd.Name() == "get" && isTransitionMarker(fmt.Sprint(cmd.Args()[1])) {
+			h.once.Do(func() { close(h.ready) })
+		}
+
+		return err
+	}
+}
+
+// isTransitionMarker matches the transition marker key, which ends in
+// :transition; a result key carries the transition ID after it.
+func isTransitionMarker(key string) bool {
+	return strings.HasSuffix(key, ":transition")
 }
 
 func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, pauseErr error, hooks ...redis.Hook) refusalFixture {
@@ -230,7 +267,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 	}
 	require.NoError(t, o.sandboxStore.Add(t.Context(), sbx, nil))
 
-	return refusalFixture{o: o, recorder: recorder, sbx: sbx, reader: reader}
+	return refusalFixture{o: o, client: redisClient, recorder: recorder, sbx: sbx, reader: reader}
 }
 
 func (f refusalFixture) removePause(t *testing.T) error {
@@ -301,26 +338,28 @@ func TestRemoveSandbox_RefusalRestoreCountsTheEvictionCaller(t *testing.T) {
 func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	t.Parallel()
 
-	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr())
+	ready := make(chan struct{})
+	f := newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), &transitionReadHook{ready: ready})
+	ctx := t.Context()
+	waitCtx := context.WithValue(ctx, transitionReadContextKey{}, true)
 
-	started := make(chan struct{})
 	waiter := make(chan error, 1)
 	go func() {
 		for {
-			sbx, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+			sbx, err := f.o.sandboxStore.Get(ctx, f.sbx.TeamID, f.sbx.SandboxID)
 			if err == nil && sbx.State == sandbox.StatePausing {
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		close(started)
-		waiter <- f.o.sandboxStore.WaitForStateChange(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		waiter <- f.o.sandboxStore.WaitForStateChange(waitCtx, f.sbx.TeamID, f.sbx.SandboxID)
 	}()
 
-	// Hold the node's answer until the waiter is in place.
+	// Hold the node's answer until the waiter has read the transition marker:
+	// a wait that starts after the pause finished finds no transition to join.
 	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
 	require.True(t, ok)
-	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: started})
+	node.SetSandboxClient(&pauseStubClient{err: refusedPauseErr(), gate: ready})
 
 	err := f.removePause(t)
 	require.ErrorIs(t, err, PauseQueueExhaustedError{})
@@ -404,7 +443,7 @@ func TestRemoveSandbox_SupersededRefusalLeavesNewIncarnationAlone(t *testing.T) 
 
 	stub := &pauseStubClient{err: refusedPauseErr()}
 	stub.onPause = func() {
-		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+		f.o.sandboxStore.Remove(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, f.sbx.ExecutionID)
 		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
 	}
 	node.SetSandboxClient(stub)
@@ -490,6 +529,32 @@ func TestRemoveSandbox_CheckpointInProgressRestoresWithFlagOff(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 	assert.Zero(t, f.recorder.stoppedCount(), "a restored sandbox must not emit stopped analytics")
+}
+
+// A node migrating the sandbox refuses its kill with the answer a pause gets.
+// The record goes back to Running instead of being removed under a running
+// VM, the node is not asked again, and the caller is told the sandbox is held.
+func TestRemoveSandbox_KillRefusedForAMigrationKeepsTheRecord(t *testing.T) {
+	t.Parallel()
+
+	f := newRefusalFixture(t, false, consts.LocalClusterID, nil)
+	node, ok := f.o.nodes.Get(f.o.scopedNodeID(consts.LocalClusterID, "node-1"))
+	require.True(t, ok)
+	stub := &pauseStubClient{deleteErr: checkpointInProgressPauseErr(t)}
+	node.SetSandboxClient(stub)
+
+	err := f.o.RemoveSandbox(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonRequest})
+	require.ErrorIs(t, err, ErrSandboxLifecycleHeld)
+
+	stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
+	require.NoError(t, err, "the record of the running VM stays")
+	assert.Equal(t, sandbox.StateRunning, stored.State)
+	assert.WithinDuration(t, f.sbx.EndTime, stored.EndTime, time.Second, "the restore reinstates the expiry the kill clamped")
+	assert.Equal(t, 1, stub.deleteCount(), "the refused sandbox is not killed again")
+	assert.Empty(t, f.restoreOutcomes(t), "a kill's restore is not counted as a pause's")
+
+	time.Sleep(300 * time.Millisecond)
+	assert.Zero(t, f.recorder.stoppedCount(), "no stop is reported for a sandbox still running")
 }
 
 // envdUnresponsivePauseErr is the node refusing a memory pause because the

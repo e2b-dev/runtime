@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/user"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +51,8 @@ type Handler struct {
 	Tag *string
 	cmd *exec.Cmd
 	tty *os.File
+	// sys is what the OS keeps beside the command; nothing on Linux.
+	sys *sysState
 
 	// freezer admits the fork. Kept for Start, which forks a non-PTY child after New has
 	// returned; see spawn for why the admission has to sit right around the clone.
@@ -102,7 +103,7 @@ type Handler struct {
 	// is unfrozen after the upgrade; the carried kill-timer waits on it so the
 	// timeout is not burned down while the process is still frozen.
 	thawed <-chan struct{}
-	// OnExit, if set, is invoked by the re-adopt reaper with the terminal event
+	// OnExit, if set, is invoked by Wait or the re-adopt reaper with the terminal event
 	// immediately before EndEvent is closed, so the service can retain the exit
 	// synchronously. A Connect that forks after the close then always finds the
 	// retained exit in the cache rather than racing an asynchronous retain.
@@ -162,17 +163,6 @@ func (p *Handler) userCommand() string {
 	return strings.Join(append([]string{p.Config.GetCmd()}, p.Config.GetArgs()...), " ")
 }
 
-// currentNice returns the nice value of the current process.
-func currentNice() int {
-	prio, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
-	if err != nil {
-		return 0
-	}
-
-	// Getpriority returns 20 - nice on Linux.
-	return 20 - prio
-}
-
 // ioniceNicePrefix builds the ionice/nice part of the process wrapper from
 // whatever the image actually ships. Both are util-linux/coreutils
 // conveniences that minimal and busybox-based images (Alpine, UBI) may lack or
@@ -204,40 +194,17 @@ func New(
 	// User command string for logging (without the internal wrapper details).
 	userCmd := strings.Join(append([]string{req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...), " ")
 
-	// Wrap in a shell that resets oom_score_adj, ioprio (ionice best-effort/4),
-	// and nice. The oom_score_adj write is pure /proc and always applied; the
-	// priority helpers are used only where the image provides them.
-	niceDelta := defaultNice - currentNice()
-	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec %s"${@}"`, defaultOomScore, ioniceNicePrefix(defaultIoClass, defaultIoPrio, niceDelta, exec.LookPath))
-	wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
-	cmd := exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
-
-	uid, gid, err := permissions.GetUserIdUints(user)
+	cmd, sys, err := newCommand(ctx, user, req, logger, freezer.Manager())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, connect.NewError(CommandErrorCode(err), err)
 	}
-
-	groups := []uint32{gid}
-	if gids, err := user.GroupIds(); err != nil {
-		logger.Warn().Err(err).Str("user", user.Username).Msg("failed to get supplementary groups")
-	} else {
-		for _, g := range gids {
-			if parsed, err := strconv.ParseUint(g, 10, 32); err == nil {
-				groups = append(groups, uint32(parsed))
-			}
+	// sys passes to the handler only on success; every earlier return frees it here.
+	handedOver := false
+	defer func() {
+		if !handedOver {
+			sys.discard()
 		}
-	}
-
-	cgroupFD, ok := freezer.Manager().GetFileDescriptor(getProcType(req))
-
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{
-			Uid:    uid,
-			Gid:    gid,
-			Groups: groups,
-		},
-	}
-	applyCgroupFD(cmd.SysProcAttr, cgroupFD, ok)
+	}()
 
 	resolvedPath, err := permissions.ExpandAndResolve(req.GetProcess().GetCwd(), user, defaults.Workdir)
 	if err != nil {
@@ -251,14 +218,7 @@ func New(
 
 	cmd.Dir = resolvedPath
 
-	var formattedVars []string
-
-	// Take only 'PATH' variable from the current environment
-	// The 'PATH' should ideally be set in the environment
-	formattedVars = append(formattedVars, "PATH="+os.Getenv("PATH"))
-	formattedVars = append(formattedVars, "HOME="+user.HomeDir)
-	formattedVars = append(formattedVars, "USER="+user.Username)
-	formattedVars = append(formattedVars, "LOGNAME="+user.Username)
+	formattedVars := baseEnv(user)
 
 	// Add the environment variables from the global environment
 	if defaults.EnvVars != nil {
@@ -292,6 +252,7 @@ func New(
 		outCancel: outCancel,
 		EndEvent:  NewMultiplexedChannel[rpc.ProcessEvent_End](0),
 		logger:    logger,
+		sys:       sys,
 		freezer:   freezer,
 	}
 	h.cgType = getProcType(req)
@@ -307,10 +268,7 @@ func New(
 		// The output of the pty should correctly be passed though.
 		var tty *os.File
 		err := h.spawn(ctx, func() (err error) {
-			tty, err = pty.StartWithSize(cmd, &pty.Winsize{
-				Cols: uint16(req.GetPty().GetSize().GetCols()),
-				Rows: uint16(req.GetPty().GetSize().GetRows()),
-			})
+			tty, err = h.startPty(ctx, cmd, uint16(req.GetPty().GetSize().GetCols()), uint16(req.GetPty().GetSize().GetRows()))
 
 			return err
 		})
@@ -475,6 +433,8 @@ func New(
 		outCancel()
 	}()
 
+	handedOver = true
+
 	return h, nil
 }
 
@@ -501,14 +461,14 @@ func (p *Handler) SendSignal(signal syscall.Signal) error {
 			return errors.New("process not started")
 		}
 
-		return syscall.Kill(int(p.pid), signal)
+		return signalPid(int(p.pid), signal)
 	}
 
 	if p.cmd.Process == nil {
 		return errors.New("process not started")
 	}
 
-	return p.cmd.Process.Signal(signal)
+	return p.sysSignal(signal)
 }
 
 func (p *Handler) ResizeTty(size *pty.Winsize) error {
@@ -516,7 +476,7 @@ func (p *Handler) ResizeTty(size *pty.Winsize) error {
 		return errors.New("tty not assigned to process")
 	}
 
-	return pty.Setsize(p.tty, size)
+	return p.sysResizeTty(size)
 }
 
 func (p *Handler) WriteStdin(data []byte) error {
@@ -566,7 +526,7 @@ func (p *Handler) WriteTty(data []byte) error {
 		return ErrTtyUnavailable
 	}
 
-	_, err := p.tty.Write(data)
+	err := p.sysWriteTty(data)
 	if err != nil {
 		return fmt.Errorf("error writing to tty of process '%d': %w", p.Pid(), err)
 	}
@@ -589,12 +549,28 @@ func (p *Handler) Start(ctx context.Context, requestTimeout time.Duration) (uint
 			// event's closes on its own once the readers above see EOF.
 			p.closeStdinPipe()
 			close(p.EndEvent.Source)
+			p.sys.discard()
 
 			return 0, fmt.Errorf("error starting process '%s': %w", p.userCommand(), err)
 		}
 	}
 
 	p.pid = uint32(p.cmd.Process.Pid)
+
+	if err := p.sysAfterStart(); err != nil {
+		// The child is terminated by sysAfterStart; reap it and release what Wait would
+		// have, as for a start that never happened.
+		_ = p.cmd.Wait()
+		p.closeStdinPipe()
+		close(p.EndEvent.Source)
+		p.sysRelease()
+
+		if errors.Is(err, errCancelledBeforeRun) {
+			return 0, fmt.Errorf("process '%s': %w", p.userCommand(), context.DeadlineExceeded)
+		}
+
+		return 0, fmt.Errorf("error containing process '%s': %w", p.userCommand(), err)
+	}
 
 	p.logger.
 		Info().
@@ -656,6 +632,7 @@ func (p *Handler) Wait() {
 	err := p.cmd.Wait()
 
 	p.tty.Close()
+	p.sysRelease()
 	// The handler owns the stdio pipes, so it closes them here as exec.Cmd.Wait closes the
 	// ones it creates. The read ends matter on a kill or a timeout: a grandchild still
 	// holding the write ends would otherwise keep the readers -- and the Start stream that
@@ -678,6 +655,7 @@ func (p *Handler) Wait() {
 		Exited:   p.cmd.ProcessState.Exited(),
 		Status:   p.cmd.ProcessState.String(),
 	}
+	p.sysEndEvent(endEvent)
 
 	event := rpc.ProcessEvent_End{
 		End: endEvent,

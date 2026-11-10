@@ -13,6 +13,9 @@ type Reason string
 const (
 	ReasonRequest Reason = "request"
 	ReasonTimeout Reason = "timeout"
+	// ReasonGuestPowerOff is the timeout action run early, because the guest
+	// powered itself off.
+	ReasonGuestPowerOff Reason = "guest_poweroff"
 )
 
 type SkipReason string
@@ -33,12 +36,19 @@ const (
 	// the sandbox's guest agent did not answer its health probe; the sandbox
 	// keeps running and a later attempt is retried as is.
 	SkipReasonEnvdUnresponsive SkipReason = "envd_unresponsive"
+	// SkipReasonUnsupported: the node refused a pause the sandbox's guest
+	// cannot take; the sandbox keeps running and the request will not succeed
+	// as asked.
+	SkipReasonUnsupported SkipReason = "unsupported"
 	// SkipReasonDraining: this replica is shutting down and stopped admitting
 	// pauses, so the sandbox is left running for a retry elsewhere.
 	SkipReasonDraining SkipReason = "draining"
 	// SkipReasonRateLimited: the sandbox used up its pause budget for the
 	// period, so the sandbox is left running.
 	SkipReasonRateLimited SkipReason = "rate_limited"
+	// SkipReasonLifecycleHeld: an operation outside the API's ordinary
+	// lifecycle holds the sandbox, which keeps running untouched.
+	SkipReasonLifecycleHeld SkipReason = "lifecycle_held"
 )
 
 // fsOnly rides on every pause event so the snapshot kind can be joined to the
@@ -89,6 +99,20 @@ func LogRefused(ctx context.Context, sandboxID string, teamID string, reason Rea
 		logger.WithTeamID(teamID),
 		zap.String("pause_reason", string(reason)),
 		zap.Bool("fs_only", fsOnly),
+	)
+}
+
+// LogGuestAgentUnresponsive is not a result either: the node took the memory
+// snapshot although the sandbox's guest agent did not answer its health
+// probe, and recorded it so; the success row of the same pause follows. A
+// resume of this snapshot must ask for memory:false.
+func LogGuestAgentUnresponsive(ctx context.Context, sandboxID string, teamID string, reason Reason, fsOnly bool) {
+	logger.L().Warn(ctx, "sandbox_pause_guest_agent_unresponsive",
+		logger.WithSandboxID(sandboxID),
+		logger.WithTeamID(teamID),
+		zap.String("pause_reason", string(reason)),
+		zap.Bool("fs_only", fsOnly),
+		zap.Bool("guest_agent_unresponsive", true),
 	)
 }
 

@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.30.0 (2026-11-06)
+
+
+### Features
+
+* **api,orchestrator:** after a grace period the eviction sweep takes the memory pause without the envd probe (d588757)
+* **api:** accept an idempotency key when starting a v2 template build (af37ca9)
+* **api:** add a cluster-mode test lane, a same-slot assertion and guards to the sandbox store (966ba46)
+* **api:** add a per-sandbox key form to the sandbox store's operations (4056ce8)
+* **api:** add idempotency to snapshot creation (bf404b8)
+* **api:** add idempotency to v3 template build requests (86635cb)
+* **api:** apply project bans through a revisioned management route (a19c612)
+* **api:** create api routes to ban teams and apply project blocks  (ed1635b)
+* **api:** expose conditional execution placement operations (2be8ec8)
+* **api:** fence sandbox lifecycle changes by execution (fc764b8)
+* **api:** list and restore a sandbox's snapshot builds (efaf798)
+* **api:** make network rule header value limit configurable per team (9182cc6)
+* **api:** memory usage limit and overcommit cap for every sandbox in placement (22237bb)
+* **api:** read and heal sandbox store records across both key forms (717481b)
+* **api:** resizable templates with a per-sandbox online CPU count (5079258)
+* **api:** select the sandbox store's write key form from a flag, with its suites and seeding tool (d90382b)
+* **api:** serve a sandbox's record and its admin overview (0b8ebd2)
+* **api:** serve the cluster management and operator routes via api (b38f9e9)
+* **api:** start and settle a sandbox migration through the migration service (2e582dd)
+* **api:** write sandbox store records in the per-sandbox key form only (8ea07b9)
+* **clean-nfs-cache:** run budget and multi-sample runs (9fd10b7)
+* **db:** mirror env soft deletes onto snapshots.env_deleted_at (8c960b5)
+* **migration:** admit live migration participants from the caller's coordinates (589ae66)
+* **orchestrator,api:** carry standby owners and capabilities on nodes and skip a status-refusing node (2654c7d)
+* **orchestrator,api:** owner, force and capabilities on the node status contracts (a6f6742)
+* **orchestrator,api:** probe envd before a checkpoint and refuse forks and snapshots of a hung guest (a011473)
+* **orchestrator,api:** probe envd before filesystem-only pauses, checkpoints and forks too (3e49373)
+* **orchestrator,api:** record a pause taken over an unresponsive guest agent and refuse its memory resume (edc7e25)
+* **orchestrator:** gate the sandbox lifecycle on the guest profile (02c3c8b)
+
+
+### Bug Fixes
+
+* **api:** a late duplicate of the create's store write no longer takes the record back (638d0b6)
+* **api:** apply a network update on the node before storing it, and fence its record write (e88aa09)
+* **api:** bound detached team bans with one deadline and move ban callers to the API (b3771a4)
+* **api:** key server analytics events by sandbox or team for PostHog (34c3d7b)
+* **api:** return volume mounts for paused sandboxes (c14ca04)
+* **api:** share gRPC connections across a remote cluster's instances (f504ef4)
+* **deps:** move the workspace to the Go 1.27.3 toolchain (839f8d7)
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.6 [security] (f018c23)
+* **deps:** update module github.com/oapi-codegen/gin-middleware to v1.2.1 (3e6356e)
+* **orchestrator:** report NotReady until a starting node can serve (ce80502)
+* **orchestrator:** the volume mount test passes the envd version its request takes (5a1c076)
+
+
+### Code Refactoring
+
+* **api+orchestrator:** always use huge pages for sandboxes and template builds (60af8b5)
+* **api:** lock and read the sandbox store by the sandbox-tagged key alone (f116183)
+* **api:** remove migration outcome polling (108ab2a)
+* **auth:** list team columns in the team lookups instead of embedding the row (a6e82b1)
+* **dashboard-api:** remove the team ban and project block routes now served by the API (92d42d2)
+* **db:** fold the dashboard queries into the main queries package (0924c61)
+* **db:** make the team tier optional and stop writing it (59b353e)
+* **workspace-api,console:** health checks probe the api, not dashboard-api (cb74ffa)
+
 ## 0.14.1 (2026-09-09)
 
 

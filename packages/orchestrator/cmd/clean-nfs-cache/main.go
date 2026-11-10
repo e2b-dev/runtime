@@ -112,6 +112,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 	flags.IntVar(&opts.BuildSampleMax, "build-sample-max", 0, "cap on build dirs scanned per run; 0 (default) = no limit (scan every build). Set > 0 to bound readdir/stat at huge caches, then min/pct apply")
 	flags.DurationVar(&opts.Grace, "grace", cleaner.GracePeriod, "never delete a build that has been warm within this window — warmth is the most-recent sampled chunk access (atime), or create time (btime) for a build with no chunks yet. Skips new and recently-used builds; 0 = no floor")
 	flags.BoolVar(&opts.Verify, "verify", false, "before each cold delete, stat the build's non-chunk files and record their size vs the flat estimate (chunk sizes are trusted from filenames); off by default")
+	flags.DurationVar(&opts.RunBudget, "run-budget", 0, "wall-time budget for one run: once spent, stop queueing deletes and starting batches; with build-sample-max > 0 and no max-cache-bytes, a run that misses its target scans further samples while time remains. Set it below the schedule interval so the next run starts on time, and well above the time to list the root and scan one sample, or the first batch has little time to delete; 0 = no budget, one sample")
 
 	args := os.Args[1:] // skip the command name
 	if err := flags.Parse(args); err != nil {
@@ -177,6 +178,9 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		}
 		if m.Get("verify").IsBool() {
 			opts.Verify = m.Get("verify").BoolValue()
+		}
+		if m.Get("runBudgetSeconds").IsNumber() {
+			opts.RunBudget = time.Duration(m.Get("runBudgetSeconds").IntValue()) * time.Second
 		}
 	}
 
@@ -258,6 +262,7 @@ func configure(ctx context.Context) (cleaner.Options, logger.Logger, *telemetry.
 		zap.Int("max_concurrent_stat", opts.MaxConcurrentStat),
 		zap.Int("max_concurrent_scan", opts.MaxConcurrentScan),
 		zap.Int("max_concurrent_delete", opts.MaxConcurrentDelete),
+		zap.Duration("run_budget", opts.RunBudget),
 	)
 
 	return opts, l, tel, metrics, meterProvider, nil

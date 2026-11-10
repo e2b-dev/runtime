@@ -103,7 +103,7 @@ func TestReleaseForgetsTheVolumesHandles(t *testing.T) {
 	gone := h.ToHandle(t.Context(), wrapper{released}, []string{"file"})
 	stays := h.ToHandle(t.Context(), kept, []string{"file"})
 
-	h.Release(released)
+	h.Release(wrapper{released})
 
 	_, _, err := h.FromHandle(t.Context(), gone)
 	assertStale(t, err)

@@ -9,7 +9,6 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
@@ -53,21 +52,11 @@ func (n *Node) Sync(ctx context.Context, store *sandbox.Store) error {
 
 		answered = true
 
-		// update node status (if changed)
-		nodeStatus, ok := OrchestratorToApiNodeStateMapper[nodeInfo.GetServiceStatus()]
-		if !ok {
-			logger.L().Error(ctx, "Unknown service info status", zap.String("status", nodeInfo.GetServiceStatus().String()), logger.WithNodeID(n.ID))
-			nodeStatus = api.NodeStatusUnhealthy
-		}
-
-		var statusChangedAt time.Time
-		if ts := nodeInfo.GetServiceStatusChangedAt(); ts.IsValid() {
-			statusChangedAt = ts.AsTime()
-		}
-
-		n.setStatus(ctx, nodeStatus, statusChangedAt)
+		reported := reportedStatus(ctx, n.ID, nodeInfo)
+		n.setStatus(ctx, reported.Status, reported.Owner, reported.ChangedAt)
 		n.setMachineInfo(nodeInfo.GetMachineInfo())
 		n.setLabels(nodeInfo.GetLabels())
+		n.setCapabilities(nodeInfo.GetCapabilities())
 		n.setMetadata(
 			NodeMetadata{
 				ServiceInstanceID: nodeInfo.GetServiceId(),

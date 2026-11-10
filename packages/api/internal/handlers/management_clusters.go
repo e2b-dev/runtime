@@ -13,8 +13,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
@@ -107,7 +107,7 @@ func (a *APIStore) createCluster(ctx context.Context, registration clusterRegist
 		return uuid.Nil, errInvalidClusterRegistration
 	}
 
-	params := dashboardqueries.CreateClusterParams{
+	params := queries.CreateClusterParams{
 		ClusterID:          registration.ClusterID,
 		Name:               registration.Name,
 		Endpoint:           registration.Endpoint,
@@ -118,10 +118,10 @@ func (a *APIStore) createCluster(ctx context.Context, registration clusterRegist
 		DeletionProtection: registration.DeletionProtection,
 	}
 	if registration.RefreshToken {
-		return a.sqlcDB.Dashboard.RegisterManagedCluster(ctx, dashboardqueries.RegisterManagedClusterParams(params))
+		return a.sqlcDB.RegisterManagedCluster(ctx, queries.RegisterManagedClusterParams(params))
 	}
 
-	return a.sqlcDB.Dashboard.CreateCluster(ctx, params)
+	return a.sqlcDB.CreateCluster(ctx, params)
 }
 
 func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.ClusterID) {
@@ -164,7 +164,7 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	protected, err := txDB.Dashboard.ClusterDeletionProtected(ctx, clusterID)
+	protected, err := txDB.ClusterDeletionProtected(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("check cluster deletion protection: %w", err)
 	}
@@ -172,25 +172,25 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 		return errProtectedClusterDeletion
 	}
 
-	envIDs, err := txDB.Dashboard.SoftDeleteClusterEnvironments(ctx, clusterID)
+	envIDs, err := txDB.SoftDeleteClusterEnvironments(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("soft delete cluster environments: %w", err)
 	}
 	if len(envIDs) > 0 {
-		if err := txDB.Dashboard.ReleaseEnvironmentsAliases(ctx, envIDs); err != nil {
+		if err := txDB.ReleaseEnvironmentsAliases(ctx, envIDs); err != nil {
 			return fmt.Errorf("release cluster environment aliases: %w", err)
 		}
-		if err := txDB.Dashboard.DeleteEnvironmentsActiveBuilds(ctx, envIDs); err != nil {
+		if err := txDB.DeleteEnvironmentsActiveBuilds(ctx, envIDs); err != nil {
 			return fmt.Errorf("delete cluster environment active builds: %w", err)
 		}
 	}
-	if err := txDB.Dashboard.DetachDeletedTemplatesFromCluster(ctx, clusterID); err != nil {
+	if err := txDB.DetachDeletedTemplatesFromCluster(ctx, clusterID); err != nil {
 		return fmt.Errorf("detach deleted templates: %w", err)
 	}
-	if err := txDB.Dashboard.DetachDeletedTeamsFromCluster(ctx, clusterID); err != nil {
+	if err := txDB.DetachDeletedTeamsFromCluster(ctx, clusterID); err != nil {
 		return fmt.Errorf("detach deleted teams: %w", err)
 	}
-	if _, err := txDB.Dashboard.DeleteCluster(ctx, clusterID); err != nil {
+	if _, err := txDB.DeleteCluster(ctx, clusterID); err != nil {
 		return fmt.Errorf("delete cluster: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -203,7 +203,7 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 func (a *APIStore) ManagementListClusterProjects(c *gin.Context, clusterID api.ClusterID) {
 	ctx := c.Request.Context()
 
-	projectIDs, err := a.sqlcDB.Dashboard.ListClusterTeamIDs(ctx, clusterID)
+	projectIDs, err := a.sqlcDB.ListClusterTeamIDs(ctx, clusterID)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "list cluster projects failed", err, telemetry.WithClusterID(clusterID))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to list cluster projects")
@@ -251,7 +251,7 @@ func (a *APIStore) requestClusterDeletion(ctx context.Context, clusterID uuid.UU
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	protected, err := txDB.Dashboard.LockClusterDeletionProtection(ctx, clusterID)
+	protected, err := txDB.LockClusterDeletionProtection(ctx, clusterID)
 	if dberrors.IsNotFoundError(err) {
 		return nil
 	}
@@ -261,7 +261,7 @@ func (a *APIStore) requestClusterDeletion(ctx context.Context, clusterID uuid.UU
 	if protected {
 		return errProtectedClusterDeletion
 	}
-	if err := txDB.Dashboard.RequestClusterDeletion(ctx, clusterID); err != nil {
+	if err := txDB.RequestClusterDeletion(ctx, clusterID); err != nil {
 		return fmt.Errorf("record cluster deletion: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -277,7 +277,7 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 
 	// The cluster delete refuses a protected cluster, so refuse here too, before
 	// the caller detaches teams or destroys infrastructure.
-	protected, err := a.sqlcDB.Dashboard.ClusterDeletionProtected(ctx, clusterID)
+	protected, err := a.sqlcDB.ClusterDeletionProtected(ctx, clusterID)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "check cluster deletion protection failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to check cluster destroy readiness")
@@ -290,7 +290,7 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 		return
 	}
 
-	shared, err := a.sqlcDB.Dashboard.ClusterUsedByMultipleTeams(ctx, clusterID)
+	shared, err := a.sqlcDB.ClusterUsedByMultipleTeams(ctx, clusterID)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "check cluster destroy readiness failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to check cluster destroy readiness")
@@ -316,7 +316,7 @@ func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID open
 		return
 	}
 
-	result, err := a.sqlcDB.Dashboard.AssignTeamCluster(ctx, dashboardqueries.AssignTeamClusterParams{
+	result, err := a.sqlcDB.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{
 		ClusterID:        clusterID,
 		TeamID:           projectID,
 		PreserveExisting: true,
@@ -362,7 +362,7 @@ func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID open
 	ctx := c.Request.Context()
 	attrs := []attribute.KeyValue{telemetry.WithTeamID(projectID.String()), telemetry.WithClusterID(clusterID)}
 
-	result, err := a.sqlcDB.Dashboard.DetachTeamCluster(ctx, dashboardqueries.DetachTeamClusterParams{
+	result, err := a.sqlcDB.DetachTeamCluster(ctx, queries.DetachTeamClusterParams{
 		TeamID:    projectID,
 		ClusterID: clusterID,
 	})

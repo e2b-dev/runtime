@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -17,11 +18,11 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
 
-// restoreScriptHook runs afterRestore once the restore script has written the
-// record back and, when failNextRead is set, fails the read that follows: the
-// ownership check after the restore.
+// restoreScriptHook runs afterRestore, with the record key the restore script
+// wrote, once the script has written the record back and, when failNextRead
+// is set, fails the read that follows: the ownership check after the restore.
 type restoreScriptHook struct {
-	afterRestore func()
+	afterRestore func(recordKey string)
 	failNextRead bool
 
 	armed atomic.Bool
@@ -36,7 +37,7 @@ func (h *restoreScriptHook) ProcessPipelineHook(next redis.ProcessPipelineHook) 
 
 func (h *restoreScriptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		if cmd.Name() == "get" && strings.Contains(cmd.Args()[1].(string), ":sandboxes:") && h.armed.CompareAndSwap(true, false) {
+		if cmd.Name() == "get" && isRecordKey(cmd.Args()[1].(string)) && h.armed.CompareAndSwap(true, false) {
 			h.fired.Store(true)
 
 			return errors.New("verification read unavailable")
@@ -44,7 +45,7 @@ func (h *restoreScriptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHoo
 
 		err := next(ctx, cmd)
 		if err == nil && isRestoreRunningScript(cmd) {
-			h.afterRestore()
+			h.afterRestore(cmd.Args()[3].(string))
 			h.armed.Store(h.failNextRead)
 		}
 
@@ -66,9 +67,13 @@ func isRestoreRunningScript(cmd redis.Cmder) bool {
 	numKeys, _ := args[2].(int)
 	key, _ := args[3].(string)
 
-	// Contains, not HasPrefix: a namespaced test client puts its prefix
-	// before the lock key.
-	return numKeys == 1 && strings.Contains(key, ":sandboxes:") && !strings.Contains(key, "lock:sandbox:")
+	return numKeys == 1 && isRecordKey(key) && !strings.Contains(key, "lock:sandbox:")
+}
+
+// isRecordKey reports whether key is a sandbox record key. Contains, not
+// HasPrefix: a namespaced test client puts its prefix before the key.
+func isRecordKey(key string) bool {
+	return strings.Contains(key, ":record")
 }
 
 func successorOf(sbx sandbox.Sandbox) sandbox.Sandbox {
@@ -79,22 +84,37 @@ func successorOf(sbx sandbox.Sandbox) sandbox.Sandbox {
 	return resumed
 }
 
-// Add is lockless: a resume can reclaim the ID right after the restore wrote
-// the record back. The ownership check reads the record again and yields to
-// the successor: it is not rewritten, not removed, and its VM is not killed.
+// writePastLock replaces the record under key with sbx, bypassing the storage
+// lock as a replica whose lock expired would. Add waits for the lock, which
+// the restore holds while a hook runs. The key is the one the hook observed,
+// which already carries the test client's namespace; the client's prefix
+// hook skips a key that carries it, so the write lands on the same key.
+func (f refusalFixture) writePastLock(ctx context.Context, key string, sbx sandbox.Sandbox) error {
+	data, err := json.Marshal(sbx)
+	if err != nil {
+		return err
+	}
+
+	return f.client.Set(ctx, key, data, 0).Err()
+}
+
+// A write that bypasses the storage lock, as a replica whose lock expired
+// makes, can replace the record right after the restore wrote it back. The
+// ownership check reads the record again and yields to the successor: it is
+// not rewritten, not removed, and its VM is not killed.
 func TestRemoveSandbox_SuccessorAfterRestoreIsSuperseded(t *testing.T) {
 	t.Parallel()
 
 	var f refusalFixture
 	var resumed sandbox.Sandbox
-	hook := &restoreScriptHook{afterRestore: func() {
+	hook := &restoreScriptHook{afterRestore: func(recordKey string) {
 		stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
 		require.NoError(t, err)
 		require.Equal(t, sandbox.StateRunning, stored.State)
 		require.Equal(t, f.sbx.ExecutionID, stored.ExecutionID)
 
 		resumed = successorOf(f.sbx)
-		require.NoError(t, f.o.sandboxStore.Add(t.Context(), resumed, nil))
+		require.NoError(t, f.writePastLock(t.Context(), recordKey, resumed))
 	}}
 	f = newRefusalFixture(t, true, consts.LocalClusterID, refusedPauseErr(), hook)
 	node, ok := f.o.nodes.Get(f.o.scopedNodeID(f.sbx.ClusterID, f.sbx.NodeID))
@@ -129,13 +149,13 @@ func TestRemoveSandbox_VerificationReadFailurePreservesSandbox(t *testing.T) {
 
 			var f refusalFixture
 			var expected sandbox.Sandbox
-			hook := &restoreScriptHook{failNextRead: true, afterRestore: func() {
+			hook := &restoreScriptHook{failNextRead: true, afterRestore: func(recordKey string) {
 				stored, err := f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
 				require.NoError(t, err)
 				require.Equal(t, sandbox.StateRunning, stored.State)
 
 				if name == "successor execution" {
-					require.NoError(t, f.o.sandboxStore.Add(t.Context(), successorOf(f.sbx), nil))
+					require.NoError(t, f.writePastLock(t.Context(), recordKey, successorOf(f.sbx)))
 				}
 				expected, err = f.o.sandboxStore.Get(t.Context(), f.sbx.TeamID, f.sbx.SandboxID)
 				require.NoError(t, err)

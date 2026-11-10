@@ -271,7 +271,7 @@ func (p *transitionWaitProbe) ProcessPipelineHook(next redis.ProcessPipelineHook
 func (p *transitionWaitProbe) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		err := next(ctx, cmd)
-		if p.armed.Load() && cmd.Name() == "get" && strings.HasSuffix(fmt.Sprint(cmd.Args()[1]), ":transition:"+p.sandboxID) && p.reads.Add(1) == 2 {
+		if p.armed.Load() && cmd.Name() == "get" && strings.HasSuffix(fmt.Sprint(cmd.Args()[1]), "{"+p.sandboxID+"}:transition") && p.reads.Add(1) == 2 {
 			p.once.Do(func() { close(p.waiting) })
 		}
 

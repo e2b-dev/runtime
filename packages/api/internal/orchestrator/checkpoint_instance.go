@@ -107,6 +107,9 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 				if isCheckpointInProgress(err) {
 					return PauseRefusedCheckpointInProgressError{}
 				}
+				if refusal := pauseRefusal(err); errors.Is(refusal, PauseUnsupportedError{}) {
+					return refusal
+				}
 
 				return fmt.Errorf("checkpoint rejected: %w", err)
 			case codes.ResourceExhausted:
@@ -148,7 +151,7 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, types.BuildStatusSuccess); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, types.BuildStatusSuccess, false); err != nil {
 		return errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 

@@ -23,7 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -39,6 +39,8 @@ type pauseRateLimitBackend struct {
 	// between the limiter check and the pause.
 	resumes []string
 	paused  int
+	// removeErr answers every pause that passes the pin.
+	removeErr error
 }
 
 func (b *pauseRateLimitBackend) GetSandbox(context.Context, uuid.UUID, string) (sandbox.Sandbox, error) {
@@ -66,6 +68,9 @@ func (b *pauseRateLimitBackend) RemoveSandbox(_ context.Context, _ uuid.UUID, _ 
 
 	if opts.ExpectExecutionID != "" && b.record != nil && b.record.ExecutionID != opts.ExpectExecutionID {
 		return orchestrator.ErrExecutionChanged
+	}
+	if b.removeErr != nil {
+		return b.removeErr
 	}
 	b.paused++
 
@@ -107,7 +112,7 @@ func postLimitedPause(t *testing.T, limiter *pauselimit.Limiter, backend *pauseR
 	ginCtx, _ := gin.CreateTestContext(recorder)
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/pause", nil)
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
@@ -227,6 +232,20 @@ func TestPauseRateLimit(t *testing.T) {
 
 		assert.Equal(t, http.StatusConflict, postLimitedPause(t, limiter, backend, "i"+id.Generate()).Code)
 		assert.Zero(t, backend.pausedCount())
+	})
+
+	// The SDKs read a 409 from pause as already paused and return without an
+	// error, which would hide that the sandbox was restored and still runs.
+	t.Run("a filesystem-only pause the guest refuses is a 400, not a 409", func(t *testing.T) {
+		t.Parallel()
+
+		limiter := newPauseLimiter(t, client, nil)
+		backend := runningExecution("first")
+		backend.removeErr = orchestrator.PauseUnsupportedError{}
+
+		recorder := postLimitedPause(t, limiter, backend, "i"+id.Generate())
+		assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+		assert.Contains(t, recorder.Body.String(), "pause it with memory instead")
 	})
 
 	t.Run("an unset flag leaves pauses unlimited", func(t *testing.T) {

@@ -11,7 +11,6 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -84,7 +83,7 @@ func (s *Service) applyProjectBan(ctx context.Context, jobs JobInserter, project
 		return false, nil
 	}
 
-	if _, err := txDB.Dashboard.SetTeamBanned(ctx, dashboardqueries.SetTeamBannedParams{
+	if _, err := txDB.SetTeamBanned(ctx, queries.SetTeamBannedParams{
 		TeamID:   projection.ProjectID,
 		IsBanned: projection.Banned,
 	}); err != nil {

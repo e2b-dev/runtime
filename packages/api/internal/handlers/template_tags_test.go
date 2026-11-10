@@ -16,7 +16,7 @@ import (
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
@@ -45,7 +45,7 @@ func TestPostTemplatesTags_RejectsOtherTeamBeforeTransaction(t *testing.T) {
 			body := fmt.Sprintf(`{"target":%q,"tags":["new-tag"]}`, templateID+suffix)
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/templates/tags", strings.NewReader(body))
 			c.Request.Header.Set("Content-Type", "application/json")
-			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{
+			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{
 				ID: uuid.New(), Slug: teamSlug,
 			}})
 

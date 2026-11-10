@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/e2b-dev/infra/packages/db/client"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
@@ -93,11 +94,25 @@ DELETE FROM volumes WHERE team_id IN (SELECT id FROM teams WHERE email = $1)
 		panic(err)
 	}
 
-	err = authDb.TestsRawSQL(ctx, `
-DELETE FROM addons WHERE added_by IN (SELECT id FROM auth.users WHERE email = $1)
-`, email)
+	// Deployments that dropped the legacy add-ons table have nothing to clean up.
+	var hasAddons bool
+	err = authDb.TestsRawSQLQuery(ctx, `SELECT to_regclass('public.addons') IS NOT NULL`, func(rows pgx.Rows) error {
+		if !rows.Next() {
+			return rows.Err()
+		}
+
+		return rows.Scan(&hasAddons)
+	})
 	if err != nil {
 		panic(err)
+	}
+	if hasAddons {
+		err = authDb.TestsRawSQL(ctx, `
+DELETE FROM addons WHERE added_by IN (SELECT id FROM auth.users WHERE email = $1)
+`, email)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	// Now safe to delete team (team_api_keys cascade automatically).

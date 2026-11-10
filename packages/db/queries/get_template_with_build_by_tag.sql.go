@@ -10,7 +10,7 @@ import (
 )
 
 const getTemplateWithBuildByTag = `-- name: GetTemplateWithBuildByTag :one
-SELECT e.id, e.created_at, e.updated_at, e.public, e.build_count, e.spawn_count, e.last_spawned_at, e.team_id, e.created_by, e.cluster_id, e.source, eb.id, eb.created_at, eb.updated_at, eb.finished_at, eb.status, eb.dockerfile, eb.start_cmd, eb.vcpu, eb.ram_mb, eb.free_disk_size_mb, eb.total_disk_size_mb, eb.kernel_version, eb.firecracker_version, eb.env_id, eb.envd_version, eb.ready_cmd, eb.cluster_node_id, eb.reason, eb.version, eb.cpu_architecture, eb.cpu_family, eb.cpu_model, eb.cpu_model_name, eb.cpu_flags, eb.status_group, eb.team_id, eb.filesystem_only, aliases, names
+SELECT e.id, e.created_at, e.updated_at, e.public, e.build_count, e.spawn_count, e.last_spawned_at, e.team_id, e.created_by, e.cluster_id, e.source, eb.id, eb.created_at, eb.updated_at, eb.finished_at, eb.status, eb.dockerfile, eb.start_cmd, eb.vcpu, eb.ram_mb, eb.free_disk_size_mb, eb.total_disk_size_mb, eb.kernel_version, eb.firecracker_version, eb.env_id, eb.envd_version, eb.ready_cmd, eb.cluster_node_id, eb.reason, eb.version, eb.cpu_architecture, eb.cpu_family, eb.cpu_model, eb.cpu_model_name, eb.cpu_flags, eb.status_group, eb.team_id, eb.filesystem_only, eb.envd_unresponsive, eb.max_vcpu, aliases, names
 FROM public.active_envs AS e
 JOIN public.env_build_assignments AS eba ON eba.env_id = e.id
     AND (
@@ -92,6 +92,8 @@ func (q *Queries) GetTemplateWithBuildByTag(ctx context.Context, arg GetTemplate
 		&i.EnvBuild.StatusGroup,
 		&i.EnvBuild.TeamID,
 		&i.EnvBuild.FilesystemOnly,
+		&i.EnvBuild.EnvdUnresponsive,
+		&i.EnvBuild.MaxVcpu,
 		&i.Aliases,
 		&i.Names,
 	)

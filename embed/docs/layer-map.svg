@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1062 870" width="1062" height="870" role="img" aria-labelledby="title desc">
   <title id="title">E2B Embed layer map</title>
-  <desc id="desc">Four bands, top to bottom: source files in the repo, the Dockerfiles that copy them, the thirteen images (three built here, ten pulled), and the twenty compose services with the depends_on gates drawn (the seed → base-template, preflight → api-secrets and dashboard → ready gates are omitted for space). The stripe on each service names its image.</desc>
+  <desc id="desc">Four bands, top to bottom: source files in the repo, the Dockerfiles that copy them, the twelve images (three built here, nine pulled), and the nineteen compose services with the depends_on gates drawn (the seed → base-template, preflight → api-secrets and dashboard → ready gates are omitted for space). The stripe on each service names its image.</desc>
   <style>
     svg {
       --bg: #F7F8FA; --surface: #FFFFFF; --ink: #151A21; --mid: #5B6470; --rule: #C9CED6;
@@ -167,13 +167,8 @@
   <text x="862" y="279" class="sub sub-xs" text-anchor="middle">built here</text>
 
   <rect x="902" y="238" width="68" height="50" class="node"/><rect x="902" y="238" width="4" height="50" class="st-e2b"/>
-  <text x="936" y="252" class="name name-sm" text-anchor="middle">dashboard-</text>
-  <text x="936" y="264" class="name name-sm" text-anchor="middle">api</text>
-  <text x="936" y="279" class="sub sub-xs" text-anchor="middle">e2b-artifacts</text>
-
-  <rect x="978" y="238" width="68" height="50" class="node"/><rect x="978" y="238" width="4" height="50" class="st-e2b"/>
-  <text x="1012" y="257" class="name name-sm" text-anchor="middle">dashboard</text>
-  <text x="1012" y="279" class="sub sub-xs" text-anchor="middle">own release line</text>
+  <text x="936" y="257" class="name name-sm" text-anchor="middle">dashboard</text>
+  <text x="936" y="279" class="sub sub-xs" text-anchor="middle">own release line</text>
 
   <!-- band 2 -> band 3 edges -->
   <line x1="305" y1="178" x2="330" y2="236" class="edge" marker-end="url(#arr)"/>
@@ -220,8 +215,6 @@
   <!-- row E -->
   <rect x="16" y="634" width="352" height="40" class="node"/><rect x="16" y="634" width="4" height="40" class="st-e2b"/>
   <text x="28" y="650" class="name name-lg">api</text><text x="28" y="664" class="sub">:3000 · two secrets generated per install</text>
-  <rect x="384" y="634" width="168" height="40" class="node"/><rect x="384" y="634" width="4" height="40" class="st-e2b"/>
-  <text x="396" y="650" class="name name-lg">dashboard-api</text><text x="396" y="664" class="sub">:3010 · the api's admin token</text>
 
   <!-- row F -->
   <rect x="16" y="706" width="168" height="40" class="node"/><rect x="16" y="706" width="4" height="40" class="st-e2b"/>
@@ -260,9 +253,7 @@
 
   <line x1="284" y1="602" x2="284" y2="632" class="edge" marker-end="url(#arr)"/><text x="290" y="621" class="lbl">healthy</text>
   <path d="M468,602 V616 H340 V632" class="edge" marker-end="url(#arr)"/><text x="474" y="614" class="lbl">done</text>
-  <line x1="500" y1="602" x2="500" y2="632" class="edge" marker-end="url(#arr)"/><text x="506" y="621" class="lbl">done</text>
-  <line x1="468" y1="674" x2="468" y2="704" class="edge" marker-end="url(#arr)"/><text x="474" y="693" class="lbl">healthy</text>
-  <path d="M340,674 V690 H452 V704" class="edge" marker-end="url(#arr)"/>
+  <path d="M340,674 V686 H452 V704" class="edge" marker-end="url(#arr)"/><text x="458" y="698" class="lbl">healthy</text>
 
 
   <line x1="100" y1="674" x2="100" y2="704" class="edge" marker-end="url(#arr)"/><text x="106" y="693" class="lbl">healthy</text>
@@ -280,6 +271,6 @@
   <rect x="568" y="727" width="10" height="10" class="st-tools"/><text x="584" y="736" class="legend">embed/tools · 7 services</text>
   <rect x="568" y="743" width="10" height="10" class="st-node"/><text x="584" y="752" class="legend">embed/node-e2b · 2</text>
   <rect x="568" y="759" width="10" height="10" class="st-seed"/><text x="584" y="768" class="legend">embed/seed · 1</text>
-  <rect x="568" y="775" width="10" height="10" class="st-e2b"/><text x="584" y="784" class="legend">e2b-artifacts release image · 6</text>
+  <rect x="568" y="775" width="10" height="10" class="st-e2b"/><text x="584" y="784" class="legend">e2b-artifacts release image · 5</text>
   <rect x="568" y="791" width="10" height="10" class="st-hub"/><text x="584" y="800" class="legend">Docker Hub image · 4</text>
 </svg>

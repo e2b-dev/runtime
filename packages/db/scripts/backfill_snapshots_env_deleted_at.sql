@@ -17,6 +17,11 @@
 --   env_deleted_at. While no index reads the column, a stamp is a heap-only
 --   update that adds no index entries when its page has room; once one does,
 --   every stamp adds an entry to every index on snapshots.
+-- - In particular, to completion before migration 20261103090000
+--   (add_snapshot_list_live_indexes) builds the live-only snapshot indexes: a
+--   row stamped after they are built leaves its space in them, so they stay
+--   near full size. If they were built first, rebuild each with REINDEX INDEX
+--   CONCURRENTLY once this finishes.
 --
 -- Run it with psql outside a transaction (no BEGIN, no --single-transaction),
 -- since it commits after each batch. statement_timeout spans the whole run,

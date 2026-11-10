@@ -237,7 +237,7 @@ jobs:
         if: matrix.sudo == true
 
       # sudo strips PATH; pass it through so gotestsum/go resolve to the runner's
-      # toolchain (1.26.10) instead of /usr/bin/go.
+      # toolchain (1.27.3) instead of /usr/bin/go.
       - name: Run tests that require sudo
         working-directory: ${{ matrix.package }}
         run: |

@@ -69,6 +69,7 @@ func (PauseQueueExhaustedError) Error() string {
 // sandbox keeps running and the request succeeds once that checkpoint ends.
 // It matches PauseQueueExhaustedError for every caller that does not tell
 // the two apart, so a refusal flows through the same restore and retry paths.
+// A node refuses a kill of a sandbox it is migrating with the same answer.
 type PauseRefusedCheckpointInProgressError struct{}
 
 func (PauseRefusedCheckpointInProgressError) Error() string {
@@ -116,6 +117,7 @@ var refusalClasses = []struct {
 }{
 	{"checkpoint_in_progress", PauseRefusedCheckpointInProgressError{}},
 	{"envd_unresponsive", PauseRefusedEnvdUnresponsiveError{}},
+	{"unsupported", PauseUnsupportedError{}},
 }
 
 // RefusalClass is the token naming a refusal for a restored pause's waiters;
@@ -160,12 +162,38 @@ func (PauseRefusedEnvdUnresponsiveError) Is(target error) bool {
 	return ok
 }
 
+// PauseUnsupportedError is a node's refusal of a pause the sandbox's guest
+// cannot take (a filesystem-only pause of a guest without a filesystem quiesce): the sandbox keeps
+// running, and the same request will never succeed, so the record is
+// restored and the caller told to pause differently.
+type PauseUnsupportedError struct{}
+
+func (PauseUnsupportedError) Error() string {
+	return "The node refused the pause as unsupported for this sandbox"
+}
+
 // ErrExecutionMismatch reports that the stored sandbox is a different
 // incarnation than the caller intended to act on — the one it saw was already
 // removed and the ID reused by a resume or recreate. Raised by StartRemoving
 // when the caller opted in via RemoveOpts.ExpectExecutionID, and always by
 // RestoreRunning.
 var ErrExecutionMismatch = errors.New("sandbox execution no longer matches")
+
+// ErrLifecycleHeld refuses an ordinary transition, update or replacement of a
+// held record; see Sandbox.LifecycleHold.
+var ErrLifecycleHeld = errors.New("the sandbox's lifecycle is held by another operation")
+
+// ErrHoldConflict refuses a hold of a record that is another execution, not
+// running, in a transition or held by another operation.
+var ErrHoldConflict = errors.New("the sandbox record cannot be held by this operation")
+
+// ErrLockLost refuses a write under the record's lock because the lock no
+// longer holds this caller's token: it expired, and another caller may have
+// written. Nothing was written, so a retry can succeed.
+var ErrLockLost = errors.New("the record's lock was lost before the update was written")
+
+// ErrNotHeld means the record is not held by the operation.
+var ErrNotHeld = errors.New("the sandbox record is not held by this operation")
 
 // ErrSandboxKilled reports that a delete claimed the sandbox ID first.
 var ErrSandboxKilled = errors.New("sandbox was concurrently killed")

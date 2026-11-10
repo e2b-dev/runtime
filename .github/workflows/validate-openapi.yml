@@ -23,7 +23,6 @@ jobs:
           - spec/openapi.yml
           - spec/openapi-edge.yml
           - spec/openapi-hyperloop.yml
-          - spec/openapi-dashboard.yml
           - packages/envd/spec/envd.yaml
       fail-fast: false
     steps:

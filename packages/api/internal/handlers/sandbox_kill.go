@@ -82,6 +82,10 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 		a.sendAPIStoreError(c, http.StatusConflict, fmt.Sprintf("Sandbox %s is still resuming; retry the delete", sandboxID))
 
 		return
+	case errors.Is(err, orchestrator.ErrSandboxLifecycleHeld), errors.Is(err, sandbox.ErrLockLost):
+		a.sendAPIStoreError(c, http.StatusConflict, utils.SandboxLifecycleHeldMsg(sandboxID))
+
+		return
 	case errors.Is(err, orchestrator.ErrSandboxOperationFailed):
 		a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("Error killing sandbox: %s", err))
 

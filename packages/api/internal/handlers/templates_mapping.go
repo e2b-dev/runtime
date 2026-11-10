@@ -5,6 +5,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // templateRow is a row of a template list. A query that lists templates
@@ -30,6 +31,7 @@ func templateToAPI(ctx context.Context, row templateRow, withUsage bool) api.Tem
 		TemplateID:  row.TemplateID,
 		BuildID:     row.BuildID.String(),
 		CpuCount:    api.CPUCount(row.BuildVcpu),
+		MaxCpuCount: sharedUtils.CastPtr(row.BuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
 		MemoryMB:    api.MemoryMB(row.BuildRamMb),
 		DiskSizeMB:  api.DiskSizeMB(diskMB),
 		Public:      row.Public,
@@ -74,6 +76,7 @@ func templateWithBuilds(template api.Template, builds []api.TemplateBuild) api.T
 		TemplateID:    template.TemplateID,
 		BuildID:       template.BuildID,
 		CpuCount:      template.CpuCount,
+		MaxCpuCount:   template.MaxCpuCount,
 		MemoryMB:      template.MemoryMB,
 		DiskSizeMB:    template.DiskSizeMB,
 		Public:        template.Public,

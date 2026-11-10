@@ -11,8 +11,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
 // Profile is the set of decisions that depend on the guest operating system.
@@ -41,8 +39,6 @@ type Profile interface {
 
 	// Template returns the template build behaviour of the guest.
 	Template() TemplateBuild
-	// FirstBoot returns the restart tolerance of the first boot of a base image.
-	FirstBoot() FirstBoot
 }
 
 // BootConfig is the guest part of the Firecracker configuration of a cold boot.
@@ -78,8 +74,9 @@ type BootConfig struct {
 type RestoreConfig struct {
 	// ClockRealtime advances the guest clock by the wall-clock time that the snapshot was paused.
 	ClockRealtime bool
-	// NoPowerOffPatch sends no power-off device declaration before the snapshot load.
-	NoPowerOffPatch bool
+	// PowerOffPatch sends the power-off device declaration before the snapshot load.
+	// Set it only for a Firecracker that accepts the PATCH and still loads the snapshot afterwards.
+	PowerOffPatch bool
 	// MmdsStoreOptional tolerates a snapshot whose microVM has no MMDS store.
 	MmdsStoreOptional bool
 	// NoMemfd keeps the guest memory off the memfd backend.
@@ -93,6 +90,21 @@ type FirecrackerSelection struct {
 	// PinToBuild keeps the Firecracker binary and the kernel slot payload that the template metadata records.
 	// PinToBuild also skips the fleet's version map.
 	PinToBuild bool
+	// AcceptVersion refuses a Firecracker version that the guest cannot run, by its name (the version directory).
+	// Nil accepts every version.
+	AcceptVersion func(version string) error
+	// RequiredFeatures lists the features that the Firecracker binary must report on the Features line of its version output.
+	// Empty requires none, and the binary is not asked.
+	RequiredFeatures []string
+}
+
+// Accept refuses a Firecracker version that the guest cannot run, by its name.
+func (s FirecrackerSelection) Accept(version string) error {
+	if s.AcceptVersion == nil {
+		return nil
+	}
+
+	return s.AcceptVersion(version)
 }
 
 // EnvdInit is the set of time budgets and the payload of the envd start.
@@ -103,6 +115,9 @@ type EnvdInit struct {
 	// ColdBootEnvdTimeout is the envd wait of a cold boot that has no caller budget.
 	// Zero keeps the default wait.
 	ColdBootEnvdTimeout time.Duration
+	// RestoreEnvdTimeoutFloor is the minimum envd wait of a restore from a snapshot.
+	// Zero keeps the wait of the flag.
+	RestoreEnvdTimeoutFloor time.Duration
 	// NoCABundle sends no CA bundle with the envd init request.
 	NoCABundle bool
 }
@@ -212,8 +227,9 @@ type TemplateBuild struct {
 	DefaultWorkDir string
 	// HugePages backs the memory image of every template of the guest with huge pages.
 	HugePages bool
-	// LayerPause holds the pause options of a build layer.
-	LayerPause LayerPause
+	// DedupLayerMemfiles deduplicates every build layer's memfile diff against its parent at 4 KiB,
+	// whatever memfile-diff-dedup says, and keeps the raw diff when the dedup fails.
+	DedupLayerMemfiles bool
 }
 
 // Skips reports whether the guest skips the build phase p.
@@ -254,6 +270,9 @@ type RenderedStep struct {
 	Warnings []string
 	// ArchivePath is the guest path that receives the archive of a COPY or ADD step.
 	ArchivePath string
+	// User is the guest user that uploads the archive and runs Command, such as the user argument of a RUN step.
+	// Empty is the build's current user.
+	User string
 	// State is the build state after the step.
 	State StepState
 }
@@ -262,21 +281,4 @@ type RenderedStep struct {
 type StepRenderer interface {
 	// Render returns the guest command of one step and the build state after it.
 	Render(step Step, state StepState) (RenderedStep, error)
-}
-
-// LayerPause is the set of pause options of a template build layer.
-type LayerPause struct {
-	// Dedup writes the memory diff of the layer deduplicated against the parent.
-	Dedup bool
-	// DedupFlag gates Dedup when it is set.
-	DedupFlag *featureflags.BoolFlag
-}
-
-// FirstBoot is the restart tolerance of the first boot of a base image.
-// The zero value refuses a first boot.
-type FirstBoot struct {
-	// MaxResets is the number of guest resets that a first boot tolerates before envd answers.
-	MaxResets int
-	// EnvdWait is the envd wait of each boot attempt.
-	EnvdWait time.Duration
 }

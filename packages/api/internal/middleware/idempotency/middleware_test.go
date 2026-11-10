@@ -30,7 +30,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/ratelimit"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -101,7 +101,7 @@ func testRouter(t *testing.T, flags *featureflags.Client, store store, teamID uu
 				id = uuid.NewSHA1(teamID, []byte("other"))
 			}
 			c := ginmiddleware.GetGinContext(ctx)
-			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &authqueries.Team{ID: id}})
+			auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: id}})
 
 			return nil
 		}},

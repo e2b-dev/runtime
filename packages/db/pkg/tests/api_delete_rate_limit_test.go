@@ -78,7 +78,7 @@ func TestAPIDeleteRateMigrationRoundTrip(t *testing.T) {
 	otherLimits := func() string {
 		t.Helper()
 		var limits string
-		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'api_team_rps_delete' - 'max_secrets')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
+		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(pl) - 'api_team_rps_delete' - 'max_secrets' - 'updated_at')::text FROM public.project_limits pl WHERE team_id = $1`, teamID).Scan(&limits)
 		require.NoError(t, err)
 
 		return limits

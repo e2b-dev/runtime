@@ -14,7 +14,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -126,7 +126,7 @@ func (s *Service) BanTeams(ctx context.Context, teamIDs []uuid.UUID) []BanOutcom
 }
 
 func (s *Service) setBanned(ctx context.Context, teamID uuid.UUID, banned bool) error {
-	rows, err := s.db.Dashboard.SetTeamBanned(ctx, dashboardqueries.SetTeamBannedParams{IsBanned: banned, TeamID: teamID})
+	rows, err := s.db.SetTeamBanned(ctx, queries.SetTeamBannedParams{IsBanned: banned, TeamID: teamID})
 	if err != nil {
 		return fmt.Errorf("set team banned: %w", err)
 	}

@@ -20,7 +20,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
@@ -68,7 +67,7 @@ func TestPostV2SandboxesSuppliesIdempotencyFields(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
 			team := &types.Team{
-				Team: &authqueries.Team{ID: uuid.New()},
+				Team: &dbtypes.Team{ID: uuid.New()},
 				ProjectSettings: dbtypes.ProjectSettings{
 					SandboxSettings: dbtypes.SandboxSettings{DefaultAllowPublicTraffic: test.projectDefault},
 				},
@@ -117,7 +116,7 @@ func TestPostV2SandboxesRetriesSafeFailures(t *testing.T) {
 	flags, err := featureflags.NewClientWithDatasource(source)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
-	team := &types.Team{Team: &authqueries.Team{ID: uuid.New(), Slug: "test-team"}}
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New(), Slug: "test-team"}}
 	db := testutils.SetupDatabase(t)
 	cache := templatecache.NewTemplateCache(db.SqlcClient, client)
 	t.Cleanup(func() { require.NoError(t, cache.Close(context.WithoutCancel(t.Context()))) })

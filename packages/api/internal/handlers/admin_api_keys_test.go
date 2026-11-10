@@ -17,8 +17,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/team"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	sharedkeys "github.com/e2b-dev/infra/packages/shared/pkg/keys"
 )
 
@@ -37,7 +37,7 @@ func TestPostAdminTeamsTeamIDApiKeysCreatesTeamKey(t *testing.T) {
 
 	store := &APIStore{
 		authDB:      testDB.AuthDB,
-		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &authqueries.Team{ID: teamID}}},
+		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &dbtypes.Team{ID: teamID}}},
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
@@ -93,7 +93,7 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsBlockedTeam(t *testing.T) {
 
 	store := &APIStore{
 		authDB: testDB.AuthDB,
-		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &authqueries.Team{
+		authService: fakeAPIKeyAuthService{team: &authtypes.Team{Team: &dbtypes.Team{
 			ID:            teamID,
 			IsBlocked:     true,
 			BlockedReason: &blockedReason,
@@ -201,7 +201,7 @@ func TestDeleteAdminTeamsTeamIDApiKeysDeletesTeamKey(t *testing.T) {
 	store := &APIStore{
 		authDB: testDB.AuthDB,
 		authService: fakeAPIKeyAuthService{
-			team:                    &authtypes.Team{Team: &authqueries.Team{ID: teamID}},
+			team:                    &authtypes.Team{Team: &dbtypes.Team{ID: teamID}},
 			invalidatedAPIKeyHashes: &invalidatedHashes,
 		},
 	}

@@ -21,4 +21,3 @@ func (defaultProfile) EnvdInit() EnvdInit                { return EnvdInit{} }
 func (defaultProfile) Capabilities() Capabilities        { return Capabilities{} }
 func (defaultProfile) Reset() Reset                      { return Reset{} }
 func (defaultProfile) Template() TemplateBuild           { return TemplateBuild{} }
-func (defaultProfile) FirstBoot() FirstBoot              { return FirstBoot{} }

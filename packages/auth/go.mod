@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/auth
 
-go 1.26.10
+go 1.27.3
 
 replace github.com/e2b-dev/infra/packages/db => ../db
 
@@ -28,7 +28,7 @@ require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/bsm/redislock v0.9.4 // indirect
+	github.com/bsm/redislock v0.10.0 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect

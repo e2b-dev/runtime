@@ -58,6 +58,7 @@ type Orchestrator struct {
 	httpClient                    *http.Client
 	nodeDiscovery                 servicediscovery.Discoverer
 	sandboxStore                  *sandbox.Store
+	sandboxEvictor                *evictor.Evictor
 	nodes                         *smap.Map[*nodemanager.Node]
 	placementAlgorithm            *placement.BestOfK
 	featureFlagsClient            *featureflags.Client
@@ -74,6 +75,7 @@ type Orchestrator struct {
 	pauseRefusalRestoreCounter    metric.Int64Counter
 	networkUpdateUnstoredCounter  metric.Int64Counter
 	noCeilingPlacementsCounter    metric.Int64Counter
+	featureUnsupportedCounter     metric.Int64Counter
 	teamMetricsObserver           *metrics.TeamObserver
 	accessTokenGenerator          *sandbox.AccessTokenGenerator
 	createdCounter                metric.Int64Counter
@@ -218,6 +220,8 @@ func New(
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
+			EndPoweredOffSandbox:     o.endPoweredOffSandbox,
+			EndEndedSandbox:          o.endEndedSandbox,
 		},
 	)
 
@@ -229,6 +233,9 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox evictor: %w", err)
 	}
+	// Set before the sync starts, which is the only caller of
+	// endPoweredOffSandbox.
+	o.sandboxEvictor = sandboxEvictor
 	go sandboxEvictor.Start(ctx)
 
 	teamMetricsObserver, err := metrics.NewTeamObserver(ctx, o.sandboxStore)
@@ -248,7 +255,7 @@ func New(
 		return nil, fmt.Errorf("failed to setup metrics: %w", err)
 	}
 
-	go o.updateBestOfKConfig(ctx)
+	go o.refreshFlagConfig(ctx)
 
 	return &o, nil
 }
@@ -346,9 +353,10 @@ func (o *Orchestrator) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// updateBestOfKConfig periodically updates the BestOfK algorithm configuration from feature flags
-func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second) // Check for config updates every 30 seconds
+// refreshFlagConfig re-reads the BestOfK placement configuration from its
+// flags every 30 s.
+func (o *Orchestrator) refreshFlagConfig(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -356,10 +364,7 @@ func (o *Orchestrator) updateBestOfKConfig(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			config := getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages)
-
-			// Update the config
-			o.placementAlgorithm.UpdateConfig(config)
+			o.placementAlgorithm.UpdateConfig(getBestOfKConfig(ctx, o.featureFlagsClient, o.scoreHugepages))
 		}
 	}
 }

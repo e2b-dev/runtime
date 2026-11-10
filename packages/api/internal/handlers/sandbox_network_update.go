@@ -94,8 +94,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		maxDomains := a.featureFlags.IntFlag(ctx, featureflags.MaxNetworkRuleDomains, featureflags.TeamContext(teamID.String()))
-		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, maxDomains, body.Rules); apiErr != nil {
+		if apiErr := validateNetworkRules(ctx, a.featureFlags, teamID, sbxInfo.EnvdVersion, a.networkRuleLimits(ctx, teamID), body.Rules); apiErr != nil {
 			a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 
 			return

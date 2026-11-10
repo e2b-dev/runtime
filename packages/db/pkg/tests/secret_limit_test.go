@@ -79,7 +79,7 @@ func TestSecretLimitMigrationRoundTrip(t *testing.T) {
 	otherLimits := func() string {
 		t.Helper()
 		var limits string
-		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(tl) - 'max_secrets')::text FROM public.team_limits tl WHERE id = $1`, teamID).Scan(&limits)
+		err := sqlDB.QueryRowContext(t.Context(), `SELECT (to_jsonb(pl) - 'max_secrets' - 'api_team_rps_delete' - 'updated_at')::text FROM public.project_limits pl WHERE team_id = $1`, teamID).Scan(&limits)
 		require.NoError(t, err)
 
 		return limits

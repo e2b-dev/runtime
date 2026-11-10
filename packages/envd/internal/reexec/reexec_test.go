@@ -1,3 +1,5 @@
+//go:build unix
+
 package reexec_test
 
 import (
