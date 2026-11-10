@@ -251,10 +251,13 @@ func TestRestoreKillOrFinished(t *testing.T) {
 
 	kill := uuid.New()
 	begin(t, st, TransitionRequest{ProjectID: project, ActorID: actor, TransitionID: kill, Action: ActionKill}, BeginStarted)
-	restore(t, st, project, actor, kill, time.Second, RestoreNotRestorable)
-	require.Equal(t, StateKilling, runOf(t, pool, actor).state)
+	restore(t, st, project, actor, kill, time.Second, RestoreRestored)
+	require.Equal(t, StateRunning, runOf(t, pool, actor).state)
+	finishTransition(t, st, project, actor, kill, nil, FinishTransitionRestored)
+	kill = uuid.New()
+	begin(t, st, TransitionRequest{ProjectID: project, ActorID: actor, TransitionID: kill, Action: ActionKill}, BeginStarted)
 	finishTransition(t, st, project, actor, kill, nil, FinishTransitionFinished)
-	restore(t, st, project, actor, kill, time.Second, RestoreNotRestorable)
+	restore(t, st, project, actor, kill, time.Second, RestoreAlreadyFinished)
 	require.Equal(t, StateGone, runOf(t, pool, actor).state)
 
 	project, record, _ = runningActor(t, st, uuid.New(), strict)

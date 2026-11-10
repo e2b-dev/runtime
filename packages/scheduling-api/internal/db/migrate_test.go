@@ -22,7 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/dbmigrate"
 )
 
-var tables = []string{"scheduling_actor", "scheduling_actor_run", "scheduling_project_live_count"}
+var tables = []string{"scheduling_actor", "scheduling_actor_run", "scheduling_project_live_count", "scheduling_kill_claim"}
 
 func TestMigrationsEmbedsTheDirectory(t *testing.T) {
 	t.Parallel()

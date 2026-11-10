@@ -72,6 +72,36 @@ func TestStartLifecycle(t *testing.T) {
 	requireCountsMatch(t, pool)
 }
 
+func TestPutClampsDeadline(t *testing.T) {
+	t.Parallel()
+	for _, supplied := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reserved", true: "supplied"}[supplied], func(t *testing.T) {
+			t.Parallel()
+			st, pool := newStore(t)
+			project, actor, rid := uuid.New(), uuid.New(), uuid.New()
+			reserve(t, st, project, actor, rid, strict, ReserveReserved)
+			record := newActor(project, actor)
+			record.MaxInstanceLength = time.Hour
+			if supplied {
+				deadline := record.StartTime.Add(3 * time.Hour)
+				record.EndTime = &deadline
+			}
+			put(t, st, rid, record, PutStored)
+			got, err := st.Get(t.Context(), project, actor)
+			require.NoError(t, err)
+			require.True(t, record.StartTime.Add(time.Hour).Equal(got.EndTime))
+			deadline := record.StartTime.Add(30 * time.Minute)
+			_, err = st.UpdateDeadline(t.Context(), project, actor, record.ExecutionID, deadline, got.EndTime)
+			require.NoError(t, err)
+			put(t, st, rid, record, PutStored)
+			got, err = st.Get(t.Context(), project, actor)
+			require.NoError(t, err)
+			require.True(t, deadline.Equal(got.EndTime))
+			require.Equal(t, map[int16]int32{0: 1}, liveCounts(t, pool, project))
+		})
+	}
+}
+
 func TestReserveRepeat(t *testing.T) {
 	t.Parallel()
 	st, pool := newStore(t)
@@ -261,10 +291,10 @@ VALUES ($1, $2, 'gone', now(), $3, now(), 'node failed', 13, now(), 0)`, actor, 
 			})
 		}, func() {
 			rid := uuid.New()
-			reserve(t, st, owner, actor, rid, strict, ReserveReserved)
-			outcome, err := st.FinishStart(t.Context(), owner, actor, rid, Failure{Message: "node failed"})
+			_, err := pool.Exec(t.Context(), `INSERT INTO public.scheduling_actor_run
+			(actor_id,project_id,state,end_time,reservation_id,reserved_at,failure_message,failure_code,gone_at,counter_slot)
+			VALUES ($1,$2,'gone',now(),$3,now(),'node failed',13,now(),0)`, actor, owner, rid)
 			require.NoError(t, err)
-			require.Equal(t, FinishStartFinished, outcome)
 		})
 		require.Empty(t, outcomes)
 		require.Len(t, errs, 1)
@@ -592,7 +622,7 @@ func newActor(project, actor uuid.UUID) Actor {
 		ActorID:                 actor,
 		ExecutionID:             uuid.NewString(),
 		StartTime:               time.Date(2030, 1, 1, 0, 0, 0, 123000, time.UTC),
-		MaxInstanceLength:       24*time.Hour + time.Microsecond,
+		MaxInstanceLength:       48*time.Hour + time.Microsecond,
 		NodeID:                  "node-1",
 		ClusterID:               uuid.New(),
 		BaseTemplateID:          "base",

@@ -295,19 +295,34 @@ func (s *Store) FinishTransition(ctx context.Context, projectID, actorID, transi
 	})
 }
 
-// RestoreRunning ends a refused pause: the run is running again with a new
-// retry window. The transition ID stays on the run, so that repeats and
-// waiters can tell a restored pause from a replaced one.
-func (s *Store) RestoreRunning(ctx context.Context, projectID, actorID, transitionID uuid.UUID, retryAfter time.Duration) (RestoreResult, error) {
+type RestoreOptions struct {
+	RefusalClass string
+	HoldOnly     bool
+	EnvdRefusal  bool
+}
+
+func (s *Store) RestoreRunning(ctx context.Context, projectID, actorID, transitionID uuid.UUID, retryAfter time.Duration, options ...RestoreOptions) (RestoreResult, error) {
 	return telemetry.Observe1(ctx, tracer, "store.RestoreRunning", func(ctx context.Context) (RestoreResult, error) {
+		var opts RestoreOptions
+		if len(options) > 0 {
+			opts = options[0]
+		}
 		restored, err := s.queries.RestoreRunning(ctx, queries.RestoreRunningParams{
+			RefusalClass: opts.RefusalClass,
+			EnvdRefusal:  opts.EnvdRefusal,
+			HoldOnly:     opts.HoldOnly,
 			RetryAfter:   pgtype.Interval{Microseconds: retryAfter.Microseconds(), Valid: true},
 			ActorID:      actorID,
 			ProjectID:    projectID,
 			TransitionID: transitionID,
 		})
 		if err == nil {
-			return RestoreResult{Outcome: RestoreRestored, RefusedUntil: *restored.RefusedUntil, RefusedSince: *restored.RefusedSince}, nil
+			result := RestoreResult{Outcome: RestoreRestored, RefusedUntil: *restored.RefusedUntil}
+			if restored.RefusedSince != nil {
+				result.RefusedSince = *restored.RefusedSince
+			}
+
+			return result, nil
 		}
 		if !isNoRows(err) {
 			return RestoreResult{}, fmt.Errorf("restore running %s: %w", actorID, err)
@@ -322,12 +337,17 @@ func (s *Store) RestoreRunning(ctx context.Context, projectID, actorID, transiti
 			return RestoreResult{}, fmt.Errorf("restore running %s: inspect: %w", actorID, err)
 		case run.TransitionID == nil || *run.TransitionID != transitionID:
 			return RestoreResult{Outcome: RestoreNotFound}, nil
-		case TransitionAction(*run.TransitionAction) != ActionPause:
+		case TransitionAction(*run.TransitionAction) != ActionPause && TransitionAction(*run.TransitionAction) != ActionKill:
 			return RestoreResult{Outcome: RestoreNotRestorable}, nil
 		case state == StateGone:
 			return RestoreResult{Outcome: RestoreAlreadyFinished}, nil
-		case state == StateRunning && run.RefusedUntil != nil && run.RefusedSince != nil:
-			return RestoreResult{Outcome: RestoreRestored, RefusedUntil: *run.RefusedUntil, RefusedSince: *run.RefusedSince}, nil
+		case state == StateRunning && run.RefusedUntil != nil:
+			result := RestoreResult{Outcome: RestoreRestored, RefusedUntil: *run.RefusedUntil}
+			if run.RefusedSince != nil {
+				result.RefusedSince = *run.RefusedSince
+			}
+
+			return result, nil
 		default:
 			return RestoreResult{}, fmt.Errorf("restore running %s: transition %s in state %s was not restored", actorID, transitionID, state)
 		}

@@ -44,6 +44,7 @@ func isLive(state State) bool {
 var (
 	ErrOtherProject  = errors.New("actor ID is held by another project")
 	ErrInvalidRecord = errors.New("record cannot be stored as jsonb")
+	ErrKillClaim     = errors.New("sandbox snapshot is being deleted")
 )
 
 type Reservation struct {
@@ -65,11 +66,16 @@ const (
 )
 
 type ReserveResult struct {
-	Outcome ReserveOutcome
+	ReservationID uuid.UUID
+	Outcome       ReserveOutcome
 	// Set only for ReserveAlreadyRunning.
 	Actor *LiveActor
-	// Set only for ReserveFinished, when FinishStart ended the start.
+	// Set only for ReserveFinished, when FinishStart or the start timeout
+	// ended the start.
 	Failure *Failure
+	// Set only for ReserveReserved and ReserveAlreadyPending: startTimeout
+	// after reserved_at of the starting row.
+	StartDeadline time.Time
 }
 
 type Actor struct {
@@ -86,14 +92,19 @@ type Actor struct {
 	AutoPause               bool
 	AutoPauseFilesystemOnly bool
 	// A JSON object.
-	Record []byte
+	Record  []byte
+	EndTime *time.Time
 }
 
 type LiveActor struct {
 	Actor
 
-	State   State
-	EndTime time.Time
+	State            State
+	EndTime          time.Time
+	RefusedUntil     *time.Time
+	RefusedSince     *time.Time
+	EnvdRefusedUntil *time.Time
+	EnvdRefusedSince *time.Time
 }
 
 type PutOutcome int
@@ -171,7 +182,16 @@ func (s *Store) Reserve(ctx context.Context, r Reservation) (ReserveResult, erro
 		for range reserveAttempts {
 			var reserved queries.ReserveRow
 			err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-				var err error
+				if err := lockAdmission(ctx, tx, r.ActorID); err != nil {
+					return err
+				}
+				claimed, err := s.queries.WithTx(tx).HasKillClaim(ctx, queries.HasKillClaimParams{ProjectID: r.ProjectID, ActorID: r.ActorID})
+				if err != nil {
+					return err
+				}
+				if claimed {
+					return ErrKillClaim
+				}
 				reserved, err = s.queries.WithTx(tx).Reserve(ctx, queries.ReserveParams{
 					ActorID:       r.ActorID,
 					ProjectID:     r.ProjectID,
@@ -193,7 +213,7 @@ func (s *Store) Reserve(ctx context.Context, r Reservation) (ReserveResult, erro
 				return ReserveResult{}, fmt.Errorf("reserve %s: %w", r.ActorID, err)
 			}
 			if reserved.Inserted {
-				return ReserveResult{Outcome: ReserveReserved}, nil
+				return ReserveResult{Outcome: ReserveReserved, StartDeadline: reserved.ReservedAt.Add(startTimeout)}, nil
 			}
 
 			run, err := s.reads.InspectReservation(ctx, r.ActorID)
@@ -226,9 +246,9 @@ func (s *Store) Reserve(ctx context.Context, r Reservation) (ReserveResult, erro
 
 				continue
 			case state == StateStarting && run.ReservationID == r.ReservationID:
-				return ReserveResult{Outcome: ReserveReserved}, nil
+				return ReserveResult{Outcome: ReserveReserved, StartDeadline: run.ReservedAt.Add(startTimeout)}, nil
 			case state == StateStarting:
-				return ReserveResult{Outcome: ReserveAlreadyPending}, nil
+				return ReserveResult{Outcome: ReserveAlreadyPending, StartDeadline: run.ReservedAt.Add(startTimeout), ReservationID: run.ReservationID}, nil
 			}
 
 			actor, err := get(ctx, s.reads, r.ProjectID, r.ActorID)
@@ -262,6 +282,8 @@ func (s *Store) Put(ctx context.Context, reservationID uuid.UUID, a Actor) (PutO
 				ActorID:       a.ActorID,
 				ProjectID:     a.ProjectID,
 				ReservationID: reservationID,
+				EndTime:       a.EndTime,
+				MaxEndTime:    a.StartTime.Add(a.MaxInstanceLength),
 			})
 			if err != nil {
 				return fmt.Errorf("update run: %w", err)
@@ -392,6 +414,11 @@ func get(ctx context.Context, q *queries.Queries, projectID, actorID uuid.UUID) 
 	if err != nil {
 		return nil, fmt.Errorf("read actor: %w", err)
 	}
+
+	return actorFromRow(row)
+}
+
+func actorFromRow(row queries.GetLiveActorRow) (*LiveActor, error) {
 	var metadata map[string]string
 	if err := json.Unmarshal(row.Metadata, &metadata); err != nil {
 		return nil, fmt.Errorf("decode metadata: %w", err)
@@ -413,8 +440,12 @@ func get(ctx context.Context, q *queries.Queries, projectID, actorID uuid.UUID) 
 			AutoPauseFilesystemOnly: row.AutoPauseFilesystemOnly,
 			Record:                  row.Record,
 		},
-		State:   row.State,
-		EndTime: row.EndTime,
+		State:            row.State,
+		EndTime:          row.EndTime,
+		RefusedUntil:     row.RefusedUntil,
+		RefusedSince:     row.RefusedSince,
+		EnvdRefusedUntil: row.EnvdRefusedUntil,
+		EnvdRefusedSince: row.EnvdRefusedSince,
 	}, nil
 }
 

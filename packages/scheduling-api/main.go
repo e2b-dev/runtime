@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/e2b-dev/infra/packages/scheduling-api/internal/cleanup"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
@@ -93,7 +94,7 @@ func run() int {
 		drain = 0
 	}
 	log.Info(ctx, "starting "+serviceName, zap.String("commit_sha", commitSHA), zap.String("version", version))
-	if err := serve(ctx, cfg, tel, drain); err != nil {
+	if err := serve(ctx, cfg, tel, drain, cleanup.DefaultConfig); err != nil {
 		log.Error(ctx, serviceName+" stopped with an error", zap.Error(err))
 
 		return 1
@@ -102,10 +103,7 @@ func run() int {
 	return 0
 }
 
-// serve runs the gRPC listener until ctx is cancelled, then withdraws health,
-// keeps serving for drain and stops gracefully. The database pools close after
-// the last request has finished.
-func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain time.Duration) error {
+func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain time.Duration, cleanupConfig cleanup.Config) error {
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.GRPCAddress)
 	if err != nil {
 		return fmt.Errorf("gRPC listener initialization failed: %w", err)
@@ -124,12 +122,30 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 		return fmt.Errorf("read database initialization failed: %w", err)
 	}
 	defer readPool.Close()
-	grpcServer, healthServer, err := newServer(tel, store.New(writePool, readPool))
+	st := store.New(writePool, readPool)
+	grpcServer, healthServer, err := newServer(tel, st)
 	if err != nil {
 		_ = listener.Close()
 
 		return fmt.Errorf("gRPC server initialization failed: %w", err)
 	}
+	worker, err := cleanup.New(st, writePool.Config().ConnConfig, cleanupConfig)
+	if err != nil {
+		_ = listener.Close()
+
+		return fmt.Errorf("cleanup worker initialization failed: %w", err)
+	}
+
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.Run(workerCtx)
+	}()
+	defer func() {
+		stopWorker()
+		<-workerDone
+	}()
 
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- grpcServer.Serve(listener) }()

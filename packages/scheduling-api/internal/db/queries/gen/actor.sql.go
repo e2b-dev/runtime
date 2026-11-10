@@ -16,7 +16,8 @@ import (
 const getLiveActor = `-- name: GetLiveActor :one
 SELECT a.actor_id, a.project_id, a.execution_id, a.start_time, a.max_instance_length, a.node_id,
        a.cluster_id, a.base_template_id, a.template_id, a.metadata, a.auto_pause,
-       a.auto_pause_filesystem_only, a.record, r.state, r.end_time
+       a.auto_pause_filesystem_only, a.record, r.state, r.end_time, r.refused_until, r.refused_since,
+       r.envd_refused_until, r.envd_refused_since
   FROM public.scheduling_actor a
   JOIN public.scheduling_actor_run r USING (actor_id)
  WHERE a.actor_id = $1 AND a.project_id = $2 AND r.state IN ('running', 'pausing', 'killing', 'snapshotting')
@@ -43,6 +44,10 @@ type GetLiveActorRow struct {
 	Record                  []byte
 	State                   SchedulingActorState
 	EndTime                 time.Time
+	RefusedUntil            *time.Time
+	RefusedSince            *time.Time
+	EnvdRefusedUntil        *time.Time
+	EnvdRefusedSince        *time.Time
 }
 
 func (q *Queries) GetLiveActor(ctx context.Context, arg GetLiveActorParams) (GetLiveActorRow, error) {
@@ -64,6 +69,10 @@ func (q *Queries) GetLiveActor(ctx context.Context, arg GetLiveActorParams) (Get
 		&i.Record,
 		&i.State,
 		&i.EndTime,
+		&i.RefusedUntil,
+		&i.RefusedSince,
+		&i.EnvdRefusedUntil,
+		&i.EnvdRefusedSince,
 	)
 	return i, err
 }

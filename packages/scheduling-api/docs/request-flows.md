@@ -2,15 +2,17 @@
 
 ## Current flow
 
-The API owns sandbox state and node calls today. scheduling-api implements the
-start path, `Get`, and pause and kill (see below), but no service calls it yet.
+The API owns node calls and uses Redis for state and admission.
+The scheduling-api RPCs are implemented. API integration is planned in a
+separate change. The sequence diagrams below describe the intended callers
+of those RPCs, not an existing API backend.
 
 ```mermaid
 flowchart LR
     Client -->|Normal sandbox ID| API[API today]
     API -->|Reservations, state, counters| Valkey
     API -->|Create, resume, pause, delete, update| Orchestrator
-    Scheduling["scheduling-api: start, Get, pause and kill state; no callers yet"]
+    API -.->|Planned: admission and live state| Scheduling[scheduling-api]
     Scheduling -->|State and counters| DB[Postgres primary]
 ```
 
@@ -18,8 +20,9 @@ flowchart LR
 
 `Reserve`, `Put`, `FinishStart` and `Get` are implemented. The
 [README](../README.md#methods) gives their outcomes and error codes. During
-migration, the API still selects nodes and calls the orchestrator. Scheduling
-owns admission and state; all reads and writes use the **Postgres primary**.
+migration, the planned integration keeps node selection and orchestrator calls
+in the API. Scheduling owns admission and state; all reads and writes use the
+**Postgres primary**.
 
 Every request carries `project_id` and `sandbox_id`. IDs at this boundary are
 normal sandbox IDs: scheduling converts them to internal actor UUIDs and back.
@@ -37,8 +40,9 @@ sequenceDiagram
     Client->>API: Create or resume
     API->>Scheduling: Reserve(project_id, sandbox_id, reservation_id, limit, end_time)
     Scheduling->>DB: Check admission; set STARTING + increment counter slot, one transaction
-    Scheduling-->>API: RESERVED / ALREADY_PENDING / ALREADY_RUNNING / LIMIT_EXCEEDED / FINISHED
+    Scheduling-->>API: RESERVED + start_deadline / ALREADY_PENDING + start_deadline / ALREADY_RUNNING / LIMIT_EXCEEDED / FINISHED
     alt RESERVED
+        Note over API,Node: Finish with Put or FinishStart before start_deadline (reserved_at + 90 s, database clock)
         API->>Node: Place + create or resume
         alt Node started
             Node-->>API: Record
@@ -54,7 +58,8 @@ sequenceDiagram
             API-->>Client: Start failed
         end
     else ALREADY_PENDING
-        API-->>Client: Start in progress (no wait method yet)
+        API->>Scheduling: InspectReservation, checking the reservation ID until it ends
+        API-->>Client: Started or the start failure
     else ALREADY_RUNNING
         API-->>Client: Existing sandbox from the response
     else LIMIT_EXCEEDED
@@ -77,17 +82,30 @@ rolled back; `FinishStart` is not a guaranteed rollback for a failed `Put`.
 
 Not implemented yet:
 
-- No sweeper ends a start whose caller never calls `Put` or `FinishStart`. Such
-  a start stays STARTING and keeps counting against the project limit.
-- No sweeper deletes GONE tombstones.
 - No wait method for `ALREADY_PENDING`.
+
+A background worker cleans up, on one replica at a time (see the
+[README](../README.md#background-cleanup)):
+
+- A start that is still STARTING 90 s after `reserved_at` is ended: GONE with
+  `start timed out`, code 4, and the same slot decremented, in one
+  transaction that rechecks the project, reservation ID, state and age. After
+  it, a late `Put` returns `NOT_FOUND` and the API must remove the sandbox on
+  the node; the cleanup does not stop it.
+- GONE rows older than 5 minutes after `gone_at` are deleted in bounded
+  batches, without changing counters. While a gone row remains and no new
+  attempt has replaced it, repeated calls get the terminal outcome. After the
+  purge, finish, wait and begin calls return `NOT_FOUND`, and `Reserve` with
+  the old reservation ID starts a new attempt, so the API must stop retrying
+  with one reservation ID within that time.
 
 ## Implemented: pause and kill
 
 `BeginTransition`, `FinishTransition`, `RestoreRunning` and
 `WaitForTransition` are implemented. The
-[README](../README.md#pause-and-kill) gives their outcomes. The API still
-calls the node; scheduling stores the state. There is no streaming.
+[README](../README.md#pause-and-kill) gives their outcomes. In the planned
+integration, the API calls the node; scheduling stores the state. There is no
+streaming.
 Transition ownership is stored in PostgreSQL. Watchers are local to each
 replica; callers can wait on any replica. On each replica, the calls for one
 transition share one watch. It reads at once, and then every 25 ms to 500 ms,
@@ -139,19 +157,66 @@ transition back. The owner retries with the same transition ID.
 
 Not implemented yet:
 
-- No sweeper ends a transition whose owner never calls `FinishTransition` or
-  `RestoreRunning`. The sandbox stays pausing or killing and waiters get
-  `WAITING`.
+- No caller recovers a transition whose owner never calls `FinishTransition`
+  or `RestoreRunning`. The sandbox stays pausing or killing and waiters get
+  `WAITING`. The recovery methods below exist, but nothing calls them yet.
 - No method begins a snapshot.
 - Replicas do not share reads, and no notification wakes a waiter: a
   transition is seen at the next read of the watch.
 
-## Proposed: the other methods
+## Implemented: stale transition recovery methods
 
-**The methods below are proposed, not implemented or final.** They follow the
-same rules as the start path: optimistic revision checks and transition IDs
-reject stale writes and identify retries. The diagrams show only the key
-arguments.
+`ListStaleTransitions` and `ClaimTransition` are implemented, but no service
+calls them and scheduling never calls a node. The
+[README](../README.md#stale-transitions) gives their outcomes. A transition
+is stale 95 s after it began or was last claimed; that makes it a candidate,
+not proof that its owner has stopped. The intended recovery caller is a
+trusted API worker:
+
+```mermaid
+sequenceDiagram
+    participant Recovery as API recovery worker
+    participant Scheduling as scheduling-api (any replica)
+    participant DB as Postgres primary
+    participant Node as Orchestrator
+
+    Recovery->>Scheduling: ListStaleTransitions(page_token)
+    Scheduling->>DB: PAUSING / KILLING older than 95 s, all projects
+    Scheduling-->>Recovery: project, sandbox, transition_id, action, execution, node
+    Recovery->>Scheduling: ClaimTransition(old transition_id, new transition_id, expected execution)
+    Scheduling->>DB: Replace transition_id and transition_at if still stale and same execution, one statement
+    Scheduling-->>Recovery: CLAIMED + sandbox / NOT_STALE / CONFLICT / EXECUTION_MISMATCH / ALREADY_* / NOT_FOUND
+    alt CLAIMED
+        Recovery->>Node: Check the sandbox of the expected execution
+        alt The sandbox has ended on the node
+            Recovery->>Scheduling: FinishTransition(new transition_id)
+        else The pause was refused and the sandbox runs
+            Recovery->>Scheduling: RestoreRunning(new transition_id)
+        else Unknown
+            Note over Recovery,Node: Leave it unresolved. It is stale again after 95 s.
+        end
+    end
+```
+
+The claim prevents only `FinishTransition` and `RestoreRunning` with the old
+transition ID from changing the claimed attempt. It does not cancel a node
+call that the old owner still runs, and it does not permanently reject
+`BeginTransition` with the old ID: after the new owner restores the sandbox
+to running, an old `BeginTransition` can start another operation. The API's
+retries of `BeginTransition` must therefore stop before 95 s after the first
+attempt. Waiters with the old ID get `UNKNOWN`; they reread the sandbox with
+`Get` and reassess, and do not use `BeginTransition` as a lookup. The
+orchestrator calls must be shown to be safe to repeat and limited to the
+expected execution before an automatic recovery uses these methods.
+Automatic recovery is not approved yet.
+
+## Implemented: deadline, list and snapshot-deletion claims
+
+`InspectReservation` lets a start joiner poll the current reservation ID and
+its outcome. It does not retain the history of replaced reservations.
+`UpdateDeadline` requires the expected execution and previous deadline. A
+concurrent transition or deadline update rejects the write. The caller sends
+the node update only after the state write succeeds.
 
 ```mermaid
 sequenceDiagram
@@ -161,15 +226,11 @@ sequenceDiagram
     participant DB as Postgres primary
     participant Node as Orchestrator
 
-    Note over Client,Node: WAIT FOR A PENDING START
-    API->>Scheduling: WaitForStart
-    Scheduling-->>API: Start outcome
-
     Note over Client,Node: TIMEOUT / KEEPALIVE / CONNECT RUNNING
     Client->>API: Set timeout, keep alive, or connect
-    API->>Scheduling: SetEndTimes(end_time)
-    Scheduling->>DB: Update deadline only if RUNNING
-    Scheduling-->>API: Accepted / rejected
+    API->>Scheduling: UpdateDeadline(expected_execution_id, expected_end_time, end_time)
+    Scheduling->>DB: Compare execution and deadline while RUNNING; cap lifetime
+    Scheduling-->>API: Updated sandbox / FAILED_PRECONDITION
     alt Deadline accepted
         API->>Node: Update deadline
         Node-->>API: Result
@@ -178,22 +239,9 @@ sequenceDiagram
         API-->>Client: Rejection or resume path
     end
 
-    Note over Client,Node: NETWORK UPDATE
-    Client->>API: Update network settings
-    API->>Scheduling: UpdateRecord(expected_revision, patch)
-    Scheduling->>DB: Conditional update + revision increment
-    Scheduling-->>API: Accepted / revision conflict
-    alt Update accepted
-        API->>Node: Apply settings
-        Node-->>API: Result
-        API-->>Client: Result
-    else Revision conflict
-        API-->>Client: Conflict
-    end
-
     Note over Client,DB: LIST
     Client->>API: List sandboxes
-    API->>Scheduling: ListSandboxes(project_id)
+    API->>Scheduling: ListLive(project_id, states, expired_only, page_token)
     Scheduling->>DB: Read visible actors of the project
     Scheduling-->>API: Records with normal sandbox IDs
     API-->>Client: List
@@ -202,6 +250,19 @@ sequenceDiagram
 Unknown node outcomes and failures after a state write also need
 reconciliation, not an assumed successful transition. A connect that needs
 resume follows the start path above.
+
+`ClaimSnapshotDeletion(project_id, sandbox_id, claim_id)` claims an absent or
+gone sandbox for 60 seconds. It excludes new reservations for the same project while the caller
+deletes the paused snapshot. Different claim IDs can coexist. Retrying a claim renews only its expiry.
+`ReleaseSnapshotDeletionClaim` releases only the matching project, sandbox and claim ID.
+Reservations remain blocked until all active claims for that project and sandbox are released or expire.
+Claims from another project cannot block admission after the gone row is purged.
+An existing live run or a gone row owned by another project still prevents a claim.
+The claim does not add a live sandbox or consume a limit slot. Tombstone cleanup also removes expired claims in bounded batches.
+
+Network record updates and lifecycle holds are not implemented. The proposed
+`UpdateRecord` operation needs its own concurrency contract before callers can
+use it.
 
 ## Later scheduling-owned flow
 

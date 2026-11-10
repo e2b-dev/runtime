@@ -37,11 +37,18 @@ DELETE FROM public.scheduling_actor WHERE actor_id = @actor_id AND project_id = 
 UPDATE public.scheduling_actor_run
    SET state = 'running',
        refused_since = CASE
+         WHEN @hold_only::boolean THEN NULL
          WHEN refused_since IS NOT NULL AND refused_until IS NOT NULL AND now() <= refused_until + interval '30 seconds'
          THEN refused_since ELSE now() END,
-       refused_until = now() + @retry_after::interval
+       refused_until = now() + @retry_after::interval,
+       envd_refused_since = CASE
+         WHEN NOT @envd_refusal::boolean THEN envd_refused_since
+         WHEN envd_refused_since IS NOT NULL AND envd_refused_until IS NOT NULL AND now() <= envd_refused_until + interval '30 seconds'
+         THEN envd_refused_since ELSE now() END,
+       envd_refused_until = CASE WHEN @envd_refusal::boolean THEN now() + @retry_after::interval ELSE envd_refused_until END,
+       failure_message = nullif(@refusal_class::text, '')
  WHERE actor_id = @actor_id AND project_id = @project_id AND transition_id = @transition_id::uuid
-   AND transition_action = 1 AND state = 'pausing'
+   AND transition_action IN (1, 2) AND state IN ('pausing', 'killing')
 RETURNING refused_until, refused_since;
 
 -- transition_age_us comes from the database clock, so that the poll schedule

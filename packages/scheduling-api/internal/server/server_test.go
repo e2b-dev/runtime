@@ -147,6 +147,49 @@ func TestReserveOutcomes(t *testing.T) {
 	require.False(t, got.HasSandbox())
 }
 
+func TestStartDeadline(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	client, pool := newClient(t)
+	project, rid := uuid.NewString(), uuid.NewString()
+	actorID, err := id.SandboxIDToUUID(sandboxID)
+	require.NoError(t, err)
+
+	reserved, err := client.Reserve(ctx, reserveRequest(project, sandboxID, rid, 10))
+	require.NoError(t, err)
+	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserved.GetOutcome())
+	var reservedAt time.Time
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT reserved_at FROM public.scheduling_actor_run WHERE actor_id = $1`, actorID).Scan(&reservedAt))
+	require.True(t, reservedAt.Add(90*time.Second).Equal(reserved.GetStartDeadline().AsTime()))
+
+	repeated, err := client.Reserve(ctx, reserveRequest(project, sandboxID, rid, 10))
+	require.NoError(t, err)
+	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, repeated.GetOutcome())
+	require.True(t, reserved.GetStartDeadline().AsTime().Equal(repeated.GetStartDeadline().AsTime()))
+	pending, err := client.Reserve(ctx, reserveRequest(project, sandboxID, uuid.NewString(), 10))
+	require.NoError(t, err)
+	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING, pending.GetOutcome())
+	require.True(t, reserved.GetStartDeadline().AsTime().Equal(pending.GetStartDeadline().AsTime()))
+
+	_, err = pool.Exec(ctx, `UPDATE public.scheduling_actor_run SET reserved_at = now() - interval '91 seconds' WHERE actor_id = $1`, actorID)
+	require.NoError(t, err)
+	expired, err := store.New(pool, pool).ExpireStarts(ctx, uuid.Nil, 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, expired.Ended)
+
+	finished, err := client.Reserve(ctx, reserveRequest(project, sandboxID, rid, 10))
+	require.NoError(t, err)
+	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_FINISHED, finished.GetOutcome())
+	require.False(t, finished.HasStartDeadline())
+	require.Equal(t, "start timed out", finished.GetFailure().GetMessage())
+	require.Equal(t, int32(codes.DeadlineExceeded), finished.GetFailure().GetCode())
+	stored, err := client.Put(ctx, putRequest(project, rid))
+	require.NoError(t, err)
+	require.Equal(t, scheduling.PutOutcome_PUT_OUTCOME_NOT_FOUND, stored.GetOutcome())
+	require.Equal(t, int32(0), slotCount(t, pool, project, 0))
+}
+
 func TestInvalidRequests(t *testing.T) {
 	t.Parallel()
 	client, _ := newClient(t)
@@ -503,7 +546,7 @@ func putRequest(project, rid string) *scheduling.PutRequest {
 		ReservationId:           rid,
 		ExecutionId:             "execution-1",
 		StartTime:               timestamppb.New(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)),
-		MaxInstanceLength:       durationpb.New(time.Hour),
+		MaxInstanceLength:       durationpb.New(48 * time.Hour),
 		NodeId:                  "node-1",
 		ClusterId:               "8b8c8d3e-7f45-4f0e-9a43-5c2a1c6d9e10",
 		BaseTemplateId:          "base",

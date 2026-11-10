@@ -7,7 +7,11 @@
 -- other slots. Only the row of the own slot is locked and read again.
 --
 -- A gone row is reused only by the same project with a new reservation ID,
--- so a repeated Reserve never restarts a start that has ended.
+-- so a repeated Reserve does not restart a start that has ended while the
+-- gone row exists.
+--
+-- now() is the same for the whole transaction, so reserved_at is the
+-- reserved_at that run writes.
 -- name: Reserve :one
 WITH free AS (
   SELECT NOT EXISTS (
@@ -34,16 +38,18 @@ WITH free AS (
          reservation_id = EXCLUDED.reservation_id, reserved_at = EXCLUDED.reserved_at,
          transition_id = NULL, transition_action = NULL, transition_at = NULL,
          failure_message = NULL, failure_code = NULL, gone_at = NULL,
-         refused_until = NULL, refused_since = NULL, counter_slot = EXCLUDED.counter_slot
+         refused_until = NULL, refused_since = NULL, envd_refused_until = NULL, envd_refused_since = NULL,
+         counter_slot = EXCLUDED.counter_slot
    WHERE r.state = 'gone' AND r.project_id = EXCLUDED.project_id AND r.reservation_id <> EXCLUDED.reservation_id
   RETURNING 1
 )
 SELECT (SELECT ok FROM free)::boolean AS free,
        EXISTS (SELECT 1 FROM bump) AS bumped,
-       EXISTS (SELECT 1 FROM run) AS inserted;
+       EXISTS (SELECT 1 FROM run) AS inserted,
+       now()::timestamptz AS reserved_at;
 
 -- name: InspectReservation :one
-SELECT project_id, state, reservation_id, (transition_action IS NOT NULL)::boolean AS transitions,
+SELECT project_id, state, reservation_id, reserved_at, (transition_action IS NOT NULL)::boolean AS transitions,
        failure_message, failure_code
   FROM public.scheduling_actor_run
  WHERE actor_id = @actor_id;

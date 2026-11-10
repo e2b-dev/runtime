@@ -148,16 +148,26 @@ const restoreRunning = `-- name: RestoreRunning :one
 UPDATE public.scheduling_actor_run
    SET state = 'running',
        refused_since = CASE
+         WHEN $1::boolean THEN NULL
          WHEN refused_since IS NOT NULL AND refused_until IS NOT NULL AND now() <= refused_until + interval '30 seconds'
          THEN refused_since ELSE now() END,
-       refused_until = now() + $1::interval
- WHERE actor_id = $2 AND project_id = $3 AND transition_id = $4::uuid
-   AND transition_action = 1 AND state = 'pausing'
+       refused_until = now() + $2::interval,
+       envd_refused_since = CASE
+         WHEN NOT $3::boolean THEN envd_refused_since
+         WHEN envd_refused_since IS NOT NULL AND envd_refused_until IS NOT NULL AND now() <= envd_refused_until + interval '30 seconds'
+         THEN envd_refused_since ELSE now() END,
+       envd_refused_until = CASE WHEN $3::boolean THEN now() + $2::interval ELSE envd_refused_until END,
+       failure_message = nullif($4::text, '')
+ WHERE actor_id = $5 AND project_id = $6 AND transition_id = $7::uuid
+   AND transition_action IN (1, 2) AND state IN ('pausing', 'killing')
 RETURNING refused_until, refused_since
 `
 
 type RestoreRunningParams struct {
+	HoldOnly     bool
 	RetryAfter   pgtype.Interval
+	EnvdRefusal  bool
+	RefusalClass string
 	ActorID      uuid.UUID
 	ProjectID    uuid.UUID
 	TransitionID uuid.UUID
@@ -172,7 +182,10 @@ type RestoreRunningRow struct {
 // series that refused_since started. SET reads the values before the update.
 func (q *Queries) RestoreRunning(ctx context.Context, arg RestoreRunningParams) (RestoreRunningRow, error) {
 	row := q.db.QueryRow(ctx, restoreRunning,
+		arg.HoldOnly,
 		arg.RetryAfter,
+		arg.EnvdRefusal,
+		arg.RefusalClass,
 		arg.ActorID,
 		arg.ProjectID,
 		arg.TransitionID,

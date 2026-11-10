@@ -110,19 +110,26 @@ func (q *Queries) InspectStart(ctx context.Context, arg InspectStartParams) (Ins
 }
 
 const markRunning = `-- name: MarkRunning :execrows
-UPDATE public.scheduling_actor_run SET state = 'running'
- WHERE actor_id = $1 AND project_id = $2 AND reservation_id = $3 AND state = 'starting'
+UPDATE public.scheduling_actor_run SET state = 'running', end_time = least(coalesce($1::timestamptz, end_time), $2::timestamptz)
+ WHERE actor_id = $3 AND project_id = $4 AND reservation_id = $5 AND state = 'starting'
 `
 
 type MarkRunningParams struct {
+	EndTime       *time.Time
+	MaxEndTime    time.Time
 	ActorID       uuid.UUID
 	ProjectID     uuid.UUID
 	ReservationID uuid.UUID
 }
 
-// Sets no indexed column, so the update stays HOT.
 func (q *Queries) MarkRunning(ctx context.Context, arg MarkRunningParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markRunning, arg.ActorID, arg.ProjectID, arg.ReservationID)
+	result, err := q.db.Exec(ctx, markRunning,
+		arg.EndTime,
+		arg.MaxEndTime,
+		arg.ActorID,
+		arg.ProjectID,
+		arg.ReservationID,
+	)
 	if err != nil {
 		return 0, err
 	}

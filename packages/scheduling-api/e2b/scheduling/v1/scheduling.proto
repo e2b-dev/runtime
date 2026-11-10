@@ -14,14 +14,19 @@ option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/schedulin
 //
 // The caller authenticates the user and supplies the project ID. Reaching this
 // service is the access-control boundary. A request never reads or changes a
-// sandbox of another project.
+// sandbox of another project, except ListStaleTransitions and unfiltered
+// ListLive: maintenance reads for trusted callers on the internal network.
+// It is not a customer endpoint.
 //
 // A start is Reserve, then Put after the node created the sandbox, or
 // FinishStart when the node failed to create it. A pause or a kill is
 // BeginTransition, then FinishTransition after the sandbox has ended on the
 // node, or RestoreRunning when the node refused a pause and the sandbox still
 // runs. The service only stores state: the caller runs the node operations.
-// Every RPC is safe to repeat with the same identifiers.
+// Retry with the same identifiers while the attempt is still recorded. A new
+// start or transition can replace its history. Gone rows can be deleted 5
+// minutes after they ended; after that, finish and wait calls return
+// NOT_FOUND, and Reserve with an old reservation_id can create a new attempt.
 //
 // Expected results are outcomes in the response. A status other than OK is a
 // transport failure, a request that fails validation (INVALID_ARGUMENT), a
@@ -32,12 +37,13 @@ service SchedulingService {
   // Admits a sandbox against the live limit of its project. RESERVED puts the
   // sandbox in the starting state with the requested end_time and adds one to
   // the live count of the project, in one transaction. A starting sandbox is
-  // not visible to Get.
+  // not visible to Get. Finish the start with Put or FinishStart before the
+  // returned start_deadline.
   rpc Reserve(ReserveRequest) returns (ReserveResponse);
 
   // Stores the record of a started sandbox and makes it running, in one
-  // transaction. Call it after the node created the sandbox. Put does not
-  // change end_time.
+  // transaction. Call it after the node created the sandbox. An optional
+  // end_time replaces the reserved deadline on the first successful Put.
   rpc Put(PutRequest) returns (PutResponse);
 
   // Ends a start that failed before Put. The sandbox is gone, the failure is
@@ -59,7 +65,7 @@ service SchedulingService {
   // that.
   rpc FinishTransition(FinishTransitionRequest) returns (FinishTransitionResponse);
 
-  // Ends a pause that the node refused while the sandbox kept running. The
+  // Ends a pause or kill that the node refused while the sandbox kept running. The
   // sandbox is running again, with a retry window for require_expired
   // transitions. The record and the live count do not change.
   rpc RestoreRunning(RestoreRunningRequest) returns (RestoreRunningResponse);
@@ -70,6 +76,38 @@ service SchedulingService {
   // transition gets older. A caller can resume waiting on any replica; each
   // replica observes completion on its next read.
   rpc WaitForTransition(WaitForTransitionRequest) returns (WaitForTransitionResponse);
+
+  // Lists the pauses and kills of all projects in this database that began
+  // or were claimed at least 95 s ago by the database clock, oldest first.
+  // Such a transition is a candidate for recovery: its owner may have failed,
+  // but it may also still be running. The list is not a snapshot: a
+  // transition can end, be claimed or begin between pages, and a page can
+  // contain a transition that is no longer stale. Writes nothing.
+  rpc ListStaleTransitions(ListStaleTransitionsRequest) returns (ListStaleTransitionsResponse);
+
+  // Takes over a stale pause or kill: if the sandbox is in the transition of
+  // old_transition_id, the transition is at least 95 s old, and the sandbox
+  // has expected_execution_id, the transition gets new_transition_id and
+  // starts its 95 s again, in one statement. The state, action, record and
+  // live count do not change. The caller of new_transition_id then owns the
+  // transition: it checks the node and ends the transition with
+  // FinishTransition or RestoreRunning, or leaves it.
+  //
+  // A claim prevents FinishTransition and RestoreRunning with the old
+  // transition ID from changing the claimed attempt, and WaitForTransition
+  // with it returns UNKNOWN. It does not permanently reject BeginTransition
+  // with that ID: while the replacement is active, an old BeginTransition
+  // joins or conflicts; after the replacement restores the sandbox to
+  // running, the old BeginTransition can start another operation. Owners must
+  // stop retrying BeginTransition before 95 s have passed since their first
+  // attempt, and must not retry it after learning that ownership changed. The
+  // claim does not stop a node call that the previous owner still runs.
+  rpc ClaimTransition(ClaimTransitionRequest) returns (ClaimTransitionResponse);
+  rpc ListLive(ListLiveRequest) returns (ListLiveResponse);
+  rpc UpdateDeadline(UpdateDeadlineRequest) returns (UpdateDeadlineResponse);
+  rpc InspectReservation(InspectReservationRequest) returns (InspectReservationResponse);
+  rpc ClaimSnapshotDeletion(ClaimSnapshotDeletionRequest) returns (ClaimSnapshotDeletionResponse);
+  rpc ReleaseSnapshotDeletionClaim(ReleaseSnapshotDeletionClaimRequest) returns (ReleaseSnapshotDeletionClaimResponse);
 }
 
 enum SandboxState {
@@ -98,6 +136,10 @@ message Sandbox {
   // The JSON object stored by Put. Equal in content to the stored object, not
   // byte for byte: key order and whitespace can differ.
   bytes record = 15;
+  google.protobuf.Timestamp refused_until = 16;
+  google.protobuf.Timestamp refused_since = 17;
+  google.protobuf.Timestamp envd_refused_until = 18;
+  google.protobuf.Timestamp envd_refused_since = 19;
 }
 
 message ReserveRequest {
@@ -105,8 +147,9 @@ message ReserveRequest {
   string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
 
   // A random UUID that the caller generates for each start. A repeat call
-  // with the same reservation_id does not count the sandbox twice, and never
-  // starts the sandbox again after that start has ended.
+  // with the same reservation_id does not count the sandbox twice, and does
+  // not start the sandbox again after that start has ended, while the gone
+  // row of that reservation remains.
   string reservation_id = 3 [(buf.validate.field).string.uuid = true];
 
   // The maximum live count of the project, this sandbox included. Admission is
@@ -115,7 +158,7 @@ message ReserveRequest {
   // run concurrently.
   int64 limit = 4 [(buf.validate.field).int64.gt = 0];
 
-  // The end time of the sandbox. Put does not change it.
+  // The intended end time before the node starts the sandbox.
   google.protobuf.Timestamp end_time = 5 [
     (buf.validate.field).required = true,
     (buf.validate.field).cel = {
@@ -136,18 +179,28 @@ enum ReserveOutcome {
   RESERVE_OUTCOME_ALREADY_RUNNING = 3;
   // The project has limit live sandboxes. Nothing changed.
   RESERVE_OUTCOME_LIMIT_EXCEEDED = 4;
-  // The start with this reservation_id has ended: FinishStart recorded a
-  // failure, or the sandbox ran and is gone. Nothing changed. A new start
-  // needs a new reservation_id.
+  // The start with this reservation_id has ended: FinishStart or the start
+  // timeout recorded a failure, or the sandbox ran and is gone. Nothing
+  // changed. A new start needs a new reservation_id. Returned only while the
+  // gone row of that reservation remains.
   RESERVE_OUTCOME_FINISHED = 5;
 }
 
 message ReserveResponse {
+  string reservation_id = 5;
   ReserveOutcome outcome = 1;
   // Set only for RESERVE_OUTCOME_ALREADY_RUNNING.
   Sandbox sandbox = 2;
-  // Set only for RESERVE_OUTCOME_FINISHED, when FinishStart ended the start.
+  // Set only for RESERVE_OUTCOME_FINISHED, when FinishStart or the start
+  // timeout ended the start.
   Failure failure = 3;
+  // Set only for RESERVE_OUTCOME_RESERVED and RESERVE_OUTCOME_ALREADY_PENDING:
+  // 90 s after the pending start was reserved, by the database clock. For
+  // ALREADY_PENDING it is the deadline of the other reservation. A repeated
+  // Reserve returns the same deadline. From this time on, the service can end
+  // the start like FinishStart, with code 4 (DEADLINE_EXCEEDED); Put then
+  // returns NOT_FOUND. Finish the start with Put or FinishStart before it.
+  google.protobuf.Timestamp start_deadline = 4;
 }
 
 message PutRequest {
@@ -197,7 +250,68 @@ message PutRequest {
   // All other sandbox fields, as one JSON object that PostgreSQL jsonb can
   // store. The service stores it and does not read its content.
   bytes record = 14 [(buf.validate.field).bytes.min_len = 2];
+  google.protobuf.Timestamp end_time = 15;
 }
+
+message ListLiveRequest {
+  // Empty selects all projects for the internal eviction and count readers.
+  string project_id = 1;
+  repeated SandboxState states = 2;
+  bool expired_only = 3;
+  int32 page_size = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  string page_token = 5 [(buf.validate.field).string.max_len = 256];
+}
+
+message ListLiveResponse {
+  repeated Sandbox sandboxes = 1;
+  string next_page_token = 2;
+}
+
+message UpdateDeadlineRequest {
+  string project_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
+  string expected_execution_id = 3 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Timestamp end_time = 4 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp expected_end_time = 5 [(buf.validate.field).required = true];
+}
+
+message InspectReservationResponse {
+  string reservation_id = 1;
+  bool pending = 2;
+  Sandbox sandbox = 3;
+  Failure failure = 4;
+  string transition_id = 5;
+}
+
+message InspectReservationRequest {
+  string project_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
+}
+
+message UpdateDeadlineResponse {
+  Sandbox sandbox = 1;
+}
+
+message ClaimSnapshotDeletionRequest {
+  string project_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
+  string claim_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+message ClaimSnapshotDeletionResponse {
+  bool claimed = 1;
+}
+
+message ReleaseSnapshotDeletionClaimRequest {
+  string project_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
+  string claim_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+message ReleaseSnapshotDeletionClaimResponse {}
 
 enum PutOutcome {
   PUT_OUTCOME_UNSPECIFIED = 0;
@@ -220,7 +334,9 @@ message Failure {
     min_len: 1
     not_contains: "\u0000"
   }];
-  // Defined by the caller. The service stores it and does not read it.
+  // Defined by the caller. The service stores it and does not read it. A
+  // start that the service ended at its start_deadline has code 4
+  // (DEADLINE_EXCEEDED) and the message "start timed out".
   int32 code = 2;
 }
 
@@ -263,7 +379,7 @@ enum TransitionAction {
   TRANSITION_ACTION_UNSPECIFIED = 0;
   // Ends with FinishTransition, or with RestoreRunning when the node refused.
   TRANSITION_ACTION_PAUSE = 1;
-  // Ends with FinishTransition.
+  // Ends with FinishTransition, or RestoreRunning after a node refusal.
   TRANSITION_ACTION_KILL = 2;
 }
 
@@ -316,7 +432,8 @@ enum BeginTransitionOutcome {
   // RestoreRunning is open. Nothing changed.
   BEGIN_TRANSITION_OUTCOME_NOT_EXPIRED = 7;
   // FinishTransition ended the transition with this transition_id. The
-  // sandbox is gone. Nothing changed.
+  // sandbox is gone. Nothing changed. Returned only while the gone row
+  // remains; after it is deleted, BeginTransition returns NOT_FOUND.
   BEGIN_TRANSITION_OUTCOME_ALREADY_FINISHED = 8;
   // RestoreRunning ended the transition with this transition_id. The sandbox
   // is running. Nothing changed. A new pause needs a new transition_id.
@@ -371,9 +488,15 @@ message FinishTransitionResponse {
 }
 
 message RestoreRunningRequest {
+  string refusal_class = 7 [(buf.validate.field).string = {
+    max_len: 64
+    not_contains: "\u0000"
+  }];
+  bool hold_only = 5;
+  bool envd_refusal = 6;
   string project_id = 1 [(buf.validate.field).string.uuid = true];
   string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
-  // The transition_id of the STARTED pause.
+  // The transition_id of the STARTED pause or kill.
   string transition_id = 3 [(buf.validate.field).string.uuid = true];
   // How long require_expired transitions wait before they try again. Zero
   // allows them at once. A whole number of microseconds, the precision the
@@ -396,7 +519,7 @@ enum RestoreRunningOutcome {
   // transition never began, or a newer start or transition replaced it.
   // Nothing changed.
   RESTORE_RUNNING_OUTCOME_NOT_FOUND = 2;
-  // The transition with this transition_id is a kill. Nothing changed.
+  // The transition action cannot be restored. Nothing changed.
   RESTORE_RUNNING_OUTCOME_NOT_RESTORABLE = 3;
   // FinishTransition already ended the pause with this transition_id. The
   // sandbox is gone. Nothing changed. A sandbox that still runs on the node
@@ -446,6 +569,95 @@ enum WaitForTransitionOutcome {
 
 message WaitForTransitionResponse {
   WaitForTransitionOutcome outcome = 1;
-  // Set only for FINISHED, when FinishTransition reported a failure.
+  // For FINISHED, the reported failure. For RESTORED, the refusal class.
   Failure failure = 2;
+}
+
+message ListStaleTransitionsRequest {
+  // 0 means 100. At most 1000.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // Empty for the first page, otherwise the next_page_token of the previous
+  // page.
+  string page_token = 2 [(buf.validate.field).string.max_len = 256];
+}
+
+message StaleTransition {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string transition_id = 3;
+  TransitionAction action = 4;
+  // When the transition began or was last claimed.
+  google.protobuf.Timestamp transition_at = 5;
+  string execution_id = 6;
+  string node_id = 7;
+  string cluster_id = 8;
+}
+
+message ListStaleTransitionsResponse {
+  repeated StaleTransition transitions = 1;
+  // Set when the page is full. Pass it as page_token to continue after the
+  // last transition of this page.
+  string next_page_token = 2;
+}
+
+message ClaimTransitionRequest {
+  string project_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^i[0-9a-z]{20}$"];
+  // The transition_id of the stale transition, as listed.
+  string old_transition_id = 3 [(buf.validate.field).string.uuid = true];
+  // A random UUID that the caller generates for each claim, different from
+  // old_transition_id. Two callers must never send the same one.
+  string new_transition_id = 4 [(buf.validate.field).string.uuid = true];
+  // The execution_id of the listed transition. The claim applies only to that
+  // execution of the sandbox.
+  string expected_execution_id = 5 [(buf.validate.field).string = {
+    min_len: 1
+    not_contains: "\u0000"
+  }];
+}
+
+enum ClaimTransitionOutcome {
+  CLAIM_TRANSITION_OUTCOME_UNSPECIFIED = 0;
+  // The sandbox is in the transition of new_transition_id, with
+  // expected_execution_id. The response carries the transition and the
+  // sandbox. A repeat call returns CLAIMED with the first transition_at.
+  CLAIM_TRANSITION_OUTCOME_CLAIMED = 1;
+  // The project has no sandbox with this sandbox_id, or the sandbox is not in
+  // a pause or kill and does not record one of the transition IDs as finished
+  // or restored: for example it is starting or snapshotting, or a later start
+  // or transition replaced the transition. Nothing changed.
+  CLAIM_TRANSITION_OUTCOME_NOT_FOUND = 2;
+  // The sandbox is in a pause or kill with another transition_id, for example
+  // after another claim. The response carries that transition. Nothing
+  // changed.
+  CLAIM_TRANSITION_OUTCOME_CONFLICT = 3;
+  // The transition of old_transition_id began or was claimed less than 95 s
+  // ago. Nothing changed.
+  CLAIM_TRANSITION_OUTCOME_NOT_STALE = 4;
+  // The sandbox is in a pause or kill, but does not have
+  // expected_execution_id. Nothing changed.
+  CLAIM_TRANSITION_OUTCOME_EXECUTION_MISMATCH = 5;
+  // The sandbox is gone and records one of the transition IDs:
+  // FinishTransition ended it. Nothing changed. Returned only while the gone
+  // row remains.
+  CLAIM_TRANSITION_OUTCOME_ALREADY_FINISHED = 6;
+  // The sandbox is running and records one of the transition IDs:
+  // RestoreRunning ended the pause. Nothing changed.
+  CLAIM_TRANSITION_OUTCOME_ALREADY_RESTORED = 7;
+}
+
+message ClaimTransitionResponse {
+  ClaimTransitionOutcome outcome = 1;
+  // The active transition. Set only for CLAIMED (new_transition_id) and
+  // CONFLICT.
+  string transition_id = 2;
+  TransitionAction action = 3;
+  // When the claim took the transition over. Set only for CLAIMED.
+  google.protobuf.Timestamp transition_at = 4;
+  // The sandbox, read with the claim: the node and execution to check. Set
+  // only for CLAIMED.
+  Sandbox sandbox = 5;
 }

@@ -19,14 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SchedulingService_Reserve_FullMethodName           = "/e2b.scheduling.v1.SchedulingService/Reserve"
-	SchedulingService_Put_FullMethodName               = "/e2b.scheduling.v1.SchedulingService/Put"
-	SchedulingService_FinishStart_FullMethodName       = "/e2b.scheduling.v1.SchedulingService/FinishStart"
-	SchedulingService_Get_FullMethodName               = "/e2b.scheduling.v1.SchedulingService/Get"
-	SchedulingService_BeginTransition_FullMethodName   = "/e2b.scheduling.v1.SchedulingService/BeginTransition"
-	SchedulingService_FinishTransition_FullMethodName  = "/e2b.scheduling.v1.SchedulingService/FinishTransition"
-	SchedulingService_RestoreRunning_FullMethodName    = "/e2b.scheduling.v1.SchedulingService/RestoreRunning"
-	SchedulingService_WaitForTransition_FullMethodName = "/e2b.scheduling.v1.SchedulingService/WaitForTransition"
+	SchedulingService_Reserve_FullMethodName                      = "/e2b.scheduling.v1.SchedulingService/Reserve"
+	SchedulingService_Put_FullMethodName                          = "/e2b.scheduling.v1.SchedulingService/Put"
+	SchedulingService_FinishStart_FullMethodName                  = "/e2b.scheduling.v1.SchedulingService/FinishStart"
+	SchedulingService_Get_FullMethodName                          = "/e2b.scheduling.v1.SchedulingService/Get"
+	SchedulingService_BeginTransition_FullMethodName              = "/e2b.scheduling.v1.SchedulingService/BeginTransition"
+	SchedulingService_FinishTransition_FullMethodName             = "/e2b.scheduling.v1.SchedulingService/FinishTransition"
+	SchedulingService_RestoreRunning_FullMethodName               = "/e2b.scheduling.v1.SchedulingService/RestoreRunning"
+	SchedulingService_WaitForTransition_FullMethodName            = "/e2b.scheduling.v1.SchedulingService/WaitForTransition"
+	SchedulingService_ListStaleTransitions_FullMethodName         = "/e2b.scheduling.v1.SchedulingService/ListStaleTransitions"
+	SchedulingService_ClaimTransition_FullMethodName              = "/e2b.scheduling.v1.SchedulingService/ClaimTransition"
+	SchedulingService_ListLive_FullMethodName                     = "/e2b.scheduling.v1.SchedulingService/ListLive"
+	SchedulingService_UpdateDeadline_FullMethodName               = "/e2b.scheduling.v1.SchedulingService/UpdateDeadline"
+	SchedulingService_InspectReservation_FullMethodName           = "/e2b.scheduling.v1.SchedulingService/InspectReservation"
+	SchedulingService_ClaimSnapshotDeletion_FullMethodName        = "/e2b.scheduling.v1.SchedulingService/ClaimSnapshotDeletion"
+	SchedulingService_ReleaseSnapshotDeletionClaim_FullMethodName = "/e2b.scheduling.v1.SchedulingService/ReleaseSnapshotDeletionClaim"
 )
 
 // SchedulingServiceClient is the client API for SchedulingService service.
@@ -38,14 +45,19 @@ const (
 //
 // The caller authenticates the user and supplies the project ID. Reaching this
 // service is the access-control boundary. A request never reads or changes a
-// sandbox of another project.
+// sandbox of another project, except ListStaleTransitions and unfiltered
+// ListLive: maintenance reads for trusted callers on the internal network.
+// It is not a customer endpoint.
 //
 // A start is Reserve, then Put after the node created the sandbox, or
 // FinishStart when the node failed to create it. A pause or a kill is
 // BeginTransition, then FinishTransition after the sandbox has ended on the
 // node, or RestoreRunning when the node refused a pause and the sandbox still
 // runs. The service only stores state: the caller runs the node operations.
-// Every RPC is safe to repeat with the same identifiers.
+// Retry with the same identifiers while the attempt is still recorded. A new
+// start or transition can replace its history. Gone rows can be deleted 5
+// minutes after they ended; after that, finish and wait calls return
+// NOT_FOUND, and Reserve with an old reservation_id can create a new attempt.
 //
 // Expected results are outcomes in the response. A status other than OK is a
 // transport failure, a request that fails validation (INVALID_ARGUMENT), a
@@ -56,11 +68,12 @@ type SchedulingServiceClient interface {
 	// Admits a sandbox against the live limit of its project. RESERVED puts the
 	// sandbox in the starting state with the requested end_time and adds one to
 	// the live count of the project, in one transaction. A starting sandbox is
-	// not visible to Get.
+	// not visible to Get. Finish the start with Put or FinishStart before the
+	// returned start_deadline.
 	Reserve(ctx context.Context, in *ReserveRequest, opts ...grpc.CallOption) (*ReserveResponse, error)
 	// Stores the record of a started sandbox and makes it running, in one
-	// transaction. Call it after the node created the sandbox. Put does not
-	// change end_time.
+	// transaction. Call it after the node created the sandbox. An optional
+	// end_time replaces the reserved deadline on the first successful Put.
 	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
 	// Ends a start that failed before Put. The sandbox is gone, the failure is
 	// kept, and the live count of the project decreases by one, in one
@@ -77,7 +90,7 @@ type SchedulingServiceClient interface {
 	// or will be removed from it. A failed or timed-out node call does not prove
 	// that.
 	FinishTransition(ctx context.Context, in *FinishTransitionRequest, opts ...grpc.CallOption) (*FinishTransitionResponse, error)
-	// Ends a pause that the node refused while the sandbox kept running. The
+	// Ends a pause or kill that the node refused while the sandbox kept running. The
 	// sandbox is running again, with a retry window for require_expired
 	// transitions. The record and the live count do not change.
 	RestoreRunning(ctx context.Context, in *RestoreRunningRequest, opts ...grpc.CallOption) (*RestoreRunningResponse, error)
@@ -87,6 +100,36 @@ type SchedulingServiceClient interface {
 	// transition gets older. A caller can resume waiting on any replica; each
 	// replica observes completion on its next read.
 	WaitForTransition(ctx context.Context, in *WaitForTransitionRequest, opts ...grpc.CallOption) (*WaitForTransitionResponse, error)
+	// Lists the pauses and kills of all projects in this database that began
+	// or were claimed at least 95 s ago by the database clock, oldest first.
+	// Such a transition is a candidate for recovery: its owner may have failed,
+	// but it may also still be running. The list is not a snapshot: a
+	// transition can end, be claimed or begin between pages, and a page can
+	// contain a transition that is no longer stale. Writes nothing.
+	ListStaleTransitions(ctx context.Context, in *ListStaleTransitionsRequest, opts ...grpc.CallOption) (*ListStaleTransitionsResponse, error)
+	// Takes over a stale pause or kill: if the sandbox is in the transition of
+	// old_transition_id, the transition is at least 95 s old, and the sandbox
+	// has expected_execution_id, the transition gets new_transition_id and
+	// starts its 95 s again, in one statement. The state, action, record and
+	// live count do not change. The caller of new_transition_id then owns the
+	// transition: it checks the node and ends the transition with
+	// FinishTransition or RestoreRunning, or leaves it.
+	//
+	// A claim prevents FinishTransition and RestoreRunning with the old
+	// transition ID from changing the claimed attempt, and WaitForTransition
+	// with it returns UNKNOWN. It does not permanently reject BeginTransition
+	// with that ID: while the replacement is active, an old BeginTransition
+	// joins or conflicts; after the replacement restores the sandbox to
+	// running, the old BeginTransition can start another operation. Owners must
+	// stop retrying BeginTransition before 95 s have passed since their first
+	// attempt, and must not retry it after learning that ownership changed. The
+	// claim does not stop a node call that the previous owner still runs.
+	ClaimTransition(ctx context.Context, in *ClaimTransitionRequest, opts ...grpc.CallOption) (*ClaimTransitionResponse, error)
+	ListLive(ctx context.Context, in *ListLiveRequest, opts ...grpc.CallOption) (*ListLiveResponse, error)
+	UpdateDeadline(ctx context.Context, in *UpdateDeadlineRequest, opts ...grpc.CallOption) (*UpdateDeadlineResponse, error)
+	InspectReservation(ctx context.Context, in *InspectReservationRequest, opts ...grpc.CallOption) (*InspectReservationResponse, error)
+	ClaimSnapshotDeletion(ctx context.Context, in *ClaimSnapshotDeletionRequest, opts ...grpc.CallOption) (*ClaimSnapshotDeletionResponse, error)
+	ReleaseSnapshotDeletionClaim(ctx context.Context, in *ReleaseSnapshotDeletionClaimRequest, opts ...grpc.CallOption) (*ReleaseSnapshotDeletionClaimResponse, error)
 }
 
 type schedulingServiceClient struct {
@@ -177,6 +220,76 @@ func (c *schedulingServiceClient) WaitForTransition(ctx context.Context, in *Wai
 	return out, nil
 }
 
+func (c *schedulingServiceClient) ListStaleTransitions(ctx context.Context, in *ListStaleTransitionsRequest, opts ...grpc.CallOption) (*ListStaleTransitionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStaleTransitionsResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_ListStaleTransitions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) ClaimTransition(ctx context.Context, in *ClaimTransitionRequest, opts ...grpc.CallOption) (*ClaimTransitionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClaimTransitionResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_ClaimTransition_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) ListLive(ctx context.Context, in *ListLiveRequest, opts ...grpc.CallOption) (*ListLiveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListLiveResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_ListLive_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) UpdateDeadline(ctx context.Context, in *UpdateDeadlineRequest, opts ...grpc.CallOption) (*UpdateDeadlineResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateDeadlineResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_UpdateDeadline_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) InspectReservation(ctx context.Context, in *InspectReservationRequest, opts ...grpc.CallOption) (*InspectReservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectReservationResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_InspectReservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) ClaimSnapshotDeletion(ctx context.Context, in *ClaimSnapshotDeletionRequest, opts ...grpc.CallOption) (*ClaimSnapshotDeletionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClaimSnapshotDeletionResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_ClaimSnapshotDeletion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulingServiceClient) ReleaseSnapshotDeletionClaim(ctx context.Context, in *ReleaseSnapshotDeletionClaimRequest, opts ...grpc.CallOption) (*ReleaseSnapshotDeletionClaimResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseSnapshotDeletionClaimResponse)
+	err := c.cc.Invoke(ctx, SchedulingService_ReleaseSnapshotDeletionClaim_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SchedulingServiceServer is the server API for SchedulingService service.
 // All implementations must embed UnimplementedSchedulingServiceServer
 // for forward compatibility.
@@ -186,14 +299,19 @@ func (c *schedulingServiceClient) WaitForTransition(ctx context.Context, in *Wai
 //
 // The caller authenticates the user and supplies the project ID. Reaching this
 // service is the access-control boundary. A request never reads or changes a
-// sandbox of another project.
+// sandbox of another project, except ListStaleTransitions and unfiltered
+// ListLive: maintenance reads for trusted callers on the internal network.
+// It is not a customer endpoint.
 //
 // A start is Reserve, then Put after the node created the sandbox, or
 // FinishStart when the node failed to create it. A pause or a kill is
 // BeginTransition, then FinishTransition after the sandbox has ended on the
 // node, or RestoreRunning when the node refused a pause and the sandbox still
 // runs. The service only stores state: the caller runs the node operations.
-// Every RPC is safe to repeat with the same identifiers.
+// Retry with the same identifiers while the attempt is still recorded. A new
+// start or transition can replace its history. Gone rows can be deleted 5
+// minutes after they ended; after that, finish and wait calls return
+// NOT_FOUND, and Reserve with an old reservation_id can create a new attempt.
 //
 // Expected results are outcomes in the response. A status other than OK is a
 // transport failure, a request that fails validation (INVALID_ARGUMENT), a
@@ -204,11 +322,12 @@ type SchedulingServiceServer interface {
 	// Admits a sandbox against the live limit of its project. RESERVED puts the
 	// sandbox in the starting state with the requested end_time and adds one to
 	// the live count of the project, in one transaction. A starting sandbox is
-	// not visible to Get.
+	// not visible to Get. Finish the start with Put or FinishStart before the
+	// returned start_deadline.
 	Reserve(context.Context, *ReserveRequest) (*ReserveResponse, error)
 	// Stores the record of a started sandbox and makes it running, in one
-	// transaction. Call it after the node created the sandbox. Put does not
-	// change end_time.
+	// transaction. Call it after the node created the sandbox. An optional
+	// end_time replaces the reserved deadline on the first successful Put.
 	Put(context.Context, *PutRequest) (*PutResponse, error)
 	// Ends a start that failed before Put. The sandbox is gone, the failure is
 	// kept, and the live count of the project decreases by one, in one
@@ -225,7 +344,7 @@ type SchedulingServiceServer interface {
 	// or will be removed from it. A failed or timed-out node call does not prove
 	// that.
 	FinishTransition(context.Context, *FinishTransitionRequest) (*FinishTransitionResponse, error)
-	// Ends a pause that the node refused while the sandbox kept running. The
+	// Ends a pause or kill that the node refused while the sandbox kept running. The
 	// sandbox is running again, with a retry window for require_expired
 	// transitions. The record and the live count do not change.
 	RestoreRunning(context.Context, *RestoreRunningRequest) (*RestoreRunningResponse, error)
@@ -235,6 +354,36 @@ type SchedulingServiceServer interface {
 	// transition gets older. A caller can resume waiting on any replica; each
 	// replica observes completion on its next read.
 	WaitForTransition(context.Context, *WaitForTransitionRequest) (*WaitForTransitionResponse, error)
+	// Lists the pauses and kills of all projects in this database that began
+	// or were claimed at least 95 s ago by the database clock, oldest first.
+	// Such a transition is a candidate for recovery: its owner may have failed,
+	// but it may also still be running. The list is not a snapshot: a
+	// transition can end, be claimed or begin between pages, and a page can
+	// contain a transition that is no longer stale. Writes nothing.
+	ListStaleTransitions(context.Context, *ListStaleTransitionsRequest) (*ListStaleTransitionsResponse, error)
+	// Takes over a stale pause or kill: if the sandbox is in the transition of
+	// old_transition_id, the transition is at least 95 s old, and the sandbox
+	// has expected_execution_id, the transition gets new_transition_id and
+	// starts its 95 s again, in one statement. The state, action, record and
+	// live count do not change. The caller of new_transition_id then owns the
+	// transition: it checks the node and ends the transition with
+	// FinishTransition or RestoreRunning, or leaves it.
+	//
+	// A claim prevents FinishTransition and RestoreRunning with the old
+	// transition ID from changing the claimed attempt, and WaitForTransition
+	// with it returns UNKNOWN. It does not permanently reject BeginTransition
+	// with that ID: while the replacement is active, an old BeginTransition
+	// joins or conflicts; after the replacement restores the sandbox to
+	// running, the old BeginTransition can start another operation. Owners must
+	// stop retrying BeginTransition before 95 s have passed since their first
+	// attempt, and must not retry it after learning that ownership changed. The
+	// claim does not stop a node call that the previous owner still runs.
+	ClaimTransition(context.Context, *ClaimTransitionRequest) (*ClaimTransitionResponse, error)
+	ListLive(context.Context, *ListLiveRequest) (*ListLiveResponse, error)
+	UpdateDeadline(context.Context, *UpdateDeadlineRequest) (*UpdateDeadlineResponse, error)
+	InspectReservation(context.Context, *InspectReservationRequest) (*InspectReservationResponse, error)
+	ClaimSnapshotDeletion(context.Context, *ClaimSnapshotDeletionRequest) (*ClaimSnapshotDeletionResponse, error)
+	ReleaseSnapshotDeletionClaim(context.Context, *ReleaseSnapshotDeletionClaimRequest) (*ReleaseSnapshotDeletionClaimResponse, error)
 	mustEmbedUnimplementedSchedulingServiceServer()
 }
 
@@ -268,6 +417,27 @@ func (UnimplementedSchedulingServiceServer) RestoreRunning(context.Context, *Res
 }
 func (UnimplementedSchedulingServiceServer) WaitForTransition(context.Context, *WaitForTransitionRequest) (*WaitForTransitionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitForTransition not implemented")
+}
+func (UnimplementedSchedulingServiceServer) ListStaleTransitions(context.Context, *ListStaleTransitionsRequest) (*ListStaleTransitionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStaleTransitions not implemented")
+}
+func (UnimplementedSchedulingServiceServer) ClaimTransition(context.Context, *ClaimTransitionRequest) (*ClaimTransitionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimTransition not implemented")
+}
+func (UnimplementedSchedulingServiceServer) ListLive(context.Context, *ListLiveRequest) (*ListLiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListLive not implemented")
+}
+func (UnimplementedSchedulingServiceServer) UpdateDeadline(context.Context, *UpdateDeadlineRequest) (*UpdateDeadlineResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateDeadline not implemented")
+}
+func (UnimplementedSchedulingServiceServer) InspectReservation(context.Context, *InspectReservationRequest) (*InspectReservationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InspectReservation not implemented")
+}
+func (UnimplementedSchedulingServiceServer) ClaimSnapshotDeletion(context.Context, *ClaimSnapshotDeletionRequest) (*ClaimSnapshotDeletionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimSnapshotDeletion not implemented")
+}
+func (UnimplementedSchedulingServiceServer) ReleaseSnapshotDeletionClaim(context.Context, *ReleaseSnapshotDeletionClaimRequest) (*ReleaseSnapshotDeletionClaimResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseSnapshotDeletionClaim not implemented")
 }
 func (UnimplementedSchedulingServiceServer) mustEmbedUnimplementedSchedulingServiceServer() {}
 func (UnimplementedSchedulingServiceServer) testEmbeddedByValue()                           {}
@@ -434,6 +604,132 @@ func _SchedulingService_WaitForTransition_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SchedulingService_ListStaleTransitions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStaleTransitionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).ListStaleTransitions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_ListStaleTransitions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).ListStaleTransitions(ctx, req.(*ListStaleTransitionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_ClaimTransition_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimTransitionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).ClaimTransition(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_ClaimTransition_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).ClaimTransition(ctx, req.(*ClaimTransitionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_ListLive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListLiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).ListLive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_ListLive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).ListLive(ctx, req.(*ListLiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_UpdateDeadline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateDeadlineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).UpdateDeadline(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_UpdateDeadline_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).UpdateDeadline(ctx, req.(*UpdateDeadlineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_InspectReservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectReservationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).InspectReservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_InspectReservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).InspectReservation(ctx, req.(*InspectReservationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_ClaimSnapshotDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimSnapshotDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).ClaimSnapshotDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_ClaimSnapshotDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).ClaimSnapshotDeletion(ctx, req.(*ClaimSnapshotDeletionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulingService_ReleaseSnapshotDeletionClaim_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseSnapshotDeletionClaimRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulingServiceServer).ReleaseSnapshotDeletionClaim(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulingService_ReleaseSnapshotDeletionClaim_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulingServiceServer).ReleaseSnapshotDeletionClaim(ctx, req.(*ReleaseSnapshotDeletionClaimRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SchedulingService_ServiceDesc is the grpc.ServiceDesc for SchedulingService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -472,6 +768,34 @@ var SchedulingService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WaitForTransition",
 			Handler:    _SchedulingService_WaitForTransition_Handler,
+		},
+		{
+			MethodName: "ListStaleTransitions",
+			Handler:    _SchedulingService_ListStaleTransitions_Handler,
+		},
+		{
+			MethodName: "ClaimTransition",
+			Handler:    _SchedulingService_ClaimTransition_Handler,
+		},
+		{
+			MethodName: "ListLive",
+			Handler:    _SchedulingService_ListLive_Handler,
+		},
+		{
+			MethodName: "UpdateDeadline",
+			Handler:    _SchedulingService_UpdateDeadline_Handler,
+		},
+		{
+			MethodName: "InspectReservation",
+			Handler:    _SchedulingService_InspectReservation_Handler,
+		},
+		{
+			MethodName: "ClaimSnapshotDeletion",
+			Handler:    _SchedulingService_ClaimSnapshotDeletion_Handler,
+		},
+		{
+			MethodName: "ReleaseSnapshotDeletionClaim",
+			Handler:    _SchedulingService_ReleaseSnapshotDeletionClaim_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

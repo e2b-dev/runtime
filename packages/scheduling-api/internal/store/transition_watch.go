@@ -244,8 +244,13 @@ func (s *Store) readTransition(ctx context.Context, key watchKey) (transitionRea
 			}
 
 			return transitionRead{result: result}, nil
-		case state == StateRunning && TransitionAction(*run.TransitionAction) == ActionPause:
-			return transitionRead{result: WaitResult{Outcome: WaitRestored}}, nil
+		case state == StateRunning && (TransitionAction(*run.TransitionAction) == ActionPause || TransitionAction(*run.TransitionAction) == ActionKill):
+			result := WaitResult{Outcome: WaitRestored}
+			if run.FailureMessage != nil {
+				result.Failure = &Failure{Message: *run.FailureMessage}
+			}
+
+			return transitionRead{result: result}, nil
 		case state != StatePausing && state != StateKilling && state != StateSnapshotting:
 			return transitionRead{}, fmt.Errorf("transition %s in state %s", key.transitionID, state)
 		}

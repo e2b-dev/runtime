@@ -16,8 +16,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/e2b-dev/infra/packages/scheduling-api/internal/cleanup"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/db/dbtest"
+	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -30,7 +32,7 @@ func TestServe(t *testing.T) {
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 	served := make(chan error, 1)
-	go func() { served <- serve(ctx, cfg, telemetry.NewNoopClient(), 2*time.Second) }()
+	go func() { served <- serve(ctx, cfg, telemetry.NewNoopClient(), 2*time.Second, cleanup.DefaultConfig) }()
 
 	conn, err := grpc.NewClient(cfg.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
@@ -71,13 +73,73 @@ func TestServe(t *testing.T) {
 	}
 }
 
+func TestServeCleanupWithOneConnection(t *testing.T) {
+	t.Parallel()
+	pool := dbtest.MigratedPool(t)
+	databaseURL, err := url.Parse(dbtest.ConnString(t, pool))
+	require.NoError(t, err)
+	query := databaseURL.Query()
+	query.Set("pool_max_conns", "1")
+	databaseURL.RawQuery = query.Encode()
+	cfg := config.Config{GRPCAddress: freeAddress(t), DatabaseURL: databaseURL.String(), WritePoolMaxConns: 1, ReadPoolMaxConns: 1}
+
+	project, actor := uuid.New(), uuid.New()
+	reserved, err := store.New(pool, pool).Reserve(t.Context(), store.Reservation{
+		ProjectID: project, ActorID: actor, ReservationID: uuid.New(), Limit: 10, EndTime: time.Now().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	require.Equal(t, store.ReserveReserved, reserved.Outcome)
+	_, err = pool.Exec(t.Context(), `UPDATE public.scheduling_actor_run SET reserved_at = now() - interval '1 hour' WHERE actor_id = $1`, actor)
+	require.NoError(t, err)
+
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	served := make(chan error, 1)
+	fast := cleanup.Config{Interval: 20 * time.Millisecond, BatchSize: 1000, Yield: time.Millisecond, IdleSessionTimeout: time.Minute}
+	go func() { served <- serve(ctx, cfg, telemetry.NewNoopClient(), 0, fast) }()
+
+	conn, err := grpc.NewClient(cfg.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	client := scheduling.NewSchedulingServiceClient(conn)
+	require.Eventually(t, func() bool {
+		var state store.State
+		err := pool.QueryRow(t.Context(), `SELECT state FROM public.scheduling_actor_run WHERE actor_id = $1`, actor).Scan(&state)
+		if err != nil {
+			return false
+		}
+		_, err = client.Get(t.Context(), scheduling.GetRequest_builder{
+			ProjectId: project.String(),
+			SandboxId: "i5f3k9q2m8x1c7v4b6n0p",
+		}.Build(), grpc.WaitForReady(true))
+
+		return err == nil && state == store.StateGone
+	}, 5*time.Second, 10*time.Millisecond)
+
+	stop()
+	select {
+	case err := <-served:
+		require.NoError(t, err)
+	case <-time.After(shutdownTimeout + 5*time.Second):
+		t.Fatal("serve did not return after shutdown")
+	}
+	require.Eventually(t, func() bool {
+		var holders int
+		err := pool.QueryRow(t.Context(), `
+SELECT count(*) FROM pg_locks
+ WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`).Scan(&holders)
+
+		return err == nil && holders == 0
+	}, 5*time.Second, 10*time.Millisecond, "shutdown released the cleanup lock")
+}
+
 func TestServeListenerInUse(t *testing.T) {
 	t.Parallel()
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 
-	err = serve(t.Context(), config.Config{GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0)
+	err = serve(t.Context(), config.Config{GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0, cleanup.DefaultConfig)
 	require.ErrorContains(t, err, "gRPC listener initialization failed")
 }
 
@@ -90,7 +152,7 @@ func TestServeDatabaseUnavailable(t *testing.T) {
 		ReadPoolMaxConns:  1,
 	}
 
-	err := serve(t.Context(), cfg, telemetry.NewNoopClient(), 0)
+	err := serve(t.Context(), cfg, telemetry.NewNoopClient(), 0, cleanup.DefaultConfig)
 	require.ErrorContains(t, err, "database initialization failed")
 
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", cfg.GRPCAddress)
@@ -115,7 +177,7 @@ func TestServeReadPoolFailureClosesWritePool(t *testing.T) {
 		ReadPoolMaxConns:  1,
 	}
 
-	err = serve(t.Context(), cfg, telemetry.NewNoopClient(), 0)
+	err = serve(t.Context(), cfg, telemetry.NewNoopClient(), 0, cleanup.DefaultConfig)
 	require.ErrorContains(t, err, "read database initialization failed")
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", cfg.GRPCAddress)
 	require.NoError(t, err, "serve released the gRPC address")

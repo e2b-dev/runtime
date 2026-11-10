@@ -2,7 +2,7 @@
 
 gRPC service for scheduling. It serves `e2b.scheduling.v1.SchedulingService`,
 which admits sandboxes against the live limit of their project and stores the
-state of live sandboxes in PostgreSQL. No other service calls it yet.
+state of live sandboxes in PostgreSQL.
 
 See [request flows](docs/request-flows.md) for the implemented start, pause and
 kill paths, the proposed methods that are not implemented, and the later
@@ -15,9 +15,23 @@ access: it fetches the protovalidate rules with `buf export`.
 
 ## Methods
 
+`ListLive` provides bounded pages filtered by project, states, and expired deadlines.
+An empty project filter is an internal all-project read.
+`UpdateDeadline` compares the execution and previous deadline while the record is running.
+`InspectReservation` exposes the current reservation identity and result for joiners.
+`ClaimSnapshotDeletion` holds an absent or gone sandbox ID for snapshot deletion for 60 seconds.
+It excludes `Reserve` for the same project under the same transaction lock.
+Overlapping claim IDs coexist. Each claim expires independently; retrying the same claim ID renews only that claim.
+`ReleaseSnapshotDeletionClaim` checks the project, sandbox and claim IDs. Admission stays blocked until every active claim for that project and sandbox is released or expires.
+The tombstone cleanup round also removes up to one batch of expired claims per purge call.
+These claims do not consume admission slots.
+
 The caller authenticates the user and sends the project ID. Reaching this
 service is the access-control boundary. A request never reads or changes a
-sandbox of another project.
+sandbox of another project, except `ListStaleTransitions` and `ListLive` with
+no project filter: internal reads of all projects in this database, for trusted
+callers on the same internal network. They are not customer endpoints. `ClaimTransition` changes
+only the sandbox of the project it names.
 
 Requests use current-format sandbox IDs (`i` followed by 20 lowercase base36
 characters) and UUID project, reservation and transition IDs. The service
@@ -29,8 +43,8 @@ A start is `Reserve`, then `Put` when the node has created the sandbox, or
 
 | Method | Effect | Outcomes |
 |---|---|---|
-| `Reserve` | Puts the sandbox in the starting state with the requested `end_time`, and adds one to the live count of the project. One transaction. | `RESERVED`, `ALREADY_PENDING`, `ALREADY_RUNNING` (with the sandbox), `LIMIT_EXCEEDED`, `FINISHED` (with the failure, if `FinishStart` recorded one) |
-| `Put` | Stores the sandbox record and makes the sandbox running. One transaction. Does not change `end_time`. | `STORED`, `NOT_FOUND` |
+| `Reserve` | Puts the sandbox in the starting state with the requested `end_time`, and adds one to the live count of the project. One transaction. | `RESERVED` and `ALREADY_PENDING` (with the start deadline), `ALREADY_RUNNING` (with the sandbox), `LIMIT_EXCEEDED`, `FINISHED` (with the failure, if `FinishStart` or the start timeout recorded one) |
+| `Put` | Stores the sandbox record and makes the sandbox running. One transaction. An optional `end_time` sets the final API deadline on the first write. The supplied or reserved deadline is capped at `start_time + max_instance_length`. Retries keep the stored deadline. | `STORED`, `NOT_FOUND` |
 | `FinishStart` | Ends a start that failed before `Put`: the sandbox is gone, the failure is kept, and the live count decreases by one. One transaction. | `FINISHED`, `NOT_FOUND`, `ALREADY_STORED` |
 | `Get` | Reads a running sandbox, or one in a pause, kill or snapshot transition. A starting or gone sandbox is not returned. | the sandbox, or no sandbox |
 
@@ -43,8 +57,17 @@ runs the node operations. See [Pause and kill](#pause-and-kill).
 |---|---|---|
 | `BeginTransition` | Moves a running sandbox to pausing or killing, and records the transition ID and action. The state change is atomic. | `STARTED` (with the sandbox), `JOINED` or `CONFLICT` (with the active transition ID and action), `NOT_FOUND`, `NOT_RUNNING`, `EXECUTION_MISMATCH`, `NOT_EXPIRED`, `ALREADY_FINISHED`, `ALREADY_RESTORED`, `ACTION_MISMATCH` |
 | `FinishTransition` | Deletes the sandbox record, makes the sandbox gone with the failure, if any, and decreases the live count by one. One transaction. | `FINISHED`, `NOT_FOUND`, `RESTORED` |
-| `RestoreRunning` | Makes a pausing sandbox running again and sets a retry window. The record and the live count do not change. One statement. | `RESTORED` (with the retry window), `NOT_FOUND`, `NOT_RESTORABLE`, `ALREADY_FINISHED` |
+| `RestoreRunning` | Restores a refused pause or kill. Sets the retry window and refusal episode. Keeps the live count. | `RESTORED` (with the retry window), `NOT_FOUND`, `NOT_RESTORABLE`, `ALREADY_FINISHED` |
 | `WaitForTransition` | Waits at most `max_wait` for the transition to end. The calls for one transition share the reads on each replica. Writes nothing. | `FINISHED` (with the failure, if any), `RESTORED`, `WAITING`, `NOT_FOUND`, `UNKNOWN` |
+
+A pause or kill whose owner does not end it becomes stale after 95 s. The
+recovery methods let a trusted caller find and take it over. See
+[Stale transitions](#stale-transitions).
+
+| Method | Effect | Outcomes |
+|---|---|---|
+| `ListStaleTransitions` | Lists pauses and kills of all projects that began or were claimed at least 95 s ago, oldest first, with their node and execution. Pages of up to 1000 (default 100). Writes nothing. | the transitions, and `next_page_token` when the page is full |
+| `ClaimTransition` | Gives a stale pause or kill a new transition ID, if the sandbox still has the expected execution. One statement. The state, action, record and live count do not change. | `CLAIMED` (with the transition and the sandbox), `NOT_FOUND`, `CONFLICT` (with the active transition), `NOT_STALE`, `EXECUTION_MISMATCH`, `ALREADY_FINISHED`, `ALREADY_RESTORED` |
 
 Expected results are outcomes in the response:
 
@@ -62,12 +85,47 @@ Expected results are outcomes in the response:
 - `Put` with `NOT_FOUND` stored nothing. The caller must remove the sandbox it
   created on the node.
 
+These results for an ended start or transition hold only while the service
+still records it: a new start or transition of the sandbox replaces that
+history, and the gone row can be deleted later. See [Tombstones](#tombstones).
+
+### Start deadline
+
+`Reserve` returns `start_deadline` with `RESERVED` and `ALREADY_PENDING`. It
+is 90 s after `reserved_at` of the pending start, by the database clock. A
+repeated `Reserve` with the same reservation ID returns the same deadline; it
+does not extend it. With `ALREADY_PENDING` it is the deadline of the other,
+pending reservation. The 90 s value is fixed in the service.
+
+From the deadline on, the service can end the start in one transaction: the
+sandbox is gone with the failure `start timed out`, code 4
+(`DEADLINE_EXCEEDED`), and the counter slot of the start decreases by one.
+The update applies only while the project, sandbox ID, reservation ID, the
+starting state and the age all match, so it does not change a start that
+`Put`, `FinishStart` or a new reservation changed first. After it:
+
+- `Put` returns `NOT_FOUND`. The service changes only the database and does
+  not stop a sandbox on a node. The caller must remove the sandbox it
+  created.
+- `FinishStart` returns `FINISHED` and keeps the timeout failure.
+- `Reserve` with the same reservation ID returns `FINISHED` with the timeout
+  failure.
+
+A `Put` or a `FinishStart` after the deadline still succeeds while the start
+has not been ended. Finish every start before its deadline.
+
+The [background cleanup](#background-cleanup) ends expired starts, so a start
+can end any time after its deadline, usually within about 20 s, later with
+a backlog of expired starts. Ending a start does not stop a sandbox on a node. A sandbox that a
+node created for an expired start runs there without a record until the
+caller removes it; the service does not find or remove such sandboxes.
+
 A gRPC error means one of these:
 
 | Code | Cause |
 |---|---|
 | `INVALID_ARGUMENT` | Field validation reports all violations with `buf.validate.Violations` details. The record must also be a JSON object that PostgreSQL jsonb can store. `max_instance_length` and `retry_after` must also be whole numbers of microseconds, and `max_wait` at most 5 s. These checks return a fixed message without details. |
-| `ALREADY_EXISTS` | `Reserve` for a sandbox ID that another project holds, including a gone sandbox. |
+| `ALREADY_EXISTS` | `Reserve` for a sandbox ID that another project holds, including a gone sandbox whose row is not purged yet. |
 | `DEADLINE_EXCEEDED`, `CANCELLED` | `WaitForTransition` whose deadline passed or whose caller cancelled before the transition ended. Call it again. |
 | `INTERNAL` | A database or server failure. The message is always `internal error`; the service logs the cause. |
 
@@ -105,7 +163,8 @@ runs. The transition ID names the owner of the transition:
 
 The service detects a reused transition ID only while the sandbox records it
 as its latest transition. A finished or restored transition keeps its ID on
-the sandbox until the next `Reserve` or `BeginTransition` replaces it.
+the sandbox until the next `Reserve` or `BeginTransition` replaces it, or
+until the gone row is purged.
 
 `FinishTransition` always ends the sandbox: it deletes the record, makes the
 sandbox gone and decreases the live count. Call it only when the sandbox has
@@ -118,7 +177,7 @@ changes nothing. A call with an ID that the sandbox does not record returns
 `NOT_FOUND`, also after a new start of the same sandbox.
 
 `RestoreRunning` is for a pause that the node refused while the sandbox kept
-running. It does not apply to a kill (`NOT_RESTORABLE`). The sandbox is running
+running. It also restores a kill refused for a checkpoint. The sandbox is running
 again with the same record, count and `end_time`. `refused_until` becomes now
 plus `retry_after`. `refused_since` keeps the first refusal while each refusal
 comes within 30 s after the previous window ended, and otherwise becomes now.
@@ -174,6 +233,73 @@ a start yet.
 | `NOT_FOUND` | The project has no sandbox with this ID. |
 | `UNKNOWN` | The sandbox does not record this transition ID: a new start or transition replaced it, or it never began. The service did not keep its outcome. Read the sandbox with `Get`. |
 
+### Stale transitions
+
+A transition is stale when it began, or was last claimed, at least 95 s ago
+by the database clock. The 95 s are fixed in the service and are not a
+request parameter. A stale transition is only a candidate for recovery: its
+owner may have failed, or its node call may still run. The service does not
+call nodes and does not end stale transitions on its own; no caller uses
+these methods yet.
+
+`ListStaleTransitions` returns, for each stale pause or kill: project ID,
+sandbox ID, transition ID, action, `transition_at`, execution ID, node ID and
+cluster ID. It reads all projects. Pages are ordered by `transition_at`, then
+by sandbox; `next_page_token` continues after the last transition of a full
+page. A token is opaque and starts with a format version. The list is not a
+snapshot: transitions that end, are claimed or begin between pages can be
+missed or listed again, and a listed transition may no longer be stale when
+the caller acts. A transition whose sandbox has no record is not listed. The
+query scans and sorts the table, because an index on the state would make
+state changes non-HOT updates.
+
+`ClaimTransition` takes `old_transition_id` from the list, a new random
+`new_transition_id`, and the listed `expected_execution_id`, which is
+required. If the sandbox of the project is pausing or killing with
+`old_transition_id`, that transition is at least 95 s old, and the sandbox
+has `expected_execution_id`, the transition gets `new_transition_id` and
+`transition_at` becomes now, so another claim must wait 95 s again. Nothing
+else changes. The response carries the action and the sandbox, read in the
+same transaction, so they belong to the claimed execution.
+
+| Outcome | Meaning |
+|---|---|
+| `CLAIMED` | The sandbox is in the transition of `new_transition_id` with `expected_execution_id`. A repeat with the same IDs returns `CLAIMED` with the first `transition_at`. |
+| `NOT_FOUND` | No such sandbox in the project, or it is starting, snapshotting, or running or gone after another transition. |
+| `CONFLICT` | The sandbox is in a pause or kill with another transition ID, for example after another claim. Carries that transition. Of concurrent claims with different new IDs, one gets `CLAIMED` and the others `CONFLICT`. |
+| `NOT_STALE` | The transition of `old_transition_id` is younger than 95 s. |
+| `EXECUTION_MISMATCH` | The sandbox in the pause or kill has another execution. |
+| `ALREADY_FINISHED` | The sandbox is gone and records one of the IDs. Only while the gone row remains. |
+| `ALREADY_RESTORED` | The sandbox is running and records one of the IDs. |
+
+A claim prevents `FinishTransition` and `RestoreRunning` with the old
+transition ID from changing the claimed attempt: they return `NOT_FOUND`.
+`WaitForTransition` with the old ID returns `UNKNOWN`. The new owner ends the
+transition with `FinishTransition` or `RestoreRunning`, as after
+`BeginTransition`.
+
+The service keeps only the latest transition ID of a sandbox, so a claim
+does not permanently reject `BeginTransition` with the old ID. While the
+replacement is active, an old `BeginTransition` returns `JOINED` or
+`CONFLICT`. After the replacement restores the sandbox to running, the old
+`BeginTransition` can start another operation (`STARTED`). Owners must stop
+retrying `BeginTransition` before 95 s have passed since their first
+attempt, and must not retry it after learning that ownership changed. A
+future API client needs a retry deadline below 95 s.
+
+On `UNKNOWN`, reread the sandbox with `Get` and reassess the requested
+operation against its execution and state. Do not use `BeginTransition` as a
+read-only lookup: it can start a new operation. A fresh claim is younger
+than 95 s, so the stale list does not show it.
+
+The claim fences only `FinishTransition` and `RestoreRunning` with the old
+ID, through the state and the new transition ID. It does not cancel a node
+call that the previous owner still runs, and it does not lock the sandbox
+for later operations. Before an automatic recovery uses these methods, the
+orchestrator calls must be shown to be safe to repeat and limited to the
+expected execution. Automatic recovery is not approved yet. Like
+`new_transition_id`, a transition ID must never be reused.
+
 ### Admission
 
 The live count of a project is split over counter slots 0 to 63. A sandbox is
@@ -202,7 +328,7 @@ between 1 µs and 9,223,372,036 s, in whole microseconds.
 | Variable | Required | Meaning |
 |---|---|---|
 | `SCHEDULING_GRPC_ADDRESS` | yes | Plaintext gRPC listen address, for example `:50051` |
-| `SCHEDULING_DATABASE_URL` | yes | PostgreSQL URL shared by both pools: the same database, role and primary endpoint. |
+| `SCHEDULING_DATABASE_URL` | yes | PostgreSQL URL shared by both pools: the same database, role and primary endpoint. The cleanup worker opens one more connection, outside the pools. |
 | `SCHEDULING_WRITE_POOL_MAX_CONNS` | no | Maximum write-pool connections. Positive `int32`, default `24`. Overrides URL `pool_max_conns`. |
 | `SCHEDULING_READ_POOL_MAX_CONNS` | no | Maximum read-pool connections. Positive `int32`, default `8`. Overrides URL `pool_max_conns`. |
 | `NODE_ID` | yes | Node ID reported in telemetry |
@@ -228,9 +354,11 @@ connection startup parameters, including for replacement connections. The
 service does not check or enforce `fsync`.
 
 The standard gRPC health service then reports `SERVING` for `""` and
-`e2b.scheduling.v1.SchedulingService`. On `SIGTERM` or `SIGINT` both change to
-`NOT_SERVING`. The listener keeps serving for 10 s, then stops gracefully
-within 10 s. Both database pools close after the last request has finished.
+`e2b.scheduling.v1.SchedulingService`. On `SIGTERM` or `SIGINT` the cleanup
+worker stops, releases its lock and closes its connection, and both health
+statuses change to `NOT_SERVING`. The listener keeps serving for 10 s, then
+stops gracefully within 10 s. Both database pools close after the worker has
+stopped and the last request has finished.
 
 Every request has a default 10 s server deadline and respects an earlier caller
 deadline.
@@ -266,7 +394,7 @@ docker run --rm --entrypoint /usr/local/bin/scheduling-api-migrate \
 | Table | Contents |
 |---|---|
 | `scheduling_actor` | Data that does not change while the actor lives. Written by `Put`, deleted by `FinishTransition`. |
-| `scheduling_actor_run` | State, deadline (`end_time`), revision, transition, failure and retry window of an actor. Written by `Reserve`. A row in state `gone` is a tombstone. |
+| `scheduling_actor_run` | State, deadline (`end_time`), revision, transition, failure and retry window of an actor. Written by `Reserve`. A row in state `gone` is a tombstone, kept at least 5 minutes. |
 | `scheduling_project_live_count` | Live actors per project, split over counter slots 0 to 63. `scheduling_actor_run.counter_slot` names the slot that counts the actor. |
 
 `scheduling_actor_run.state` uses the PostgreSQL enum `public.scheduling_actor_state`:
@@ -277,10 +405,103 @@ Transition actions in `transition_action`:
 No method begins a snapshot yet; `Get` and `BeginTransition` report a
 snapshotting sandbox as such.
 
-Nothing removes tombstones yet. Nothing ends a start whose caller never calls
-`Put` or `FinishStart`, or a transition whose caller never calls
-`FinishTransition` or `RestoreRunning`. Such a sandbox keeps counting against
-the limit of its project, and waiters get `WAITING`.
+Nothing ends a transition whose caller never calls `FinishTransition` or
+`RestoreRunning` on its own. Such a sandbox keeps counting against the limit
+of its project, and waiters get `WAITING`, until a caller recovers it (see
+[Stale transitions](#stale-transitions)). The cleanup worker does not touch
+transitions.
+
+Start expiry and the tombstone purge read the table with a scan, at most a
+given number of rows per call. The table has no index on `state`,
+`reserved_at` or `gone_at`, so that state changes stay HOT updates.
+
+### Tombstones
+
+A gone row (state 6) keeps the outcome of the latest start or transition of
+a sandbox. A new start of the same sandbox reuses the row and replaces that
+outcome at once, so this is not a guarantee for every earlier result. A gone
+row that no new start reuses is kept for at least 5 minutes after `gone_at`,
+by the database clock. The 5 minutes are fixed in the service. While the row
+remains:
+
+- `Reserve` with the same reservation ID returns `FINISHED`, with the failure
+  if one was recorded.
+- `FinishStart`, `FinishTransition` and `WaitForTransition` for the ended
+  start or transition return their terminal outcome, and `BeginTransition`
+  with the ended transition ID returns `ALREADY_FINISHED`.
+- `Reserve` from another project returns `ALREADY_EXISTS`.
+
+`Store.PurgeTombstones` deletes gone rows that are older than that, up to a
+given number per call, in one statement. It does not change the live counts:
+a gone sandbox is not counted. A row that a concurrent `Reserve` is reusing
+is skipped, and purges on several replicas delete different rows. After the
+purge the service keeps nothing of the sandbox:
+
+- `FinishStart`, `FinishTransition`, `WaitForTransition` and
+  `BeginTransition` return `NOT_FOUND`.
+- `Reserve` with the old reservation ID starts a new attempt and returns
+  `RESERVED`. Retry a lost response with the same identifiers only for a
+  bounded time, well within the 5 minutes. Never reuse a reservation ID
+  indefinitely.
+- Any project can reserve the sandbox ID.
+
+The [background cleanup](#background-cleanup) runs the purge.
+
+### Background cleanup
+
+Each replica runs a cleanup worker. Only the replica that holds the
+PostgreSQL session advisory lock `0x73636865645f636c` (a 64-bit key) in the
+scheduling database does the work. The others try to take the lock once per
+round, 10 s apart, and do not keep a connection between tries. The lock is
+held on a dedicated connection, one per replica, outside the pool that
+`pool_max_conns` sizes, so a pool of one connection also works. That
+connection always has `application_name` `scheduling-api-cleanup` and
+`idle_session_timeout` 60 s, whatever the database URL sets.
+`idle_session_timeout` needs PostgreSQL 14 or later; the tests use
+PostgreSQL 18.
+
+After each round, the worker waits 10 s before the next attempt. Each round
+has a 10 s work budget split between start expiry and tombstone deletion,
+5 s each. Connecting and trying the lock share a 5 s timeout, which comes
+before the budget. The budgets end the work by cancelling it. The lock check before
+each batch is not cancelled by a budget and has its own 1 s timeout, so a
+round can take a little longer when the database is slow to answer.
+
+1. Start expiry ends expired starts (see [Start deadline](#start-deadline))
+   in batches of 1000, in actor ID order. The next batch or round continues
+   after the last start it tried. Starts that fail every time therefore do
+   not keep the others from ending. A start that the budget interrupts is
+   tried again from there; it is not a failure.
+2. Tombstone deletion deletes tombstones past the retention (see
+   [Tombstones](#tombstones)), 1000 per statement, while a batch is full. It
+   runs even when start expiry used its whole budget.
+
+Full batches are 10 ms apart. The work uses the service pool, in short
+transactions with a 1 s lock timeout and a 5 s statement timeout; request
+queries keep their own limits. A start whose counter row stays locked longer
+than 1 s fails for this round and is tried again later.
+
+Before each batch, the leader checks that its lock connection still runs on
+the backend that took the lock. If the check fails, it closes the connection
+and tries to take the lock again in the next round. If the leader's host
+fails or its process hangs, PostgreSQL ends the idle lock session after the
+60 s idle session timeout, if the database is healthy, and another replica
+takes the lock at its next try, up to 10 s later; it is not immediate. Two
+replicas can briefly both work, for example when a lost connection has not
+been noticed yet. That is safe: every statement checks the state of the row
+it changes, and the purge skips locked rows. A lost lock does not mean that
+any sandbox stopped.
+
+The worker logs a round that changed rows, with counts and duration. A round
+with failures logs one error with the failure counts and the first error of
+each step; running out of a budget is not a failure. A start that fails on
+every round, for example because its counter row is missing, logs an error
+every round: it means that the live counts are wrong, and it needs an
+operator; the service does not repair counters. The worker also logs when it
+acquires, loses or releases the lock. Each store call is a span.
+
+The worker does not end transitions (pausing, killing) and does not repair
+counters. On a database without the migrations, each round logs an error.
 
 ## Sandbox UUIDs
 
@@ -334,9 +555,10 @@ make test
 
 | Package | Covers |
 |---|---|
-| `internal/store` | The SQL: admission under concurrency, retries, project isolation, counter slots, failed starts, transitions under concurrency, retry windows, waits across store instances, rollback on failure |
-| `internal/server` | The gRPC methods through the production server and interceptors: validation, outcomes, waits across two servers, deadlines, sanitized errors |
-| `.` | Startup with the database, health, shutdown |
+| `internal/store` | The SQL: admission under concurrency, retries, project isolation, counter slots, failed starts, start deadlines and expiry under concurrency, tombstone purge under concurrency, transitions under concurrency, stale transition lists and claims under concurrency, retry windows, waits across store instances, rollback on failure |
+| `internal/cleanup` | The cleanup worker: one leader across workers, a new leader after the leader's backend ends, release on stop, expiry and purge rounds, a locked counter row, database failures |
+| `internal/server` | The gRPC methods through the production server and interceptors: validation, outcomes, waits across two servers, deadlines, page tokens, sanitized errors |
+| `.` | Startup with the database, health, shutdown, cleanup with a one-connection pool |
 
 ## Commands
 

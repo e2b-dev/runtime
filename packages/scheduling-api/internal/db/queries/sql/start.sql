@@ -1,6 +1,5 @@
--- Sets no indexed column, so the update stays HOT.
 -- name: MarkRunning :execrows
-UPDATE public.scheduling_actor_run SET state = 'running'
+UPDATE public.scheduling_actor_run SET state = 'running', end_time = least(coalesce(sqlc.narg(end_time)::timestamptz, end_time), @max_end_time::timestamptz)
  WHERE actor_id = @actor_id AND project_id = @project_id AND reservation_id = @reservation_id AND state = 'starting';
 
 -- name: InsertActor :exec

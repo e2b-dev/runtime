@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/id"
@@ -77,15 +76,26 @@ func (s *service) Reserve(ctx context.Context, req *scheduling.ReserveRequest) (
 	if errors.Is(err, store.ErrOtherProject) {
 		return nil, status.Error(codes.AlreadyExists, "sandbox_id is held by another project")
 	}
+	if errors.Is(err, store.ErrKillClaim) {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
 	if err != nil {
 		return nil, internalError(ctx, err)
 	}
 
 	switch result.Outcome {
 	case store.ReserveReserved:
-		return scheduling.ReserveResponse_builder{Outcome: scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED}.Build(), nil
+		return scheduling.ReserveResponse_builder{
+			ReservationId: req.GetReservationId(),
+			Outcome:       scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED,
+			StartDeadline: timestamppb.New(result.StartDeadline),
+		}.Build(), nil
 	case store.ReserveAlreadyPending:
-		return scheduling.ReserveResponse_builder{Outcome: scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING}.Build(), nil
+		return scheduling.ReserveResponse_builder{
+			ReservationId: result.ReservationID.String(),
+			Outcome:       scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING,
+			StartDeadline: timestamppb.New(result.StartDeadline),
+		}.Build(), nil
 	case store.ReserveLimitExceeded:
 		return scheduling.ReserveResponse_builder{Outcome: scheduling.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED}.Build(), nil
 	case store.ReserveFinished:
@@ -103,30 +113,14 @@ func (s *service) Reserve(ctx context.Context, req *scheduling.ReserveRequest) (
 		}.Build(), nil
 	case store.ReserveAlreadyRunning:
 		a := result.Actor
-		sandboxID, state, err := sandboxIDAndState(a)
+		wire, err := wireActor(a)
 		if err != nil {
 			return nil, internalError(ctx, err)
 		}
 
 		return scheduling.ReserveResponse_builder{
 			Outcome: scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_RUNNING,
-			Sandbox: scheduling.Sandbox_builder{
-				SandboxId:               sandboxID,
-				ProjectId:               a.ProjectID.String(),
-				State:                   state,
-				EndTime:                 timestamppb.New(a.EndTime),
-				ExecutionId:             a.ExecutionID,
-				StartTime:               timestamppb.New(a.StartTime),
-				MaxInstanceLength:       durationpb.New(a.MaxInstanceLength),
-				NodeId:                  a.NodeID,
-				ClusterId:               a.ClusterID.String(),
-				BaseTemplateId:          a.BaseTemplateID,
-				TemplateId:              a.TemplateID,
-				Metadata:                a.Metadata,
-				AutoPause:               a.AutoPause,
-				AutoPauseFilesystemOnly: a.AutoPauseFilesystemOnly,
-				Record:                  a.Record,
-			}.Build(),
+			Sandbox: wire,
 		}.Build(), nil
 	default:
 		return nil, internalError(ctx, fmt.Errorf("reserve: unknown outcome %d", result.Outcome))
@@ -154,7 +148,16 @@ func (s *service) Put(ctx context.Context, req *scheduling.PutRequest) (*schedul
 		return nil, status.Error(codes.InvalidArgument, invalidRecordMessage)
 	}
 
+	var endTime *time.Time
+	if req.HasEndTime() {
+		if err := req.GetEndTime().CheckValid(); err != nil {
+			return nil, status.Error(codes.InvalidArgument, "invalid end_time")
+		}
+		value := req.GetEndTime().AsTime()
+		endTime = &value
+	}
 	outcome, err := s.store.Put(ctx, reservationID, store.Actor{
+		EndTime:                 endTime,
 		ProjectID:               projectID,
 		ActorID:                 actorID,
 		ExecutionID:             req.GetExecutionId(),
@@ -229,29 +232,13 @@ func (s *service) Get(ctx context.Context, req *scheduling.GetRequest) (*schedul
 	if a == nil {
 		return scheduling.GetResponse_builder{}.Build(), nil
 	}
-	sandboxID, state, err := sandboxIDAndState(a)
+	wire, err := wireActor(a)
 	if err != nil {
 		return nil, internalError(ctx, err)
 	}
 
 	return scheduling.GetResponse_builder{
-		Sandbox: scheduling.Sandbox_builder{
-			SandboxId:               sandboxID,
-			ProjectId:               a.ProjectID.String(),
-			State:                   state,
-			EndTime:                 timestamppb.New(a.EndTime),
-			ExecutionId:             a.ExecutionID,
-			StartTime:               timestamppb.New(a.StartTime),
-			MaxInstanceLength:       durationpb.New(a.MaxInstanceLength),
-			NodeId:                  a.NodeID,
-			ClusterId:               a.ClusterID.String(),
-			BaseTemplateId:          a.BaseTemplateID,
-			TemplateId:              a.TemplateID,
-			Metadata:                a.Metadata,
-			AutoPause:               a.AutoPause,
-			AutoPauseFilesystemOnly: a.AutoPauseFilesystemOnly,
-			Record:                  a.Record,
-		}.Build(),
+		Sandbox: wire,
 	}.Build(), nil
 }
 
@@ -325,27 +312,10 @@ func (s *service) BeginTransition(ctx context.Context, req *scheduling.BeginTran
 	}
 	var sandbox *scheduling.Sandbox
 	if a := result.Actor; a != nil {
-		sandboxID, state, err := sandboxIDAndState(a)
+		sandbox, err = wireActor(a)
 		if err != nil {
 			return nil, internalError(ctx, err)
 		}
-		sandbox = scheduling.Sandbox_builder{
-			SandboxId:               sandboxID,
-			ProjectId:               a.ProjectID.String(),
-			State:                   state,
-			EndTime:                 timestamppb.New(a.EndTime),
-			ExecutionId:             a.ExecutionID,
-			StartTime:               timestamppb.New(a.StartTime),
-			MaxInstanceLength:       durationpb.New(a.MaxInstanceLength),
-			NodeId:                  a.NodeID,
-			ClusterId:               a.ClusterID.String(),
-			BaseTemplateId:          a.BaseTemplateID,
-			TemplateId:              a.TemplateID,
-			Metadata:                a.Metadata,
-			AutoPause:               a.AutoPause,
-			AutoPauseFilesystemOnly: a.AutoPauseFilesystemOnly,
-			Record:                  a.Record,
-		}.Build()
 	}
 
 	return scheduling.BeginTransitionResponse_builder{
@@ -403,17 +373,22 @@ func (s *service) RestoreRunning(ctx context.Context, req *scheduling.RestoreRun
 		return nil, status.Error(codes.InvalidArgument, "retry_after: must be a whole number of microseconds")
 	}
 
-	result, err := s.store.RestoreRunning(ctx, projectID, actorID, transitionID, req.GetRetryAfter().AsDuration())
+	result, err := s.store.RestoreRunning(ctx, projectID, actorID, transitionID, req.GetRetryAfter().AsDuration(), store.RestoreOptions{HoldOnly: req.GetHoldOnly(), EnvdRefusal: req.GetEnvdRefusal(), RefusalClass: req.GetRefusalClass()})
 	if err != nil {
 		return nil, internalError(ctx, err)
 	}
 
 	switch result.Outcome {
 	case store.RestoreRestored:
+		var refusedSince *timestamppb.Timestamp
+		if !result.RefusedSince.IsZero() {
+			refusedSince = timestamppb.New(result.RefusedSince)
+		}
+
 		return scheduling.RestoreRunningResponse_builder{
 			Outcome:      scheduling.RestoreRunningOutcome_RESTORE_RUNNING_OUTCOME_RESTORED,
 			RefusedUntil: timestamppb.New(result.RefusedUntil),
-			RefusedSince: timestamppb.New(result.RefusedSince),
+			RefusedSince: refusedSince,
 		}.Build(), nil
 	case store.RestoreNotFound:
 		return scheduling.RestoreRunningResponse_builder{Outcome: scheduling.RestoreRunningOutcome_RESTORE_RUNNING_OUTCOME_NOT_FOUND}.Build(), nil
@@ -462,7 +437,12 @@ func (s *service) WaitForTransition(ctx context.Context, req *scheduling.WaitFor
 			Failure: failure,
 		}.Build(), nil
 	case store.WaitRestored:
-		return scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED}.Build(), nil
+		var failure *scheduling.Failure
+		if result.Failure != nil {
+			failure = scheduling.Failure_builder{Message: result.Failure.Message}.Build()
+		}
+
+		return scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, Failure: failure}.Build(), nil
 	case store.WaitWaiting:
 		return scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING}.Build(), nil
 	case store.WaitNotFound:
