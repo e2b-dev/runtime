@@ -15,7 +15,7 @@ runs:
   using: "composite"
   steps:
     - name: Pull deployment secrets into temporary file
-      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
       with:
         method: "oidc"
         identity-id: ${{ inputs.infisical_machine_identity_id }}
@@ -41,7 +41,7 @@ runs:
         echo "GH_WORKLOAD_IDENTITY_PROVIDER=${GH_WORKLOAD_IDENTITY_PROVIDER}" >> "$GITHUB_ENV"
 
     - name: Load runtime environment
-      uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
       with:
         method: "oidc"
         identity-id: ${{ inputs.infisical_machine_identity_id }}
