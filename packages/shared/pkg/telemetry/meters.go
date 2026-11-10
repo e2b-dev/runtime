@@ -53,6 +53,9 @@ const (
 	// snapshot). The read plus disabled rate is the team's store sweeps per
 	// second; hit over the total is what the snapshot saves.
 	ApiSandboxListReads CounterType = "api.sandbox.list.reads"
+	// ApiTemplateListCapExceeded counts unpaginated template list requests
+	// refused because the team has more templates than the cap, by team.
+	ApiTemplateListCapExceeded CounterType = "api.template.list.cap_exceeded"
 	// ApiEvictorFsOnlyAutoPause counts timeout auto-pauses whose policy asked
 	// for a filesystem-only snapshot. Unlabeled since the fs-only version
 	// gate was dropped: every counted eviction takes the fs-only path.
@@ -903,6 +906,7 @@ var counterDesc = map[CounterType]string{
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
+	ApiTemplateListCapExceeded:                   "Unpaginated template list requests refused because the team has more templates than the cap, by team.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
 	TeamSandboxCreated:                           "Counter of started sandboxes for the team in the interval",
@@ -1007,6 +1011,7 @@ var counterUnits = map[CounterType]string{
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
 	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
 	ApiSandboxListReads:                          "{request}",
+	ApiTemplateListCapExceeded:                   "{request}",
 	BuildResultCounterName:                       "{build}",
 	BuildCacheResultCounterName:                  "{layer}",
 	TeamSandboxCreated:                           "{sandbox}",

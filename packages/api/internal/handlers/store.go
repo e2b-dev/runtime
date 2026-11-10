@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/riverqueue/river"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"k8s.io/client-go/kubernetes"
@@ -247,6 +248,7 @@ type APIStore struct {
 	snapshotUpsertSem         *sharedutils.AdjustableSemaphore
 	sandboxListSem            *sharedutils.AdjustableSemaphore
 	snapshotBuildQuerySem     *sharedutils.AdjustableSemaphore
+	templateListCapHits       metric.Int64Counter
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer
@@ -406,6 +408,11 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
 	}
 
+	templateListCapHits, err := telemetry.GetCounter(tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/api/internal/handlers"), telemetry.ApiTemplateListCapExceeded)
+	if err != nil {
+		logger.L().Fatal(ctx, "Initializing template list cap counter", zap.Error(err))
+	}
+
 	authClient := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
@@ -483,6 +490,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		snapshotUpsertSem:     snapshotUpsertSem,
 		sandboxListSem:        sandboxListSem,
 		snapshotBuildQuerySem: snapshotBuildQuerySem,
+		templateListCapHits:   templateListCapHits,
 		secretsConn:           secretsConn,
 		webhooksConn:          webhooksConn,
 		webhookManagement:     webhookManagement,
