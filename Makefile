@@ -7,14 +7,6 @@ PROVIDER ?= gcp
 AWS_BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
 GCP_BUCKET_PREFIX ?= $(GCP_PROJECT_ID)-
 
-# Setup production environment variables, this is used only for E2B.dev production
-# Uses Infisical CLI to read secrets from Infisical Vault
-# To update them, use the Infisical UI directly
-# On a first use, you need to run `infisical login` and `infisical init`
-.PHONY: download-prod-env
-download-prod-env:
-	@  ./scripts/download-prod-env.sh ${ENV}
-
 .PHONY: build
 build/%:
 	$(MAKE) -C packages/$(notdir $@) build
