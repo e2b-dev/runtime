@@ -14,4 +14,5 @@ type TLSConfig struct {
 	Webhooks     mtls.HopSettings `envPrefix:"E2B_TLS_WEBHOOKS_"`
 	Analytics    mtls.HopSettings `envPrefix:"E2B_TLS_ANALYTICS_"`
 	Orchestrator mtls.HopSettings `envPrefix:"E2B_TLS_ORCHESTRATOR_"`
+	Scheduling   mtls.HopSettings `envPrefix:"E2B_TLS_SCHEDULING_"`
 }

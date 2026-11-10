@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+
 	"google.golang.org/grpc/credentials"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
@@ -28,11 +30,12 @@ type serviceTLS struct {
 	http, internalGRPC, publicGRPC mtls.ServerConfig
 	httpHealthPaths                []string
 	hops                           handlers.Hops
+	scheduling                     credentials.TransportCredentials
 }
 
 // newServiceTLS builds the api's listeners and hops from the chart's
 // settings; no wildcard is admitted on its ports.
-func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool) (serviceTLS, error) {
+func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, schedulingHop bool) (serviceTLS, error) {
 	var s serviceTLS
 	var err error
 	if s.http, err = proc.Listener("http", httpModeFlag, c.HTTP, mtls.WithoutWildcards()); err != nil {
@@ -69,6 +72,24 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool) (serv
 	}
 	if s.hops.Orchestrator, err = hop("orchestrator", orchestratorHopFlag, c.Orchestrator); err != nil {
 		return serviceTLS{}, err
+	}
+
+	if schedulingHop {
+		settings := c.Scheduling
+		if settings.Mode == "" {
+			settings.Mode = "on"
+		}
+		if settings.Mode != "on" && settings.Mode != "off" {
+			return serviceTLS{}, errors.New("E2B_TLS_SCHEDULING_CLIENT_MODE must be on or off")
+		}
+		hopConfig, err := proc.Hop("scheduling", "", settings)
+		if err != nil {
+			return serviceTLS{}, err
+		}
+		if settings.Mode != "off" && hopConfig.Files.Bundle() == nil {
+			return serviceTLS{}, errors.New("scheduling TLS certificate files are unavailable")
+		}
+		s.scheduling = mtls.NewClientCredentials(hopConfig)
 	}
 
 	return s, nil
