@@ -340,9 +340,14 @@ func (s *Slot) exportNonDNSUDP(ctx context.Context, fw *Firewall) {
 	}
 }
 
+// NetNSPath is where the network namespace named namespaceID is bound.
+func NetNSPath(namespaceID string) string {
+	return filepath.Join(NetNamespacesDir, namespaceID)
+}
+
 // netNSPath is where the slot's network namespace is bound.
 func (s *Slot) netNSPath() string {
-	return filepath.Join(NetNamespacesDir, s.NamespaceID())
+	return NetNSPath(s.NamespaceID())
 }
 
 // errNoFirewall is what every firewall operation returns for a slot without

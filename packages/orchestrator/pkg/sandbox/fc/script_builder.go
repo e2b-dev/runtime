@@ -10,6 +10,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
@@ -25,7 +26,7 @@ type startScriptArgs struct {
 	DeprecatedSandboxRootfsDir string
 	SandboxRootfsFile          string
 
-	NamespaceID       string
+	NetNamespacePath  string
 	FirecrackerPath   string
 	FirecrackerSocket string
 
@@ -51,6 +52,19 @@ type StartScriptResult struct {
 	KernelPath string
 }
 
+// Both templates start with `mount --make-rprivate /` to recursively set
+// MS_PRIVATE on every inherited mount. This is the propagation invariant the
+// mount namespace relies on: the process enters a fresh mount namespace via
+// CLONE_NEWNS (SysProcAttr.Unshareflags in NewProcess), and CLONE_NEWNS alone
+// does NOT make mounts private, unlike `unshare -m` (util-linux >= 2.27). The
+// Go runtime already issues MS_REC|MS_PRIVATE on / in the child when
+// Unshareflags has CLONE_NEWNS (see syscall/exec_linux.go), so this line is the
+// explicit, in-script belt to that suspenders and must stay the first command.
+//
+// The final step enters the slot's network namespace with `nsenter --net=` (a
+// plain setns) instead of `ip netns exec`, which internally does its own
+// unshare(CLONE_NEWNS) + /sys remount and so forced a second mount-tree copy
+// under the global namespace_sem on every sandbox start.
 const startScriptV1 = `mount --make-rprivate / &&
 
 mount -t tmpfs tmpfs {{ .DeprecatedSandboxRootfsDir }} -o X-mount.mkdir &&
@@ -59,7 +73,7 @@ ln -s {{ .HostRootfsPath }} {{ .DeprecatedSandboxRootfsDir }}/{{ .SandboxRootfsF
 mount -t tmpfs tmpfs {{ .SandboxDir }}/{{ .SandboxKernelDir }} -o X-mount.mkdir &&
 ln -s {{ .HostKernelPath }} {{ .SandboxDir }}/{{ .SandboxKernelDir }}/{{ .SandboxKernelFile }} &&
 
-ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
+nsenter --net={{ .NetNamespacePath }} -- {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
 
 const startScriptV2 = `mount --make-rprivate / &&
 mount -t tmpfs tmpfs {{ .SandboxDir }} -o X-mount.mkdir &&
@@ -69,7 +83,7 @@ ln -s {{ .HostRootfsPath }} {{ .SandboxDir }}/{{ .SandboxRootfsFile }} &&
 mkdir -p {{ .SandboxDir }}/{{ .SandboxKernelDir }} &&
 ln -s {{ .HostKernelPath }} {{ .SandboxDir }}/{{ .SandboxKernelDir }}/{{ .SandboxKernelFile }} &&
 
-ip netns exec {{ .NamespaceID }} {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
+nsenter --net={{ .NetNamespacePath }} -- {{ .FirecrackerPath }} --api-sock {{ .FirecrackerSocket }}{{ if .EnablePCI }} --enable-pci{{ end }}{{ if .LogLevel }} --level {{ .LogLevel }} --show-level --show-log-origin{{ end }}`
 
 // StartScriptBuilder handles the creation and execution of firecracker start scripts
 type StartScriptBuilder struct {
@@ -112,7 +126,7 @@ func (sb *StartScriptBuilder) buildArgs(
 		SandboxRootfsFile:          versions.RootfsFileName(),
 
 		// FC
-		NamespaceID:       namespaceID,
+		NetNamespacePath:  network.NetNSPath(namespaceID),
 		FirecrackerPath:   versions.FirecrackerPath(sb.builderConfig),
 		FirecrackerSocket: files.SandboxFirecrackerSocketPath(),
 		EnablePCI:         versions.GuestProfile().Boot().PCI,

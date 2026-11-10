@@ -259,15 +259,29 @@ func NewProcess(
 	}
 
 	cmd := exec.CommandContext(execCtx,
-		"unshare",
-		"-m",
-		"--",
 		"bash",
 		"-c",
 		startScript.Value,
 	)
 
-	p := &Process{
+	// Enter a fresh mount namespace via CLONE_NEWNS instead of wrapping the
+	// command in `unshare -m`. The old wrapper forked a copy_mnt_ns of its own,
+	// and the script's `ip netns exec` forced a second one; doing the unshare
+	// here (one copy) and entering the network namespace with `nsenter --net`
+	// (a plain setns, no copy) halves the mount-tree copies taken under the
+	// global namespace_sem on every sandbox start.
+	//
+	// Note: unlike `unshare -m` (util-linux >= 2.27), CLONE_NEWNS does NOT by
+	// itself make mounts private. The Go runtime issues MS_REC|MS_PRIVATE on /
+	// in the child when Unshareflags carries CLONE_NEWNS, and both start
+	// scripts additionally begin with `mount --make-rprivate /`, so propagation
+	// ends up private exactly as it did under `unshare -m`.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:       true,                // Create a new session
+		Unshareflags: syscall.CLONE_NEWNS, // Enter a new mount namespace
+	}
+
+	return &Process{
 		Versions:              versions,
 		Exit:                  utils.NewErrorOnce(),
 		cmd:                   cmd,
@@ -282,13 +296,7 @@ func NewProcess(
 
 		kernelPath: startScript.KernelPath,
 		rootfsPath: startScript.RootfsPath,
-	}
-
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create a new session
-	}
-
-	return p, nil
+	}, nil
 }
 
 // refuseReapedProcess refuses readiness for a process the wait owner already
