@@ -12,6 +12,7 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -19,7 +20,7 @@ import (
 func Start(t *testing.T) (scheduling.SchedulingServiceClient, func()) {
 	t.Helper()
 	pool := dbtest.MigratedPool(t)
-	srv, err := server.New(telemetry.NewNoopClient(), store.New(pool, pool))
+	srv, err := server.New(telemetry.NewNoopClient(), store.New(pool, pool), mtls.ServerConfig{Mode: mtls.StaticMode(mtls.ModeOff)})
 	require.NoError(t, err)
 	var config net.ListenConfig
 	listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")

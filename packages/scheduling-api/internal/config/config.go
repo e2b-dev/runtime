@@ -6,13 +6,16 @@ import (
 	"os"
 
 	"github.com/caarlos0/env/v11"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 )
 
 type Config struct {
-	GRPCAddress       string `env:"SCHEDULING_GRPC_ADDRESS,required,notEmpty"`
-	DatabaseURL       string `env:"SCHEDULING_DATABASE_URL,required,notEmpty"`
-	WritePoolMaxConns int32  `env:"SCHEDULING_WRITE_POOL_MAX_CONNS"           envDefault:"24"`
-	ReadPoolMaxConns  int32  `env:"SCHEDULING_READ_POOL_MAX_CONNS"            envDefault:"8"`
+	TLS               mtls.ListenerSettings `envPrefix:"E2B_TLS_GRPC_"`
+	GRPCAddress       string                `env:"SCHEDULING_GRPC_ADDRESS,required,notEmpty"`
+	DatabaseURL       string                `env:"SCHEDULING_DATABASE_URL,required,notEmpty"`
+	WritePoolMaxConns int32                 `env:"SCHEDULING_WRITE_POOL_MAX_CONNS"           envDefault:"24"`
+	ReadPoolMaxConns  int32                 `env:"SCHEDULING_READ_POOL_MAX_CONNS"            envDefault:"8"`
 }
 
 type MigratorConfig struct {

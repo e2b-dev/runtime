@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/db/dbtest"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -28,7 +29,7 @@ var schedulingServiceName = scheduling.SchedulingService_ServiceDesc.ServiceName
 
 func TestServe(t *testing.T) {
 	t.Parallel()
-	cfg := config.Config{GRPCAddress: freeAddress(t), DatabaseURL: dbtest.ConnString(t, dbtest.MigratedPool(t)), WritePoolMaxConns: 2, ReadPoolMaxConns: 1}
+	cfg := config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: freeAddress(t), DatabaseURL: dbtest.ConnString(t, dbtest.MigratedPool(t)), WritePoolMaxConns: 2, ReadPoolMaxConns: 1}
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 	served := make(chan error, 1)
@@ -81,7 +82,7 @@ func TestServeCleanupWithOneConnection(t *testing.T) {
 	query := databaseURL.Query()
 	query.Set("pool_max_conns", "1")
 	databaseURL.RawQuery = query.Encode()
-	cfg := config.Config{GRPCAddress: freeAddress(t), DatabaseURL: databaseURL.String(), WritePoolMaxConns: 1, ReadPoolMaxConns: 1}
+	cfg := config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: freeAddress(t), DatabaseURL: databaseURL.String(), WritePoolMaxConns: 1, ReadPoolMaxConns: 1}
 
 	project, actor := uuid.New(), uuid.New()
 	reserved, err := store.New(pool, pool).Reserve(t.Context(), store.Reservation{
@@ -139,13 +140,14 @@ func TestServeListenerInUse(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 
-	err = serve(t.Context(), config.Config{GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0, cleanup.DefaultConfig)
+	err = serve(t.Context(), config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0, cleanup.DefaultConfig)
 	require.ErrorContains(t, err, "gRPC listener initialization failed")
 }
 
 func TestServeDatabaseUnavailable(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{
+		TLS:               mtls.ListenerSettings{Mode: "off"},
 		GRPCAddress:       freeAddress(t),
 		DatabaseURL:       "postgres://postgres@" + freeAddress(t) + "/scheduling?sslmode=disable&connect_timeout=5",
 		WritePoolMaxConns: 2,
@@ -171,6 +173,7 @@ func TestServeReadPoolFailureClosesWritePool(t *testing.T) {
 	query.Set("pool_min_conns", "2")
 	databaseURL.RawQuery = query.Encode()
 	cfg := config.Config{
+		TLS:               mtls.ListenerSettings{Mode: "off"},
 		GRPCAddress:       freeAddress(t),
 		DatabaseURL:       databaseURL.String(),
 		WritePoolMaxConns: 2,

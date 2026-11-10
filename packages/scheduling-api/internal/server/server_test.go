@@ -25,6 +25,7 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -514,7 +515,7 @@ func newClient(t *testing.T) (scheduling.SchedulingServiceClient, *pgxpool.Pool)
 func serve(t *testing.T, pool *pgxpool.Pool) scheduling.SchedulingServiceClient {
 	t.Helper()
 
-	grpcServer, err := server.New(telemetry.NewNoopClient(), store.New(pool, pool))
+	grpcServer, err := server.New(telemetry.NewNoopClient(), store.New(pool, pool), mtls.ServerConfig{Mode: mtls.StaticMode(mtls.ModeOff)})
 	require.NoError(t, err)
 	listener := bufconn.Listen(1 << 20)
 	go func() { _ = grpcServer.Serve(listener) }()

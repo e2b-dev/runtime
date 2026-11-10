@@ -772,6 +772,12 @@ Scheduling PostgreSQL uses separate read and write pgx pools from one
 The defaults allow 8 read and 24 write connections per service replica. Reads
 within a mutation transaction stay on the write pool.
 
+The scheduling listener requires mTLS by default. `E2B_TLS_GRPC_ALLOW` names
+the API SPIFFE identities allowed to call it. The shared TLS loader reads the
+certificate, key and CA bundle and reloads them every minute. Plaintext is
+limited to gRPC health probes. An isolated local run can explicitly set
+`E2B_TLS_GRPC_MODE=off`.
+
 The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
 `_migrations` table. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.

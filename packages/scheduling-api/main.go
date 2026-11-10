@@ -28,6 +28,7 @@ import (
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -104,6 +105,14 @@ func run() int {
 }
 
 func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain time.Duration, cleanupConfig cleanup.Config) error {
+	proc, err := mtls.NewProcess(ctx, tel.MeterProvider, nil, logger.L())
+	if err != nil {
+		return err
+	}
+	tlsConfig, err := config.ServerTLS(proc, cfg.TLS)
+	if err != nil {
+		return fmt.Errorf("gRPC TLS initialization failed: %w", err)
+	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.GRPCAddress)
 	if err != nil {
 		return fmt.Errorf("gRPC listener initialization failed: %w", err)
@@ -123,7 +132,7 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	}
 	defer readPool.Close()
 	st := store.New(writePool, readPool)
-	grpcServer, healthServer, err := newServer(tel, st)
+	grpcServer, healthServer, err := newServer(tel, st, tlsConfig) //nolint:contextcheck // TLS callbacks use the handshake context.
 	if err != nil {
 		_ = listener.Close()
 
@@ -218,8 +227,8 @@ func openDatabase(ctx context.Context, databaseURL string, maxConns int32) (*pgx
 	return pool, nil
 }
 
-func newServer(tel *telemetry.Client, st *store.Store) (*grpc.Server, *health.Server, error) {
-	grpcServer, err := server.New(tel, st)
+func newServer(tel *telemetry.Client, st *store.Store, tlsConfig mtls.ServerConfig) (*grpc.Server, *health.Server, error) {
+	grpcServer, err := server.New(tel, st, tlsConfig)
 	if err != nil {
 		return nil, nil, err
 	}

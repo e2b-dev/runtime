@@ -22,6 +22,7 @@ import (
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -32,7 +33,7 @@ const (
 	invalidRecordMessage = "record: must be a JSON object that PostgreSQL jsonb can store"
 )
 
-func New(tel *telemetry.Client, st *store.Store) (*grpc.Server, error) {
+func New(tel *telemetry.Client, st *store.Store, tlsConfig mtls.ServerConfig) (*grpc.Server, error) {
 	validator, err := protovalidate.New()
 	if err != nil {
 		return nil, fmt.Errorf("create the request validator: %w", err)
@@ -40,6 +41,9 @@ func New(tel *telemetry.Client, st *store.Store) (*grpc.Server, error) {
 
 	server := e2bgrpc.NewGRPCServer(
 		tel,
+		e2bgrpc.WithTransportCredentials(mtls.NewServerCredentials(tlsConfig)),
+		e2bgrpc.WithUnaryInterceptors(mtls.UnaryServerInterceptor(tlsConfig)),
+		e2bgrpc.WithStreamInterceptors(mtls.StreamServerInterceptor(tlsConfig)),
 		e2bgrpc.WithRecoveryHandler(func(any) error { return status.Error(codes.Internal, internalMessage) }),
 		e2bgrpc.WithUnaryDeadline(unaryDeadline),
 		e2bgrpc.WithUnaryInterceptors(protovalidatemw.UnaryServerInterceptor(validator)),

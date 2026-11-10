@@ -13,6 +13,22 @@ generated Go code is in `packages/shared/pkg/grpc/scheduling`. After a change
 to the proto or to a SQL query, run `make generate`. Generation needs network
 access: it fetches the protovalidate rules with `buf export`.
 
+## Transport
+
+Set `E2B_TLS_CERT_FILE`, `E2B_TLS_KEY_FILE`, and `E2B_TLS_CA_FILE` to the
+service certificate chain, private key, and trusted CA bundle. Certificates carry
+a SPIFFE URI SAN and the appropriate client/server authentication usage.
+Use a separate service identity, not the orchestrator identity.
+Set `E2B_TLS_GRPC_ALLOW` to the comma-separated API SPIFFE identities permitted
+to call every scheduling method. Wildcards are rejected.
+`E2B_TLS_GRPC_MODE` defaults to `required`; only `required` and `off` are accepted.
+Missing or unreadable certificate files and an empty allow-list fail startup in
+required mode. The shared loader reloads certificates every minute.
+
+For an isolated plaintext local run, explicitly set `E2B_TLS_GRPC_MODE=off`.
+The shared mTLS listener permits plaintext gRPC health probes in required mode,
+but rejects plaintext scheduling calls. Health checks expose no sandbox records.
+
 ## Methods
 
 `ListLive` provides bounded pages filtered by project, states, and expired deadlines.
@@ -26,11 +42,11 @@ Overlapping claim IDs coexist. Each claim expires independently; retrying the sa
 The tombstone cleanup round also removes up to one batch of expired claims per purge call.
 These claims do not consume admission slots.
 
-The caller authenticates the user and sends the project ID. Reaching this
-service is the access-control boundary. A request never reads or changes a
+The caller authenticates the user and sends the project ID. The service requires
+mTLS and an allowed API SPIFFE identity by default. A request never reads or changes a
 sandbox of another project, except `ListStaleTransitions` and `ListLive` with
 no project filter: internal reads of all projects in this database, for trusted
-callers on the same internal network. They are not customer endpoints. `ClaimTransition` changes
+callers in the listener allow-list. They are not customer endpoints. `ClaimTransition` changes
 only the sandbox of the project it names.
 
 Requests use current-format sandbox IDs (`i` followed by 20 lowercase base36
@@ -327,7 +343,7 @@ between 1 µs and 9,223,372,036 s, in whole microseconds.
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `SCHEDULING_GRPC_ADDRESS` | yes | Plaintext gRPC listen address, for example `:50051` |
+| `SCHEDULING_GRPC_ADDRESS` | yes | gRPC listen address, for example `:50051`; mTLS is required by default |
 | `SCHEDULING_DATABASE_URL` | yes | PostgreSQL URL shared by both pools: the same database, role and primary endpoint. The cleanup worker opens one more connection, outside the pools. |
 | `SCHEDULING_WRITE_POOL_MAX_CONNS` | no | Maximum write-pool connections. Positive `int32`, default `24`. Overrides URL `pool_max_conns`. |
 | `SCHEDULING_READ_POOL_MAX_CONNS` | no | Maximum read-pool connections. Positive `int32`, default `8`. Overrides URL `pool_max_conns`. |
