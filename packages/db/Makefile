@@ -58,8 +58,3 @@ build-tools:
 .PHONY: test
 test: build-tools
 	go test -v ./tests/...
-
-.PHONY: seed-db
-seed-db:
-	@echo "Seeding database..."
-	@POSTGRES_CONNECTION_STRING=$(POSTGRES_CONNECTION_STRING) go run ./scripts/seed/postgres/seed-db.go

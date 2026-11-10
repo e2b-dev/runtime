@@ -1,11 +1,7 @@
 ENV := $(shell cat .last_used_env || echo "not-set")
 ENV_FILE := .env.${ENV}
-PROVIDER ?= gcp
 
 -include ${ENV_FILE}
-
-AWS_BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
-GCP_BUCKET_PREFIX ?= $(GCP_PROJECT_ID)-
 
 .PHONY: build
 build/%:
@@ -36,40 +32,6 @@ build-and-upload/%:
 	./scripts/confirm.sh $(TERRAFORM_ENVIRONMENT)
 	GCP_PROJECT_ID=$(GCP_PROJECT_ID) $(MAKE) -C packages/$(notdir $@) build-and-upload
 
-.PHONY: copy-public-builds
-copy-public-builds:
-ifeq ($(PROVIDER),aws)
-	mkdir -p ./.kernels
-	mkdir -p ./.firecrackers
-	mkdir -p ./.busybox
-	aws s3 cp s3://e2b-artifact-binaries/kernels/ ./.kernels/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
-	aws s3 cp s3://e2b-artifact-binaries/firecrackers/ ./.firecrackers/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
-	aws s3 cp s3://e2b-artifact-binaries/busybox/ ./.busybox/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
-	aws s3 cp ./.kernels/ s3://${AWS_BUCKET_PREFIX}fc-kernels/ --recursive --profile ${AWS_PROFILE}
-	aws s3 cp ./.firecrackers/ s3://${AWS_BUCKET_PREFIX}fc-versions/ --recursive --profile ${AWS_PROFILE}
-	aws s3 cp ./.busybox/ s3://${AWS_BUCKET_PREFIX}fc-busybox/ --recursive --profile ${AWS_PROFILE}
-	rm -rf ./.kernels
-	rm -rf ./.firecrackers
-	rm -rf ./.busybox
-else ifeq ($(PROVIDER),azure)
-	mkdir -p ./.kernels
-	mkdir -p ./.firecrackers
-	mkdir -p ./.busybox
-	gcloud storage cp -r "gs://e2b-artifact-binaries/kernels/*" ./.kernels/
-	gcloud storage cp -r "gs://e2b-artifact-binaries/firecrackers/*" ./.firecrackers/
-	gcloud storage cp -r "gs://e2b-artifact-binaries/busybox/*" ./.busybox/
-	az storage blob upload-batch --auth-mode login --overwrite --account-name $(AZURE_STORAGE_ACCOUNT_NAME) --destination fc-kernels --source ./.kernels
-	az storage blob upload-batch --auth-mode login --overwrite --account-name $(AZURE_STORAGE_ACCOUNT_NAME) --destination fc-versions --source ./.firecrackers
-	az storage blob upload-batch --auth-mode login --overwrite --account-name $(AZURE_STORAGE_ACCOUNT_NAME) --destination fc-busybox --source ./.busybox
-	rm -rf ./.kernels
-	rm -rf ./.firecrackers
-	rm -rf ./.busybox
-else
-	gsutil cp -r gs://e2b-artifact-binaries/kernels/* gs://$(GCP_BUCKET_PREFIX)fc-kernels/
-	gsutil cp -r gs://e2b-artifact-binaries/firecrackers/* gs://$(GCP_BUCKET_PREFIX)fc-versions/
-	gsutil cp -r gs://e2b-artifact-binaries/busybox/* gs://$(GCP_BUCKET_PREFIX)fc-busybox/
-endif
-
 .PHONY: download-public-kernels
 download-public-kernels:
 	mkdir -p ./packages/fc-kernels
@@ -98,14 +60,6 @@ generate-tests/%:
 .PHONY: migrate
 migrate:
 	$(MAKE) -C packages/db migrate
-
-.PHONY: prep-cluster
-prep-cluster:
-	$(MAKE) -C packages/shared prep-cluster
-
-.PHONY: seed-db
-seed-db:
-	$(MAKE) -C packages/db seed-db
 
 .PHONY: set-env
 set-env:
