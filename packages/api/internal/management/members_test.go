@@ -32,8 +32,38 @@ func TestValidateProjectMemberProjection(t *testing.T) {
 		{projection: ProjectMemberProjection{ProjectID: valid.ProjectID, UserID: valid.UserID, Revision: 1, Present: false, Identities: []ProjectMemberIdentity{identity}}, err: ErrInvalidProjectMember},
 		{projection: ProjectMemberProjection{ProjectID: valid.ProjectID, UserID: valid.UserID, Revision: 1, Present: true, Identities: []ProjectMemberIdentity{identity, identity}}, err: ErrDuplicateProjectIdentity},
 		{projection: ProjectMemberProjection{ProjectID: valid.ProjectID, UserID: valid.UserID, Revision: 1, Present: true, Identities: []ProjectMemberIdentity{identity, {Issuer: identity.Issuer, Subject: "other-subject"}}}, err: ErrInvalidProjectMember},
+		{projection: ProjectMemberProjection{ProjectID: valid.ProjectID, UserID: valid.UserID, Revision: 1, Present: true, Role: "admin", Identities: []ProjectMemberIdentity{identity}}, err: ErrInvalidProjectMember},
 	} {
 		require.ErrorIs(t, validateProjectMemberProjection(test.projection), test.err)
+	}
+}
+
+// A source that sends no role must not change what is stored: a new member
+// starts as a member, and a later push without a role keeps an owner an owner.
+func TestApplyProjectMemberStoresTheRole(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	projectID := testutils.CreateTestTeam(t, db)
+	service, _ := newService(db)
+	userID := uuid.New()
+	identity := ProjectMemberIdentity{Issuer: "https://issuer.test", Subject: "subject"}
+
+	for revision, step := range []struct{ sent, stored string }{
+		{sent: "", stored: ProjectMemberRoleMember},
+		{sent: ProjectMemberRoleOwner, stored: ProjectMemberRoleOwner},
+		{sent: "", stored: ProjectMemberRoleOwner},
+		{sent: ProjectMemberRoleMember, stored: ProjectMemberRoleMember},
+	} {
+		require.NoError(t, service.ApplyProjectMember(t.Context(), ProjectMemberProjection{
+			ProjectID:  projectID,
+			UserID:     userID,
+			Revision:   int64(revision + 1),
+			Present:    true,
+			Role:       step.sent,
+			Identities: []ProjectMemberIdentity{identity},
+		}))
+		require.Equal(t, step.stored, teamMemberRole(t, db, projectID, userID), "after revision %d", revision+1)
 	}
 }
 

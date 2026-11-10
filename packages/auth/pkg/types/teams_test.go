@@ -27,7 +27,8 @@ func TestNewTeamPreservesTheSecretLimit(t *testing.T) {
 
 // Pods of adjacent releases share the cached teams. An entry written while the
 // team still carried its tier must decode whole, and the entry written back
-// must hold the same keys without it.
+// must hold the same keys without it. An entry written before the member role
+// was cached decodes with none.
 func TestTeamKeepsTheCachedShape(t *testing.T) {
 	t.Parallel()
 
@@ -54,6 +55,7 @@ func TestTeamKeepsTheCachedShape(t *testing.T) {
 	var want map[string]any
 	require.NoError(t, json.Unmarshal([]byte(cached), &want))
 	delete(want, "Tier")
+	want["Role"] = ""
 	wantJSON, err := json.Marshal(want)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(wantJSON), string(written))

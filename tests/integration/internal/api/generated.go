@@ -232,6 +232,24 @@ func (e LogsSource) Valid() bool {
 	}
 }
 
+// Defines values for ManagementProjectMemberApplyRequestRole.
+const (
+	Member ManagementProjectMemberApplyRequestRole = "member"
+	Owner  ManagementProjectMemberApplyRequestRole = "owner"
+)
+
+// Valid indicates whether the value is a known member of the ManagementProjectMemberApplyRequestRole enum.
+func (e ManagementProjectMemberApplyRequestRole) Valid() bool {
+	switch e {
+	case Member:
+		return true
+	case Owner:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NodeStatus.
 const (
 	NodeStatusConnecting   NodeStatus = "connecting"
@@ -1635,7 +1653,13 @@ type ManagementProjectMemberApplyRequest struct {
 	IsDefault *bool `json:"is_default,omitempty"`
 	Present   bool  `json:"present"`
 	Revision  int64 `json:"revision"`
+
+	// Role The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
+	Role *ManagementProjectMemberApplyRequestRole `json:"role,omitempty"`
 }
+
+// ManagementProjectMemberApplyRequestRole The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
+type ManagementProjectMemberApplyRequestRole string
 
 // ManagementProjectMemberIdentity defines model for ManagementProjectMemberIdentity.
 type ManagementProjectMemberIdentity struct {

@@ -370,7 +370,10 @@ retries.
   per-project/user revision in `projection.project_members`; a duplicate or older revision
   succeeds without changing target state. A present projection carries the user's OIDC
   issuer/subject identities. Every projected user has at least one, and an identity already owned
-  by a different user returns 409. A revocation removes only that user's `users_teams` row;
+  by a different user returns 409. A present projection may carry the user's role (`owner` or
+  `member`), stored in `users_teams.role` and loaded with the team when a user session is
+  authenticated; an omitted role keeps the stored one, and a new member without one is stored as
+  `member`. Both roles grant the same access. A revocation removes only that user's `users_teams` row;
   projected users and identities are retained. Auth caches member authorization, so each accepted
   command evicts that user's authorization for the project after commit.
 - `PUT .../limits` syncs the project's effective limits into `project_limits`, which the team

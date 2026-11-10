@@ -4620,6 +4620,10 @@ components:
           type: boolean
           default: false
           description: Whether this membership is the user's default team. Omitted requests from older sources remain non-default.
+        role:
+          type: string
+          enum: [owner, member]
+          description: The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
         identities:
           type: array
           maxItems: 16

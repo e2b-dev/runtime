@@ -10,6 +10,11 @@ type Team struct {
 
 	Limits          *TeamLimits
 	ProjectSettings dbtypes.ProjectSettings
+
+	// Role is the authenticated user's role on the team, set by every lookup
+	// made for a user. It is empty when the team was resolved without one, by
+	// API key or by team ID.
+	Role string
 }
 
 func (t *Team) TeamID() string {

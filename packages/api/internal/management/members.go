@@ -24,12 +24,20 @@ type ProjectMemberIdentity struct {
 	Subject string
 }
 
+const (
+	ProjectMemberRoleOwner  = "owner"
+	ProjectMemberRoleMember = "member"
+)
+
 type ProjectMemberProjection struct {
-	ProjectID  uuid.UUID
-	UserID     uuid.UUID
-	Revision   int64
-	Present    bool
-	IsDefault  bool
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+	Revision  int64
+	Present   bool
+	IsDefault bool
+	// Role is empty when the source sent none: the stored role is kept, and a
+	// new member is stored as a member.
+	Role       string
 	Identities []ProjectMemberIdentity
 }
 
@@ -97,10 +105,15 @@ func (s *Service) applyProjectMember(ctx context.Context, projection ProjectMemb
 				return false, ErrProjectIdentityOwnedByUser
 			}
 		}
+		var role *string
+		if projection.Role != "" {
+			role = &projection.Role
+		}
 		if err := txDB.UpsertTeamMember(ctx, authqueries.UpsertTeamMemberParams{
 			TeamID:    projection.ProjectID,
 			UserID:    projection.UserID,
 			IsDefault: projection.IsDefault,
+			Role:      role,
 		}); err != nil {
 			return false, fmt.Errorf("upsert project member: %w", err)
 		}
@@ -130,6 +143,11 @@ func validateProjectMemberProjection(projection ProjectMemberProjection) error {
 		return nil
 	}
 	if len(projection.Identities) == 0 {
+		return ErrInvalidProjectMember
+	}
+	switch projection.Role {
+	case "", ProjectMemberRoleOwner, ProjectMemberRoleMember:
+	default:
 		return ErrInvalidProjectMember
 	}
 

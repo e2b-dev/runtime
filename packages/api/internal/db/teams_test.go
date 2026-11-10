@@ -37,6 +37,34 @@ func TestGetTeamsByUserLeavesOutADeletedTeam(t *testing.T) {
 	require.Equal(t, liveTeam, teams[0].Team.ID)
 }
 
+// A request without a team header picks its team from this list, so each team
+// must carry the user's role on it just as a single-team lookup does.
+func TestGetTeamsByUserLoadsTheRoleOnEachTeam(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	userID := uuid.New()
+	require.NoError(t, db.AuthDB.UpsertPublicUser(t.Context(), userID))
+	owned := testutils.CreateTestTeam(t, db)
+	joined := testutils.CreateTestTeam(t, db)
+	for _, teamID := range []uuid.UUID{owned, joined} {
+		require.NoError(t, db.AuthDB.CreateTeamMembership(t.Context(), authqueries.CreateTeamMembershipParams{
+			UserID: userID, TeamID: teamID,
+		}))
+	}
+	require.NoError(t, db.AuthDB.TestsRawSQL(t.Context(),
+		"UPDATE public.users_teams SET role = 'owner' WHERE team_id = $1 AND user_id = $2", owned, userID))
+
+	teams, err := GetTeamsByUser(t.Context(), db.AuthDB, userID)
+
+	require.NoError(t, err)
+	roles := map[uuid.UUID]string{}
+	for _, team := range teams {
+		roles[team.Team.ID] = team.Role
+	}
+	require.Equal(t, map[uuid.UUID]string{owned: "owner", joined: "member"}, roles)
+}
+
 // One statement returns each team with its limits: the pushed row, else the
 // deployment's defaults.
 func TestGetTeamsByUserResolvesEachTeamsLimitsInOneStatement(t *testing.T) {

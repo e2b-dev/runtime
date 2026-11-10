@@ -112,6 +112,7 @@ const getTeamByTeamAndUser = `-- name: GetTeamByTeamAndUser :one
 SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
     t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
     t.deleted_at, t.slug,
+    ut.role,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -153,6 +154,7 @@ type GetTeamByTeamAndUserRow struct {
 	SsoAutoJoin                      bool
 	DeletedAt                        *time.Time
 	Slug                             string
+	Role                             string
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
 	ConcurrentSandboxes              int64
@@ -186,6 +188,7 @@ func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAnd
 		&i.SsoAutoJoin,
 		&i.DeletedAt,
 		&i.Slug,
+		&i.Role,
 		&i.SandboxDefaultAllowPublicTraffic,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
@@ -298,7 +301,7 @@ const getUserTeamsWithLimits = `-- name: GetUserTeamsWithLimits :many
 SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
     t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
     t.deleted_at, t.slug,
-    ut.is_default,
+    ut.is_default, ut.role,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -336,6 +339,7 @@ type GetUserTeamsWithLimitsRow struct {
 	DeletedAt                        *time.Time
 	Slug                             string
 	IsDefault                        bool
+	Role                             string
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
 	ConcurrentSandboxes              int64
@@ -376,6 +380,7 @@ func (q *Queries) GetUserTeamsWithLimits(ctx context.Context, userID uuid.UUID) 
 			&i.DeletedAt,
 			&i.Slug,
 			&i.IsDefault,
+			&i.Role,
 			&i.SandboxDefaultAllowPublicTraffic,
 			&i.MaxLengthHours,
 			&i.ConcurrentSandboxes,

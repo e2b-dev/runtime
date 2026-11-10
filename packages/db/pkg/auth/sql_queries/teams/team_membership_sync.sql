@@ -8,15 +8,18 @@ WITH cleared_default AS (
       AND sqlc.arg(is_default)::boolean
     RETURNING 1
 )
-INSERT INTO public.users_teams (user_id, team_id, is_default, added_by)
+INSERT INTO public.users_teams (user_id, team_id, is_default, added_by, role)
 SELECT
     sqlc.arg(user_id)::uuid,
     sqlc.arg(team_id)::uuid,
     sqlc.arg(is_default)::boolean,
-    sqlc.narg(added_by)::uuid
+    sqlc.narg(added_by)::uuid,
+    COALESCE(sqlc.narg(role)::text, 'member')
 WHERE (SELECT count(*) FROM cleared_default) >= 0
 ON CONFLICT (team_id, user_id) DO UPDATE
-SET is_default = EXCLUDED.is_default;
+SET
+    is_default = EXCLUDED.is_default,
+    role = COALESCE(sqlc.narg(role)::text, public.users_teams.role);
 
 -- name: DeleteTeamMember :exec
 DELETE FROM public.users_teams
