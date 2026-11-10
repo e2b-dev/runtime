@@ -117,6 +117,22 @@ func TestSnapshotTemplate_MalformedBodyIs400WithoutRetry(t *testing.T) {
 	assert.Empty(t, backend.created)
 }
 
+// A tag in the snapshot name follows the rules of every other tag: a UUID would
+// read as a build ID wherever the snapshot is referenced.
+func TestSnapshotTemplate_UUIDTagIs400BeforeTransition(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	cache := templatecache.NewTemplateCache(db.SqlcClient, redis_utils.SetupInstance(t))
+
+	backend := &snapshotBackendStub{}
+	recorder := postSnapshot(t, backend, false, `{"name": "uuid-tag-snapshot:`+uuid.NewString()+`"}`, cache)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "false", recorder.Header().Get(apierrors.ShouldRetryHeader))
+	assert.Empty(t, backend.created, "a refused name must not start a snapshot")
+}
+
 // memory:false on a node below the orchestrator version floor is answered 409
 // with its own error code, and the sandbox never leaves Running: the
 // transition is never asked for.

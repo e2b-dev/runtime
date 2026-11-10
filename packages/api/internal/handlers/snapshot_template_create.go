@@ -123,7 +123,12 @@ func (a *APIStore) createSnapshotTemplate(c *gin.Context, sandboxID api.SandboxI
 		alias := id.ExtractAlias(identifier)
 
 		if tag != nil {
-			opts.Tag = *tag
+			tags, err := id.ValidateAndDeduplicateTags([]string{*tag})
+			if err != nil {
+				return &api.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid tag: %s", err), Retryable: apierrors.NoRetry}
+			}
+
+			opts.Tag = tags[0]
 		}
 
 		// Resolve alias using the cache — same pattern as template builds
