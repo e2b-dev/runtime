@@ -294,8 +294,8 @@ services:
       REDIS_URL: 127.0.0.1:6379
       CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
       LOGS_COLLECTOR_ADDRESS: http://127.0.0.1:30006
-      # Where this service and api, client-proxy and dashboard-api export their
-      # metrics, traces and logs over OTLP/gRPC. Empty unless .env sets
+      # Where this service, api and client-proxy export their metrics, traces
+      # and logs over OTLP/gRPC. Empty unless .env sets
       # E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, and empty exports nothing.
       OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
       TEMPLATE_STORAGE_URL: file:///var/lib/e2b/storage/templates
@@ -451,74 +451,16 @@ services:
       retries: 30
       start_period: 20s
 
-  # The dashboard's backend. It reads the same databases as the api and the
-  # same admin token: the wrapper below is the api's, reading GEN_ADMIN_TOKEN
-  # from the file api-secrets writes, so both processes hold the one token
-  # this install generated. It starts without an admin JWT issuer, so its
-  # admin routes accept only that token.
-  dashboard-api:
-    logging: *logging
-    image: ${E2B_DASHBOARD_API_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      PORT: "3010"
-      NODE_ID: dashboard-api
-      ENVIRONMENT: local
-      POSTGRES_CONNECTION_STRING: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
-      REDIS_URL: 127.0.0.1:6379
-      CLICKHOUSE_CONNECTION_STRING: clickhouse://clickhouse:clickhouse@127.0.0.1:9000/default
-      OTEL_COLLECTOR_GRPC_ENDPOINT: ${E2B_OTEL_COLLECTOR_GRPC_ENDPOINT:-}
-      AUTH_PROVIDER_CONFIG: '{"jwt":[]}'
-    volumes:
-      - seed-state:/run/e2b:ro
-    entrypoint:
-      - sh
-      - -c
-      - |
-        test -s /run/e2b/api.env || {
-          echo "dashboard-api: api-secrets left no /run/e2b/api.env" >&2
-          echo "FIX: run docker compose up api-secrets and read its output" >&2
-          exit 1
-        }
-        . /run/e2b/api.env
-        [ -n "$${GEN_ADMIN_TOKEN:-}" ] || {
-          echo "dashboard-api: /run/e2b/api.env is incomplete" >&2
-          echo "FIX: docker compose run --rm --no-deps --entrypoint rm api-secrets /run/e2b/api.env, then docker compose up -d" >&2
-          exit 1
-        }
-        export ADMIN_TOKEN="$${ADMIN_TOKEN:-$$GEN_ADMIN_TOKEN}"
-        exec ./dashboard-api "$$@"
-      - dashboard-api
-    depends_on:
-      api-secrets:
-        condition: service_completed_successfully
-      db-migrator:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3010/health >/dev/null"]
-      interval: 10s
-      timeout: 3s
-      retries: 30
-      start_period: 20s
-
   # The web UI. A browser signs in with this install's team API key, which
   # lands in an httpOnly cookie; DASHBOARD_COOKIE_SECURE=false keeps that
-  # cookie over plain http. The server reaches the two APIs on loopback; the
+  # cookie over plain http. The server reaches the api on loopback; the
   # browser reaches sandboxes at PUBLIC_SANDBOX_URL, so that address has to be
   # one the browser can open, which is what the E2B_DASHBOARD_HOST knob sets.
   # PUBLIC_E2B_DOMAIN is required by the image and only feeds SDK domain
   # routing, which PUBLIC_SANDBOX_URL overrides here. The image refuses to
   # start on E2B_SANDBOX_URL or any NEXT_PUBLIC_* variable, so none is set.
-  # /api/health is 503 until dashboard-api answers, which makes it the right
-  # readiness for `up --wait`; the image has node but no wget or curl.
+  # /api/health is the healthcheck `ready` waits on; the image has node but no
+  # wget or curl.
   dashboard:
     logging: *logging
     image: ${E2B_DASHBOARD_IMAGE:?fetch the .env that ships beside compose.yaml (README, Install)}
@@ -529,13 +471,10 @@ services:
       HOSTNAME: 0.0.0.0
       PUBLIC_E2B_DOMAIN: localhost
       E2B_INFRA_API_URL: http://127.0.0.1:3000
-      E2B_DASHBOARD_API_URL: http://127.0.0.1:3010
       PUBLIC_SANDBOX_URL: http://${E2B_DASHBOARD_HOST:-localhost}:3002
       DASHBOARD_COOKIE_SECURE: "false"
     depends_on:
       api:
-        condition: service_healthy
-      dashboard-api:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]

@@ -19,8 +19,9 @@ const HeaderProbe = "X-E2b-Sandbox-Probe"
 type Option func(*options)
 
 type options struct {
-	probe     bool
-	onOutcome pool.OutcomeRecorder
+	probe         bool
+	onOutcome     pool.OutcomeRecorder
+	transportWrap pool.TransportWrap
 }
 
 // WithProbe makes the proxy answer HeaderProbe requests. Without it the
@@ -36,6 +37,13 @@ func WithProbe() Option {
 func WithOutcomeRecorder(r pool.OutcomeRecorder) Option {
 	return func(o *options) {
 		o.onOutcome = r
+	}
+}
+
+// WithTransportWrap makes the proxy build each upstream transport through w.
+func WithTransportWrap(w pool.TransportWrap) Option {
+	return func(o *options) {
+		o.transportWrap = w
 	}
 }
 

@@ -71,6 +71,9 @@ var (
 	// before it flushes, so its own metrics never carry the failure.
 	fcSnapshotLoadFailures = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxFCSnapshotLoadFailures))
 
+	// How long a cold boot's InstanceStart request stayed open.
+	fcInstanceStartDuration = utils.Must(telemetry.GetHistogram(fcMeter, telemetry.SandboxFCInstanceStartDuration))
+
 	// How a start that needs a CPU limit got it, so the rollout can see fallbacks and failures.
 	vcpuLimitStarts = utils.Must(telemetry.GetCounter(fcMeter, telemetry.SandboxVcpuLimit))
 

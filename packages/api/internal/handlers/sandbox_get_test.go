@@ -43,7 +43,7 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 	snapshots := snapshotcache.NewSnapshotCache(nil, redisClient)
 	orch, err := orchestrator.New(ctx, cfg.Config{}, &telemetry.Client{MeterProvider: noop.NewMeterProvider()},
 		nil, true, nil, redisClient, nil, clusters.NewTestPool(), flags, nil, snapshots, nil,
-		insecure.NewCredentials(), insecure.NewCredentials(), nil)
+		insecure.NewCredentials(), insecure.NewCredentials())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, orch.Close(context.WithoutCancel(t.Context())))

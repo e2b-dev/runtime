@@ -525,7 +525,7 @@ func TestRemove_HeldRecordKeepsReservation(t *testing.T) {
 			name: "held",
 			refuse: func(t *testing.T, store *Store, _ *MockStorage, sbx Sandbox) {
 				t.Helper()
-				hold := Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, ID: "op"}
+				hold := Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: "op"}
 				require.NoError(t, store.HoldExecution(t.Context(), hold, time.Now().Add(time.Minute)))
 			},
 		},

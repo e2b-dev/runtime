@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 )
 
 func TestParse_Defaults(t *testing.T) {
@@ -87,10 +89,14 @@ func TestParse_TLS(t *testing.T) {
 	t.Setenv("E2B_TLS_API_CLIENT_MODE", "on")
 	t.Setenv("E2B_TLS_API_EXPECT", "spiffe://td.example.internal/ns/control/sa/api")
 	t.Setenv("E2B_TLS_API_SERVER_NAME", "api.example.internal")
+	t.Setenv("E2B_TLS_ROUTER_CLIENT_MODE", "on")
+	t.Setenv("E2B_TLS_ROUTER_EXPECT", "spiffe://td.example.internal/ns/router/sa/router")
+	t.Setenv("E2B_TLS_ROUTER_SERVER_NAME", "")
 
 	cfg, err := Parse()
 	require.NoError(t, err)
 	require.Equal(t, "on", cfg.TLS.API.Mode)
 	require.Equal(t, []string{"spiffe://td.example.internal/ns/control/sa/api"}, cfg.TLS.API.Expect)
 	require.Equal(t, "api.example.internal", cfg.TLS.API.ServerName)
+	require.Equal(t, mtls.HopSettings{Mode: "on", Expect: []string{"spiffe://td.example.internal/ns/router/sa/router"}}, cfg.TLS.Router)
 }

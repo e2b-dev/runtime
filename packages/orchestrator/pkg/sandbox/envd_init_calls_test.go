@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -475,4 +476,94 @@ func assertReportAttrs(t *testing.T, attrs attribute.Set) {
 	_, ok := attrs.Value("timeout_ms")
 	assert.False(t, ok, "no timeout_ms: %v", attrs.ToSlice())
 	assert.Equal(t, 4, attrs.Len(), "envd.version, start_type, loop and team: %v", attrs.ToSlice())
+}
+
+func TestWaitForEnvdEndsWhenTheMemoryBackendExits(t *testing.T) {
+	t.Parallel()
+
+	srv := stallingEnvd(t, 1<<30, "")
+	s, _ := newInitTestSandbox(srv.URL, 200*time.Millisecond)
+	memory := uffd.NewNoopMemory(4096, 4096)
+	s.Resources = &Resources{memory: memory}
+	s.process = &fc.Process{Exit: utils.NewErrorOnce()}
+	t.Cleanup(func() { s.process.Exit.SetSuccess() })
+
+	serveErr := errors.New("failed handling uffd: failed to read from source after 4 attempts: cache file /cache could not be populated")
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		memory.Exit().SetError(serveErr)
+	}()
+
+	start := time.Now()
+	err := s.WaitForEnvd(t.Context(), StartTypeResume, 30*time.Second)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrMemoryBackendExited)
+	require.ErrorIs(t, err, serveErr, "the serve failure is the cause")
+	require.NotErrorIs(t, err, ErrWaitForEnvdTimeout)
+	assert.Less(t, time.Since(start), 10*time.Second, "the wait ends with the backend, not with the timeout")
+}
+
+func TestWaitForEnvdPrefersTheFirecrackerExitOverACleanBackendEnd(t *testing.T) {
+	t.Parallel()
+
+	srv := stallingEnvd(t, 1<<30, "")
+	s, _ := newInitTestSandbox(srv.URL, 200*time.Millisecond)
+	memory := uffd.NewNoopMemory(4096, 4096)
+	s.Resources = &Resources{memory: memory}
+	s.process = &fc.Process{Exit: utils.NewErrorOnce()}
+
+	resetErr := errors.New("guest requested reset")
+	require.NoError(t, memory.Stop())
+	s.process.Exit.SetError(resetErr)
+
+	// Both exits are ready, so the watcher's select may take either first.
+	for range 20 {
+		err := s.WaitForEnvd(t.Context(), StartTypeReboot, 30*time.Second)
+		require.ErrorIs(t, err, ErrFcProcessExited)
+		require.ErrorIs(t, err, resetErr)
+		require.NotErrorIs(t, err, ErrMemoryBackendExited)
+	}
+}
+
+func TestWaitForEnvdIgnoresACleanBackendEndWhileFirecrackerRuns(t *testing.T) {
+	t.Parallel()
+
+	srv := stallingEnvd(t, 1<<30, "")
+	s, _ := newInitTestSandbox(srv.URL, 200*time.Millisecond)
+	memory := uffd.NewNoopMemory(4096, 4096)
+	s.Resources = &Resources{memory: memory}
+	s.process = &fc.Process{Exit: utils.NewErrorOnce()}
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = memory.Stop()
+		time.Sleep(300 * time.Millisecond)
+		s.process.Exit.SetError(errors.New("exited later"))
+	}()
+
+	err := s.WaitForEnvd(t.Context(), StartTypeResume, 30*time.Second)
+	require.ErrorIs(t, err, ErrFcProcessExited)
+	require.NotErrorIs(t, err, ErrMemoryBackendExited)
+}
+
+func TestWaitForEnvdKeepsTheBackendFailureOverAFirecrackerExit(t *testing.T) {
+	t.Parallel()
+
+	srv := stallingEnvd(t, 1<<30, "")
+	s, _ := newInitTestSandbox(srv.URL, 200*time.Millisecond)
+	memory := uffd.NewNoopMemory(4096, 4096)
+	s.Resources = &Resources{memory: memory}
+	s.process = &fc.Process{Exit: utils.NewErrorOnce()}
+
+	serveErr := errors.New("failed handling uffd: cache file could not be populated")
+	memory.Exit().SetError(serveErr)
+	s.process.Exit.SetSuccess()
+
+	// Both exits are ready, so the watcher's select may take either first.
+	for range 20 {
+		err := s.WaitForEnvd(t.Context(), StartTypeResume, 30*time.Second)
+		require.ErrorIs(t, err, ErrMemoryBackendExited)
+		require.ErrorIs(t, err, serveErr)
+		require.NotErrorIs(t, err, ErrFcProcessExited)
+	}
 }

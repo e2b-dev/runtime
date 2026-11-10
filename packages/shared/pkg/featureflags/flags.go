@@ -949,14 +949,15 @@ var (
 	// MaxConcurrentSnapshotUpserts limits concurrent UpsertSnapshot calls (pause + snapshot template paths).
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSnapshotUpserts = NewIntFlag("max-concurrent-snapshot-upserts", 0)
-	// MaxConcurrentSandboxListQueries limits concurrent GetSnapshotsWithCursor calls in the sandbox list path.
+	// MaxConcurrentSandboxListQueries limits how many sandbox list pages run their paused snapshot queries at once.
+	// A page holds its slot across its GetSnapshotsWithCursor calls, which run one after another.
 	// 0 or negative disables throttling (unlimited concurrency).
 	MaxConcurrentSandboxListQueries = NewIntFlag("max-concurrent-sandbox-list-queries", 0)
 
-	// PausedSandboxListBatchLimit caps the number of rows requested per GetSnapshotsWithCursor
-	// query when excluding running sandboxes in GET /v2/sandboxes.
-	// 0 or negative disables batching (fetches queryLimit + len(runningSandboxesIDs) in one query).
-	// Evaluated per team.
+	// PausedSandboxListBatchLimit caps the rows each GetSnapshotsWithCursor call of a GET /v2/sandboxes
+	// paused page asks for, or the rows the page still misses when more. A capped page that does not
+	// fill within its calls ends early and the next page continues after the last row read.
+	// 0 or negative leaves the calls uncapped. Evaluated per team.
 	PausedSandboxListBatchLimit = NewIntFlag("paused-sandbox-list-batch-limit", 0)
 
 	// DBMaxConnLifetimeSeconds overrides pgxpool MaxConnLifetime when positive.
@@ -1226,12 +1227,12 @@ const (
 	// patches, and it restores snapshots taken by every older line. It starts
 	// at 0.4.0 because e2b release numbers rise across lines and v1.14-0
 	// already shipped 0.3.x; the version gates key on that number.
-	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.0"
+	DefaultFirecrackerV1_17_0Version = "v1.17-0.4.1"
 	// New template builds get the current release; existing builds keep
 	// resolving within their own line below (cross-line upgrades are an
 	// operator decision via the firecracker-versions flag, never a baked
 	// default — the map invariant key == LDKey(value) enforces it).
-	DefaultFirecrackerVersion = DefaultFirecrackerV1_14_0Version
+	DefaultFirecrackerVersion = DefaultFirecrackerV1_17_0Version
 )
 
 var FirecrackerVersionMap = map[string]string{

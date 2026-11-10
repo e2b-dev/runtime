@@ -116,6 +116,9 @@ var ErrWaitForEnvdTimeout = errors.New("syncing took too long")
 // ErrFcProcessExited is the cancel cause used when the Firecracker process exits during WaitForEnvd.
 var ErrFcProcessExited = errors.New("fc process exited prematurely")
 
+// ErrMemoryBackendExited is the cancel cause used when the memory backend fails during WaitForEnvd.
+var ErrMemoryBackendExited = errors.New("memory backend exited prematurely")
+
 var sandboxHttpTransport = otelhttp.NewTransport(
 	&http.Transport{
 		DisableKeepAlives: true,
@@ -5232,21 +5235,59 @@ func (s *Sandbox) WaitForEnvd(
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
-	go func() {
+	var memoryExit <-chan struct{}
+	if s.Resources != nil && s.memory != nil {
+		memoryExit = s.memory.Exit().Done()
+	}
+
+	backendFailure := func() error {
+		if memoryExit == nil {
+			return nil
+		}
 		select {
-		// Ensure the syncing takes at most timeout seconds.
-		case <-time.After(timeout):
-			cancel(ErrWaitForEnvdTimeout)
-		case <-ctx.Done():
-			return
-		case <-s.process.Exit.Done():
-			// Exit.Error() is nil for orchestrator-initiated teardowns; a nil
-			// %w renders as %!w(<nil>).
-			if exitErr := s.process.Exit.Error(); exitErr != nil {
-				cancel(fmt.Errorf("%w: %w", ErrFcProcessExited, exitErr))
-			} else {
-				cancel(ErrFcProcessExited)
+		case <-memoryExit:
+			return s.memory.Exit().Error()
+		default:
+			return nil
+		}
+	}
+
+	// A resume's exit watcher stops the sandbox when the backend fails, so the
+	// Firecracker exit can be a consequence of that failure.
+	// Exit.Error() is nil for orchestrator-initiated teardowns; a nil %w renders
+	// as %!w(<nil>).
+	fcExited := func() {
+		if backendErr := backendFailure(); backendErr != nil {
+			cancel(fmt.Errorf("%w: %w", ErrMemoryBackendExited, backendErr))
+		} else if exitErr := s.process.Exit.Error(); exitErr != nil {
+			cancel(fmt.Errorf("%w: %w", ErrFcProcessExited, exitErr))
+		} else {
+			cancel(ErrFcProcessExited)
+		}
+	}
+
+	go func() {
+		deadline := time.After(timeout)
+		for {
+			select {
+			case <-deadline:
+				cancel(ErrWaitForEnvdTimeout)
+			case <-ctx.Done():
+			case <-s.process.Exit.Done():
+				fcExited()
+			case <-memoryExit:
+				// A cold boot's no-op backend stops cleanly on guest reset; the
+				// reset checks read the Firecracker exit that follows.
+				exitErr := s.memory.Exit().Error()
+				if exitErr == nil {
+					memoryExit = nil
+
+					continue
+				}
+				cancel(fmt.Errorf("%w: %w", ErrMemoryBackendExited, exitErr))
 			}
+
+			return
 		}
 	}()
 

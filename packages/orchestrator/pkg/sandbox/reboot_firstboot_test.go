@@ -20,18 +20,6 @@ func (resettingProfile) Reset() guest.Reset {
 	return guest.Reset{CleanExitBeforeEnvdIsReset: true}
 }
 
-func TestFirstBootRetryOnlyOnAGuestResetWithinTheBudget(t *testing.T) {
-	t.Parallel()
-
-	reset := errors.Join(ErrGuestResetBeforeEnvd, ErrFcProcessExited)
-
-	assert.True(t, firstBootRetry(reset, 0, 3))
-	assert.True(t, firstBootRetry(reset, 2, 3))
-	assert.False(t, firstBootRetry(reset, 3, 3), "the budget is spent")
-	assert.False(t, firstBootRetry(ErrFcProcessExited, 0, 3), "an exit that is not a reset")
-	assert.False(t, firstBootRetry(nil, 0, 3), "a boot that succeeded")
-}
-
 func TestIsGuestResetBeforeEnvdFollowsTheProfile(t *testing.T) {
 	t.Parallel()
 
@@ -59,20 +47,20 @@ func TestRebootEnvdWait(t *testing.T) {
 	assert.Equal(t, 2*rebootEnvdTimeout, rebootEnvdWait(linux, 2*rebootEnvdTimeout))
 }
 
-// A reset attempt whose close failed is not booted again: the next attempt
-// reopens the same disk, which the failed close may have left unflushed.
-func TestEnvdWaitErrorRetriesOnlyACleanlyClosedReset(t *testing.T) {
+// A reset whose close failed is not marked as one, so a caller does not boot
+// the same disk again: the failed close may have left it unflushed.
+func TestEnvdWaitErrorMarksOnlyACleanlyClosedReset(t *testing.T) {
 	t.Parallel()
 
 	wait := errors.Join(errors.New("wait for envd"), ErrFcProcessExited)
 	closeFailed := errors.New("rootfs flush failed")
 
-	assert.True(t, firstBootRetry(envdWaitError(wait, true, nil), 0, 3), "a reset whose close succeeded")
+	require.ErrorIs(t, envdWaitError(wait, true, nil), ErrGuestResetBeforeEnvd, "a reset whose close succeeded")
 
 	err := envdWaitError(wait, true, closeFailed)
-	assert.False(t, firstBootRetry(err, 0, 3), "a reset whose close failed")
+	require.NotErrorIs(t, err, ErrGuestResetBeforeEnvd, "a reset whose close failed")
 	require.ErrorIs(t, err, closeFailed, "the close failure is returned")
 
-	assert.False(t, firstBootRetry(envdWaitError(wait, false, nil), 0, 3), "not a reset")
+	require.NotErrorIs(t, envdWaitError(wait, false, nil), ErrGuestResetBeforeEnvd, "not a reset")
 	require.ErrorIs(t, envdWaitError(wait, false, closeFailed), closeFailed)
 }

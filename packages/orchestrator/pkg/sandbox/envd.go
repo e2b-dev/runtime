@@ -103,7 +103,7 @@ func classifyEnvdInitExit(err error) envdInitExitType {
 		return envdInitExitSuccess
 	case errors.Is(err, ErrWaitForEnvdTimeout), errors.Is(err, context.DeadlineExceeded):
 		return envdInitExitTimeout
-	case errors.Is(err, ErrFcProcessExited):
+	case errors.Is(err, ErrFcProcessExited), errors.Is(err, ErrMemoryBackendExited):
 		return envdInitExitOther
 	case errors.Is(err, context.Canceled):
 		return envdInitExitCanceled

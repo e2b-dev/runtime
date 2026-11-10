@@ -49,6 +49,8 @@ func newProxyClient(
 	disableKeepAlives bool,
 	insecureSkipTLSVerify bool,
 	onOutcome OutcomeRecorder,
+	key string,
+	wrap TransportWrap,
 ) *ProxyClient {
 	recordOutcome := func(ctx context.Context, outcome RequestOutcome) {
 		if onOutcome != nil {
@@ -123,6 +125,20 @@ func newProxyClient(
 	}
 	if insecureSkipTLSVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Sandbox services commonly use self-signed certificates.
+	}
+	if wrap != nil {
+		transport = wrap(key, transport)
+		// The pool closes both sides of an upgraded connection at once (see
+		// tracking.Connection): hide any CloseWrite a wrapped dial returns.
+		dial := transport.DialContext
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+
+			return fullCloseConn{Conn: conn}, nil
+		}
 	}
 
 	pc := &ProxyClient{
@@ -258,6 +274,9 @@ func newProxyClient(
 
 	return pc
 }
+
+// fullCloseConn hides the CloseWrite of the connection it embeds.
+type fullCloseConn struct{ net.Conn }
 
 func (p *ProxyClient) getDestination(r *http.Request) (*Destination, bool) {
 	ctx := r.Context()

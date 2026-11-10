@@ -65,7 +65,8 @@ func New(
 		int(maxConnectionAttempts),
 		idleTimeout,
 		disableKeepAlives,
-		o.onOutcome,
+		pool.WithOutcomeRecorder(o.onOutcome),
+		pool.WithTransportWrap(o.transportWrap),
 	)
 
 	proxy := &Proxy{
