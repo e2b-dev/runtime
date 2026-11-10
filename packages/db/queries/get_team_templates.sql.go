@@ -16,6 +16,7 @@ const getTeamTemplates = `-- name: GetTeamTemplates :many
 SELECT e.id, e.created_at, e.updated_at, e.public, e.build_count, e.spawn_count, e.last_spawned_at, e.team_id, e.created_by, e.cluster_id, e.source,
        COALESCE(eb.id, '00000000-0000-0000-0000-000000000000'::uuid) as build_id,
        COALESCE(eb.vcpu, 0) as build_vcpu,
+       eb.max_vcpu as build_max_vcpu,
        COALESCE(eb.ram_mb, 0) as build_ram_mb,
        eb.total_disk_size_mb as build_total_disk_size_mb,
        eb.envd_version as build_envd_version,
@@ -33,7 +34,7 @@ LEFT JOIN LATERAL (
     WHERE env_id = e.id
 ) ea ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only
+    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only, b.envd_unresponsive, b.max_vcpu
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = e.id AND ba.tag = 'default'
@@ -41,7 +42,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) latest_build ON TRUE
 LEFT JOIN LATERAL (
-    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only
+    SELECT b.id, b.created_at, b.updated_at, b.finished_at, b.status, b.dockerfile, b.start_cmd, b.vcpu, b.ram_mb, b.free_disk_size_mb, b.total_disk_size_mb, b.kernel_version, b.firecracker_version, b.env_id, b.envd_version, b.ready_cmd, b.cluster_node_id, b.reason, b.version, b.cpu_architecture, b.cpu_family, b.cpu_model, b.cpu_model_name, b.cpu_flags, b.status_group, b.team_id, b.filesystem_only, b.envd_unresponsive, b.max_vcpu
     FROM public.env_build_assignments AS ba
     JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = e.id AND ba.tag = 'default' AND b.status_group = 'ready'
@@ -64,6 +65,7 @@ type GetTeamTemplatesRow struct {
 	ActiveEnv               ActiveEnv
 	BuildID                 uuid.UUID
 	BuildVcpu               int64
+	BuildMaxVcpu            *int64
 	BuildRamMb              int64
 	BuildTotalDiskSizeMb    *int64
 	BuildEnvdVersion        *string
@@ -97,6 +99,7 @@ func (q *Queries) GetTeamTemplates(ctx context.Context, arg GetTeamTemplatesPara
 			&i.ActiveEnv.Source,
 			&i.BuildID,
 			&i.BuildVcpu,
+			&i.BuildMaxVcpu,
 			&i.BuildRamMb,
 			&i.BuildTotalDiskSizeMb,
 			&i.BuildEnvdVersion,

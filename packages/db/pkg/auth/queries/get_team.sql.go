@@ -7,12 +7,15 @@ package authqueries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const getTeamByAPIKey = `-- name: GetTeamByAPIKey :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.deleted_at, t.slug,
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -36,7 +39,19 @@ WHERE tak.api_key_hash = $1
 `
 
 type GetTeamByAPIKeyRow struct {
-	Team                             Team
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
 	ConcurrentSandboxes              int64
@@ -62,20 +77,19 @@ func (q *Queries) GetTeamByAPIKey(ctx context.Context, apiKeyHash string) (GetTe
 	row := q.db.QueryRow(ctx, getTeamByAPIKey, apiKeyHash)
 	var i GetTeamByAPIKeyRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.DeletedAt,
-		&i.Team.Slug,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
 		&i.SandboxDefaultAllowPublicTraffic,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
@@ -95,7 +109,9 @@ func (q *Queries) GetTeamByAPIKey(ctx context.Context, apiKeyHash string) (GetTe
 }
 
 const getTeamByTeamAndUser = `-- name: GetTeamByTeamAndUser :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.deleted_at, t.slug,
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -124,7 +140,19 @@ type GetTeamByTeamAndUserParams struct {
 }
 
 type GetTeamByTeamAndUserRow struct {
-	Team                             Team
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
 	ConcurrentSandboxes              int64
@@ -145,20 +173,19 @@ func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAnd
 	row := q.db.QueryRow(ctx, getTeamByTeamAndUser, arg.UserID, arg.ID)
 	var i GetTeamByTeamAndUserRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.DeletedAt,
-		&i.Team.Slug,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
 		&i.SandboxDefaultAllowPublicTraffic,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
@@ -178,7 +205,9 @@ func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAnd
 }
 
 const getTeamByTeamID = `-- name: GetTeamByTeamID :one
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.deleted_at, t.slug,
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -201,7 +230,19 @@ WHERE t.id = $1
 `
 
 type GetTeamByTeamIDRow struct {
-	Team                             Team
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
 	ConcurrentSandboxes              int64
@@ -222,20 +263,19 @@ func (q *Queries) GetTeamByTeamID(ctx context.Context, id uuid.UUID) (GetTeamByT
 	row := q.db.QueryRow(ctx, getTeamByTeamID, id)
 	var i GetTeamByTeamIDRow
 	err := row.Scan(
-		&i.Team.ID,
-		&i.Team.CreatedAt,
-		&i.Team.IsBlocked,
-		&i.Team.Name,
-		&i.Team.Tier,
-		&i.Team.Email,
-		&i.Team.IsBanned,
-		&i.Team.BlockedReason,
-		&i.Team.ClusterID,
-		&i.Team.SandboxSchedulingLabels,
-		&i.Team.SsoOrganizationID,
-		&i.Team.SsoAutoJoin,
-		&i.Team.DeletedAt,
-		&i.Team.Slug,
+		&i.ID,
+		&i.CreatedAt,
+		&i.IsBlocked,
+		&i.Name,
+		&i.Email,
+		&i.IsBanned,
+		&i.BlockedReason,
+		&i.ClusterID,
+		&i.SandboxSchedulingLabels,
+		&i.SsoOrganizationID,
+		&i.SsoAutoJoin,
+		&i.DeletedAt,
+		&i.Slug,
 		&i.SandboxDefaultAllowPublicTraffic,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
@@ -255,7 +295,10 @@ func (q *Queries) GetTeamByTeamID(ctx context.Context, id uuid.UUID) (GetTeamByT
 }
 
 const getUserTeamsWithLimits = `-- name: GetUserTeamsWithLimits :many
-SELECT t.id, t.created_at, t.is_blocked, t.name, t.tier, t.email, t.is_banned, t.blocked_reason, t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join, t.deleted_at, t.slug, ut.is_default,
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ut.is_default,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -279,7 +322,19 @@ WHERE ut.user_id = $1
 `
 
 type GetUserTeamsWithLimitsRow struct {
-	Team                             Team
+	ID                               uuid.UUID
+	CreatedAt                        time.Time
+	IsBlocked                        bool
+	Name                             string
+	Email                            string
+	IsBanned                         bool
+	BlockedReason                    *string
+	ClusterID                        *uuid.UUID
+	SandboxSchedulingLabels          []string
+	SsoOrganizationID                *uuid.UUID
+	SsoAutoJoin                      bool
+	DeletedAt                        *time.Time
+	Slug                             string
 	IsDefault                        bool
 	SandboxDefaultAllowPublicTraffic *bool
 	MaxLengthHours                   int64
@@ -307,20 +362,19 @@ func (q *Queries) GetUserTeamsWithLimits(ctx context.Context, userID uuid.UUID) 
 	for rows.Next() {
 		var i GetUserTeamsWithLimitsRow
 		if err := rows.Scan(
-			&i.Team.ID,
-			&i.Team.CreatedAt,
-			&i.Team.IsBlocked,
-			&i.Team.Name,
-			&i.Team.Tier,
-			&i.Team.Email,
-			&i.Team.IsBanned,
-			&i.Team.BlockedReason,
-			&i.Team.ClusterID,
-			&i.Team.SandboxSchedulingLabels,
-			&i.Team.SsoOrganizationID,
-			&i.Team.SsoAutoJoin,
-			&i.Team.DeletedAt,
-			&i.Team.Slug,
+			&i.ID,
+			&i.CreatedAt,
+			&i.IsBlocked,
+			&i.Name,
+			&i.Email,
+			&i.IsBanned,
+			&i.BlockedReason,
+			&i.ClusterID,
+			&i.SandboxSchedulingLabels,
+			&i.SsoOrganizationID,
+			&i.SsoAutoJoin,
+			&i.DeletedAt,
+			&i.Slug,
 			&i.IsDefault,
 			&i.SandboxDefaultAllowPublicTraffic,
 			&i.MaxLengthHours,

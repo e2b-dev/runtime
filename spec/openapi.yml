@@ -319,18 +319,33 @@ components:
       schema:
         type: string
         format: uuid
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+        digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+        and request content identify the request. When idempotency is enabled, a matching retry of
+        a completed request replays its status and body, including the IDs of any resources it
+        created, without repeating the operation. A failure explicitly classified as safe to retry
+        (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+        attempt can run at a time. A different request returns 409 with error_code
+        idempotency_request_mismatch. A matching request whose original has no recorded response
+        yet and is within its expected response window returns 409 with error_code
+        idempotency_in_progress. A matching request whose original has no recorded response and
+        whose expected response deadline has passed or is unknown returns 422 with error_code
+        idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+        request again. If the key's record is unavailable or idempotency is misconfigured, the
+        request returns 503; Should-Retry tells whether to retry with the same key. After the
+        retention period expires, the key can start a new operation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: '^[a-z0-9-]+$'
   headers:
     ShouldRetry:
-      description: |
-        Whether the condition behind this error may clear, so that retrying the request could
-        succeed. true marks a transient failure such as missing capacity, a rate limit, or a
-        creation still in progress: retry after Retry-After when present, otherwise with
-        exponential backoff. false marks a failure a retry cannot fix, such as a malformed request
-        or a configuration fault, or an outcome that is unknown, where a retry could create a
-        second sandbox. Successful responses and errors without an explicit classification omit
-        the header. With idempotency enabled, retry sandbox creation with the same Idempotency-Key
-        and request parameters. A retryable creation failure permits a fresh attempt; an
-        idempotency_in_progress response only reports an existing attempt and never releases it.
       required: false
       schema:
         type: boolean
@@ -867,6 +882,18 @@ components:
         onTimeout:
           $ref: "#/components/schemas/SandboxOnTimeout"
 
+    EnvdUnresponsiveAtPause:
+      type: boolean
+      description: >-
+        True when the snapshot a paused sandbox would resume from was taken
+        while the sandbox guest agent was not responding. A plain resume of
+        it is refused with 409 and error_code
+        sandbox_snapshot_guest_agent_unresponsive, because restoring that
+        memory would bring the unresponsive agent back; resume it without
+        memory (`memory: false`), which cold-boots the sandbox from its disk.
+        Omitted for a running sandbox and for a snapshot whose agent
+        answered.
+
     SandboxPauseMode:
       type: string
       description: >-
@@ -1075,6 +1102,8 @@ components:
           description: Time when the sandbox will expire
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
+        envdUnresponsiveAtPause:
+          $ref: "#/components/schemas/EnvdUnresponsiveAtPause"
         envdAccessToken:
           type: string
           description: Access token used for envd communication
@@ -1106,6 +1135,52 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SandboxVolumeMount"
+
+    SandboxRecord:
+      required:
+        - templateID
+        - sandboxID
+        - startedAt
+        - cpuCount
+        - memoryMB
+        - diskSizeMB
+        - retentionExpired
+        - eventsRetentionExpired
+      properties:
+        templateID:
+          type: string
+          description: Identifier of the template from which is the sandbox created
+        alias:
+          type: string
+          description: Alias of the template
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        startedAt:
+          type: string
+          format: date-time
+          description: Time when the sandbox was started
+        stoppedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Time when the sandbox was stopped
+        domain:
+          type: string
+          nullable: true
+          description: Base domain where the sandbox traffic is accessible
+        cpuCount:
+          $ref: "#/components/schemas/CPUCount"
+        memoryMB:
+          $ref: "#/components/schemas/MemoryMB"
+        diskSizeMB:
+          $ref: "#/components/schemas/DiskSizeMB"
+        retentionExpired:
+          type: boolean
+          description: Whether the sandbox ended more than the fixed retention window ago, so its monitoring and logs data is no longer available
+        eventsRetentionExpired:
+          type: boolean
+          description: Whether the sandbox ended more than the team's events retention window ago, so its events data is no longer available
 
     ListedSandbox:
       required:
@@ -1153,6 +1228,8 @@ components:
           $ref: "#/components/schemas/SandboxState"
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
+        envdUnresponsiveAtPause:
+          $ref: "#/components/schemas/EnvdUnresponsiveAtPause"
         volumeMounts:
           type: array
           items:
@@ -1179,6 +1256,13 @@ components:
           minimum: 0
           default: 15
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the sandbox. Defaults to the template's
+            cpuCount; at most its maxCpuCount (fixed-size templates accept only
+            their cpuCount).
         autoPause:
           type: boolean
           default: false
@@ -1236,6 +1320,13 @@ components:
           minimum: 1
           default: 300
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the sandbox. Defaults to the template's
+            cpuCount; at most its maxCpuCount (fixed-size templates accept only
+            their cpuCount).
         autoPause:
           type: boolean
           default: false
@@ -1310,6 +1401,13 @@ components:
           minimum: 0
           default: 15
           description: Time to live for the sandbox in seconds.
+        cpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: >-
+            Online vCPU target for the resumed sandbox. Defaults to the
+            snapshot's cpuCount; at most the template's maxCpuCount
+            (fixed-size templates accept only their cpuCount).
         autoPause:
           type: boolean
           deprecated: true
@@ -1322,7 +1420,9 @@ components:
             state has crash-recovery semantics — writes not flushed before the pause
             may be lost. A no-op for snapshots that contain no memory. Rejected with
             an error in environments where this capability is not enabled, never
-            silently downgraded to a memory restore.
+            silently downgraded to a memory restore. A snapshot taken while the
+            sandbox guest agent was not responding (envdUnresponsiveAtPause) can
+            only be resumed this way, and needs no enablement.
 
     ConnectSandbox:
       type: object
@@ -1342,7 +1442,10 @@ components:
             modified or deleted. Disk state has crash-recovery semantics — writes not
             flushed before the pause may be lost. A no-op for snapshots that contain
             no memory. Rejected with an error in environments where this capability
-            is not enabled, never silently downgraded to a memory restore.
+            is not enabled, never silently downgraded to a memory restore. A
+            snapshot taken while the sandbox guest agent was not responding
+            (envdUnresponsiveAtPause) can only be resumed this way, and needs no
+            enablement.
 
     ConnectSandboxV2:
       type: object
@@ -1361,7 +1464,10 @@ components:
             modified or deleted. Disk state has crash-recovery semantics — writes not
             flushed before the pause may be lost. A no-op for snapshots that contain
             no memory. Rejected with an error in environments where this capability
-            is not enabled, never silently downgraded to a memory restore.
+            is not enabled, never silently downgraded to a memory restore. A
+            snapshot taken while the sandbox guest agent was not responding
+            (envdUnresponsiveAtPause) can only be resumed this way, and needs no
+            enablement.
 
     SandboxTimeoutRequest:
       type: object
@@ -1412,6 +1518,19 @@ components:
             and open connections. Resume it with an explicit request (connect or
             resume); auto-resume, which can be triggered by arbitrary traffic,
             refuses such a sandbox. Defaults to true.
+        requireHealthyGuest:
+          type: boolean
+          default: false
+          description: >-
+            The pause checks that the sandbox guest agent answers before it
+            takes the snapshot. By default an unresponsive agent is recorded
+            on the snapshot and the pause proceeds; the sandbox then shows
+            `envdUnresponsiveAtPause` and a later resume must ask for
+            `memory: false`, since restoring that memory would bring the
+            unresponsive agent back. With this true, the pause is instead
+            refused with 503 while the agent does not answer, and the sandbox
+            keeps running. A filesystem-only pause (`memory: false`) is always
+            refused while the agent does not answer, whatever this says.
 
     SandboxForkRequest:
       type: object
@@ -1813,6 +1932,279 @@ components:
         - AdminSandboxStateRunning
         - AdminSandboxStatePaused
         - AdminSandboxStateKilled
+
+    AdminSandboxBuildStatusGroup:
+      type: string
+      description: |
+        Coarse build state derived from the build status: pending (pending,
+        waiting), in_progress (in_progress, building, snapshotting), ready
+        (ready, uploaded, success) or failed (any other status)
+      enum:
+        - pending
+        - in_progress
+        - ready
+        - failed
+      x-enum-varnames:
+        - AdminSandboxBuildStatusGroupPending
+        - AdminSandboxBuildStatusGroupInProgress
+        - AdminSandboxBuildStatusGroupReady
+        - AdminSandboxBuildStatusGroupFailed
+
+    AdminSandboxBuild:
+      type: object
+      description: A build assigned to a sandbox's snapshot template under a tag
+      required:
+        - buildID
+        - templateID
+        - tag
+        - status
+        - statusGroup
+        - clusterNodeID
+        - assignedAt
+        - isCurrent
+        - restorable
+      properties:
+        buildID:
+          type: string
+          format: uuid
+          description: Identifier of the build
+        templateID:
+          type: string
+          description: Identifier of the snapshot template the build is assigned to
+        tag:
+          type: string
+          description: Tag the build is assigned under
+        status:
+          type: string
+          description: Build status as stored, for example ready, snapshotting or waiting
+        statusGroup:
+          $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
+        clusterNodeID:
+          type: string
+          nullable: true
+          description: Node that produced the build, null when it was not recorded
+        assignedAt:
+          type: string
+          format: date-time
+          description: When the build was assigned to the template under this tag
+        isCurrent:
+          type: boolean
+          description: |
+            Whether this build is the template's newest ready assignment under
+            the tag, the build a resume uses, regardless of the status filter
+        restorable:
+          type: boolean
+          description: |
+            Whether the restore route would accept this build: it is ready,
+            assigned under the default tag, not the current build, and its
+            snapshot template is not deleted
+
+    AdminSandboxBuildList:
+      type: object
+      required:
+        - items
+        - total
+        - snapshotTemplateID
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSandboxBuild"
+        total:
+          type: integer
+          format: int64
+          description: Number of assignments matching the tag and status filter, ignoring limit and offset
+        snapshotTemplateID:
+          type: string
+          nullable: true
+          description: |
+            Identifier of the template that holds the sandbox's snapshot, null
+            when the sandbox has no snapshot
+
+    AdminSandboxBuildRestoreRequest:
+      type: object
+      required:
+        - buildID
+      properties:
+        buildID:
+          type: string
+          format: uuid
+          description: |
+            Build to make current. It must be ready and already assigned to the
+            sandbox's snapshot template under the default tag.
+
+    AdminSandboxBuildRestoreResult:
+      type: object
+      required:
+        - sandboxID
+        - templateID
+        - buildID
+        - assignedAt
+        - previousBuildID
+      properties:
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        templateID:
+          type: string
+          description: Identifier of the snapshot template that received the assignment
+        buildID:
+          type: string
+          format: uuid
+          description: Build that is now the template's current default build
+        assignedAt:
+          type: string
+          format: date-time
+          description: When the new assignment was written
+        previousBuildID:
+          type: string
+          format: uuid
+          nullable: true
+          description: Build that was current before the restore, null when there was none
+
+    AdminSandboxOverview:
+      type: object
+      description: |
+        Who owns a sandbox and what its snapshot holds, read from the database:
+        the team, the snapshot template and its most recent pause, and the
+        newest default-tag build assignment of that template
+      required:
+        - sandboxId
+        - team
+        - snapshotTemplateId
+        - lastPause
+        - latestBuild
+        - buildCount
+      properties:
+        sandboxId:
+          type: string
+          description: Identifier of the sandbox
+        team:
+          $ref: "#/components/schemas/AdminSandboxOverviewTeam"
+        snapshotTemplateId:
+          type: string
+          nullable: true
+          description: Template that holds the sandbox's snapshot, null when the sandbox has no snapshot
+        lastPause:
+          allOf:
+            - $ref: "#/components/schemas/AdminSandboxLastPause"
+          nullable: true
+          description: What the most recent pause recorded, null when the sandbox has no snapshot
+        latestBuild:
+          allOf:
+            - $ref: "#/components/schemas/AdminSandboxOverviewBuild"
+          nullable: true
+          description: |
+            Newest default-tag build assignment of the snapshot template, null
+            when there is no snapshot or no assignment
+        buildCount:
+          type: integer
+          format: int64
+          description: Number of default-tag build assignments of the snapshot template
+
+    AdminSandboxOverviewTeam:
+      type: object
+      description: The team the sandbox belongs to
+      required:
+        - id
+        - name
+        - email
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifier of the team
+        name:
+          type: string
+          nullable: true
+          description: Name of the team
+        email:
+          type: string
+          nullable: true
+          description: Contact email of the team
+
+    AdminSandboxLastPause:
+      type: object
+      description: |
+        The snapshot as the most recent pause left it. A resume can change
+        whether the sandbox auto-pauses without rewriting it, and restoring an
+        older build does not change it.
+      required:
+        - kind
+        - autoPause
+        - autoPauseKind
+      properties:
+        kind:
+          allOf:
+            - $ref: "#/components/schemas/AdminSandboxPauseKind"
+          description: Kind of snapshot the most recent pause took
+        autoPause:
+          type: boolean
+          description: Whether the sandbox pauses instead of being killed on timeout, as of the most recent pause
+        autoPauseKind:
+          allOf:
+            - $ref: "#/components/schemas/AdminSandboxPauseKind"
+          description: Kind of snapshot an auto-pause takes, as of the most recent pause
+
+    AdminSandboxPauseKind:
+      type: string
+      description: |
+        What a pause kept: memory is a full snapshot that resumes where the
+        sandbox left off, filesystem keeps only the root filesystem and boots
+        it again on resume
+      enum:
+        - memory
+        - filesystem
+      x-enum-varnames:
+        - AdminSandboxPauseKindMemory
+        - AdminSandboxPauseKindFilesystem
+
+    AdminSandboxOverviewBuild:
+      type: object
+      description: The newest default-tag build assignment of a sandbox's snapshot template
+      required:
+        - buildId
+        - templateId
+        - tag
+        - status
+        - statusGroup
+        - clusterNodeId
+        - assignedAt
+        - isCurrent
+        - restorable
+      properties:
+        buildId:
+          type: string
+          format: uuid
+          description: Identifier of the build
+        templateId:
+          type: string
+          description: Identifier of the snapshot template the build is assigned to
+        tag:
+          type: string
+          description: Tag the build is assigned under
+        status:
+          type: string
+          description: Build status as stored, for example ready, snapshotting or waiting
+        statusGroup:
+          allOf:
+            - $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
+          nullable: true
+          description: Coarse build state, null when the stored group is not one of the known values
+        clusterNodeId:
+          type: string
+          nullable: true
+          description: Node that produced the build, null when it was not recorded
+        assignedAt:
+          type: string
+          format: date-time
+          description: When the build was assigned to the template under the tag
+        isCurrent:
+          type: boolean
+          description: Always true, the newest assignment is the one the template resolves to
+        restorable:
+          type: boolean
+          description: Always false, the newest assignment is already current
 
     AdminTeamRunningSandboxCounts:
       type: object
@@ -2320,6 +2712,10 @@ components:
           description: Identifier of the last successful build for given template
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count for resizable templates; absent for fixed-size templates."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         diskSizeMB:
@@ -2601,6 +2997,10 @@ components:
           description: Time when the build was finished
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count for resizable templates; absent for fixed-size templates."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         diskSizeMB:
@@ -2678,6 +3078,10 @@ components:
           description: Identifier of the team, as its UUID or its public project ID (prj_)
         cpuCount:
           $ref: "#/components/schemas/CPUCount"
+        maxCpuCount:
+          allOf:
+            - $ref: "#/components/schemas/CPUCount"
+          description: "Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount."
         memoryMB:
           $ref: "#/components/schemas/MemoryMB"
         minFreeDiskMb:
@@ -2917,7 +3321,8 @@ components:
       type: string
       description: |
         Status of the node.
-        - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+        - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+        - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
       enum:
         - ready
         - draining
@@ -2925,6 +3330,7 @@ components:
         - unhealthy
         - standby
         - shutting_down
+        - not_ready
       x-enum-varnames:
         - NodeStatusReady
         - NodeStatusDraining
@@ -2932,6 +3338,7 @@ components:
         - NodeStatusUnhealthy
         - NodeStatusStandby
         - NodeStatusShuttingDown
+        - NodeStatusNotReady
 
     NodeStatusChange:
       required:
@@ -2943,6 +3350,15 @@ components:
           description: Identifier of the cluster
         status:
           $ref: "#/components/schemas/NodeStatus"
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+          description: Owner of a standby override; required to release a standby that carries one
+        force:
+          type: boolean
+          description: Apply the status and owner regardless of the recorded owner
 
     DiskMetrics:
       required:
@@ -3091,6 +3507,14 @@ components:
           type: string
           format: date-time
           description: Time when the node status was last changed
+        statusOwner:
+          type: string
+          description: Owner recorded by the current standby override
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities of the orchestrator build, for example park-owner
         sandboxCount:
           type: integer
           format: uint32
@@ -3118,6 +3542,47 @@ components:
           type: integer
           format: int
           description: Number of starting Sandboxes
+
+    NodeSandboxes:
+      description: The sandboxes the API confirms are running on a node, as the node and the API's records agree on them when read. A guest the node runs for an execution the API records elsewhere, or does not record, is left out.
+      required:
+        - nodeID
+        - observedAt
+        - items
+      properties:
+        nodeID:
+          type: string
+          description: Identifier of the node
+        observedAt:
+          type: string
+          format: date-time
+          description: Time the node's sandboxes were read
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeSandbox"
+
+    NodeSandbox:
+      required:
+        - teamID
+        - sandboxID
+        - executionID
+      properties:
+        teamID:
+          type: string
+          format: uuid
+          description: Identifier of the team
+        sandboxID:
+          type: string
+          description: Identifier of the sandbox
+        executionID:
+          type: string
+          format: uuid
+          description: Identifier of the running execution
+        lifecycleHoldUntil:
+          type: string
+          format: date-time
+          description: Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
 
     NodeDetail:
       required:
@@ -3159,6 +3624,14 @@ components:
           type: string
           format: date-time
           description: Time when the node status was last changed
+        statusOwner:
+          type: string
+          description: Owner recorded by the current standby override
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities of the orchestrator build, for example park-owner
         sandboxCount:
           type: integer
           format: uint32
@@ -3451,7 +3924,10 @@ components:
             idempotency_outcome_unknown, cluster_registration_invalid,
             cluster_registration_conflict, cluster_assignment_invalid,
             cluster_assignment_project_not_found, cluster_assignment_cluster_not_found,
-            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting.
+            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting,
+            sandbox_snapshot_guest_agent_unresponsive (a plain resume of a
+            snapshot taken while the sandbox guest agent was not responding;
+            resume it with memory: false).
         message:
           type: string
           description: Error
@@ -4284,12 +4760,22 @@ paths:
       summary: Health check
       description: Health check
       responses:
-        "204":
+        "200":
           description: The service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/401"
         "429":
           $ref: "#/components/responses/429"
+        "503":
+          description: The service is starting up or draining
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /teams:
     get:
@@ -5032,11 +5518,45 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /unstable/sandboxes/{sandboxID}/record:
+    get:
+      summary: Sandbox record
+      description: Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+      tags: [sandboxes]
+      security:
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      responses:
+        "200":
+          description: Successfully returned the sandbox record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxRecord"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
   # TODO: Pause and resume might be exposed as POST /sandboxes/{sandboxID}/snapshot and then POST /sandboxes with specified snapshotting setup
   /sandboxes/{sandboxID}/pause:
     post:
       summary: Pause sandbox
-      description: Pause the sandbox
+      description: >-
+        Pause the sandbox. Answers 503 and leaves the sandbox running when it
+        cannot be paused right now: its node is busy, it is being snapshotted,
+        or `requireHealthyGuest` was set and the sandbox guest agent is not
+        responding; retry later.
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -5057,6 +5577,8 @@ paths:
       responses:
         "204":
           description: The sandbox was paused successfully and can be resumed
+        "400":
+          $ref: "#/components/responses/400"
         "409":
           $ref: "#/components/responses/409"
         "404":
@@ -5074,7 +5596,12 @@ paths:
     post:
       summary: Resume sandbox
       deprecated: true
-      description: Resume the sandbox
+      description: >-
+        Resume the sandbox. Answers 409 when the sandbox is already running,
+        or when its snapshot was taken while the sandbox guest agent was not
+        responding and a plain resume would restore that memory (error_code
+        sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox
+        without memory (`memory: false`).
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -5171,7 +5698,13 @@ paths:
   /sandboxes/{sandboxID}/connect:
     post:
       summary: Connect sandbox
-      description: Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+      description: >-
+        Returns sandbox details. If the sandbox is paused, it will be resumed.
+        TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect
+        instead. Answers 409 with error_code
+        sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's
+        snapshot was taken while its guest agent was not responding and the
+        request did not ask for `memory: false`.
       deprecated: true
       tags: [sandboxes]
       security:
@@ -5226,7 +5759,10 @@ paths:
       description: >-
         Returns sandbox details. If the sandbox is paused, it will be resumed.
         TTL is only extended. The request body is optional; an omitted timeout
-        defaults to 300 seconds.
+        defaults to 300 seconds. Answers 409 with error_code
+        sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's
+        snapshot was taken while its guest agent was not responding and the
+        request did not ask for `memory: false`.
       tags: [sandboxes]
       security:
         - ApiKeyAuth: []
@@ -5386,6 +5922,7 @@ paths:
           AdminTeamAuth: []
       parameters:
         - $ref: "#/components/parameters/sandboxID"
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -5400,17 +5937,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/SnapshotInfo"
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/401"
         "404":
-          $ref: "#/components/responses/404"
+          description: Not found
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflict
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Unprocessable request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/429"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
-          $ref: "#/components/responses/503"
+          description: Service unavailable
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /snapshots:
     get:
@@ -5463,8 +6058,10 @@ paths:
   /v3/templates:
     post:
       summary: Create template (v3)
-      description: Create a new template
+      description: Create a new template.
       tags: [templates]
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       security:
         - ApiKeyAuth: []
         - AuthProviderBearerAuth: []
@@ -5488,17 +6085,100 @@ paths:
               schema:
                 $ref: "#/components/schemas/TemplateRequestResponseV3"
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/responses/401"
+          description: Authentication error
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          $ref: "#/components/responses/403"
+          description: Forbidden
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
-          $ref: "#/components/responses/409"
+          description: Conflict
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Unprocessable request
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
-          $ref: "#/components/responses/429"
+          description: Too many requests
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+            Retry-After:
+              description: When present, the number of seconds to wait before retrying the request.
+              required: false
+              schema:
+                type: integer
+                minimum: 0
+              example: 30
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          headers:
+            Should-Retry:
+              required: false
+              schema:
+                type: boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v2/templates:
     get:
@@ -5907,7 +6587,7 @@ paths:
   /v2/templates/{templateID}/builds/{buildID}:
     post:
       summary: Start template build (v2)
-      description: Start the build
+      description: Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
       tags: [templates]
       security:
         - ApiKeyAuth: []
@@ -5920,6 +6600,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/templateID"
         - $ref: "#/components/parameters/buildID"
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -5930,13 +6611,79 @@ paths:
         "202":
           description: The build has started
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/responses/401"
+          description: Authentication error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The Idempotency-Key conflicts with a different request (error_code idempotency_request_mismatch), or the matching original request has no recorded response yet and is within its expected response window (error_code idempotency_in_progress); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The matching original request has no recorded response and its expected response deadline has passed or is unknown (error_code idempotency_outcome_unknown); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/429"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v2/templates/{templateID}:
     patch:
@@ -6468,8 +7215,43 @@ paths:
       responses:
         "204":
           description: The node status was changed successfully
+        "400":
+          $ref: "#/components/responses/400"
         "409":
           $ref: "#/components/responses/409"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /nodes/{nodeID}/sandboxes:
+    get:
+      summary: Node sandboxes
+      description: List the sandboxes the API confirms are running on the node
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/nodeID"
+        - in: query
+          name: clusterID
+          description: Identifier of the cluster
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Successfully returned the node's sandboxes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeSandboxes"
         "401":
           $ref: "#/components/responses/401"
         "404":
@@ -6561,6 +7343,158 @@ paths:
           $ref: "#/components/responses/401"
         "404":
           $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/sandboxes/{sandboxID}/overview:
+    get:
+      summary: Sandbox overview
+      description: |
+        Reads a sandbox's team, snapshot template, most recent pause and newest
+        default-tag build from the database. The team comes from the
+        stopped-sandbox log, or from the snapshot when the sandbox has not
+        stopped. Returns 404 when neither knows the sandbox. A sandbox without
+        a snapshot returns null `snapshotTemplateId`, `lastPause` and
+        `latestBuild`.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      responses:
+        "200":
+          description: The sandbox overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandboxOverview"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/sandboxes/{sandboxID}/builds:
+    get:
+      summary: List the builds of a sandbox's snapshot template
+      description: |
+        Lists the build assignments of the template that holds the sandbox's
+        snapshot under one tag. Assignments without a creation time are left
+        out. A sandbox without a snapshot returns no items and a null
+        `snapshotTemplateID`; this route does not report whether the sandbox
+        exists.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+        - name: statusGroup
+          in: query
+          required: false
+          description: Only list builds in these status groups, comma-separated. Omit to list every group.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
+        - name: tag
+          in: query
+          required: false
+          description: Tag whose assignments are listed
+          schema:
+            type: string
+            minLength: 1
+            default: default
+        - name: order
+          in: query
+          required: false
+          description: Direction of the assignment time order
+          schema:
+            $ref: "#/components/schemas/OrderDirection"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of builds to return
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: Number of matching builds to skip
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: A page of the snapshot template's build assignments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandboxBuildList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/sandboxes/{sandboxID}/builds/restore:
+    post:
+      summary: Make a build the current build of a sandbox's snapshot
+      description: |
+        Assigns a ready build of the sandbox's snapshot template to the template
+        again under the default tag, so the sandbox resumes from that build.
+        The snapshot takes the restored build's kind, filesystem-only or
+        memory.
+        Answers 404 when the sandbox has no snapshot, its snapshot template is
+        deleted, or the build is not assigned to that template under the
+        default tag, and 409 when the build is not ready or is already the
+        current build.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      parameters:
+        - $ref: "#/components/parameters/sandboxID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSandboxBuildRestoreRequest"
+      responses:
+        "200":
+          description: The build is now the snapshot template's current default build
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSandboxBuildRestoreResult"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
         "429":
           $ref: "#/components/responses/429"
         "500":

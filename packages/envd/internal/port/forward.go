@@ -72,10 +72,6 @@ type Forwarder struct {
 	sourceIP          net.IP
 }
 
-// forwardingAvailable reports whether this build can forward ports: socat is
-// spawned per port, which the images ship.
-func forwardingAvailable() error { return nil }
-
 func NewForwarder(
 	logger *zerolog.Logger,
 	scanner *Scanner,
@@ -219,9 +215,7 @@ func (f *Forwarder) startPortForwarding(ctx context.Context, p *PortToForward) (
 
 	cgroupFD, ok := f.freezer.Manager().GetFileDescriptor(cgroups.ProcessTypeSocat)
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.SysProcAttr = socatProcAttr()
 	applyCgroupFD(cmd.SysProcAttr, cgroupFD, ok)
 
 	f.logger.Debug().
@@ -295,7 +289,7 @@ func (f *Forwarder) stopPortForwarding(p *PortToForward) {
 	// Kill the socat's process group. A re-adopted socat has no *exec.Cmd Wait
 	// goroutine to reap it, so ImportForwards started reaper.Reap for it; a
 	// self-spawned socat is reaped by its startPortForwarding Wait goroutine.
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+	if err := killSocat(pid); err != nil {
 		logger.Error().Err(err).Msg("Failed to kill process group")
 
 		return
@@ -369,7 +363,7 @@ func (f *Forwarder) ImportForwards(forwards []*upgrade.ForwardedPort) (readopted
 		// Only re-adopt a socat that is still alive (kill -0). One that exited
 		// during the handover window is left out so the next scan respawns rather
 		// than recording a dead socat as "forwarded".
-		if syscall.Kill(pid, 0) != nil {
+		if !processAlive(pid) {
 			continue
 		}
 		f.ports[fp.GetKey()] = &PortToForward{

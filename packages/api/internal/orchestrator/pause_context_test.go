@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,9 +47,9 @@ func (h *transitionCommitHook) ProcessHook(next redis.ProcessHook) redis.Process
 	}
 }
 
-// startTransitionScript's keys are the record, the transition and its
-// result; the finish script's start with the transition. The record key is
-// the one with no transition segment.
+// startTransitionScript's keys are the record, the transition, its result
+// and the record's lock. The finish script's start with the transition. The
+// record key is the one with no transition segment.
 func isStartTransitionScript(cmd redis.Cmder) bool {
 	if cmd.Name() != "evalsha" && cmd.Name() != "eval" {
 		return false
@@ -63,7 +62,7 @@ func isStartTransitionScript(cmd redis.Cmder) bool {
 	first, _ := args[3].(string)
 	second, _ := args[4].(string)
 
-	return numKeys == 3 && !strings.Contains(first, ":transition:") && strings.Contains(second, ":transition:")
+	return numKeys == 4 && !isTransitionMarker(first) && isTransitionMarker(second)
 }
 
 type pauseContextClient struct {

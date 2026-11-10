@@ -36,6 +36,10 @@ type RedisConfig struct {
 	// (per cluster node for cluster clients).
 	// When non-positive, defaults to min(defaultMinIdleConns, PoolSize).
 	MinIdleConns int
+	// ContextTimeoutEnabled makes a command's context deadline bound its socket
+	// reads and writes too; otherwise only the read and write timeouts do, and a
+	// stalled reply outlives the deadline.
+	ContextTimeoutEnabled bool
 }
 
 const (
@@ -201,6 +205,7 @@ func newRedisOptions(ctx context.Context, config RedisConfig, poolSize, minIdleC
 	opts.ConnMaxIdleTime = -1
 	opts.ConnMaxLifetime = connMaxLifetime
 	opts.ConnMaxLifetimeJitter = connMaxLifetimeJitter
+	opts.ContextTimeoutEnabled = config.ContextTimeoutEnabled
 
 	return opts, nil
 }
@@ -228,6 +233,7 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 			ConnMaxIdleTime:       -1,
 			ConnMaxLifetime:       connMaxLifetime,
 			ConnMaxLifetimeJitter: connMaxLifetimeJitter,
+			ContextTimeoutEnabled: config.ContextTimeoutEnabled,
 		}
 
 		tlsConfig, err := resolveTLSConfig(ctx, config, config.RedisClusterURL)

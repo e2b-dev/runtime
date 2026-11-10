@@ -81,6 +81,10 @@ func ErrorHandler(c *gin.Context, message string, statusCode int) {
 		// a request reaching a server that does not hold the caller's key
 		// would otherwise have its body logged there.
 		errMsg = fmt.Errorf("OpenAPI security error: %s", message)
+	case statusCode == http.StatusNotFound:
+		// A 404 here means no route matched (an unknown path or an unserved
+		// method). Its body is never read: it would be read only for this log.
+		errMsg = fmt.Errorf("OpenAPI validation error: %s", message)
 	default:
 		data, err := c.GetRawData()
 		if err == nil {

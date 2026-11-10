@@ -296,6 +296,7 @@ func TestCompose_PreservesExistingFileOnFailure(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root to enforce directory permissions")
 	}
+	skipUnlessDirModeBlocksCreate(t)
 
 	api, currentUser := newComposeTestAPI(t)
 	destDir := t.TempDir()

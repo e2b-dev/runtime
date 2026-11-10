@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -268,6 +269,11 @@ type CreateOption func(*createOptions)
 
 type createOptions struct {
 	completeStartedCreate bool
+	cpuCount              *int32
+}
+
+func WithCPUCount(cpuCount *int32) CreateOption {
+	return func(o *createOptions) { o.cpuCount = cpuCount }
 }
 
 // CompleteStartedCreate lets a resume create under way, and the bookkeeping
@@ -300,6 +306,12 @@ func (o *Orchestrator) CreateSandbox(
 	var opts createOptions
 	for _, option := range options {
 		option(&opts)
+	}
+
+	if opts.cpuCount != nil {
+		if apiErr := cpuCountDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			return sandbox.Sandbox{}, apiErr
+		}
 	}
 
 	// Calculate total concurrent instances including addons
@@ -349,6 +361,16 @@ func (o *Orchestrator) CreateSandbox(
 				ErrorCode: ErrCodeStartInFlight,
 				ClientMsg: "Sandbox is already starting; memory: false cannot be applied to a start already in flight — retry once it is running or paused",
 				Err:       fmt.Errorf("filesystem-boot resume of '%s' cannot join an in-flight start", sandboxID),
+			}
+		}
+
+		if opts.cpuCount != nil {
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusConflict,
+				ErrorCode: ErrCodeStartInFlight,
+				ClientMsg: "Sandbox is already starting; cpuCount cannot be applied to a start already in flight",
+				Err:       fmt.Errorf("CPU override for sandbox %q cannot join an in-flight start", sandboxID),
+				Retryable: apierrors.NoRetry,
 			}
 		}
 
@@ -409,8 +431,12 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, fetchErr
 	}
 
-	fcSemver, err := fcversion.New(sbxData.Build.FirecrackerVersion)
-	if err != nil {
+	vcpu, cpuErr := resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
+	if cpuErr != nil {
+		return sandbox.Sandbox{}, cpuErr
+	}
+
+	if _, err := fcversion.New(sbxData.Build.FirecrackerVersion); err != nil {
 		errMsg := fmt.Errorf("failed to get fcSemver for firecracker fcSemver '%s': %w", sbxData.Build.FirecrackerVersion, err)
 
 		return sandbox.Sandbox{}, &api.APIError{
@@ -421,7 +447,6 @@ func (o *Orchestrator) CreateSandbox(
 		}
 	}
 
-	hasHugePages := fcSemver.HasHugePages()
 	telemetry.ReportEvent(ctx, "Got FC info")
 
 	var sbxDomain *string
@@ -482,9 +507,10 @@ func (o *Orchestrator) CreateSandbox(
 			EnvdAccessToken:         sbxData.EnvdAccessToken,
 			MaxSandboxLength:        team.Limits.MaxLengthHours,
 			EventsTtlDays:           team.Limits.EventsTTLDays,
-			HugePages:               hasHugePages,
+			HugePages:               true, // orchestrators that predate ignoring the field still read it
 			RamMb:                   sbxData.Build.RamMb,
-			Vcpu:                    sbxData.Build.Vcpu,
+			Vcpu:                    vcpu,
+			MaxVcpus:                ut.FromPtr(sbxData.Build.MaxVcpu),
 			Snapshot:                isResume,
 			AutoPause:               sbxData.AutoPause,
 			AutoPauseFilesystemOnly: sbxData.AutoPauseFilesystemOnly,
@@ -552,10 +578,8 @@ func (o *Orchestrator) CreateSandbox(
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
 	requirements := placement.Requirements{
-		CPU: cpuRequirement,
-		Memory: placement.MemoryRequirement{
-			Limit: float64(o.featureFlagsClient.IntFlag(ctx, featureflags.PlacementHugepageLimitPercent, featureflags.TeamContext(team.ID.String()), featureflags.SandboxContext(sandboxID))) / 100,
-		},
+		CPU:    cpuRequirement,
+		Memory: placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
 	}
 
 	placed, err := placement.PlaceSandboxCompletingStartedCreate(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, requirements, labelFilteringEnabled, allLabels, completeStartedCreateUntil)
@@ -568,6 +592,21 @@ func (o *Orchestrator) CreateSandbox(
 				snapshotSandboxID = sbxData.SnapshotSandboxID
 			}
 			o.maybeRemapResumeOriginNode(ctx, snapshotSandboxID, team, sbxData.NodeID, placed.WarmedNode)
+		}
+
+		if unsupportedErr, ok := errors.AsType[placement.UnsupportedFeatureError](err); ok {
+			o.featureUnsupportedCounter.Add(ctx, 1, metric.WithAttributes(
+				telemetry.WithTeamID(team.TeamID()),
+				attribute.String("feature", strings.Join(unsupportedErr.Features, ",")),
+			))
+			logger.L().Warn(ctx, "No orchestrator in the cluster supports a feature the sandbox needs",
+				logger.WithTeamID(team.TeamID()),
+				logger.WithTemplateID(sbxData.TemplateID),
+				logger.WithBuildID(sbxData.Build.ID.String()),
+				logger.WithSandboxID(sandboxID),
+				zap.Strings("features", unsupportedErr.Features),
+				zap.String("required_version", unsupportedErr.MinVersion),
+			)
 		}
 
 		return sandbox.Sandbox{}, placementAPIError(err)
@@ -631,7 +670,7 @@ func (o *Orchestrator) CreateSandbox(
 		time.Duration(team.Limits.MaxLengthHours)*time.Hour,
 		startTime,
 		endTime,
-		sbxData.Build.Vcpu,
+		vcpu,
 		*sbxData.Build.TotalDiskSizeMb,
 		sbxData.Build.RamMb,
 		sbxData.Build.KernelVersion,
@@ -664,10 +703,7 @@ func (o *Orchestrator) CreateSandbox(
 		killErr := o.removeSandboxFromNode(
 			context.WithoutCancel(ctx),
 			sbx,
-			sandbox.StateActionKill,
-			sandbox.KillReasonUnknown,
-			false, // kill: no snapshot
-			false, // kill: no probe to skip
+			sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 		)
 		if killErr != nil {
 			logger.L().Error(ctx, "Error removing memory-restored sandbox after unhonored filesystem-boot demand",
@@ -695,10 +731,7 @@ func (o *Orchestrator) CreateSandbox(
 			killErr := o.removeSandboxFromNode(
 				context.WithoutCancel(ctx),
 				sbxToRemove,
-				sandbox.StateActionKill,
-				sandbox.KillReasonUnknown,
-				false, // kill: no snapshot
-				false, // kill: no probe to skip
+				sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
 			)
 			if killErr != nil {
 				logger.L().Error(ctx, "Error removing sandbox",

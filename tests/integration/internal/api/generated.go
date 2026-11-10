@@ -34,6 +34,48 @@ func (e AWSRegistryType) Valid() bool {
 	}
 }
 
+// Defines values for AdminSandboxBuildStatusGroup.
+const (
+	AdminSandboxBuildStatusGroupFailed     AdminSandboxBuildStatusGroup = "failed"
+	AdminSandboxBuildStatusGroupInProgress AdminSandboxBuildStatusGroup = "in_progress"
+	AdminSandboxBuildStatusGroupPending    AdminSandboxBuildStatusGroup = "pending"
+	AdminSandboxBuildStatusGroupReady      AdminSandboxBuildStatusGroup = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AdminSandboxBuildStatusGroup enum.
+func (e AdminSandboxBuildStatusGroup) Valid() bool {
+	switch e {
+	case AdminSandboxBuildStatusGroupFailed:
+		return true
+	case AdminSandboxBuildStatusGroupInProgress:
+		return true
+	case AdminSandboxBuildStatusGroupPending:
+		return true
+	case AdminSandboxBuildStatusGroupReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminSandboxPauseKind.
+const (
+	AdminSandboxPauseKindFilesystem AdminSandboxPauseKind = "filesystem"
+	AdminSandboxPauseKindMemory     AdminSandboxPauseKind = "memory"
+)
+
+// Valid indicates whether the value is a known member of the AdminSandboxPauseKind enum.
+func (e AdminSandboxPauseKind) Valid() bool {
+	switch e {
+	case AdminSandboxPauseKindFilesystem:
+		return true
+	case AdminSandboxPauseKindMemory:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AdminSandboxState.
 const (
 	AdminSandboxStateKilled  AdminSandboxState = "killed"
@@ -194,6 +236,7 @@ func (e LogsSource) Valid() bool {
 const (
 	NodeStatusConnecting   NodeStatus = "connecting"
 	NodeStatusDraining     NodeStatus = "draining"
+	NodeStatusNotReady     NodeStatus = "not_ready"
 	NodeStatusReady        NodeStatus = "ready"
 	NodeStatusShuttingDown NodeStatus = "shutting_down"
 	NodeStatusStandby      NodeStatus = "standby"
@@ -206,6 +249,8 @@ func (e NodeStatus) Valid() bool {
 	case NodeStatusConnecting:
 		return true
 	case NodeStatusDraining:
+		return true
+	case NodeStatusNotReady:
 		return true
 	case NodeStatusReady:
 		return true
@@ -650,6 +695,83 @@ type AdminSandbox struct {
 	TeamID openapi_types.UUID `json:"teamID"`
 }
 
+// AdminSandboxBuild A build assigned to a sandbox's snapshot template under a tag
+type AdminSandboxBuild struct {
+	// AssignedAt When the build was assigned to the template under this tag
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Identifier of the build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// ClusterNodeID Node that produced the build, null when it was not recorded
+	ClusterNodeID *string `json:"clusterNodeID"`
+
+	// IsCurrent Whether this build is the template's newest ready assignment under
+	// the tag, the build a resume uses, regardless of the status filter
+	IsCurrent bool `json:"isCurrent"`
+
+	// Restorable Whether the restore route would accept this build: it is ready,
+	// assigned under the default tag, not the current build, and its
+	// snapshot template is not deleted
+	Restorable bool `json:"restorable"`
+
+	// Status Build status as stored, for example ready, snapshotting or waiting
+	Status string `json:"status"`
+
+	// StatusGroup Coarse build state derived from the build status: pending (pending,
+	// waiting), in_progress (in_progress, building, snapshotting), ready
+	// (ready, uploaded, success) or failed (any other status)
+	StatusGroup AdminSandboxBuildStatusGroup `json:"statusGroup"`
+
+	// Tag Tag the build is assigned under
+	Tag string `json:"tag"`
+
+	// TemplateID Identifier of the snapshot template the build is assigned to
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildList defines model for AdminSandboxBuildList.
+type AdminSandboxBuildList struct {
+	Items []AdminSandboxBuild `json:"items"`
+
+	// SnapshotTemplateID Identifier of the template that holds the sandbox's snapshot, null
+	// when the sandbox has no snapshot
+	SnapshotTemplateID *string `json:"snapshotTemplateID"`
+
+	// Total Number of assignments matching the tag and status filter, ignoring limit and offset
+	Total int64 `json:"total"`
+}
+
+// AdminSandboxBuildRestoreRequest defines model for AdminSandboxBuildRestoreRequest.
+type AdminSandboxBuildRestoreRequest struct {
+	// BuildID Build to make current. It must be ready and already assigned to the
+	// sandbox's snapshot template under the default tag.
+	BuildID openapi_types.UUID `json:"buildID"`
+}
+
+// AdminSandboxBuildRestoreResult defines model for AdminSandboxBuildRestoreResult.
+type AdminSandboxBuildRestoreResult struct {
+	// AssignedAt When the new assignment was written
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildID Build that is now the template's current default build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// PreviousBuildID Build that was current before the restore, null when there was none
+	PreviousBuildID *openapi_types.UUID `json:"previousBuildID"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// TemplateID Identifier of the snapshot template that received the assignment
+	TemplateID string `json:"templateID"`
+}
+
+// AdminSandboxBuildStatusGroup Coarse build state derived from the build status: pending (pending,
+// waiting), in_progress (in_progress, building, snapshotting), ready
+// (ready, uploaded, success) or failed (any other status)
+type AdminSandboxBuildStatusGroup string
+
 // AdminSandboxKillResult defines model for AdminSandboxKillResult.
 type AdminSandboxKillResult struct {
 	// FailedCount Number of sandboxes that failed to kill
@@ -658,6 +780,91 @@ type AdminSandboxKillResult struct {
 	// KilledCount Number of sandboxes successfully killed
 	KilledCount int `json:"killedCount"`
 }
+
+// AdminSandboxLastPause The snapshot as the most recent pause left it. A resume can change
+// whether the sandbox auto-pauses without rewriting it, and restoring an
+// older build does not change it.
+type AdminSandboxLastPause struct {
+	// AutoPause Whether the sandbox pauses instead of being killed on timeout, as of the most recent pause
+	AutoPause bool `json:"autoPause"`
+
+	// AutoPauseKind Kind of snapshot an auto-pause takes, as of the most recent pause
+	AutoPauseKind AdminSandboxPauseKind `json:"autoPauseKind"`
+
+	// Kind Kind of snapshot the most recent pause took
+	Kind AdminSandboxPauseKind `json:"kind"`
+}
+
+// AdminSandboxOverview Who owns a sandbox and what its snapshot holds, read from the database:
+// the team, the snapshot template and its most recent pause, and the
+// newest default-tag build assignment of that template
+type AdminSandboxOverview struct {
+	// BuildCount Number of default-tag build assignments of the snapshot template
+	BuildCount int64 `json:"buildCount"`
+
+	// LastPause What the most recent pause recorded, null when the sandbox has no snapshot
+	LastPause *AdminSandboxLastPause `json:"lastPause"`
+
+	// LatestBuild Newest default-tag build assignment of the snapshot template, null
+	// when there is no snapshot or no assignment
+	LatestBuild *AdminSandboxOverviewBuild `json:"latestBuild"`
+
+	// SandboxId Identifier of the sandbox
+	SandboxId string `json:"sandboxId"`
+
+	// SnapshotTemplateId Template that holds the sandbox's snapshot, null when the sandbox has no snapshot
+	SnapshotTemplateId *string `json:"snapshotTemplateId"`
+
+	// Team The team the sandbox belongs to
+	Team AdminSandboxOverviewTeam `json:"team"`
+}
+
+// AdminSandboxOverviewBuild The newest default-tag build assignment of a sandbox's snapshot template
+type AdminSandboxOverviewBuild struct {
+	// AssignedAt When the build was assigned to the template under the tag
+	AssignedAt time.Time `json:"assignedAt"`
+
+	// BuildId Identifier of the build
+	BuildId openapi_types.UUID `json:"buildId"`
+
+	// ClusterNodeId Node that produced the build, null when it was not recorded
+	ClusterNodeId *string `json:"clusterNodeId"`
+
+	// IsCurrent Always true, the newest assignment is the one the template resolves to
+	IsCurrent bool `json:"isCurrent"`
+
+	// Restorable Always false, the newest assignment is already current
+	Restorable bool `json:"restorable"`
+
+	// Status Build status as stored, for example ready, snapshotting or waiting
+	Status string `json:"status"`
+
+	// StatusGroup Coarse build state, null when the stored group is not one of the known values
+	StatusGroup *AdminSandboxBuildStatusGroup `json:"statusGroup"`
+
+	// Tag Tag the build is assigned under
+	Tag string `json:"tag"`
+
+	// TemplateId Identifier of the snapshot template the build is assigned to
+	TemplateId string `json:"templateId"`
+}
+
+// AdminSandboxOverviewTeam The team the sandbox belongs to
+type AdminSandboxOverviewTeam struct {
+	// Email Contact email of the team
+	Email *string `json:"email"`
+
+	// Id Identifier of the team
+	Id openapi_types.UUID `json:"id"`
+
+	// Name Name of the team
+	Name *string `json:"name"`
+}
+
+// AdminSandboxPauseKind What a pause kept: memory is a full snapshot that resumes where the
+// sandbox left off, filesystem keeps only the root filesystem and boots
+// it again on resume
+type AdminSandboxPauseKind string
 
 // AdminSandboxState State after the sandbox's latest create, resume, pause or kill event
 type AdminSandboxState string
@@ -1074,7 +1281,7 @@ type ClusterUpdateRequest struct {
 
 // ConnectSandbox defines model for ConnectSandbox.
 type ConnectSandbox struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -1083,7 +1290,7 @@ type ConnectSandbox struct {
 
 // ConnectSandboxV2 defines model for ConnectSandboxV2.
 type ConnectSandboxV2 struct {
-	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -1143,6 +1350,9 @@ type DiskSizeMB = int32
 // EnvVars defines model for EnvVars.
 type EnvVars map[string]string
 
+// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+type EnvdUnresponsiveAtPause = bool
+
 // EnvdVersion Version of the envd running in the sandbox
 type EnvdVersion = string
 
@@ -1151,7 +1361,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting.
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -1258,6 +1468,9 @@ type ListedSandbox struct {
 
 	// EndAt Time when the sandbox will expire
 	EndAt time.Time `json:"endAt"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -1485,7 +1698,10 @@ type NewSandbox struct {
 
 	// AutoResume Auto-resume configuration for paused sandboxes.
 	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
-	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// CpuCount Online vCPU target for the sandbox. Defaults to the template's cpuCount; at most its maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+	EnvVars  *EnvVars  `json:"envVars,omitempty"`
 
 	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
 	Iam *SandboxIam `json:"iam,omitempty"`
@@ -1520,7 +1736,10 @@ type NewSandboxV2 struct {
 
 	// AutoResume Auto-resume configuration for paused sandboxes.
 	AutoResume *SandboxAutoResumeConfig `json:"autoResume,omitempty"`
-	EnvVars    *EnvVars                 `json:"envVars,omitempty"`
+
+	// CpuCount Online vCPU target for the sandbox. Defaults to the template's cpuCount; at most its maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+	EnvVars  *EnvVars  `json:"envVars,omitempty"`
 
 	// Iam Sandbox workload identity configuration. A non-empty, valid tokens map enables workload identity for the sandbox.
 	Iam *SandboxIam `json:"iam,omitempty"`
@@ -1564,6 +1783,9 @@ type NewVolume struct {
 
 // Node defines model for Node.
 type Node struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1599,11 +1821,15 @@ type Node struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1611,6 +1837,9 @@ type Node struct {
 
 // NodeDetail defines model for NodeDetail.
 type NodeDetail struct {
+	// Capabilities Capabilities of the orchestrator build, for example park-owner
+	Capabilities *[]string `json:"capabilities,omitempty"`
+
 	// ClusterID Identifier of the cluster
 	ClusterID string `json:"clusterID"`
 
@@ -1643,11 +1872,15 @@ type NodeDetail struct {
 	ServiceInstanceID string `json:"serviceInstanceID"`
 
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 
 	// StatusChangedAt Time when the node status was last changed
 	StatusChangedAt time.Time `json:"statusChangedAt"`
+
+	// StatusOwner Owner recorded by the current standby override
+	StatusOwner *string `json:"statusOwner,omitempty"`
 
 	// Version Version of the orchestrator
 	Version string `json:"version"`
@@ -1689,8 +1922,35 @@ type NodeMetrics struct {
 	MemoryUsedBytes uint64 `json:"memoryUsedBytes"`
 }
 
+// NodeSandbox defines model for NodeSandbox.
+type NodeSandbox struct {
+	// ExecutionID Identifier of the running execution
+	ExecutionID openapi_types.UUID `json:"executionID"`
+
+	// LifecycleHoldUntil Deadline of the operation holding the sandbox's lifecycle, absent when it is not held
+	LifecycleHoldUntil *time.Time `json:"lifecycleHoldUntil,omitempty"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// TeamID Identifier of the team
+	TeamID openapi_types.UUID `json:"teamID"`
+}
+
+// NodeSandboxes The sandboxes the API confirms are running on a node, as the node and the API's records agree on them when read. A guest the node runs for an execution the API records elsewhere, or does not record, is left out.
+type NodeSandboxes struct {
+	Items []NodeSandbox `json:"items"`
+
+	// NodeID Identifier of the node
+	NodeID string `json:"nodeID"`
+
+	// ObservedAt Time the node's sandboxes were read
+	ObservedAt time.Time `json:"observedAt"`
+}
+
 // NodeStatus Status of the node.
-// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 type NodeStatus string
 
 // NodeStatusChange defines model for NodeStatusChange.
@@ -1698,8 +1958,15 @@ type NodeStatusChange struct {
 	// ClusterID Identifier of the cluster
 	ClusterID *openapi_types.UUID `json:"clusterID,omitempty"`
 
+	// Force Apply the status and owner regardless of the recorded owner
+	Force *bool `json:"force,omitempty"`
+
+	// Owner Owner of a standby override; required to release a standby that carries one
+	Owner *string `json:"owner,omitempty"`
+
 	// Status Status of the node.
-	// - standby: the node is not actively used, but it can return to ready and continue serving traffic.
+	// - standby: the node refuses new sandboxes and keeps serving the ones it holds; it can return to ready.
+	// - not_ready: the node is starting and cannot take new work yet. It becomes ready by itself and cannot be set through the API.
 	Status NodeStatus `json:"status"`
 }
 
@@ -1717,7 +1984,10 @@ type ResumedSandbox struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	AutoPause *bool `json:"autoPause,omitempty"`
 
-	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore.
+	// CpuCount Online vCPU target for the resumed sandbox. Defaults to the snapshot's cpuCount; at most the template's maxCpuCount (fixed-size templates accept only their cpuCount).
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
+	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
@@ -1850,6 +2120,9 @@ type SandboxDetail struct {
 
 	// EnvdAccessToken Access token used for envd communication
 	EnvdAccessToken *string `json:"envdAccessToken,omitempty"`
+
+	// EnvdUnresponsiveAtPause True when the snapshot a paused sandbox would resume from was taken while the sandbox guest agent was not responding. A plain resume of it is refused with 409 and error_code sandbox_snapshot_guest_agent_unresponsive, because restoring that memory would bring the unresponsive agent back; resume it without memory (`memory: false`), which cold-boots the sandbox from its disk. Omitted for a running sandbox and for a snapshot whose agent answered.
+	EnvdUnresponsiveAtPause *EnvdUnresponsiveAtPause `json:"envdUnresponsiveAtPause,omitempty"`
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
@@ -2131,6 +2404,45 @@ type SandboxPauseMode string
 type SandboxPauseRequest struct {
 	// Memory Whether to capture a full memory snapshot. When false, only the filesystem is persisted and resuming the sandbox cold-boots (reboots) it from disk, losing in-memory state, running processes, and open connections. Resume it with an explicit request (connect or resume); auto-resume, which can be triggered by arbitrary traffic, refuses such a sandbox. Defaults to true.
 	Memory *bool `json:"memory,omitempty"`
+
+	// RequireHealthyGuest The pause checks that the sandbox guest agent answers before it takes the snapshot. By default an unresponsive agent is recorded on the snapshot and the pause proceeds; the sandbox then shows `envdUnresponsiveAtPause` and a later resume must ask for `memory: false`, since restoring that memory would bring the unresponsive agent back. With this true, the pause is instead refused with 503 while the agent does not answer, and the sandbox keeps running. A filesystem-only pause (`memory: false`) is always refused while the agent does not answer, whatever this says.
+	RequireHealthyGuest *bool `json:"requireHealthyGuest,omitempty"`
+}
+
+// SandboxRecord defines model for SandboxRecord.
+type SandboxRecord struct {
+	// Alias Alias of the template
+	Alias *string `json:"alias,omitempty"`
+
+	// CpuCount CPU cores for the sandbox
+	CpuCount CPUCount `json:"cpuCount"`
+
+	// DiskSizeMB Disk size for the sandbox in MiB
+	DiskSizeMB DiskSizeMB `json:"diskSizeMB"`
+
+	// Domain Base domain where the sandbox traffic is accessible
+	Domain *string `json:"domain,omitempty"`
+
+	// EventsRetentionExpired Whether the sandbox ended more than the team's events retention window ago, so its events data is no longer available
+	EventsRetentionExpired bool `json:"eventsRetentionExpired"`
+
+	// MemoryMB Memory for the sandbox in MiB
+	MemoryMB MemoryMB `json:"memoryMB"`
+
+	// RetentionExpired Whether the sandbox ended more than the fixed retention window ago, so its monitoring and logs data is no longer available
+	RetentionExpired bool `json:"retentionExpired"`
+
+	// SandboxID Identifier of the sandbox
+	SandboxID string `json:"sandboxID"`
+
+	// StartedAt Time when the sandbox was started
+	StartedAt time.Time `json:"startedAt"`
+
+	// StoppedAt Time when the sandbox was stopped
+	StoppedAt *time.Time `json:"stoppedAt,omitempty"`
+
+	// TemplateID Identifier of the template from which is the sandbox created
+	TemplateID string `json:"templateID"`
 }
 
 // SandboxRefreshRequest defines model for SandboxRefreshRequest.
@@ -2371,6 +2683,9 @@ type Template struct {
 	// LastSpawnedAt Time when the template was last used
 	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
 
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
+
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
 
@@ -2418,6 +2733,9 @@ type TemplateBuild struct {
 
 	// FinishedAt Time when the build was finished
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
@@ -2475,6 +2793,9 @@ type TemplateBuildRequestV3 struct {
 
 	// CpuCount CPU cores for the sandbox
 	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
+	// MaxCpuCount Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
@@ -2687,6 +3008,9 @@ type TemplateWithBuilds struct {
 
 	// LastSpawnedAt Time when the template was last used
 	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
+
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB `json:"memoryMB"`
@@ -2929,6 +3253,9 @@ type BuildsLimit = int32
 // ClusterID defines model for clusterID.
 type ClusterID = openapi_types.UUID
 
+// IdempotencyKey defines model for idempotencyKey.
+type IdempotencyKey = string
+
 // NodeID defines model for nodeID.
 type NodeID = string
 
@@ -3110,6 +3437,12 @@ type GetNodesNodeIDParams struct {
 	ClusterID *openapi_types.UUID `form:"clusterID,omitempty" json:"clusterID,omitempty"`
 }
 
+// GetNodesNodeIDSandboxesParams defines parameters for GetNodesNodeIDSandboxes.
+type GetNodesNodeIDSandboxesParams struct {
+	// ClusterID Identifier of the cluster
+	ClusterID *openapi_types.UUID `form:"clusterID,omitempty" json:"clusterID,omitempty"`
+}
+
 // GetSandboxesParams defines parameters for GetSandboxes.
 type GetSandboxesParams struct {
 	// Metadata Metadata query used to filter the sandboxes (e.g. "user=abc&app=prod"). Each key and values must be URL encoded.
@@ -3136,6 +3469,26 @@ type GetSandboxesSandboxIDMetricsParams struct {
 	// Start Unix timestamp for the start of the interval, in seconds, for which the metrics
 	Start *int64 `form:"start,omitempty" json:"start,omitempty"`
 	End   *int64 `form:"end,omitempty" json:"end,omitempty"`
+}
+
+// PostSandboxesSandboxIDSnapshotsParams defines parameters for PostSandboxesSandboxIDSnapshots.
+type PostSandboxesSandboxIDSnapshotsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // GetSecretsParams defines parameters for GetSecrets.
@@ -3305,6 +3658,24 @@ type AdminListClusterTeamsParamsSortBy string
 // AdminListClusterTeamsParamsSortOrder defines parameters for AdminListClusterTeams.
 type AdminListClusterTeamsParamsSortOrder string
 
+// GetUnstableAdminSandboxesSandboxIDBuildsParams defines parameters for GetUnstableAdminSandboxesSandboxIDBuilds.
+type GetUnstableAdminSandboxesSandboxIDBuildsParams struct {
+	// StatusGroup Only list builds in these status groups, comma-separated. Omit to list every group.
+	StatusGroup *[]AdminSandboxBuildStatusGroup `form:"statusGroup,omitempty" json:"statusGroup,omitempty"`
+
+	// Tag Tag whose assignments are listed
+	Tag *string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Order Direction of the assignment time order
+	Order *OrderDirection `form:"order,omitempty" json:"order,omitempty"`
+
+	// Limit Maximum number of builds to return
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Number of matching builds to skip
+	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetUnstableAdminTemplatesAliasesParams defines parameters for GetUnstableAdminTemplatesAliases.
 type GetUnstableAdminTemplatesAliasesParams struct {
 	// Search Exact template ID or alias
@@ -3434,6 +3805,46 @@ type GetV2TemplatesParams struct {
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// PostV2TemplatesTemplateIDBuildsBuildIDParams defines parameters for PostV2TemplatesTemplateIDBuildsBuildID.
+type PostV2TemplatesTemplateIDBuildsBuildIDParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// PostV3TemplatesParams defines parameters for PostV3Templates.
+type PostV3TemplatesParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // PostAdminTeamsTeamIDApiKeysJSONRequestBody defines body for PostAdminTeamsTeamIDApiKeys for application/json ContentType.
 type PostAdminTeamsTeamIDApiKeysJSONRequestBody = NewTeamAPIKey
 
@@ -3513,6 +3924,9 @@ type AdminUpdateClusterJSONRequestBody = ClusterUpdateRequest
 
 // AdminRotateClusterTokenJSONRequestBody defines body for AdminRotateClusterToken for application/json ContentType.
 type AdminRotateClusterTokenJSONRequestBody = ClusterTokenRotateRequest
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody defines body for PostUnstableAdminSandboxesSandboxIDBuildsRestore for application/json ContentType.
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody = AdminSandboxBuildRestoreRequest
 
 // AdminBanTeamsJSONRequestBody defines body for AdminBanTeams for application/json ContentType.
 type AdminBanTeamsJSONRequestBody = AdminTeamsBanRequest
@@ -4313,6 +4727,13 @@ type ClientInterface interface {
 	// Corresponds with POST /nodes/{nodeID} (the `PostNodesNodeID` operationId).
 	PostNodesNodeID(ctx context.Context, nodeID NodeID, body PostNodesNodeIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetNodesNodeIDSandboxes Node sandboxes
+	//
+	// List the sandboxes the API confirms are running on the node.
+	//
+	// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+	GetNodesNodeIDSandboxes(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSandboxes List running sandboxes
 	//
 	// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
@@ -4367,7 +4788,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBody Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4378,7 +4799,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDConnect Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4441,7 +4862,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBody Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4450,7 +4871,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDPause Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4477,7 +4898,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBody Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4488,7 +4909,7 @@ type ClientInterface interface {
 
 	// PostSandboxesSandboxIDResume Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4504,7 +4925,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDSnapshots Create snapshot
 	//
@@ -4513,7 +4934,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBody Set sandbox timeout
 	//
@@ -4839,6 +5260,61 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 	AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUnstableAdminSandboxesSandboxIDOverview Sandbox overview
+	//
+	// Reads a sandbox's team, snapshot template, most recent pause and newest
+	// default-tag build from the database. The team comes from the
+	// stopped-sandbox log, or from the snapshot when the sandbox has not
+	// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+	// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+	// `latestBuild`.
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+	GetUnstableAdminSandboxesSandboxIDOverview(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminBanTeamsWithBody Ban teams
 	//
@@ -5211,6 +5687,13 @@ type ClientInterface interface {
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettings(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetUnstableSandboxesSandboxIDRecord Sandbox record
+	//
+	// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+	//
+	// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+	GetUnstableSandboxesSandboxIDRecord(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetUnstableTeamsTeamIDLimits Team limits
 	//
 	// Returns the team's effective resource limits. A team-authenticated request may read only its own team.
@@ -5259,7 +5742,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5268,7 +5751,7 @@ type ClientInterface interface {
 
 	// PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5309,21 +5792,21 @@ type ClientInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3TemplatesWithBody Create template (v3)
 	//
@@ -5332,7 +5815,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostV3Templates Create template (v3)
 	//
@@ -5341,7 +5824,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVolumes List team volumes
 	//
@@ -6015,6 +6498,23 @@ func (c *Client) PostNodesNodeID(ctx context.Context, nodeID NodeID, body PostNo
 	return c.Client.Do(req)
 }
 
+// GetNodesNodeIDSandboxes Node sandboxes
+//
+// List the sandboxes the API confirms are running on the node.
+//
+// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+func (c *Client) GetNodesNodeIDSandboxes(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNodesNodeIDSandboxesRequest(c.Server, nodeID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetSandboxes List running sandboxes
 //
 // List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
@@ -6126,7 +6626,7 @@ func (c *Client) GetSandboxesSandboxID(ctx context.Context, sandboxID SandboxID,
 
 // PostSandboxesSandboxIDConnectWithBody Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6146,7 +6646,7 @@ func (c *Client) PostSandboxesSandboxIDConnectWithBody(ctx context.Context, sand
 
 // PostSandboxesSandboxIDConnect Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6277,7 +6777,7 @@ func (c *Client) PutSandboxesSandboxIDNetwork(ctx context.Context, sandboxID San
 
 // PostSandboxesSandboxIDPauseWithBody Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6296,7 +6796,7 @@ func (c *Client) PostSandboxesSandboxIDPauseWithBody(ctx context.Context, sandbo
 
 // PostSandboxesSandboxIDPause Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6353,7 +6853,7 @@ func (c *Client) PostSandboxesSandboxIDRefreshes(ctx context.Context, sandboxID 
 
 // PostSandboxesSandboxIDResumeWithBody Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type.
 //
@@ -6373,7 +6873,7 @@ func (c *Client) PostSandboxesSandboxIDResumeWithBody(ctx context.Context, sandb
 
 // PostSandboxesSandboxIDResume Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6398,8 +6898,8 @@ func (c *Client) PostSandboxesSandboxIDResume(ctx context.Context, sandboxID San
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, contentType, body)
+func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequestWithBody(c.Server, sandboxID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6417,8 +6917,8 @@ func (c *Client) PostSandboxesSandboxIDSnapshotsWithBody(ctx context.Context, sa
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, body)
+func (c *Client) PostSandboxesSandboxIDSnapshots(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSandboxesSandboxIDSnapshotsRequest(c.Server, sandboxID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7151,6 +7651,101 @@ func (c *Client) AdminRotateClusterTokenWithBody(ctx context.Context, clusterID 
 // Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 func (c *Client) AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminRotateClusterTokenRequest(c.Server, clusterID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *Client) GetUnstableAdminSandboxesSandboxIDBuilds(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(c.Server, sandboxID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(c.Server, sandboxID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestore Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *Client) PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(c.Server, sandboxID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverview Sandbox overview
+//
+// Reads a sandbox's team, snapshot template, most recent pause and newest
+// default-tag build from the database. The team comes from the
+// stopped-sandbox log, or from the snapshot when the sandbox has not
+// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+// `latestBuild`.
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+func (c *Client) GetUnstableAdminSandboxesSandboxIDOverview(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableAdminSandboxesSandboxIDOverviewRequest(c.Server, sandboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -7962,6 +8557,23 @@ func (c *Client) ManagementSetProjectSettings(ctx context.Context, projectID ope
 	return c.Client.Do(req)
 }
 
+// GetUnstableSandboxesSandboxIDRecord Sandbox record
+//
+// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+//
+// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+func (c *Client) GetUnstableSandboxesSandboxIDRecord(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUnstableSandboxesSandboxIDRecordRequest(c.Server, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetUnstableTeamsTeamIDLimits Team limits
 //
 // Returns the team's effective resource limits. A team-authenticated request may read only its own team.
@@ -8070,7 +8682,7 @@ func (c *Client) PostV2Sandboxes(ctx context.Context, params *PostV2SandboxesPar
 
 // PostV2SandboxesSandboxIDConnectWithBody Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8089,7 +8701,7 @@ func (c *Client) PostV2SandboxesSandboxIDConnectWithBody(ctx context.Context, sa
 
 // PostV2SandboxesSandboxIDConnect Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8180,13 +8792,13 @@ func (c *Client) PatchV2TemplatesTemplateID(ctx context.Context, templateID Temp
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBody Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, contentType, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(c.Server, templateID, buildID, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8199,13 +8811,13 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx context.Cont
 
 // PostV2TemplatesTemplateIDBuildsBuildID Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, body)
+func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(c.Server, templateID, buildID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8223,8 +8835,8 @@ func (c *Client) PostV2TemplatesTemplateIDBuildsBuildID(ctx context.Context, tem
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostV3TemplatesWithBody(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8242,8 +8854,8 @@ func (c *Client) PostV3TemplatesWithBody(ctx context.Context, contentType string
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *Client) PostV3Templates(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostV3TemplatesRequest(c.Server, body)
+func (c *Client) PostV3Templates(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostV3TemplatesRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9794,6 +10406,67 @@ func NewPostNodesNodeIDRequestWithBody(server string, nodeID NodeID, contentType
 	return req, nil
 }
 
+// NewGetNodesNodeIDSandboxesRequest constructs an http.Request for the GetNodesNodeIDSandboxes method
+func NewGetNodesNodeIDSandboxesRequest(server string, nodeID NodeID, params *GetNodesNodeIDSandboxesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "nodeID", nodeID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/nodes/%s/sandboxes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ClusterID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "clusterID", *params.ClusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetSandboxesRequest constructs an http.Request for the GetSandboxes method
 func NewGetSandboxesRequest(server string, params *GetSandboxesParams) (*http.Request, error) {
 	var err error
@@ -10439,18 +11112,18 @@ func NewPostSandboxesSandboxIDResumeRequestWithBody(server string, sandboxID San
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequest calls the generic PostSandboxesSandboxIDSnapshots builder with application/json body
-func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequest(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, "application/json", bodyReader)
+	return NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server, sandboxID, params, "application/json", bodyReader)
 }
 
 // NewPostSandboxesSandboxIDSnapshotsRequestWithBody constructs an http.Request for the PostSandboxesSandboxIDSnapshots method, with any body, and a specified content type
-func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -10481,6 +11154,21 @@ func NewPostSandboxesSandboxIDSnapshotsRequestWithBody(server string, sandboxID 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -12349,6 +13037,196 @@ func NewAdminRotateClusterTokenRequestWithBody(server string, clusterID ClusterI
 	return req, nil
 }
 
+// NewGetUnstableAdminSandboxesSandboxIDBuildsRequest constructs an http.Request for the GetUnstableAdminSandboxesSandboxIDBuilds method
+func NewGetUnstableAdminSandboxesSandboxIDBuildsRequest(server string, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.StatusGroup != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "statusGroup", *params.StatusGroup, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Tag != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tag", *params.Tag, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Order != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "order", *params.Order, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest calls the generic PostUnstableAdminSandboxesSandboxIDBuildsRestore builder with application/json body
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequest(server string, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server, sandboxID, "application/json", bodyReader)
+}
+
+// NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody constructs an http.Request for the PostUnstableAdminSandboxesSandboxIDBuildsRestore method, with any body, and a specified content type
+func NewPostUnstableAdminSandboxesSandboxIDBuildsRestoreRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/builds/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetUnstableAdminSandboxesSandboxIDOverviewRequest constructs an http.Request for the GetUnstableAdminSandboxesSandboxIDOverview method
+func NewGetUnstableAdminSandboxesSandboxIDOverviewRequest(server string, sandboxID SandboxID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/sandboxes/%s/overview", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAdminBanTeamsRequest calls the generic AdminBanTeams builder with application/json body
 func NewAdminBanTeamsRequest(server string, body AdminBanTeamsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -13663,6 +14541,40 @@ func NewManagementSetProjectSettingsRequestWithBody(server string, projectID ope
 	return req, nil
 }
 
+// NewGetUnstableSandboxesSandboxIDRecordRequest constructs an http.Request for the GetUnstableSandboxesSandboxIDRecord method
+func NewGetUnstableSandboxesSandboxIDRecordRequest(server string, sandboxID SandboxID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/sandboxes/%s/record", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetUnstableTeamsTeamIDLimitsRequest constructs an http.Request for the GetUnstableTeamsTeamIDLimits method
 func NewGetUnstableTeamsTeamIDLimitsRequest(server string, teamID TeamID) (*http.Request, error) {
 	var err error
@@ -14296,18 +15208,18 @@ func NewPatchV2TemplatesTemplateIDRequestWithBody(server string, templateID Temp
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequest calls the generic PostV2TemplatesTemplateIDBuildsBuildID builder with application/json body
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequest(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, "application/json", bodyReader)
+	return NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server, templateID, buildID, params, "application/json", bodyReader)
 }
 
 // NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody constructs an http.Request for the PostV2TemplatesTemplateIDBuildsBuildID method, with any body, and a specified content type
-func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14346,22 +15258,37 @@ func NewPostV2TemplatesTemplateIDBuildsBuildIDRequestWithBody(server string, tem
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
+
 	return req, nil
 }
 
 // NewPostV3TemplatesRequest calls the generic PostV3Templates builder with application/json body
-func NewPostV3TemplatesRequest(server string, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
+func NewPostV3TemplatesRequest(server string, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostV3TemplatesRequestWithBody(server, "application/json", bodyReader)
+	return NewPostV3TemplatesRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostV3TemplatesRequestWithBody constructs an http.Request for the PostV3Templates method, with any body, and a specified content type
-func NewPostV3TemplatesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostV3TemplatesRequestWithBody(server string, params *PostV3TemplatesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -14385,6 +15312,21 @@ func NewPostV3TemplatesRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -14880,6 +15822,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /nodes/{nodeID} (the `PostNodesNodeID` operationId).
 	PostNodesNodeIDWithResponse(ctx context.Context, nodeID NodeID, body PostNodesNodeIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostNodesNodeIDResponse, error)
 
+	// GetNodesNodeIDSandboxesWithResponse Node sandboxes
+	//
+	// List the sandboxes the API confirms are running on the node.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+	GetNodesNodeIDSandboxesWithResponse(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*GetNodesNodeIDSandboxesResponse, error)
+
 	// GetSandboxesWithResponse List running sandboxes
 	//
 	// List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
@@ -14942,7 +15893,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -14953,7 +15904,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15020,7 +15971,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15029,7 +15980,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 	//
-	// Pause the sandbox.
+	// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15056,7 +16007,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15067,7 +16018,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 	//
-	// Resume the sandbox.
+	// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15083,7 +16034,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDSnapshotsWithResponse Create snapshot
 	//
@@ -15092,7 +16043,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
+	PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error)
 
 	// PostSandboxesSandboxIDTimeoutWithBodyWithResponse Set sandbox timeout
 	//
@@ -15464,6 +16415,65 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
 	AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
+
+	// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+	//
+	// Lists the build assignments of the template that holds the sandbox's
+	// snapshot under one tag. Assignments without a creation time are left
+	// out. A sandbox without a snapshot returns no items and a null
+	// `snapshotTemplateID`; this route does not report whether the sandbox
+	// exists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+	GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
+
+	// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+	//
+	// Assigns a ready build of the sandbox's snapshot template to the template
+	// again under the default tag, so the sandbox resumes from that build.
+	// The snapshot takes the restored build's kind, filesystem-only or
+	// memory.
+	// Answers 404 when the sandbox has no snapshot, its snapshot template is
+	// deleted, or the build is not assigned to that template under the
+	// default tag, and 409 when the build is not ready or is already the
+	// current build.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+	PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error)
+
+	// GetUnstableAdminSandboxesSandboxIDOverviewWithResponse Sandbox overview
+	//
+	// Reads a sandbox's team, snapshot template, most recent pause and newest
+	// default-tag build from the database. The team comes from the
+	// stopped-sandbox log, or from the snapshot when the sandbox has not
+	// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+	// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+	// `latestBuild`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+	GetUnstableAdminSandboxesSandboxIDOverviewWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error)
 
 	// AdminBanTeamsWithBodyWithResponse Ban teams
 	//
@@ -15870,6 +16880,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /unstable/management/projects/{projectID}/settings (the `ManagementSetProjectSettings` operationId).
 	ManagementSetProjectSettingsWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementSetProjectSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementSetProjectSettingsResponse, error)
 
+	// GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
+	//
+	// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+	GetUnstableSandboxesSandboxIDRecordWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableSandboxesSandboxIDRecordResponse, error)
+
 	// GetUnstableTeamsTeamIDLimitsWithResponse Team limits
 	//
 	// Returns the team's effective resource limits. A team-authenticated request may read only its own team.
@@ -15926,7 +16945,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15935,7 +16954,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 	//
-	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+	// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15980,21 +16999,21 @@ type ClientWithResponsesInterface interface {
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 	//
-	// Start the build.
+	// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
+	PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error)
 
 	// PostV3TemplatesWithBodyWithResponse Create template (v3)
 	//
@@ -16003,7 +17022,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// PostV3TemplatesWithResponse Create template (v3)
 	//
@@ -16012,7 +17031,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-	PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
+	PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error)
 
 	// GetVolumesWithResponse List team volumes
 	//
@@ -18174,6 +19193,8 @@ type PostNodesNodeIDResponse429Headers struct {
 type PostNodesNodeIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -18186,6 +19207,11 @@ type PostNodesNodeIDResponse struct {
 	JSON500 *N500
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostNodesNodeIDResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostNodesNodeIDResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -18236,6 +19262,82 @@ func (r PostNodesNodeIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PostNodesNodeIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetNodesNodeIDSandboxesResponse429Headers the declared response headers of an HTTP 429 response for GetNodesNodeIDSandboxes
+type GetNodesNodeIDSandboxesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetNodesNodeIDSandboxesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NodeSandboxes
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetNodesNodeIDSandboxesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON200() *NodeSandboxes {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetNodesNodeIDSandboxesResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetNodesNodeIDSandboxesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNodesNodeIDSandboxesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNodesNodeIDSandboxesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetNodesNodeIDSandboxesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19080,6 +20182,8 @@ type PostSandboxesSandboxIDPauseResponse429Headers struct {
 type PostSandboxesSandboxIDPauseResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
@@ -19094,6 +20198,11 @@ type PostSandboxesSandboxIDPauseResponse struct {
 	JSON503 *N503
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesSandboxIDPauseResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostSandboxesSandboxIDPauseResponse) GetJSON400() *N400 {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -19321,9 +20430,39 @@ func (r PostSandboxesSandboxIDResumeResponse) ContentType() string {
 	return ""
 }
 
+// PostSandboxesSandboxIDSnapshotsResponse400Headers the declared response headers of an HTTP 400 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse404Headers the declared response headers of an HTTP 404 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse409Headers the declared response headers of an HTTP 409 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse422Headers the declared response headers of an HTTP 422 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostSandboxesSandboxIDSnapshotsResponse429Headers the declared response headers of an HTTP 429 response for PostSandboxesSandboxIDSnapshots
 type PostSandboxesSandboxIDSnapshotsResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse500Headers the declared response headers of an HTTP 500 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSandboxesSandboxIDSnapshotsResponse503Headers the declared response headers of an HTTP 503 response for PostSandboxesSandboxIDSnapshots
+type PostSandboxesSandboxIDSnapshotsResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostSandboxesSandboxIDSnapshotsResponse struct {
@@ -19332,19 +20471,35 @@ type PostSandboxesSandboxIDSnapshotsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *SnapshotInfo
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostSandboxesSandboxIDSnapshotsResponse400Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostSandboxesSandboxIDSnapshotsResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostSandboxesSandboxIDSnapshotsResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostSandboxesSandboxIDSnapshotsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSandboxesSandboxIDSnapshotsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostSandboxesSandboxIDSnapshotsResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostSandboxesSandboxIDSnapshotsResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19353,7 +20508,7 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON201() *SnapshotInfo {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *N400 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -19363,8 +20518,18 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON401() *N401 {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *N404 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON404() *Error {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -19373,12 +20538,12 @@ func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *N500 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON503() *N503 {
+func (r PostSandboxesSandboxIDSnapshotsResponse) GetJSON503() *Error {
 	return r.JSON503
 }
 
@@ -22011,6 +23176,255 @@ func (r AdminRotateClusterTokenResponse) ContentType() string {
 	return ""
 }
 
+// GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableAdminSandboxesSandboxIDBuilds
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableAdminSandboxesSandboxIDBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildList
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON200() *AdminSandboxBuildList {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminSandboxesSandboxIDBuildsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers the declared response headers of an HTTP 429 response for PostUnstableAdminSandboxesSandboxIDBuildsRestore
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxBuildRestoreResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON200() *AdminSandboxBuildRestoreResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableAdminSandboxesSandboxIDOverview
+type GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableAdminSandboxesSandboxIDOverviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminSandboxOverview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON200() *AdminSandboxOverview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableAdminSandboxesSandboxIDOverviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // AdminBanTeamsResponse429Headers the declared response headers of an HTTP 429 response for AdminBanTeams
 type AdminBanTeamsResponse429Headers struct {
 	RetryAfter *int
@@ -24130,6 +25544,96 @@ func (r ManagementSetProjectSettingsResponse) ContentType() string {
 	return ""
 }
 
+// GetUnstableSandboxesSandboxIDRecordResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableSandboxesSandboxIDRecord
+type GetUnstableSandboxesSandboxIDRecordResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetUnstableSandboxesSandboxIDRecordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SandboxRecord
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetUnstableSandboxesSandboxIDRecordResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON200() *SandboxRecord {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUnstableSandboxesSandboxIDRecordResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUnstableSandboxesSandboxIDRecordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUnstableSandboxesSandboxIDRecordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUnstableSandboxesSandboxIDRecordResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetUnstableTeamsTeamIDLimitsResponse429Headers the declared response headers of an HTTP 429 response for GetUnstableTeamsTeamIDLimits
 type GetUnstableTeamsTeamIDLimitsResponse429Headers struct {
 	RetryAfter *int
@@ -24998,34 +26502,120 @@ func (r PatchV2TemplatesTemplateIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers the declared response headers of an HTTP 400 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers the declared response headers of an HTTP 401 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers the declared response headers of an HTTP 403 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers the declared response headers of an HTTP 404 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers the declared response headers of an HTTP 409 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers the declared response headers of an HTTP 422 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers the declared response headers of an HTTP 429 response for PostV2TemplatesTemplateIDBuildsBuildID
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers the declared response headers of an HTTP 500 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers the declared response headers of an HTTP 503 response for PostV2TemplatesTemplateIDBuildsBuildID
+type PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV2TemplatesTemplateIDBuildsBuildIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *N400 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *N401 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON401() *Error {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON422() *Error {
+	return r.JSON422
 }
 
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
@@ -25034,8 +26624,13 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON429() *N429 {
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *N500 {
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25067,9 +26662,45 @@ func (r PostV2TemplatesTemplateIDBuildsBuildIDResponse) ContentType() string {
 	return ""
 }
 
+// PostV3TemplatesResponse400Headers the declared response headers of an HTTP 400 response for PostV3Templates
+type PostV3TemplatesResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse401Headers the declared response headers of an HTTP 401 response for PostV3Templates
+type PostV3TemplatesResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse403Headers the declared response headers of an HTTP 403 response for PostV3Templates
+type PostV3TemplatesResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse409Headers the declared response headers of an HTTP 409 response for PostV3Templates
+type PostV3TemplatesResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse422Headers the declared response headers of an HTTP 422 response for PostV3Templates
+type PostV3TemplatesResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostV3TemplatesResponse429Headers the declared response headers of an HTTP 429 response for PostV3Templates
 type PostV3TemplatesResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter  *int
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse500Headers the declared response headers of an HTTP 500 response for PostV3Templates
+type PostV3TemplatesResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostV3TemplatesResponse503Headers the declared response headers of an HTTP 503 response for PostV3Templates
+type PostV3TemplatesResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostV3TemplatesResponse struct {
@@ -25078,19 +26709,37 @@ type PostV3TemplatesResponse struct {
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *TemplateRequestResponseV3
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
 	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *N403
+	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
+	JSON429 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostV3TemplatesResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostV3TemplatesResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostV3TemplatesResponse403Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostV3TemplatesResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostV3TemplatesResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostV3TemplatesResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostV3TemplatesResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostV3TemplatesResponse503Headers
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -25099,33 +26748,43 @@ func (r PostV3TemplatesResponse) GetJSON202() *TemplateRequestResponseV3 {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON400() *N400 {
+func (r PostV3TemplatesResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON401() *N401 {
+func (r PostV3TemplatesResponse) GetJSON401() *Error {
 	return r.JSON401
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON403() *N403 {
+func (r PostV3TemplatesResponse) GetJSON403() *Error {
 	return r.JSON403
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON409() *N409 {
+func (r PostV3TemplatesResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON429() *N429 {
+func (r PostV3TemplatesResponse) GetJSON429() *Error {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostV3TemplatesResponse) GetJSON500() *N500 {
+func (r PostV3TemplatesResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostV3TemplatesResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25981,6 +27640,21 @@ func (c *ClientWithResponses) PostNodesNodeIDWithResponse(ctx context.Context, n
 	return ParsePostNodesNodeIDResponse(rsp)
 }
 
+// GetNodesNodeIDSandboxesWithResponse Node sandboxes
+//
+// List the sandboxes the API confirms are running on the node.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /nodes/{nodeID}/sandboxes (the `GetNodesNodeIDSandboxes` operationId).
+func (c *ClientWithResponses) GetNodesNodeIDSandboxesWithResponse(ctx context.Context, nodeID NodeID, params *GetNodesNodeIDSandboxesParams, reqEditors ...RequestEditorFn) (*GetNodesNodeIDSandboxesResponse, error) {
+	rsp, err := c.GetNodesNodeIDSandboxes(ctx, nodeID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNodesNodeIDSandboxesResponse(rsp)
+}
+
 // GetSandboxesWithResponse List running sandboxes
 //
 // List all running sandboxes. Returns 400 when more than 5000 running sandboxes match; use GET /v2/sandboxes to page through them.
@@ -26078,7 +27752,7 @@ func (c *ClientWithResponses) GetSandboxesSandboxIDWithResponse(ctx context.Cont
 
 // PostSandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26095,7 +27769,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDConnectWithBodyWithResponse(
 
 // PostSandboxesSandboxIDConnectWithResponse Connect sandbox
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. Use POST /v2/sandboxes/{sandboxID}/connect instead. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26203,7 +27877,7 @@ func (c *ClientWithResponses) PutSandboxesSandboxIDNetworkWithResponse(ctx conte
 
 // PostSandboxesSandboxIDPauseWithBodyWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26218,7 +27892,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDPauseWithBodyWithResponse(ct
 
 // PostSandboxesSandboxIDPauseWithResponse Pause sandbox
 //
-// Pause the sandbox.
+// Pause the sandbox. Answers 503 and leaves the sandbox running when it cannot be paused right now: its node is busy, it is being snapshotted, or `requireHealthyGuest` was set and the sandbox guest agent is not responding; retry later.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26263,7 +27937,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDRefreshesWithResponse(ctx co
 
 // PostSandboxesSandboxIDResumeWithBodyWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26280,7 +27954,7 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithBodyWithResponse(c
 
 // PostSandboxesSandboxIDResumeWithResponse Resume sandbox
 //
-// Resume the sandbox.
+// Resume the sandbox. Answers 409 when the sandbox is already running, or when its snapshot was taken while the sandbox guest agent was not responding and a plain resume would restore that memory (error_code sandbox_snapshot_guest_agent_unresponsive); resume such a sandbox without memory (`memory: false`).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26301,8 +27975,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDResumeWithResponse(ctx conte
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshotsWithBody(ctx, sandboxID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -26316,8 +27990,8 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithBodyWithRespons
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /sandboxes/{sandboxID}/snapshots (the `PostSandboxesSandboxIDSnapshots` operationId).
-func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
-	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, body, reqEditors...)
+func (c *ClientWithResponses) PostSandboxesSandboxIDSnapshotsWithResponse(ctx context.Context, sandboxID SandboxID, params *PostSandboxesSandboxIDSnapshotsParams, body PostSandboxesSandboxIDSnapshotsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDSnapshotsResponse, error) {
+	rsp, err := c.PostSandboxesSandboxIDSnapshots(ctx, sandboxID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -26938,6 +28612,89 @@ func (c *ClientWithResponses) AdminRotateClusterTokenWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseAdminRotateClusterTokenResponse(rsp)
+}
+
+// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
+//
+// Lists the build assignments of the template that holds the sandbox's
+// snapshot under one tag. Assignments without a creation time are left
+// out. A sandbox without a snapshot returns no items and a null
+// `snapshotTemplateID`; this route does not report whether the sandbox
+// exists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/builds (the `GetUnstableAdminSandboxesSandboxIDBuilds` operationId).
+func (c *ClientWithResponses) GetUnstableAdminSandboxesSandboxIDBuildsWithResponse(ctx context.Context, sandboxID SandboxID, params *GetUnstableAdminSandboxesSandboxIDBuildsParams, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	rsp, err := c.GetUnstableAdminSandboxesSandboxIDBuilds(ctx, sandboxID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
+}
+
+// PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse Make a build the current build of a sandbox's snapshot
+//
+// Assigns a ready build of the sandbox's snapshot template to the template
+// again under the default tag, so the sandbox resumes from that build.
+// The snapshot takes the restored build's kind, filesystem-only or
+// memory.
+// Answers 404 when the sandbox has no snapshot, its snapshot template is
+// deleted, or the build is not assigned to that template under the
+// default tag, and 409 when the build is not ready or is already the
+// current build.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /unstable/admin/sandboxes/{sandboxID}/builds/restore (the `PostUnstableAdminSandboxesSandboxIDBuildsRestore` operationId).
+func (c *ClientWithResponses) PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse(ctx context.Context, sandboxID SandboxID, body PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody, reqEditors ...RequestEditorFn) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	rsp, err := c.PostUnstableAdminSandboxesSandboxIDBuildsRestore(ctx, sandboxID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp)
+}
+
+// GetUnstableAdminSandboxesSandboxIDOverviewWithResponse Sandbox overview
+//
+// Reads a sandbox's team, snapshot template, most recent pause and newest
+// default-tag build from the database. The team comes from the
+// stopped-sandbox log, or from the snapshot when the sandbox has not
+// stopped. Returns 404 when neither knows the sandbox. A sandbox without
+// a snapshot returns null `snapshotTemplateId`, `lastPause` and
+// `latestBuild`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/sandboxes/{sandboxID}/overview (the `GetUnstableAdminSandboxesSandboxIDOverview` operationId).
+func (c *ClientWithResponses) GetUnstableAdminSandboxesSandboxIDOverviewWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error) {
+	rsp, err := c.GetUnstableAdminSandboxesSandboxIDOverview(ctx, sandboxID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse(rsp)
 }
 
 // AdminBanTeamsWithBodyWithResponse Ban teams
@@ -27603,6 +29360,21 @@ func (c *ClientWithResponses) ManagementSetProjectSettingsWithResponse(ctx conte
 	return ParseManagementSetProjectSettingsResponse(rsp)
 }
 
+// GetUnstableSandboxesSandboxIDRecordWithResponse Sandbox record
+//
+// Returns the team's latest recorded run of the sandbox, including runs that have already ended, and whether its monitoring, logs and events data are still retained. Returns 404 when the team has no recorded run of the sandbox.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/sandboxes/{sandboxID}/record (the `GetUnstableSandboxesSandboxIDRecord` operationId).
+func (c *ClientWithResponses) GetUnstableSandboxesSandboxIDRecordWithResponse(ctx context.Context, sandboxID SandboxID, reqEditors ...RequestEditorFn) (*GetUnstableSandboxesSandboxIDRecordResponse, error) {
+	rsp, err := c.GetUnstableSandboxesSandboxIDRecord(ctx, sandboxID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUnstableSandboxesSandboxIDRecordResponse(rsp)
+}
+
 // GetUnstableTeamsTeamIDLimitsWithResponse Team limits
 //
 // Returns the team's effective resource limits. A team-authenticated request may read only its own team.
@@ -27695,7 +29467,7 @@ func (c *ClientWithResponses) PostV2SandboxesWithResponse(ctx context.Context, p
 
 // PostV2SandboxesSandboxIDConnectWithBodyWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27710,7 +29482,7 @@ func (c *ClientWithResponses) PostV2SandboxesSandboxIDConnectWithBodyWithRespons
 
 // PostV2SandboxesSandboxIDConnectWithResponse Connect sandbox (v2)
 //
-// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds.
+// Returns sandbox details. If the sandbox is paused, it will be resumed. TTL is only extended. The request body is optional; an omitted timeout defaults to 300 seconds. Answers 409 with error_code sandbox_snapshot_guest_agent_unresponsive when the paused sandbox's snapshot was taken while its guest agent was not responding and the request did not ask for `memory: false`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27785,13 +29557,13 @@ func (c *ClientWithResponses) PatchV2TemplatesTemplateIDWithResponse(ctx context
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildIDWithBody(ctx, templateID, buildID, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -27800,13 +29572,13 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithBodyWith
 
 // PostV2TemplatesTemplateIDBuildsBuildIDWithResponse Start template build (v2)
 //
-// Start the build.
+// Start the build. With an Idempotency-Key, replays continue to work after the build has left the waiting state.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v2/templates/{templateID}/builds/{buildID} (the `PostV2TemplatesTemplateIDBuildsBuildID` operationId).
-func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
-	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, body, reqEditors...)
+func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse(ctx context.Context, templateID TemplateID, buildID BuildID, params *PostV2TemplatesTemplateIDBuildsBuildIDParams, body PostV2TemplatesTemplateIDBuildsBuildIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV2TemplatesTemplateIDBuildsBuildIDResponse, error) {
+	rsp, err := c.PostV2TemplatesTemplateIDBuildsBuildID(ctx, templateID, buildID, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -27820,8 +29592,8 @@ func (c *ClientWithResponses) PostV2TemplatesTemplateIDBuildsBuildIDWithResponse
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3TemplatesWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Context, params *PostV3TemplatesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3TemplatesWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -27835,8 +29607,8 @@ func (c *ClientWithResponses) PostV3TemplatesWithBodyWithResponse(ctx context.Co
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v3/templates (the `PostV3Templates` operationId).
-func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
-	rsp, err := c.PostV3Templates(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostV3TemplatesWithResponse(ctx context.Context, params *PostV3TemplatesParams, body PostV3TemplatesJSONRequestBody, reqEditors ...RequestEditorFn) (*PostV3TemplatesResponse, error) {
+	rsp, err := c.PostV3Templates(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29562,9 +31334,6 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	}
 
 	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -29741,6 +31510,13 @@ func ParsePostNodesNodeIDResponse(rsp *http.Response) (*PostNodesNodeIDResponse,
 	case rsp.StatusCode == 204:
 		break // No content-type
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -29781,6 +31557,73 @@ func ParsePostNodesNodeIDResponse(rsp *http.Response) (*PostNodesNodeIDResponse,
 	switch {
 	case rsp.StatusCode == 429:
 		var headers PostNodesNodeIDResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetNodesNodeIDSandboxesResponse parses an HTTP response from a GetNodesNodeIDSandboxesWithResponse call
+func ParseGetNodesNodeIDSandboxesResponse(rsp *http.Response) (*GetNodesNodeIDSandboxesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNodesNodeIDSandboxesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NodeSandboxes
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetNodesNodeIDSandboxesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
@@ -30557,6 +32400,13 @@ func ParsePostSandboxesSandboxIDPauseResponse(rsp *http.Response) (*PostSandboxe
 	case rsp.StatusCode == 204:
 		break // No content-type
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest N401
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30790,7 +32640,7 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30804,11 +32654,25 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -30818,14 +32682,14 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30834,6 +32698,46 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostSandboxesSandboxIDSnapshotsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostSandboxesSandboxIDSnapshotsResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostSandboxesSandboxIDSnapshotsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostSandboxesSandboxIDSnapshotsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSandboxesSandboxIDSnapshotsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -30844,6 +32748,26 @@ func ParsePostSandboxesSandboxIDSnapshotsResponse(rsp *http.Response) (*PostSand
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostSandboxesSandboxIDSnapshotsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostSandboxesSandboxIDSnapshotsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -33149,6 +35073,228 @@ func ParseAdminRotateClusterTokenResponse(rsp *http.Response) (*AdminRotateClust
 	return response, nil
 }
 
+// ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse parses an HTTP response from a GetUnstableAdminSandboxesSandboxIDBuildsWithResponse call
+func ParseGetUnstableAdminSandboxesSandboxIDBuildsResponse(rsp *http.Response) (*GetUnstableAdminSandboxesSandboxIDBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminSandboxesSandboxIDBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableAdminSandboxesSandboxIDBuildsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse parses an HTTP response from a PostUnstableAdminSandboxesSandboxIDBuildsRestoreWithResponse call
+func ParsePostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse(rsp *http.Response) (*PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxBuildRestoreResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PostUnstableAdminSandboxesSandboxIDBuildsRestoreResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse parses an HTTP response from a GetUnstableAdminSandboxesSandboxIDOverviewWithResponse call
+func ParseGetUnstableAdminSandboxesSandboxIDOverviewResponse(rsp *http.Response) (*GetUnstableAdminSandboxesSandboxIDOverviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableAdminSandboxesSandboxIDOverviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSandboxOverview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableAdminSandboxesSandboxIDOverviewResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseAdminBanTeamsResponse parses an HTTP response from a AdminBanTeamsWithResponse call
 func ParseAdminBanTeamsResponse(rsp *http.Response) (*AdminBanTeamsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -34920,6 +37066,87 @@ func ParseManagementSetProjectSettingsResponse(rsp *http.Response) (*ManagementS
 	return response, nil
 }
 
+// ParseGetUnstableSandboxesSandboxIDRecordResponse parses an HTTP response from a GetUnstableSandboxesSandboxIDRecordWithResponse call
+func ParseGetUnstableSandboxesSandboxIDRecordResponse(rsp *http.Response) (*GetUnstableSandboxesSandboxIDRecordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUnstableSandboxesSandboxIDRecordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SandboxRecord
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetUnstableSandboxesSandboxIDRecordResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetUnstableTeamsTeamIDLimitsResponse parses an HTTP response from a GetUnstableTeamsTeamIDLimitsWithResponse call
 func ParseGetUnstableTeamsTeamIDLimitsResponse(rsp *http.Response) (*GetUnstableTeamsTeamIDLimitsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -35767,18 +37994,46 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
@@ -35788,15 +38043,82 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -35807,6 +38129,26 @@ func ParsePostV2TemplatesTemplateIDBuildsBuildIDResponse(rsp *http.Response) (*P
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV2TemplatesTemplateIDBuildsBuildIDResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -35834,50 +38176,114 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 		response.JSON202 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest N403
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostV3TemplatesResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostV3TemplatesResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostV3TemplatesResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostV3TemplatesResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostV3TemplatesResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostV3TemplatesResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -35887,7 +38293,34 @@ func ParsePostV3TemplatesResponse(rsp *http.Response) (*PostV3TemplatesResponse,
 			}
 			headers.RetryAfter = &value
 		}
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostV3TemplatesResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostV3TemplatesResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

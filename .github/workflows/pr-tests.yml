@@ -81,6 +81,18 @@ jobs:
             postgres: true
             redis: true
             sudo: false
+            race: true
+            runner: blacksmith-4vcpu-ubuntu-2404
+          # The sandbox store's Redis tests again, on a cluster-mode server
+          # that rejects a command whose keys span slots as a sharded
+          # deployment does, with the shared Redis helper's checks of it.
+          - package: packages/api
+            shard: cluster
+            test_path: ./internal/sandbox/... ../shared/pkg/redis/...
+            redis: true
+            cluster: true
+            sudo: false
+            race: true
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/client-proxy
             test_path: ./...
@@ -137,6 +149,7 @@ jobs:
           test-path: ${{ matrix.test_path }}
           sudo: ${{ matrix.sudo }}
           race: ${{ matrix.race || false }}
+          cluster: ${{ matrix.cluster || false }}
 
   unit_tests:
     needs: run-tests

@@ -259,6 +259,16 @@ type Template struct {
 	// snapshot is one it can cold-boot / rewrite without repairing the journal.
 	FsQuiesced bool `json:"fs_quiesced,omitempty"`
 
+	// EnvdUnresponsive records that this memory snapshot was taken while the
+	// guest agent did not answer the pause's health probe, so a memory resume
+	// of it replays an unresponsive agent. The zero value (false) is a snapshot
+	// whose agent answered or was not probed, which every snapshot from before
+	// the field has. Stamped at every pause, cleared by a pause whose agent
+	// answered; deliberately NOT carried by the With*/SameVersionTemplate
+	// copy-constructors, like FilesystemOnly. WithPrefetch keeps it, since it
+	// rewrites the same snapshot's metadata.
+	EnvdUnresponsive bool `json:"envd_unresponsive,omitempty"`
+
 	// RunningEnvdVersion is the version of the envd running in this memory snapshot when it
 	// differs from the template-baked one: the version the running envd last reported, else
 	// the one a confirmed live upgrade delivered, else the one this life was resumed with.
@@ -290,6 +300,16 @@ type Template struct {
 	RootfsDriveID string `json:"rootfs_drive_id,omitempty"`
 	NetIfaceID    string `json:"net_iface_id,omitempty"`
 	RootfsFile    string `json:"rootfs_file,omitempty"`
+	// NoMmdsStore marks a memory image whose microVM has no MMDS store, which
+	// only an image made outside this runtime and its paused lineage have:
+	// Firecracker cannot add a store after a restore, so the envd in it
+	// accepts no new access token. EnvdAccessTokenHash is then the
+	// keys.HashAccessToken of the token that envd holds (of "" for none), and
+	// empty when no pause could know it. Both are device truth stamped at every
+	// pause, carried with the memory like the device names, and dropped by
+	// BasedOn, whose build cold-boots with a store.
+	NoMmdsStore         bool   `json:"no_mmds_store,omitempty"`
+	EnvdAccessTokenHash string `json:"envd_access_token_hash,omitempty"`
 }
 
 // guestOSKey is the metadata key of GuestOS. retiredGuestOSKey is the spelling
@@ -328,6 +348,18 @@ func (t Template) GuestProfile() (guest.Profile, error) {
 	return guest.Lookup(t.GuestOS)
 }
 
+// ServingGuestProfile returns the guest profile for a build FROM the template
+// or a sandbox of it: GuestProfile, gated by guest.Serve for a non-default
+// guest OS.
+func (t Template) ServingGuestProfile(ctx context.Context, flags guest.Flags) (guest.Profile, error) {
+	p, err := t.GuestProfile()
+	if err != nil {
+		return nil, err
+	}
+
+	return guest.Serve(ctx, flags, p)
+}
+
 // rootfsFileRE is the shape of a bare file name the sandbox start script can
 // take unquoted.
 var rootfsFileRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -337,6 +369,18 @@ var rootfsFileRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // nor "..".
 func ValidRootfsFile(name string) bool {
 	return name != "." && name != ".." && rootfsFileRE.MatchString(name)
+}
+
+// WithEnvdToken returns a copy of the template stamped with whether its memory
+// image lacks an MMDS store and, if so, the hash of the token its envd holds.
+func (t Template) WithEnvdToken(noMmdsStore bool, envdAccessTokenHash string) Template {
+	t.NoMmdsStore = noMmdsStore
+	t.EnvdAccessTokenHash = ""
+	if noMmdsStore {
+		t.EnvdAccessTokenHash = envdAccessTokenHash
+	}
+
+	return t
 }
 
 // WithDeviceNames returns a copy of the template stamped with the device names
@@ -389,6 +433,24 @@ func (t Template) MarkFsQuiesced(quiesced bool) Template {
 	return t
 }
 
+// IsEnvdUnresponsive reports whether this memory snapshot was taken while the
+// guest agent did not answer the pause's health probe.
+func (t Template) IsEnvdUnresponsive() bool {
+	return t.EnvdUnresponsive
+}
+
+// MarkEnvdUnresponsive records whether the guest agent answered the pause's
+// health probe. Unlike MarkFilesystemOnly it never lifts the metadata version:
+// this mark rides on a memory snapshot, and lifting the version of a V1
+// lineage would change the rootfs path its memory image was taken with (see
+// WithVcpuCount). A V1 lineage therefore loses the mark here; the API keeps its
+// own copy on the snapshot row, which is the one a resume is refused on.
+func (t Template) MarkEnvdUnresponsive(unresponsive bool) Template {
+	t.EnvdUnresponsive = unresponsive
+
+	return t
+}
+
 func V1TemplateVersion() Template {
 	return Template{
 		Version: 1,
@@ -430,6 +492,9 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
 		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -450,6 +515,9 @@ func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 		RootfsDriveID:    t.RootfsDriveID,
 		NetIfaceID:       t.NetIfaceID,
 		RootfsFile:       t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 
@@ -485,11 +553,15 @@ func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 		CPUTemplate:        t.CPUTemplate,
 		BuildCPUTemplate:   t.BuildCPUTemplate,
 		VcpuCount:          t.VcpuCount,
+		EnvdUnresponsive:   t.EnvdUnresponsive,
 		RunningEnvdVersion: t.RunningEnvdVersion,
 		GuestOS:            t.GuestOS,
 		RootfsDriveID:      t.RootfsDriveID,
 		NetIfaceID:         t.NetIfaceID,
 		RootfsFile:         t.RootfsFile,
+
+		NoMmdsStore:         t.NoMmdsStore,
+		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
 	}
 }
 

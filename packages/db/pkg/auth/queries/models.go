@@ -10,23 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type Team struct {
-	ID                      uuid.UUID
-	CreatedAt               time.Time
-	IsBlocked               bool
-	Name                    string
-	Tier                    *string
-	Email                   string
-	IsBanned                bool
-	BlockedReason           *string
-	ClusterID               *uuid.UUID
-	SandboxSchedulingLabels []string
-	SsoOrganizationID       *uuid.UUID
-	SsoAutoJoin             bool
-	DeletedAt               *time.Time
-	Slug                    string
-}
-
 type TeamApiKey struct {
 	CreatedAt time.Time
 	TeamID    uuid.UUID

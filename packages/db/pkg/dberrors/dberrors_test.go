@@ -30,3 +30,12 @@ func TestIsUniqueConstraintViolation(t *testing.T) {
 	})
 	require.True(t, IsUniqueConstraintViolation(err))
 }
+
+func TestIsUndefinedTableRecognisesAQueryAgainstAMissingTable(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+
+	err := db.SqlcClient.TestsRawSQL(t.Context(), `SELECT 1 FROM public.no_such_table`)
+	require.True(t, IsUndefinedTable(err))
+}

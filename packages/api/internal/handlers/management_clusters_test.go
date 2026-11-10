@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -169,7 +168,7 @@ func TestManagementRegisterClusterStartsUnprotected(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, managementClusterRegistration()).Code)
 
-	protected, err := db.SqlcClient.Dashboard.ClusterDeletionProtected(t.Context(), clusterID)
+	protected, err := db.SqlcClient.ClusterDeletionProtected(t.Context(), clusterID)
 	require.NoError(t, err)
 	require.False(t, protected)
 }
@@ -235,13 +234,12 @@ func TestManagementAssignProjectClusterRejectsDifferentAssignment(t *testing.T) 
 	require.Equal(t, firstID, assignedProjectCluster(t, db, projectID))
 }
 
-func TestManagementAssignProjectClusterIgnoresTheProjectTier(t *testing.T) {
+func TestManagementAssignProjectClusterAssignsAndEvictsTheProject(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	projectID := testutils.CreateTestTeam(t, db)
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET tier = 'base_v1' WHERE id = $1`, projectID))
 	store, auth := newManagementStore(t, db)
 	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, managementClusterRegistration()).Code)
 
@@ -378,7 +376,7 @@ func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t
 			_, err := db.SqlcClient.SoftDeleteTemplate(ctx, queries.SoftDeleteTemplateParams{TemplateID: deletedID, TeamID: teamID})
 			require.NoError(t, err)
 			if teamAssigned {
-				_, err := db.SqlcClient.Dashboard.AssignTeamCluster(ctx, dashboardqueries.AssignTeamClusterParams{TeamID: teamID, ClusterID: clusterID})
+				_, err := db.SqlcClient.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{TeamID: teamID, ClusterID: clusterID})
 				require.NoError(t, err)
 			}
 			store, _ := newManagementStore(t, db)
@@ -448,7 +446,7 @@ func TestManagementDeleteClusterWaitsForAConcurrentTeamReference(t *testing.T) {
 	referenceClient, referenceTx, err := db.SqlcClient.WithTx(ctx)
 	require.NoError(t, err)
 	defer func() { _ = referenceTx.Rollback(context.WithoutCancel(ctx)) }()
-	result, err := referenceClient.Dashboard.AssignTeamCluster(ctx, dashboardqueries.AssignTeamClusterParams{TeamID: teamID, ClusterID: clusterID})
+	result, err := referenceClient.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{TeamID: teamID, ClusterID: clusterID})
 	require.NoError(t, err)
 	require.True(t, result.Assigned)
 

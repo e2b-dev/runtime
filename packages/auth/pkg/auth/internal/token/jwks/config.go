@@ -20,8 +20,9 @@ const (
 
 // Config describes a single OIDC issuer.
 type Config struct {
-	Issuer        Issuer        `json:"issuer"`
-	CacheDuration time.Duration `json:"cacheDuration"`
+	Issuer            Issuer        `json:"issuer"`
+	CacheDuration     time.Duration `json:"cacheDuration"`
+	RequiredAtStartup *bool         `json:"requiredAtStartup"`
 }
 
 // Issuer describes an OIDC issuer endpoint plus audience policy.
@@ -35,8 +36,9 @@ type Issuer struct {
 // UnmarshalJSON parses `cacheDuration` from a Go duration string.
 func (e *Config) UnmarshalJSON(data []byte) error {
 	type entryJSON struct {
-		Issuer        Issuer `json:"issuer"`
-		CacheDuration string `json:"cacheDuration"`
+		Issuer            Issuer `json:"issuer"`
+		CacheDuration     string `json:"cacheDuration"`
+		RequiredAtStartup *bool  `json:"requiredAtStartup"`
 	}
 
 	var raw entryJSON
@@ -45,6 +47,7 @@ func (e *Config) UnmarshalJSON(data []byte) error {
 	}
 
 	e.Issuer = raw.Issuer
+	e.RequiredAtStartup = raw.RequiredAtStartup
 
 	if raw.CacheDuration != "" {
 		duration, err := time.ParseDuration(raw.CacheDuration)
@@ -96,4 +99,8 @@ func (e *Config) discoveryURL() string {
 	}
 
 	return strings.TrimRight(e.Issuer.URL, "/") + defaultDiscoveryPath
+}
+
+func (e *Config) requiredAtStartup() bool {
+	return e.RequiredAtStartup == nil || *e.RequiredAtStartup
 }

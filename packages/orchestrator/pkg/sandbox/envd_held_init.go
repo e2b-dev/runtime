@@ -371,6 +371,7 @@ func (s *Sandbox) doHeldInit(
 		dialStart := time.Now()
 		conn, err := h.dial(ctx)
 		dialed := time.Since(dialStart)
+		attempts.dialed(dialed)
 		if err != nil {
 			attempts.fail(envdInitPhaseConnect)
 			s.recordSlowDial(ctx, countStart, dialed, string(envdInitPhaseConnect))
@@ -388,6 +389,7 @@ func (s *Sandbox) doHeldInit(
 				if minted, ok := body.mintedAt(); ok {
 					attempts.servedAge = time.Since(minted)
 				}
+				attempts.servedDial = dialed
 				s.recordSlowDial(ctx, countStart, dialed, "success")
 
 				return response, attempts, nil

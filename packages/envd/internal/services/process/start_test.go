@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/user"
 	"testing"
 	"time"
@@ -24,11 +23,7 @@ import (
 func newTestService(t *testing.T, middleware ...func(http.Handler) http.Handler) (spec.ProcessClient, func()) {
 	t.Helper()
 
-	// handler.New sets SysProcAttr.Credential to switch uid/gid,
-	// which requires root.
-	if os.Geteuid() != 0 {
-		t.Skip("skipping: requires root (handler.New sets SysProcAttr.Credential)")
-	}
+	skipUnlessCredentialSwitchAllowed(t)
 
 	u, err := user.Current()
 	require.NoError(t, err)
@@ -69,10 +64,7 @@ func TestStart_ShortCommand(t *testing.T) {
 	defer cancel()
 
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd:  "echo",
-			Args: []string{"hello"},
-		},
+		Process: echoCommand(),
 	}))
 	require.NoError(t, err)
 
@@ -117,10 +109,7 @@ func TestStart_CancelBeforeStartEvent(t *testing.T) {
 	defer cancel()
 
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd:  "echo",
-			Args: []string{"hello"},
-		},
+		Process: echoCommand(),
 	}))
 	if err == nil {
 		for stream.Receive() {
@@ -162,9 +151,7 @@ func TestStart_ClientDisconnectMidStream(t *testing.T) {
 
 	// Use a long-running command so there's data flowing when we cancel.
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd: "yes",
-		},
+		Process: endlessOutputCommand(),
 	}))
 	require.NoError(t, err)
 
@@ -203,7 +190,7 @@ func TestStart_StdinRoundTrip(t *testing.T) {
 	defer cancel()
 
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{Cmd: "cat"},
+		Process: stdinEchoCommand(),
 	}))
 	require.NoError(t, err)
 	defer stream.Close()
@@ -254,10 +241,7 @@ func TestStart_KilledProcessEndsItsStreamWhileAGrandchildHoldsStdout(t *testing.
 	// The grandchild outlives the test's own deadline, so only the read ends being closed
 	// can end the stream in time.
 	stream, err := client.Start(ctx, connect.NewRequest(&rpc.StartRequest{
-		Process: &rpc.ProcessConfig{
-			Cmd:  "/bin/sh",
-			Args: []string{"-c", "sleep 60 & echo started; wait"},
-		},
+		Process: grandchildHoldsStdoutCommand(),
 	}))
 	require.NoError(t, err)
 

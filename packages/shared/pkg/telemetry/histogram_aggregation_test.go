@@ -12,29 +12,51 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-func TestNetworkReleaseHistogramExport(t *testing.T) {
+func TestExplicitHistogramViewsExport(t *testing.T) {
 	t.Parallel()
 
 	reader := sdkmetric.NewManualReader(sdkmetric.WithAggregationSelector(histogramAggregation))
 	provider, err := NewMeterProvider(noopMetricExporter{}, time.Hour, nil, sdkmetric.WithReader(reader))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.WithoutCancel(t.Context()))) })
+	meter := provider.Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry")
 	for _, name := range []HistogramType{NetworkSlotReturnDurationName, NetworkEgressRetirementDurationName} {
-		histogram, err := GetHistogram(provider.Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry"), name)
+		histogram, err := GetHistogram(meter, name)
 		require.NoError(t, err)
 		histogram.Record(t.Context(), 60_001)
 	}
+	for _, name := range []HistogramType{OrchestratorBlockCachePunchDuration, OrchestratorBlockCacheCloseDuration} {
+		histogram, err := GetFloatHistogram(meter, name)
+		require.NoError(t, err)
+		histogram.Record(t.Context(), 60_001)
+	}
+
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &collected))
 	require.Len(t, collected.ScopeMetrics, 1)
-	require.Len(t, collected.ScopeMetrics[0].Metrics, 2)
+	require.Len(t, collected.ScopeMetrics[0].Metrics, 4)
 	for _, m := range collected.ScopeMetrics[0].Metrics {
-		data, ok := m.Data.(metricdata.Histogram[int64])
-		require.Truef(t, ok, "%s must export explicit buckets, got %T", m.Name, m.Data)
-		require.Len(t, data.DataPoints, 1)
-		assert.Equal(t, int64(60_001), data.DataPoints[0].Sum)
-		assert.Contains(t, data.DataPoints[0].Bounds, float64(60_000))
-		assert.Contains(t, data.DataPoints[0].Bounds, float64(120_000))
+		var sum float64
+		var bounds []float64
+		switch data := m.Data.(type) {
+		case metricdata.Histogram[int64]:
+			require.Len(t, data.DataPoints, 1)
+			sum, bounds = float64(data.DataPoints[0].Sum), data.DataPoints[0].Bounds
+		case metricdata.Histogram[float64]:
+			require.Len(t, data.DataPoints, 1)
+			sum, bounds = data.DataPoints[0].Sum, data.DataPoints[0].Bounds
+		default:
+			require.Failf(t, "not explicit", "%s must export explicit buckets, got %T", m.Name, m.Data)
+		}
+		assert.InDelta(t, 60_001, sum, 0)
+		assert.Contains(t, bounds, float64(60_000))
+		assert.Contains(t, bounds, float64(120_000))
+		require.GreaterOrEqual(t, len(bounds), 4)
+		if m.Name == string(OrchestratorBlockCachePunchDuration) {
+			assert.Equal(t, []float64{0.01, 0.05, 0.25, 1}, bounds[:4], "punch duration keeps its sub-millisecond edges")
+		} else {
+			assert.InDelta(t, 0, bounds[0], 0, "%s keeps the shared view", m.Name)
+		}
 	}
 }
 

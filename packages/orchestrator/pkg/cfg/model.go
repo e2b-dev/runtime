@@ -25,14 +25,18 @@ type BuilderConfig struct {
 	featureflags.Config
 
 	FirecrackerVersionsDir string `env:"FIRECRACKER_VERSIONS_DIR" envDefault:"/fc-versions"`
-	BusyboxVersion         string `env:"BUSYBOX_VERSION"          envDefault:"1.36.1"`
-	HostBusyboxDir         string `env:"HOST_BUSYBOX_DIR"         envDefault:"/fc-busybox"`
-	HostEnvdPath           string `env:"HOST_ENVD_PATH"           envDefault:"/fc-envd/envd"`
-	HostKernelsDir         string `env:"HOST_KERNELS_DIR"         envDefault:"/fc-kernels"`
-	OrchestratorBaseDir    string `env:"ORCHESTRATOR_BASE_PATH"   envDefault:"/orchestrator"`
-	SandboxDir             string `env:"SANDBOX_DIR"              envDefault:"/fc-vm"`
-	SharedChunkCacheDir    string `env:"SHARED_CHUNK_CACHE_PATH"`
-	TemplatesDir           string `env:"TEMPLATES_DIR,expand"     envDefault:"${ORCHESTRATOR_BASE_PATH}/build-templates"`
+	// FirecrackerLogLevel, when set (Error, Warning, Info, Debug, Trace), raises
+	// Firecracker's own log level; its log goes to stdout and lands in the
+	// sandbox logger like the guest's serial output. Empty keeps the default.
+	FirecrackerLogLevel string `env:"FIRECRACKER_LOG_LEVEL"   envDefault:""`
+	BusyboxVersion      string `env:"BUSYBOX_VERSION"         envDefault:"1.36.1"`
+	HostBusyboxDir      string `env:"HOST_BUSYBOX_DIR"        envDefault:"/fc-busybox"`
+	HostEnvdPath        string `env:"HOST_ENVD_PATH"          envDefault:"/fc-envd/envd"`
+	HostKernelsDir      string `env:"HOST_KERNELS_DIR"        envDefault:"/fc-kernels"`
+	OrchestratorBaseDir string `env:"ORCHESTRATOR_BASE_PATH"  envDefault:"/orchestrator"`
+	SandboxDir          string `env:"SANDBOX_DIR"             envDefault:"/fc-vm"`
+	SharedChunkCacheDir string `env:"SHARED_CHUNK_CACHE_PATH"`
+	TemplatesDir        string `env:"TEMPLATES_DIR,expand"    envDefault:"${ORCHESTRATOR_BASE_PATH}/build-templates"`
 
 	DefaultCacheDir string `env:"DEFAULT_CACHE_DIR,expand" envDefault:"${ORCHESTRATOR_BASE_PATH}/build"`
 
@@ -40,6 +44,42 @@ type BuilderConfig struct {
 
 	StorageConfig storage.Config
 	NetworkConfig network.Config
+}
+
+// firecrackerLogLevels are the values Firecracker's --level accepts, in the
+// spelling it prints; FIRECRACKER_LOG_LEVEL matches them case-insensitively.
+var firecrackerLogLevels = []string{"Off", "Error", "Warning", "Info", "Debug", "Trace"}
+
+// normalizeFirecrackerLogLevel returns the canonical spelling of a level, or
+// ok false for a value Firecracker would refuse: the value is spliced into
+// every sandbox's start script, so a bad one would fail every start on the
+// node, and anything but a bare level word must not reach the shell.
+func normalizeFirecrackerLogLevel(v string) (level string, ok bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", true
+	}
+	for _, l := range firecrackerLogLevels {
+		if strings.EqualFold(v, l) {
+			return l, true
+		}
+	}
+	// Firecracker's parser takes "warn" as well as "warning".
+	if strings.EqualFold(v, "warn") {
+		return "Warning", true
+	}
+
+	return "", false
+}
+
+// applyFirecrackerLogLevel keeps a valid FIRECRACKER_LOG_LEVEL and drops an
+// invalid one with a warning.
+func applyFirecrackerLogLevel(c *BuilderConfig) {
+	level, ok := normalizeFirecrackerLogLevel(c.FirecrackerLogLevel)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "FIRECRACKER_LOG_LEVEL %q is not a Firecracker log level (%s); ignoring it\n", c.FirecrackerLogLevel, strings.Join(firecrackerLogLevels, ", "))
+	}
+	c.FirecrackerLogLevel = level
 }
 
 func makePathsAbsolute(c *BuilderConfig) error {
@@ -170,6 +210,7 @@ func Parse() (Config, error) {
 	if err = makePathsAbsolute(&bc); err != nil {
 		return config, err
 	}
+	applyFirecrackerLogLevel(&bc)
 
 	config.BuilderConfig = bc
 
@@ -205,6 +246,7 @@ func ParseBuilder() (BuilderConfig, error) {
 	if err = makePathsAbsolute(&model); err != nil {
 		return BuilderConfig{}, err
 	}
+	applyFirecrackerLogLevel(&model)
 
 	if err = model.NetworkConfig.Validate(); err != nil {
 		return BuilderConfig{}, err

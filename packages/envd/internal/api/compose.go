@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
-	"syscall"
 
 	"github.com/google/uuid"
 
@@ -49,11 +47,10 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := user.Lookup(username)
+	u, err := permissions.GetUser(username)
 	if err != nil {
-		errMsg := fmt.Errorf("error looking up user '%s': %w", username, err)
-		a.logger.Error().Err(errMsg).Str(string(logs.OperationIDKey), operationID).Msg("user lookup failed")
-		jsonError(w, http.StatusUnauthorized, errMsg)
+		a.logger.Error().Err(err).Str(string(logs.OperationIDKey), operationID).Msg("user lookup failed")
+		jsonError(w, http.StatusUnauthorized, err)
 
 		return
 	}
@@ -129,7 +126,7 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 
 	destFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
-		if errors.Is(err, syscall.ENOSPC) {
+		if isNoSpace(err) {
 			jsonError(w, http.StatusInsufficientStorage, errors.New("not enough disk space available"))
 
 			return
@@ -140,7 +137,7 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = os.Chown(tmpPath, uid, gid)
+	err = permissions.Chown(tmpPath, uid, gid)
 	if err != nil {
 		destFile.Close()
 		os.Remove(tmpPath)
@@ -171,7 +168,7 @@ func (a *API) PostFilesCompose(w http.ResponseWriter, r *http.Request) {
 			destFile.Close()
 			os.Remove(tmpPath)
 
-			if errors.Is(err, syscall.ENOSPC) {
+			if isNoSpace(err) {
 				jsonError(w, http.StatusInsufficientStorage, errors.New("not enough disk space available"))
 
 				return

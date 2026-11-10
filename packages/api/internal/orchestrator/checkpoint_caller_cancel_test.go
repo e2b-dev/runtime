@@ -55,9 +55,10 @@ func (c *gatedCheckpointClient) Delete(context.Context, *orchestrator.SandboxDel
 }
 
 // checkpointRestoreHook acts on the next record restore once armed: before
-// runs first, and fail then fails the restore without sending it.
+// runs first, with the record key the restore is about to write, and fail
+// then fails the restore without sending it.
 type checkpointRestoreHook struct {
-	before func(context.Context) error
+	before func(ctx context.Context, recordKey string) error
 	fail   bool
 
 	armed atomic.Bool
@@ -73,7 +74,7 @@ func (h *checkpointRestoreHook) ProcessHook(next redis.ProcessHook) redis.Proces
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if isRestoreRunningScript(cmd) && h.armed.CompareAndSwap(true, false) {
 			if h.before != nil {
-				if err := h.before(ctx); err != nil {
+				if err := h.before(ctx, cmd.Args()[3].(string)); err != nil {
 					return err
 				}
 			}

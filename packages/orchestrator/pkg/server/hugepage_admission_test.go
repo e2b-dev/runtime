@@ -178,7 +178,7 @@ func TestAdmitHugePagesRefusal(t *testing.T) {
 	t.Parallel()
 
 	s := hugePageAdmissionServer(t, true, pool(5120, 4000, 100))
-	sbx := &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096, HugePages: true}
+	sbx := &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096}
 
 	_, err := s.admitHugePages(t.Context(), sbx)
 	st := status.Convert(err)
@@ -225,31 +225,36 @@ func TestAdmitHugePagesCountsATeardownEndingDuringTheRead(t *testing.T) {
 		return m, err
 	}
 
-	_, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096, HugePages: true})
+	_, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096})
 	require.Zero(t, s.sandboxFactory.Sandboxes.Stopping(), "the teardown ended during the read")
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 }
 
-// A guest without hugepages and every guest with the flag off never read the
-// pool and are never refused.
+// Every start uses hugepages, so a request that leaves huge_pages unset is
+// still checked against the pool.
+func TestAdmitHugePagesIgnoresTheRequestedPageSize(t *testing.T) {
+	t.Parallel()
+
+	s := hugePageAdmissionServer(t, true, pool(5120, 5120, 0))
+	_, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096})
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+// With the flag off or the pool unwired, a start never reads the pool and is
+// never refused.
 func TestAdmitHugePagesControl(t *testing.T) {
 	t.Parallel()
 
 	exhausted := pool(5120, 5120, 0)
 
-	on := hugePageAdmissionServer(t, true, exhausted)
-	release, err := on.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096})
-	require.NoError(t, err)
-	release()
-
 	off := hugePageAdmissionServer(t, false, exhausted)
-	release, err = off.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096, HugePages: true})
+	release, err := off.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096})
 	require.NoError(t, err)
 	release()
 
 	unwired := hugePageAdmissionServer(t, true, exhausted)
 	unwired.hugePages = nil
-	release, err = unwired.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096, HugePages: true})
+	release, err = unwired.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-2", RamMb: 4096})
 	require.NoError(t, err)
 	release()
 
@@ -264,7 +269,7 @@ func TestCreate_RefusesAStartTheFreeHugePagesCannotBack(t *testing.T) {
 	s := hugePageAdmissionServer(t, true, pool(5120, 5000, 0))
 
 	_, err := s.Create(t.Context(), &orchestrator.SandboxCreateRequest{
-		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-2", ExecutionId: "exec-1", Vcpu: 2, RamMb: 4096, HugePages: true},
+		Sandbox: &orchestrator.SandboxConfig{SandboxId: "sandbox-2", ExecutionId: "exec-1", Vcpu: 2, RamMb: 4096},
 	})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 

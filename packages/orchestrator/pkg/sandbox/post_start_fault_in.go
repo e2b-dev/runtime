@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
@@ -69,7 +70,9 @@ func (s *Sandbox) recordsPostStartFaultIn(startType StartType) bool {
 // Firecracker process exits, so a sandbox paused or killed early records only
 // the windows it reached. Across an in-place checkpoint the process keeps
 // running and so does the sampling.
-func (s *Sandbox) recordPostStartFaultIn(ctx context.Context, base *postStartBase) {
+func (s *Sandbox) recordPostStartFaultIn(parent trace.SpanContext, base *postStartBase) {
+	// Keep the trace identity without retaining the completed request or span.
+	ctx := trace.ContextWithSpanContext(context.Background(), parent)
 	ctx, cancel := contextUntil(ctx, s.process.Exit.Done())
 	defer cancel()
 
@@ -126,6 +129,19 @@ func runPostStartWindows(
 }
 
 func (s *Sandbox) emitPostStartWindow(ctx context.Context, base *postStartBase, window postStartWindow, d userfaultfd.ServeSnapshot) {
+	// The parent wait span has ended, but its context keeps this point-in-time
+	// summary on the same trace as the resume. No new per-page work is needed.
+	_, span := tracer.Start(ctx, "post-start-fault-window")
+	span.SetAttributes(
+		attribute.String("window", window.label),
+		attribute.Int64("post_start.pages", d.Pages),
+		attribute.Int64("post_start.source_pages", d.SourcePages),
+		attribute.Float64("post_start.serve_sum_ms", ms(d.ServeTime)),
+		attribute.Float64("post_start.source_serve_sum_ms", ms(d.SourceServeTime)),
+	)
+	span.SetAttributes(sourceAttrs("post_start", d)...)
+	span.End()
+
 	attrs := metric.WithAttributes(
 		attribute.String("window", window.label),
 		attribute.String("start_type", string(base.startType)),

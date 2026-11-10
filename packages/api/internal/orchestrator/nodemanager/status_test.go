@@ -28,6 +28,7 @@ func TestNodeCanAcceptNewRequests(t *testing.T) {
 		api.NodeStatusShuttingDown: false,
 		api.NodeStatusStandby:      false,
 		api.NodeStatusUnhealthy:    false,
+		api.NodeStatusNotReady:     false,
 		api.NodeStatus("nonsense"): false,
 	}
 
@@ -42,13 +43,55 @@ func TestNodeCanAcceptNewRequests(t *testing.T) {
 	}
 }
 
-func TestSendStatusChangeRejectsShuttingDown(t *testing.T) {
+// Only the node enters its own startup and shutdown statuses.
+func TestSendStatusChangeRejectsProcessStatuses(t *testing.T) {
 	t.Parallel()
 
 	node := &Node{ID: "test-node"}
-	err := node.SendStatusChange(t.Context(), api.NodeStatusShuttingDown)
+	for status, message := range map[api.NodeStatus]string{
+		api.NodeStatusShuttingDown: "shutting_down can only be entered during process shutdown",
+		api.NodeStatusNotReady:     "not_ready can only be entered during process startup",
+	} {
+		err := node.SendStatusChange(t.Context(), StatusChange{Status: status})
+		require.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
+		require.Equal(t, message, grpcstatus.Convert(err).Message())
+	}
+}
+
+// The override carries the owner and force to the orchestrator, and an
+// acknowledged change updates this replica's node at once: a Standby keeps its
+// owner, a release clears it, a refusal leaves the node as it was.
+func TestSendStatusChange_ForwardsOwnerAndForceAndUpdatesLocally(t *testing.T) {
+	t.Parallel()
+
+	node := NewTestNode("node-1", api.NodeStatusReady, 0, 1)
+	client := &RecordingInfoClient{}
+	node.SetInfoClient(client)
+
+	require.NoError(t, node.SendStatusChange(t.Context(), StatusChange{Status: api.NodeStatusStandby, Owner: "x", Force: true}))
+	require.Len(t, client.Requests, 1)
+	assert.Equal(t, orchestratorinfo.ServiceInfoStatus_Standby, client.Requests[0].GetServiceStatus())
+	assert.Equal(t, "x", client.Requests[0].GetOwner())
+	assert.True(t, client.Requests[0].GetForce())
+	assert.Equal(t, api.NodeStatusStandby, node.StatusInfo().Status)
+	assert.Equal(t, "x", node.StatusInfo().Owner)
+
+	parkedAt := node.StatusInfo().ChangedAt
+	require.NoError(t, node.SendStatusChange(t.Context(), StatusChange{Status: api.NodeStatusStandby, Owner: "x"}))
+	assert.Equal(t, parkedAt, node.StatusInfo().ChangedAt, "a repeated change keeps its time")
+
+	require.NoError(t, node.SendStatusChange(t.Context(), StatusChange{Status: api.NodeStatusReady, Owner: "x"}))
+	require.Len(t, client.Requests, 3)
+	assert.Equal(t, "x", client.Requests[2].GetOwner())
+	assert.False(t, client.Requests[2].GetForce())
+	assert.Equal(t, api.NodeStatusReady, node.StatusInfo().Status)
+	assert.Empty(t, node.StatusInfo().Owner)
+
+	client.Err = grpcstatus.Error(codes.FailedPrecondition, "standby owned by x")
+	err := node.SendStatusChange(t.Context(), StatusChange{Status: api.NodeStatusStandby, Owner: "y"})
 	require.Equal(t, codes.FailedPrecondition, grpcstatus.Code(err))
-	require.Equal(t, "shutting_down can only be entered during process shutdown", grpcstatus.Convert(err).Message())
+	assert.Equal(t, api.NodeStatusReady, node.StatusInfo().Status)
+	assert.Empty(t, node.StatusInfo().Owner)
 }
 
 // Every status the orchestrator can report needs an api.NodeStatus counterpart.
@@ -69,6 +112,7 @@ func TestOrchestratorToApiNodeStateMapperCoversEveryProtoStatus(t *testing.T) {
 		orchestratorinfo.ServiceInfoStatus_Unhealthy:    "unhealthy",
 		orchestratorinfo.ServiceInfoStatus_Standby:      "standby",
 		orchestratorinfo.ServiceInfoStatus_ShuttingDown: "shutting_down",
+		orchestratorinfo.ServiceInfoStatus_NotReady:     "not_ready",
 	}
 
 	for value, name := range orchestratorinfo.ServiceInfoStatus_name {
@@ -136,7 +180,7 @@ func TestStatusMappersAreInverses(t *testing.T) {
 func TestStatusChangeLogsTheDiscoveryBackend(t *testing.T) {
 	transitions := map[string]func(*Node, context.Context){
 		"reported by the orchestrator": func(n *Node, ctx context.Context) {
-			n.setStatus(ctx, api.NodeStatusDraining, time.Now())
+			n.setStatus(ctx, api.NodeStatusDraining, "", time.Now())
 		},
 		"observed locally": func(n *Node, ctx context.Context) { n.markUnhealthyLocal(ctx) },
 	}

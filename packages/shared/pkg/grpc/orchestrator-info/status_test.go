@@ -15,6 +15,7 @@ func TestServiceInfoStatusCanAcceptNewRequests(t *testing.T) {
 		ServiceInfoStatus_Standby:      false,
 		ServiceInfoStatus_Unhealthy:    false,
 		ServiceInfoStatus_ShuttingDown: false,
+		ServiceInfoStatus_NotReady:     false,
 		ServiceInfoStatus(9999):        false,
 	}
 

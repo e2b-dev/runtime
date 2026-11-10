@@ -292,7 +292,7 @@ func TestResumeFlights_AttemptCeilingEndsAnUnansweredResumeWithTheUnavailablePag
 
 	var capacityErr *reverseproxy.SandboxCapacityError
 	require.ErrorAs(t, err, &capacityErr)
-	require.Equal(t, "sbx", capacityErr.SandboxId)
+	require.Equal(t, "sbx", capacityErr.SandboxID())
 	require.Equal(t, errAttemptDeadline.Error(), capacityErr.Message)
 
 	flights.mu.Lock()

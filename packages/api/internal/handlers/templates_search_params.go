@@ -46,8 +46,8 @@ func (s templatesSort) byUpdatedAt() bool {
 	return s == templatesSortUpdatedAtDesc || s == templatesSortUpdatedAtAsc
 }
 
-// The pagination below is dashboard-api's template list pagination, copied
-// so the dashboard keeps its cursors when it moves to this route.
+// Pages use keyset cursors of the form `{sort}|{timestamp}|{template ID}`,
+// where the timestamp is the sorted column of the page's last row.
 
 const (
 	templatesSearchDefaultLimit = int32(50)

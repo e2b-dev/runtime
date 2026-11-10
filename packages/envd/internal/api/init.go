@@ -1030,7 +1030,7 @@ func (a *API) SetupHyperloop(address string) {
 	a.hyperloopLock.Lock()
 	defer a.hyperloopLock.Unlock()
 
-	if err := rewriteHostsFile(address, "/etc/hosts"); err != nil {
+	if err := rewriteHostsFile(address, hostsFilePath()); err != nil {
 		a.logger.Error().Err(err).Msg("failed to modify hosts file")
 	} else {
 		a.defaults.EnvVars.Store("E2B_EVENTS_ADDRESS", fmt.Sprintf("http://%s", address))

@@ -9,9 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
 // fired is a timer channel that has already fired.
@@ -139,6 +141,37 @@ func TestPostStartWindowLabels(t *testing.T) {
 		labels = append(labels, w.label)
 	}
 	assert.Equal(t, []string{"10s", "1m", "5m"}, labels)
+}
+
+func TestPostStartWindowAppearsOnResumeTrace(t *testing.T) {
+	t.Parallel()
+
+	_, parent := tracer.Start(t.Context(), "resume-test")
+	wantTraceID := parent.SpanContext().TraceID()
+	wantParentID := parent.SpanContext().SpanID()
+	ctx := trace.ContextWithSpanContext(t.Context(), parent.SpanContext())
+	parent.End()
+
+	var bySource [storage.NumSources]int64
+	bySource[storage.SourceGCS] = 2
+	s := &Sandbox{Metadata: &Metadata{}}
+	s.emitPostStartWindow(ctx, &postStartBase{startType: StartTypeResume}, postStartWindow{label: "10s"}, userfaultfd.ServeSnapshot{
+		Pages: 3, SourcePages: 2, ServeTime: 12 * time.Millisecond, SourceServeTime: 10 * time.Millisecond, BySource: bySource,
+	})
+
+	for _, sp := range testSpanRecorder.Ended() {
+		if sp.Name() != "post-start-fault-window" || sp.SpanContext().TraceID() != wantTraceID {
+			continue
+		}
+		assert.Equal(t, wantParentID, sp.Parent().SpanID())
+		attrs := attrMap(sp.Attributes())
+		assert.Equal(t, "10s", attrs["window"])
+		assert.Equal(t, int64(3), attrs["post_start.pages"])
+		assert.Equal(t, int64(2), attrs["post_start.source_pages.gcs"])
+
+		return
+	}
+	t.Fatal("post-start fault window missing from the resume trace")
 }
 
 // Only a customer memory resume records windows: a create or reboot cold boots

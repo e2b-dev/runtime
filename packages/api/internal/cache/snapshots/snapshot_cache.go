@@ -19,7 +19,9 @@ const (
 	snapshotCacheTTL             = 5 * time.Minute
 	snapshotCacheRefreshInterval = 1 * time.Minute
 
-	snapshotCacheKeyPrefix = "snapshot:last"
+	// v2 carries the build's envd_unresponsive mark; a replica without it
+	// must not refill an entry a replica with it reads.
+	snapshotCacheKeyPrefix = "snapshot:last:v2"
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/cache/snapshots")

@@ -60,6 +60,10 @@ func (b *cachedBlob) WriteTo(ctx context.Context, dst io.Writer) (n int64, e err
 	if err == nil {
 		return bytesRead, nil
 	}
+	// The backend's copy would land after the bytes the cache already wrote.
+	if bytesRead > 0 {
+		return bytesRead, err
+	}
 
 	// This is semi-arbitrary. this code path is called for files that tend to be less than 1 MB (headers, metadata, etc),
 	// so 2 MB allows us to read the file without needing to allocate more memory, with some room for growth. If the
@@ -148,7 +152,7 @@ func (b *cachedBlob) copyFullFileFromCache(ctx context.Context, dst io.Writer) (
 
 	count, err := io.Copy(dst, fp)
 	if ignoreEOF(err) != nil {
-		return 0, fmt.Errorf("failed to copy cached file %s: %w", path, err)
+		return count, fmt.Errorf("failed to copy cached file %s: %w", path, err)
 	}
 
 	return count, nil

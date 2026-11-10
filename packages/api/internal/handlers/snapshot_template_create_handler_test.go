@@ -14,13 +14,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -81,12 +83,12 @@ func postSnapshot(t *testing.T, backend *snapshotBackendStub, flagOn bool, body 
 	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes/"+sandboxID+"/snapshots", bytes.NewBufferString(body))
 	ginCtx.Request.Header.Set("Content-Type", "application/json")
 	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{
-		Team:   &authqueries.Team{ID: uuid.New(), Slug: "test-team"},
+		Team:   &dbtypes.Team{ID: uuid.New(), Slug: "test-team"},
 		Limits: &authtypes.TeamLimits{MaxLengthHours: 24},
 	})
 
 	store := &APIStore{snapshotBackendOverride: backend, featureFlags: ff, templateCache: cache}
-	store.PostSandboxesSandboxIDSnapshots(ginCtx, sandboxID)
+	store.PostSandboxesSandboxIDSnapshots(ginCtx, sandboxID, api.PostSandboxesSandboxIDSnapshotsParams{})
 
 	return recorder
 }
@@ -100,6 +102,19 @@ func snapshotErrorCode(t *testing.T, recorder *httptest.ResponseRecorder) string
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
 
 	return body.ErrorCode
+}
+
+// A body that does not parse is answered 400 with Should-Retry: false; the
+// router's schema validator usually rejects it first.
+func TestSnapshotTemplate_MalformedBodyIs400WithoutRetry(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{}
+	recorder := postSnapshot(t, backend, true, `{`, nil)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "false", recorder.Header().Get(apierrors.ShouldRetryHeader))
+	assert.Empty(t, backend.created)
 }
 
 // memory:false on a node below the orchestrator version floor is answered 409
@@ -208,4 +223,18 @@ func TestSnapshotTemplate_MemorySnapshotIgnoresBothGates(t *testing.T) {
 	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
 	require.Len(t, backend.created, 1)
 	assert.False(t, backend.created[0].FilesystemOnly)
+}
+
+// memory:false that the node refuses as unsupported for the guest is answered 409 with the sandbox left running, never the
+// generic 500. The pause handler answers the same refusal 400, since the SDKs read a 409 from pause as already paused.
+func TestSnapshotTemplate_UnsupportedRefusalIs409(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{createErr: orchestrator.PauseUnsupportedError{}}
+	recorder := postSnapshot(t, backend, true, `{"memory": false}`, nil)
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "does not support it")
+	require.Len(t, backend.created, 1)
+	assert.True(t, backend.created[0].FilesystemOnly)
 }

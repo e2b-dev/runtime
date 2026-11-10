@@ -22,6 +22,11 @@ const (
 	PlacementFeatureUnsupported  = "sandbox_feature_unsupported"
 	PlacementCreateFailed        = "sandbox_create_failed"
 	PlacementCreateRefused       = "sandbox_create_refused"
+
+	// SnapshotGuestAgentUnresponsive refuses a memory resume of a snapshot
+	// the node took while the sandbox's guest agent did not answer; only a
+	// resume without memory brings the sandbox back.
+	SnapshotGuestAgentUnresponsive = "sandbox_snapshot_guest_agent_unresponsive"
 )
 
 // PermanentPlacementRefusal reports an error code for a placement no retry
@@ -30,9 +35,10 @@ const (
 // (a vcpu request out of bounds), both of which the API states as such. A
 // capacity shortage clears on its own, and "no compatible node" also names
 // a node pool that is only briefly draining or unhealthy, so both are
-// retried.
+// retried. A snapshot taken over an unresponsive guest agent is refused a
+// memory resume for good; only an explicit resume without memory changes it.
 func PermanentPlacementRefusal(code string) bool {
-	return code == PlacementFeatureUnsupported || code == PlacementCreateRefused
+	return code == PlacementFeatureUnsupported || code == PlacementCreateRefused || code == SnapshotGuestAgentUnresponsive
 }
 
 // RetryablePlacementFailure reports an error code for a placement the API

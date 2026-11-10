@@ -116,61 +116,6 @@ func TestCompressorOutputIsRightSizedAndOwned(t *testing.T) {
 	}
 }
 
-func TestCompressorFrameSizedOutput(t *testing.T) {
-	t.Parallel()
-
-	for _, codec := range []CompressionType{CompressionZstd, CompressionLZ4} {
-		t.Run(codec.String(), func(t *testing.T) {
-			t.Parallel()
-
-			cfg := defaultCfg(codec, 1, DefaultCompressFrameSize)
-			cfg.FrameSizedOutput = true
-			pool, err := newCompressorPool(cfg)
-			require.NoError(t, err)
-			c := pool.Get().(compressor)
-
-			zeros := make([]byte, DefaultCompressFrameSize)
-			a, err := c.compress(zeros)
-			require.NoError(t, err)
-			aCopy := bytes.Clone(a)
-
-			b, err := c.compress(generateSemiRandomData(DefaultCompressFrameSize))
-			require.NoError(t, err)
-
-			require.GreaterOrEqual(t, cap(a), DefaultCompressFrameSize, "kill switch should keep the frame-sized buffer")
-			require.NotSame(t, unsafe.SliceData(a), unsafe.SliceData(b), "outputs share a buffer")
-			require.Equal(t, aCopy, a, "a later compress overwrote an earlier output")
-		})
-	}
-}
-
-func TestCompressStreamFrameSizedOutputRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	const (
-		dataSize  = 16 * megabyte
-		frameSize = 2 * megabyte
-	)
-	data := generateSparseData(dataSize, frameSize, 96*1024)
-
-	for _, codec := range []CompressionType{CompressionZstd, CompressionLZ4} {
-		t.Run(codec.String(), func(t *testing.T) {
-			t.Parallel()
-
-			cfg := defaultCfg(codec, 4, frameSize)
-			cfg.FrameSizedOutput = true
-			up := &memPartUploader{}
-
-			ft, _, err := compressStream(t.Context(), bytes.NewReader(data), cfg, up, 4, nil)
-			require.NoError(t, err)
-
-			decompressed, err := decompressAll(ft.Table(), up.Assemble())
-			require.NoError(t, err)
-			require.Equal(t, data, decompressed)
-		})
-	}
-}
-
 // recordingPartUploader keeps the frame slices passed to UploadPart.
 type recordingPartUploader struct {
 	memPartUploader
@@ -244,7 +189,6 @@ func TestSharedCompressorPoolKey(t *testing.T) {
 		{"level", func(c *CompressConfig) { c.Level = 3 }, false},
 		{"frame size", func(c *CompressConfig) { c.FrameSizeKB = 1024 }, false},
 		{"encoder concurrency", func(c *CompressConfig) { c.EncoderConcurrency = 2 }, false},
-		{"frame-sized output", func(c *CompressConfig) { c.FrameSizedOutput = true }, false},
 	}
 
 	for _, tc := range tests {
@@ -292,27 +236,4 @@ func TestCompressStreamReusesCompressorPool(t *testing.T) {
 	upload()
 	second, _ := compressorPools.Load(key)
 	require.Same(t, first, second)
-}
-
-// TestCompressStreamPerUploadCompressors checks the kill switch: the upload
-// builds its own pool and leaves the shared ones alone.
-func TestCompressStreamPerUploadCompressors(t *testing.T) {
-	t.Parallel()
-
-	// A config no other test uses, so no other test creates its pool.
-	cfg := defaultCfg(CompressionLZ4, 4, 1024*1024)
-	cfg.PerUploadCompressors = true
-	key := newCompressorPoolKey(cfg)
-
-	data := generateSparseData(4*megabyte, 1024*1024, 32*1024)
-	up := &memPartUploader{}
-	ft, _, err := compressStream(t.Context(), bytes.NewReader(data), cfg, up, 4, nil)
-	require.NoError(t, err)
-
-	decompressed, err := decompressAll(ft.Table(), up.Assemble())
-	require.NoError(t, err)
-	require.Equal(t, data, decompressed)
-
-	_, shared := compressorPools.Load(key)
-	require.False(t, shared, "the upload used a shared pool")
 }

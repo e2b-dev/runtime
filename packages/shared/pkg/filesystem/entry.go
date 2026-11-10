@@ -3,12 +3,11 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
 // statTimes holds platform-independent file timestamps and ownership info
-// extracted from a *syscall.Stat_t.
+// extracted from the OS-specific stat data behind os.FileInfo.Sys.
 type statTimes struct {
 	atime time.Time
 	ctime time.Time
@@ -142,18 +141,4 @@ func followSymlink(path string) string {
 	}
 
 	return resolvedPath
-}
-
-func toTimestamp(spec syscall.Timespec) time.Time {
-	if spec.Sec == 0 && spec.Nsec == 0 {
-		return time.Time{}
-	}
-
-	return time.Unix(spec.Sec, spec.Nsec)
-}
-
-func getBase(sys any) *syscall.Stat_t {
-	st, _ := sys.(*syscall.Stat_t)
-
-	return st
 }

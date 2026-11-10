@@ -33,7 +33,7 @@ func (s Service) ListDir(ctx context.Context, req *connect.Request[rpc.ListDirRe
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	resolvedPath, err := followSymlink(requestedPath)
+	resolvedPath, err := resolveListRoot(requestedPath)
 	if err != nil {
 		return nil, err
 	}

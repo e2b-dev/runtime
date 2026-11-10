@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
+	reservationsredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -124,8 +125,9 @@ func (n *NoOpReservationStorage) WaitForStart(_ context.Context, _ uuid.UUID, _ 
 type MockStorage struct {
 	Storage
 
-	addError error
-	mu       sync.Mutex
+	addError    error
+	removeError error
+	mu          sync.Mutex
 }
 
 func NewMockStorage(storage Storage) *MockStorage {
@@ -152,6 +154,26 @@ func (m *MockStorage) Add(ctx context.Context, sbx Sandbox) error {
 	}
 
 	return m.Storage.Add(ctx, sbx)
+}
+
+// SetRemoveError configures Remove() to return an error
+func (m *MockStorage) SetRemoveError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeError = err
+}
+
+// Remove wraps Storage.Remove() with error injection
+func (m *MockStorage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) error {
+	m.mu.Lock()
+	err := m.removeError
+	m.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+
+	return m.Storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
 }
 
 // createTestSandbox creates a test sandbox with default values
@@ -356,4 +378,196 @@ func TestAdd_ConcurrentCalls(t *testing.T) {
 			assert.NoError(t, err, "expected sandbox %s to be in storage", sandboxID)
 		}
 	})
+}
+
+// A removal naming a predecessor execution that reaches the store after its
+// successor wrote its record, and before the successor's start finished, is
+// refused by the storage and leaves the successor's start reservation alone:
+// a request waiting on that start keeps waiting instead of failing with no
+// result. The successor's own removal still releases the reservation, so a
+// new start is admitted.
+func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	client := redis_utils.SetupInstance(t)
+	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
+	require.NoError(t, err)
+	go storage.Start(ctx)
+	t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
+	reservations := reservationsredis.NewReservationStorage(client, storage.Notifier())
+	store := NewStore(storage, reservations, Callbacks{})
+
+	successor := createTestSandbox()
+	successor.ExecutionID = uuid.NewString()
+	teamID, sandboxID := successor.TeamID, successor.SandboxID
+	finishStart, _, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart)
+	_, waitForStart, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NoError(t, storage.Add(ctx, successor))
+
+	store.Remove(ctx, teamID, sandboxID, uuid.NewString())
+
+	pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	_, err = waitForStart(pending)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the successor's start is still pending")
+	stored, err := storage.Get(ctx, teamID, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, successor.ExecutionID, stored.ExecutionID)
+
+	store.Remove(ctx, teamID, sandboxID, successor.ExecutionID)
+
+	_, err = storage.Get(ctx, teamID, sandboxID)
+	require.ErrorIs(t, err, ErrNotFound)
+	finishStart, _, err = reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart, "the successor's removal released its reservation")
+}
+
+// The sync hands every sandbox the node lists as powered off, and only those,
+// to EndPoweredOffSandbox.
+func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
+	t.Parallel()
+
+	ended := make(chan NodeSandbox, 2)
+	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
+		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended <- sbx },
+	})
+
+	running := createTestSandbox()
+	poweredOff := createTestSandbox()
+	require.NoError(t, store.Add(t.Context(), running, nil))
+	require.NoError(t, store.Add(t.Context(), poweredOff, nil))
+
+	listed := poweredOff.ToNodeSandbox()
+	listed.DiskKept = true
+	store.Reconcile(t.Context(), []NodeSandbox{running.ToNodeSandbox(), listed}, "node-1")
+
+	select {
+	case got := <-ended:
+		assert.Equal(t, poweredOff.SandboxID, got.SandboxID)
+	case <-time.After(5 * time.Second):
+		t.Fatal("EndPoweredOffSandbox was not called")
+	}
+
+	select {
+	case got := <-ended:
+		t.Fatalf("EndPoweredOffSandbox called for %s, which is not powered off", got.SandboxID)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// The sync hands every sandbox the node lists as ended with nothing kept to
+// EndEndedSandbox, and never kills one as an orphan, even with its record
+// gone; a sandbox the store does not know that is still running is.
+func TestReconcile_EndsEndedSandboxes(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		ended    []string
+		orphaned []string
+		poweroff []string
+	)
+	record := func(to *[]string) OrphanCallback {
+		return func(_ context.Context, sbx NodeSandbox) {
+			mu.Lock()
+			defer mu.Unlock()
+			*to = append(*to, sbx.SandboxID)
+		}
+	}
+	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
+		KillOrphanSandbox:    record(&orphaned),
+		EndEndedSandbox:      record(&ended),
+		EndPoweredOffSandbox: record(&poweroff),
+	})
+
+	inStore := createTestSandbox()
+	require.NoError(t, store.Add(t.Context(), inStore, nil))
+
+	old := time.Now().Add(-time.Hour)
+	listed := func(sbx Sandbox, ended bool) NodeSandbox {
+		node := sbx.ToNodeSandbox()
+		node.StartTime = old
+		node.Ended = ended
+
+		return node
+	}
+	endedInStore := listed(inStore, true)
+	endedGone := listed(createTestSandbox(), true)
+	orphan := listed(createTestSandbox(), false)
+
+	store.Reconcile(t.Context(), []NodeSandbox{endedInStore, endedGone, orphan}, "node-1")
+
+	// Reconcile waits for both callbacks before it returns.
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, []string{endedInStore.SandboxID, endedGone.SandboxID}, ended)
+	assert.Equal(t, []string{orphan.SandboxID}, orphaned)
+	assert.Empty(t, poweroff)
+}
+
+// A removal refused by a hold, or by a lock lost before the script ran,
+// leaves the record in place, and its reservation with it: a start still
+// pending keeps waiting.
+func TestRemove_HeldRecordKeepsReservation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// refuse makes the storage refuse the removal of sbx.
+		refuse func(t *testing.T, store *Store, storage *MockStorage, sbx Sandbox)
+	}{
+		{
+			name: "held",
+			refuse: func(t *testing.T, store *Store, _ *MockStorage, sbx Sandbox) {
+				t.Helper()
+				hold := Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: "op"}
+				require.NoError(t, store.HoldExecution(t.Context(), hold, time.Now().Add(time.Minute)))
+			},
+		},
+		{
+			name: "lock lost",
+			refuse: func(t *testing.T, _ *Store, storage *MockStorage, _ Sandbox) {
+				t.Helper()
+				storage.SetRemoveError(fmt.Errorf("remove: %w", ErrLockLost))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+
+			client := redis_utils.SetupInstance(t)
+			backend, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
+			require.NoError(t, err)
+			storage := NewMockStorage(backend)
+			reservations := reservationsredis.NewReservationStorage(client, backend.Notifier())
+			store := NewStore(storage, reservations, Callbacks{})
+
+			sbx := createTestSandbox()
+			sbx.ExecutionID = uuid.NewString()
+			finishStart, _, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			require.NoError(t, err)
+			require.NotNil(t, finishStart)
+			_, waitForStart, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			require.NoError(t, err)
+			require.NoError(t, storage.Add(ctx, sbx))
+			tt.refuse(t, store, storage, sbx)
+
+			store.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID)
+
+			_, err = storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
+			require.NoError(t, err, "the record stays")
+			pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+			defer cancel()
+			_, err = waitForStart(pending)
+			require.ErrorIs(t, err, context.DeadlineExceeded, "the start is still pending")
+		})
+	}
 }

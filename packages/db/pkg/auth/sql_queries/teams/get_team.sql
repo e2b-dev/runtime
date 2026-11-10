@@ -4,7 +4,9 @@
 -- migration recreating a view or function; TestTeamLookupsReturnEveryDefaultLimit
 -- in pkg/tests fails when a lookup misses one.
 -- name: GetTeamByAPIKey :one
-SELECT sqlc.embed(t),
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -27,7 +29,9 @@ LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE tak.api_key_hash = $1;
 
 -- name: GetTeamByTeamAndUser :one
-SELECT sqlc.embed(t),
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -50,7 +54,9 @@ LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE ut.user_id = $1 AND t.id = $2;
 
 -- name: GetTeamByTeamID :one
-SELECT sqlc.embed(t),
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
@@ -72,7 +78,10 @@ LEFT JOIN projection.project_settings ps ON ps.project_id = t.id
 WHERE t.id = $1;
 
 -- name: GetUserTeamsWithLimits :many
-SELECT sqlc.embed(t), ut.is_default,
+SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked_reason,
+    t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
+    t.deleted_at, t.slug,
+    ut.is_default,
     ps.sandbox_default_allow_public_traffic,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,

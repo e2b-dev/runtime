@@ -10,10 +10,11 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/api/internal/template"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
-	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
@@ -21,33 +22,42 @@ import (
 )
 
 // PostV3Templates triggers a new template build
-func (a *APIStore) PostV3Templates(c *gin.Context) {
+func (a *APIStore) PostV3Templates(c *gin.Context, _ api.PostV3TemplatesParams) {
 	ctx := c.Request.Context()
 
-	body, err := ginutils.ParseBody[api.TemplateBuildRequestV3](ctx, c)
-	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %s", err))
+	var body api.TemplateBuildRequestV3
+	// ShouldBind, unlike Bind, leaves the response uncommitted so Should-Retry can still be set.
+	if err := c.ShouldBind(&body); err != nil {
+		apierrors.SendAPIError(c, &apierrors.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: fmt.Sprintf("Invalid request body: error when parsing request: %s", err),
+			Retryable: apierrors.NoRetry,
+		})
 		telemetry.ReportCriticalError(ctx, "invalid request body", err)
 
 		return
 	}
 
-	t := requestTemplateBuild(ctx, c, a, body)
-	if t != nil {
+	idempotency.Execute(c, body, func() *apierrors.APIError {
+		t, apiErr := requestTemplateBuild(ctx, c, a, body)
+		if apiErr != nil {
+			return apiErr
+		}
 		c.JSON(http.StatusAccepted, t)
-	}
+
+		return nil
+	})
 }
 
-func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body api.TemplateBuildRequestV3) *api.TemplateRequestResponseV3 {
+func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body api.TemplateBuildRequestV3) (*api.TemplateRequestResponseV3, *api.APIError) {
 	telemetry.ReportEvent(ctx, "started environment build")
 
 	// Prepare info for rebuilding env
 	team, apiErr := a.GetTeam(ctx, c, body.TeamID)
 	if apiErr != nil {
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 		telemetry.ReportCriticalError(ctx, "error when getting team, limits", apiErr.Err)
 
-		return nil
+		return nil, apiErr
 	}
 	// Determine the input based on which field is provided
 	var input string
@@ -58,24 +68,20 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		// Deprecated: handle alias field for backward compatibility
 		input = *body.Alias
 	default:
-		a.sendAPIStoreError(c, http.StatusBadRequest, "Name is required")
 		telemetry.ReportError(ctx, "name is required", nil)
 
-		return nil
+		return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: "Name is required", Retryable: apierrors.NoRetry}
 	}
 
 	identifier, tag, err := id.ParseName(input)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid name: %s", err))
 		telemetry.ReportError(ctx, "invalid name", err)
 
-		return nil
+		return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid name: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	if err := id.ValidateNamespaceMatchesTeam(identifier, team.Slug); err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, err.Error())
-
-		return nil
+		return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: err.Error(), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	allTags := utils.DerefOrDefault(body.Tags, nil)
@@ -85,18 +91,21 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 
 	tags, err := id.ValidateAndDeduplicateTags(allTags)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid tag: %s", err))
 		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "invalid tag", err)
 
-		return nil
+		return nil, &api.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid tag: %s", err), Err: err, Retryable: apierrors.NoRetry}
 	}
 
 	currentCluster, err := a.sqlcDB.GetTeamClusterForTemplateBuild(ctx, team.ID)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error when checking the team's cluster")
 		telemetry.ReportCriticalError(ctx, "error when getting team cluster", err)
 
-		return nil
+		return nil, &api.APIError{
+			Code:      http.StatusInternalServerError,
+			ClientMsg: "Error when checking the team's cluster",
+			Err:       err,
+			Retryable: apierrors.CanRetry,
+		}
 	}
 	clusterID := clusters.WithClusterFallback(currentCluster)
 	findTemplateCtx, span := tracer.Start(ctx, "find-template-alias")
@@ -121,10 +130,9 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		// Team can create their own template with this alias in their namespace
 	default:
 		apiErr := templatecache.ErrorToAPIError(err, identifier)
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 		telemetry.ReportCriticalError(findTemplateCtx, "error when getting template alias", apiErr.Err)
 
-		return nil
+		return nil, apiErr
 	}
 	span.End()
 
@@ -143,6 +151,7 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Alias:              &identifier,
 		Tags:               tags,
 		CpuCount:           body.CpuCount,
+		MaxCpuCount:        body.MaxCpuCount,
 		MemoryMB:           body.MemoryMB,
 		MinFreeDiskMb:      body.MinFreeDiskMb,
 		Version:            templates.TemplateV2LatestVersion,
@@ -150,15 +159,14 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		FirecrackerVersion: firecrackerVersion,
 	}
 
-	template, apiError := template.RegisterBuild(ctx, a.templateCache, a.sqlcDB, buildReq)
+	template, apiError := template.RegisterBuild(ctx, a.templateCache, a.sqlcDB, a.featureFlags, buildReq)
 	if apiError != nil {
 		if replacesTemplateID != "" {
 			a.templateCache.InvalidateAlias(context.WithoutCancel(ctx), &team.Slug, id.ExtractAlias(identifier))
 		}
-		a.sendAPIStoreError(c, apiError.Code, apiError.ClientMsg)
 		telemetry.ReportErrorByCode(ctx, apiError.Code, "error when requesting template build", apiError.Err, telemetry.WithTemplateID(templateID))
 
-		return nil
+		return nil, apiError
 	}
 
 	// Invalidate aliases to prevent stale NotFound entries
@@ -185,5 +193,5 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Names:      template.Names,
 		Tags:       template.Tags,
 		Public:     template.Public,
-	}
+	}, nil
 }

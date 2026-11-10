@@ -109,14 +109,6 @@ func (c *ClickhouseDelivery) Publish(_ context.Context, _ string, event events.S
 
 	eventData := string(eventDataJson)
 
-	ttlDays := event.EventsTTLDays
-	if ttlDays <= 0 {
-		ttlDays = events.DefaultEventsTTLDays
-	}
-	if ttlDays > events.MaxEventsTTLDays {
-		ttlDays = events.MaxEventsTTLDays
-	}
-
 	return c.batcher.Push(SandboxEvent{
 		Version:   event.Version,
 		ID:        event.ID,
@@ -129,7 +121,7 @@ func (c *ClickhouseDelivery) Publish(_ context.Context, _ string, event events.S
 		SandboxBuildID:     event.SandboxBuildID,
 		SandboxTeamID:      event.SandboxTeamID,
 		SandboxExecutionID: event.SandboxExecutionID,
-		EventsTTLDays:      ttlDays,
+		EventsTTLDays:      events.RetentionDays(event.EventsTTLDays),
 	})
 }
 

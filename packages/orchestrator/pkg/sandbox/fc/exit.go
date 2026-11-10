@@ -3,6 +3,7 @@
 package fc
 
 import (
+	"fmt"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -27,6 +28,31 @@ type ExitInfo struct {
 	// Stop ran: a foreign SIGKILL during our SIGTERM, or our SIGTERM reaching
 	// a process something else had already killed.
 	SentByStop bool
+
+	// MetricsRead is whether the metrics reader read Firecracker's metrics to
+	// their end, so the guest counters below are complete.
+	MetricsRead bool
+
+	// MetricsAwaited is set when the exit waited for the reader
+	// (Process.DrainMetricsOnExit). Without it the counters are whatever had
+	// been read, and a clean exit is classified as one.
+	MetricsAwaited bool
+
+	// GuestResets is how many times the guest reset itself, summed over the
+	// process's life.
+	GuestResets uint64
+
+	// GuestPowerOffs is how many times the guest asked to power off, summed
+	// over the process's life. Only a Firecracker with the ACPI power-off
+	// device counts them.
+	GuestPowerOffs uint64
+
+	// GuestCrashes is how many times the guest reported a crash through the
+	// paravirtual crash registers, summed over the process's life, and
+	// GuestCrashCode is the code of the last one, as the guest reported it.
+	// Only a Firecracker that offers the crash registers counts them.
+	GuestCrashes   uint64
+	GuestCrashCode uint64
 }
 
 // LogFields describes the exit for a log line.
@@ -40,7 +66,14 @@ func (e *ExitInfo) LogFields() []zap.Field {
 			zap.Bool("fc_core_dumped", e.CoreDumped),
 		}
 	case e.Exited:
-		return []zap.Field{zap.Int("fc_exit_code", e.ExitCode)}
+		return []zap.Field{
+			zap.Int("fc_exit_code", e.ExitCode),
+			zap.Uint64("fc_guest_resets", e.GuestResets),
+			zap.Uint64("fc_guest_poweroffs", e.GuestPowerOffs),
+			zap.Uint64("fc_guest_crashes", e.GuestCrashes),
+			zap.String("fc_guest_crash_code", fmt.Sprintf("%#x", e.GuestCrashCode)),
+			zap.Bool("fc_metrics_read", e.MetricsRead),
+		}
 	default:
 		return nil
 	}
@@ -50,9 +83,23 @@ func (e *ExitInfo) LogFields() []zap.Field {
 type CrashCause string
 
 const (
-	// CrashCauseCleanExit is Firecracker exiting 0. Usually the guest shut
-	// down or rebooted, but a guest kernel panic (the guest reboots on panic)
-	// and a triple fault end the same way and cannot be told apart here.
+	// CrashCauseGuestPowerOff is Firecracker exiting 0 after the guest asked
+	// the machine to power off.
+	CrashCauseGuestPowerOff CrashCause = "guest_poweroff"
+
+	// CrashCauseGuestReset is Firecracker exiting 0 after the guest reset
+	// itself. A reboot, or a guest kernel panic: Linux guests reboot on panic,
+	// and the two resets cannot be told apart here.
+	CrashCauseGuestReset CrashCause = "guest_reset"
+
+	// CrashCauseGuestCrash is Firecracker exiting 0 after the guest reported
+	// a crash and then reset itself; ExitInfo.GuestCrashCode holds the
+	// code it reported.
+	CrashCauseGuestCrash CrashCause = "guest_crash"
+
+	// CrashCauseCleanExit is Firecracker exiting 0 with no reset or power-off
+	// counted: the guest ended without asking for either, such as on a triple
+	// fault.
 	CrashCauseCleanExit CrashCause = "clean_exit"
 
 	// CrashCauseExitError is a non-zero exit that is not one of Firecracker's
@@ -83,9 +130,60 @@ const (
 	// SetStopReason.
 	CrashCauseRequestedSignal CrashCause = "requested_signal"
 
-	// CrashCauseUnknown is an exit wait(2) never reported.
+	// CrashCauseUnknown is an exit wait(2) never reported, or a clean exit
+	// whose metrics were not read to their end, so a reset may be missing.
 	CrashCauseUnknown CrashCause = "unknown"
 )
+
+// GuestEvent is what a crash cause says happened to the guest, worded only as
+// far as the host can observe it.
+type GuestEvent string
+
+const (
+	// GuestEventPowerOff is a guest that powered itself off.
+	GuestEventPowerOff GuestEvent = "poweroff"
+
+	// GuestEventRebootOrCrash is a guest reset: a reboot or a kernel crash.
+	GuestEventRebootOrCrash GuestEvent = "reboot_or_crash"
+
+	// GuestEventCrashWithRestart is a guest that reported a crash and then
+	// reset.
+	GuestEventCrashWithRestart GuestEvent = "crash_with_restart"
+
+	// GuestEventCrashNoRestart is a guest that ended without a reset.
+	GuestEventCrashNoRestart GuestEvent = "crash_no_restart"
+
+	// GuestEventFailure is an end the guest did not cause.
+	GuestEventFailure GuestEvent = "failure"
+
+	// GuestEventUnknown is an end the host could not observe.
+	GuestEventUnknown GuestEvent = "unknown"
+)
+
+// GuestEvent maps the cause to the guest event it implies.
+func (c CrashCause) GuestEvent() GuestEvent {
+	switch c {
+	case CrashCauseGuestPowerOff:
+		return GuestEventPowerOff
+	case CrashCauseGuestReset:
+		return GuestEventRebootOrCrash
+	case CrashCauseGuestCrash:
+		return GuestEventCrashWithRestart
+	case CrashCauseCleanExit:
+		return GuestEventCrashNoRestart
+	case CrashCauseExitError, CrashCauseExternalSignal, CrashCauseFault,
+		CrashCauseMemoryHandlerFailed, CrashCauseRequestedSignal:
+		return GuestEventFailure
+	default:
+		return GuestEventUnknown
+	}
+}
+
+// Restarts reports whether the guest asked for a restart: it reset, after a
+// crash it reported or not.
+func (e GuestEvent) Restarts() bool {
+	return e == GuestEventRebootOrCrash || e == GuestEventCrashWithRestart
+}
 
 // ClassifyExit labels an exit that ended an execution nobody asked to stop.
 func ClassifyExit(info *ExitInfo) CrashCause {
@@ -98,6 +196,14 @@ func ClassifyExit(info *ExitInfo) CrashCause {
 		return CrashCauseRequestedSignal
 	case info.Signaled:
 		return CrashCauseExternalSignal
+	case info.Exited && info.ExitCode == 0 && info.GuestPowerOffs > 0:
+		return CrashCauseGuestPowerOff
+	case info.Exited && info.ExitCode == 0 && info.GuestResets > 0 && info.GuestCrashes > 0:
+		return CrashCauseGuestCrash
+	case info.Exited && info.ExitCode == 0 && info.GuestResets > 0:
+		return CrashCauseGuestReset
+	case info.Exited && info.ExitCode == 0 && !info.MetricsRead && info.MetricsAwaited:
+		return CrashCauseUnknown
 	case info.Exited && info.ExitCode == 0:
 		return CrashCauseCleanExit
 	case info.Exited:

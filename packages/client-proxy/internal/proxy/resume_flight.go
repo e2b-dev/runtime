@@ -359,7 +359,7 @@ func (r *resumeFlights) Resume(ctx context.Context, sandboxId string, sandboxPor
 		// registry still holds.
 		r.countCaller(ctx, resumeFlightRoleNone, resumeFlightResultCanceled)
 
-		return nil, reverseproxy.NewErrSandboxCapacity(sandboxId, errFlightClosed.Error())
+		return nil, reverseproxy.NewErrSandboxCapacity(sandboxId, reverseproxy.PresenceUnknown, errFlightClosed.Error())
 	}
 	f, ok := r.flights[key]
 	if ok {
@@ -644,7 +644,8 @@ func (r *resumeFlights) run(ctx context.Context, f *resumeFlight, budget time.Du
 	defer func() {
 		if p := recover(); p != nil {
 			logger.L().Error(ctx, "resume flight panicked", zap.Any("panic", p), zap.Stack("stack"), logger.WithSandboxID(sandboxId))
-			f.route, f.err = nil, fmt.Errorf("%w: resume flight panicked: %v", reverseproxy.NewErrSandboxCapacity(sandboxId, "resume flight panicked"), p)
+			var capacity error = reverseproxy.NewErrSandboxCapacity(sandboxId, reverseproxy.PresenceUnknown, "resume flight panicked")
+			f.route, f.err = nil, fmt.Errorf("%w: resume flight panicked: %v", capacity, p)
 		}
 	}()
 
@@ -706,7 +707,9 @@ func (r *resumeFlights) resume(ctx context.Context, f *resumeFlight, budget time
 			// The cause stays in the chain: the page is the capacity
 			// page either way, but a Close counts as canceled, not as
 			// an error.
-			return nil, fmt.Errorf("%w: %w", reverseproxy.NewErrSandboxCapacity(sandboxId, err.Error()), err)
+			var capacity error = reverseproxy.NewErrSandboxCapacity(sandboxId, reverseproxy.PresenceUnknown, err.Error())
+
+			return nil, fmt.Errorf("%w: %w", capacity, err)
 		case errors.Is(err, errFlightClosed):
 			return nil, endedResumeError(ctx, lastErr)
 		case localResumeError(err):

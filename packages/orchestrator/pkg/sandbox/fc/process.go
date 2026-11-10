@@ -32,6 +32,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/socket"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
@@ -120,6 +121,11 @@ type ProcessOptions struct {
 	// BootCpus caps the CPUs the guest kernel brings up (maxcpus=); 0 is all. Create sets it.
 	BootCpus int64
 
+	// ACPIPowerOff declares the ACPI power-off device, so a guest power-off
+	// ends the process instead of halting the vCPUs. A Firecracker without
+	// the device refuses it, and the boot goes on without.
+	ACPIPowerOff bool
+
 	// CPUTemplate is the custom Firecracker CPU template sent before boot. Nil is none. Only
 	// a cold boot needs it; a memory resume restores the vCPU state the template produced.
 	CPUTemplate *cputemplate.Template
@@ -179,12 +185,23 @@ type Process struct {
 	// so anything woken by Exit reads a populated value.
 	exitInfo atomic.Pointer[ExitInfo]
 
+	// reaped closes once the leader is reaped, before Exit resolves.
+	reaped chan struct{}
+
 	// sentSignals has bit N set before Stop sends signal N. The reap matches
 	// the terminating signal against it: a zombie still accepts signals and
 	// the reap races Stop, so no single flag can be ordered against the death.
 	sentSignals atomic.Uint64
 
 	client *apiClient
+
+	// mmdsStoreMissing is set when Resume found the restored microVM without an
+	// MMDS store; a pause records it, since its envd then keeps its token.
+	mmdsStoreMissing atomic.Bool
+
+	// acpiPowerOff is set once Firecracker accepted the ACPI power-off
+	// device, on the cold boot's machine config or the restore's PATCH.
+	acpiPowerOff atomic.Bool
 
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
@@ -199,6 +216,24 @@ type Process struct {
 	// metricsLineMs is the utc_timestamp_ms of the last line it ingested.
 	balloonAccum  atomic.Pointer[BalloonMetricsSnapshot]
 	metricsLineMs atomic.Int64
+
+	// guestResets sums i8042.reset_count, guestPowerOffs
+	// acpi_pm.poweroff_count and guestCrashes the count field of the guest
+	// profile's crash report group over the process's life; guestCrashCode
+	// keeps the last value of that group's code field.
+	// metricsStarted is set once the metrics reader is started, and
+	// metricsDone closes when it has stopped reading.
+	guestResets    atomic.Uint64
+	guestPowerOffs atomic.Uint64
+	guestCrashes   atomic.Uint64
+	guestCrashCode atomic.Uint64
+	metricsStarted atomic.Bool
+	// drainOnExit makes the exit wait for the metrics reader, so the guest
+	// counters above are complete when the exit is classified; drainWanted,
+	// asked at the exit, can ask for the wait too.
+	drainOnExit atomic.Bool
+	drainWanted atomic.Pointer[func() bool]
+	metricsDone chan struct{}
 }
 
 func validateFirecrackerBinary(versions Config, config cfg.BuilderConfig) error {
@@ -215,6 +250,12 @@ func validateFirecrackerBinary(versions Config, config cfg.BuilderConfig) error 
 	}
 
 	return fmt.Errorf("error stating firecracker binary %q: %w", firecrackerPath, err)
+}
+
+// requireAcceptedVersion refuses a launch whose Firecracker version the guest
+// profile refuses by name.
+func requireAcceptedVersion(versions Config) error {
+	return versions.GuestProfile().Firecracker().Accept(versions.FirecrackerVersion)
 }
 
 func NewProcess(
@@ -247,6 +288,9 @@ func NewProcess(
 	if err = validateFirecrackerBinary(versions, config); err != nil {
 		return nil, err
 	}
+	if err = requireAcceptedBinary(ctx, versions, config); err != nil {
+		return nil, err
+	}
 
 	_, err = os.Stat(versions.HostKernelPath(config))
 	if err != nil {
@@ -265,6 +309,8 @@ func NewProcess(
 	p := &Process{
 		Versions:              versions,
 		Exit:                  utils.NewErrorOnce(),
+		reaped:                make(chan struct{}),
+		metricsDone:           make(chan struct{}),
 		cmd:                   cmd,
 		firecrackerSocketPath: files.SandboxFirecrackerSocketPath(),
 		metricsPath:           files.SandboxMetricsFifoPath(),
@@ -483,8 +529,8 @@ func (p *Process) Create(
 
 // configureGuestDevices sends Firecracker the boot source, the disk, the
 // network interface with its MMDS binding, the machine, the CPU template, the
-// entropy device and the balloon. Every error already carries the Stop of the
-// process.
+// entropy device and the balloon: the part of Create the guest profile decides.
+// Every error already carries the Stop of the process.
 func (p *Process) configureGuestDevices(
 	ctx context.Context,
 	firecrackerVcpuCount int64,
@@ -496,10 +542,22 @@ func (p *Process) configureGuestDevices(
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
 ) error {
+	boot := p.Versions.GuestProfile().Boot()
+	// Built before the first request, so a misconfigured profile never half-configures the VM.
+	machineConfig, err := newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra, options.ACPIPowerOff)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("invalid guest profile machine config: %w", err), fcStopErr)
+	}
+
 	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
 	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
 	kernelArgs := buildKernelArgs(ipv4, options).String()
-	err := p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
+	if boot.NoKernelArgs {
+		kernelArgs = ""
+	}
+	err = p.client.setBootSource(ctx, kernelArgs, p.kernelPath)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -524,7 +582,7 @@ func (p *Process) configureGuestDevices(
 	}
 	telemetry.ReportEvent(ctx, "symlinked rootfs")
 
-	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit))
+	err = p.client.setRootfsDrive(ctx, p.rootfsPath, options.IoEngine, buildRateLimiter(driveRateLimit), !boot.NoRootDevice, boot.BlockSectorSize)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
@@ -540,16 +598,27 @@ func (p *Process) configureGuestDevices(
 	}
 	telemetry.ReportEvent(ctx, "set fc network config")
 
-	err = p.client.setMachineConfig(ctx, firecrackerVcpuCount, memoryMB, hugePages)
+	err = p.client.setMachineConfig(ctx, machineConfig)
+	if err != nil && options.ACPIPowerOff {
+		logger.L().Warn(ctx, "firecracker refused the ACPI power-off device, booting without it",
+			zap.String("firecracker_version", p.Versions.FirecrackerVersion), zap.Error(err))
+		var withoutPowerOff any
+		withoutPowerOff, err = newMachineConfigBody(firecrackerVcpuCount, memoryMB, hugePages, boot.MachineConfigExtra, false)
+		if err == nil {
+			err = p.client.setMachineConfig(ctx, withoutPowerOff)
+		}
+	} else if err == nil && options.ACPIPowerOff {
+		p.acpiPowerOff.Store(true)
+	}
 	if err != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting fc machine config: %w", err), fcStopErr)
 	}
-	telemetry.ReportEvent(ctx, "set fc machine config")
+	telemetry.ReportEvent(ctx, "set fc machine config", attribute.Int("machine.config_extra_fields", len(boot.MachineConfigExtra)))
 
 	// A template this host rejects is corrupt metadata or a placement bug.
-	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() {
+	if options.CPUTemplate != nil && !options.CPUTemplate.IsEmpty() && !boot.NoCPUTemplate {
 		err = p.client.setCPUConfig(ctx, *options.CPUTemplate)
 		if err != nil {
 			fcStopErr := p.Stop(ctx)
@@ -561,15 +630,17 @@ func (p *Process) configureGuestDevices(
 		)
 	}
 
-	err = p.client.setEntropyDevice(ctx)
-	if err != nil {
-		fcStopErr := p.Stop(ctx)
+	if !boot.NoEntropy {
+		err = p.client.setEntropyDevice(ctx)
+		if err != nil {
+			fcStopErr := p.Stop(ctx)
 
-		return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
+			return errors.Join(fmt.Errorf("error setting fc entropy config: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "set fc entropy config")
 	}
-	telemetry.ReportEvent(ctx, "set fc entropy config")
 
-	if freePageReporting || freePageHinting {
+	if (freePageReporting || freePageHinting) && !boot.NoBalloon {
 		if err := p.client.installBalloon(ctx, freePageReporting, freePageHinting); err != nil {
 			fcStopErr := p.Stop(ctx)
 
@@ -749,6 +820,14 @@ func (p *Process) ResumeInPlace(
 	return nil
 }
 
+// GuestOptions is what the guest decides about a restore. The zero value is
+// the restore every snapshot of the default guest takes.
+type GuestOptions struct {
+	// ACPIPowerOff declares the ACPI power-off device before the load; the
+	// process counts the device as declared once Firecracker accepts it.
+	ACPIPowerOff bool
+}
+
 // Resume restores the snapshot with RestorePaused, runs its vCPUs and then
 // sets the MMDS metadata. A failure stops the process.
 func (p *Process) Resume(
@@ -761,6 +840,7 @@ func (p *Process) Resume(
 	cgroupHandle *cgroup.CgroupHandle,
 	useMemfd bool,
 	useSyncWP bool,
+	guest GuestOptions,
 	cpuTemplate string,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
@@ -769,7 +849,7 @@ func (p *Process) Resume(
 	ctx, span := tracer.Start(ctx, "resume-fc")
 	defer span.End()
 
-	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
+	err := p.RestorePaused(ctx, sbxMetadata, uffdSocketPath, snapfile, uffdReady, cgroupHandle, useMemfd, useSyncWP, guest, cpuTemplate, txRateLimit, driveRateLimit, vcpus)
 	if err != nil {
 		return err
 	}
@@ -810,11 +890,14 @@ func (p *Process) RestorePaused(
 	cgroupHandle *cgroup.CgroupHandle,
 	useMemfd bool,
 	useSyncWP bool,
+	guest GuestOptions,
 	cpuTemplate string,
 	txRateLimit RateLimiterConfig,
 	driveRateLimit RateLimiterConfig,
 	vcpus ResumeVcpus,
 ) error {
+	ifaceID, netOverride := p.resumeNetworkOverride()
+
 	// Symlink /dev/null to the rootfs link path, so we can start the FC process without the rootfs and then symlink the real rootfs.
 	err := utils.SymlinkForce("/dev/null", p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
 	if err != nil {
@@ -892,6 +975,8 @@ func (p *Process) RestorePaused(
 	}
 	telemetry.ReportEvent(ctx, "set fc metrics")
 
+	p.declareRestorePowerOff(ctx, guest)
+
 	err = p.client.loadSnapshot(
 		ctx,
 		uffdSocketPath,
@@ -899,6 +984,8 @@ func (p *Process) RestorePaused(
 		snapfile,
 		useMemfd,
 		useSyncWP,
+		p.Versions.GuestProfile().Restore().ClockRealtime,
+		netOverride,
 		cpuTemplate,
 		p.teamID,
 	)
@@ -910,14 +997,14 @@ func (p *Process) RestorePaused(
 
 	// Always apply/reset rate limits before resuming so any limits
 	// persisted in the snapshot are overwritten by the current config.
-	if setErr := p.client.setTxRateLimit(ctx, p.slot.VpeerName(), txRateLimit); setErr != nil {
+	if setErr := p.client.setTxRateLimit(ctx, ifaceID, txRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting TX rate limit: %w", setErr), fcStopErr)
 	}
 	telemetry.ReportEvent(ctx, "configured tx rate limit")
 
-	if setErr := p.client.setDriveRateLimit(ctx, rootfsDriveID, driveRateLimit); setErr != nil {
+	if setErr := p.client.setDriveRateLimit(ctx, p.Versions.RootfsDriveIDOrDefault(), driveRateLimit); setErr != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(fmt.Errorf("error setting drive rate limit: %w", setErr), fcStopErr)
@@ -951,11 +1038,89 @@ func (p *Process) SetMmds(ctx context.Context, sbxMetadata sbxlogger.SandboxMeta
 		meta.AccessTokenHash = keys.HashAccessToken("")
 	}
 
-	if err := p.client.setMmds(ctx, meta); err != nil {
+	if err := p.setRestoredMmds(ctx, meta); err != nil {
 		return fmt.Errorf("error setting mmds: %w", err)
 	}
 
 	return nil
+}
+
+// setRestoredMmds writes the metadata a restored guest reads. An image made
+// outside this runtime can carry no MMDS store, nor does any snapshot paused
+// from it, and Firecracker cannot add one after a restore: for a profile whose
+// restore declares the store optional, that refusal is tolerated and
+// remembered; any other refusal, and any under another profile, fails.
+func (p *Process) setRestoredMmds(ctx context.Context, meta *MmdsMetadata) error {
+	err := p.client.setMmds(ctx, meta)
+	if err == nil || !p.Versions.GuestProfile().Restore().MmdsStoreOptional || !mmdsStoreMissing(err) {
+		return err
+	}
+
+	p.mmdsStoreMissing.Store(true)
+	logger.L().Warn(ctx, "the snapshot carries no MMDS store, skipping the metadata put",
+		logger.WithSandboxID(meta.SandboxID),
+		zap.Error(err))
+	telemetry.ReportEvent(ctx, "mmds store missing in the snapshot")
+
+	return nil
+}
+
+// DrainMetricsOnExit makes the exit wait, up to metricsDrainTimeout, for the
+// metrics reader to reach Firecracker's last line, so a guest reset or
+// power-off is counted before the exit is classified. Without it the exit is
+// classified on the counters read so far.
+func (p *Process) DrainMetricsOnExit() {
+	p.drainOnExit.Store(true)
+}
+
+// SetExitDrain asks want at the exit whether to wait for the metrics reader,
+// so a setting turned on while the process runs still counts its last line.
+// A process that took the ACPI power-off device always waits.
+func (p *Process) SetExitDrain(want func() bool) {
+	p.drainWanted.Store(&want)
+}
+
+// drainsOnExit is whether the exit waits for the metrics reader.
+func (p *Process) drainsOnExit() bool {
+	if p.drainOnExit.Load() || p.ACPIPowerOffDeclared() {
+		return true
+	}
+	want := p.drainWanted.Load()
+
+	return want != nil && (*want)()
+}
+
+// declareRestorePowerOff sends a restore's ACPI power-off declaration when the
+// guest asks for it. A Firecracker that refuses it restores without the device.
+func (p *Process) declareRestorePowerOff(ctx context.Context, guest GuestOptions) {
+	if !guest.ACPIPowerOff {
+		return
+	}
+	if err := p.client.setACPIPowerOff(ctx); err != nil {
+		logger.L().Warn(ctx, "firecracker refused the ACPI power-off device, restoring without it",
+			zap.String("firecracker_version", p.Versions.FirecrackerVersion), zap.Error(err))
+
+		return
+	}
+	p.acpiPowerOff.Store(true)
+}
+
+// ACPIPowerOffDeclared reports whether Firecracker accepted the ACPI
+// power-off device for this process, so a guest power-off ends it.
+func (p *Process) ACPIPowerOffDeclared() bool {
+	return p != nil && p.acpiPowerOff.Load()
+}
+
+// DeclarePowerOffForTest records the device as accepted, as
+// configureGuestDevices does once Firecracker takes it.
+func (p *Process) DeclarePowerOffForTest() {
+	p.acpiPowerOff.Store(true)
+}
+
+// MmdsStoreMissing reports whether this microVM was restored without an MMDS
+// store, so its envd accepts only the token it already holds.
+func (p *Process) MmdsStoreMissing() bool {
+	return p != nil && p.mmdsStoreMissing.Load()
 }
 
 func (p *Process) Pid() (int, error) {
@@ -969,11 +1134,22 @@ func (p *Process) Pid() (int, error) {
 // handleExit records how the reaped process ended and resolves Exit with the
 // error it returns. waitErr is what cmd.Wait returned.
 func (p *Process) handleExit(ctx context.Context, waitErr error) error {
+	close(p.reaped)
+	drain := p.drainsOnExit()
+	metricsRead := drain && p.waitMetricsDrained(ctx)
+
 	// Record the status before resolving Exit: the branches below flatten a
 	// signalled kill and a clean exit into the same nil error.
 	if state := p.cmd.ProcessState; state != nil {
 		if status, ok := state.Sys().(syscall.WaitStatus); ok {
-			p.exitInfo.Store(exitInfoFromStatus(status, p.sentSignals.Load()))
+			info := exitInfoFromStatus(status, p.sentSignals.Load())
+			info.MetricsRead = metricsRead
+			info.MetricsAwaited = drain
+			info.GuestResets = p.guestResets.Load()
+			info.GuestPowerOffs = p.guestPowerOffs.Load()
+			info.GuestCrashes = p.guestCrashes.Load()
+			info.GuestCrashCode = p.guestCrashCode.Load()
+			p.exitInfo.Store(info)
 		}
 	}
 
@@ -1000,6 +1176,27 @@ func (p *Process) handleExit(ctx context.Context, waitErr error) error {
 	p.Exit.SetError(err)
 
 	return err
+}
+
+// waitMetricsDrained waits for the metrics reader to read Firecracker's last
+// line, metricsDrainTimeout at most, and reports whether it did. A process
+// whose reader never started has no counters to wait for.
+func (p *Process) waitMetricsDrained(ctx context.Context) bool {
+	if !p.metricsStarted.Load() {
+		return false
+	}
+
+	select {
+	case <-p.metricsDone:
+		return true
+	case <-time.After(metricsDrainTimeout):
+		logger.L().Warn(ctx, "fc metrics reader did not reach the end of the FIFO after the exit",
+			zap.Duration("timeout", metricsDrainTimeout),
+			logger.WithSandboxID(p.files.SandboxID),
+		)
+
+		return false
+	}
 }
 
 // ExitInfo reports how the Firecracker leader was reaped, and nil before that.
@@ -1421,4 +1618,18 @@ func (p *Process) CreateSnapshot(ctx context.Context, snapfilePath string) error
 	defer childSpan.End()
 
 	return p.client.createSnapshot(ctx, snapfilePath)
+}
+
+// resumeNetworkOverride names the interface a restore addresses (the device
+// name the snapshot bakes; see Config) and, for a snapshot baked with a
+// foreign name, the override that reopens it on the slot's tap.
+func (p *Process) resumeNetworkOverride() (ifaceID string, override *models.NetworkOverride) {
+	ifaceID = p.Versions.NetIfaceIDOrDefault(p.slot.VpeerName())
+	if p.Versions.NetIfaceID == "" {
+		return ifaceID, nil
+	}
+
+	tapName := p.slot.TapName()
+
+	return ifaceID, &models.NetworkOverride{IfaceID: &ifaceID, HostDevName: &tapName}
 }

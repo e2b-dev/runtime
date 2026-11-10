@@ -3,11 +3,15 @@ package orchestrator
 import (
 	"cmp"
 	"context"
+	"errors"
+	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 )
 
 func (o *Orchestrator) TeamRunningSandboxCounts(ctx context.Context) (map[uuid.UUID]int64, error) {
@@ -38,7 +42,9 @@ func (o *Orchestrator) AdminNodes(clusterID uuid.UUID) ([]*api.Node, error) {
 				CpuModelName:    machineInfo.CPUModelName,
 			},
 			Status:               statusInfo.Status,
+			StatusOwner:          optionalOwner(statusInfo.Owner),
 			StatusChangedAt:      statusInfo.ChangedAt,
+			Capabilities:         optionalCapabilities(n.Capabilities()),
 			CreateSuccesses:      n.PlacementMetrics.SuccessCount(),
 			CreateFails:          n.PlacementMetrics.FailsCount(),
 			SandboxStartingCount: int(n.PlacementMetrics.InProgressCount()),
@@ -81,7 +87,9 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 			CpuModelName:    machineInfo.CPUModelName,
 		},
 		Status:          statusInfo.Status,
+		StatusOwner:     optionalOwner(statusInfo.Owner),
 		StatusChangedAt: statusInfo.ChangedAt,
+		Capabilities:    optionalCapabilities(n.Capabilities()),
 		CreateSuccesses: n.PlacementMetrics.SuccessCount(),
 		CreateFails:     n.PlacementMetrics.FailsCount(),
 		SandboxCount:    nodeMetrics.SandboxCount,
@@ -93,4 +101,67 @@ func (o *Orchestrator) AdminNodeDetail(clusterID uuid.UUID, nodeID string) (*api
 	}
 
 	return node, nil
+}
+
+// An empty owner or capability list is left out of the JSON.
+func optionalOwner(owner string) *string {
+	if owner == "" {
+		return nil
+	}
+
+	return &owner
+}
+
+func optionalCapabilities(capabilities []string) *[]string {
+	if len(capabilities) == 0 {
+		return nil
+	}
+
+	return &capabilities
+}
+
+// AdminNodeSandboxes lists the sandboxes the node runs that the store
+// records as running on it with the same execution: a guest the node runs
+// for an execution recorded elsewhere, such as the source's copy during a
+// move, or not recorded at all, is left out, as is one the node reports
+// ended. A node or store read that fails fails the list, so a worker outage
+// never reads as an empty node.
+func (o *Orchestrator) AdminNodeSandboxes(ctx context.Context, clusterID uuid.UUID, nodeID string) (*api.NodeSandboxes, error) {
+	node := o.GetNode(clusterID, nodeID)
+	if node == nil {
+		return nil, ErrNodeNotFound
+	}
+	observed, err := node.GetOrphanCandidates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list the node's sandboxes: %w", err)
+	}
+	now := time.Now()
+	items := make([]api.NodeSandbox, 0, len(observed))
+	for _, onNode := range observed {
+		if onNode.Ended {
+			continue
+		}
+		sbx, err := o.sandboxStore.Get(ctx, onNode.TeamID, onNode.SandboxID)
+		if errors.Is(err, sandbox.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read sandbox %q: %w", onNode.SandboxID, err)
+		}
+		if sbx.ClusterID != clusterID || sbx.State != sandbox.StateRunning || sbx.NodeID != node.ID || sbx.ExecutionID != onNode.ExecutionID {
+			continue
+		}
+		executionID, err := uuid.Parse(sbx.ExecutionID)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox %q execution ID: %w", sbx.SandboxID, err)
+		}
+		item := api.NodeSandbox{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: executionID}
+		if sbx.Held(now) {
+			until := time.UnixMilli(sbx.LifecycleHoldUntil)
+			item.LifecycleHoldUntil = &until
+		}
+		items = append(items, item)
+	}
+
+	return &api.NodeSandboxes{NodeID: node.ID, ObservedAt: now, Items: items}, nil
 }

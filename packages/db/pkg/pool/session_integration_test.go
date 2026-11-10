@@ -68,6 +68,8 @@ func TestConnectChecksAndConfiguresPool(t *testing.T) {
 	t.Cleanup(func() { closeBounded(t, client) })
 
 	assert.EqualValues(t, 2, client.Pool().Config().MaxConns)
+	assert.Equal(t, time.Hour, client.Pool().Config().MaxConnLifetime)
+	assert.Equal(t, time.Duration(0), client.Pool().Config().MaxConnLifetimeJitter)
 	assert.Equal(t, pgx.QueryExecModeExec, client.Pool().Config().ConnConfig.DefaultQueryExecMode)
 
 	var searchPath string
@@ -75,6 +77,16 @@ func TestConnectChecksAndConfiguresPool(t *testing.T) {
 		"SELECT current_setting('search_path')",
 	).Scan(&searchPath))
 	assert.Equal(t, "public", searchPath)
+
+	clientWithLifetime, err := Connect(t.Context(), databaseURL, "lifetime-test",
+		WithMaxConnections(1),
+		WithMaxConnLifetime(15*time.Minute),
+		WithMaxConnLifetimeJitter(2*time.Minute),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { closeBounded(t, clientWithLifetime) })
+	assert.Equal(t, 15*time.Minute, clientWithLifetime.Pool().Config().MaxConnLifetime)
+	assert.Equal(t, 2*time.Minute, clientWithLifetime.Pool().Config().MaxConnLifetimeJitter)
 
 	missing, err := url.Parse(databaseURL)
 	require.NoError(t, err)

@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.26.10
+ARG GOLANG_VERSION=1.27.3
 ARG DEBIAN_RUNTIME_TAG=bookworm-20260824-slim
 
 # The orchestrator binary is built with CGO and dynamically links against

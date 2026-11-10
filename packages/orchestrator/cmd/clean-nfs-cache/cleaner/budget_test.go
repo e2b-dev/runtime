@@ -179,6 +179,7 @@ func TestValidateBudgetOptions(t *testing.T) {
 		{"budget alone is enough", func(o *Options) { o.MaxCacheBytes = 1 }, ""},
 		{"budget with bytes-to-delete", func(o *Options) { o.MaxCacheBytes = 1; o.TargetBytesToDelete = 1 }, "mutually exclusive"},
 		{"budget with percent is fine", func(o *Options) { o.MaxCacheBytes = 1; o.TargetDiskUsagePercent = 90 }, ""},
+		{"negative run budget", func(o *Options) { o.TargetBytesToDelete = 1; o.RunBudget = -time.Second }, "run-budget must be >= 0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

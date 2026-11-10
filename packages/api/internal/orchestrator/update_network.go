@@ -161,6 +161,8 @@ func (o *Orchestrator) UpdateSandboxNetworkConfig(
 			return apiErr
 		case errors.As(err, &sbxNotRunningErr):
 			return &api.APIError{Code: http.StatusConflict, ClientMsg: utils.SandboxChangingStateMsg(sandboxID, sbxNotRunningErr.State), Err: err}
+		case errors.Is(err, sandbox.ErrLifecycleHeld):
+			return &api.APIError{Code: http.StatusConflict, ClientMsg: utils.SandboxLifecycleHeldMsg(sandboxID), Err: err}
 		case errors.Is(err, sandbox.ErrNotFound):
 			return &api.APIError{Code: http.StatusNotFound, ClientMsg: utils.SandboxNotFoundMsg(sandboxID), Err: err}
 		default:

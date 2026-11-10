@@ -1093,7 +1093,9 @@ func TestEnvdInitFailsWhenTheNetworkRefusesItsEnvd(t *testing.T) {
 			}
 			s, version := newHeldSandbox(t, e.srv.URL, "0.10.2", false)
 			var heard []string
+			responseCaptured := false
 			s.networkHook = envdReadyHook{ready: func(envdVersion string) error {
+				assert.True(t, responseCaptured, "startup faults must be captured before the network-ready hook")
 				heard = append(heard, envdVersion)
 
 				return refusal
@@ -1101,9 +1103,13 @@ func TestEnvdInitFailsWhenTheNetworkRefusesItsEnvd(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			err := s.initEnvd(ctx, StartTypeResume, true, envdInitOptions{budget: 5 * time.Second})
+			err := s.initEnvd(ctx, StartTypeResume, true, envdInitOptions{
+				budget:     5 * time.Second,
+				onResponse: func() { responseCaptured = true },
+			})
 			require.ErrorIs(t, err, errEnvdRefusedByNetwork)
 			require.ErrorIs(t, err, refusal)
+			assert.True(t, responseCaptured)
 			assert.Equal(t, []string{tc.want}, heard)
 			assert.Equal(t, map[string]int64{"network_refused/response": 1},
 				exitsByType(counterPointsFor(t, telemetry.EnvdInitCalls, version)))

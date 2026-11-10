@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"regexp"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -20,6 +20,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
@@ -32,18 +33,23 @@ var (
 	ErrVolumeID         = errors.New("invalid volume ID")
 	ErrInvalidMountPath = errors.New("invalid mount path")
 	ErrUnknownSandbox   = errors.New("unknown sandbox")
+	ErrLifecycleClosed  = errors.New("sandbox lifecycle mount admission is closed")
 	ErrVolumeBroken     = errors.New("volume root is no longer usable")
 )
+
+// Builder allocates one chroot for a persistent volume.
+type Builder interface {
+	Chroot(volumeType string, teamID, volumeID uuid.UUID) (*chrooted.Chrooted, error)
+}
 
 type NFSHandler struct {
 	mu sync.Mutex
 
-	builder   *chrooted.Builder
+	builder   Builder
 	sandboxes *sandbox.Map
+	gate      *mountcache.LifecycleGate
 
-	chrootsByLifecycleID  map[string]map[uuid.UUID]*wrappedFS
-	onMount               []func(billy.Filesystem)
-	onRelease             []func(billy.Filesystem)
+	chrootsByOwner        map[mountcache.Owner]map[uuid.UUID]*chrooted.Chrooted
 	chrootMountsCounter   metric.Int64Counter
 	chrootUnmountsCounter metric.Int64Counter
 }
@@ -51,8 +57,9 @@ type NFSHandler struct {
 var _ nfs.Handler = (*NFSHandler)(nil)
 
 func NewNFSHandler(
-	builder *chrooted.Builder,
+	builder Builder,
 	sandboxes *sandbox.Map,
+	gate *mountcache.LifecycleGate,
 ) (*NFSHandler, error) {
 	chrootMountsCounter, err := meter.Int64Counter("nfs.chroot.mounts")
 	if err != nil {
@@ -65,86 +72,74 @@ func NewNFSHandler(
 	}
 
 	h := &NFSHandler{
+		mu:                    sync.Mutex{},
 		builder:               builder,
 		sandboxes:             sandboxes,
-		chrootsByLifecycleID:  make(map[string]map[uuid.UUID]*wrappedFS),
+		gate:                  gate,
+		chrootsByOwner:        make(map[mountcache.Owner]map[uuid.UUID]*chrooted.Chrooted),
 		chrootMountsCounter:   chrootMountsCounter,
 		chrootUnmountsCounter: chrootUnmountsCounter,
 	}
 
-	sandboxes.Subscribe(h)
-
 	// don't need to keep a reference around, just create it
-	if _, err = meter.Int64ObservableGauge("nfs.chroots.gauge", metric.WithInt64Callback(func(_ context.Context, observer metric.Int64Observer) error {
-		var count int
-
-		h.mu.Lock()
-		for _, chroots := range h.chrootsByLifecycleID {
-			count += len(chroots)
-		}
-		h.mu.Unlock()
-
-		observer.Observe(int64(count))
+	_, err = meter.Int64ObservableGauge("nfs.chroots.gauge", metric.WithInt64Callback(func(_ context.Context, observer metric.Int64Observer) error {
+		observer.Observe(int64(h.Count()))
 
 		return nil
-	})); err != nil {
+	}))
+	if err != nil {
 		return nil, fmt.Errorf("failed to create chroots gauge: %w", err)
 	}
 
 	return h, nil
 }
 
-// OnMount registers f to be called with each filesystem Mount creates for a
-// sandbox, before Mount returns it.
-func (h *NFSHandler) OnMount(f func(billy.Filesystem)) {
+// Count returns the number of registered chroots represented by the gauge.
+func (h *NFSHandler) Count() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.onMount = append(h.onMount, f)
+	var count int
+	for _, chroots := range h.chrootsByOwner {
+		count += len(chroots)
+	}
+
+	return count
 }
 
-// OnRelease registers f to be called with each filesystem Mount returned for
-// a sandbox once the sandbox releases its network, before it is closed.
-func (h *NFSHandler) OnRelease(f func(billy.Filesystem)) {
+// RemoveOwner closes all chroots registered to one exact sandbox lifecycle.
+func (h *NFSHandler) RemoveOwner(ctx context.Context, owner mountcache.Owner) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.onRelease = append(h.onRelease, f)
-}
-
-func (h *NFSHandler) OnInsert(_ context.Context, _ *sandbox.Sandbox) {}
-
-// OnStopping is called when a sandbox leaves the live registry.
-func (h *NFSHandler) OnStopping(_ context.Context, _ *sandbox.Sandbox) {}
-
-func (h *NFSHandler) OnNetworkRelease(ctx context.Context, sbx *sandbox.Sandbox) error {
-	lifecycleID := sbx.LifecycleID
-
-	h.mu.Lock()
-	mounts := h.chrootsByLifecycleID[lifecycleID]
-	delete(h.chrootsByLifecycleID, lifecycleID)
-	onRelease := h.onRelease
+	chroots := h.chrootsByOwner[owner]
+	delete(h.chrootsByOwner, owner)
 	h.mu.Unlock()
 
-	for _, mounted := range mounts {
-		for _, f := range onRelease {
-			f(mounted)
+	var errs []error
+	for _, chroot := range chroots {
+		if err := chroot.CloseAsync(); err != nil {
+			logger.L().Warn(ctx, "failed to start chroot close",
+				logger.WithSandboxID(owner.SandboxID),
+				logger.WithLifecycleID(owner.LifecycleID),
+				zap.Error(err),
+			)
 		}
-
-		chroot := mounted.chroot
-		err := chroot.Close()
-		if err != nil {
+	}
+	for _, chroot := range chroots {
+		if err := chroot.WaitClosed(ctx); err != nil {
+			errs = append(errs, err)
 			logger.L().Warn(ctx, "failed to close chroot",
-				logger.WithSandboxID(sbx.Runtime.SandboxID),
-				logger.WithLifecycleID(lifecycleID),
+				logger.WithSandboxID(owner.SandboxID),
+				logger.WithLifecycleID(owner.LifecycleID),
 				zap.String("path", chroot.Root()),
 				zap.Error(err),
 			)
+
+			continue
 		}
 		h.chrootUnmountsCounter.Add(ctx, 1)
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (h *NFSHandler) Mount(
@@ -152,38 +147,75 @@ func (h *NFSHandler) Mount(
 	conn net.Conn,
 	request nfs.MountRequest,
 ) (nfs.MountStatus, billy.Filesystem, []nfs.AuthFlavor) {
-	fs, err := h.getChroot(ctx, conn.RemoteAddr(), request)
+	remoteAddr := conn.RemoteAddr().String()
+	sbx, err := h.sandboxes.GetByHostPort(remoteAddr)
 	if err != nil {
-		sourceIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-
-		logger.L().Warn(ctx, "failed to get path",
-			zap.String("request", string(request.Dirpath)),
-			logger.WithSandboxIP(sourceIP),
-			zap.Error(err))
+		h.logMountError(ctx, remoteAddr, request, fmt.Errorf("%w: %w", ErrUnknownSandbox, err))
 
 		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
 	}
 
-	return nfs.MountStatusOk, fs, nil
+	owner := mountcache.Owner{SandboxID: sbx.Runtime.SandboxID, LifecycleID: sbx.LifecycleID}
+	// The caller includes its lifecycle in the export path. An old TCP socket
+	// may be accepted or dispatch MOUNT after its source IP has been reassigned;
+	// neither Accept nor the current IP alone proves the request's lifecycle.
+	volumeName, matches := strings.CutPrefix(string(request.Dirpath), sbx.NFSMountPath(""))
+	if owner.LifecycleID == "" || !matches || volumeName == "" || strings.Contains(volumeName, "/") {
+		h.logMountError(ctx, remoteAddr, request, ErrInvalidMountPath)
+
+		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
+	}
+	admission, admitted := h.gate.Begin(owner)
+	if !admitted {
+		h.logMountError(ctx, remoteAddr, request, ErrLifecycleClosed)
+
+		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			admission.Done()
+		}
+	}()
+
+	current, currentErr := h.sandboxes.GetByHostPort(remoteAddr)
+	if currentErr != nil || current.Runtime.SandboxID != owner.SandboxID || current.LifecycleID != owner.LifecycleID {
+		admission.Close()
+		h.logMountError(ctx, remoteAddr, request, ErrLifecycleClosed)
+
+		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
+	}
+
+	fs, volumeID, err := h.getChroot(ctx, sbx, owner, admission, volumeName)
+	if err != nil {
+		h.logMountError(ctx, remoteAddr, request, err)
+
+		return nfs.MountStatusErrAcces, mountFailedFS{}, nil
+	}
+
+	transferred = true
+
+	return nfs.MountStatusOk, wrapChrooted(fs, mountcache.MountKey{
+		Owner:    owner,
+		VolumeID: volumeID,
+	}, admission), nil
 }
 
-var mountPath = regexp.MustCompile(`^/[^/]+$`)
+func (h *NFSHandler) logMountError(ctx context.Context, remoteAddr string, request nfs.MountRequest, err error) {
+	sourceIP, _, _ := net.SplitHostPort(remoteAddr)
+	logger.L().Warn(ctx, "failed to get path",
+		zap.String("request", string(request.Dirpath)),
+		logger.WithSandboxIP(sourceIP),
+		zap.Error(err))
+}
 
-func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request nfs.MountRequest) (*wrappedFS, error) {
-	sbx, err := h.sandboxes.GetByHostPort(remoteAddr.String())
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnknownSandbox, err)
-	}
-
-	// normalize the mount path
-	requestedPath := string(request.Dirpath)
-	regexpMatch := mountPath.MatchString(requestedPath)
-	if !regexpMatch {
-		return nil, fmt.Errorf(`%w: expected "/volume_name", got %q`, ErrInvalidMountPath, requestedPath)
-	}
-
-	volumeName := requestedPath[1:]
-
+func (h *NFSHandler) getChroot(
+	ctx context.Context,
+	sbx *sandbox.Sandbox,
+	owner mountcache.Owner,
+	admission *mountcache.MountAdmission,
+	volumeName string,
+) (*chrooted.Chrooted, uuid.UUID, error) {
 	// find the local volume mount
 	var volumeMount *sandbox.VolumeMountConfig
 	for _, sbxVolumeMount := range sbx.Config.VolumeMounts {
@@ -194,90 +226,83 @@ func (h *NFSHandler) getChroot(ctx context.Context, remoteAddr net.Addr, request
 		}
 	}
 	if volumeMount == nil {
-		return nil, fmt.Errorf("failed to mount %q: %w", volumeName, ErrVolumeNotFound)
+		return nil, uuid.Nil, fmt.Errorf("failed to mount %q: %w", volumeName, ErrVolumeNotFound)
 	}
 
 	teamID, ok := pkg.TryParseUUID(sbx.Metadata.Runtime.TeamID)
 	if !ok {
-		return nil, ErrInvalidTeamID
+		return nil, uuid.Nil, ErrInvalidTeamID
 	}
 
 	if volumeMount.ID == uuid.Nil {
-		return nil, ErrVolumeID
+		return nil, uuid.Nil, ErrVolumeID
 	}
 
-	// A sandbox mounting the same volume again gets the filesystem it already
-	// has, so repeated mounts share one set of file handles instead of each
-	// holding its own until the sandbox goes away. If that filesystem's root
-	// stopped working, the mount fails rather than opening the volume afresh.
-	lifecycleID := sbx.LifecycleID
-	if fs, ok := h.mounted(lifecycleID, volumeMount.ID); ok {
-		if err := rootUsable(fs); err != nil {
-			return nil, fmt.Errorf("failed to mount %q: %w: %w", volumeName, ErrVolumeBroken, err)
+	var existing *chrooted.Chrooted
+	if !admission.Register(func() {
+		h.mu.Lock()
+		existing = h.chrootsByOwner[owner][volumeMount.ID]
+		h.mu.Unlock()
+	}) {
+		return nil, uuid.Nil, ErrLifecycleClosed
+	}
+	if existing != nil {
+		if err := rootUsable(existing); err != nil {
+			return nil, uuid.Nil, fmt.Errorf("failed to mount %q: %w: %w", volumeName, ErrVolumeBroken, err)
 		}
 
-		return fs, nil
+		return existing, volumeMount.ID, nil
 	}
 
-	chroot, err := h.builder.Chroot(volumeMount.Type, teamID, volumeMount.ID)
+	fs, err := h.builder.Chroot(volumeMount.Type, teamID, volumeMount.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to mount %q: %w", volumeName, err)
+		return nil, uuid.Nil, fmt.Errorf("failed to mount %q: %w", volumeName, err)
 	}
 
-	h.mu.Lock()
-	mounts, ok := h.chrootsByLifecycleID[lifecycleID]
-	if !ok {
-		mounts = make(map[uuid.UUID]*wrappedFS)
-		h.chrootsByLifecycleID[lifecycleID] = mounts
-	}
-	fs, raced := mounts[volumeMount.ID]
-	if !raced {
-		fs = wrapChrooted(chroot)
-		mounts[volumeMount.ID] = fs
-	}
-	onMount := h.onMount
-	h.mu.Unlock()
+	canonical := fs
+	registered := admission.Register(func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if existing := h.chrootsByOwner[owner][volumeMount.ID]; existing != nil {
+			canonical = existing
 
-	if raced {
-		if err := chroot.Close(); err != nil {
-			logger.L().Warn(ctx, "failed to close duplicate chroot", zap.String("path", chroot.Root()), zap.Error(err))
+			return
+		}
+		if h.chrootsByOwner[owner] == nil {
+			h.chrootsByOwner[owner] = make(map[uuid.UUID]*chrooted.Chrooted)
+		}
+		h.chrootsByOwner[owner][volumeMount.ID] = fs
+	})
+	if !registered {
+		return nil, uuid.Nil, errors.Join(ErrLifecycleClosed, fs.Close())
+	}
+
+	if canonical != fs {
+		if err := fs.Close(); err != nil {
+			logger.L().Warn(ctx, "failed to close duplicate chroot", zap.String("path", fs.Root()), zap.Error(err))
 		}
 
-		return fs, nil
-	}
+		if err := rootUsable(canonical); err != nil {
+			return nil, uuid.Nil, fmt.Errorf("failed to mount %q: %w: %w", volumeName, ErrVolumeBroken, err)
+		}
 
-	for _, f := range onMount {
-		f(fs)
+		return canonical, volumeMount.ID, nil
 	}
-
 	h.chrootMountsCounter.Add(ctx, 1)
 
-	return fs, nil
+	return fs, volumeMount.ID, nil
 }
 
-// rootUsable reports whether the volume root a filesystem was opened on can
-// still be used. The open root keeps a removed directory statable, so a
-// removed root shows up as a link count of zero rather than as an error.
-func rootUsable(fs *wrappedFS) error {
-	info, err := fs.chroot.Stat("/")
+func rootUsable(root *chrooted.Chrooted) error {
+	info, err := root.Stat("/")
 	if err != nil {
 		return err
 	}
-
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink == 0 {
 		return errors.New("volume root was removed")
 	}
 
 	return nil
-}
-
-func (h *NFSHandler) mounted(lifecycleID string, volumeID uuid.UUID) (*wrappedFS, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	fs, ok := h.chrootsByLifecycleID[lifecycleID][volumeID]
-
-	return fs, ok
 }
 
 func (h *NFSHandler) Change(_ context.Context, filesystem billy.Filesystem) billy.Change {

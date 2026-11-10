@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/bsm/redislock"
-	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -40,7 +39,7 @@ func TestStorageLocker_ObtainAfterReleaseNotification(t *testing.T) {
 
 	locker, subManager := setupTestLocker(t, true)
 
-	key := getSandboxKey(uuid.NewString(), "lock-notification")
+	key := recordKey("lock-notification")
 	lockKey := redis_utils.GetLockKey(key)
 	routingKey := getLockRoutingKey(lockKey)
 
@@ -69,7 +68,7 @@ func TestStorageLocker_ObtainTimesOutWhenHeld(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-timeout"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-timeout"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -88,7 +87,7 @@ func TestStorageLocker_ObtainUsesProvidedContext(t *testing.T) {
 	t.Parallel()
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-parent-deadline"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-parent-deadline"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -116,7 +115,7 @@ func TestStorageLocker_ObtainReturnsContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-context-cancel"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-context-cancel"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -138,7 +137,7 @@ func TestStorageLocker_ObtainFallsBackWhenNotificationMissed(t *testing.T) {
 	// notification and verifies the exponential fallback still makes progress.
 	locker, subManager := setupTestLocker(t, false)
 
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-fallback"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-fallback"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -165,7 +164,7 @@ func TestStorageLock_ReleaseUsesProvidedContext(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, false)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-canceled-release"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-canceled-release"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	pubsub := locker.redisClient.Subscribe(t.Context(), globalStorageNotifyChannel)
@@ -188,7 +187,7 @@ func TestStorageLock_ReleaseReturnsErrorWhenLockAlreadyReleased(t *testing.T) {
 	t.Parallel()
 
 	locker, _ := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-double-release"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-double-release"))
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -200,7 +199,7 @@ func TestStorageLocker_IgnoresUnrelatedNotification(t *testing.T) {
 	t.Parallel()
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "lock-unrelated-notification"))
+	lockKey := redis_utils.GetLockKey(recordKey("lock-unrelated-notification"))
 	routingKey := getLockRoutingKey(lockKey)
 
 	lock, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
@@ -297,12 +296,16 @@ func TestStorageLocker_AttemptsImmediatelyBeforeWaiting(t *testing.T) {
 func TestStorageLocker_NotificationRetryIsDelayedAndCoalesced(t *testing.T) {
 	t.Parallel()
 
+	// The scripted delay is long against what the test spends before each
+	// window it opens inside the delay, so a loaded runner cannot push a
+	// window into the retry; the windows and thresholds scale with it.
+	const delay = 400 * time.Millisecond
 	client := newRecordingLockClient(redislock.ErrNotObtained, redislock.ErrNotObtained)
 	var samples atomic.Int32
 	locker, subManager := newScriptedStorageLockerWithDelay(client, func() time.Duration {
 		samples.Add(1)
 
-		return 120 * time.Millisecond
+		return delay
 	})
 	lockKey := "coalesced-notification"
 	routingKey := getLockRoutingKey(lockKey)
@@ -324,15 +327,16 @@ func TestStorageLocker_NotificationRetryIsDelayedAndCoalesced(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 		subManager.dispatch(routingKey)
 	}
-	require.Never(t, func() bool { return client.callCount() >= 3 }, 40*time.Millisecond, time.Millisecond)
-	require.Eventually(t, func() bool { return client.callCount() == 3 }, 250*time.Millisecond, time.Millisecond)
+	require.Never(t, func() bool { return client.callCount() >= 3 }, delay/3, time.Millisecond)
+	require.Eventually(t, func() bool { return client.callCount() == 3 }, 2*delay, time.Millisecond)
 
 	calls := client.callTimes()
-	require.GreaterOrEqual(t, calls[2].Sub(notifiedAt), 90*time.Millisecond)
+	require.GreaterOrEqual(t, calls[2].Sub(notifiedAt), 3*delay/4)
 	require.Equal(t, int32(1), samples.Load())
 
 	// Any stale buffered notification was drained before the failed attempt;
-	// it cannot trigger a back-to-back retry.
+	// it cannot trigger a back-to-back retry. The window ends before the
+	// fallback's earliest retry, lockRetryMinInterval less its jitter.
 	require.Never(t, func() bool { return client.callCount() > 3 }, 60*time.Millisecond, time.Millisecond)
 	require.Equal(t, int32(1), samples.Load())
 
@@ -341,9 +345,9 @@ func TestStorageLocker_NotificationRetryIsDelayedAndCoalesced(t *testing.T) {
 	notifiedAgainAt := time.Now()
 	subManager.dispatch(routingKey)
 	require.Eventually(t, func() bool { return samples.Load() == 2 }, testWaitTimeout, time.Millisecond)
-	require.Never(t, func() bool { return client.callCount() >= 4 }, 40*time.Millisecond, time.Millisecond)
-	require.Eventually(t, func() bool { return client.callCount() == 4 }, 250*time.Millisecond, time.Millisecond)
-	require.GreaterOrEqual(t, client.callTimes()[3].Sub(notifiedAgainAt), 90*time.Millisecond)
+	require.Never(t, func() bool { return client.callCount() >= 4 }, delay/3, time.Millisecond)
+	require.Eventually(t, func() bool { return client.callCount() == 4 }, 2*delay, time.Millisecond)
+	require.GreaterOrEqual(t, client.callTimes()[3].Sub(notifiedAgainAt), 3*delay/4)
 
 	cancel()
 	requireErrorFromChannel(t, result, context.Canceled)
@@ -530,7 +534,7 @@ func TestStorageLocker_ConcurrentWaitersRemainExclusive(t *testing.T) {
 	const waiterCount = 32
 
 	locker, subManager := setupTestLocker(t, true)
-	lockKey := redis_utils.GetLockKey(getSandboxKey(uuid.NewString(), "concurrent-waiters"))
+	lockKey := redis_utils.GetLockKey(recordKey("concurrent-waiters"))
 	routingKey := getLockRoutingKey(lockKey)
 	incumbent, err := locker.Obtain(t.Context(), lockKey, testLockTimeout)
 	require.NoError(t, err)
@@ -625,6 +629,15 @@ func setupTestLocker(t *testing.T, startSubManager bool) (*storageLocker, *subsc
 	}
 
 	return newStorageLocker(redisClient, subManager, pub), subManager
+}
+
+func lockHeld(t *testing.T, locker *storageLocker, lockKey string) bool {
+	t.Helper()
+
+	held, err := locker.redisClient.Exists(t.Context(), lockKey).Result()
+	require.NoError(t, err)
+
+	return held == 1
 }
 
 type recordingLockClient struct {
@@ -758,16 +771,24 @@ func requireErrorFromChannel(t *testing.T, ch <-chan error, expected error) {
 	}
 }
 
+// requirePubSubPayload waits for expected on the subscription, draining every
+// message already queued on each poll: the channel is shared by the package's
+// parallel tests, whose lock releases can queue more notifications than one
+// per poll interval within the wait.
 func requirePubSubPayload(t *testing.T, pubsub *goredis.PubSub, expected string) {
 	t.Helper()
 
 	messages := pubsub.Channel()
 	require.Eventually(t, func() bool {
-		select {
-		case msg := <-messages:
-			return msg.Payload == expected
-		default:
-			return false
+		for {
+			select {
+			case msg := <-messages:
+				if msg.Payload == expected {
+					return true
+				}
+			default:
+				return false
+			}
 		}
 	}, testWaitTimeout, testPollInterval, "expected PubSub payload was not received")
 }

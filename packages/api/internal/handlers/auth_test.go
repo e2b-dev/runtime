@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -17,8 +17,8 @@ func TestFindTeamAcceptsPublicProjectID(t *testing.T) {
 	defaultTeamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	teamID := uuid.MustParse("f47ac10b-58cc-4372-a567-0e02b2c3d479")
 	teams := []*types.TeamWithDefault{
-		{Team: &types.Team{Team: &authqueries.Team{ID: defaultTeamID}}, IsDefault: true},
-		{Team: &types.Team{Team: &authqueries.Team{ID: teamID}}},
+		{Team: &types.Team{Team: &dbtypes.Team{ID: defaultTeamID}}, IsDefault: true},
+		{Team: &types.Team{Team: &dbtypes.Team{ID: teamID}}},
 	}
 
 	for _, tc := range []struct {

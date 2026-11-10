@@ -26,16 +26,12 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	nfscfg "github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/cfg"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/portmap"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
-const (
-	defaultDockerHost = "172.17.0.1"
-	portMapperPort    = 111
-)
+const defaultDockerHost = "172.17.0.1"
 
 //go:embed e2e_start.sh
 var e2eStartScript []byte
@@ -110,8 +106,10 @@ func TestIntegrationTest(t *testing.T) {
 	volumeType := "volume-type-1"
 	volumeName := "test-volume-1"
 	volumeID := uuid.New()
+	lifecycleID := uuid.NewString()
 	sandboxes := sandbox.NewSandboxesMap()
 	sandboxes.AssignNetwork(t.Context(), &sandbox.Sandbox{
+		LifecycleID: lifecycleID,
 		Metadata: &sandbox.Metadata{
 			Runtime: sandboxtypes.RuntimeMetadata{
 				SandboxID: sandboxID,
@@ -128,9 +126,6 @@ func TestIntegrationTest(t *testing.T) {
 		},
 	})
 
-	// launch nfs proxy server
-	nfsListener := getListener(t, 0)
-
 	volumeTypePath := t.TempDir()
 
 	// make volume dir
@@ -145,10 +140,32 @@ func TestIntegrationTest(t *testing.T) {
 
 	s, err := NewProxy(t.Context(), builder, sandboxes, nfscfg.Config{})
 	require.NoError(t, err)
-	go func() {
-		err := s.Serve(nfsListener)
-		assert.NoError(t, err)
-	}()
+	// Register these in reverse cleanup order: release the lifecycle while
+	// the proxy is live, close its listener, then join Serve before removing
+	// the volume directory. Container cleanup registered below runs first.
+	var served chan error
+	t.Cleanup(func() {
+		if served == nil {
+			return
+		}
+		select {
+		case err := <-served:
+			assert.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Error("NFS listener closed but Serve did not join")
+		}
+	})
+	nfsListener := getListener(t, 0)
+	releaseNetwork := sandboxes.NetworkRelease(sandboxID, lifecycleID)
+	t.Cleanup(func() {
+		assert.NoError(t, releaseNetwork(context.WithoutCancel(t.Context()), slot.HostIPString()))
+		assert.Eventually(t, func() bool {
+			return s.retirement.count() == 0 && s.chroots.Count() == 0
+		}, 5*time.Second, time.Millisecond,
+			"mounted fixture must retire every root after exact-lifecycle network release")
+	})
+	served = make(chan error, 1)
+	go func() { served <- s.Serve(nfsListener) }()
 
 	_, nfsListenPortStr, err := net.SplitHostPort(nfsListener.Addr().String())
 	require.NoError(t, err)
@@ -156,21 +173,14 @@ func TestIntegrationTest(t *testing.T) {
 	nfsListenPort, err := strconv.Atoi(nfsListenPortStr)
 	require.NoError(t, err)
 
-	// launch portmapper
-	pmListener := getListener(t, portMapperPort)
-	pm := portmap.NewPortMap(t.Context())
-	go func() {
-		err := pm.Serve(t.Context(), pmListener)
-		assert.NoError(t, err)
-	}()
-
-	// this spawns a container, runs our script, then exits
+	// The mount specifies both NFS and MOUNT ports. An unused portmapper on
+	// port 111 would conflict with parallel clients using reserved source ports.
 	testCtr, err := testcontainers.Run(t.Context(), "ubuntu:24.04",
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.NetworkMode = "host"
 			hostConfig.Privileged = true
 		}),
-		testcontainers.WithHostPortAccess(nfsListenPort, portMapperPort),
+		testcontainers.WithHostPortAccess(nfsListenPort),
 		testcontainers.WithEnv(map[string]string{
 			"NFS_HOST": nfsListener.Addr().String(),
 		}),
@@ -209,7 +219,7 @@ func TestIntegrationTest(t *testing.T) {
 		exec.WithEnv([]string{
 			"NFS_HOST=" + defaultDockerHost,
 			"NFS_PORT=" + nfsListenPortStr,
-			"NFS_PATH=/" + volumeName,
+			"NFS_PATH=/" + lifecycleID + "/" + volumeName,
 		}),
 	)
 	require.NoError(t, err)

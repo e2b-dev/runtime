@@ -27,6 +27,7 @@ func TestHealthAndLivenessRoutesPreserveServiceState(t *testing.T) {
 		status e2bHealth.Status
 	}{
 		{"booting", orchestratorinfo.ServiceInfoStatus_Unhealthy, http.StatusServiceUnavailable, e2bHealth.Unhealthy},
+		{"not ready", orchestratorinfo.ServiceInfoStatus_NotReady, http.StatusServiceUnavailable, e2bHealth.Unhealthy},
 		{"ready", orchestratorinfo.ServiceInfoStatus_Healthy, http.StatusOK, e2bHealth.Healthy},
 		{"draining", orchestratorinfo.ServiceInfoStatus_Draining, http.StatusOK, e2bHealth.Draining},
 		{"standby", orchestratorinfo.ServiceInfoStatus_Standby, http.StatusOK, e2bHealth.Draining},
@@ -34,7 +35,7 @@ func TestHealthAndLivenessRoutesPreserveServiceState(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			info := service.NewInfoContainer("node", "version", "startup-test", "service-generation", machineinfo.MachineInfo{}, cfg.Config{})
+			info := service.NewInfoContainer(t.Context(), "node", "version", "startup-test", "service-generation", machineinfo.MachineInfo{}, cfg.Config{BuilderConfig: cfg.BuilderConfig{OrchestratorBaseDir: t.TempDir()}})
 			check, err := NewHealthcheck(info)
 			require.NoError(t, err)
 			info.SetStatus(t.Context(), test.state)

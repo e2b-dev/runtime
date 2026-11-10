@@ -15,8 +15,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/management"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
@@ -28,7 +28,7 @@ func TestDeleteProjectSoftDeletesItAndEnqueuesItsTeardown(t *testing.T) {
 	ctx := t.Context()
 	store, _ := newManagementStore(t, db)
 	projectID := testutils.CreateTestTeam(t, db)
-	clusterID, err := db.SqlcClient.Dashboard.CreateCluster(ctx, dashboardqueries.CreateClusterParams{
+	clusterID, err := db.SqlcClient.CreateCluster(ctx, queries.CreateClusterParams{
 		Name: "project-cluster", Endpoint: "https://cluster.example.test", Token: "test-token",
 	})
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestDeleteProjectRetryRepairsWhatRacedTheDeletion(t *testing.T) {
 	lateSnapshot := testutils.UpsertTestSnapshot(t, ctx, db, "snapshot-"+uuid.NewString(), "sandbox-"+uuid.NewString(), projectID, baseTemplate)
 	addProjectAPIKey(t, db, projectID)
 	addProjectMember(t, db, projectID)
-	clusterID, err := db.SqlcClient.Dashboard.CreateCluster(ctx, dashboardqueries.CreateClusterParams{
+	clusterID, err := db.SqlcClient.CreateCluster(ctx, queries.CreateClusterParams{
 		Name: "raced-cluster", Endpoint: "https://cluster.example.test", Token: "test-token",
 	})
 	require.NoError(t, err)

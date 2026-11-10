@@ -82,23 +82,29 @@ func TestGetTeamsByUserResolvesEachTeamsLimitsInOneStatement(t *testing.T) {
 	require.Equal(t, map[uuid.UUID]*bool{pushed: new(false), unpushed: nil}, publicTrafficDefaults)
 }
 
-// A column added to both rows but not to teamRow would reach the team as zero.
+// A column teamRow leaves behind reaches the team as zero, and one copied from
+// the wrong column carries another's value; setting one column per pass shows
+// both.
 func TestTeamRowCopiesEveryColumn(t *testing.T) {
 	t.Parallel()
 
-	var source authqueries.GetUserTeamsWithLimitsRow
-	value := reflect.ValueOf(&source).Elem()
-	for i := range value.NumField() {
-		if field := value.Field(i); field.Kind() == reflect.Int64 {
-			field.SetInt(int64(i + 1))
-		}
+	columns := reflect.TypeFor[authqueries.GetUserTeamsWithLimitsRow]()
+	for field := range reflect.TypeFor[authqueries.GetTeamByTeamIDRow]().Fields() {
+		_, ok := columns.FieldByName(field.Name)
+		assert.True(t, ok, "GetUserTeamsWithLimitsRow has no %s", field.Name)
 	}
-	source.Team.ID = uuid.New()
-	source.SandboxDefaultAllowPublicTraffic = new(false)
 
-	copied := reflect.ValueOf(teamRow(source))
-	for i := range copied.NumField() {
-		name := copied.Type().Field(i).Name
-		assert.Equal(t, value.FieldByName(name).Interface(), copied.Field(i).Interface(), name)
+	for column := range columns.Fields() {
+		var source authqueries.GetUserTeamsWithLimitsRow
+		testutils.SetNonZero(t, reflect.ValueOf(&source).Elem().FieldByIndex(column.Index))
+
+		copied := reflect.ValueOf(teamRow(source))
+		for field := range copied.Type().Fields() {
+			want := reflect.Zero(field.Type)
+			if field.Name == column.Name {
+				want = reflect.ValueOf(source).FieldByIndex(column.Index)
+			}
+			assert.Equal(t, want.Interface(), copied.FieldByIndex(field.Index).Interface(), "%s after setting %s", field.Name, column.Name)
+		}
 	}
 }

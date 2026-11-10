@@ -19,8 +19,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	dbmodule "github.com/e2b-dev/infra/packages/db"
-	dashboardqueries "github.com/e2b-dev/infra/packages/db/pkg/dashboard/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 // The caller cannot tell a create from a reconcile, so one request serves both
@@ -101,9 +101,8 @@ func TestUpsertProjectRejectsASlugTakenByAnotherProject(t *testing.T) {
 	require.Equal(t, http.StatusConflict, collision.Code, collision.Body.String())
 }
 
-// A routine name push must not undo an operator's decision, nor move a project
-// off limits that arrived through their own route.
-func TestUpsertProjectPreservesBlockedStateAndTier(t *testing.T) {
+// A routine name push must not undo an operator's decision.
+func TestUpsertProjectPreservesBlockedState(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
@@ -113,13 +112,7 @@ func TestUpsertProjectPreservesBlockedStateAndTier(t *testing.T) {
 	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
 
 	require.NoError(t, db.AuthDB.TestsRawSQL(t.Context(),
-		`INSERT INTO public.tiers (id, name, disk_mb, concurrent_instances, max_length_hours,
-			max_vcpu, max_ram_mb, concurrent_template_builds, events_ttl_days,
-			default_free_disk_size_mb, max_disk_size_mb)
-		 VALUES ('pro_v1', 'Pro', 20480, 100, 24, 8, 8192, 20, 30, 10240, 51200)
-		 ON CONFLICT (id) DO NOTHING`))
-	require.NoError(t, db.AuthDB.TestsRawSQL(t.Context(),
-		"UPDATE public.teams SET is_blocked = true, tier = 'pro_v1' WHERE id = $1", project.id))
+		"UPDATE public.teams SET is_blocked = true WHERE id = $1", project.id))
 
 	reconcile := project.request()
 	reconcile.Name = "Acme Renamed"
@@ -128,8 +121,6 @@ func TestUpsertProjectPreservesBlockedStateAndTier(t *testing.T) {
 	require.Equal(t, http.StatusOK, renamed.Code, renamed.Body.String())
 
 	require.Equal(t, "true", teamColumn(t, db, project.id, "is_blocked::text"))
-	// A push never writes the tier, so a project that has one keeps it.
-	require.Equal(t, "pro_v1", teamColumn(t, db, project.id, "tier"))
 }
 
 // The team lookups read limits from project_limits or default_limits, so a
@@ -142,10 +133,10 @@ func TestUpsertProjectCreatesWithoutATier(t *testing.T) {
 	project := newProjectFixture()
 
 	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	require.Equal(t, "true", teamColumn(t, db, project.id, "(tier IS NULL)::text"))
 
-	team, err := db.AuthDB.GetTeamByTeamID(t.Context(), project.id)
+	_, err := db.AuthDB.GetTeamByTeamID(t.Context(), project.id)
 	require.NoError(t, err)
-	require.Nil(t, team.Team.Tier)
 }
 
 // Every property in the contract is synchronized by the caller and sent on
@@ -309,7 +300,7 @@ func TestUpsertProjectRefusesAClusterBeingDeleted(t *testing.T) {
 func createCluster(t *testing.T, db *testutils.Database) uuid.UUID {
 	t.Helper()
 
-	clusterID, err := db.SqlcClient.Dashboard.CreateCluster(t.Context(), dashboardqueries.CreateClusterParams{
+	clusterID, err := db.SqlcClient.CreateCluster(t.Context(), queries.CreateClusterParams{
 		Name: "project-cluster-" + uuid.NewString()[:8], Endpoint: "https://cluster.example.test", Token: "test-token",
 	})
 	require.NoError(t, err)

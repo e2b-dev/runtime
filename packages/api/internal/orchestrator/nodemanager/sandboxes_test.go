@@ -157,34 +157,6 @@ func TestGetOrphanCandidates_ToleratesMissingConfig(t *testing.T) {
 	assert.Equal(t, "sbx-no-config", sandboxes[0].SandboxID)
 }
 
-// TestGetOrphanCandidates_ReadsHugePagesFromConfig covers the one field with no
-// scalar counterpart. Killing an orphan releases its RAM from the node's
-// hugepage count only when the flag is set.
-func TestGetOrphanCandidates_ReadsHugePagesFromConfig(t *testing.T) {
-	t.Parallel()
-
-	teamID := uuid.New()
-	node := newTestNodeWithList(t,
-		&orchestrator.RunningSandbox{
-			StartTime: timestamppb.New(time.Now()),
-			SandboxId: "sbx-hugepages",
-			TeamId:    teamID.String(),
-			Config:    &orchestrator.SandboxConfig{HugePages: true},
-		},
-		&orchestrator.RunningSandbox{
-			StartTime: timestamppb.New(time.Now()),
-			SandboxId: "sbx-no-config",
-			TeamId:    teamID.String(),
-		},
-	)
-
-	sandboxes, err := node.GetOrphanCandidates(t.Context())
-	require.NoError(t, err)
-	require.Len(t, sandboxes, 2)
-	assert.True(t, sandboxes[0].HugePages)
-	assert.False(t, sandboxes[1].HugePages)
-}
-
 // TestGetOrphanCandidates_SkipsUnparseableTeamID verifies that one malformed
 // entry does not abort the sync for the whole node. A sandbox with no usable
 // team ID has no store key, so it can be neither confirmed nor killed.
@@ -237,4 +209,49 @@ func TestGetOrphanCandidates_SkipsEntryWithoutSandboxID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sandboxes, 1)
 	assert.Equal(t, "sbx-good", sandboxes[0].SandboxID)
+}
+
+// An ended sandbox carries its guest event, in log form, and whether the node
+// kept its disk.
+func TestGetOrphanCandidates_ReadsEnded(t *testing.T) {
+	t.Parallel()
+
+	teamID := uuid.New()
+	node := newTestNodeWithList(t,
+		&orchestrator.RunningSandbox{
+			SandboxId:  "sbx-ended",
+			TeamId:     teamID.String(),
+			Ended:      true,
+			GuestEvent: orchestrator.GuestEvent_GUEST_EVENT_REBOOT_OR_CRASH,
+		},
+		&orchestrator.RunningSandbox{
+			SandboxId:  "sbx-kept",
+			TeamId:     teamID.String(),
+			Ended:      true,
+			GuestEvent: orchestrator.GuestEvent_GUEST_EVENT_POWER_OFF,
+			DiskKept:   true,
+		},
+		&orchestrator.RunningSandbox{
+			SandboxId: "sbx-running",
+			TeamId:    teamID.String(),
+		},
+	)
+
+	sandboxes, err := node.GetOrphanCandidates(t.Context())
+	require.NoError(t, err)
+	require.Len(t, sandboxes, 3)
+
+	assert.True(t, sandboxes[0].Ended)
+	assert.Equal(t, "reboot_or_crash", sandboxes[0].GuestEvent)
+	assert.False(t, sandboxes[0].DiskKept)
+	assert.True(t, sandboxes[0].EndedOnNode())
+
+	assert.True(t, sandboxes[1].Ended)
+	assert.Equal(t, "power_off", sandboxes[1].GuestEvent)
+	assert.True(t, sandboxes[1].DiskKept)
+	assert.False(t, sandboxes[1].EndedOnNode())
+
+	assert.False(t, sandboxes[2].Ended)
+	assert.Empty(t, sandboxes[2].GuestEvent)
+	assert.False(t, sandboxes[2].EndedOnNode())
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/localupload"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service/machineinfo"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	e2bHealth "github.com/e2b-dev/infra/packages/shared/pkg/health"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
@@ -28,7 +29,7 @@ import (
 
 func TestHTTPHandlerExposesHealthAndLiveness(t *testing.T) {
 	t.Parallel()
-	info := service.NewInfoContainer("node", "version", "route-test", "instance", machineinfo.MachineInfo{}, cfg.Config{})
+	info := service.NewInfoContainer(t.Context(), "node", "version", "route-test", "instance", machineinfo.MachineInfo{}, cfg.Config{BuilderConfig: cfg.BuilderConfig{OrchestratorBaseDir: t.TempDir()}})
 	check, err := healthcheck.NewHealthcheck(info)
 	require.NoError(t, err)
 	server := httptest.NewServer(newHTTPHandler(check.CreateHandler(), nil))
@@ -36,7 +37,7 @@ func TestHTTPHandlerExposesHealthAndLiveness(t *testing.T) {
 	client := server.Client()
 	client.Timeout = 3 * time.Second
 	for _, state := range []orchestratorinfo.ServiceInfoStatus{orchestratorinfo.ServiceInfoStatus_Unhealthy, orchestratorinfo.ServiceInfoStatus_Healthy} {
-		info.SetStatus(t.Context(), state)
+		require.NoError(t, info.OverrideStatus(t.Context(), servicestatus.Request{Status: state}))
 		for _, route := range []string{"/live", "/health"} {
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+route, nil)
 			require.NoError(t, err)
@@ -64,7 +65,7 @@ func TestHTTPHandlerExposesHealthAndLiveness(t *testing.T) {
 
 func TestHTTPHandlerPreservesUploadRoute(t *testing.T) {
 	t.Parallel()
-	info := service.NewInfoContainer("node", "version", "route-test", "instance", machineinfo.MachineInfo{}, cfg.Config{})
+	info := service.NewInfoContainer(t.Context(), "node", "version", "route-test", "instance", machineinfo.MachineInfo{}, cfg.Config{BuilderConfig: cfg.BuilderConfig{OrchestratorBaseDir: t.TempDir()}})
 	check, err := healthcheck.NewHealthcheck(info)
 	require.NoError(t, err)
 	root := t.TempDir()

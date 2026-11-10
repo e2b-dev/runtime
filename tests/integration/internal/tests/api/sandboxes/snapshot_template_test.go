@@ -25,7 +25,7 @@ func createSnapshotTemplate(t *testing.T, c *api.ClientWithResponses, sbxId stri
 func createSnapshotTemplateWithBody(t *testing.T, c *api.ClientWithResponses, sbxId string, body api.PostSandboxesSandboxIDSnapshotsJSONRequestBody) *api.PostSandboxesSandboxIDSnapshotsResponse {
 	t.Helper()
 
-	resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(t.Context(), sbxId, body, setup.WithAPIKey())
+	resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(t.Context(), sbxId, nil, body, setup.WithAPIKey())
 	require.NoError(t, err)
 
 	return resp
@@ -537,7 +537,7 @@ func startSnapshotInBackground(t *testing.T, c *api.ClientWithResponses, sandbox
 		defer close(done)
 
 		resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(
-			t.Context(), sandboxID,
+			t.Context(), sandboxID, nil,
 			api.PostSandboxesSandboxIDSnapshotsJSONRequestBody{},
 			setup.WithAPIKey(),
 		)
@@ -625,6 +625,7 @@ func TestSnapshotTemplateConcurrentOperations(t *testing.T) {
 		resp, err := c.PostSandboxesSandboxIDSnapshotsWithResponse(
 			t.Context(),
 			sbx.SandboxID,
+			nil,
 			api.PostSandboxesSandboxIDSnapshotsJSONRequestBody{},
 			setup.WithAPIKey(),
 		)
