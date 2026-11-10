@@ -48,6 +48,11 @@ const (
 	// answer its health probe; a snapshot taken now would record a hung agent
 	// and never resume. The sandbox keeps running and the pause can be retried.
 	UserErrorCode_ENVD_UNRESPONSIVE UserErrorCode = 11
+	// A sandbox create refused because the node's status admits nothing new
+	// (Standby, Draining, Unhealthy). It clears when the node is set Healthy
+	// again, not on a retry, so the API leaves the node out of its next sample.
+	// A capacity refusal carries no detail and is retried as before.
+	UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES UserErrorCode = 12
 )
 
 // Enum value maps for UserErrorCode.
@@ -64,6 +69,7 @@ var (
 		8:  "SANDBOX_CREATE_REFUSED",
 		10: "CHECKPOINT_IN_PROGRESS",
 		11: "ENVD_UNRESPONSIVE",
+		12: "NODE_NOT_ACCEPTING_SANDBOXES",
 	}
 	UserErrorCode_value = map[string]int32{
 		"UNKNOWN_USER_ERROR_CODE":             0,
@@ -77,6 +83,7 @@ var (
 		"SANDBOX_CREATE_REFUSED":              8,
 		"CHECKPOINT_IN_PROGRESS":              10,
 		"ENVD_UNRESPONSIVE":                   11,
+		"NODE_NOT_ACCEPTING_SANDBOXES":        12,
 	}
 )
 
@@ -1904,7 +1911,7 @@ const file_volume_proto_rawDesc = "" +
 	"\x04_gid\"6\n" +
 	"\x12UpdatePathResponse\x12 \n" +
 	"\x05entry\x18\x01 \x01(\v2\n" +
-	".EntryInfoR\x05entry*\xa9\x02\n" +
+	".EntryInfoR\x05entry*\xcb\x02\n" +
 	"\rUserErrorCode\x12\x1b\n" +
 	"\x17UNKNOWN_USER_ERROR_CODE\x10\x00\x12\x12\n" +
 	"\x0ePATH_NOT_FOUND\x10\x01\x12\x17\n" +
@@ -1917,7 +1924,8 @@ const file_volume_proto_rawDesc = "" +
 	"\x16SANDBOX_CREATE_REFUSED\x10\b\x12\x1a\n" +
 	"\x16CHECKPOINT_IN_PROGRESS\x10\n" +
 	"\x12\x15\n" +
-	"\x11ENVD_UNRESPONSIVE\x10\v*i\n" +
+	"\x11ENVD_UNRESPONSIVE\x10\v\x12 \n" +
+	"\x1cNODE_NOT_ACCEPTING_SANDBOXES\x10\f*i\n" +
 	"\bFileType\x12\x19\n" +
 	"\x15FILE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eFILE_TYPE_FILE\x10\x01\x12\x17\n" +

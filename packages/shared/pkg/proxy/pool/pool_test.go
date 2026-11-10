@@ -45,7 +45,7 @@ func TestPoolReusesClientAcrossInsecureSkipTLSVerify(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			p := New(4, 1, time.Second, false, nil)
+			p := New(4, 1, time.Second, false)
 
 			client := p.Get(t.Context(), testDestination("lifecycle", tt.first))
 			require.NotNil(t, client)
@@ -59,7 +59,7 @@ func TestPoolReusesClientAcrossInsecureSkipTLSVerify(t *testing.T) {
 func TestPoolBuildsOneClientPerConnectionKey(t *testing.T) {
 	t.Parallel()
 
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 
 	first := p.Get(t.Context(), testDestination("lifecycle-a", true))
 	second := p.Get(t.Context(), testDestination("lifecycle-b", false))
@@ -70,11 +70,62 @@ func TestPoolBuildsOneClientPerConnectionKey(t *testing.T) {
 	assert.Nil(t, second.transport.TLSClientConfig)
 }
 
+// The wrap decorates the transport once per key, with that key, and the
+// client keeps the transport the wrap returns.
+func TestPoolWrapsTheTransportOncePerConnectionKey(t *testing.T) {
+	t.Parallel()
+
+	var keys []string
+	p := New(4, 1, time.Second, false, WithTransportWrap(func(key string, base *http.Transport) *http.Transport {
+		keys = append(keys, key)
+		wrapped := base.Clone()
+		wrapped.MaxResponseHeaderBytes = 1 << 10 // a mark the test can read back
+
+		return wrapped
+	}))
+	client := p.Get(t.Context(), testDestination("lifecycle-a", false))
+	assert.Same(t, client, p.Get(t.Context(), testDestination("lifecycle-a", false)))
+	assert.Equal(t, []string{"lifecycle-a"}, keys)
+	assert.Equal(t, int64(1<<10), client.transport.MaxResponseHeaderBytes)
+	assert.Same(t, client.transport, client.ReverseProxy.Transport)
+}
+
+// A wrapped dial may return a connection with CloseWrite; the pool keeps a
+// full close (tracking.Connection), so the proxy never waits on a half-close.
+func TestPoolWrappedDialHasNoCloseWrite(t *testing.T) {
+	t.Parallel()
+
+	server, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Close() })
+	go func() {
+		for {
+			c, err := server.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	p := New(4, 1, time.Second, false, WithTransportWrap(func(_ string, base *http.Transport) *http.Transport {
+		base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr) // a *net.TCPConn, which has CloseWrite
+		}
+
+		return base
+	}))
+	conn, err := p.Get(t.Context(), testDestination("lifecycle-a", false)).transport.DialContext(t.Context(), "tcp", server.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_, ok := conn.(interface{ CloseWrite() error })
+	assert.False(t, ok)
+}
+
 // ConnectDone pauses a real successful TCP dial before the transport can
 // register it. Cleanup must wait for that socket, not just its registry.
 func TestOwnerJoinsLateDial(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 	d := testDestination("lifetime", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -133,7 +184,7 @@ func TestOwnerJoinsLateDial(t *testing.T) {
 
 func TestOwnerCancelsReadinessRetry(t *testing.T) {
 	t.Parallel()
-	p := New(4, 5, time.Second, false, nil)
+	p := New(4, 5, time.Second, false)
 	d := testDestination("retry", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -161,7 +212,7 @@ func TestOwnerCancelsReadinessRetry(t *testing.T) {
 
 func TestOwnerStopsTLSHandshake(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
@@ -214,7 +265,7 @@ func (c resetErrorConn) Close() error {
 
 func TestResetErrorDoesNotRetainSettledOwner(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 	d := testDestination("reset-error", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)
@@ -241,7 +292,7 @@ func TestResetErrorDoesNotRetainSettledOwner(t *testing.T) {
 // to be refused through; that client is not counted as a pool member.
 func TestClientBuiltAfterStopIsNotCounted(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 	d := testDestination("late", false)
 	d.Owner = p.NewOwner()
 	require.NoError(t, d.Owner.Close(t.Context()))
@@ -254,7 +305,7 @@ func TestClientBuiltAfterStopIsNotCounted(t *testing.T) {
 // that the eventual settlement does not give back.
 func TestRetriedCloseLeavesNothingBehind(t *testing.T) {
 	t.Parallel()
-	p := New(4, 1, time.Second, false, nil)
+	p := New(4, 1, time.Second, false)
 	d := testDestination("retried", false)
 	d.Owner = p.NewOwner()
 	client := p.Get(t.Context(), d)

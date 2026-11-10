@@ -4,10 +4,12 @@ package steps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/commands"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
@@ -215,7 +218,7 @@ func (sb *StepBuilder) Build(
 			meta.Context,
 		)
 		if err != nil {
-			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), err)
+			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), guestEnded(ctx, sbx, err))
 		}
 
 		err = sandboxtools.SyncChangesToDiskWith(
@@ -225,6 +228,10 @@ func (sb *StepBuilder) Build(
 			guestTemplate.SyncCommand,
 		)
 		if err != nil {
+			if err = guestEnded(ctx, sbx, err); errors.Is(err, ErrStepEndedGuest) {
+				return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), err)
+			}
+
 			return metadata.Template{}, fmt.Errorf("error running sync command: %w", err)
 		}
 
@@ -257,4 +264,48 @@ func (sb *StepBuilder) Build(
 		Cached:   false,
 		Hash:     currentLayer.Hash,
 	}, nil
+}
+
+// ErrStepEndedGuest marks a step whose command restarted or shut down the guest.
+var ErrStepEndedGuest = errors.New("the step ended the guest: a build step must leave the guest running, a restart or shutdown inside a step is not supported")
+
+// A restarting guest drops its connections seconds before it resets, and its
+// exit lands only once Firecracker is gone.
+const guestEndGrace = 30 * time.Second
+
+type stepGuest interface {
+	Exited() bool
+	Wait(ctx context.Context) error
+	FirecrackerExit() *fc.ExitInfo
+}
+
+// guestEnded wraps err in ErrStepEndedGuest when the guest ended itself. Only a
+// lost stream waits for the exit; any other error means the guest answered.
+// Firecracker exits cleanly only when the guest asks, so a clean exit counts
+// even with no reset recorded.
+func guestEnded(ctx context.Context, guest stepGuest, err error) error {
+	if !guest.Exited() {
+		if connect.CodeOf(err) != connect.CodeUnavailable {
+			return err
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, guestEndGrace)
+		defer cancel()
+		_ = guest.Wait(waitCtx)
+
+		if !guest.Exited() {
+			return err
+		}
+	}
+
+	exit := guest.FirecrackerExit()
+	switch fc.ClassifyExit(exit).GuestEvent() {
+	case fc.GuestEventFailure, fc.GuestEventUnknown:
+		return err
+	case fc.GuestEventCrashWithRestart:
+		// A crash is not the step's doing; the code goes to the log.
+		return fmt.Errorf("the guest crashed during the step (crash code %#x): %w", exit.GuestCrashCode, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrStepEndedGuest, err)
+	}
 }

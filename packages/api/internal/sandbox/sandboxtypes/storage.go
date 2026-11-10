@@ -78,6 +78,9 @@ type Hold struct {
 	TeamID      uuid.UUID
 	SandboxID   string
 	ExecutionID string
+	// SourceNodeID is the node the execution is on when held: a hold
+	// taken from a placement the execution has left since is refused.
+	SourceNodeID string
 	// ID is the holding operation's own ID, stored as lifecycleHold.
 	ID string
 }
@@ -89,8 +92,9 @@ type LifecycleHolds interface {
 	// HoldExecution marks the running execution as held until `until`, which
 	// must be in the future. The same hold again is a no-op and keeps its
 	// deadline. It refuses with ErrHoldConflict a record of another
-	// execution, not running, in a transition, or under a live hold of
-	// another operation.
+	// execution, on another node than SourceNodeID, not running, in a
+	// transition, under a live hold of another operation, or a deadline
+	// already passed.
 	HoldExecution(ctx context.Context, hold Hold, until time.Time) error
 	// MoveHeldExecution changes the execution's node to nodeID and releases
 	// the hold in one write, and reports whether it wrote: a repeat that

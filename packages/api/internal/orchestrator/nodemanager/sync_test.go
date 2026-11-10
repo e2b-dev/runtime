@@ -13,6 +13,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 )
 
 // TestSync_ShutDownConnectionIsFatal: a node whose conn was closed under it
@@ -92,4 +93,29 @@ func TestSync_ReconnectingConnection(t *testing.T) {
 			assert.True(t, unreachable, "the node still did not answer")
 		})
 	}
+}
+
+// A sync records the owner and the capabilities the orchestrator reports, and
+// an orchestrator that reports capabilities but no labels still gets the
+// implicit default label: capabilities never stand in for labels. The failing
+// list call ends the cycle after the info call and marks the node unhealthy
+// locally, which keeps what the orchestrator reported.
+func TestSync_ReadsOwnerAndCapabilities(t *testing.T) {
+	t.Parallel()
+
+	n := NewTestNode("test-node", api.NodeStatusReady, 0, 1,
+		WithServiceInfoResponse(&orchestratorinfo.ServiceInfoResponse{
+			NodeId:        "test-node",
+			ServiceStatus: orchestratorinfo.ServiceInfoStatus_Standby,
+			StatusOwner:   "x",
+			Capabilities:  []string{"park-owner"},
+		}),
+		WithFailingSandboxList())
+
+	require.NoError(t, n.Sync(t.Context(), nil))
+
+	assert.Equal(t, api.NodeStatusUnhealthy, n.Status())
+	assert.Equal(t, "x", n.StatusInfo().Owner)
+	assert.Equal(t, []string{"park-owner"}, n.Capabilities())
+	assert.Equal(t, map[string]struct{}{"default": {}}, n.Labels())
 }

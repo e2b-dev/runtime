@@ -94,7 +94,6 @@ browser ──https://<port>-<sandbox>.<domain>──▶ client-proxy ──▶ 
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images and build steps |
 | Client proxy | `packages/client-proxy` | control plane | Edge router: sandbox URL to the right node, auto-resume on traffic |
 | Envd | `packages/envd` | inside every VM | Process, filesystem, and port API the SDKs use |
-| Dashboard API | `packages/dashboard-api` | control plane | Backend for the web dashboard |
 
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) has the full picture: sequence diagrams for creation, traffic, pause and resume, and template builds, plus the data stores and the deployment topology. Read it first.
 

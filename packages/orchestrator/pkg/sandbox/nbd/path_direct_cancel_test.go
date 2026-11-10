@@ -26,22 +26,40 @@ func withAfterConnect(f func(deviceIndex uint32)) MountOption {
 	return func(m *DirectPathMount) { m.afterConnect = f }
 }
 
-// feedSlotsUntil supplies pool with free device slots until stop is closed, standing in for
-// Populate. Populate cannot be used here: it would re-acquire the very slot the test asserts
-// was released. But the pool still has to be refillable, because Open's connect-retry loop
-// takes a fresh slot per attempt - a pool seeded with exactly one slot deadlocks in GetDevice
-// the first time a concurrent test connects the device this one was handed.
+// feedSlots supplies pool with free device slots, standing in for Populate. Populate cannot be
+// used here: it would re-acquire the very slot the test asserts was released. But the pool
+// still has to be refillable, because Open's connect-retry loop takes a fresh slot per
+// attempt - a pool seeded with exactly one slot deadlocks in GetDevice the first time a
+// concurrent test connects the device this one was handed.
 //
-// It stops on its own after maxAttempts so a machine with nothing free fails the test in
-// seconds instead of hanging until the go test timeout: closing done makes GetDevice return
-// ErrClosed, which surfaces as an Open error the assertions below report.
-func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) <-chan struct{} {
-	const maxAttempts = 16
+// The returned stop ends the feeder and waits for it; it is safe to call more than once and
+// also runs on cleanup. A feeder that finds no free device, or has fed maxFeedAttempts slots,
+// closes the pool, so a machine with nothing free fails the test with ErrClosed in seconds
+// instead of hanging until the go test timeout.
+func feedSlots(t *testing.T, pool *DevicePool) (stop func()) {
+	t.Helper()
 
+	return startFeeder(t, pool, true)
+}
+
+// feedSlotsKeepOpen is feedSlots for a pool the test uses again after this feeder: running
+// dry ends the feeder but leaves the pool open, so the caller bounds its Open with a deadline.
+func feedSlotsKeepOpen(t *testing.T, pool *DevicePool) (stop func()) {
+	t.Helper()
+
+	return startFeeder(t, pool, false)
+}
+
+const maxFeedAttempts = 16
+
+func startFeeder(t *testing.T, pool *DevicePool, closeWhenDry bool) func() {
+	t.Helper()
+
+	stopCh := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range maxAttempts {
+		for range maxFeedAttempts {
 			slot, err := pool.getFreeDeviceSlot()
 			if err != nil {
 				break
@@ -49,15 +67,28 @@ func feedSlotsUntil(pool *DevicePool, stop <-chan struct{}) <-chan struct{} {
 
 			select {
 			case pool.slots <- *slot:
-			case <-stop:
+			case <-stopCh:
+				// The slot was claimed but never offered, so nothing else frees it.
+				pool.mu.Lock()
+				pool.usedSlots.Clear(uint(*slot))
+				pool.mu.Unlock()
+
 				return
 			}
 		}
 
-		pool.doneOnce.Do(func() { close(pool.done) })
+		if closeWhenDry {
+			pool.doneOnce.Do(func() { close(pool.done) })
+		}
 	}()
 
-	return done
+	stop := sync.OnceFunc(func() {
+		close(stopCh)
+		<-done
+	})
+	t.Cleanup(stop)
+
+	return stop
 }
 
 // A cancellation observed after nbdnl.Connect has succeeded must not strand the device. The
@@ -103,26 +134,16 @@ func testOpenCancelledAfterConnect(t *testing.T, featureFlags *featureflags.Clie
 	overlay := block.NewOverlay(source, cache)
 	t.Cleanup(func() { overlay.Close() })
 
-	pool, err := NewDevicePool(1)
-	require.NoError(t, err, "failed to create device pool")
-
 	// Confine the pool to its own slot window: contention with parallel
 	// tests' pools otherwise burns the feeder's attempts on devices another
 	// pool connects first, and an exhausted feeder surfaces as ErrClosed in
 	// place of the cancellation under test.
-	claimSlotWindow(t, pool)
+	pool := poolInWindow(t)
 
-	stop := make(chan struct{})
-	stopFeeder := sync.OnceFunc(func() { close(stop) })
-	feeder := feedSlotsUntil(pool, stop)
 	// Stopped and joined before the unwind under test releases the slot: a
 	// feeder that is between its checks would otherwise take the slot back
 	// and the assertion below would read its claim as a leak.
-	stopAndJoinFeeder := sync.OnceFunc(func() {
-		stopFeeder()
-		<-feeder
-	})
-	t.Cleanup(stopAndJoinFeeder)
+	stopAndJoinFeeder := feedSlots(t, pool)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

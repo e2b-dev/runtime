@@ -39,8 +39,6 @@ type Profile interface {
 
 	// Template returns the template build behaviour of the guest.
 	Template() TemplateBuild
-	// FirstBoot returns the restart tolerance of the first boot of a base image.
-	FirstBoot() FirstBoot
 }
 
 // BootConfig is the guest part of the Firecracker configuration of a cold boot.
@@ -283,13 +281,4 @@ type RenderedStep struct {
 type StepRenderer interface {
 	// Render returns the guest command of one step and the build state after it.
 	Render(step Step, state StepState) (RenderedStep, error)
-}
-
-// FirstBoot is the restart tolerance of the first boot of a base image.
-// The zero value refuses a first boot.
-type FirstBoot struct {
-	// MaxResets is the number of guest resets that a first boot tolerates before envd answers.
-	MaxResets int
-	// EnvdWait is the envd wait of each boot attempt.
-	EnvdWait time.Duration
 }

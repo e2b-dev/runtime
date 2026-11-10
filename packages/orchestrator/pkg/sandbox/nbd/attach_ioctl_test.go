@@ -89,20 +89,15 @@ func openIoctlMountOn(t *testing.T, mnt *DirectPathMount, unmasked bool) (*Direc
 
 // singleSlotPool is a pool with one known free device buffered and no feeder,
 // so a test can say which device an Open takes and whether its slot came back.
+// The slot channel is closed behind that device: an Open that retries fails
+// at once in GetDevice instead of waiting there until the go test timeout.
 func singleSlotPool(t *testing.T) (*DevicePool, DeviceSlot) {
 	t.Helper()
-	pool, err := NewDevicePool(1)
-	require.NoError(t, err)
-	releasePadding := claimSlotWindow(t, pool)
-	t.Cleanup(func() {
-		releasePadding()
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
-		defer cancel()
-		assert.NoError(t, pool.Close(ctx))
-	})
+	pool := poolInWindow(t)
 	slot, err := pool.getFreeDeviceSlot()
 	require.NoError(t, err)
 	pool.slots <- *slot
+	close(pool.slots)
 
 	return pool, *slot
 }
@@ -392,18 +387,10 @@ func TestIoctlOpenCancelledDuringConfigureReleasesTheSlot(t *testing.T) {
 	}
 	// A pool whose feeder stops inside the attach: afterwards the only slots
 	// taken in its window are the one buffered and the one under test.
-	pool, err := NewDevicePool(1)
-	require.NoError(t, err)
-	claimSlotWindow(t, pool)
-	stop := make(chan struct{})
-	feeder := feedSlotsUntil(pool, stop)
+	pool := poolInWindow(t)
 	// The feeder claims a slot before it looks at stop, so it is stopped and
 	// joined inside the hook, before the unwind releases the slot under test.
-	stopAndJoinFeeder := sync.OnceFunc(func() {
-		close(stop)
-		<-feeder
-	})
-	t.Cleanup(stopAndJoinFeeder)
+	stopAndJoinFeeder := feedSlots(t, pool)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -477,25 +464,33 @@ func TestIoctlOpenRetriesPastANetlinkOwnedDevice(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("kernel NBD requires root")
 	}
-	pool, first := singleSlotPool(t)
+	pool := poolInWindow(t)
 	netlinkFlags, err := featureflags.NewClient("", "", "")
 	require.NoError(t, err)
 	owner := NewDirectPathMount(ioctlTestBackend(t), pool, netlinkFlags, logger.L())
-	ownerIdx, err := owner.Open(t.Context())
+	// A failed netlink connect retries on a fresh slot. The ioctl Open below
+	// still needs the pool when this feeder runs dry.
+	stopOwnerFeeder := feedSlotsKeepOpen(t, pool)
+	ownerCtx, ownerCancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer ownerCancel()
+	ownerIdx, err := owner.Open(ownerCtx)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, owner.Close(context.WithoutCancel(t.Context()))) })
-	require.Equal(t, first, ownerIdx)
+	stopOwnerFeeder()
 	require.Nil(t, owner.ioctlSession, "the owner attached through netlink")
+	// The slot the owner's feeder left buffered goes back unused, so the
+	// owner's device can be offered first below.
+	select {
+	case spare := <-pool.slots:
+		pool.mu.Lock()
+		pool.usedSlots.Clear(uint(spare))
+		pool.mu.Unlock()
+	default:
+	}
 
 	// The owner's device is offered again, ahead of what the feeder finds.
 	pool.slots <- ownerIdx
-	stop := make(chan struct{})
-	feeder := feedSlotsUntil(pool, stop)
-	stopFeeder := sync.OnceFunc(func() {
-		close(stop)
-		<-feeder
-	})
-	t.Cleanup(stopFeeder)
+	stopFeeder := feedSlots(t, pool)
 
 	mnt := NewDirectPathMount(ioctlTestBackend(t), pool, ioctlTestFlags(t, 1), logger.L())
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -941,22 +936,8 @@ func TestOpenCancelledDuringDeviceOpenReturnsNoDevice(t *testing.T) {
 			if os.Geteuid() != 0 {
 				t.Skip("kernel NBD requires root")
 			}
-			pool, err := NewDevicePool(1)
-			require.NoError(t, err)
-			releasePadding := claimSlotWindow(t, pool)
-			t.Cleanup(func() {
-				releasePadding()
-				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
-				defer cancel()
-				assert.NoError(t, pool.Close(ctx))
-			})
-			stop := make(chan struct{})
-			feeder := feedSlotsUntil(pool, stop)
-			stopAndJoinFeeder := sync.OnceFunc(func() {
-				close(stop)
-				<-feeder
-			})
-			t.Cleanup(stopAndJoinFeeder)
+			pool := poolInWindow(t)
+			stopAndJoinFeeder := feedSlots(t, pool)
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

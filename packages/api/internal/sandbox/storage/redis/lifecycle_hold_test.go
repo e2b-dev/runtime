@@ -33,7 +33,7 @@ func heldSandbox(t *testing.T, storage *Storage, sandboxID string) sandboxtypes.
 func holdExecution(t *testing.T, storage *Storage, sbx sandboxtypes.Sandbox, holdID string, until time.Time) error {
 	t.Helper()
 
-	return storage.HoldExecution(t.Context(), sandboxtypes.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, ID: holdID}, until)
+	return storage.HoldExecution(t.Context(), sandboxtypes.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: holdID}, until)
 }
 
 func moveHeldExecution(t *testing.T, storage *Storage, sbx sandboxtypes.Sandbox, holdID, nodeID string) error {
@@ -92,6 +92,9 @@ func TestLifecycleHold(t *testing.T) {
 	other := sbx
 	other.ExecutionID = uuid.NewString()
 	require.ErrorIs(t, holdExecution(t, storage, other, holdID, until), sandboxtypes.ErrHoldConflict, "another execution")
+	left := sbx
+	left.NodeID = "node-z"
+	require.ErrorIs(t, holdExecution(t, storage, left, holdID, until), sandboxtypes.ErrHoldConflict, "a placement the execution has left")
 	require.NoError(t, holdExecution(t, storage, sbx, holdID, until))
 	heldRaw := client.Get(ctx, key).Val()
 	require.NoError(t, holdExecution(t, storage, sbx, holdID, until.Add(time.Hour)), "the same hold again")
@@ -153,7 +156,9 @@ func TestLifecycleHold(t *testing.T) {
 	require.ErrorIs(t, moveHeldExecution(t, storage, sbx, holdID, "node-c"), sandboxtypes.ErrNotHeld,
 		"a move to another node is not this one")
 	// A later operation's hold on the moved record does not hide the move.
-	require.NoError(t, holdExecution(t, storage, sbx, "next", until))
+	onTarget := sbx
+	onTarget.NodeID = "node-b"
+	require.NoError(t, holdExecution(t, storage, onTarget, "next", until))
 	require.NoError(t, moveHeldExecution(t, storage, sbx, holdID, "node-b"))
 	require.NoError(t, releaseHeldExecution(t, storage, sbx, "next"))
 	require.NoError(t, storage.Add(ctx, sbx))
@@ -256,7 +261,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	sbx := heldSandbox(t, storage, "expired-hold")
 	key := recordKey(sbx.SandboxID)
 	unheld := client.Get(ctx, key).Val()
-	require.Error(t, holdExecution(t, storage, sbx, "op", time.Now()), "a deadline already passed")
+	require.ErrorIs(t, holdExecution(t, storage, sbx, "op", time.Now()), sandboxtypes.ErrHoldConflict, "a deadline already passed")
 	assert.Equal(t, unheld, client.Get(ctx, key).Val(), "a refused hold writes nothing")
 	expiry := time.Now().Add(100 * time.Millisecond)
 	require.NoError(t, holdExecution(t, storage, sbx, "op", expiry))

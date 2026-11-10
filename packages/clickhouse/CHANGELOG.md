@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.30.0 (2026-11-06)
+
+
+### Features
+
+* **api:** serve a sandbox's record and its admin overview (0b8ebd2)
+* **clean-nfs-cache:** run budget and multi-sample runs (9fd10b7)
+
+
+### Bug Fixes
+
+* **deps:** move the workspace to the Go 1.27.3 toolchain (839f8d7)
+* **orchestrator:** the volume mount test passes the envd version its request takes (5a1c076)
+
 ## 0.4.1 (2026-09-11)
 
 

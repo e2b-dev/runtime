@@ -131,7 +131,6 @@ func TestSearchTemplates_DefaultSortPaginates(t *testing.T) {
 	require.Len(t, first, 2)
 	require.NotEmpty(t, token)
 
-	// The cursor has dashboard-api's format: {sort}|{created_at}|{template ID}.
 	assert.Equal(t, "created_at_desc|"+first[1].CreatedAt.UTC().Format(time.RFC3339Nano)+"|"+first[1].TemplateID, token)
 
 	second, next := callSearchTemplatesHandler(t, ctx, testDB, teamTestCaller(teamID, nil), api.GetUnstableTemplatesSearchParams{Limit: &limit, Cursor: &token})

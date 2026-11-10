@@ -312,7 +312,7 @@ runs:
       env:
         TEMPLATE_ID: "2j6ly824owf4awgai1xo"
         KERNEL_VERSION: "vmlinux-6.1.158-c1a568c"
-        FIRECRACKER_VERSION: "v1.14-0.2.0"
+        FIRECRACKER_VERSION: "v1.17-0.4.1"
         DISK_SIZE_MB: ${{ inputs.disk_size_mb }}
         # 256 MiB guest memory: the CI sandboxes run the kernel, envd and
         # light test commands, and a smaller memfile makes every pause,

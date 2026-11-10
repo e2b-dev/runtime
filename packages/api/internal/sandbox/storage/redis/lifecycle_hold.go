@@ -15,16 +15,17 @@ import (
 
 // HoldExecution marks the running execution as held until `until`, which must
 // be in the future. The same hold again is a no-op and keeps its deadline. It
-// refuses with sandboxtypes.ErrHoldConflict a record of another execution, not
-// running, in a transition, or under a live hold of another operation. A
-// record in a transition is refused because the transition may still restore
-// or remove it when it finishes.
+// refuses with sandboxtypes.ErrHoldConflict a record of another execution, on
+// another node than the hold's source, not running, in a transition, under a
+// live hold of another operation, or a deadline already passed. A record in
+// a transition is refused because the transition may still restore or remove
+// it when it finishes.
 func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, until time.Time) error {
-	if hold.ID == "" {
-		return errors.New("empty hold ID")
+	if hold.ID == "" || hold.SourceNodeID == "" {
+		return errors.New("empty hold ID or source node")
 	}
 	if !until.After(time.Now()) {
-		return fmt.Errorf("hold deadline %s already passed", until.Format(time.RFC3339Nano))
+		return fmt.Errorf("hold deadline %s already passed: %w", until.Format(time.RFC3339Nano), sandboxtypes.ErrHoldConflict)
 	}
 
 	return s.withRecordLock(ctx, hold.TeamID, hold.SandboxID, func(lock *storageLock, sbx sandboxtypes.Sandbox) error {
@@ -32,10 +33,10 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 		// deadline, and a hold written past it would read as released.
 		now := time.Now()
 		if !until.After(now) {
-			return fmt.Errorf("hold deadline %s passed while waiting for the record's lock", until.Format(time.RFC3339Nano))
+			return fmt.Errorf("hold deadline %s passed while waiting for the record's lock: %w", until.Format(time.RFC3339Nano), sandboxtypes.ErrHoldConflict)
 		}
 		switch {
-		case sbx.ExecutionID != hold.ExecutionID:
+		case sbx.ExecutionID != hold.ExecutionID || sbx.NodeID != hold.SourceNodeID:
 			return sandboxtypes.ErrHoldConflict
 		case sbx.LifecycleHold == hold.ID && sbx.Held(now):
 			return nil

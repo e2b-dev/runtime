@@ -11,6 +11,7 @@ package dummyserver
 
 import (
 	"context"
+	"net/http"
 	"sync"
 
 	"github.com/google/uuid"
@@ -20,14 +21,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 )
 
 // SandboxServer is an in-memory dummy implementation of orchestrator.SandboxServiceServer.
 type SandboxServer struct {
 	orchestrator.UnimplementedSandboxServiceServer
 
-	clientID string
+	clientID     string
+	machine      *servicestatus.Machine
+	maxSandboxes int64
 
 	mu        sync.Mutex
 	sandboxes map[string]*orchestrator.RunningSandbox
@@ -35,17 +40,29 @@ type SandboxServer struct {
 
 // NewSandbox returns a SandboxServer with an empty sandbox map and a fixed
 // per-process clientID (a UUID). The clientID is returned from Create so the
-// api side can route follow-up calls back to this orchestrator.
-func NewSandbox() *SandboxServer {
+// api side can route follow-up calls back to this orchestrator. Creates are
+// refused while the machine is not Healthy or maxSandboxes are running; a
+// limit of zero or less closes the node, as the real orchestrator's does.
+func NewSandbox(machine *servicestatus.Machine, maxSandboxes int64) *SandboxServer {
 	return &SandboxServer{
-		clientID:  uuid.NewString(),
-		sandboxes: make(map[string]*orchestrator.RunningSandbox),
+		clientID:     uuid.NewString(),
+		machine:      machine,
+		maxSandboxes: maxSandboxes,
+		sandboxes:    make(map[string]*orchestrator.RunningSandbox),
 	}
 }
 
 // ClientID returns the synthetic client identifier for this dummy node.
 func (s *SandboxServer) ClientID() string {
 	return s.clientID
+}
+
+// Count is the number of sandboxes recorded as running.
+func (s *SandboxServer) Count() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return uint32(len(s.sandboxes))
 }
 
 func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreateRequest) (*orchestrator.SandboxCreateResponse, error) {
@@ -56,6 +73,22 @@ func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreat
 	sbxID := req.GetSandbox().GetSandboxId()
 	if sbxID == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
+	}
+
+	// The same refusal as the real orchestrator's, detail included: the api
+	// retries elsewhere and leaves this node out of its next sample.
+	if snap := s.machine.Snapshot(); snap.Status != orchestratorinfo.ServiceInfoStatus_Healthy {
+		st := status.Newf(codes.ResourceExhausted, "node is not accepting new sandboxes (status %s), please retry", snap.Status)
+		withDetails, err := st.WithDetails(&orchestrator.UserError{
+			Code:       orchestrator.UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES,
+			Message:    st.Message(),
+			HttpStatus: http.StatusServiceUnavailable,
+		})
+		if err != nil {
+			return nil, st.Err()
+		}
+
+		return nil, withDetails.Err()
 	}
 
 	startTime := req.GetStartTime()
@@ -75,8 +108,12 @@ func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreat
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if int64(len(s.sandboxes)) >= s.maxSandboxes {
+		return nil, status.Error(codes.ResourceExhausted, "too many sandboxes on this node, please retry")
+	}
 	s.sandboxes[sbxID] = running
-	s.mu.Unlock()
 
 	return &orchestrator.SandboxCreateResponse{ClientId: s.clientID}, nil
 }

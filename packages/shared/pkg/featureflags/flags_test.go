@@ -102,7 +102,7 @@ func TestResolveFirecrackerVersion_MixedFormatMap(t *testing.T) {
 	client := newResolverTestClient(t, map[string]string{
 		"v1.14":   "v1.14.1_431f1fc",
 		"v1.14-0": "v1.14-0.2.0",
-		"v1.17-0": "v1.17-0.4.0",
+		"v1.17-0": "v1.17-0.4.1",
 	})
 
 	cases := []struct {
@@ -112,7 +112,7 @@ func TestResolveFirecrackerVersion_MixedFormatMap(t *testing.T) {
 		{"v1.14.1_431f1fc", "v1.14.1_431f1fc"},
 		{"v1.14-0.1.0", "v1.14-0.2.0"},
 		{"v1.14-1.0.0", "v1.14-1.0.0"},
-		{"v1.17-0.4.0", "v1.17-0.4.0"},
+		{"v1.17-0.4.0", "v1.17-0.4.1"},
 	}
 
 	for _, tc := range cases {

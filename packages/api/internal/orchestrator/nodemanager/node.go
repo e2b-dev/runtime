@@ -72,9 +72,10 @@ type Node struct {
 	lastHugePageAdd     time.Time
 	lastOrdinaryPageAdd time.Time
 
-	machineInfo machineinfo.MachineInfo
-	labels      map[string]struct{}
-	meta        NodeMetadata
+	machineInfo  machineinfo.MachineInfo
+	labels       map[string]struct{}
+	capabilities []string
+	meta         NodeMetadata
 
 	PlacementMetrics PlacementMetrics
 
@@ -101,17 +102,6 @@ func New(
 		return nil, fmt.Errorf("failed to get node service info: %w", err)
 	}
 
-	nodeStatus, ok := OrchestratorToApiNodeStateMapper[nodeInfo.GetServiceStatus()]
-	if !ok {
-		logger.L().Error(ctx, "Unknown service info status", zap.String("status", nodeInfo.GetServiceStatus().String()), logger.WithNodeID(nodeInfo.GetNodeId()))
-		nodeStatus = api.NodeStatusUnhealthy
-	}
-
-	var nodeStatusChangedAt time.Time
-	if ts := nodeInfo.GetServiceStatusChangedAt(); ts.IsValid() {
-		nodeStatusChangedAt = ts.AsTime()
-	}
-
 	nodeMetadata := NodeMetadata{
 		ServiceInstanceID: nodeInfo.GetServiceId(),
 		Commit:            nodeInfo.GetServiceCommit(),
@@ -128,7 +118,7 @@ func New(
 		Backend:       discoveredNode.Backend,
 
 		client: client,
-		status: StatusInfo{Status: nodeStatus, ChangedAt: nodeStatusChangedAt},
+		status: reportedStatus(ctx, nodeInfo.GetNodeId(), nodeInfo),
 		meta:   nodeMetadata,
 
 		PlacementMetrics: PlacementMetrics{
@@ -141,6 +131,7 @@ func New(
 	n.UpdateMetricsFromServiceInfoResponse(nodeInfo)
 	n.setMachineInfo(nodeInfo.GetMachineInfo())
 	n.setLabels(nodeInfo.GetLabels())
+	n.setCapabilities(nodeInfo.GetCapabilities())
 
 	return n, nil
 }
@@ -190,6 +181,10 @@ func NewClusterNode(ctx context.Context, client *clusters.GRPCClient, clusterID 
 	n.UpdateMetricsFromServiceInfoResponse(nodeInfo)
 	n.setMachineInfo(nodeInfo.GetMachineInfo())
 	n.setLabels(nodeInfo.GetLabels())
+	n.setCapabilities(nodeInfo.GetCapabilities())
+	// The report is fresher than the registry entry the node was built from.
+	reported := reportedStatus(ctx, n.ID, nodeInfo)
+	n.setStatus(ctx, reported.Status, reported.Owner, reported.ChangedAt)
 
 	return n, nil
 }

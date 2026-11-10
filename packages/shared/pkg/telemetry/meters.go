@@ -47,11 +47,6 @@ const (
 	// node.id and reason: no_capacity (the orchestrator reports no pool
 	// ceiling) | no_page_size. The limit was a no-op for that placement.
 	ApiOrchestratorPlacementsWithoutHugepageCeiling CounterType = "api.orchestrator.placements_without_hugepage_ceiling"
-	// ApiOrchestratorMigrationOutcomes counts the changes migration outcomes
-	// made to sandbox records, by outcome and by action: settle | release |
-	// end, or unheld for a settlement or end that found the record no longer
-	// held.
-	ApiOrchestratorMigrationOutcomes CounterType = "api.orchestrator.migration_outcomes"
 	// ApiSandboxListReads counts sandbox list requests by team and by how the
 	// team's store read was served: disabled (no lag allowed, own read) | read
 	// (started the shared read) | shared (joined one in flight) | hit (a live
@@ -797,6 +792,9 @@ const (
 	SandboxFCBlockIOEngineThrottled     HistogramType = "orchestrator.sandbox.fc.block.io_engine_throttled"
 	SandboxFCBlockRemainingReqs         HistogramType = "orchestrator.sandbox.fc.block.remaining_reqs"
 
+	// Cold-boot InstanceStart latency; Firecracker builds the VM before answering.
+	SandboxFCInstanceStartDuration HistogramType = "orchestrator.sandbox.fc.instance_start.duration"
+
 	SnapshotDiffBytes  HistogramType = "orchestrator.sandbox.snapshot.diff.bytes"
 	SnapshotDiffRatio  HistogramType = "orchestrator.sandbox.snapshot.diff.ratio"
 	SnapshotTotalBytes HistogramType = "orchestrator.sandbox.snapshot.total.bytes"
@@ -910,7 +908,6 @@ var counterDesc = map[CounterType]string{
 	ApiOrchestratorSandboxFeatureUnsupported:     "Sandbox creates refused because no orchestrator in the cluster runs a release implementing a capability the request needs, by feature",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
-	ApiOrchestratorMigrationOutcomes:             "Changes migration outcomes made to sandbox records, by outcome and action (settle | release | end), and settlements or ends that found the record no longer held (unheld).",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
@@ -1404,6 +1401,7 @@ var histogramDesc = map[HistogramType]string{
 	SandboxFCBlockRateLimiterEventCount: "Distribution of Firecracker VMM block rate limiter events per metrics flush",
 	SandboxFCBlockIOEngineThrottled:     "Distribution of Firecracker VMM block ops throttled by io_uring engine per metrics flush",
 	SandboxFCBlockRemainingReqs:         "Distribution of Firecracker VMM block queue remaining-request events per metrics flush",
+	SandboxFCInstanceStartDuration:      "Time Firecracker took to answer InstanceStart on a cold boot, by success",
 
 	SnapshotDiffBytes:  "Per-snapshot dirty/empty bytes per file",
 	SnapshotDiffRatio:  "Per-snapshot dirty/empty as fraction of total mapped size (1.0 = 100%)",
@@ -1498,6 +1496,7 @@ var histogramUnits = map[HistogramType]string{
 	SandboxFCBlockRateLimiterEventCount: "{event}",
 	SandboxFCBlockIOEngineThrottled:     "{op}",
 	SandboxFCBlockRemainingReqs:         "{event}",
+	SandboxFCInstanceStartDuration:      "ms",
 
 	SnapshotDiffBytes:  "{By}",
 	SnapshotDiffRatio:  "{1}",

@@ -15,6 +15,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
 
 // refusingClient answers the first `times` creates with the refusal a node gives
@@ -24,6 +25,27 @@ func refusingClient(creates *atomic.Int64, times int64) *nodemanager.MockSandbox
 		CreateFunc: func() error {
 			if n := creates.Add(1); times < 0 || n <= times {
 				return status.Error(codes.ResourceExhausted, "too many sandboxes starting on this node, please retry")
+			}
+
+			return nil
+		},
+	}
+}
+
+// statusRefusingClient answers the first `times` creates with the refusal of a
+// node whose status admits nothing new (negative: every create), counting them
+// all. The detail is what tells it from a capacity refusal.
+func statusRefusingClient(creates *atomic.Int64, times int64) *nodemanager.MockSandboxClientCustom {
+	return &nodemanager.MockSandboxClientCustom{
+		CreateFunc: func() error {
+			if n := creates.Add(1); times < 0 || n <= times {
+				st, err := status.New(codes.ResourceExhausted, "node is not accepting new sandboxes (status Standby), please retry").
+					WithDetails(&orchestrator.UserError{Code: orchestrator.UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES})
+				if err != nil {
+					return err
+				}
+
+				return st.Err()
 			}
 
 			return nil
@@ -130,4 +152,92 @@ func TestPlaceSandbox_DeadlineEndsRefusalBackoff(t *testing.T) {
 		assert.True(t, result.TimedOut)
 		assert.LessOrEqual(t, creates.Load(), int64(2), "an hour-wide backoff leaves no time for more creates")
 	})
+}
+
+// A node whose status refused a create is left out of the next sample while
+// another candidate exists, so the retry does not go straight back to the
+// parked node. It is not excluded: the sample after that may pick it again.
+func TestPlaceSandbox_StatusRefusedNodeIsSkippedNextSampleWhenOthersExist(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var busyCreates, otherCreates atomic.Int64
+	busy := nodemanager.NewTestNode("busy", api.NodeStatusReady, 0, 8)
+	busy.SetSandboxClient(statusRefusingClient(&busyCreates, 1))
+	other := nodemanager.NewTestNode("other", api.NodeStatusReady, 0, 8)
+	other.SetSandboxClient(refusingClient(&otherCreates, 0))
+	nodes := []*nodemanager.Node{busy, other}
+
+	var picks []string
+	result, err := placeSandbox(ctx, firstNotExcluded(nodes, &picks), nodes, nil, testSbxRequest("sbx-skip"),
+		Requirements{}, false, nil, refusalBackoff{}, time.Time{})
+
+	require.NoError(t, err)
+	assert.Equal(t, other.ID, result.Node.ID)
+	assert.Equal(t, []string{busy.ID, other.ID}, picks)
+	assert.Equal(t, int64(1), busyCreates.Load())
+	assert.Equal(t, int64(1), otherCreates.Load())
+	assert.Zero(t, busy.PlacementMetrics.FailsCount())
+	assert.Zero(t, other.PlacementMetrics.FailsCount())
+}
+
+// A capacity refusal skips nothing: the node that refused stays the first
+// candidate and the paced retry lands on it, as it did before the skip.
+func TestPlaceSandbox_CapacityRefusedNodeIsRetriedNextSample(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var busyCreates, otherCreates atomic.Int64
+	busy := nodemanager.NewTestNode("busy", api.NodeStatusReady, 0, 8)
+	busy.SetSandboxClient(refusingClient(&busyCreates, 1))
+	other := nodemanager.NewTestNode("other", api.NodeStatusReady, 0, 8)
+	other.SetSandboxClient(refusingClient(&otherCreates, 0))
+	nodes := []*nodemanager.Node{busy, other}
+
+	var picks []string
+	result, err := placeSandbox(ctx, firstNotExcluded(nodes, &picks), nodes, nil, testSbxRequest("sbx-capacity"),
+		Requirements{}, false, nil, refusalBackoff{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, busy.ID, result.Node.ID)
+	assert.Equal(t, []string{busy.ID, busy.ID}, picks)
+	assert.Equal(t, int64(2), busyCreates.Load())
+	assert.Zero(t, otherCreates.Load())
+}
+
+// When no other candidate can take the sandbox, the skip is withdrawn and the
+// refusing node is retried, as a single-node cluster is.
+func TestPlaceSandbox_StatusRefusedNodeIsRetriedWhenOthersCannotTakeIt(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var creates atomic.Int64
+	busy := nodemanager.NewTestNode("busy", api.NodeStatusReady, 0, 8)
+	busy.SetSandboxClient(statusRefusingClient(&creates, 1))
+	small := nodemanager.NewTestNode("small", api.NodeStatusReady, 0, 8)
+	nodes := []*nodemanager.Node{busy, small}
+
+	// The small node never fits the sandbox: a sample without the busy node finds nothing.
+	var picks []string
+	onlyBusyFits := stubAlgorithm{choose: func(excluded map[string]struct{}) (*nodemanager.Node, error) {
+		if _, ok := excluded[busy.ID]; ok {
+			return nil, FailedToPlaceSandboxError{}
+		}
+		picks = append(picks, busy.ID)
+
+		return busy, nil
+	}}
+
+	result, err := placeSandbox(ctx, onlyBusyFits, nodes, nil, testSbxRequest("sbx-only-fit"),
+		Requirements{}, false, nil, refusalBackoff{}, time.Time{})
+
+	require.NoError(t, err)
+	assert.Equal(t, busy.ID, result.Node.ID)
+	assert.Equal(t, []string{busy.ID, busy.ID}, picks)
+	assert.Equal(t, int64(2), creates.Load())
 }

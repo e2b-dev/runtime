@@ -31,7 +31,16 @@ var ApiNodeToOrchestratorStateMapper = map[api.NodeStatus]orchestratorinfo.Servi
 
 type StatusInfo struct {
 	Status    api.NodeStatus
+	Owner     string
 	ChangedAt time.Time
+}
+
+// StatusChange is a status override for the node. A Standby records its owner
+// and a release has to carry it; Force bypasses the owner rules.
+type StatusChange struct {
+	Status api.NodeStatus
+	Owner  string
+	Force  bool
 }
 
 func (n *Node) Status() api.NodeStatus {
@@ -61,18 +70,18 @@ func (n *Node) StatusInfo() StatusInfo {
 		}
 	}
 
-	return StatusInfo{Status: status, ChangedAt: n.status.ChangedAt}
+	return StatusInfo{Status: status, Owner: n.status.Owner, ChangedAt: n.status.ChangedAt}
 }
 
-func (n *Node) setStatus(ctx context.Context, status api.NodeStatus, changedAt time.Time) {
+func (n *Node) setStatus(ctx context.Context, status api.NodeStatus, owner string, changedAt time.Time) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 
 	if n.status.Status != status {
-		logger.L().Info(ctx, "NodeID status changed", logger.WithNodeID(n.ID), zap.String("status", string(status)), zap.String("backend", n.Backend))
+		logger.L().Info(ctx, "NodeID status changed", logger.WithNodeID(n.ID), zap.String("status", string(status)), zap.String("owner", owner), zap.String("backend", n.Backend))
 	}
 
-	n.status = StatusInfo{Status: status, ChangedAt: changedAt}
+	n.status = StatusInfo{Status: status, Owner: owner, ChangedAt: changedAt}
 }
 
 // markUnhealthyLocal marks the node as unhealthy based on a local observation.
@@ -87,7 +96,8 @@ func (n *Node) markUnhealthyLocal(ctx context.Context) {
 	}
 
 	logger.L().Info(ctx, "NodeID status changed", logger.WithNodeID(n.ID), zap.String("status", string(api.NodeStatusUnhealthy)), zap.String("backend", n.Backend))
-	n.status = StatusInfo{Status: api.NodeStatusUnhealthy, ChangedAt: time.Now()}
+	// The owner is what the node recorded; this replica's view of its reachability does not change it.
+	n.status = StatusInfo{Status: api.NodeStatusUnhealthy, Owner: n.status.Owner, ChangedAt: time.Now()}
 }
 
 // markReachable records that the node answered this replica, clearing any
@@ -138,28 +148,61 @@ func (n *Node) UnreachableSince() (time.Time, bool) {
 	return n.unreachableSince, !n.unreachableSince.IsZero()
 }
 
-func (n *Node) SendStatusChange(ctx context.Context, s api.NodeStatus) error {
-	if s == api.NodeStatusShuttingDown {
+func (n *Node) SendStatusChange(ctx context.Context, change StatusChange) error {
+	if change.Status == api.NodeStatusShuttingDown {
 		return grpcstatus.Error(codes.FailedPrecondition, "shutting_down can only be entered during process shutdown")
 	}
-	if s == api.NodeStatusNotReady {
+	if change.Status == api.NodeStatusNotReady {
 		return grpcstatus.Error(codes.FailedPrecondition, "not_ready can only be entered during process startup")
 	}
 
-	nodeStatus, ok := ApiNodeToOrchestratorStateMapper[s]
+	nodeStatus, ok := ApiNodeToOrchestratorStateMapper[change.Status]
 	if !ok {
-		logger.L().Error(ctx, "Unknown service info status", zap.String("status", string(s)), logger.WithNodeID(n.ID))
+		logger.L().Error(ctx, "Unknown service info status", zap.String("status", string(change.Status)), logger.WithNodeID(n.ID))
 
-		return fmt.Errorf("unknown service info status: %s", s)
+		return fmt.Errorf("unknown service info status: %s", change.Status)
 	}
 
 	client, ctx := n.GetClient(ctx)
-	_, err := client.Info.ServiceStatusOverride(ctx, &orchestratorinfo.ServiceStatusChangeRequest{ServiceStatus: nodeStatus})
+	_, err := client.Info.ServiceStatusOverride(ctx, &orchestratorinfo.ServiceStatusChangeRequest{ServiceStatus: nodeStatus, Owner: change.Owner, Force: change.Force})
 	if err != nil {
 		logger.L().Error(ctx, "Failed to send status change", zap.Error(err))
 
 		return err
 	}
 
+	// The node took the change, so show it now rather than at the next sync,
+	// which overwrites both from the node's report. Only a Standby keeps an
+	// owner, and a repeated change keeps its time.
+	owner := ""
+	if change.Status == api.NodeStatusStandby {
+		owner = change.Owner
+	}
+	n.mutex.RLock()
+	current := n.status
+	n.mutex.RUnlock()
+	changedAt := time.Now()
+	if current.Status == change.Status && current.Owner == owner {
+		changedAt = current.ChangedAt
+	}
+	n.setStatus(ctx, change.Status, owner, changedAt)
+
 	return nil
+}
+
+// reportedStatus is the status a node's report maps to, Unhealthy for one
+// this build does not know, with the owner and change time it carries.
+func reportedStatus(ctx context.Context, nodeID string, info *orchestratorinfo.ServiceInfoResponse) StatusInfo {
+	status, ok := OrchestratorToApiNodeStateMapper[info.GetServiceStatus()]
+	if !ok {
+		logger.L().Error(ctx, "Unknown service info status", zap.String("status", info.GetServiceStatus().String()), logger.WithNodeID(nodeID))
+		status = api.NodeStatusUnhealthy
+	}
+
+	var changedAt time.Time
+	if ts := info.GetServiceStatusChangedAt(); ts.IsValid() {
+		changedAt = ts.AsTime()
+	}
+
+	return StatusInfo{Status: status, Owner: info.GetStatusOwner(), ChangedAt: changedAt}
 }

@@ -275,13 +275,15 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		return nil, err
 	}
 
-	// A node that is not Healthy admits nothing new. The bare ResourceExhausted
-	// makes the caller retry elsewhere without excluding this node; a UserError
-	// detail would make it give up.
+	// A node that is not Healthy admits nothing new. The ResourceExhausted
+	// makes the caller retry elsewhere without excluding this node; its detail
+	// tells a status refusal, which lasts until the node is set Healthy, from
+	// a capacity refusal, which the caller retries on the same node. Only the
+	// SANDBOX_CREATE_REFUSED detail makes the caller give up.
 	if snap := s.info.Snapshot(); snap.Status != orchestratorinfo.ServiceInfoStatus_Healthy {
 		telemetry.ReportEvent(ctx, "create refused by node status")
 
-		return nil, status.Errorf(codes.ResourceExhausted, "node is not accepting new sandboxes (status %s), please retry", snap.Status)
+		return nil, nodeNotAcceptingStatus(snap.Status).Err()
 	}
 
 	// Check the limit while taking the ID so in-flight starts count too.
@@ -3975,6 +3977,22 @@ func checkpointInProgressStatus(code codes.Code, format string, sandboxID string
 	st := status.Newf(code, format, sandboxID)
 	withDetails, err := st.WithDetails(&orchestrator.UserError{
 		Code:       orchestrator.UserErrorCode_CHECKPOINT_IN_PROGRESS,
+		Message:    st.Message(),
+		HttpStatus: http.StatusServiceUnavailable,
+	})
+	if err != nil {
+		return st
+	}
+
+	return withDetails
+}
+
+// nodeNotAcceptingStatus is the refusal of a create on a node whose status
+// admits nothing new, with the detail the API skips the node on.
+func nodeNotAcceptingStatus(nodeStatus orchestratorinfo.ServiceInfoStatus) *status.Status {
+	st := status.Newf(codes.ResourceExhausted, "node is not accepting new sandboxes (status %s), please retry", nodeStatus)
+	withDetails, err := st.WithDetails(&orchestrator.UserError{
+		Code:       orchestrator.UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES,
 		Message:    st.Message(),
 		HttpStatus: http.StatusServiceUnavailable,
 	})

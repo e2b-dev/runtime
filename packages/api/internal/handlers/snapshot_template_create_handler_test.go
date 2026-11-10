@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
@@ -21,6 +22,7 @@ import (
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -86,7 +88,7 @@ func postSnapshot(t *testing.T, backend *snapshotBackendStub, flagOn bool, body 
 	})
 
 	store := &APIStore{snapshotBackendOverride: backend, featureFlags: ff, templateCache: cache}
-	store.PostSandboxesSandboxIDSnapshots(ginCtx, sandboxID)
+	store.PostSandboxesSandboxIDSnapshots(ginCtx, sandboxID, api.PostSandboxesSandboxIDSnapshotsParams{})
 
 	return recorder
 }
@@ -100,6 +102,19 @@ func snapshotErrorCode(t *testing.T, recorder *httptest.ResponseRecorder) string
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
 
 	return body.ErrorCode
+}
+
+// A body that does not parse is answered 400 with Should-Retry: false; the
+// router's schema validator usually rejects it first.
+func TestSnapshotTemplate_MalformedBodyIs400WithoutRetry(t *testing.T) {
+	t.Parallel()
+
+	backend := &snapshotBackendStub{}
+	recorder := postSnapshot(t, backend, true, `{`, nil)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "false", recorder.Header().Get(apierrors.ShouldRetryHeader))
+	assert.Empty(t, backend.created)
 }
 
 // memory:false on a node below the orchestrator version floor is answered 409

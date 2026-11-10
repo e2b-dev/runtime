@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
@@ -277,17 +278,19 @@ func (c *apiClient) setMetrics(ctx context.Context, metricsPath string) error {
 }
 
 func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernelPath string) error {
-	bootSourceConfig := operations.PutGuestBootSourceParams{
-		Context: ctx,
-		Body: &models.BootSource{
-			BootArgs:        kernelArgs,
-			KernelImagePath: &kernelPath,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-boot-source-fc", func(ctx context.Context) error {
+		bootSourceConfig := operations.PutGuestBootSourceParams{
+			Context: ctx,
+			Body: &models.BootSource{
+				BootArgs:        kernelArgs,
+				KernelImagePath: &kernelPath,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestBootSource(&bootSourceConfig)
+		_, err := c.client.Operations.PutGuestBootSource(&bootSourceConfig)
 
-	return err
+		return err
+	})
 }
 
 // setRootfsDrive attaches the rootfs. isRootDevice makes Firecracker name the
@@ -298,28 +301,30 @@ func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernel
 // Firecracker, which reports the backing block device's own logical block
 // size (the NBD device's, 4096) or 512 for a regular file.
 func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEngine *string, rateLimiter *models.RateLimiter, isRootDevice bool, blkSize int64) error {
-	driveID := rootfsDriveID
+	return telemetry.Observe0(ctx, tracer, "set-rootfs-drive-fc", func(ctx context.Context) error {
+		driveID := rootfsDriveID
 
-	driversConfig := operations.PutGuestDriveByIDParams{
-		Context: ctx,
-		DriveID: driveID,
-		Body: &models.Drive{
-			DriveID:      &driveID,
-			PathOnHost:   rootfsPath,
-			IsRootDevice: &isRootDevice,
-			IsReadOnly:   false,
-			IoEngine:     ioEngine,
-			RateLimiter:  rateLimiter,
-			BlkSize:      blkSize,
-		},
-	}
+		driversConfig := operations.PutGuestDriveByIDParams{
+			Context: ctx,
+			DriveID: driveID,
+			Body: &models.Drive{
+				DriveID:      &driveID,
+				PathOnHost:   rootfsPath,
+				IsRootDevice: &isRootDevice,
+				IsReadOnly:   false,
+				IoEngine:     ioEngine,
+				RateLimiter:  rateLimiter,
+				BlkSize:      blkSize,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestDriveByID(&driversConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc drivers config: %w", err)
-	}
+		_, err := c.client.Operations.PutGuestDriveByID(&driversConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc drivers config: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // buildTokenBucket constructs a Firecracker TokenBucket from a TokenBucketConfig.
@@ -414,37 +419,39 @@ func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, confi
 }
 
 func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tapName string, tapMac string, txRateLimiter *models.RateLimiter) error {
-	networkConfig := operations.PutGuestNetworkInterfaceByIDParams{
-		Context: ctx,
-		IfaceID: ifaceID,
-		Body: &models.NetworkInterface{
-			IfaceID:       &ifaceID,
-			GuestMac:      tapMac,
-			HostDevName:   &tapName,
-			TxRateLimiter: txRateLimiter,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "set-network-interface-fc", func(ctx context.Context) error {
+		networkConfig := operations.PutGuestNetworkInterfaceByIDParams{
+			Context: ctx,
+			IfaceID: ifaceID,
+			Body: &models.NetworkInterface{
+				IfaceID:       &ifaceID,
+				GuestMac:      tapMac,
+				HostDevName:   &tapName,
+				TxRateLimiter: txRateLimiter,
+			},
+		}
 
-	_, err := c.client.Operations.PutGuestNetworkInterfaceByID(&networkConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc network config: %w", err)
-	}
+		_, err := c.client.Operations.PutGuestNetworkInterfaceByID(&networkConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc network config: %w", err)
+		}
 
-	mmdsVersion := "V2"
-	mmdsConfig := operations.PutMmdsConfigParams{
-		Context: ctx,
-		Body: &models.MmdsConfig{
-			Version:           &mmdsVersion,
-			NetworkInterfaces: []string{ifaceID},
-		},
-	}
+		mmdsVersion := "V2"
+		mmdsConfig := operations.PutMmdsConfigParams{
+			Context: ctx,
+			Body: &models.MmdsConfig{
+				Version:           &mmdsVersion,
+				NetworkInterfaces: []string{ifaceID},
+			},
+		}
 
-	_, err = c.client.Operations.PutMmdsConfig(&mmdsConfig)
-	if err != nil {
-		return fmt.Errorf("error setting network mmds data: %w", err)
-	}
+		_, err = c.client.Operations.PutMmdsConfig(&mmdsConfig)
+		if err != nil {
+			return fmt.Errorf("error setting network mmds data: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // newMachineConfigBody returns the PUT /machine-config body: the orchestrator's
@@ -468,13 +475,15 @@ func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra
 
 // setMachineConfig sends a body built by newMachineConfigBody.
 func (c *apiClient) setMachineConfig(ctx context.Context, body any) error {
-	params := operations.PutMachineConfigurationParams{Context: ctx}
-	_, err := c.client.Operations.PutMachineConfiguration(&params, withJSONBody(body))
-	if err != nil {
-		return fmt.Errorf("error setting fc machine config: %w", err)
-	}
+	return telemetry.Observe0(ctx, tracer, "set-machine-config-fc", func(ctx context.Context) error {
+		params := operations.PutMachineConfigurationParams{Context: ctx}
+		_, err := c.client.Operations.PutMachineConfiguration(&params, withJSONBody(body))
+		if err != nil {
+			return fmt.Errorf("error setting fc machine config: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // machineConfigModel is the machine configuration body the orchestrator decides.
@@ -567,57 +576,66 @@ func cpuConfigBody(tmpl cputemplate.Template) *models.CPUConfig {
 // setCPUConfig installs a custom CPU template. Firecracker accepts it only before boot,
 // and in either order with PUT /machine-config as long as that omits cpu_template.
 func (c *apiClient) setCPUConfig(ctx context.Context, tmpl cputemplate.Template) error {
-	cpuConfigParams := operations.PutCPUConfigurationParams{
-		Context: ctx,
-		Body:    cpuConfigBody(tmpl),
-	}
+	return telemetry.Observe0(ctx, tracer, "set-cpu-config-fc", func(ctx context.Context) error {
+		cpuConfigParams := operations.PutCPUConfigurationParams{
+			Context: ctx,
+			Body:    cpuConfigBody(tmpl),
+		}
 
-	_, err := c.client.Operations.PutCPUConfiguration(&cpuConfigParams)
-	if err != nil {
-		return fmt.Errorf("error setting fc cpu config (template %s): %w", tmpl.Digest(), err)
-	}
+		_, err := c.client.Operations.PutCPUConfiguration(&cpuConfigParams)
+		if err != nil {
+			return fmt.Errorf("error setting fc cpu config (template %s): %w", tmpl.Digest(), err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // https://github.com/firecracker-microvm/firecracker/blob/main/docs/entropy.md#firecracker-implementation
 func (c *apiClient) setEntropyDevice(ctx context.Context) error {
-	entropyConfig := operations.PutEntropyDeviceParams{
-		Context: ctx,
-		Body: &models.EntropyDevice{
-			RateLimiter: &models.RateLimiter{
-				Bandwidth: &models.TokenBucket{
-					OneTimeBurst: new(entropyOneTimeBurst),
-					Size:         new(entropyBytesSize),
-					RefillTime:   new(entropyRefillTime),
+	return telemetry.Observe0(ctx, tracer, "set-entropy-device-fc", func(ctx context.Context) error {
+		entropyConfig := operations.PutEntropyDeviceParams{
+			Context: ctx,
+			Body: &models.EntropyDevice{
+				RateLimiter: &models.RateLimiter{
+					Bandwidth: &models.TokenBucket{
+						OneTimeBurst: new(entropyOneTimeBurst),
+						Size:         new(entropyBytesSize),
+						RefillTime:   new(entropyRefillTime),
+					},
 				},
 			},
-		},
-	}
+		}
 
-	_, err := c.client.Operations.PutEntropyDevice(&entropyConfig)
-	if err != nil {
-		return fmt.Errorf("error setting fc entropy config: %w", err)
-	}
+		_, err := c.client.Operations.PutEntropyDevice(&entropyConfig)
+		if err != nil {
+			return fmt.Errorf("error setting fc entropy config: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (c *apiClient) startVM(ctx context.Context) error {
-	start := models.InstanceActionInfoActionTypeInstanceStart
-	startActionParams := operations.CreateSyncActionParams{
-		Context: ctx,
-		Info: &models.InstanceActionInfo{
-			ActionType: &start,
-		},
-	}
+	return telemetry.Observe0(ctx, tracer, "start-vm-fc", func(ctx context.Context) error {
+		start := models.InstanceActionInfoActionTypeInstanceStart
+		startActionParams := operations.CreateSyncActionParams{
+			Context: ctx,
+			Info: &models.InstanceActionInfo{
+				ActionType: &start,
+			},
+		}
 
-	_, err := c.client.Operations.CreateSyncAction(&startActionParams)
-	if err != nil {
-		return fmt.Errorf("error starting fc: %w", err)
-	}
+		began := time.Now()
+		_, err := c.client.Operations.CreateSyncAction(&startActionParams)
+		fcInstanceStartDuration.Record(ctx, time.Since(began).Milliseconds(),
+			metric.WithAttributes(attribute.Bool("success", err == nil)))
+		if err != nil {
+			return fmt.Errorf("error starting fc: %w", err)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // installBalloon attaches a zero-MiB balloon device. Individual balloon

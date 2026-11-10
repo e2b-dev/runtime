@@ -211,7 +211,7 @@ Each service reads its configuration from a `.env.local` file in its package dir
 
 # Unit tests that need PostgreSQL
 
-The database tests in `packages/db`, `packages/api`, `packages/dashboard-api` and `packages/local-dev` share one PostgreSQL server, named by `PG_TEST_DATABASE_URL`. Each test gets its own database, copied from a template, and dropped when the test ends. A disposable server tuned for tests keeps them fast:
+The database tests in `packages/db`, `packages/api` and `packages/local-dev` share one PostgreSQL server, named by `PG_TEST_DATABASE_URL`. Each test gets its own database, copied from a template, and dropped when the test ends. A disposable server tuned for tests keeps them fast:
 
 ```bash
 docker run -d --rm --name e2b-test-postgres -p 55432:5432 --tmpfs /var/lib/postgresql \

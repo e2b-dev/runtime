@@ -1,9 +1,8 @@
 #!/usr/bin/env bats
 
-# The dashboard is two services on the host network beside the api: the web
-# UI on 3001 and its backend dashboard-api on 3010. These tests hold the
-# contract the published dashboard image imposes and the guides describe:
-# the runtime URL variables are the image's names, the SDK alias
+# The dashboard is one service on the host network beside the api, the web UI
+# on 3001. These tests hold the contract the published dashboard image imposes
+# and the guides describe: the runtime URL variables are the image's names, the SDK alias
 # E2B_SANDBOX_URL is never set (the image refuses to start on it), the cookie
 # is not marked Secure (plain http), and the sandbox URL the browser uses
 # comes from the E2B_DASHBOARD_HOST knob, localhost by default.
@@ -22,21 +21,18 @@ env_pin() { sed -n "s|^$1=\([^ #]*\).*|\1|p" compose/.env; }
 
 svc() { echo "$RENDERED_JSON" | jq -r ".services[\"$1\"]$2"; }
 
-@test "both dashboard services exist, on the host network, on their pinned images" {
-  [ "$(svc dashboard-api .image)" = "$(env_pin E2B_DASHBOARD_API_IMAGE)" ]
+@test "the dashboard is on the host network, on its pinned image" {
   [ "$(svc dashboard .image)" = "$(env_pin E2B_DASHBOARD_IMAGE)" ]
-  [ "$(svc dashboard-api .network_mode)" = "host" ]
   [ "$(svc dashboard .network_mode)" = "host" ]
 }
 
 @test "the dashboard carries exactly the image's runtime variables" {
   keys="$(svc dashboard '.environment | keys | sort | join(" ")')"
-  [ "$keys" = "DASHBOARD_COOKIE_SECURE E2B_DASHBOARD_API_URL E2B_INFRA_API_URL HOSTNAME PORT PUBLIC_E2B_DOMAIN PUBLIC_SANDBOX_URL" ] || {
+  [ "$keys" = "DASHBOARD_COOKIE_SECURE E2B_INFRA_API_URL HOSTNAME PORT PUBLIC_E2B_DOMAIN PUBLIC_SANDBOX_URL" ] || {
     echo "dashboard env keys are: $keys" >&2; return 1; }
   [ "$(svc dashboard .environment.PORT)" = "3001" ]
   [ "$(svc dashboard .environment.DASHBOARD_COOKIE_SECURE)" = "false" ]
   [ "$(svc dashboard .environment.E2B_INFRA_API_URL)" = "http://127.0.0.1:3000" ]
-  [ "$(svc dashboard .environment.E2B_DASHBOARD_API_URL)" = "http://127.0.0.1:3010" ]
   [ "$(svc dashboard .environment.PUBLIC_E2B_DOMAIN)" = "localhost" ]
 }
 
@@ -47,34 +43,17 @@ svc() { echo "$RENDERED_JSON" | jq -r ".services[\"$1\"]$2"; }
 }
 
 @test "the SDK alias and the build-time names are never set on the dashboard" {
-  for key in E2B_SANDBOX_URL NEXT_PUBLIC_E2B_DOMAIN NEXT_PUBLIC_INFRA_API_URL NEXT_PUBLIC_DASHBOARD_API_URL NEXT_PUBLIC_E2B_SANDBOX_URL; do
+  for key in E2B_SANDBOX_URL NEXT_PUBLIC_E2B_DOMAIN NEXT_PUBLIC_INFRA_API_URL NEXT_PUBLIC_E2B_SANDBOX_URL; do
     [ "$(svc dashboard ".environment | has(\"$key\")")" = "false" ] || { echo "dashboard sets $key" >&2; return 1; }
   done
 }
 
-@test "dashboard-api reaches the stores the api's way and takes the admin token from the seed-state volume" {
-  [ "$(svc dashboard-api .environment.PORT)" = "3010" ]
-  [ "$(svc dashboard-api .environment.POSTGRES_CONNECTION_STRING)" = "$(svc api .environment.POSTGRES_CONNECTION_STRING)" ]
-  [ "$(svc dashboard-api .environment.REDIS_URL)" = "$(svc api .environment.REDIS_URL)" ]
-  [ "$(svc dashboard-api .environment.CLICKHOUSE_CONNECTION_STRING)" = "$(svc api .environment.CLICKHOUSE_CONNECTION_STRING)" ]
-  [ "$(svc dashboard-api '.environment.ADMIN_TOKEN | type, length' | tr '\n' ' ')" = "string 0 " ]
-  [ "$(svc dashboard-api '.volumes[] | select(.target == "/run/e2b") | "\(.source) \(.read_only)"')" = "seed-state true" ]
-  for key in ORY_SDK_URL ORY_PROJECT_API_TOKEN ADMIN_AUTH_PROVIDER_CONFIG; do
-    [ "$(svc dashboard-api ".environment | has(\"$key\")")" = "false" ] || { echo "dashboard-api sets $key" >&2; return 1; }
-  done
-}
-
-@test "start order: dashboard-api after the migrator and the secrets, the dashboard after both apis" {
-  [ "$(svc dashboard-api '.depends_on["db-migrator"].condition')" = "service_completed_successfully" ]
-  [ "$(svc dashboard-api '.depends_on["api-secrets"].condition')" = "service_completed_successfully" ]
-  [ "$(svc dashboard-api '.depends_on.postgres.condition')" = "service_healthy" ]
+@test "start order: the dashboard after the api" {
   [ "$(svc dashboard '.depends_on.api.condition')" = "service_healthy" ]
-  [ "$(svc dashboard '.depends_on["dashboard-api"].condition')" = "service_healthy" ]
   [ "$(svc ready '.depends_on.dashboard.condition')" = "service_healthy" ]
 }
 
-@test "the healthchecks probe the ports the guides name" {
-  [[ "$(svc dashboard-api '.healthcheck.test | join(" ")')" == *"http://127.0.0.1:3010/health"* ]]
+@test "the healthcheck probes the port the guides name" {
   test_cmd="$(svc dashboard '.healthcheck.test | join(" ")')"
   [[ "$test_cmd" == "CMD node -e "* ]]
   [[ "$test_cmd" == *"http://127.0.0.1:3001/api/health"* ]]

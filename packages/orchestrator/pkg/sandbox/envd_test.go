@@ -51,6 +51,12 @@ func TestClassifyEnvdInitExit(t *testing.T) {
 			fmt.Errorf("%w with cause: %w", context.Canceled, ErrFcProcessExited),
 			envdInitExitOther,
 		},
+		{"memory_backend_exited", ErrMemoryBackendExited, envdInitExitOther},
+		{
+			"wrapped_memory_backend_exited",
+			fmt.Errorf("%w with cause: %w", context.Canceled, ErrMemoryBackendExited),
+			envdInitExitOther,
+		},
 		{"other", errors.New("connection refused"), envdInitExitOther},
 	}
 

@@ -135,15 +135,13 @@ func TestHopsReportUnderTheirKeysAndReadTheirFlags(t *testing.T) {
 	flags, source := servicetest.Flags(t)
 	proc, metrics := servicetest.NewProcess(t, flags.StringReader())
 	servicetest.SetFlag(source, "mtls-api-webhooks-client-mode", "on")
-	servicetest.SetFlag(source, "mtls-api-sandbox-migration-client-mode", "on")
 	// A hop with no expected server name refuses an on flip.
 	servicetest.SetFlag(source, "mtls-api-analytics-client-mode", "on")
 
 	_, err := newServiceTLS(proc, cfg.TLSConfig{
-		SecretsStore:     mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/store/sa/store"}},
-		Webhooks:         mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/webhooks/sa/webhooks"}},
-		Orchestrator:     mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/orchestrator/sa/orchestrator"}},
-		SandboxMigration: mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/migrations/sa/migrations"}},
+		SecretsStore: mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/store/sa/store"}},
+		Webhooks:     mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/webhooks/sa/webhooks"}},
+		Orchestrator: mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/orchestrator/sa/orchestrator"}},
 	}, true)
 	require.NoError(t, err)
 
@@ -152,7 +150,6 @@ func TestHopsReportUnderTheirKeysAndReadTheirFlags(t *testing.T) {
 	}
 	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "analytics", "off", mtls.SourceRefused))
 	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "webhooks", "on", mtls.SourceFlag))
-	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "sandbox_migration", "on", mtls.SourceFlag))
 }
 
 // On the public TLS path the collector is not dialled through the hop, so

@@ -53,6 +53,11 @@ enum UserErrorCode {
   // answer its health probe; a snapshot taken now would record a hung agent
   // and never resume. The sandbox keeps running and the pause can be retried.
   ENVD_UNRESPONSIVE = 11;
+  // A sandbox create refused because the node's status admits nothing new
+  // (Standby, Draining, Unhealthy). It clears when the node is set Healthy
+  // again, not on a retry, so the API leaves the node out of its next sample.
+  // A capacity refusal carries no detail and is retried as before.
+  NODE_NOT_ACCEPTING_SANDBOXES = 12;
 }
 
 message UserError {

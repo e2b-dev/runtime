@@ -32,10 +32,11 @@ func statusGateTestServer(t *testing.T) *Server {
 	return s
 }
 
-// A parked node admits nothing new. The refusal is a bare ResourceExhausted,
-// the code the caller retries elsewhere without excluding this node, and it
-// leaves no hold on the ID and no outstanding work behind. Once the owner
-// releases the park, the same create reaches the reservation.
+// A parked node admits nothing new. The refusal is a ResourceExhausted, the
+// code the caller retries elsewhere without excluding this node, with the
+// detail that tells it from a capacity refusal, and it leaves no hold on the
+// ID and no outstanding work behind. Once the owner releases the park, the
+// same create reaches the reservation.
 func TestCreate_RefusesWhileNotHealthy(t *testing.T) {
 	t.Parallel()
 
@@ -47,7 +48,10 @@ func TestCreate_RefusesWhileNotHealthy(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.ResourceExhausted, st.Code())
-	assert.Empty(t, st.Details(), "a UserError detail would make the caller give up on the sandbox")
+	require.Len(t, st.Details(), 1)
+	detail, ok := st.Details()[0].(*orchestrator.UserError)
+	require.True(t, ok)
+	assert.Equal(t, orchestrator.UserErrorCode_NODE_NOT_ACCEPTING_SANDBOXES, detail.GetCode(), "the status detail, not the one the caller gives up on")
 	assert.Zero(t, s.info.OutstandingWork())
 
 	// The refusal left the ID free. This hold stops the next create at the

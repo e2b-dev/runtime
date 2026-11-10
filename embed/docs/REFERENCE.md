@@ -9,8 +9,8 @@ Terraform and Kubernetes.
 ## What runs where
 
 The 4 stores run in containers on a bridge network with their ports on
-`127.0.0.1`. api, client-proxy, dashboard-api, the dashboard and the released
-orchestrator run on the machine's own network, and so does the opt-in
+`127.0.0.1`. api, client-proxy, the dashboard and the released orchestrator
+run on the machine's own network, and so does the opt-in
 collector ([Observability](#observability)). The orchestrator is a host
 process, launched through `nsenter` by a privileged container, the same
 pattern E2B's own Kubernetes deployment uses. Its launcher ends every sandbox
@@ -33,16 +33,14 @@ instead. `ready` is the marker that everything above worked. It is a
 long-running container, not a one-shot, and its readiness is the whole
 stack's.
 
-dashboard-api starts once `db-migrator` and `api-secrets` are done and reaches
-the same stores as the api; the dashboard starts once api and dashboard-api
-are healthy.
+The dashboard starts once api is healthy.
 
 ### Ports on the host network
 
-13 ports listen on every interface of the machine. The SDK needs 3000 and
-3002; a browser needs 3001 for the dashboard. The other 10 must not be
+12 ports listen on every interface of the machine. The SDK needs 3000 and
+3002; a browser needs 3001 for the dashboard. The other 9 must not be
 reachable on any address the machine holds: give it no public address of its
-own, or firewall those 10 ports for that address as well, not only at the
+own, or firewall those 9 ports for that address as well, not only at the
 network edge.
 
 | Port | Service | Reachable from | Purpose |
@@ -51,7 +49,6 @@ network edge.
 | 3001 | dashboard | trusted clients | the web dashboard, for a browser |
 | 3002 | client-proxy | trusted clients | sandbox traffic (header routing) |
 | 3003 | client-proxy | the machine only | health |
-| 3010 | dashboard-api | the machine only | the dashboard's backend |
 | 5007 | orchestrator | the machine only | the orchestrator's proxy into sandboxes, behind 3002 |
 | 5008 | orchestrator | the machine only | **unauthenticated** gRPC control API |
 | 5009 | api | the machine only | internal gRPC |
@@ -79,7 +76,7 @@ log listener is on 30006 (20006 on Kubernetes, for the reason that guide
 gives) and its API on 44313, on Kubernetes only. The 2 pprof endpoints are
 6060 for api and 6061 for the orchestrator. The built-in collector, when it
 runs, listens on 4317 and 13133 ([Observability](#observability)).
-`sudo ss -ltnp` on the machine confirms the split: the 13 ports in the table
+`sudo ss -ltnp` on the machine confirms the split: the 12 ports in the table
 above show a `*:` address, everything here shows `127.0.0.1:`.
 
 ## Observability
@@ -109,12 +106,12 @@ print. None of this needs a collector.
 
 ### The collector setting
 
-api, the orchestrator, client-proxy and dashboard-api carry the platform's
-OpenTelemetry instrumentation, and 1 setting points it at a collector:
+api, the orchestrator and client-proxy carry the platform's OpenTelemetry
+instrumentation, and 1 setting points it at a collector:
 `E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` in [`compose/.env`](../compose/.env), a
-`host:port` the 4 services reach over OTLP/gRPC without TLS. It ships
+`host:port` the 3 services reach over OTLP/gRPC without TLS. It ships
 commented, and empty or absent it exports nothing, which is how the stack runs
-by default. Set, each of the 4 sends its metrics every 15 seconds, its traces
+by default. Set, each of the 3 sends its metrics every 15 seconds, its traces
 and its logs there. api and the orchestrator also export the `e2b.*` product
 metrics on their own: a team's running and created sandboxes, and each
 sandbox's CPU, memory and disk. With no endpoint those exporters time out and
@@ -171,7 +168,7 @@ build logs do not depend on it: they reach ClickHouse through Vector.
 
 ### Ports, Kubernetes and Terraform
 
-4317 and 13133 bind `127.0.0.1` only, so they are not among the 13 ports in
+4317 and 13133 bind `127.0.0.1` only, so they are not among the 12 ports in
 [the host-network table](#ports-on-the-host-network), and no firewall needs
 to change for them.
 
@@ -207,9 +204,7 @@ start into the volume that holds the team key (`/run/e2b/api.env` in
 `seed-state`). Terraform writes generated ones into the instance's `.env` at
 first boot. Kubernetes reads the Secret the install creates. On Compose,
 setting either one in `.env` pins it and leaves the other generated; each
-guide's Secrets section says how to rotate what it holds. dashboard-api
-reads the admin token the same way everywhere, so rotating it means
-recreating dashboard-api as well as the api.
+guide's Secrets section says how to rotate what it holds.
 
 Both are worth guarding. The admin token is admin over the seeded team on
 port 3000 without the team API key, including minting and revoking API keys;
@@ -220,8 +215,8 @@ reaches 3002.
 ## Images and pins
 
 [`compose/.env`](../compose/.env) is the source of truth for every E2B
-version the stack uses: the 5 released E2B service images (api, db-migrator,
-dashboard-api, client-proxy, clickhouse-migrator), the dashboard image, the 3
+version the stack uses: the 4 released E2B service images (api, db-migrator,
+client-proxy, clickhouse-migrator), the dashboard image, the 3
 stack images Embed builds itself, and the 5 Firecracker binaries. The 4 store
 images and the built-in collector's are pinned inline in
 [`compose/compose.yaml`](../compose/compose.yaml) and repeated in the
@@ -235,9 +230,8 @@ registry.
 
 Embed is released at the platform version once that release is tagged.
 That release moves every platform pin in both files to it: api, db-migrator,
-dashboard-api, client-proxy, clickhouse-migrator, the orchestrator and the 3
-stack images, the lines carrying a release marker. A checkout at a release
-therefore names one version everywhere and pulls exactly what that release
+client-proxy, clickhouse-migrator, the orchestrator and the 3 stack images,
+the lines carrying a release marker. A checkout at a release therefore names one version everywhere and pulls exactly what that release
 published; see [RELEASING.md](../../docs/RELEASING.md). envd has its own
 release line, and the kernel, Firecracker and BusyBox are not released here,
 so those 4 are pinned by hand. A bump adds the binary's checksum to
@@ -262,14 +256,14 @@ URLs the guides use give the newest.
 ![Layer map: source files, build definitions, images, services](layer-map.svg)
 
 Top to bottom: the source files, the Dockerfiles that copy them, the images
-(3 built here, 10 pulled ready-made) and the compose services. Arrows in the
+(3 built here, 9 pulled ready-made) and the compose services. Arrows in the
 last band are `depends_on` gates, in start order. The stripe on each service
 says which image it runs. 3 things the picture leaves out: the ClickHouse,
 Vector and collector configs are inlined into
 [`compose/compose.yaml`](../compose/compose.yaml) rather than shipped in an
 image; the 5 Firecracker artifacts never enter an image at all, since
 `fetch-artifacts` writes them onto the machine and the orchestrator reads them
-there; and the opt-in `otel-collector` service, an 11th image pulled
+there; and the opt-in `otel-collector` service, a 10th image pulled
 ready-made, is not drawn.
 
 ## Beyond the first sandbox

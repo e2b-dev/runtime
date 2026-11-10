@@ -25,7 +25,6 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
-	"github.com/e2b-dev/infra/packages/orchestrator/cmd/internal/cmdutil"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
@@ -138,7 +137,7 @@ func main() {
 
 	// Suppress other noisy output unless verbose, but keep std log for fatal errors
 	if !*verbose {
-		cmdutil.SuppressNoisyLogsKeepStdLog()
+		suppressNoisyLogs()
 	}
 
 	ctx := context.Background()
@@ -512,15 +511,15 @@ func printArtifactSizes(ctx context.Context, persistence storage.StorageProvider
 func printLocalFileSizes(basePath, buildID string) {
 	dir := filepath.Join(basePath, buildID)
 
-	for _, a := range cmdutil.MainArtifacts() {
+	for _, a := range mainArtifacts() {
 		path := filepath.Join(dir, a.File)
-		_, actual, err := cmdutil.GetFileSizes(path)
+		actual, err := actualFileSize(path)
 		if err != nil {
 			continue
 		}
 
 		headerPath := filepath.Join(dir, a.HeaderFile)
-		totalSize, blockSize := cmdutil.GetHeaderInfo(headerPath)
+		totalSize, blockSize := headerInfo(headerPath)
 		if totalSize == 0 {
 			fmt.Printf("   %s: %d MB (this layer)\n", a.Name, actual>>20)
 
@@ -532,9 +531,9 @@ func printLocalFileSizes(basePath, buildID string) {
 			a.Name, actual>>20, totalSize>>20, pct, blockSize>>10)
 	}
 
-	for _, a := range cmdutil.SmallArtifacts() {
+	for _, a := range smallArtifacts() {
 		path := filepath.Join(dir, a.File)
-		if actual, err := cmdutil.GetActualFileSize(path); err == nil {
+		if actual, err := actualFileSize(path); err == nil {
 			fmt.Printf("   %s: %d KB\n", a.Name, actual>>10)
 		}
 	}
