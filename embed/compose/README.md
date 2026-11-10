@@ -60,10 +60,10 @@ the hub is [`../README.md`](../README.md).
   a smaller host the first signal is `host-setup` failing with `FIX: give the
   host more memory (12 GiB recommended) or lower HUGEPAGES`. Lower
   `HUGEPAGES` rather than assuming 8 GiB is always enough. Size it by the
-  sandboxes you will run at once: every sandbox takes its guest memory from
-  this reservation as it touches pages, up to its full size (256 of the 2 MiB
-  pages for a 512 MiB `base` sandbox, about 90 while idle), so the default
-  carries eight sandboxes at full memory or about twenty idle ones. Past
+  sandboxes you will run at once: a sandbox reserves its whole guest memory
+  in this pool when it starts, idle or not (256 of the 2 MiB pages for a
+  512 MiB `base` sandbox), so the pool carries `HUGEPAGES` times 2 MiB
+  divided by the sandbox's memory: eight `base` sandboxes by default. Past
   that the stack stays healthy and each create is refused before it starts
   (`CREATE_HUGEPAGE_ADMISSION`) with `500: Failed to place sandbox: this node
   cannot allocate 512 MiB of guest memory in hugepages`, with the sandbox's
@@ -73,7 +73,9 @@ the hub is [`../README.md`](../README.md).
   start and the orchestrator needs no restart. A killed sandbox gives its
   pages back a few hundred milliseconds after the kill returns; a create
   sent in that window is retried on this host until they are back
-  (`CREATE_MEMORY_REFUSAL`) instead of failing.
+  (`CREATE_MEMORY_REFUSAL`) instead of failing. A snapshot of a running
+  sandbox needs that sandbox's memory a second time while it is taken, so
+  leave one sandbox's memory spare if you take them.
 - Outbound HTTPS to Docker Hub, `us-docker.pkg.dev`, `storage.googleapis.com`,
   `github.com` and `raw.githubusercontent.com`. No account and no token:
   every image and binary the stack pulls is public.
@@ -198,6 +200,42 @@ the `env/` directory next to `compose.yaml` yourself, since the two-file
 install does not ship one. It cannot override a key already set in the api
 `environment:` block, because Compose gives `environment:` precedence over
 `env_file`, so change those in `compose.yaml`.
+
+### Limits
+
+The defaults fit a small host. A larger one meets these limits, roughly in
+this order; the last applies at any size:
+
+| Limit | Default | What you see when you reach it | To change it |
+|-------|---------|--------------------------------|--------------|
+| Sandboxes the memory pool holds | `HUGEPAGES` times 2 MiB divided by the sandbox's memory: 8 of `base` | a `500: Failed to place sandbox` that names the sandbox's size ([Requirements](#requirements)) | `HUGEPAGES` in `.env` |
+| Sandboxes the team runs at once | 20 | a 429 whose message says `you have reached the maximum number of concurrent E2B sandboxes (20)` | the database rows below |
+| Sandbox lifetime | 1 hour | `400: Timeout cannot be greater than 1 hours`; a timeout extended later is cut at one hour from the start, without an error | the database rows below |
+| NBD devices | `NBDS_MAX`, 64 | a create waits for a device, then fails ([Everyday commands](#everyday-commands)) | `NBDS_MAX` in `.env`, before the module loads |
+| Network slots kept ready | 132 | creating more than about 130 sandboxes within seconds of killing as many slows down | no setting |
+| Sandboxes on the node | 200 | the create is retried for 70 seconds, then `503: Failed to place sandbox: not enough capacity` | no setting |
+| Sandboxes starting at once | 3 | the creates past three are retried until one of the three finishes, for up to 70 seconds, then the same 503 | no setting |
+
+The JavaScript SDK stops waiting after 60 seconds by default
+(`requestTimeoutMs`), so it reports a timeout in place of those two 503s.
+
+The team's two limits have no setting. They are in the stack's own Postgres:
+one row of defaults, and, on an install upgraded from an early release, a row
+of the team's own that wins over it. This changes both; the second statement
+matches nothing on a newer install. The api applies the change within five
+minutes, and a new lifetime reaches only sandboxes created after it:
+
+```bash
+docker compose exec postgres psql -U postgres \
+  -c "UPDATE public.default_limits SET concurrent_sandboxes = 100, max_length_hours = 24" \
+  -c "UPDATE public.project_limits SET concurrent_sandboxes = 100, max_length_hours = 24"
+```
+
+The network slots are the orchestrator's pool of prepared network namespaces:
+32 new ones and up to 100 returned by sandboxes that ended. A returned slot
+past the hundredth is torn down, and new slots are made one at a time, so a
+workload that kills and recreates more than about 130 sandboxes at once waits
+on that.
 
 ### What runs where
 
