@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewResumeBalloonReportingParams() *ResumeBalloonReportingParams {
-	return &ResumeBalloonReportingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewResumeBalloonReportingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewResumeBalloonReportingParamsWithTimeout creates a new ResumeBalloonReportingParams object
 // with the ability to set a timeout on a request.
 func NewResumeBalloonReportingParamsWithTimeout(timeout time.Duration) *ResumeBalloonReportingParams {
 	return &ResumeBalloonReportingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewResumeBalloonReportingParamsWithContext creates a new ResumeBalloonReportingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [ResumeBalloonReportingParams].
 func NewResumeBalloonReportingParamsWithContext(ctx context.Context) *ResumeBalloonReportingParams {
 	return &ResumeBalloonReportingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ ResumeBalloonReportingParams contains all the parameters to send to the API endp
 	Typically these are written to a http.Request.
 */
 type ResumeBalloonReportingParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the resume balloon reporting params (not the query body).
@@ -77,43 +81,46 @@ func (o *ResumeBalloonReportingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the resume balloon reporting params
+// WithTimeout adds the timeout to the resume balloon reporting params.
 func (o *ResumeBalloonReportingParams) WithTimeout(timeout time.Duration) *ResumeBalloonReportingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the resume balloon reporting params
+// SetTimeout adds the timeout to the resume balloon reporting params.
 func (o *ResumeBalloonReportingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the resume balloon reporting params
+// WithContext adds the context to the resume balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [ResumeBalloonReportingParams].
 func (o *ResumeBalloonReportingParams) WithContext(ctx context.Context) *ResumeBalloonReportingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the resume balloon reporting params
+// SetContext adds the context to the resume balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [ResumeBalloonReportingParams].
 func (o *ResumeBalloonReportingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the resume balloon reporting params
+// WithHTTPClient adds the HTTPClient to the resume balloon reporting params.
 func (o *ResumeBalloonReportingParams) WithHTTPClient(client *http.Client) *ResumeBalloonReportingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the resume balloon reporting params
+// SetHTTPClient adds the HTTPClient to the resume balloon reporting params.
 func (o *ResumeBalloonReportingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *ResumeBalloonReportingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

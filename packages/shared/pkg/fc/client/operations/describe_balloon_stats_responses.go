@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // DescribeBalloonStatsReader is a Reader for the DescribeBalloonStats structure.
@@ -51,11 +50,9 @@ func NewDescribeBalloonStatsOK() *DescribeBalloonStatsOK {
 	return &DescribeBalloonStatsOK{}
 }
 
-/*
-DescribeBalloonStatsOK describes a response with status code 200, with default header values.
-
-The balloon device statistics
-*/
+// DescribeBalloonStatsOK describes a response with status code 200, with default header values.
+//
+// The balloon device statistics
 type DescribeBalloonStatsOK struct {
 	Payload *models.BalloonStats
 }
@@ -121,11 +118,9 @@ func NewDescribeBalloonStatsBadRequest() *DescribeBalloonStatsBadRequest {
 	return &DescribeBalloonStatsBadRequest{}
 }
 
-/*
-DescribeBalloonStatsBadRequest describes a response with status code 400, with default header values.
-
-The balloon device statistics were not enabled when the device was configured.
-*/
+// DescribeBalloonStatsBadRequest describes a response with status code 400, with default header values.
+//
+// The balloon device statistics were not enabled when the device was configured.
 type DescribeBalloonStatsBadRequest struct {
 	Payload *models.Error
 }
@@ -193,11 +188,9 @@ func NewDescribeBalloonStatsDefault(code int) *DescribeBalloonStatsDefault {
 	}
 }
 
-/*
-DescribeBalloonStatsDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// DescribeBalloonStatsDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type DescribeBalloonStatsDefault struct {
 	_statusCode int
 

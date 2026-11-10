@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchMachineConfigurationReader is a Reader for the PatchMachineConfiguration structure.
@@ -51,11 +50,9 @@ func NewPatchMachineConfigurationNoContent() *PatchMachineConfigurationNoContent
 	return &PatchMachineConfigurationNoContent{}
 }
 
-/*
-PatchMachineConfigurationNoContent describes a response with status code 204, with default header values.
-
-Machine Configuration created/updated
-*/
+// PatchMachineConfigurationNoContent describes a response with status code 204, with default header values.
+//
+// Machine Configuration created/updated
 type PatchMachineConfigurationNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPatchMachineConfigurationBadRequest() *PatchMachineConfigurationBadReque
 	return &PatchMachineConfigurationBadRequest{}
 }
 
-/*
-PatchMachineConfigurationBadRequest describes a response with status code 400, with default header values.
-
-Machine Configuration cannot be updated due to bad input
-*/
+// PatchMachineConfigurationBadRequest describes a response with status code 400, with default header values.
+//
+// Machine Configuration cannot be updated due to bad input
 type PatchMachineConfigurationBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPatchMachineConfigurationDefault(code int) *PatchMachineConfigurationDef
 	}
 }
 
-/*
-PatchMachineConfigurationDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchMachineConfigurationDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchMachineConfigurationDefault struct {
 	_statusCode int
 

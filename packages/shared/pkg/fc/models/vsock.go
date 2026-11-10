@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -70,7 +70,7 @@ func (m *Vsock) validateUdsPath(formats strfmt.Registry) error {
 }
 
 // ContextValidate validates this vsock based on context it is used
-func (m *Vsock) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *Vsock) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -79,13 +79,13 @@ func (m *Vsock) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *Vsock) UnmarshalBinary(b []byte) error {
 	var res Vsock
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

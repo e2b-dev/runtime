@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPatchMemoryHotplugParams creates a new PatchMemoryHotplugParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPatchMemoryHotplugParams() *PatchMemoryHotplugParams {
-	return &PatchMemoryHotplugParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPatchMemoryHotplugParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPatchMemoryHotplugParamsWithTimeout creates a new PatchMemoryHotplugParams object
 // with the ability to set a timeout on a request.
 func NewPatchMemoryHotplugParamsWithTimeout(timeout time.Duration) *PatchMemoryHotplugParams {
 	return &PatchMemoryHotplugParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPatchMemoryHotplugParamsWithContext creates a new PatchMemoryHotplugParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchMemoryHotplugParams].
 func NewPatchMemoryHotplugParamsWithContext(ctx context.Context) *PatchMemoryHotplugParams {
 	return &PatchMemoryHotplugParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PatchMemoryHotplugParams contains all the parameters to send to the API endpoint
 */
 type PatchMemoryHotplugParams struct {
 
-	/* Body.
-
-	   Hotpluggable memory size update
-	*/
+	// Body.
+	//
+	// Hotpluggable memory size update
 	Body *models.MemoryHotplugSizeUpdate
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the patch memory hotplug params (not the query body).
@@ -86,54 +88,57 @@ func (o *PatchMemoryHotplugParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the patch memory hotplug params
+// WithTimeout adds the timeout to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) WithTimeout(timeout time.Duration) *PatchMemoryHotplugParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the patch memory hotplug params
+// SetTimeout adds the timeout to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the patch memory hotplug params
+// WithContext adds the context to the patch memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchMemoryHotplugParams].
 func (o *PatchMemoryHotplugParams) WithContext(ctx context.Context) *PatchMemoryHotplugParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the patch memory hotplug params
+// SetContext adds the context to the patch memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchMemoryHotplugParams].
 func (o *PatchMemoryHotplugParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the patch memory hotplug params
+// WithHTTPClient adds the HTTPClient to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) WithHTTPClient(client *http.Client) *PatchMemoryHotplugParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the patch memory hotplug params
+// SetHTTPClient adds the HTTPClient to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the patch memory hotplug params
+// WithBody adds the body to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) WithBody(body *models.MemoryHotplugSizeUpdate) *PatchMemoryHotplugParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the patch memory hotplug params
+// SetBody adds the body to the patch memory hotplug params.
 func (o *PatchMemoryHotplugParams) SetBody(body *models.MemoryHotplugSizeUpdate) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PatchMemoryHotplugParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 )
 
 // MemoryHotplugSizeUpdate An update to the size of the hotpluggable memory region.
@@ -19,12 +19,12 @@ type MemoryHotplugSizeUpdate struct {
 }
 
 // Validate validates this memory hotplug size update
-func (m *MemoryHotplugSizeUpdate) Validate(formats strfmt.Registry) error {
+func (m *MemoryHotplugSizeUpdate) Validate(_ strfmt.Registry) error {
 	return nil
 }
 
 // ContextValidate validates this memory hotplug size update based on context it is used
-func (m *MemoryHotplugSizeUpdate) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *MemoryHotplugSizeUpdate) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -33,13 +33,13 @@ func (m *MemoryHotplugSizeUpdate) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *MemoryHotplugSizeUpdate) UnmarshalBinary(b []byte) error {
 	var res MemoryHotplugSizeUpdate
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

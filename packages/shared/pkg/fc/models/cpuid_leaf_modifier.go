@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -86,7 +87,7 @@ func (m *CpuidLeafModifier) validateModifiers(formats strfmt.Registry) error {
 	}
 
 	for i := 0; i < len(m.Modifiers); i++ {
-		if swag.IsZero(m.Modifiers[i]) { // not required
+		if typeutils.IsZero(m.Modifiers[i]) { // not required
 			continue
 		}
 
@@ -139,8 +140,8 @@ func (m *CpuidLeafModifier) contextValidateModifiers(ctx context.Context, format
 
 		if m.Modifiers[i] != nil {
 
-			if swag.IsZero(m.Modifiers[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.Modifiers[i]) { // not required
+				continue
 			}
 
 			if err := m.Modifiers[i].ContextValidate(ctx, formats); err != nil {
@@ -167,13 +168,13 @@ func (m *CpuidLeafModifier) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *CpuidLeafModifier) UnmarshalBinary(b []byte) error {
 	var res CpuidLeafModifier
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

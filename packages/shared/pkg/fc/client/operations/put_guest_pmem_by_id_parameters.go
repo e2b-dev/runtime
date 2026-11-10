@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutGuestPmemByIDParams creates a new PutGuestPmemByIDParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutGuestPmemByIDParams() *PutGuestPmemByIDParams {
-	return &PutGuestPmemByIDParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutGuestPmemByIDParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutGuestPmemByIDParamsWithTimeout creates a new PutGuestPmemByIDParams object
 // with the ability to set a timeout on a request.
 func NewPutGuestPmemByIDParamsWithTimeout(timeout time.Duration) *PutGuestPmemByIDParams {
 	return &PutGuestPmemByIDParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutGuestPmemByIDParamsWithContext creates a new PutGuestPmemByIDParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestPmemByIDParams].
 func NewPutGuestPmemByIDParamsWithContext(ctx context.Context) *PutGuestPmemByIDParams {
 	return &PutGuestPmemByIDParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,21 +63,19 @@ PutGuestPmemByIDParams contains all the parameters to send to the API endpoint
 */
 type PutGuestPmemByIDParams struct {
 
-	/* Body.
-
-	   Guest pmem device properties
-	*/
+	// Body.
+	//
+	// Guest pmem device properties
 	Body *models.Pmem
 
-	/* ID.
-
-	   The id of the guest pmem device
-	*/
+	// ID.
+	//
+	// The id of the guest pmem device
 	ID string
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put guest pmem by ID params (not the query body).
@@ -92,65 +93,68 @@ func (o *PutGuestPmemByIDParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put guest pmem by ID params
+// WithTimeout adds the timeout to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) WithTimeout(timeout time.Duration) *PutGuestPmemByIDParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put guest pmem by ID params
+// SetTimeout adds the timeout to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put guest pmem by ID params
+// WithContext adds the context to the put guest pmem by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestPmemByIDParams].
 func (o *PutGuestPmemByIDParams) WithContext(ctx context.Context) *PutGuestPmemByIDParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put guest pmem by ID params
+// SetContext adds the context to the put guest pmem by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestPmemByIDParams].
 func (o *PutGuestPmemByIDParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put guest pmem by ID params
+// WithHTTPClient adds the HTTPClient to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) WithHTTPClient(client *http.Client) *PutGuestPmemByIDParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put guest pmem by ID params
+// SetHTTPClient adds the HTTPClient to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put guest pmem by ID params
+// WithBody adds the body to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) WithBody(body *models.Pmem) *PutGuestPmemByIDParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put guest pmem by ID params
+// SetBody adds the body to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) SetBody(body *models.Pmem) {
 	o.Body = body
 }
 
-// WithID adds the id to the put guest pmem by ID params
+// WithID adds the id to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) WithID(id string) *PutGuestPmemByIDParams {
 	o.SetID(id)
 	return o
 }
 
-// SetID adds the id to the put guest pmem by ID params
+// SetID adds the id to the put guest pmem by ID params.
 func (o *PutGuestPmemByIDParams) SetID(id string) {
 	o.ID = id
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutGuestPmemByIDParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

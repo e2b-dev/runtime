@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutMachineConfigurationParams creates a new PutMachineConfigurationParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutMachineConfigurationParams() *PutMachineConfigurationParams {
-	return &PutMachineConfigurationParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutMachineConfigurationParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutMachineConfigurationParamsWithTimeout creates a new PutMachineConfigurationParams object
 // with the ability to set a timeout on a request.
 func NewPutMachineConfigurationParamsWithTimeout(timeout time.Duration) *PutMachineConfigurationParams {
 	return &PutMachineConfigurationParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutMachineConfigurationParamsWithContext creates a new PutMachineConfigurationParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMachineConfigurationParams].
 func NewPutMachineConfigurationParamsWithContext(ctx context.Context) *PutMachineConfigurationParams {
 	return &PutMachineConfigurationParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutMachineConfigurationParams contains all the parameters to send to the API end
 */
 type PutMachineConfigurationParams struct {
 
-	/* Body.
-
-	   Machine Configuration Parameters
-	*/
+	// Body.
+	//
+	// Machine Configuration Parameters
 	Body *models.MachineConfiguration
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put machine configuration params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutMachineConfigurationParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put machine configuration params
+// WithTimeout adds the timeout to the put machine configuration params.
 func (o *PutMachineConfigurationParams) WithTimeout(timeout time.Duration) *PutMachineConfigurationParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put machine configuration params
+// SetTimeout adds the timeout to the put machine configuration params.
 func (o *PutMachineConfigurationParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put machine configuration params
+// WithContext adds the context to the put machine configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMachineConfigurationParams].
 func (o *PutMachineConfigurationParams) WithContext(ctx context.Context) *PutMachineConfigurationParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put machine configuration params
+// SetContext adds the context to the put machine configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMachineConfigurationParams].
 func (o *PutMachineConfigurationParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put machine configuration params
+// WithHTTPClient adds the HTTPClient to the put machine configuration params.
 func (o *PutMachineConfigurationParams) WithHTTPClient(client *http.Client) *PutMachineConfigurationParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put machine configuration params
+// SetHTTPClient adds the HTTPClient to the put machine configuration params.
 func (o *PutMachineConfigurationParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put machine configuration params
+// WithBody adds the body to the put machine configuration params.
 func (o *PutMachineConfigurationParams) WithBody(body *models.MachineConfiguration) *PutMachineConfigurationParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put machine configuration params
+// SetBody adds the body to the put machine configuration params.
 func (o *PutMachineConfigurationParams) SetBody(body *models.MachineConfiguration) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutMachineConfigurationParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

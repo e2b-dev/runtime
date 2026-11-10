@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchGuestNetworkInterfaceByIDReader is a Reader for the PatchGuestNetworkInterfaceByID structure.
@@ -51,11 +50,9 @@ func NewPatchGuestNetworkInterfaceByIDNoContent() *PatchGuestNetworkInterfaceByI
 	return &PatchGuestNetworkInterfaceByIDNoContent{}
 }
 
-/*
-PatchGuestNetworkInterfaceByIDNoContent describes a response with status code 204, with default header values.
-
-Network interface updated
-*/
+// PatchGuestNetworkInterfaceByIDNoContent describes a response with status code 204, with default header values.
+//
+// Network interface updated
 type PatchGuestNetworkInterfaceByIDNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPatchGuestNetworkInterfaceByIDBadRequest() *PatchGuestNetworkInterfaceBy
 	return &PatchGuestNetworkInterfaceByIDBadRequest{}
 }
 
-/*
-PatchGuestNetworkInterfaceByIDBadRequest describes a response with status code 400, with default header values.
-
-Network interface cannot be updated due to bad input
-*/
+// PatchGuestNetworkInterfaceByIDBadRequest describes a response with status code 400, with default header values.
+//
+// Network interface cannot be updated due to bad input
 type PatchGuestNetworkInterfaceByIDBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPatchGuestNetworkInterfaceByIDDefault(code int) *PatchGuestNetworkInterf
 	}
 }
 
-/*
-PatchGuestNetworkInterfaceByIDDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchGuestNetworkInterfaceByIDDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchGuestNetworkInterfaceByIDDefault struct {
 	_statusCode int
 

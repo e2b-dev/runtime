@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetMemoryHotplugReader is a Reader for the GetMemoryHotplug structure.
@@ -45,11 +44,9 @@ func NewGetMemoryHotplugOK() *GetMemoryHotplugOK {
 	return &GetMemoryHotplugOK{}
 }
 
-/*
-GetMemoryHotplugOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetMemoryHotplugOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetMemoryHotplugOK struct {
 	Payload *models.MemoryHotplugStatus
 }
@@ -117,11 +114,9 @@ func NewGetMemoryHotplugDefault(code int) *GetMemoryHotplugDefault {
 	}
 }
 
-/*
-GetMemoryHotplugDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetMemoryHotplugDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetMemoryHotplugDefault struct {
 	_statusCode int
 

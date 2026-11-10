@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -113,7 +114,7 @@ func (m *Drive) validateCacheTypeEnum(path, location string, value string) error
 }
 
 func (m *Drive) validateCacheType(formats strfmt.Registry) error {
-	if swag.IsZero(m.CacheType) { // not required
+	if typeutils.IsZero(m.CacheType) { // not required
 		return nil
 	}
 
@@ -164,7 +165,7 @@ func (m *Drive) validateIoEngineEnum(path, location string, value string) error 
 }
 
 func (m *Drive) validateIoEngine(formats strfmt.Registry) error {
-	if swag.IsZero(m.IoEngine) { // not required
+	if typeutils.IsZero(m.IoEngine) { // not required
 		return nil
 	}
 
@@ -186,7 +187,7 @@ func (m *Drive) validateIsRootDevice(formats strfmt.Registry) error {
 }
 
 func (m *Drive) validateRateLimiter(formats strfmt.Registry) error {
-	if swag.IsZero(m.RateLimiter) { // not required
+	if typeutils.IsZero(m.RateLimiter) { // not required
 		return nil
 	}
 
@@ -226,7 +227,7 @@ func (m *Drive) contextValidateRateLimiter(ctx context.Context, formats strfmt.R
 
 	if m.RateLimiter != nil {
 
-		if swag.IsZero(m.RateLimiter) { // not required
+		if typeutils.IsZero(m.RateLimiter) { // not required
 			return nil
 		}
 
@@ -252,13 +253,13 @@ func (m *Drive) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *Drive) UnmarshalBinary(b []byte) error {
 	var res Drive
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

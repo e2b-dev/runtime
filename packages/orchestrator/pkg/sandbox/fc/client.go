@@ -7,13 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/RoaringBitmap/roaring/v2"
-	"github.com/firecracker-microvm/firecracker-go-sdk"
 	openapiruntime "github.com/go-openapi/runtime"
+	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -64,13 +66,17 @@ type apiClient struct {
 }
 
 func newApiClient(socketPath string) *apiClient {
-	client := client.NewHTTPClient(strfmt.NewFormats())
+	transport := httptransport.New(client.DefaultHost, client.DefaultBasePath, client.DefaultSchemes)
+	transport.Transport = &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
 
-	transport := firecracker.NewUnixSocketTransport(socketPath, nil, false)
-	client.SetTransport(transport)
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
 
 	return &apiClient{
-		client: client,
+		client: client.New(transport, strfmt.NewFormats()),
 	}
 }
 
@@ -125,11 +131,10 @@ func (c *apiClient) loadSnapshot(
 	}
 
 	snapshotConfig := operations.LoadSnapshotParams{
-		Context: ctx,
-		Body:    body,
+		Body: body,
 	}
 
-	_, err := c.client.Operations.LoadSnapshot(&snapshotConfig)
+	_, err := c.client.Operations.LoadSnapshotContext(ctx, &snapshotConfig)
 	if err != nil {
 		reason := classifySnapshotLoadFailure(err)
 		fcSnapshotLoadFailures.Add(ctx, 1, metric.WithAttributes(
@@ -162,13 +167,12 @@ func (c *apiClient) resumeVM(ctx context.Context) error {
 
 	state := models.VMStateResumed
 	pauseConfig := operations.PatchVMParams{
-		Context: ctx,
 		Body: &models.VM{
 			State: &state,
 		},
 	}
 
-	_, err := c.client.Operations.PatchVM(&pauseConfig)
+	_, err := c.client.Operations.PatchVMContext(ctx, &pauseConfig)
 	if err != nil {
 		return fmt.Errorf("error resuming vm: %w", err)
 	}
@@ -179,13 +183,12 @@ func (c *apiClient) resumeVM(ctx context.Context) error {
 func (c *apiClient) pauseVM(ctx context.Context) error {
 	state := models.VMStatePaused
 	pauseConfig := operations.PatchVMParams{
-		Context: ctx,
 		Body: &models.VM{
 			State: &state,
 		},
 	}
 
-	_, err := c.client.Operations.PatchVM(&pauseConfig)
+	_, err := c.client.Operations.PatchVMContext(ctx, &pauseConfig)
 	if err != nil {
 		return fmt.Errorf("error pausing vm: %w", err)
 	}
@@ -198,14 +201,13 @@ func (c *apiClient) createSnapshot(
 	snapfilePath string,
 ) error {
 	snapshotConfig := operations.CreateSnapshotParams{
-		Context: ctx,
 		Body: &models.SnapshotCreateParams{
 			SnapshotType: models.SnapshotCreateParamsSnapshotTypeFull,
 			SnapshotPath: &snapfilePath,
 		},
 	}
 
-	_, err := c.client.Operations.CreateSnapshot(&snapshotConfig)
+	_, err := c.client.Operations.CreateSnapshotContext(ctx, &snapshotConfig)
 	if err != nil {
 		return fmt.Errorf("error creating snapshot: %w", err)
 	}
@@ -218,11 +220,10 @@ func (c *apiClient) setMmds(ctx context.Context, metadata *MmdsMetadata) error {
 	defer span.End()
 
 	mmdsConfig := operations.PutMmdsParams{
-		Context: ctx,
-		Body:    metadata,
+		Body: metadata,
 	}
 
-	_, err := c.client.Operations.PutMmds(&mmdsConfig)
+	_, err := c.client.Operations.PutMmdsContext(ctx, &mmdsConfig)
 	if err != nil {
 		return fmt.Errorf("error setting mmds data: %w", err)
 	}
@@ -245,13 +246,12 @@ func mmdsStoreMissing(err error) bool {
 func (c *apiClient) flushMetrics(ctx context.Context) error {
 	action := models.InstanceActionInfoActionTypeFlushMetrics
 	params := operations.CreateSyncActionParams{
-		Context: ctx,
 		Info: &models.InstanceActionInfo{
 			ActionType: &action,
 		},
 	}
 
-	_, err := c.client.Operations.CreateSyncAction(&params)
+	_, err := c.client.Operations.CreateSyncActionContext(ctx, &params)
 	if err != nil {
 		return fmt.Errorf("error flushing fc metrics: %w", err)
 	}
@@ -262,13 +262,12 @@ func (c *apiClient) flushMetrics(ctx context.Context) error {
 func (c *apiClient) setMetrics(ctx context.Context, metricsPath string) error {
 	return telemetry.Observe0(ctx, tracer, "set-metrics-fc", func(ctx context.Context) error {
 		params := operations.PutMetricsParams{
-			Context: ctx,
 			Body: &models.Metrics{
 				MetricsPath: &metricsPath,
 			},
 		}
 
-		_, err := c.client.Operations.PutMetrics(&params)
+		_, err := c.client.Operations.PutMetricsContext(ctx, &params)
 		if err != nil {
 			return fmt.Errorf("error setting fc metrics: %w", err)
 		}
@@ -280,14 +279,13 @@ func (c *apiClient) setMetrics(ctx context.Context, metricsPath string) error {
 func (c *apiClient) setBootSource(ctx context.Context, kernelArgs string, kernelPath string) error {
 	return telemetry.Observe0(ctx, tracer, "set-boot-source-fc", func(ctx context.Context) error {
 		bootSourceConfig := operations.PutGuestBootSourceParams{
-			Context: ctx,
 			Body: &models.BootSource{
 				BootArgs:        kernelArgs,
 				KernelImagePath: &kernelPath,
 			},
 		}
 
-		_, err := c.client.Operations.PutGuestBootSource(&bootSourceConfig)
+		_, err := c.client.Operations.PutGuestBootSourceContext(ctx, &bootSourceConfig)
 
 		return err
 	})
@@ -305,7 +303,6 @@ func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEng
 		driveID := rootfsDriveID
 
 		driversConfig := operations.PutGuestDriveByIDParams{
-			Context: ctx,
 			DriveID: driveID,
 			Body: &models.Drive{
 				DriveID:      &driveID,
@@ -318,7 +315,7 @@ func (c *apiClient) setRootfsDrive(ctx context.Context, rootfsPath string, ioEng
 			},
 		}
 
-		_, err := c.client.Operations.PutGuestDriveByID(&driversConfig)
+		_, err := c.client.Operations.PutGuestDriveByIDContext(ctx, &driversConfig)
 		if err != nil {
 			return fmt.Errorf("error setting fc drivers config: %w", err)
 		}
@@ -372,7 +369,6 @@ func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config R
 		}
 
 		params := operations.PatchGuestNetworkInterfaceByIDParams{
-			Context: ctx,
 			IfaceID: ifaceID,
 			Body: &models.PartialNetworkInterface{
 				IfaceID:       &ifaceID,
@@ -380,7 +376,7 @@ func (c *apiClient) setTxRateLimit(ctx context.Context, ifaceID string, config R
 			},
 		}
 
-		_, err := c.client.Operations.PatchGuestNetworkInterfaceByID(&params)
+		_, err := c.client.Operations.PatchGuestNetworkInterfaceByIDContext(ctx, &params)
 		if err != nil {
 			return fmt.Errorf("error setting TX rate limit: %w", err)
 		}
@@ -401,7 +397,6 @@ func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, confi
 		}
 
 		params := operations.PatchGuestDriveByIDParams{
-			Context: ctx,
 			DriveID: driveID,
 			Body: &models.PartialDrive{
 				DriveID:     &driveID,
@@ -409,7 +404,7 @@ func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, confi
 			},
 		}
 
-		_, err := c.client.Operations.PatchGuestDriveByID(&params)
+		_, err := c.client.Operations.PatchGuestDriveByIDContext(ctx, &params)
 		if err != nil {
 			return fmt.Errorf("error setting drive rate limit: %w", err)
 		}
@@ -421,7 +416,6 @@ func (c *apiClient) setDriveRateLimit(ctx context.Context, driveID string, confi
 func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tapName string, tapMac string, txRateLimiter *models.RateLimiter) error {
 	return telemetry.Observe0(ctx, tracer, "set-network-interface-fc", func(ctx context.Context) error {
 		networkConfig := operations.PutGuestNetworkInterfaceByIDParams{
-			Context: ctx,
 			IfaceID: ifaceID,
 			Body: &models.NetworkInterface{
 				IfaceID:       &ifaceID,
@@ -431,21 +425,20 @@ func (c *apiClient) setNetworkInterface(ctx context.Context, ifaceID string, tap
 			},
 		}
 
-		_, err := c.client.Operations.PutGuestNetworkInterfaceByID(&networkConfig)
+		_, err := c.client.Operations.PutGuestNetworkInterfaceByIDContext(ctx, &networkConfig)
 		if err != nil {
 			return fmt.Errorf("error setting fc network config: %w", err)
 		}
 
 		mmdsVersion := "V2"
 		mmdsConfig := operations.PutMmdsConfigParams{
-			Context: ctx,
 			Body: &models.MmdsConfig{
 				Version:           &mmdsVersion,
 				NetworkInterfaces: []string{ifaceID},
 			},
 		}
 
-		_, err = c.client.Operations.PutMmdsConfig(&mmdsConfig)
+		_, err = c.client.Operations.PutMmdsConfigContext(ctx, &mmdsConfig)
 		if err != nil {
 			return fmt.Errorf("error setting network mmds data: %w", err)
 		}
@@ -476,8 +469,8 @@ func newMachineConfigBody(vCPUCount int64, memoryMB int64, hugePages bool, extra
 // setMachineConfig sends a body built by newMachineConfigBody.
 func (c *apiClient) setMachineConfig(ctx context.Context, body any) error {
 	return telemetry.Observe0(ctx, tracer, "set-machine-config-fc", func(ctx context.Context) error {
-		params := operations.PutMachineConfigurationParams{Context: ctx}
-		_, err := c.client.Operations.PutMachineConfiguration(&params, withJSONBody(body))
+		params := operations.PutMachineConfigurationParams{}
+		_, err := c.client.Operations.PutMachineConfigurationContext(ctx, &params, withJSONBody(body))
 		if err != nil {
 			return fmt.Errorf("error setting fc machine config: %w", err)
 		}
@@ -554,9 +547,8 @@ func withJSONBody(body any) operations.ClientOption {
 // the snapshot does not record it, and a PATCH carrying only this field
 // leaves the load allowed.
 func (c *apiClient) setACPIPowerOff(ctx context.Context) error {
-	_, err := c.client.Operations.PatchMachineConfiguration(&operations.PatchMachineConfigurationParams{
-		Context: ctx,
-		Body:    &models.MachineConfiguration{AcpiPoweroff: true},
+	_, err := c.client.Operations.PatchMachineConfigurationContext(ctx, &operations.PatchMachineConfigurationParams{
+		Body: &models.MachineConfiguration{AcpiPoweroff: true},
 	})
 	if err != nil {
 		return fmt.Errorf("error setting fc acpi power-off: %w", err)
@@ -578,11 +570,10 @@ func cpuConfigBody(tmpl cputemplate.Template) *models.CPUConfig {
 func (c *apiClient) setCPUConfig(ctx context.Context, tmpl cputemplate.Template) error {
 	return telemetry.Observe0(ctx, tracer, "set-cpu-config-fc", func(ctx context.Context) error {
 		cpuConfigParams := operations.PutCPUConfigurationParams{
-			Context: ctx,
-			Body:    cpuConfigBody(tmpl),
+			Body: cpuConfigBody(tmpl),
 		}
 
-		_, err := c.client.Operations.PutCPUConfiguration(&cpuConfigParams)
+		_, err := c.client.Operations.PutCPUConfigurationContext(ctx, &cpuConfigParams)
 		if err != nil {
 			return fmt.Errorf("error setting fc cpu config (template %s): %w", tmpl.Digest(), err)
 		}
@@ -595,7 +586,6 @@ func (c *apiClient) setCPUConfig(ctx context.Context, tmpl cputemplate.Template)
 func (c *apiClient) setEntropyDevice(ctx context.Context) error {
 	return telemetry.Observe0(ctx, tracer, "set-entropy-device-fc", func(ctx context.Context) error {
 		entropyConfig := operations.PutEntropyDeviceParams{
-			Context: ctx,
 			Body: &models.EntropyDevice{
 				RateLimiter: &models.RateLimiter{
 					Bandwidth: &models.TokenBucket{
@@ -607,7 +597,7 @@ func (c *apiClient) setEntropyDevice(ctx context.Context) error {
 			},
 		}
 
-		_, err := c.client.Operations.PutEntropyDevice(&entropyConfig)
+		_, err := c.client.Operations.PutEntropyDeviceContext(ctx, &entropyConfig)
 		if err != nil {
 			return fmt.Errorf("error setting fc entropy config: %w", err)
 		}
@@ -617,7 +607,7 @@ func (c *apiClient) setEntropyDevice(ctx context.Context) error {
 }
 
 func (c *apiClient) getMemoryHotplug(ctx context.Context) (*models.MemoryHotplugStatus, error) {
-	res, err := c.client.Operations.GetMemoryHotplug(&operations.GetMemoryHotplugParams{Context: ctx})
+	res, err := c.client.Operations.GetMemoryHotplugContext(ctx, &operations.GetMemoryHotplugParams{})
 	if err != nil {
 		return nil, fmt.Errorf("error getting memory hotplug: %w", err)
 	}
@@ -626,8 +616,7 @@ func (c *apiClient) getMemoryHotplug(ctx context.Context) (*models.MemoryHotplug
 }
 
 func (c *apiClient) setMemoryHotplug(ctx context.Context, totalMib int64) error {
-	_, err := c.client.Operations.PutMemoryHotplug(&operations.PutMemoryHotplugParams{
-		Context: ctx,
+	_, err := c.client.Operations.PutMemoryHotplugContext(ctx, &operations.PutMemoryHotplugParams{
 		Body: &models.MemoryHotplugConfig{
 			TotalSizeMib: totalMib,
 			BlockSizeMib: MemoryHotplugBlockMiB,
@@ -645,14 +634,13 @@ func (c *apiClient) startVM(ctx context.Context) error {
 	return telemetry.Observe0(ctx, tracer, "start-vm-fc", func(ctx context.Context) error {
 		start := models.InstanceActionInfoActionTypeInstanceStart
 		startActionParams := operations.CreateSyncActionParams{
-			Context: ctx,
 			Info: &models.InstanceActionInfo{
 				ActionType: &start,
 			},
 		}
 
 		began := time.Now()
-		_, err := c.client.Operations.CreateSyncAction(&startActionParams)
+		_, err := c.client.Operations.CreateSyncActionContext(ctx, &startActionParams)
 		fcInstanceStartDuration.Record(ctx, time.Since(began).Milliseconds(),
 			metric.WithAttributes(attribute.Bool("success", err == nil)))
 		if err != nil {
@@ -674,7 +662,6 @@ func (c *apiClient) installBalloon(ctx context.Context, freePageReporting, freeP
 	deflateOnOom := false
 
 	balloonConfig := operations.PutBalloonParams{
-		Context: ctx,
 		Body: &models.Balloon{
 			AmountMib:         &amountMib,
 			DeflateOnOom:      &deflateOnOom,
@@ -683,7 +670,7 @@ func (c *apiClient) installBalloon(ctx context.Context, freePageReporting, freeP
 		},
 	}
 
-	_, err := c.client.Operations.PutBalloon(&balloonConfig)
+	_, err := c.client.Operations.PutBalloonContext(ctx, &balloonConfig)
 	if err != nil {
 		return fmt.Errorf("error installing balloon device: %w", err)
 	}
@@ -703,10 +690,9 @@ func swaggerSuccess(err error) bool {
 
 func (c *apiClient) startBalloonHinting(ctx context.Context, acknowledgeOnStop bool) error {
 	params := operations.StartBalloonHintingParams{
-		Context: ctx,
-		Body:    &models.BalloonStartCmd{AcknowledgeOnStop: acknowledgeOnStop},
+		Body: &models.BalloonStartCmd{AcknowledgeOnStop: acknowledgeOnStop},
 	}
-	_, err := c.client.Operations.StartBalloonHinting(&params)
+	_, err := c.client.Operations.StartBalloonHintingContext(ctx, &params)
 	if err != nil {
 		if swaggerSuccess(err) {
 			return nil
@@ -723,8 +709,8 @@ func (c *apiClient) startBalloonHinting(ctx context.Context, acknowledgeOnStop b
 var errHintingStopRefused = errors.New("balloon hinting stop refused")
 
 func (c *apiClient) stopBalloonHinting(ctx context.Context) error {
-	params := operations.StopBalloonHintingParams{Context: ctx}
-	if _, err := c.client.Operations.StopBalloonHinting(&params); err != nil {
+	params := operations.StopBalloonHintingParams{}
+	if _, err := c.client.Operations.StopBalloonHintingContext(ctx, &params); err != nil {
 		if swaggerSuccess(err) {
 			return nil
 		}
@@ -744,8 +730,8 @@ func (c *apiClient) stopBalloonHinting(ctx context.Context) error {
 // guarantee no REMOVE-style discard fires while a CoW window captures guest
 // memory. Idempotent.
 func (c *apiClient) pauseFreePageReporting(ctx context.Context) error {
-	params := operations.PauseBalloonReportingParams{Context: ctx}
-	if _, err := c.client.Operations.PauseBalloonReporting(&params); err != nil {
+	params := operations.PauseBalloonReportingParams{}
+	if _, err := c.client.Operations.PauseBalloonReportingContext(ctx, &params); err != nil {
 		if swaggerSuccess(err) {
 			return nil
 		}
@@ -759,8 +745,8 @@ func (c *apiClient) pauseFreePageReporting(ctx context.Context) error {
 // resumeFreePageReporting re-enables free-page-reporting discards and
 // processes anything deferred while paused. Idempotent.
 func (c *apiClient) resumeFreePageReporting(ctx context.Context) error {
-	params := operations.ResumeBalloonReportingParams{Context: ctx}
-	if _, err := c.client.Operations.ResumeBalloonReporting(&params); err != nil {
+	params := operations.ResumeBalloonReportingParams{}
+	if _, err := c.client.Operations.ResumeBalloonReportingContext(ctx, &params); err != nil {
 		if swaggerSuccess(err) {
 			return nil
 		}
@@ -777,8 +763,8 @@ func (c *apiClient) resumeFreePageReporting(ctx context.Context) error {
 // free: an FC build without /balloon/reporting errors here, and no
 // confirmation means no deferral.
 func (c *apiClient) freePageReportingPaused(ctx context.Context) (bool, error) {
-	params := operations.DescribeBalloonReportingParams{Context: ctx}
-	res, err := c.client.Operations.DescribeBalloonReporting(&params)
+	params := operations.DescribeBalloonReportingParams{}
+	res, err := c.client.Operations.DescribeBalloonReportingContext(ctx, &params)
 	if err != nil {
 		return false, fmt.Errorf("error describing balloon free-page reporting: %w", err)
 	}
@@ -805,8 +791,8 @@ func (c *apiClient) balloonFreePageReporting(ctx context.Context) (bool, error) 
 // describeBalloonConfig returns the balloon device config, or nil when no
 // balloon is installed (FC answers 400).
 func (c *apiClient) describeBalloonConfig(ctx context.Context) (*models.Balloon, error) {
-	params := operations.DescribeBalloonConfigParams{Context: ctx}
-	res, err := c.client.Operations.DescribeBalloonConfig(&params)
+	params := operations.DescribeBalloonConfigParams{}
+	res, err := c.client.Operations.DescribeBalloonConfigContext(ctx, &params)
 	if err != nil {
 		if _, ok := errors.AsType[*operations.DescribeBalloonConfigBadRequest](err); ok {
 			return nil, nil
@@ -827,8 +813,8 @@ type hintingStatus struct {
 }
 
 func (c *apiClient) describeBalloonHinting(ctx context.Context) (hintingStatus, error) {
-	params := operations.DescribeBalloonHintingParams{Context: ctx}
-	res, err := c.client.Operations.DescribeBalloonHinting(&params)
+	params := operations.DescribeBalloonHintingParams{}
+	res, err := c.client.Operations.DescribeBalloonHintingContext(ctx, &params)
 	if err != nil {
 		return hintingStatus{}, err
 	}
@@ -841,11 +827,9 @@ func (c *apiClient) describeBalloonHinting(ctx context.Context) (hintingStatus, 
 }
 
 func (c *apiClient) memoryMapping(ctx context.Context) (*memory.Mapping, error) {
-	params := operations.GetMemoryMappingsParams{
-		Context: ctx,
-	}
+	params := operations.GetMemoryMappingsParams{}
 
-	res, err := c.client.Operations.GetMemoryMappings(&params)
+	res, err := c.client.Operations.GetMemoryMappingsContext(ctx, &params)
 	if err != nil {
 		return nil, fmt.Errorf("error getting memory mappings: %w", err)
 	}
@@ -854,11 +838,9 @@ func (c *apiClient) memoryMapping(ctx context.Context) (*memory.Mapping, error) 
 }
 
 func (c *apiClient) memoryInfo(ctx context.Context, blockSize int64) (*header.DiffMetadata, error) {
-	params := operations.GetMemoryParams{
-		Context: ctx,
-	}
+	params := operations.GetMemoryParams{}
 
-	res, err := c.client.Operations.GetMemory(&params)
+	res, err := c.client.Operations.GetMemoryContext(ctx, &params)
 	if err != nil {
 		return nil, fmt.Errorf("error getting memory: %w", err)
 	}
@@ -871,11 +853,9 @@ func (c *apiClient) memoryInfo(ctx context.Context, blockSize int64) (*header.Di
 }
 
 func (c *apiClient) dirtyMemory(ctx context.Context, blockSize int64) (*header.DiffMetadata, error) {
-	params := operations.GetDirtyMemoryParams{
-		Context: ctx,
-	}
+	params := operations.GetDirtyMemoryParams{}
 
-	res, err := c.client.Operations.GetDirtyMemory(&params)
+	res, err := c.client.Operations.GetDirtyMemoryContext(ctx, &params)
 	if err != nil {
 		return nil, fmt.Errorf("error getting dirty memory: %w", err)
 	}

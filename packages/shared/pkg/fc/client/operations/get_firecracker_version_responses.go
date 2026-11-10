@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetFirecrackerVersionReader is a Reader for the GetFirecrackerVersion structure.
@@ -45,11 +44,9 @@ func NewGetFirecrackerVersionOK() *GetFirecrackerVersionOK {
 	return &GetFirecrackerVersionOK{}
 }
 
-/*
-GetFirecrackerVersionOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetFirecrackerVersionOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetFirecrackerVersionOK struct {
 	Payload *models.FirecrackerVersion
 }
@@ -117,11 +114,9 @@ func NewGetFirecrackerVersionDefault(code int) *GetFirecrackerVersionDefault {
 	}
 }
 
-/*
-GetFirecrackerVersionDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetFirecrackerVersionDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetFirecrackerVersionDefault struct {
 	_statusCode int
 

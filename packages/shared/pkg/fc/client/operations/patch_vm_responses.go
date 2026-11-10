@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchVMReader is a Reader for the PatchVM structure.
@@ -51,11 +50,9 @@ func NewPatchVMNoContent() *PatchVMNoContent {
 	return &PatchVMNoContent{}
 }
 
-/*
-PatchVMNoContent describes a response with status code 204, with default header values.
-
-Vm state updated
-*/
+// PatchVMNoContent describes a response with status code 204, with default header values.
+//
+// Vm state updated
 type PatchVMNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPatchVMBadRequest() *PatchVMBadRequest {
 	return &PatchVMBadRequest{}
 }
 
-/*
-PatchVMBadRequest describes a response with status code 400, with default header values.
-
-Vm state cannot be updated due to bad input
-*/
+// PatchVMBadRequest describes a response with status code 400, with default header values.
+//
+// Vm state cannot be updated due to bad input
 type PatchVMBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPatchVMDefault(code int) *PatchVMDefault {
 	}
 }
 
-/*
-PatchVMDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchVMDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchVMDefault struct {
 	_statusCode int
 

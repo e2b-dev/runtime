@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutEntropyDeviceParams creates a new PutEntropyDeviceParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutEntropyDeviceParams() *PutEntropyDeviceParams {
-	return &PutEntropyDeviceParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutEntropyDeviceParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutEntropyDeviceParamsWithTimeout creates a new PutEntropyDeviceParams object
 // with the ability to set a timeout on a request.
 func NewPutEntropyDeviceParamsWithTimeout(timeout time.Duration) *PutEntropyDeviceParams {
 	return &PutEntropyDeviceParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutEntropyDeviceParamsWithContext creates a new PutEntropyDeviceParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutEntropyDeviceParams].
 func NewPutEntropyDeviceParamsWithContext(ctx context.Context) *PutEntropyDeviceParams {
 	return &PutEntropyDeviceParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutEntropyDeviceParams contains all the parameters to send to the API endpoint
 */
 type PutEntropyDeviceParams struct {
 
-	/* Body.
-
-	   Guest entropy device properties
-	*/
+	// Body.
+	//
+	// Guest entropy device properties
 	Body *models.EntropyDevice
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put entropy device params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutEntropyDeviceParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put entropy device params
+// WithTimeout adds the timeout to the put entropy device params.
 func (o *PutEntropyDeviceParams) WithTimeout(timeout time.Duration) *PutEntropyDeviceParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put entropy device params
+// SetTimeout adds the timeout to the put entropy device params.
 func (o *PutEntropyDeviceParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put entropy device params
+// WithContext adds the context to the put entropy device params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutEntropyDeviceParams].
 func (o *PutEntropyDeviceParams) WithContext(ctx context.Context) *PutEntropyDeviceParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put entropy device params
+// SetContext adds the context to the put entropy device params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutEntropyDeviceParams].
 func (o *PutEntropyDeviceParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put entropy device params
+// WithHTTPClient adds the HTTPClient to the put entropy device params.
 func (o *PutEntropyDeviceParams) WithHTTPClient(client *http.Client) *PutEntropyDeviceParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put entropy device params
+// SetHTTPClient adds the HTTPClient to the put entropy device params.
 func (o *PutEntropyDeviceParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put entropy device params
+// WithBody adds the body to the put entropy device params.
 func (o *PutEntropyDeviceParams) WithBody(body *models.EntropyDevice) *PutEntropyDeviceParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put entropy device params
+// SetBody adds the body to the put entropy device params.
 func (o *PutEntropyDeviceParams) SetBody(body *models.EntropyDevice) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutEntropyDeviceParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

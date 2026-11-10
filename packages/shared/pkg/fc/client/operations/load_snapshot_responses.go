@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // LoadSnapshotReader is a Reader for the LoadSnapshot structure.
@@ -51,11 +50,9 @@ func NewLoadSnapshotNoContent() *LoadSnapshotNoContent {
 	return &LoadSnapshotNoContent{}
 }
 
-/*
-LoadSnapshotNoContent describes a response with status code 204, with default header values.
-
-Snapshot loaded
-*/
+// LoadSnapshotNoContent describes a response with status code 204, with default header values.
+//
+// Snapshot loaded
 type LoadSnapshotNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewLoadSnapshotBadRequest() *LoadSnapshotBadRequest {
 	return &LoadSnapshotBadRequest{}
 }
 
-/*
-LoadSnapshotBadRequest describes a response with status code 400, with default header values.
-
-Snapshot cannot be loaded due to bad input
-*/
+// LoadSnapshotBadRequest describes a response with status code 400, with default header values.
+//
+// Snapshot cannot be loaded due to bad input
 type LoadSnapshotBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewLoadSnapshotDefault(code int) *LoadSnapshotDefault {
 	}
 }
 
-/*
-LoadSnapshotDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// LoadSnapshotDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type LoadSnapshotDefault struct {
 	_statusCode int
 

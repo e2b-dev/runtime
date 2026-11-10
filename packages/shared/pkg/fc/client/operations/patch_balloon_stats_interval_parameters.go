@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPatchBalloonStatsIntervalParams creates a new PatchBalloonStatsIntervalParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPatchBalloonStatsIntervalParams() *PatchBalloonStatsIntervalParams {
-	return &PatchBalloonStatsIntervalParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPatchBalloonStatsIntervalParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPatchBalloonStatsIntervalParamsWithTimeout creates a new PatchBalloonStatsIntervalParams object
 // with the ability to set a timeout on a request.
 func NewPatchBalloonStatsIntervalParamsWithTimeout(timeout time.Duration) *PatchBalloonStatsIntervalParams {
 	return &PatchBalloonStatsIntervalParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPatchBalloonStatsIntervalParamsWithContext creates a new PatchBalloonStatsIntervalParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonStatsIntervalParams].
 func NewPatchBalloonStatsIntervalParamsWithContext(ctx context.Context) *PatchBalloonStatsIntervalParams {
 	return &PatchBalloonStatsIntervalParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PatchBalloonStatsIntervalParams contains all the parameters to send to the API e
 */
 type PatchBalloonStatsIntervalParams struct {
 
-	/* Body.
-
-	   Balloon properties
-	*/
+	// Body.
+	//
+	// Balloon properties
 	Body *models.BalloonStatsUpdate
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the patch balloon stats interval params (not the query body).
@@ -86,54 +88,57 @@ func (o *PatchBalloonStatsIntervalParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the patch balloon stats interval params
+// WithTimeout adds the timeout to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) WithTimeout(timeout time.Duration) *PatchBalloonStatsIntervalParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the patch balloon stats interval params
+// SetTimeout adds the timeout to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the patch balloon stats interval params
+// WithContext adds the context to the patch balloon stats interval params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonStatsIntervalParams].
 func (o *PatchBalloonStatsIntervalParams) WithContext(ctx context.Context) *PatchBalloonStatsIntervalParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the patch balloon stats interval params
+// SetContext adds the context to the patch balloon stats interval params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonStatsIntervalParams].
 func (o *PatchBalloonStatsIntervalParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the patch balloon stats interval params
+// WithHTTPClient adds the HTTPClient to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) WithHTTPClient(client *http.Client) *PatchBalloonStatsIntervalParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the patch balloon stats interval params
+// SetHTTPClient adds the HTTPClient to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the patch balloon stats interval params
+// WithBody adds the body to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) WithBody(body *models.BalloonStatsUpdate) *PatchBalloonStatsIntervalParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the patch balloon stats interval params
+// SetBody adds the body to the patch balloon stats interval params.
 func (o *PatchBalloonStatsIntervalParams) SetBody(body *models.BalloonStatsUpdate) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PatchBalloonStatsIntervalParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

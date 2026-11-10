@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 )
 
 // MemoryHotplugStatus The status of the hotpluggable memory device (virtio-mem)
@@ -31,12 +31,12 @@ type MemoryHotplugStatus struct {
 }
 
 // Validate validates this memory hotplug status
-func (m *MemoryHotplugStatus) Validate(formats strfmt.Registry) error {
+func (m *MemoryHotplugStatus) Validate(_ strfmt.Registry) error {
 	return nil
 }
 
 // ContextValidate validates this memory hotplug status based on context it is used
-func (m *MemoryHotplugStatus) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *MemoryHotplugStatus) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -45,13 +45,13 @@ func (m *MemoryHotplugStatus) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *MemoryHotplugStatus) UnmarshalBinary(b []byte) error {
 	var res MemoryHotplugStatus
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

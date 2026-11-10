@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutCPUConfigurationReader is a Reader for the PutCPUConfiguration structure.
@@ -51,11 +50,9 @@ func NewPutCPUConfigurationNoContent() *PutCPUConfigurationNoContent {
 	return &PutCPUConfigurationNoContent{}
 }
 
-/*
-PutCPUConfigurationNoContent describes a response with status code 204, with default header values.
-
-CPU configuration set successfully
-*/
+// PutCPUConfigurationNoContent describes a response with status code 204, with default header values.
+//
+// CPU configuration set successfully
 type PutCPUConfigurationNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutCPUConfigurationBadRequest() *PutCPUConfigurationBadRequest {
 	return &PutCPUConfigurationBadRequest{}
 }
 
-/*
-PutCPUConfigurationBadRequest describes a response with status code 400, with default header values.
-
-CPU configuration cannot be updated due to invalid input format
-*/
+// PutCPUConfigurationBadRequest describes a response with status code 400, with default header values.
+//
+// CPU configuration cannot be updated due to invalid input format
 type PutCPUConfigurationBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutCPUConfigurationDefault(code int) *PutCPUConfigurationDefault {
 	}
 }
 
-/*
-PutCPUConfigurationDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutCPUConfigurationDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutCPUConfigurationDefault struct {
 	_statusCode int
 

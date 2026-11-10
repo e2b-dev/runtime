@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutGuestNetworkInterfaceByIDParams creates a new PutGuestNetworkInterfaceByIDParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutGuestNetworkInterfaceByIDParams() *PutGuestNetworkInterfaceByIDParams {
-	return &PutGuestNetworkInterfaceByIDParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutGuestNetworkInterfaceByIDParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutGuestNetworkInterfaceByIDParamsWithTimeout creates a new PutGuestNetworkInterfaceByIDParams object
 // with the ability to set a timeout on a request.
 func NewPutGuestNetworkInterfaceByIDParamsWithTimeout(timeout time.Duration) *PutGuestNetworkInterfaceByIDParams {
 	return &PutGuestNetworkInterfaceByIDParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutGuestNetworkInterfaceByIDParamsWithContext creates a new PutGuestNetworkInterfaceByIDParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestNetworkInterfaceByIDParams].
 func NewPutGuestNetworkInterfaceByIDParamsWithContext(ctx context.Context) *PutGuestNetworkInterfaceByIDParams {
 	return &PutGuestNetworkInterfaceByIDParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,21 +63,19 @@ PutGuestNetworkInterfaceByIDParams contains all the parameters to send to the AP
 */
 type PutGuestNetworkInterfaceByIDParams struct {
 
-	/* Body.
-
-	   Guest network interface properties
-	*/
+	// Body.
+	//
+	// Guest network interface properties
 	Body *models.NetworkInterface
 
-	/* IfaceID.
-
-	   The id of the guest network interface
-	*/
+	// IfaceID.
+	//
+	// The id of the guest network interface
 	IfaceID string
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put guest network interface by ID params (not the query body).
@@ -92,65 +93,68 @@ func (o *PutGuestNetworkInterfaceByIDParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put guest network interface by ID params
+// WithTimeout adds the timeout to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) WithTimeout(timeout time.Duration) *PutGuestNetworkInterfaceByIDParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put guest network interface by ID params
+// SetTimeout adds the timeout to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put guest network interface by ID params
+// WithContext adds the context to the put guest network interface by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestNetworkInterfaceByIDParams].
 func (o *PutGuestNetworkInterfaceByIDParams) WithContext(ctx context.Context) *PutGuestNetworkInterfaceByIDParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put guest network interface by ID params
+// SetContext adds the context to the put guest network interface by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestNetworkInterfaceByIDParams].
 func (o *PutGuestNetworkInterfaceByIDParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put guest network interface by ID params
+// WithHTTPClient adds the HTTPClient to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) WithHTTPClient(client *http.Client) *PutGuestNetworkInterfaceByIDParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put guest network interface by ID params
+// SetHTTPClient adds the HTTPClient to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put guest network interface by ID params
+// WithBody adds the body to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) WithBody(body *models.NetworkInterface) *PutGuestNetworkInterfaceByIDParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put guest network interface by ID params
+// SetBody adds the body to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) SetBody(body *models.NetworkInterface) {
 	o.Body = body
 }
 
-// WithIfaceID adds the ifaceID to the put guest network interface by ID params
+// WithIfaceID adds the ifaceID to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) WithIfaceID(ifaceID string) *PutGuestNetworkInterfaceByIDParams {
 	o.SetIfaceID(ifaceID)
 	return o
 }
 
-// SetIfaceID adds the ifaceId to the put guest network interface by ID params
+// SetIfaceID adds the ifaceId to the put guest network interface by ID params.
 func (o *PutGuestNetworkInterfaceByIDParams) SetIfaceID(ifaceID string) {
 	o.IfaceID = ifaceID
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutGuestNetworkInterfaceByIDParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

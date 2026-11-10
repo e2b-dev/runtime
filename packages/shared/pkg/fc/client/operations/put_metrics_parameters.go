@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutMetricsParams creates a new PutMetricsParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutMetricsParams() *PutMetricsParams {
-	return &PutMetricsParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutMetricsParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutMetricsParamsWithTimeout creates a new PutMetricsParams object
 // with the ability to set a timeout on a request.
 func NewPutMetricsParamsWithTimeout(timeout time.Duration) *PutMetricsParams {
 	return &PutMetricsParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutMetricsParamsWithContext creates a new PutMetricsParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMetricsParams].
 func NewPutMetricsParamsWithContext(ctx context.Context) *PutMetricsParams {
 	return &PutMetricsParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutMetricsParams contains all the parameters to send to the API endpoint
 */
 type PutMetricsParams struct {
 
-	/* Body.
-
-	   Metrics system description
-	*/
+	// Body.
+	//
+	// Metrics system description
 	Body *models.Metrics
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put metrics params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutMetricsParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put metrics params
+// WithTimeout adds the timeout to the put metrics params.
 func (o *PutMetricsParams) WithTimeout(timeout time.Duration) *PutMetricsParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put metrics params
+// SetTimeout adds the timeout to the put metrics params.
 func (o *PutMetricsParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put metrics params
+// WithContext adds the context to the put metrics params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMetricsParams].
 func (o *PutMetricsParams) WithContext(ctx context.Context) *PutMetricsParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put metrics params
+// SetContext adds the context to the put metrics params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMetricsParams].
 func (o *PutMetricsParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put metrics params
+// WithHTTPClient adds the HTTPClient to the put metrics params.
 func (o *PutMetricsParams) WithHTTPClient(client *http.Client) *PutMetricsParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put metrics params
+// SetHTTPClient adds the HTTPClient to the put metrics params.
 func (o *PutMetricsParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put metrics params
+// WithBody adds the body to the put metrics params.
 func (o *PutMetricsParams) WithBody(body *models.Metrics) *PutMetricsParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put metrics params
+// SetBody adds the body to the put metrics params.
 func (o *PutMetricsParams) SetBody(body *models.Metrics) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutMetricsParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

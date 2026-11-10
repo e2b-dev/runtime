@@ -7,7 +7,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -47,7 +48,7 @@ func (m *MemoryHotplugConfig) Validate(formats strfmt.Registry) error {
 }
 
 func (m *MemoryHotplugConfig) validateBlockSizeMib(formats strfmt.Registry) error {
-	if swag.IsZero(m.BlockSizeMib) { // not required
+	if typeutils.IsZero(m.BlockSizeMib) { // not required
 		return nil
 	}
 
@@ -59,7 +60,7 @@ func (m *MemoryHotplugConfig) validateBlockSizeMib(formats strfmt.Registry) erro
 }
 
 func (m *MemoryHotplugConfig) validateSlotSizeMib(formats strfmt.Registry) error {
-	if swag.IsZero(m.SlotSizeMib) { // not required
+	if typeutils.IsZero(m.SlotSizeMib) { // not required
 		return nil
 	}
 
@@ -71,7 +72,7 @@ func (m *MemoryHotplugConfig) validateSlotSizeMib(formats strfmt.Registry) error
 }
 
 // ContextValidate validates this memory hotplug config based on context it is used
-func (m *MemoryHotplugConfig) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *MemoryHotplugConfig) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -80,13 +81,13 @@ func (m *MemoryHotplugConfig) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *MemoryHotplugConfig) UnmarshalBinary(b []byte) error {
 	var res MemoryHotplugConfig
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

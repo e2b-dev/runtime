@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewStopBalloonHintingParams() *StopBalloonHintingParams {
-	return &StopBalloonHintingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewStopBalloonHintingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewStopBalloonHintingParamsWithTimeout creates a new StopBalloonHintingParams object
 // with the ability to set a timeout on a request.
 func NewStopBalloonHintingParamsWithTimeout(timeout time.Duration) *StopBalloonHintingParams {
 	return &StopBalloonHintingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewStopBalloonHintingParamsWithContext creates a new StopBalloonHintingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StopBalloonHintingParams].
 func NewStopBalloonHintingParamsWithContext(ctx context.Context) *StopBalloonHintingParams {
 	return &StopBalloonHintingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ StopBalloonHintingParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type StopBalloonHintingParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the stop balloon hinting params (not the query body).
@@ -77,43 +81,46 @@ func (o *StopBalloonHintingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the stop balloon hinting params
+// WithTimeout adds the timeout to the stop balloon hinting params.
 func (o *StopBalloonHintingParams) WithTimeout(timeout time.Duration) *StopBalloonHintingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the stop balloon hinting params
+// SetTimeout adds the timeout to the stop balloon hinting params.
 func (o *StopBalloonHintingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the stop balloon hinting params
+// WithContext adds the context to the stop balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StopBalloonHintingParams].
 func (o *StopBalloonHintingParams) WithContext(ctx context.Context) *StopBalloonHintingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the stop balloon hinting params
+// SetContext adds the context to the stop balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StopBalloonHintingParams].
 func (o *StopBalloonHintingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the stop balloon hinting params
+// WithHTTPClient adds the HTTPClient to the stop balloon hinting params.
 func (o *StopBalloonHintingParams) WithHTTPClient(client *http.Client) *StopBalloonHintingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the stop balloon hinting params
+// SetHTTPClient adds the HTTPClient to the stop balloon hinting params.
 func (o *StopBalloonHintingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *StopBalloonHintingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

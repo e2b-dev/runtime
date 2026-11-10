@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPatchVMParams creates a new PatchVMParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPatchVMParams() *PatchVMParams {
-	return &PatchVMParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPatchVMParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPatchVMParamsWithTimeout creates a new PatchVMParams object
 // with the ability to set a timeout on a request.
 func NewPatchVMParamsWithTimeout(timeout time.Duration) *PatchVMParams {
 	return &PatchVMParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPatchVMParamsWithContext creates a new PatchVMParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchVMParams].
 func NewPatchVMParamsWithContext(ctx context.Context) *PatchVMParams {
 	return &PatchVMParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PatchVMParams contains all the parameters to send to the API endpoint
 */
 type PatchVMParams struct {
 
-	/* Body.
-
-	   The microVM state
-	*/
+	// Body.
+	//
+	// The microVM state
 	Body *models.VM
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the patch Vm params (not the query body).
@@ -86,54 +88,57 @@ func (o *PatchVMParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the patch Vm params
+// WithTimeout adds the timeout to the patch Vm params.
 func (o *PatchVMParams) WithTimeout(timeout time.Duration) *PatchVMParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the patch Vm params
+// SetTimeout adds the timeout to the patch Vm params.
 func (o *PatchVMParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the patch Vm params
+// WithContext adds the context to the patch Vm params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchVMParams].
 func (o *PatchVMParams) WithContext(ctx context.Context) *PatchVMParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the patch Vm params
+// SetContext adds the context to the patch Vm params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchVMParams].
 func (o *PatchVMParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the patch Vm params
+// WithHTTPClient adds the HTTPClient to the patch Vm params.
 func (o *PatchVMParams) WithHTTPClient(client *http.Client) *PatchVMParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the patch Vm params
+// SetHTTPClient adds the HTTPClient to the patch Vm params.
 func (o *PatchVMParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the patch Vm params
+// WithBody adds the body to the patch Vm params.
 func (o *PatchVMParams) WithBody(body *models.VM) *PatchVMParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the patch Vm params
+// SetBody adds the body to the patch Vm params.
 func (o *PatchVMParams) SetBody(body *models.VM) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PatchVMParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

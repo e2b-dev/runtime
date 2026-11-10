@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetDirtyMemoryReader is a Reader for the GetDirtyMemory structure.
@@ -51,11 +50,9 @@ func NewGetDirtyMemoryOK() *GetDirtyMemoryOK {
 	return &GetDirtyMemoryOK{}
 }
 
-/*
-GetDirtyMemoryOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetDirtyMemoryOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetDirtyMemoryOK struct {
 	Payload *models.DirtyMemory
 }
@@ -121,11 +118,9 @@ func NewGetDirtyMemoryBadRequest() *GetDirtyMemoryBadRequest {
 	return &GetDirtyMemoryBadRequest{}
 }
 
-/*
-GetDirtyMemoryBadRequest describes a response with status code 400, with default header values.
-
-The microVM is not paused.
-*/
+// GetDirtyMemoryBadRequest describes a response with status code 400, with default header values.
+//
+// The microVM is not paused.
 type GetDirtyMemoryBadRequest struct {
 	Payload *models.Error
 }
@@ -193,11 +188,9 @@ func NewGetDirtyMemoryDefault(code int) *GetDirtyMemoryDefault {
 	}
 }
 
-/*
-GetDirtyMemoryDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetDirtyMemoryDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetDirtyMemoryDefault struct {
 	_statusCode int
 

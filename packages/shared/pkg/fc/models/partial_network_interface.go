@@ -8,7 +8,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -60,7 +61,7 @@ func (m *PartialNetworkInterface) validateIfaceID(formats strfmt.Registry) error
 }
 
 func (m *PartialNetworkInterface) validateRxRateLimiter(formats strfmt.Registry) error {
-	if swag.IsZero(m.RxRateLimiter) { // not required
+	if typeutils.IsZero(m.RxRateLimiter) { // not required
 		return nil
 	}
 
@@ -83,7 +84,7 @@ func (m *PartialNetworkInterface) validateRxRateLimiter(formats strfmt.Registry)
 }
 
 func (m *PartialNetworkInterface) validateTxRateLimiter(formats strfmt.Registry) error {
-	if swag.IsZero(m.TxRateLimiter) { // not required
+	if typeutils.IsZero(m.TxRateLimiter) { // not required
 		return nil
 	}
 
@@ -127,7 +128,7 @@ func (m *PartialNetworkInterface) contextValidateRxRateLimiter(ctx context.Conte
 
 	if m.RxRateLimiter != nil {
 
-		if swag.IsZero(m.RxRateLimiter) { // not required
+		if typeutils.IsZero(m.RxRateLimiter) { // not required
 			return nil
 		}
 
@@ -152,7 +153,7 @@ func (m *PartialNetworkInterface) contextValidateTxRateLimiter(ctx context.Conte
 
 	if m.TxRateLimiter != nil {
 
-		if swag.IsZero(m.TxRateLimiter) { // not required
+		if typeutils.IsZero(m.TxRateLimiter) { // not required
 			return nil
 		}
 
@@ -178,13 +179,13 @@ func (m *PartialNetworkInterface) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *PartialNetworkInterface) UnmarshalBinary(b []byte) error {
 	var res PartialNetworkInterface
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

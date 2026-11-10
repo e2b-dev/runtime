@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchMmdsReader is a Reader for the PatchMmds structure.
@@ -51,11 +50,9 @@ func NewPatchMmdsNoContent() *PatchMmdsNoContent {
 	return &PatchMmdsNoContent{}
 }
 
-/*
-PatchMmdsNoContent describes a response with status code 204, with default header values.
-
-MMDS data store updated.
-*/
+// PatchMmdsNoContent describes a response with status code 204, with default header values.
+//
+// MMDS data store updated.
 type PatchMmdsNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPatchMmdsBadRequest() *PatchMmdsBadRequest {
 	return &PatchMmdsBadRequest{}
 }
 
-/*
-PatchMmdsBadRequest describes a response with status code 400, with default header values.
-
-MMDS data store cannot be updated due to bad input.
-*/
+// PatchMmdsBadRequest describes a response with status code 400, with default header values.
+//
+// MMDS data store cannot be updated due to bad input.
 type PatchMmdsBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPatchMmdsDefault(code int) *PatchMmdsDefault {
 	}
 }
 
-/*
-PatchMmdsDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchMmdsDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchMmdsDefault struct {
 	_statusCode int
 

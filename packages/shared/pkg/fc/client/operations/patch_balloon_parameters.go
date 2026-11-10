@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPatchBalloonParams creates a new PatchBalloonParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPatchBalloonParams() *PatchBalloonParams {
-	return &PatchBalloonParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPatchBalloonParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPatchBalloonParamsWithTimeout creates a new PatchBalloonParams object
 // with the ability to set a timeout on a request.
 func NewPatchBalloonParamsWithTimeout(timeout time.Duration) *PatchBalloonParams {
 	return &PatchBalloonParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPatchBalloonParamsWithContext creates a new PatchBalloonParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonParams].
 func NewPatchBalloonParamsWithContext(ctx context.Context) *PatchBalloonParams {
 	return &PatchBalloonParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PatchBalloonParams contains all the parameters to send to the API endpoint
 */
 type PatchBalloonParams struct {
 
-	/* Body.
-
-	   Balloon properties
-	*/
+	// Body.
+	//
+	// Balloon properties
 	Body *models.BalloonUpdate
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the patch balloon params (not the query body).
@@ -86,54 +88,57 @@ func (o *PatchBalloonParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the patch balloon params
+// WithTimeout adds the timeout to the patch balloon params.
 func (o *PatchBalloonParams) WithTimeout(timeout time.Duration) *PatchBalloonParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the patch balloon params
+// SetTimeout adds the timeout to the patch balloon params.
 func (o *PatchBalloonParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the patch balloon params
+// WithContext adds the context to the patch balloon params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonParams].
 func (o *PatchBalloonParams) WithContext(ctx context.Context) *PatchBalloonParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the patch balloon params
+// SetContext adds the context to the patch balloon params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchBalloonParams].
 func (o *PatchBalloonParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the patch balloon params
+// WithHTTPClient adds the HTTPClient to the patch balloon params.
 func (o *PatchBalloonParams) WithHTTPClient(client *http.Client) *PatchBalloonParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the patch balloon params
+// SetHTTPClient adds the HTTPClient to the patch balloon params.
 func (o *PatchBalloonParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the patch balloon params
+// WithBody adds the body to the patch balloon params.
 func (o *PatchBalloonParams) WithBody(body *models.BalloonUpdate) *PatchBalloonParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the patch balloon params
+// SetBody adds the body to the patch balloon params.
 func (o *PatchBalloonParams) SetBody(body *models.BalloonUpdate) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PatchBalloonParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPauseBalloonReportingParams() *PauseBalloonReportingParams {
-	return &PauseBalloonReportingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPauseBalloonReportingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPauseBalloonReportingParamsWithTimeout creates a new PauseBalloonReportingParams object
 // with the ability to set a timeout on a request.
 func NewPauseBalloonReportingParamsWithTimeout(timeout time.Duration) *PauseBalloonReportingParams {
 	return &PauseBalloonReportingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPauseBalloonReportingParamsWithContext creates a new PauseBalloonReportingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PauseBalloonReportingParams].
 func NewPauseBalloonReportingParamsWithContext(ctx context.Context) *PauseBalloonReportingParams {
 	return &PauseBalloonReportingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ PauseBalloonReportingParams contains all the parameters to send to the API endpo
 	Typically these are written to a http.Request.
 */
 type PauseBalloonReportingParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the pause balloon reporting params (not the query body).
@@ -77,43 +81,46 @@ func (o *PauseBalloonReportingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the pause balloon reporting params
+// WithTimeout adds the timeout to the pause balloon reporting params.
 func (o *PauseBalloonReportingParams) WithTimeout(timeout time.Duration) *PauseBalloonReportingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the pause balloon reporting params
+// SetTimeout adds the timeout to the pause balloon reporting params.
 func (o *PauseBalloonReportingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the pause balloon reporting params
+// WithContext adds the context to the pause balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PauseBalloonReportingParams].
 func (o *PauseBalloonReportingParams) WithContext(ctx context.Context) *PauseBalloonReportingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the pause balloon reporting params
+// SetContext adds the context to the pause balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PauseBalloonReportingParams].
 func (o *PauseBalloonReportingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the pause balloon reporting params
+// WithHTTPClient adds the HTTPClient to the pause balloon reporting params.
 func (o *PauseBalloonReportingParams) WithHTTPClient(client *http.Client) *PauseBalloonReportingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the pause balloon reporting params
+// SetHTTPClient adds the HTTPClient to the pause balloon reporting params.
 func (o *PauseBalloonReportingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PauseBalloonReportingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

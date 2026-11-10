@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPatchGuestNetworkInterfaceByIDParams creates a new PatchGuestNetworkInterfaceByIDParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPatchGuestNetworkInterfaceByIDParams() *PatchGuestNetworkInterfaceByIDParams {
-	return &PatchGuestNetworkInterfaceByIDParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPatchGuestNetworkInterfaceByIDParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPatchGuestNetworkInterfaceByIDParamsWithTimeout creates a new PatchGuestNetworkInterfaceByIDParams object
 // with the ability to set a timeout on a request.
 func NewPatchGuestNetworkInterfaceByIDParamsWithTimeout(timeout time.Duration) *PatchGuestNetworkInterfaceByIDParams {
 	return &PatchGuestNetworkInterfaceByIDParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPatchGuestNetworkInterfaceByIDParamsWithContext creates a new PatchGuestNetworkInterfaceByIDParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchGuestNetworkInterfaceByIDParams].
 func NewPatchGuestNetworkInterfaceByIDParamsWithContext(ctx context.Context) *PatchGuestNetworkInterfaceByIDParams {
 	return &PatchGuestNetworkInterfaceByIDParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,21 +63,19 @@ PatchGuestNetworkInterfaceByIDParams contains all the parameters to send to the 
 */
 type PatchGuestNetworkInterfaceByIDParams struct {
 
-	/* Body.
-
-	   A subset of the guest network interface properties
-	*/
+	// Body.
+	//
+	// A subset of the guest network interface properties
 	Body *models.PartialNetworkInterface
 
-	/* IfaceID.
-
-	   The id of the guest network interface
-	*/
+	// IfaceID.
+	//
+	// The id of the guest network interface
 	IfaceID string
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the patch guest network interface by ID params (not the query body).
@@ -92,65 +93,68 @@ func (o *PatchGuestNetworkInterfaceByIDParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the patch guest network interface by ID params
+// WithTimeout adds the timeout to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) WithTimeout(timeout time.Duration) *PatchGuestNetworkInterfaceByIDParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the patch guest network interface by ID params
+// SetTimeout adds the timeout to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the patch guest network interface by ID params
+// WithContext adds the context to the patch guest network interface by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchGuestNetworkInterfaceByIDParams].
 func (o *PatchGuestNetworkInterfaceByIDParams) WithContext(ctx context.Context) *PatchGuestNetworkInterfaceByIDParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the patch guest network interface by ID params
+// SetContext adds the context to the patch guest network interface by ID params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PatchGuestNetworkInterfaceByIDParams].
 func (o *PatchGuestNetworkInterfaceByIDParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the patch guest network interface by ID params
+// WithHTTPClient adds the HTTPClient to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) WithHTTPClient(client *http.Client) *PatchGuestNetworkInterfaceByIDParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the patch guest network interface by ID params
+// SetHTTPClient adds the HTTPClient to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the patch guest network interface by ID params
+// WithBody adds the body to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) WithBody(body *models.PartialNetworkInterface) *PatchGuestNetworkInterfaceByIDParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the patch guest network interface by ID params
+// SetBody adds the body to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) SetBody(body *models.PartialNetworkInterface) {
 	o.Body = body
 }
 
-// WithIfaceID adds the ifaceID to the patch guest network interface by ID params
+// WithIfaceID adds the ifaceID to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) WithIfaceID(ifaceID string) *PatchGuestNetworkInterfaceByIDParams {
 	o.SetIfaceID(ifaceID)
 	return o
 }
 
-// SetIfaceID adds the ifaceId to the patch guest network interface by ID params
+// SetIfaceID adds the ifaceId to the patch guest network interface by ID params.
 func (o *PatchGuestNetworkInterfaceByIDParams) SetIfaceID(ifaceID string) {
 	o.IfaceID = ifaceID
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PatchGuestNetworkInterfaceByIDParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

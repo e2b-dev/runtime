@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // StopBalloonHintingReader is a Reader for the StopBalloonHinting structure.
@@ -51,11 +50,9 @@ func NewStopBalloonHintingOK() *StopBalloonHintingOK {
 	return &StopBalloonHintingOK{}
 }
 
-/*
-StopBalloonHintingOK describes a response with status code 200, with default header values.
-
-Free page hinting run stopped.
-*/
+// StopBalloonHintingOK describes a response with status code 200, with default header values.
+//
+// Free page hinting run stopped.
 type StopBalloonHintingOK struct {
 }
 
@@ -107,11 +104,9 @@ func NewStopBalloonHintingBadRequest() *StopBalloonHintingBadRequest {
 	return &StopBalloonHintingBadRequest{}
 }
 
-/*
-StopBalloonHintingBadRequest describes a response with status code 400, with default header values.
-
-The balloon free hinting was not enabled when the device was configured.
-*/
+// StopBalloonHintingBadRequest describes a response with status code 400, with default header values.
+//
+// The balloon free hinting was not enabled when the device was configured.
 type StopBalloonHintingBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewStopBalloonHintingDefault(code int) *StopBalloonHintingDefault {
 	}
 }
 
-/*
-StopBalloonHintingDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// StopBalloonHintingDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type StopBalloonHintingDefault struct {
 	_statusCode int
 

@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetMachineConfigurationReader is a Reader for the GetMachineConfiguration structure.
@@ -45,11 +44,9 @@ func NewGetMachineConfigurationOK() *GetMachineConfigurationOK {
 	return &GetMachineConfigurationOK{}
 }
 
-/*
-GetMachineConfigurationOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetMachineConfigurationOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetMachineConfigurationOK struct {
 	Payload *models.MachineConfiguration
 }
@@ -117,11 +114,9 @@ func NewGetMachineConfigurationDefault(code int) *GetMachineConfigurationDefault
 	}
 }
 
-/*
-GetMachineConfigurationDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetMachineConfigurationDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetMachineConfigurationDefault struct {
 	_statusCode int
 

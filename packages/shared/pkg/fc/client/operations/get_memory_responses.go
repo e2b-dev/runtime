@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetMemoryReader is a Reader for the GetMemory structure.
@@ -45,11 +44,9 @@ func NewGetMemoryOK() *GetMemoryOK {
 	return &GetMemoryOK{}
 }
 
-/*
-GetMemoryOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetMemoryOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetMemoryOK struct {
 	Payload *models.MemoryResponse
 }
@@ -117,11 +114,9 @@ func NewGetMemoryDefault(code int) *GetMemoryDefault {
 	}
 }
 
-/*
-GetMemoryDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetMemoryDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetMemoryDefault struct {
 	_statusCode int
 

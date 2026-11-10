@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutGuestVsockReader is a Reader for the PutGuestVsock structure.
@@ -51,11 +50,9 @@ func NewPutGuestVsockNoContent() *PutGuestVsockNoContent {
 	return &PutGuestVsockNoContent{}
 }
 
-/*
-PutGuestVsockNoContent describes a response with status code 204, with default header values.
-
-Vsock created/updated
-*/
+// PutGuestVsockNoContent describes a response with status code 204, with default header values.
+//
+// Vsock created/updated
 type PutGuestVsockNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutGuestVsockBadRequest() *PutGuestVsockBadRequest {
 	return &PutGuestVsockBadRequest{}
 }
 
-/*
-PutGuestVsockBadRequest describes a response with status code 400, with default header values.
-
-Vsock cannot be created due to bad input
-*/
+// PutGuestVsockBadRequest describes a response with status code 400, with default header values.
+//
+// Vsock cannot be created due to bad input
 type PutGuestVsockBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutGuestVsockDefault(code int) *PutGuestVsockDefault {
 	}
 }
 
-/*
-PutGuestVsockDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutGuestVsockDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutGuestVsockDefault struct {
 	_statusCode int
 

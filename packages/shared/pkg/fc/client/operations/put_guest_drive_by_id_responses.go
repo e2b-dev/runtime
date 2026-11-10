@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutGuestDriveByIDReader is a Reader for the PutGuestDriveByID structure.
@@ -51,11 +50,9 @@ func NewPutGuestDriveByIDNoContent() *PutGuestDriveByIDNoContent {
 	return &PutGuestDriveByIDNoContent{}
 }
 
-/*
-PutGuestDriveByIDNoContent describes a response with status code 204, with default header values.
-
-Drive created/updated
-*/
+// PutGuestDriveByIDNoContent describes a response with status code 204, with default header values.
+//
+// Drive created/updated
 type PutGuestDriveByIDNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutGuestDriveByIDBadRequest() *PutGuestDriveByIDBadRequest {
 	return &PutGuestDriveByIDBadRequest{}
 }
 
-/*
-PutGuestDriveByIDBadRequest describes a response with status code 400, with default header values.
-
-Drive cannot be created/updated due to bad input
-*/
+// PutGuestDriveByIDBadRequest describes a response with status code 400, with default header values.
+//
+// Drive cannot be created/updated due to bad input
 type PutGuestDriveByIDBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutGuestDriveByIDDefault(code int) *PutGuestDriveByIDDefault {
 	}
 }
 
-/*
-PutGuestDriveByIDDefault describes a response with status code -1, with default header values.
-
-Internal server error.
-*/
+// PutGuestDriveByIDDefault describes a response with status code -1, with default header values.
+//
+// Internal server error.
 type PutGuestDriveByIDDefault struct {
 	_statusCode int
 

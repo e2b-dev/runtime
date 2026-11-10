@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewStartBalloonHintingParams creates a new StartBalloonHintingParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewStartBalloonHintingParams() *StartBalloonHintingParams {
-	return &StartBalloonHintingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewStartBalloonHintingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewStartBalloonHintingParamsWithTimeout creates a new StartBalloonHintingParams object
 // with the ability to set a timeout on a request.
 func NewStartBalloonHintingParamsWithTimeout(timeout time.Duration) *StartBalloonHintingParams {
 	return &StartBalloonHintingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewStartBalloonHintingParamsWithContext creates a new StartBalloonHintingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StartBalloonHintingParams].
 func NewStartBalloonHintingParamsWithContext(ctx context.Context) *StartBalloonHintingParams {
 	return &StartBalloonHintingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ StartBalloonHintingParams contains all the parameters to send to the API endpoin
 */
 type StartBalloonHintingParams struct {
 
-	/* Body.
-
-	   When the device completes the hinting whether we should automatically ack this.
-	*/
+	// Body.
+	//
+	// When the device completes the hinting whether we should automatically ack this.
 	Body *models.BalloonStartCmd
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the start balloon hinting params (not the query body).
@@ -86,54 +88,57 @@ func (o *StartBalloonHintingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the start balloon hinting params
+// WithTimeout adds the timeout to the start balloon hinting params.
 func (o *StartBalloonHintingParams) WithTimeout(timeout time.Duration) *StartBalloonHintingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the start balloon hinting params
+// SetTimeout adds the timeout to the start balloon hinting params.
 func (o *StartBalloonHintingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the start balloon hinting params
+// WithContext adds the context to the start balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StartBalloonHintingParams].
 func (o *StartBalloonHintingParams) WithContext(ctx context.Context) *StartBalloonHintingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the start balloon hinting params
+// SetContext adds the context to the start balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [StartBalloonHintingParams].
 func (o *StartBalloonHintingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the start balloon hinting params
+// WithHTTPClient adds the HTTPClient to the start balloon hinting params.
 func (o *StartBalloonHintingParams) WithHTTPClient(client *http.Client) *StartBalloonHintingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the start balloon hinting params
+// SetHTTPClient adds the HTTPClient to the start balloon hinting params.
 func (o *StartBalloonHintingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the start balloon hinting params
+// WithBody adds the body to the start balloon hinting params.
 func (o *StartBalloonHintingParams) WithBody(body *models.BalloonStartCmd) *StartBalloonHintingParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the start balloon hinting params
+// SetBody adds the body to the start balloon hinting params.
 func (o *StartBalloonHintingParams) SetBody(body *models.BalloonStartCmd) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *StartBalloonHintingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetMemoryParams() *GetMemoryParams {
-	return &GetMemoryParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetMemoryParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetMemoryParamsWithTimeout creates a new GetMemoryParams object
 // with the ability to set a timeout on a request.
 func NewGetMemoryParamsWithTimeout(timeout time.Duration) *GetMemoryParams {
 	return &GetMemoryParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetMemoryParamsWithContext creates a new GetMemoryParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryParams].
 func NewGetMemoryParamsWithContext(ctx context.Context) *GetMemoryParams {
 	return &GetMemoryParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetMemoryParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type GetMemoryParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get memory params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetMemoryParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get memory params
+// WithTimeout adds the timeout to the get memory params.
 func (o *GetMemoryParams) WithTimeout(timeout time.Duration) *GetMemoryParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get memory params
+// SetTimeout adds the timeout to the get memory params.
 func (o *GetMemoryParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get memory params
+// WithContext adds the context to the get memory params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryParams].
 func (o *GetMemoryParams) WithContext(ctx context.Context) *GetMemoryParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get memory params
+// SetContext adds the context to the get memory params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryParams].
 func (o *GetMemoryParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get memory params
+// WithHTTPClient adds the HTTPClient to the get memory params.
 func (o *GetMemoryParams) WithHTTPClient(client *http.Client) *GetMemoryParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get memory params
+// SetHTTPClient adds the HTTPClient to the get memory params.
 func (o *GetMemoryParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetMemoryParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

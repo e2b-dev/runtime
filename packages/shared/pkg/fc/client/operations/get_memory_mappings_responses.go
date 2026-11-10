@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetMemoryMappingsReader is a Reader for the GetMemoryMappings structure.
@@ -45,11 +44,9 @@ func NewGetMemoryMappingsOK() *GetMemoryMappingsOK {
 	return &GetMemoryMappingsOK{}
 }
 
-/*
-GetMemoryMappingsOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetMemoryMappingsOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetMemoryMappingsOK struct {
 	Payload *models.MemoryMappingsResponse
 }
@@ -117,11 +114,9 @@ func NewGetMemoryMappingsDefault(code int) *GetMemoryMappingsDefault {
 	}
 }
 
-/*
-GetMemoryMappingsDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetMemoryMappingsDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetMemoryMappingsDefault struct {
 	_statusCode int
 

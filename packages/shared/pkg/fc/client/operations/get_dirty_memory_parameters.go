@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetDirtyMemoryParams() *GetDirtyMemoryParams {
-	return &GetDirtyMemoryParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetDirtyMemoryParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetDirtyMemoryParamsWithTimeout creates a new GetDirtyMemoryParams object
 // with the ability to set a timeout on a request.
 func NewGetDirtyMemoryParamsWithTimeout(timeout time.Duration) *GetDirtyMemoryParams {
 	return &GetDirtyMemoryParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetDirtyMemoryParamsWithContext creates a new GetDirtyMemoryParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetDirtyMemoryParams].
 func NewGetDirtyMemoryParamsWithContext(ctx context.Context) *GetDirtyMemoryParams {
 	return &GetDirtyMemoryParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetDirtyMemoryParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type GetDirtyMemoryParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get dirty memory params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetDirtyMemoryParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get dirty memory params
+// WithTimeout adds the timeout to the get dirty memory params.
 func (o *GetDirtyMemoryParams) WithTimeout(timeout time.Duration) *GetDirtyMemoryParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get dirty memory params
+// SetTimeout adds the timeout to the get dirty memory params.
 func (o *GetDirtyMemoryParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get dirty memory params
+// WithContext adds the context to the get dirty memory params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetDirtyMemoryParams].
 func (o *GetDirtyMemoryParams) WithContext(ctx context.Context) *GetDirtyMemoryParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get dirty memory params
+// SetContext adds the context to the get dirty memory params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetDirtyMemoryParams].
 func (o *GetDirtyMemoryParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get dirty memory params
+// WithHTTPClient adds the HTTPClient to the get dirty memory params.
 func (o *GetDirtyMemoryParams) WithHTTPClient(client *http.Client) *GetDirtyMemoryParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get dirty memory params
+// SetHTTPClient adds the HTTPClient to the get dirty memory params.
 func (o *GetDirtyMemoryParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetDirtyMemoryParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error
