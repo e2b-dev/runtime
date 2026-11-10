@@ -41,7 +41,11 @@ func (s *Server) waitForAcquire(ctx context.Context, kind string) error {
 		s.recordStartGateWait(ctx, kind, startGateCancelled, waited)
 		telemetry.ReportEvent(ctx, "too many resuming sandboxes on node")
 
-		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node, please retry")
+		// waited is the differentiating value here: unlike the create gate's
+		// instant TryAcquire, this path blocks up to acquireTimeout, so the
+		// time spent waiting separates a hard timeout (gate saturated the whole
+		// window) from a fast context cancellation. max is the gate's cap.
+		return status.Errorf(codes.ResourceExhausted, "too many sandboxes resuming on this node: waited=%s, max=%d, please retry", waited.Round(time.Millisecond), s.startingSandboxes.Limit())
 	}
 	s.recordStartGateWait(ctx, kind, startGateAcquired, waited)
 

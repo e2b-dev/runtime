@@ -54,9 +54,9 @@ func TestSandboxLimitMetric(t *testing.T) {
 			})
 			require.Equal(t, codes.ResourceExhausted, status.Code(err))
 			if want > 0 {
-				require.Equal(t, "too many sandboxes starting on this node, please retry", status.Convert(err).Message())
+				require.Equal(t, "too many sandboxes starting on this node: max=1, please retry", status.Convert(err).Message())
 			} else {
-				require.Equal(t, fmt.Sprintf("max number of running sandboxes on node reached (%d), please retry", want), status.Convert(err).Message())
+				require.Equal(t, fmt.Sprintf("max number of running sandboxes on node reached: max=%d, please retry", want), status.Convert(err).Message())
 			}
 		}
 
