@@ -1429,6 +1429,11 @@ A template a build creates is private to its team unless the api runs with
 `TEMPLATES_DEFAULT_PUBLIC=true`; then it is public, so any team on the same cluster can start it by
 template ID or `<team-slug>/<alias>`. A rebuild keeps the visibility the template already has.
 
+The API sends each build to the least CPU-loaded of three eligible template builders sampled at
+random, scored from the host CPU use and allocated VM vCPUs each builder reports in `ServiceInfo`.
+A build's vCPUs count against the builder it was sent to for a minute, until the builder's own
+reports show its VMs, so a burst of builds between reports spreads instead of following one report.
+
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
 with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies

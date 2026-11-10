@@ -2,6 +2,7 @@ package clusters
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
@@ -71,7 +72,7 @@ func TestTemplateBuilder_DrainingStatusesOnlyServeExistingWork(t *testing.T) {
 			require.True(t, found)
 			assert.Same(t, builder, got)
 
-			_, err = c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil)
+			_, err = c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil, 0)
 			require.ErrorIs(t, err, ErrAvailableTemplateBuilderNotFound)
 		})
 	}
@@ -197,7 +198,7 @@ func TestGetAvailableTemplateBuilder_RequiresTheMinimumVersion(t *testing.T) {
 			builder.serviceVersion = tt.version
 			c := clusterWithInstances(t, builder)
 
-			got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, minVersion)
+			got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, minVersion, 0)
 			if tt.picked {
 				require.NoError(t, err)
 				assert.Same(t, builder, got)
@@ -209,7 +210,7 @@ func TestGetAvailableTemplateBuilder_RequiresTheMinimumVersion(t *testing.T) {
 			require.NotErrorIs(t, err, ErrAvailableTemplateBuilderNotFound)
 
 			// Without a requirement the same builder is still picked.
-			got, err = c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil)
+			got, err = c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil, 0)
 			require.NoError(t, err)
 			assert.Same(t, builder, got)
 		})
@@ -228,7 +229,7 @@ func TestGetAvailableTemplateBuilder_SkipsOldBuildersForANewerOne(t *testing.T) 
 	c := clusterWithInstances(t, old, current)
 
 	for range 200 {
-		got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion)
+		got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion, 0)
 		require.NoError(t, err)
 		require.Same(t, current, got)
 	}
@@ -245,7 +246,7 @@ func TestGetAvailableTemplateBuilder_VersionErrorOnlyWhenTheVersionIsTheCause(t 
 	unhealthy.serviceVersion = "0.16.202610010000"
 	c := clusterWithInstances(t, unhealthy)
 
-	_, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion)
+	_, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion, 0)
 	require.ErrorIs(t, err, ErrAvailableTemplateBuilderNotFound)
 	assert.NotErrorIs(t, err, ErrTemplateBuilderVersionTooOld)
 }
@@ -262,7 +263,7 @@ func TestGetAvailableTemplateBuilder_NotAVersionErrorWhenANewBuilderIsOnlyUnavai
 	draining.status = infogrpc.ServiceInfoStatus_Draining
 	c := clusterWithInstances(t, old, draining)
 
-	_, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion)
+	_, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, ResizableTemplateBuildsMinVersion, 0)
 	require.ErrorIs(t, err, ErrAvailableTemplateBuilderNotFound)
 	assert.NotErrorIs(t, err, ErrTemplateBuilderVersionTooOld)
 }
@@ -278,4 +279,94 @@ func TestInstanceAtLeast(t *testing.T) {
 	assert.False(t, InstanceAtLeast("0.16.202610139999", minVersion))
 	assert.False(t, InstanceAtLeast("", minVersion))
 	assert.False(t, InstanceAtLeast("not-a-version", minVersion))
+}
+
+func builderWithLoad(nodeID string, cpuPercent, cpuAllocated uint32) *Instance {
+	b := builderOn(nodeID, "alloc-"+nodeID)
+	b.cpuCount = 80
+	b.cpuPercent = cpuPercent
+	b.cpuAllocated = cpuAllocated
+
+	return b
+}
+
+// Builds used to go to a uniformly random builder, so a builder already at
+// 100% CPU kept receiving its share of new builds, and all of them timed out
+// waiting for their VMs. With no more matching builders than are sampled, the
+// least loaded one must win every time; one that reports no load loses to any
+// that does.
+func TestGetAvailableTemplateBuilder_PicksTheLeastLoadedCandidate(t *testing.T) {
+	t.Parallel()
+
+	idle := builderWithLoad("idle", 5, 10)
+	c := clusterWithInstances(t,
+		builderWithLoad("hot", 100, 80),
+		idle,
+		builderOn("unreported", "alloc-unreported"),
+	)
+
+	for range 100 {
+		got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil, 0)
+		require.NoError(t, err)
+		require.Same(t, idle, got)
+	}
+}
+
+// With more builders than are sampled, the busiest one is never picked while
+// another candidate exists, and equally idle builders still share the builds
+// rather than one taking them all between load reports.
+func TestGetAvailableTemplateBuilder_AvoidsTheBusiestAndSpreadsTheRest(t *testing.T) {
+	t.Parallel()
+
+	hot := builderWithLoad("hot", 100, 80)
+	instances := []*Instance{hot}
+	for _, node := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"} {
+		instances = append(instances, builderWithLoad(node, 10, 10))
+	}
+	c := clusterWithInstances(t, instances...)
+
+	picked := map[string]int{}
+	for range 500 {
+		got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil, 0)
+		require.NoError(t, err)
+		require.NotSame(t, hot, got)
+		picked[got.NodeID]++
+	}
+	assert.Len(t, picked, 9, "every idle builder should receive builds")
+}
+
+// Load reports arrive once per instance sync, so every build in a burst sees
+// the same reports. With three or fewer matching builders the sample is the
+// whole pool, and each build would go to whichever reported the lowest load
+// unless the builds already placed count against their builders.
+func TestGetAvailableTemplateBuilder_SpreadsABurstBetweenLoadReports(t *testing.T) {
+	t.Parallel()
+
+	c := clusterWithInstances(t,
+		builderWithLoad("a", 5, 10),
+		builderWithLoad("b", 6, 10),
+		builderWithLoad("c", 7, 10),
+	)
+
+	picked := map[string]int{}
+	for range 30 {
+		got, err := c.GetAvailableTemplateBuilder(t.Context(), machineinfo.MachineInfo{}, nil, 8)
+		require.NoError(t, err)
+		picked[got.NodeID]++
+	}
+	assert.Equal(t, map[string]int{"a": 10, "b": 10, "c": 10}, picked)
+}
+
+// A reservation only bridges the gap until the builder reports the build
+// itself; one that never expired would make a builder look busier with every
+// build ever sent to it.
+func TestBuildReservations_Expire(t *testing.T) {
+	t.Parallel()
+
+	b := builderWithLoad("a", 0, 0)
+	b.reservations = []buildReservation{{vcpus: 80, expires: time.Now().Add(-time.Second)}}
+	assert.Zero(t, b.cpuLoad())
+
+	b.reserveBuild(8)
+	assert.InDelta(t, 0.1, b.cpuLoad(), 1e-9)
 }

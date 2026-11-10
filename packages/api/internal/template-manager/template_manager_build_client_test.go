@@ -58,7 +58,7 @@ func TestGetAvailableBuildClient_FallbackEnforcesTheMinimumVersion(t *testing.T)
 		)
 		tm.builderPinFallback = counter
 
-		got, err := tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion)
+		got, err := tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion, 0)
 		require.NoError(t, err)
 		assert.Equal(t, other, got.GetMachineInfo())
 
@@ -81,7 +81,7 @@ func TestGetAvailableBuildClient_FallbackEnforcesTheMinimumVersion(t *testing.T)
 		)
 		tm.builderVersionRejected = counter
 
-		_, err = tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion)
+		_, err = tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion, 0)
 		require.ErrorIs(t, err, clusters.ErrTemplateBuilderVersionTooOld)
 
 		points := sumPoints(t, reader)
@@ -100,7 +100,7 @@ func TestGetAvailableBuildClient_FallbackEnforcesTheMinimumVersion(t *testing.T)
 			clusters.TestBuilder{Version: oldVersion, Machine: other},
 		)
 
-		got, err := tm.GetAvailableBuildClient(t.Context(), clusterID, nil)
+		got, err := tm.GetAvailableBuildClient(t.Context(), clusterID, nil, 0)
 		require.NoError(t, err)
 		assert.Equal(t, pinned, got.GetMachineInfo())
 	})
@@ -127,7 +127,7 @@ func TestGetAvailableBuildClient_NoPinIsNotAPinFallback(t *testing.T) {
 		builderPinFallback: pinFallback,
 	}
 
-	_, err = tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion)
+	_, err = tm.GetAvailableBuildClient(t.Context(), clusterID, clusters.ResizableTemplateBuildsMinVersion, 0)
 	require.ErrorIs(t, err, clusters.ErrTemplateBuilderVersionTooOld)
 	assert.Empty(t, sumPoints(t, reader))
 }

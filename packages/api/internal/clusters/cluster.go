@@ -50,7 +50,10 @@ type Cluster struct {
 
 	instances       *smap.Map[*Instance]
 	synchronization *synchronization.Synchronize[servicediscovery.Instance, *Instance]
-	resources       ClusterResource
+	// builderPick makes choosing a builder and reserving it one step, so
+	// concurrent builds each see the reservations of those placed before them.
+	builderPick sync.Mutex
+	resources   ClusterResource
 
 	// connections are shared by a remote cluster's instances; nil for the
 	// local cluster, whose instances each hold their own.
@@ -326,36 +329,57 @@ func (c *Cluster) GetByServiceInstanceID(serviceInstanceID string) (*Instance, b
 	return nil, false
 }
 
-func (c *Cluster) getRandomInstance(isMatch func(InstanceInfo, machineinfo.MachineInfo) bool) (*Instance, bool) {
-	var instances []*Instance
+// builderCandidates is how many matching builders a build samples before
+// taking the least loaded ("power of K choices"). Each API replica sees only
+// its own reservations, so always taking the single least loaded builder
+// would send every replica's builds between two load reports to the same one.
+const builderCandidates = 3
+
+// getLeastLoadedInstance samples up to builderCandidates matching instances
+// at random, returns the one with the lowest cpuLoad and reserves vcpus on it.
+func (c *Cluster) getLeastLoadedInstance(isMatch func(InstanceInfo, machineinfo.MachineInfo) bool, vcpus int64) (*Instance, bool) {
+	c.builderPick.Lock()
+	defer c.builderPick.Unlock()
+
+	var matches []*Instance
 	for _, instance := range c.instances.Items() {
-		instances = append(instances, instance)
-	}
-
-	// Make sure we will always iterate in different order and when there is bigger amount of builders, we will not always pick the same one
-	rand.Shuffle(len(instances), func(i, j int) { instances[i], instances[j] = instances[j], instances[i] })
-
-	for _, instance := range instances {
 		if isMatch(instance.GetInfo(), instance.GetMachineInfo()) {
-			return instance, true
+			matches = append(matches, instance)
 		}
 	}
 
-	return nil, false
+	rand.Shuffle(len(matches), func(i, j int) { matches[i], matches[j] = matches[j], matches[i] })
+
+	var best *Instance
+	for _, instance := range matches[:min(builderCandidates, len(matches))] {
+		if best == nil || instance.cpuLoad() < best.cpuLoad() {
+			best = instance
+		}
+	}
+
+	if best == nil {
+		return nil, false
+	}
+	best.reserveBuild(vcpus)
+
+	return best, true
 }
 
-// GetAvailableTemplateBuilder picks a builder matching expectedInfo. A non-nil
+// GetAvailableTemplateBuilder picks a builder matching expectedInfo, the least
+// loaded of a few sampled at random (see getLeastLoadedInstance). vcpus is the
+// vCPU count of the build being placed, held against the chosen builder for
+// buildReservationTTL; 0 when the caller is not starting a build. A non-nil
 // minVersion skips builders below it; when that is the only reason nothing
 // qualified, and no builder at the version is merely draining or unhealthy,
 // the error is ErrTemplateBuilderVersionTooOld.
-func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo, minVersion *semver.Version) (*Instance, error) {
+func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo machineinfo.MachineInfo, minVersion *semver.Version, vcpus int64) (*Instance, error) {
 	_, span := tracer.Start(ctx, "template-builder-get-available-instance")
 	span.SetAttributes(telemetry.WithClusterID(c.ID))
 	defer span.End()
 
 	versionTooOld := false        // an available builder was skipped only for its version
 	unavailableAtVersion := false // a builder at the version exists but cannot take work now
-	instance, ok := c.getRandomInstance(func(info InstanceInfo, machineInfo machineinfo.MachineInfo) bool {
+	instance, ok := c.getLeastLoadedInstance(func(info InstanceInfo, machineInfo machineinfo.MachineInfo) bool {
 		if !info.IsBuilder {
 			return false
 		}
@@ -377,7 +401,7 @@ func (c *Cluster) GetAvailableTemplateBuilder(ctx context.Context, expectedInfo 
 		}
 
 		return false
-	})
+	}, vcpus)
 	if !ok {
 		if versionTooOld && !unavailableAtVersion {
 			return nil, ErrTemplateBuilderVersionTooOld
