@@ -210,7 +210,10 @@ type APIStore struct {
 	// pauseBackendOverride, when non-nil, replaces the orchestrator for the
 	// pause handler's two calls — tests use it to assert the gate's wiring
 	// (refusal before RemoveSandbox) without a real orchestrator.
-	pauseBackendOverride   pauseOrchestrator
+	pauseBackendOverride pauseOrchestrator
+	// timeoutBackendOverride, when non-nil, replaces the orchestrator for the
+	// timeout handler so the 404 branch is testable without a real orchestrator.
+	timeoutBackendOverride timeoutOrchestrator
 	forkBackendOverride    forkOrchestrator
 	pauseLimiter           *pauselimit.Limiter
 	resumeBackendOverride  resumeWaitOrchestrator
