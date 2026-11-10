@@ -170,6 +170,7 @@ spec:
             - { name: TEMPLATE_STORAGE_URL, value: "file:///var/lib/e2b/storage/templates" }
             - { name: PAUSE_ADMISSION_DISK_HEADROOM_MIB, value: "1024" }
             - { name: CREATE_MEMORY_REFUSAL, value: "true" }
+            - { name: CREATE_HUGEPAGE_ADMISSION, value: "true" }
             - { name: BUILD_CACHE_STORAGE_URL, value: "file:///var/lib/e2b/storage/build-cache" }
             - { name: ARTIFACTS_REGISTRY_PROVIDER, value: Local }
             - { name: LOCAL_UPLOAD_BASE_URL, value: "http://127.0.0.1:5008" }

@@ -69,6 +69,28 @@ setup() {
   fi
 }
 
+# With CREATE_HUGEPAGE_ADMISSION on, which compose.yaml sets, an orchestrator
+# older than the build of 2026-11-10 counts a start's guest memory twice from
+# the moment the start maps it until the start ends, and refuses creates the
+# pool has room for. The pin must not slide back below that build. A release
+# and an auto-deploy build of one minor do not sort by age, so each has its
+# own floor: v0.30.0 is the last release without the fix, and a build, which
+# carries its commit after a hyphen, is held to its build stamp.
+@test "orchestrator pin is at least the build that counts a start's hugepages once" {
+  grep -q 'CREATE_HUGEPAGE_ADMISSION: "true"' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  case "$orch_tag" in
+    *-*) min=v0.30.202611101738 ;;
+    *) min=v0.30.1 ;;
+  esac
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; a start's hugepages are counted once from orchestrator build v0.30.202611101738 on, and in every release after v0.30.0" >&2
+    return 1
+  fi
+}
+
 # The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
 # after a hyphen, and two images from different commits must not compare equal.
 @test "api and db-migrator pins move together" {
