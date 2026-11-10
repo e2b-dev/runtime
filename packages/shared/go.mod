@@ -57,7 +57,7 @@ require (
 	github.com/riverqueue/rivercontrib/otelriver v0.12.0
 	github.com/rs/cors v1.11.1
 	github.com/samber/lo v1.53.0
-	github.com/spiffe/go-spiffe/v2 v2.8.1
+	github.com/spiffe/go-spiffe/v2 v2.9.0
 	github.com/stretchr/testify v1.12.1
 	github.com/sumup/typeid v0.8.0
 	github.com/testcontainers/testcontainers-go v0.44.0
