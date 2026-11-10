@@ -9,8 +9,15 @@ ENV GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.
 ARG TARGETARCH
 
 RUN apk add --no-cache git
+# Install the goose version go.mod requires, so the image runs the goose CI
+# migrates with. go build cannot resolve the module here: the context lacks its
+# ../shared replace target.
 # A cross-compiled `go install` lands in /go/bin/linux_<arch>/, a native one in /go/bin/.
-RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose@v3.28.0 \
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=bind,source=go.mod,target=/tmp/module/go.mod \
+    version="$(awk '$1 == "github.com/pressly/goose/v3" { print $2 }' /tmp/module/go.mod)" \
+    && test -n "${version}" \
+    && GOARCH=${TARGETARCH} go install "github.com/pressly/goose/v3/cmd/goose@${version}" \
     && install -D "$(find /go/bin -type f -name goose)" /out/goose
 
 # Final stage
