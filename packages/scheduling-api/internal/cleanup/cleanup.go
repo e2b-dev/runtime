@@ -12,11 +12,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	queries "github.com/e2b-dev/infra/packages/scheduling-api/internal/db/queries/gen"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // lockKey names the session advisory lock of the cleanup leader in the
@@ -65,6 +68,30 @@ type Worker struct {
 	rounds atomic.Int64
 }
 
+var (
+	meter = otel.Meter("github.com/e2b-dev/infra/packages/scheduling-api/internal/cleanup")
+
+	expiredStarts = utils.Must(meter.Int64Counter("api.scheduling.cleanup.expired_starts",
+		metric.WithDescription("Expired starts that the cleanup ended."), metric.WithUnit("{start}")))
+	failedStarts = utils.Must(meter.Int64Counter("api.scheduling.cleanup.failed_starts",
+		metric.WithDescription("Attempts to end an expired start that failed. The start is tried again in a later round."), metric.WithUnit("{start}")))
+	purgedTombstones = utils.Must(meter.Int64Counter("api.scheduling.cleanup.purged_tombstones",
+		metric.WithDescription("Tombstones that the cleanup deleted."), metric.WithUnit("{tombstone}")))
+	roundFailures = utils.Must(meter.Int64Counter("api.scheduling.cleanup.round.failures",
+		metric.WithDescription("Cleanup rounds with at least one failure."), metric.WithUnit("{round}")))
+	roundDuration = utils.Must(meter.Float64Histogram("api.scheduling.cleanup.round.duration",
+		metric.WithDescription("Duration of the cleanup rounds of the leader."), metric.WithUnit("s")))
+
+	leaders atomic.Int64
+	_       = utils.Must(meter.Int64ObservableGauge("api.scheduling.cleanup.leader",
+		metric.WithDescription("Cleanup workers of this process that hold the leader lock: 1 on the leader replica, else 0."), metric.WithUnit("1"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(leaders.Load())
+
+			return nil
+		})))
+)
+
 type roundStats struct {
 	expired, failed int
 	purged          int64
@@ -89,6 +116,16 @@ func New(st *store.Store, connConfig *pgx.ConnConfig, config Config) (*Worker, e
 	connConfig.RuntimeParams["idle_session_timeout"] = fmt.Sprintf("%dms", config.IdleSessionTimeout.Milliseconds())
 
 	return &Worker{store: st, connConfig: connConfig, config: config}, nil
+}
+
+func record(ctx context.Context, stats roundStats, duration time.Duration) {
+	expiredStarts.Add(ctx, int64(stats.expired))
+	failedStarts.Add(ctx, int64(stats.failed))
+	purgedTombstones.Add(ctx, stats.purged)
+	if len(stats.errs) > 0 {
+		roundFailures.Add(ctx, 1)
+	}
+	roundDuration.Record(ctx, duration.Seconds())
 }
 
 // Run does a round at once and then Interval after the end of each round,
@@ -119,6 +156,7 @@ func (w *Worker) round(ctx context.Context) roundStats {
 	}
 	w.rounds.Add(1)
 	started := time.Now()
+	defer func() { record(ctx, stats, time.Since(started)) }()
 
 	expireCtx, cancel := context.WithTimeout(ctx, w.config.Interval/2)
 	w.expire(ctx, expireCtx, &stats)
@@ -224,6 +262,7 @@ func (w *Worker) lead(ctx context.Context) bool {
 	}
 
 	w.leader, w.leaderPID, w.after = conn, locked.Pid, uuid.Nil
+	leaders.Add(1)
 	logger.L().Info(ctx, "scheduling cleanup leadership acquired", zap.Int32("backend_pid", locked.Pid))
 
 	return true
@@ -273,4 +312,5 @@ func (w *Worker) closeLeader(ctx context.Context) {
 	defer cancel()
 	_ = w.leader.Close(closeCtx)
 	w.leader, w.leaderPID, w.after = nil, 0, uuid.Nil
+	leaders.Add(-1)
 }

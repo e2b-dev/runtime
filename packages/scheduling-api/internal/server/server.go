@@ -46,7 +46,7 @@ func New(tel *telemetry.Client, st *store.Store, tlsConfig mtls.ServerConfig) (*
 		e2bgrpc.WithStreamInterceptors(mtls.StreamServerInterceptor(tlsConfig)),
 		e2bgrpc.WithRecoveryHandler(func(any) error { return status.Error(codes.Internal, internalMessage) }),
 		e2bgrpc.WithUnaryDeadline(unaryDeadline),
-		e2bgrpc.WithUnaryInterceptors(protovalidatemw.UnaryServerInterceptor(validator)),
+		e2bgrpc.WithUnaryInterceptors(protovalidatemw.UnaryServerInterceptor(validator), recordOutcomes),
 		e2bgrpc.WithWaitForHandlers(),
 	)
 	scheduling.RegisterSchedulingServiceServer(server, &service{store: st})

@@ -132,6 +132,21 @@ SELECT count(*) FROM pg_locks
 
 		return err == nil && holders == 0
 	}, 5*time.Second, 10*time.Millisecond, "shutdown released the cleanup lock")
+
+	seen := statementSeries(t)
+	cleanupStatements := 0
+	for s := range seen {
+		if s.pool != "cleanup" {
+			continue
+		}
+		cleanupStatements++
+		for _, pool := range []string{"write", "read"} {
+			for _, failed := range []bool{false, true} {
+				require.False(t, seen[series{pool, s.statement, failed}], "the pools never run the lock statement %s", s.statement)
+			}
+		}
+	}
+	require.Positive(t, cleanupStatements, "the lock connection reports its own statements")
 }
 
 func TestServeListenerInUse(t *testing.T) {

@@ -8,12 +8,17 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -49,6 +54,13 @@ const (
 var (
 	commitSHA string
 	version   = "0.0.0" // x-release-please-version
+)
+
+var (
+	meter = otel.Meter("github.com/e2b-dev/infra/packages/scheduling-api")
+
+	statementDuration = sharedutils.Must(meter.Float64Histogram("api.scheduling.db.statement.duration",
+		metric.WithDescription("Duration of the SQL statements, by pool, statement name and failure."), metric.WithUnit("s")))
 )
 
 func main() {
@@ -117,14 +129,14 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	if err != nil {
 		return fmt.Errorf("gRPC listener initialization failed: %w", err)
 	}
-	writePool, err := openDatabase(ctx, cfg.DatabaseURL, cfg.WritePoolMaxConns)
+	writePool, err := openDatabase(ctx, "write", cfg.DatabaseURL, cfg.WritePoolMaxConns)
 	if err != nil {
 		_ = listener.Close()
 
 		return fmt.Errorf("write database initialization failed: %w", err)
 	}
 	defer writePool.Close()
-	readPool, err := openDatabase(ctx, cfg.DatabaseURL, cfg.ReadPoolMaxConns)
+	readPool, err := openDatabase(ctx, "read", cfg.DatabaseURL, cfg.ReadPoolMaxConns)
 	if err != nil {
 		_ = listener.Close()
 
@@ -138,7 +150,9 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 
 		return fmt.Errorf("gRPC server initialization failed: %w", err)
 	}
-	worker, err := cleanup.New(st, writePool.Config().ConnConfig, cleanupConfig)
+	cleanupConnConfig := writePool.Config().ConnConfig
+	cleanupConnConfig.Tracer = statementTimer{pool: attribute.String("pool.name", "cleanup")}
+	worker, err := cleanup.New(st, cleanupConnConfig, cleanupConfig)
 	if err != nil {
 		_ = listener.Close()
 
@@ -188,7 +202,7 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	return serveErr
 }
 
-func openDatabase(ctx context.Context, databaseURL string, maxConns int32) (*pgxpool.Pool, error) {
+func openDatabase(ctx context.Context, name, databaseURL string, maxConns int32) (*pgxpool.Pool, error) {
 	if maxConns <= 0 {
 		return nil, errors.New("pool maximum connections must be positive")
 	}
@@ -201,6 +215,7 @@ func openDatabase(ctx context.Context, databaseURL string, maxConns int32) (*pgx
 		return nil, fmt.Errorf("pool minimum connections exceed maximum %d", maxConns)
 	}
 	config.ConnConfig.RuntimeParams["synchronous_commit"] = "on"
+	config.ConnConfig.Tracer = statementTimer{pool: attribute.String("pool.name", name)}
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		var writablePrimary bool
 		if err := conn.QueryRow(ctx, `SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean`).Scan(&writablePrimary); err != nil {
@@ -223,6 +238,11 @@ func openDatabase(ctx context.Context, databaseURL string, maxConns int32) (*pgx
 
 		return nil, fmt.Errorf("ping the database: %w", err)
 	}
+	if err := otelpgx.RecordStats(pool, otelpgx.WithStatsAttributes(attribute.String("pool.name", name))); err != nil {
+		pool.Close()
+
+		return nil, fmt.Errorf("record the pool statistics: %w", err)
+	}
 
 	return pool, nil
 }
@@ -237,4 +257,52 @@ func newServer(tel *telemetry.Client, st *store.Store, tlsConfig mtls.ServerConf
 	healthServer.SetServingStatus(scheduling.SchedulingService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
 
 	return grpcServer, healthServer, nil
+}
+
+type statementTimer struct {
+	pool attribute.KeyValue
+}
+
+type statementStart struct {
+	name string
+	at   time.Time
+}
+
+type statementStartKey struct{}
+
+func (t statementTimer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	return context.WithValue(ctx, statementStartKey{}, statementStart{name: statementName(data.SQL), at: time.Now()})
+}
+
+func (t statementTimer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	start, ok := ctx.Value(statementStartKey{}).(statementStart)
+	if !ok {
+		return
+	}
+	failed := data.Err != nil || (start.name == "commit" && data.CommandTag.String() == "ROLLBACK")
+	statementDuration.Record(ctx, time.Since(start.at).Seconds(), metric.WithAttributes(
+		t.pool, attribute.String("statement", start.name), attribute.Bool("error", failed),
+	))
+}
+
+// statementName is a metric attribute: it must return a sqlc query name, a
+// transaction control statement or "other", never SQL text.
+func statementName(sql string) string {
+	if rest, ok := strings.CutPrefix(sql, "-- name: "); ok {
+		if name, _, found := strings.Cut(rest, " "); found {
+			return name
+		}
+
+		return "other"
+	}
+	switch {
+	case strings.HasPrefix(sql, "begin"):
+		return "begin"
+	case sql == "commit":
+		return "commit"
+	case sql == "rollback":
+		return "rollback"
+	default:
+		return "other"
+	}
 }

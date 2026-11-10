@@ -3,6 +3,7 @@ package cleanup
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,10 +11,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/db/dbtest"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
 )
+
+var metricReader = sdkmetric.NewManualReader()
+
+func TestMain(m *testing.M) {
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader)))
+	m.Run()
+}
 
 var fast = Config{Interval: 20 * time.Millisecond, BatchSize: 1000, Yield: time.Millisecond, IdleSessionTimeout: time.Minute}
 
@@ -443,4 +454,82 @@ func freePort(t *testing.T) uint16 {
 	require.NoError(t, listener.Close())
 
 	return uint16(port)
+}
+
+// The cleanup metrics have no attribute that tells tests apart, so this test
+// is not parallel: Go starts the parallel tests of the package only after it
+// has returned, and the values it reads are its own.
+func TestRoundMetrics(t *testing.T) { //nolint:paralleltest // reads exact values of the process-wide meter provider
+	ctx := t.Context()
+	pool := dbtest.MigratedPool(t)
+	st := store.New(pool, pool)
+	hot, other := uuid.New(), uuid.New()
+	expiredStart(t, st, pool, hot)
+	expiredStart(t, st, pool, other)
+	oldTombstone(t, st, pool, other)
+	w := newWorker(t, st, pool, DefaultConfig)
+	t.Cleanup(func() { w.resign(t.Context()) })
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	_, err = tx.Exec(ctx, `SELECT FROM public.scheduling_project_live_count WHERE project_id = $1 FOR UPDATE`, hot)
+	require.NoError(t, err)
+
+	before := collectCleanup(t)
+	require.Zero(t, before["api.scheduling.cleanup.leader"])
+	stats := w.round(ctx)
+	require.Equal(t, 1, stats.expired)
+	require.Equal(t, 1, stats.failed)
+	require.Equal(t, int64(1), stats.purged)
+	after := collectCleanup(t)
+	for name := range after {
+		if name != "api.scheduling.cleanup.leader" {
+			after[name] -= before[name]
+		}
+	}
+	require.Equal(t, map[string]int64{
+		"api.scheduling.cleanup.expired_starts":    1,
+		"api.scheduling.cleanup.failed_starts":     1,
+		"api.scheduling.cleanup.purged_tombstones": 1,
+		"api.scheduling.cleanup.round.failures":    1,
+		"api.scheduling.cleanup.round.duration":    1,
+		"api.scheduling.cleanup.leader":            1,
+	}, after)
+
+	w.resign(ctx)
+	require.Zero(t, collectCleanup(t)["api.scheduling.cleanup.leader"])
+}
+
+// collectCleanup returns the value of each cleanup counter and gauge, and the
+// number of recorded rounds of the histogram.
+func collectCleanup(t *testing.T) map[string]int64 {
+	t.Helper()
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(t.Context(), &collected))
+	values := map[string]int64{}
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if !strings.HasPrefix(m.Name, "api.scheduling.cleanup.") {
+				continue
+			}
+			switch data := m.Data.(type) {
+			case metricdata.Sum[int64]:
+				for _, point := range data.DataPoints {
+					values[m.Name] += point.Value
+				}
+			case metricdata.Gauge[int64]:
+				for _, point := range data.DataPoints {
+					values[m.Name] += point.Value
+				}
+			case metricdata.Histogram[float64]:
+				for _, point := range data.DataPoints {
+					values[m.Name] += int64(point.Count)
+				}
+			}
+		}
+	}
+
+	return values
 }

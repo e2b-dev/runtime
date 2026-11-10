@@ -358,6 +358,32 @@ Telemetry uses the shared OpenTelemetry client and its standard environment.
 Each store operation is a span. The service does not log request or response
 payloads.
 
+The shared gRPC server metrics count calls by status code. The service adds
+these metrics. No attribute carries a project, sandbox, reservation,
+transition or node ID.
+
+| Metric | Unit | Attributes | Meaning |
+|---|---|---|---|
+| `pgxpool.acquires`, `pgxpool.empty_acquire`, `pgxpool.canceled_acquires` | | `pool.name` | Cumulative acquires: all successful ones, the successful ones that waited because the pool had no idle connection, and the ones that the context cancelled |
+| `pgxpool.acquire_duration`, `pgxpool.empty_acquire_wait_time` | `ns` | `pool.name` | Cumulative time of the successful acquires, and of the ones that waited |
+| `pgxpool.acquired_connections`, `pgxpool.idle_connections`, `pgxpool.total_connections`, `pgxpool.max_connections` | | `pool.name` | Connections in use, idle and in total, and the pool maximum |
+| `api.scheduling.db.statement.duration` | `s` | `pool.name`, `statement`, `error` | Duration of each SQL statement, from the call to its result. `statement` is the sqlc query name, `begin`, `commit`, `rollback`, or `other`. `error` is `true` for a statement that failed or was cancelled, and for a `commit` that PostgreSQL answered with a rollback. |
+| `api.scheduling.rpc.outcomes` | `{call}` | `method`, `outcome` | Successful calls whose response has an `outcome` field, for example `Reserve` with `RESERVE_OUTCOME_LIMIT_EXCEEDED`. A gRPC error is not counted here. |
+| `api.scheduling.cleanup.expired_starts` | `{start}` | | Expired starts that the cleanup ended |
+| `api.scheduling.cleanup.failed_starts` | `{start}` | | Attempts to end an expired start that failed; the start is tried again in a later round |
+| `api.scheduling.cleanup.purged_tombstones` | `{tombstone}` | | Tombstones that the cleanup deleted |
+| `api.scheduling.cleanup.round.duration` | `s` | | Duration of each round of the leader |
+| `api.scheduling.cleanup.round.failures` | `{round}` | | Rounds with at least one failure |
+| `api.scheduling.cleanup.leader` | `1` | | Cleanup workers of this process that hold the leader lock: 1 on the leader replica, else 0 |
+
+`pool.name` is `write` or `read`, and also `cleanup` for the statement
+durations. The `pgxpool.*` metrics come from otelpgx,
+which also exports the other `pgxpool.*` counters, reads the pool statistics
+at most once a second, and adds `db.system.name` and
+`db.client.connection.pool.name` (host, port and database, the same for both
+pools). The statements of the cleanup lock connection have `pool.name`
+`cleanup`.
+
 ## Startup, health and shutdown
 
 On start, the service opens two pgx pools and pings each with a separate 10 s
@@ -514,7 +540,9 @@ each step; running out of a budget is not a failure. A start that fails on
 every round, for example because its counter row is missing, logs an error
 every round: it means that the live counts are wrong, and it needs an
 operator; the service does not repair counters. The worker also logs when it
-acquires, loses or releases the lock. Each store call is a span.
+acquires, loses or releases the lock. Each store call is a span. The
+`api.scheduling.cleanup.*` metrics (see [Configuration](#configuration)) count
+the same work.
 
 The worker does not end transitions (pausing, killing) and does not repair
 counters. On a database without the migrations, each round logs an error.
@@ -571,10 +599,10 @@ make test
 
 | Package | Covers |
 |---|---|
-| `internal/store` | The SQL: admission under concurrency, retries, project isolation, counter slots, failed starts, start deadlines and expiry under concurrency, tombstone purge under concurrency, transitions under concurrency, stale transition lists and claims under concurrency, retry windows, waits across store instances, rollback on failure |
-| `internal/cleanup` | The cleanup worker: one leader across workers, a new leader after the leader's backend ends, release on stop, expiry and purge rounds, a locked counter row, database failures |
-| `internal/server` | The gRPC methods through the production server and interceptors: validation, outcomes, waits across two servers, deadlines, page tokens, sanitized errors |
-| `.` | Startup with the database, health, shutdown, cleanup with a one-connection pool |
+| `internal/store` | The SQL: admission under concurrency, retries, project isolation, counter slots, failed starts, start deadlines and expiry under concurrency, tombstone purge under concurrency, transitions under concurrency, stale transition lists and claims under concurrency, retry windows, waits across store instances, rollback on failure, store spans |
+| `internal/cleanup` | The cleanup worker: one leader across workers, a new leader after the leader's backend ends, release on stop, expiry and purge rounds, a locked counter row, database failures, round metrics |
+| `internal/server` | The gRPC methods through the production server and interceptors: validation, outcomes, waits across two servers, deadlines, page tokens, sanitized errors, the outcome counter |
+| `.` | Startup with the database, health, shutdown, cleanup with a one-connection pool, pool metrics, statement durations |
 
 ## Commands
 
