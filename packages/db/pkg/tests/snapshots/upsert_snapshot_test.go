@@ -26,7 +26,7 @@ func TestUpsertSnapshot_NewSnapshot(t *testing.T) {
 	// Create a base env (required by foreign key constraint on snapshots table)
 	baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
 	// Source build the snapshot copies its CPU info from
-	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, "uploaded")
+	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
 
 	// Prepare test data for a new snapshot
 	templateID := "test-template-" + uuid.New().String()
@@ -113,7 +113,7 @@ func TestUpsertSnapshot_ExistingSnapshot(t *testing.T) {
 	// Create a base env (required by foreign key constraint on snapshots table)
 	baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
 	// Source build the snapshots copy their CPU info from
-	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, "uploaded")
+	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
 
 	// Prepare test data for the first snapshot creation
 	templateID := "test-template-" + uuid.New().String()
@@ -314,7 +314,7 @@ func TestUpsertSnapshot_CopiesMaxVcpuFromSourceBuild(t *testing.T) {
 
 			teamID := testutils.CreateTestTeam(t, client)
 			baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
-			sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, "uploaded")
+			sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
 
 			err := client.SqlcClient.TestsRawSQL(ctx,
 				"UPDATE public.env_builds SET max_vcpu = $1 WHERE id = $2", tt.sourceMax, sourceBuildID)

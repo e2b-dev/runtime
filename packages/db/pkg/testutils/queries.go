@@ -120,16 +120,16 @@ func CreateTestTemplateWithAlias(t *testing.T, db *Database, teamID uuid.UUID) (
 	return templateID, alias
 }
 
-// CreateTestBuild creates a build for a template with the given status
-func CreateTestBuild(t *testing.T, ctx context.Context, db *Database, templateID string, status string) uuid.UUID {
+// CreateTestBuild creates a build for a template with the given status group
+func CreateTestBuild(t *testing.T, ctx context.Context, db *Database, templateID string, statusGroup types.BuildStatusGroup) uuid.UUID {
 	t.Helper()
 	buildID := uuid.New()
 
 	err := db.SqlcClient.TestsRawSQL(ctx,
 		`INSERT INTO public.env_builds 
-		(id, env_id, team_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
+		(id, env_id, team_id, status_group, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
 		VALUES ($1, $2, (SELECT team_id FROM public.envs WHERE id = $2), $3, 2, 2048, 512, '6.1.0', '1.4.0', 'test-node', NOW(), NOW())`,
-		buildID, templateID, status,
+		buildID, templateID, statusGroup,
 	)
 	require.NoError(t, err, "Failed to create test build")
 

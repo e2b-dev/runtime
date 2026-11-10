@@ -47,11 +47,11 @@ func TestStatusGroupTriggerKeepsBothColumnsInStep(t *testing.T) {
 		require.NotEmpty(t, status, "status filled for %s", group)
 		filled[group] = status
 
-		legacy := testutils.CreateTestBuild(t, ctx, db, templateID, status)
+		legacy := createLegacyBuild(t, ctx, db, templateID, status)
 		assert.Equal(t, group, readStatusGroup(t, ctx, db, legacy), "an older pod writing %q", status)
 	}
 
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, string(types.BuildStatusBuilding))
+	buildID := createLegacyBuild(t, ctx, db, templateID, string(types.BuildStatusBuilding))
 	require.Equal(t, types.BuildStatusGroupInProgress, readStatusGroup(t, ctx, db, buildID))
 
 	require.NoError(t, db.SqlcClient.UpdateEnvBuildStatus(ctx, queries.UpdateEnvBuildStatusParams{
@@ -64,6 +64,21 @@ func TestStatusGroupTriggerKeepsBothColumnsInStep(t *testing.T) {
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
 		`UPDATE public.env_builds SET status = $2 WHERE id = $1`, buildID, string(types.BuildStatusFailed)))
 	assert.Equal(t, types.BuildStatusGroupFailed, readStatusGroup(t, ctx, db, buildID), "a status update derives the group")
+}
+
+// createLegacyBuild inserts a build the way pods that predate status_group do.
+func createLegacyBuild(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, status string) uuid.UUID {
+	t.Helper()
+
+	buildID := uuid.New()
+	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
+		`INSERT INTO public.env_builds
+		(id, env_id, team_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
+		VALUES ($1, $2, (SELECT team_id FROM public.envs WHERE id = $2), $3, 2, 2048, 512, '6.1.0', '1.4.0', 'test-node', NOW(), NOW())`,
+		buildID, templateID, status,
+	))
+
+	return buildID
 }
 
 func readStatus(t *testing.T, ctx context.Context, db *testutils.Database, buildID uuid.UUID) string {

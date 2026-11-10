@@ -15,6 +15,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -29,12 +30,12 @@ func TestListBuilds_PaginatesNewestFirstWithinTheTeam(t *testing.T) {
 	// The two older builds share a second, so the cursor must keep the
 	// fraction for the second page to start between them.
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	oldest := insertAssignedTestBuild(t, ctx, testDB, templateID, "success", now.Add(-2*time.Hour+200*time.Millisecond))
-	middle := insertAssignedTestBuild(t, ctx, testDB, templateID, "success", now.Add(-2*time.Hour+600*time.Millisecond))
-	newest := insertAssignedTestBuild(t, ctx, testDB, templateID, "success", now.Add(-time.Hour))
+	oldest := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, now.Add(-2*time.Hour+200*time.Millisecond))
+	middle := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, now.Add(-2*time.Hour+600*time.Millisecond))
+	newest := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, now.Add(-time.Hour))
 
 	otherTemplateID := testutils.CreateTestTemplate(t, testDB, testutils.CreateTestTeam(t, testDB))
-	insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, "success", now)
+	insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, dbtypes.BuildStatusGroupReady, now)
 
 	first, cursor := listBuilds(t, testDB, teamID, api.GetUnstableBuildsParams{Limit: new(int32(2))})
 	require.Equal(t, []uuid.UUID{newest, middle}, buildIDs(first))
@@ -55,7 +56,7 @@ func TestListBuilds_FirstPageListsBuildsAheadOfTheAppClock(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, testDB)
 
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	ahead := insertAssignedTestBuild(t, ctx, testDB, templateID, "building", time.Now().UTC().Add(time.Hour))
+	ahead := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupInProgress, time.Now().UTC().Add(time.Hour))
 
 	builds, _ := listBuilds(t, testDB, teamID, api.GetUnstableBuildsParams{})
 
@@ -71,11 +72,11 @@ func TestListBuilds_FiltersByBuildIDTemplateIDOrAlias(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	plainTemplate := testutils.CreateTestTemplate(t, testDB, teamID)
-	plainOld := insertAssignedTestBuild(t, ctx, testDB, plainTemplate, "success", now.Add(-2*time.Hour))
-	plainNew := insertAssignedTestBuild(t, ctx, testDB, plainTemplate, "success", now.Add(-time.Hour))
+	plainOld := insertAssignedTestBuild(t, ctx, testDB, plainTemplate, dbtypes.BuildStatusGroupReady, now.Add(-2*time.Hour))
+	plainNew := insertAssignedTestBuild(t, ctx, testDB, plainTemplate, dbtypes.BuildStatusGroupReady, now.Add(-time.Hour))
 
 	aliasedTemplate, alias := testutils.CreateTestTemplateWithAlias(t, testDB, teamID)
-	aliased := insertAssignedTestBuild(t, ctx, testDB, aliasedTemplate, "success", now)
+	aliased := insertAssignedTestBuild(t, ctx, testDB, aliasedTemplate, dbtypes.BuildStatusGroupReady, now)
 
 	for name, tc := range map[string]struct {
 		filter       string
@@ -111,11 +112,11 @@ func TestListBuilds_FiltersByStatus(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	failed := insertAssignedTestBuild(t, ctx, testDB, templateID, "failed", now.Add(-4*time.Hour))
+	failed := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed, now.Add(-4*time.Hour))
 	setBuildReasonMessage(t, ctx, testDB, failed, "step 3 failed")
-	uploaded := insertAssignedTestBuild(t, ctx, testDB, templateID, "uploaded", now.Add(-3*time.Hour))
-	building := insertAssignedTestBuild(t, ctx, testDB, templateID, "building", now.Add(-2*time.Hour))
-	pending := insertAssignedTestBuild(t, ctx, testDB, templateID, "pending", now.Add(-time.Hour))
+	uploaded := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, now.Add(-3*time.Hour))
+	building := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupInProgress, now.Add(-2*time.Hour))
+	pending := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupPending, now.Add(-time.Hour))
 
 	for name, tc := range map[string]struct {
 		statuses   *api.BuildStatuses
@@ -190,12 +191,12 @@ func TestBuildsStatuses_ReturnsOnlyTheTeamsBuilds(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	running := insertAssignedTestBuild(t, ctx, testDB, templateID, "building", now.Add(-time.Hour))
-	failed := insertAssignedTestBuild(t, ctx, testDB, templateID, "failed", now)
+	running := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupInProgress, now.Add(-time.Hour))
+	failed := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed, now)
 	setBuildReasonMessage(t, ctx, testDB, failed, "out of disk")
 
 	otherTemplateID := testutils.CreateTestTemplate(t, testDB, testutils.CreateTestTeam(t, testDB))
-	otherTeams := insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, "building", now)
+	otherTeams := insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, dbtypes.BuildStatusGroupInProgress, now)
 
 	recorder := serveBuildsHandler(t, &APIStore{sqlcDB: testDB.SqlcClient}, teamTestCaller(teamID, nil), func(store *APIStore, c *gin.Context) {
 		store.GetUnstableBuildsStatuses(c, api.GetUnstableBuildsStatusesParams{BuildIds: []uuid.UUID{running, failed, otherTeams}})
@@ -240,7 +241,7 @@ func TestGetBuild_ReturnsTheBuildWithItsTemplateNames(t *testing.T) {
 	createdAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
 	templateID, alias := testutils.CreateTestTemplateWithAlias(t, testDB, teamID)
-	buildID := insertAssignedTestBuild(t, ctx, testDB, templateID, "failed", createdAt)
+	buildID := insertAssignedTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed, createdAt)
 	setBuildReasonMessage(t, ctx, testDB, buildID, "step 3 failed")
 
 	recorder := serveGetBuild(t, testDB, teamID, buildID.String())
@@ -262,10 +263,10 @@ func TestGetBuild_RefusesBuildsItCannotRead(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, testDB)
 
 	otherTemplateID := testutils.CreateTestTemplate(t, testDB, testutils.CreateTestTeam(t, testDB))
-	otherTeams := insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, "success", time.Now())
+	otherTeams := insertAssignedTestBuild(t, ctx, testDB, otherTemplateID, dbtypes.BuildStatusGroupReady, time.Now())
 
 	deletedTemplateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	ofDeletedTemplate := insertAssignedTestBuild(t, ctx, testDB, deletedTemplateID, "success", time.Now())
+	ofDeletedTemplate := insertAssignedTestBuild(t, ctx, testDB, deletedTemplateID, dbtypes.BuildStatusGroupReady, time.Now())
 	softDeleteTestTemplate(t, ctx, testDB, deletedTemplateID)
 
 	for name, tc := range map[string]struct {
@@ -339,10 +340,10 @@ func setBuildReasonMessage(t *testing.T, ctx context.Context, testDB *testutils.
 
 // insertAssignedTestBuild inserts a build and assigns it to its template, as
 // the builds queries only list assigned builds.
-func insertAssignedTestBuild(t *testing.T, ctx context.Context, testDB *testutils.Database, templateID string, status string, createdAt time.Time) uuid.UUID {
+func insertAssignedTestBuild(t *testing.T, ctx context.Context, testDB *testutils.Database, templateID string, statusGroup dbtypes.BuildStatusGroup, createdAt time.Time) uuid.UUID {
 	t.Helper()
 
-	buildID := insertTestBuild(t, ctx, testDB, templateID, status, 2, createdAt)
+	buildID := insertTestBuild(t, ctx, testDB, templateID, statusGroup, 2, createdAt)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, buildID, "default", createdAt)
 
 	return buildID

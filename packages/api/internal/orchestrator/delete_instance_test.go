@@ -219,7 +219,7 @@ func newRefusalFixture(t *testing.T, restoreFlag bool, clusterID uuid.UUID, paus
 
 	teamID := testutils.CreateTestTeam(t, db)
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
-	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, string(types.BuildStatusUploaded))
+	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, types.BuildStatusGroupReady)
 
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
 	node.ClusterID = clusterID

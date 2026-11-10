@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetExclusiveBuildsForTemplateDeletion_ExclusiveBuild(t *testing.T) {
@@ -17,7 +18,7 @@ func TestGetExclusiveBuildsForTemplateDeletion_ExclusiveBuild(t *testing.T) {
 	// Create a template with a build assigned only to it
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 
 	// Execute query
@@ -40,7 +41,7 @@ func TestGetExclusiveBuildsForTemplateDeletion_SharedBuild(t *testing.T) {
 	template2ID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create a build assigned to template1
-	buildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, buildID, "default")
 
 	// Also assign the same build to template2 (shared build)
@@ -65,11 +66,11 @@ func TestGetExclusiveBuildsForTemplateDeletion_MixedBuilds(t *testing.T) {
 	template2ID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create an exclusive build for template1
-	exclusiveBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	exclusiveBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, exclusiveBuildID, "default")
 
 	// Create a shared build (assigned to both templates)
-	sharedBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	sharedBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, sharedBuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, template2ID, sharedBuildID, "default")
 
@@ -107,7 +108,7 @@ func TestGetExclusiveBuildsForTemplateDeletion_MultipleTagsSameTemplate(t *testi
 	// Create template with a build assigned with multiple tags
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 
 	// Assign same build with multiple tags to same template
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
@@ -135,7 +136,7 @@ func TestGetExclusiveBuildsForTemplateDeletion_SharedBuildAcrossTeams(t *testing
 	template2ID := testutils.CreateTestTemplate(t, db, team2ID)
 
 	// Create a build assigned to template1
-	buildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, buildID, "default")
 
 	// Also assign the same build to template2 (shared build across teams)
@@ -161,11 +162,11 @@ func TestGetExclusiveBuildsForTemplateDeletion_MixedBuildsAcrossTeams(t *testing
 	template2ID := testutils.CreateTestTemplate(t, db, team2ID)
 
 	// Create an exclusive build for template1
-	exclusiveBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	exclusiveBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, exclusiveBuildID, "default")
 
 	// Create a shared build (assigned to both templates from different teams)
-	sharedBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, "uploaded")
+	sharedBuildID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, sharedBuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, template2ID, sharedBuildID, "default")
 

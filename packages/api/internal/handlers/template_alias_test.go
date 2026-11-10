@@ -186,7 +186,7 @@ func TestTaggedTemplateAliasTransferredTemplate(t *testing.T) {
 			name: "tag exists on transferred template",
 			setTags: func(t *testing.T, ctx context.Context, db *testutils.Database, templateID string) {
 				t.Helper()
-				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 				testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "dev")
 			},
 			tag: "dev",
@@ -243,7 +243,7 @@ func TestQueryTaggedTemplateAlias(t *testing.T) {
 			name: "existing alias with ready tag returns ok",
 			setupAlias: func(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, alias string) string {
 				t.Helper()
-				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 				testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "dev")
 
 				return id.WithTag(alias, "dev")
@@ -261,7 +261,7 @@ func TestQueryTaggedTemplateAlias(t *testing.T) {
 			name: "existing alias with explicit default tag returns ok",
 			setupAlias: func(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, alias string) string {
 				t.Helper()
-				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 				testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 				return id.WithTag(alias, id.DefaultTag)
@@ -279,7 +279,7 @@ func TestQueryTaggedTemplateAlias(t *testing.T) {
 			name: "existing alias with non-ready tag returns not found",
 			setupAlias: func(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, alias string) string {
 				t.Helper()
-				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupPending)
 				testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "dev")
 
 				return id.WithTag(alias, "dev")
@@ -290,7 +290,7 @@ func TestQueryTaggedTemplateAlias(t *testing.T) {
 			name: "existing alias with ready build id suffix returns ok",
 			setupAlias: func(t *testing.T, ctx context.Context, db *testutils.Database, templateID string, alias string) string {
 				t.Helper()
-				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+				buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 				testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 				return id.WithTag(alias, buildID.String())

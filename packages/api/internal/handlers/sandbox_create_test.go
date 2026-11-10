@@ -796,7 +796,7 @@ func TestPostSandboxes_AlwaysRequiresSecureCapableTemplate(t *testing.T) {
 	alias := "secure-access-required"
 	templateID := createTestTemplate(ctx, t, db, teamID)
 	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &teamSlug)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 	for _, tt := range tests {
@@ -927,7 +927,7 @@ func TestPostSandboxes_PrivateTemplateHidesAccessDenied(t *testing.T) {
 	setTemplatePublic(ctx, t, db, templateID, false)
 	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &ownerTeamSlug)
 
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, tag)
 
 	templateRef := id.WithTag(id.WithNamespace(ownerTeamSlug, alias), tag)
@@ -981,7 +981,7 @@ func assertMissingTagDisclosure(t *testing.T, public bool, alias string) {
 	setTemplatePublic(ctx, t, db, templateID, public)
 	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &ownerTeamSlug)
 
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 	templateRef := id.WithTag(id.WithNamespace(ownerTeamSlug, alias), "v2")
@@ -1042,7 +1042,7 @@ func assertMissingDefaultTagDisclosure(t *testing.T) {
 	templateID := createTestTemplate(ctx, t, db, ownerTeamID)
 	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &ownerTeamSlug)
 
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "dev")
 
 	templateRef := id.WithNamespace(ownerTeamSlug, alias)

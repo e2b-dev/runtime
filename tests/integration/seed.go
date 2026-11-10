@@ -216,21 +216,21 @@ VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, 'template')
 		if build.createdAt != nil {
 			err = db.TestsRawSQL(ctx, `
 INSERT INTO env_builds (
-	id, env_id, team_id, dockerfile, status, vcpu, ram_mb, free_disk_size_mb,
+	id, env_id, team_id, dockerfile, status_group, vcpu, ram_mb, free_disk_size_mb,
 	total_disk_size_mb, kernel_version, firecracker_version, envd_version,
 	cluster_node_id, version, created_at, updated_at
 ) VALUES ($1, $14, $15, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
-`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusUploaded,
+`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusGroupReady,
 				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.17-0.4.1", pkg.Version,
 				"integration-test-node", templates.TemplateV2LatestVersion, build.createdAt, data.EnvID, data.TeamID)
 		} else {
 			err = db.TestsRawSQL(ctx, `
 INSERT INTO env_builds (
-	id, env_id, team_id, dockerfile, status, vcpu, ram_mb, free_disk_size_mb,
+	id, env_id, team_id, dockerfile, status_group, vcpu, ram_mb, free_disk_size_mb,
 	total_disk_size_mb, kernel_version, firecracker_version, envd_version,
 	cluster_node_id, version, updated_at
 ) VALUES ($1, $13, $14, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
-`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusUploaded,
+`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusGroupReady,
 				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.17-0.4.1", pkg.Version,
 				"integration-test-node", templates.TemplateV2LatestVersion, data.EnvID, data.TeamID)
 		}

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -27,10 +28,10 @@ func TestAdminSandboxOverviewDescribesTheLastPauseAndTheNewestDatedDefaultBuild(
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	at := func(hours int) *time.Time { return new(start.Add(time.Duration(hours) * time.Hour)) }
 
-	insertAdminTestBuild(t, db, templateID, "success", id.DefaultTag, at(1))
-	newest := insertAdminTestBuild(t, db, templateID, "waiting", id.DefaultTag, at(2))
-	insertAdminTestBuild(t, db, templateID, "success", "other", at(3))
-	insertAdminTestBuild(t, db, templateID, "success", id.DefaultTag, nil)
+	insertAdminTestBuild(t, db, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, at(1))
+	newest := insertAdminTestBuild(t, db, templateID, dbtypes.BuildStatusGroupPending, id.DefaultTag, at(2))
+	insertAdminTestBuild(t, db, templateID, dbtypes.BuildStatusGroupReady, "other", at(3))
+	insertAdminTestBuild(t, db, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, nil)
 	teamID := adminTestSnapshotTeamID(t, db, sandboxID)
 
 	recorder := getAdminSandboxOverview(t, &APIStore{sqlcDB: db.SqlcClient}, sandboxID)

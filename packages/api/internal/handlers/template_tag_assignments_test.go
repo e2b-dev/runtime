@@ -13,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetTemplatesTemplateIDTagsTagAssignments_ReturnsLatestFirst(t *testing.T) {
@@ -22,8 +23,8 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_ReturnsLatestFirst(t *testing.
 	ctx := t.Context()
 	teamID := testutils.CreateTestTeam(t, testDB)
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	oldBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
-	newBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+	oldBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
+	newBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	oldAssignmentID := insertTemplateTagAssignment(t, ctx, testDB, templateID, oldBuildID, "prod", baseTime)
@@ -51,7 +52,7 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_PaginatesAcrossPages(t *testin
 	const totalAssignments = 5
 	assignmentIDs := make([]uuid.UUID, 0, totalAssignments)
 	for i := range totalAssignments {
-		buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+		buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 		assignmentIDs = append(assignmentIDs, insertTemplateTagAssignment(t, ctx, testDB, templateID, buildID, "prod", baseTime.Add(time.Duration(i)*time.Hour)))
 	}
 
@@ -85,7 +86,7 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_StableKeysetOnSameTimestamp(t 
 	// Three assignments share a timestamp; the assignment id breaks the tie.
 	sameTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	for range 3 {
-		buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+		buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 		insertTemplateTagAssignment(t, ctx, testDB, templateID, buildID, "prod", sameTime)
 	}
 
@@ -113,9 +114,9 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_FiltersNonReadyBuilds(t *testi
 	teamID := testutils.CreateTestTeam(t, testDB)
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
 
-	readyBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
-	failedBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "failed")
-	waitingBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "waiting")
+	readyBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
+	failedBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed)
+	waitingBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupPending)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	readyAssignmentID := insertTemplateTagAssignment(t, ctx, testDB, templateID, readyBuildID, "prod", baseTime)
@@ -136,8 +137,8 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_FiltersOtherTags(t *testing.T)
 	teamID := testutils.CreateTestTeam(t, testDB)
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
 
-	prodBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
-	devBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+	prodBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
+	devBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	prodAssignmentID := insertTemplateTagAssignment(t, ctx, testDB, templateID, prodBuildID, "prod", baseTime)
@@ -156,7 +157,7 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_ReturnsEmptyForUnknownTag(t *t
 	ctx := t.Context()
 	teamID := testutils.CreateTestTeam(t, testDB)
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	readyBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+	readyBuildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, readyBuildID, "prod", time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC))
 
 	response := callTagAssignmentsHandler(t, ctx, testDB, teamID, templateID, "missing", api.GetTemplatesTemplateIDTagsTagAssignmentsParams{})
@@ -172,7 +173,7 @@ func TestGetTemplatesTemplateIDTagsTagAssignments_NormalizesTag(t *testing.T) {
 	ctx := t.Context()
 	teamID := testutils.CreateTestTeam(t, testDB)
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady)
 	assignmentID := insertTemplateTagAssignment(t, ctx, testDB, templateID, buildID, "prod", time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC))
 
 	response := callTagAssignmentsHandler(t, ctx, testDB, teamID, templateID, " PROD ", api.GetTemplatesTemplateIDTagsTagAssignmentsParams{})

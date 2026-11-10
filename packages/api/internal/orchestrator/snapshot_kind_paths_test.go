@@ -88,7 +88,7 @@ func newKindFixture(t *testing.T, checkpointErr error) kindFixture {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
-	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, string(types.BuildStatusUploaded))
+	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, types.BuildStatusGroupReady)
 
 	client := &checkpointStubClient{err: checkpointErr}
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)

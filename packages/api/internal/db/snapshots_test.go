@@ -27,7 +27,7 @@ func createTestSnapshot(t *testing.T, db *testutils.Database, teamID uuid.UUID, 
 	allowInternet := true
 
 	// Source build the snapshot copies its CPU info from
-	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseEnvID, "uploaded")
+	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseEnvID, types.BuildStatusGroupReady)
 
 	// UpsertSnapshot will create the env automatically, so we pass envID as TemplateID
 	params := queries.UpsertSnapshotParams{
@@ -79,9 +79,9 @@ func createTestEnvBuild(t *testing.T, db *testutils.Database, envID string) uuid
 
 	err := db.SqlcClient.TestsRawSQL(t.Context(),
 		`INSERT INTO public.env_builds
-		(id, status, vcpu, ram_mb, free_disk_size_mb, total_disk_size_mb, kernel_version, firecracker_version, envd_version, cluster_node_id, created_at, updated_at, version)
+		(id, status_group, vcpu, ram_mb, free_disk_size_mb, total_disk_size_mb, kernel_version, firecracker_version, envd_version, cluster_node_id, created_at, updated_at, version)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW(), 1)`,
-		buildID, "ready", vcpu, ramMb, freeDisk, totalDisk, "6.1.0", "1.4.0", "v1.0.0", "test-node",
+		buildID, types.BuildStatusGroupReady, vcpu, ramMb, freeDisk, totalDisk, "6.1.0", "1.4.0", "v1.0.0", "test-node",
 	)
 	require.NoError(t, err, "Failed to create test env build")
 

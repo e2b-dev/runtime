@@ -17,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -42,11 +43,11 @@ func insertAdminTestSnapshot(t *testing.T, db *testutils.Database) (sandboxID, t
 }
 
 // insertAdminTestBuild creates a build of the template with the given status
-// and assigns it under tag. A nil assignedAt leaves the assignment undated.
-func insertAdminTestBuild(t *testing.T, db *testutils.Database, templateID, status, tag string, assignedAt *time.Time) uuid.UUID {
+// group and assigns it under tag. A nil assignedAt leaves the assignment undated.
+func insertAdminTestBuild(t *testing.T, db *testutils.Database, templateID string, statusGroup dbtypes.BuildStatusGroup, tag string, assignedAt *time.Time) uuid.UUID {
 	t.Helper()
 
-	buildID := testutils.CreateTestBuild(t, t.Context(), db, templateID, status)
+	buildID := testutils.CreateTestBuild(t, t.Context(), db, templateID, statusGroup)
 	assignAdminTestBuild(t, db, templateID, buildID, tag, assignedAt)
 
 	return buildID
@@ -116,11 +117,11 @@ func TestGetUnstableAdminSandboxesSandboxIDBuildsListsTheSnapshotTemplateHistory
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	at := func(hours int) *time.Time { return new(start.Add(time.Duration(hours) * time.Hour)) }
 
-	oldest := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, at(1))
-	failed := insertAdminTestBuild(t, testDB, templateID, "failed", id.DefaultTag, at(2))
-	ready := insertAdminTestBuild(t, testDB, templateID, "uploaded", id.DefaultTag, at(3))
-	building := insertAdminTestBuild(t, testDB, templateID, "building", id.DefaultTag, at(4))
-	insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, nil)
+	oldest := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, at(1))
+	failed := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupFailed, id.DefaultTag, at(2))
+	ready := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, at(3))
+	building := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupInProgress, id.DefaultTag, at(4))
+	insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, nil)
 	assignAdminTestBuild(t, testDB, templateID, oldest, "stable", at(5))
 
 	store := &APIStore{sqlcDB: testDB.SqlcClient}
@@ -191,7 +192,7 @@ func TestGetUnstableAdminSandboxesSandboxIDBuildsReturnsEveryBuildField(t *testi
 
 	testDB := testutils.SetupDatabase(t)
 	sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-	buildID := insertAdminTestBuild(t, testDB, templateID, "snapshotting", id.DefaultTag, new(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)))
+	buildID := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupInProgress, id.DefaultTag, new(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)))
 
 	recorder := getAdminSandboxBuilds(t, &APIStore{sqlcDB: testDB.SqlcClient}, sandboxID, api.GetUnstableAdminSandboxesSandboxIDBuildsParams{})
 
@@ -230,9 +231,9 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreMakesTheBuildCurrentFor
 	testDB := testutils.SetupDatabase(t)
 	redisClient := redis_utils.SetupInstance(t)
 	sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-	older := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
-	current := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-time.Hour)))
-	pausing := insertAdminTestBuild(t, testDB, templateID, "snapshotting", id.DefaultTag, new(time.Now().Add(-time.Minute)))
+	older := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
+	current := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-time.Hour)))
+	pausing := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupInProgress, id.DefaultTag, new(time.Now().Add(-time.Minute)))
 
 	store := &APIStore{
 		sqlcDB:        testDB.SqlcClient,
@@ -291,7 +292,7 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 			seed: func(t *testing.T) (string, string, uuid.UUID) {
 				t.Helper()
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-				buildID := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, yesterday)
+				buildID := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, yesterday)
 				require.NoError(t, testDB.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET deleted_at = NOW() WHERE id = $1`, templateID))
 
 				return sandboxID, templateID, buildID
@@ -305,7 +306,7 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
 				_, otherTemplateID := insertAdminTestSnapshot(t, testDB)
 
-				return sandboxID, templateID, insertAdminTestBuild(t, testDB, otherTemplateID, "success", id.DefaultTag, yesterday)
+				return sandboxID, templateID, insertAdminTestBuild(t, testDB, otherTemplateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, yesterday)
 			},
 			wantCode:    http.StatusNotFound,
 			wantMessage: "Build is not assigned to the sandbox's snapshot template",
@@ -315,7 +316,7 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 				t.Helper()
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
 
-				return sandboxID, templateID, insertAdminTestBuild(t, testDB, templateID, "success", "stable", yesterday)
+				return sandboxID, templateID, insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, "stable", yesterday)
 			},
 			wantCode:    http.StatusNotFound,
 			wantMessage: "Build is not assigned to the sandbox's snapshot template",
@@ -324,8 +325,8 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 			seed: func(t *testing.T) (string, string, uuid.UUID) {
 				t.Helper()
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-				buildID := insertAdminTestBuild(t, testDB, templateID, "failed", id.DefaultTag, yesterday)
-				insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now()))
+				buildID := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupFailed, id.DefaultTag, yesterday)
+				insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now()))
 
 				return sandboxID, templateID, buildID
 			},
@@ -336,9 +337,9 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 			seed: func(t *testing.T) (string, string, uuid.UUID) {
 				t.Helper()
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-				insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, yesterday)
+				insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, yesterday)
 
-				return sandboxID, templateID, insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now()))
+				return sandboxID, templateID, insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now()))
 			},
 			wantCode:    http.StatusConflict,
 			wantMessage: "Build is already the current build",
@@ -347,8 +348,8 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreRefusesBuildsItCannotRe
 			seed: func(t *testing.T) (string, string, uuid.UUID) {
 				t.Helper()
 				sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-				buildID := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, yesterday)
-				insertAdminTestBuild(t, testDB, templateID, "snapshotting", id.DefaultTag, new(time.Now()))
+				buildID := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, yesterday)
+				insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupInProgress, id.DefaultTag, new(time.Now()))
 
 				return sandboxID, templateID, buildID
 			},
@@ -402,8 +403,8 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreWaitsForAnOpenRestoreOf
 	testDB := testutils.SetupDatabase(t)
 	redisClient := redis_utils.SetupInstance(t)
 	sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-	older := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
-	insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-time.Hour)))
+	older := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
+	insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-time.Hour)))
 
 	store := &APIStore{
 		sqlcDB:        testDB.SqlcClient,
@@ -434,8 +435,8 @@ func TestGetUnstableAdminSandboxesSandboxIDBuildsOffersNoRestoreForADeletedSnaps
 
 	testDB := testutils.SetupDatabase(t)
 	sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-	older := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
-	current := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-time.Hour)))
+	older := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
+	current := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-time.Hour)))
 	require.NoError(t, testDB.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET deleted_at = NOW() WHERE id = $1`, templateID))
 
 	entries, total := adminTestBuildEntries(t, getAdminSandboxBuilds(t, &APIStore{sqlcDB: testDB.SqlcClient}, sandboxID, api.GetUnstableAdminSandboxesSandboxIDBuildsParams{}))
@@ -467,8 +468,8 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreGivesTheSnapshotTheRest
 
 			testDB := testutils.SetupDatabase(t)
 			sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-			older := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
-			current := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-time.Hour)))
+			older := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
+			current := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-time.Hour)))
 			setAdminTestBuildKind(t, testDB, older, tc.buildFilesystemOnly)
 			setAdminTestBuildKind(t, testDB, current, tc.snapshotFilesystemOnly)
 			require.NoError(t, testDB.SqlcClient.UpdateSnapshotFilesystemOnly(t.Context(), queries.UpdateSnapshotFilesystemOnlyParams{SandboxID: sandboxID, FilesystemOnly: tc.snapshotFilesystemOnly}))
@@ -498,9 +499,9 @@ func TestPostUnstableAdminSandboxesSandboxIDBuildsRestoreSortsAfterAnAssignmentC
 
 	testDB := testutils.SetupDatabase(t)
 	sandboxID, templateID := insertAdminTestSnapshot(t, testDB)
-	older := insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
-	insertAdminTestBuild(t, testDB, templateID, "success", id.DefaultTag, new(time.Now().Add(-time.Hour)))
-	other := testutils.CreateTestBuild(t, t.Context(), testDB, templateID, "success")
+	older := insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-2*time.Hour)))
+	insertAdminTestBuild(t, testDB, templateID, dbtypes.BuildStatusGroupReady, id.DefaultTag, new(time.Now().Add(-time.Hour)))
+	other := testutils.CreateTestBuild(t, t.Context(), testDB, templateID, dbtypes.BuildStatusGroupReady)
 
 	store := &APIStore{
 		sqlcDB:        testDB.SqlcClient,

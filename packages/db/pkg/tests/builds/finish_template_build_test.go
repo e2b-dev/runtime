@@ -49,7 +49,7 @@ func TestFinishTemplateBuild_OverwritesVersionsWhenProvided(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	// Sanity check the seeded row matches the fixture constants.
 	kernel, firecracker, _ := getBuildVersions(t, ctx, db, buildID)
@@ -86,7 +86,7 @@ func TestFinishTemplateBuild_PreservesVersionsWhenEmpty(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	// Simulate an old template-manager that does not populate kernel / firecracker
 	// versions on the response: both params empty, but the rest of the update
@@ -119,7 +119,7 @@ func TestFinishTemplateBuild_PreservesSingleVersionWhenOnlyOneEmpty(t *testing.T
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	reportedKernel := "vmlinux-reported"
 

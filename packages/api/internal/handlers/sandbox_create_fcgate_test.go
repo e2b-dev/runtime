@@ -54,7 +54,7 @@ func TestPostSandboxes_FsOnlyAutoPauseVersionGate(t *testing.T) {
 	alias := "fs-only-gate-template"
 	templateID := createTestTemplate(ctx, t, db, teamID)
 	createTestTemplateAliasWithName(ctx, t, db, templateID, alias, &teamSlug)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 	recorder := httptest.NewRecorder()

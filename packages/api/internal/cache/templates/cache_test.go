@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -59,7 +60,7 @@ func TestTemplateCache_InvalidateAllTagsDeletesRedisEntries(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 
 	tc := NewTemplateCache(db.SqlcClient, redisClient)
@@ -94,7 +95,7 @@ func TestTemplateCache_Get_ClassifiesMissingDefaultTag(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "dev")
 
 	tc := NewTemplateCache(db.SqlcClient, redis)
@@ -117,7 +118,7 @@ func TestTemplateCache_Get_ExistingTagWithoutReadyBuildIsTagNotFound(t *testing.
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 
 	tc := NewTemplateCache(db.SqlcClient, redis)

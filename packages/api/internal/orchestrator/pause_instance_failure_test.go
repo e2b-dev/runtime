@@ -64,7 +64,7 @@ func newPauseFixture(t *testing.T, pauseErr error) (*Orchestrator, *testutils.Da
 
 	teamID := testutils.CreateTestTeam(t, db)
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
-	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, string(types.BuildStatusUploaded))
+	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, types.BuildStatusGroupReady)
 
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
 	node.SetSandboxClient(&pauseFailingSandboxClient{err: pauseErr})

@@ -19,7 +19,7 @@ func TestInvalidateUnstartedTemplateBuilds_InvalidatesWaitingBuilds(t *testing.T
 	// Create template with a waiting build
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 
 	// Invalidate waiting builds for default tag
@@ -45,11 +45,11 @@ func TestInvalidateUnstartedTemplateBuilds_OnlyAffectsSpecificTag(t *testing.T) 
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Build with 'default' tag
-	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, defaultBuildID, "default")
 
 	// Build with 'v1' tag only (delete trigger-created 'default' assignment)
-	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.DeleteTriggerBuildAssignment(t, ctx, db, templateID, v1BuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, v1BuildID, "v1")
 
@@ -79,10 +79,10 @@ func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectOtherTemplates(t *testin
 	template1ID := testutils.CreateTestTemplate(t, db, teamID)
 	template2ID := testutils.CreateTestTemplate(t, db, teamID)
 
-	build1ID := testutils.CreateTestBuild(t, ctx, db, template1ID, "waiting")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, template1ID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1ID, build1ID, "default")
 
-	build2ID := testutils.CreateTestBuild(t, ctx, db, template2ID, "waiting")
+	build2ID := testutils.CreateTestBuild(t, ctx, db, template2ID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template2ID, build2ID, "default")
 
 	// Invalidate only template1's builds
@@ -110,13 +110,13 @@ func TestInvalidateUnstartedTemplateBuilds_DoesNotAffectNonWaitingBuilds(t *test
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
-	waitingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	waitingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, waitingBuildID, "default")
 
-	buildingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildingBuildID, "default")
 
-	uploadedBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	uploadedBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, uploadedBuildID, "default")
 
 	// Invalidate waiting builds
@@ -147,13 +147,13 @@ func TestInvalidateUnstartedTemplateBuilds_MultipleWaitingBuilds(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
-	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build1ID, "default")
 
-	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build2ID, "default")
 
-	build3ID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	build3ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build3ID, "default")
 
 	// Invalidate all waiting builds
@@ -180,21 +180,21 @@ func TestInvalidateUnstartedTemplateBuilds_MultipleTagsInSingleCall(t *testing.T
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Build with 'default' tag
-	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, defaultBuildID, "default")
 
 	// Build with 'v1' tag only (delete trigger-created 'default' assignment)
-	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.DeleteTriggerBuildAssignment(t, ctx, db, templateID, v1BuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, v1BuildID, "v1")
 
 	// Build with 'v2' tag only (delete trigger-created 'default' assignment)
-	v2BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	v2BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.DeleteTriggerBuildAssignment(t, ctx, db, templateID, v2BuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, v2BuildID, "v2")
 
 	// Build with 'stable' tag only (should NOT be affected) - delete trigger-created 'default' assignment
-	stableBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	stableBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.DeleteTriggerBuildAssignment(t, ctx, db, templateID, stableBuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, stableBuildID, "stable")
 

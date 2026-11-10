@@ -23,7 +23,7 @@ func newSnapshotBuildFixture(t *testing.T) (*Orchestrator, *testutils.Database, 
 	db := testutils.SetupDatabase(t)
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, t.Context(), db, templateID, string(types.BuildStatusSnapshotting))
+	buildID := testutils.CreateTestBuild(t, t.Context(), db, templateID, types.BuildStatusGroupInProgress)
 
 	return &Orchestrator{sqlcDB: db.SqlcClient}, db, buildID
 }

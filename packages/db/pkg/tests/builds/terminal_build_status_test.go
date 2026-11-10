@@ -82,7 +82,7 @@ func TestFailTemplateBuildAndDeactivate_RecordsTheFirstTerminalOutcome(t *testin
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	assert.True(t, failBuild(t, ctx, db, buildID, "build status polling timed out"),
 		"the write that ends an in-progress build reports that it did")
@@ -102,7 +102,7 @@ func TestFailTemplateBuildAndDeactivate_LeavesAFinishedBuildReady(t *testing.T) 
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	finishBuild(t, ctx, db, buildID)
 
@@ -119,7 +119,7 @@ func TestFinishTemplateBuild_LeavesAFailedBuildFailed(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	failBuild(t, ctx, db, buildID, "build status polling timed out")
 
@@ -137,7 +137,7 @@ func TestFailTemplateBuildAndDeactivate_ReleasesTheConcurrencySlotWhenItWins(t *
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	err := db.SqlcClient.CreateActiveTemplateBuild(ctx, queries.CreateActiveTemplateBuildParams{
 		BuildID:    buildID,

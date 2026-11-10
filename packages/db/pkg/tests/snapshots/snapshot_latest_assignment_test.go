@@ -425,7 +425,7 @@ func TestGetLastSnapshot_IgnoresNonDefaultTags(t *testing.T) {
 
 	// Create another build and assign it with a non-default tag (e.g., "v1")
 	// This should be ignored by GetLastSnapshot
-	otherBuildID := testutils.CreateTestBuild(t, ctx, db, result1.TemplateID, "success")
+	otherBuildID := testutils.CreateTestBuild(t, ctx, db, result1.TemplateID, types.BuildStatusGroupReady)
 	// Delete the auto-created 'default' assignment from the trigger so the build only has 'v1' tag
 	testutils.DeleteTriggerBuildAssignment(t, ctx, db, result1.TemplateID, otherBuildID, "default")
 	testutils.CreateTestBuildAssignment(t, ctx, db, result1.TemplateID, otherBuildID, "v1")
@@ -452,9 +452,9 @@ func TestGetLastSnapshot_AssignmentOrderDifferentFromBuildOrder(t *testing.T) {
 	snapshotTemplateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create builds: build1 (older), build2 (newer)
-	build1ID := testutils.CreateTestBuild(t, ctx, db, snapshotTemplateID, "success")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, snapshotTemplateID, types.BuildStatusGroupReady)
 	time.Sleep(10 * time.Millisecond)
-	build2ID := testutils.CreateTestBuild(t, ctx, db, snapshotTemplateID, "success")
+	build2ID := testutils.CreateTestBuild(t, ctx, db, snapshotTemplateID, types.BuildStatusGroupReady)
 
 	// Assign in REVERSE order: build2 first, then build1
 	// Even though build2 was created later, build1 has the latest assignment
