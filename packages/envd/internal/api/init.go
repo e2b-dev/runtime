@@ -195,6 +195,13 @@ const thawHeader = "X-Envd-Thaw"
 // clock.
 const clockCorrectionHeader = "X-Envd-Init-Clock-Correction"
 
+// maxInitBodyBytes caps the /init request body. The largest legitimate payload carries env
+// vars and a CA bundle, both far below this. The body is read before auth (auth needs the
+// parsed token), and the server sets no ReadTimeout, so an unbounded io.ReadAll would let
+// any guest process that can reach the port allocate heap until envd — the sandbox's
+// control plane — is OOM-killed.
+const maxInitBodyBytes = 1 << 20 // 1 MiB
+
 func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -237,11 +244,24 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	freezeGen := a.workloadFreezer.FreezeGeneration(ctx)
 
 	if r.Body != nil {
+		// Cap the body before reading it: the read runs before auth, so this is
+		// the only thing standing between an unauthenticated oversized request
+		// and an OOM. MaxBytesError also makes the server close the connection
+		// after the response instead of draining the oversized remainder.
+		r.Body = http.MaxBytesReader(w, r.Body, maxInitBodyBytes)
+
 		// Read raw body so we can wipe it after parsing
 		body, err := io.ReadAll(r.Body)
 		// Ensure body is wiped after we're done
 		defer memguard.WipeBytes(body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				logger.Warn().Msg("Request body exceeds the /init size limit")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+
+				return
+			}
 			logger.Error().Msgf("Failed to read request body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 
