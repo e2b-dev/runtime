@@ -5,15 +5,19 @@
 # variable. Without it Compose renders a blank image name or a blank kernel
 # version and only warns, and the operator meets either a confusing "neither
 # an image nor a build context" error or a fetch-artifacts failure after the
-# host has already been mutated. The nine knobs that are genuinely optional and
-# are absent from .env (TEAM_API_KEY, ADMIN_TOKEN, SANDBOX_ACCESS_TOKEN_HASH_SEED,
-# E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT only as commented
-# lines) keep the ${VAR:-...} form: HUGEPAGES, NBDS_MAX, PF_MIN_FREE_GIB,
-# FORCE_REBUILD, E2B_DASHBOARD_HOST and E2B_OTEL_COLLECTOR_GRPC_ENDPOINT carry a
-# working default (the last an empty one, which exports no telemetry), while
-# TEAM_API_KEY, ADMIN_TOKEN and SANDBOX_ACCESS_TOKEN_HASH_SEED carry none — the
-# stack generates all three per install (seed for the key, api-secrets for the
-# api's two), and a value set in .env or the shell overrides the generated one.
+# host has already been mutated. The twelve knobs that are genuinely optional
+# and are absent from .env (TEAM_API_KEY, ADMIN_TOKEN,
+# SANDBOX_ACCESS_TOKEN_HASH_SEED, E2B_DASHBOARD_HOST,
+# E2B_OTEL_COLLECTOR_GRPC_ENDPOINT, MAX_SANDBOXES_PER_NODE,
+# MAX_STARTING_INSTANCES_PER_NODE and NETWORK_REUSED_SLOTS_POOL_SIZE only as
+# commented lines) keep the ${VAR:-...} form: HUGEPAGES, NBDS_MAX,
+# PF_MIN_FREE_GIB, FORCE_REBUILD, E2B_DASHBOARD_HOST,
+# E2B_OTEL_COLLECTOR_GRPC_ENDPOINT and the three node limits carry a working
+# default (the endpoint an empty one, which exports no telemetry, and the
+# limits one that keeps the orchestrator's own), while TEAM_API_KEY,
+# ADMIN_TOKEN and SANDBOX_ACCESS_TOKEN_HASH_SEED carry none — the stack
+# generates all three per install (seed for the key, api-secrets for the api's
+# two), and a value set in .env or the shell overrides the generated one.
 name: e2b
 
 x-tools: &tools
@@ -86,6 +90,13 @@ services:
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:8123:8123"
+    # ClickHouse opens every /sys/block entry at start; with NBDS_MAX at its
+    # ceiling that is more than the 1024 soft limit Docker 25+ leaves a
+    # container with.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     volumes:
       - clickhouse:/var/lib/clickhouse
     configs:
@@ -318,6 +329,17 @@ services:
       # orchestrator's create-hugepage-admission flag, which has no
       # LaunchDarkly to come from here.
       CREATE_HUGEPAGE_ADMISSION: "true"
+      # How many sandboxes the node runs or starts (200), how many start at
+      # once (3), and how many network slots returned by ended sandboxes the
+      # pool keeps for the next ones (100). Empty keeps each default, as does
+      # the 0 the pool size falls back to. A slot returned to a full pool is
+      # torn down and new ones are made one at a time, so the pool follows the
+      # sandbox limit unless .env sets it. The first two are the orchestrator's
+      # max-sandboxes-per-node and max-starting-instances-per-node flags, which
+      # have no LaunchDarkly to come from here.
+      MAX_SANDBOXES_PER_NODE: ${MAX_SANDBOXES_PER_NODE:-}
+      MAX_STARTING_INSTANCES_PER_NODE: ${MAX_STARTING_INSTANCES_PER_NODE:-}
+      NETWORK_REUSED_SLOTS_POOL_SIZE: ${NETWORK_REUSED_SLOTS_POOL_SIZE:-${MAX_SANDBOXES_PER_NODE:-0}}
       BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
       ARTIFACTS_REGISTRY_PROVIDER: Local
       LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008

@@ -185,7 +185,8 @@ before the first `up`, or with the stack down: once `ls /sys/block/nbd*/pid`
 prints nothing, `modprobe -r nbd` on the host and `up` again; `host-setup`
 stops with a `FIX:` line when the loaded module has fewer devices than asked.
 The orchestrator also refuses the 201st running sandbox (`max number of
-running sandboxes on node reached (200)`), a limit this stack cannot raise.
+running sandboxes on node reached (200)`), a limit `MAX_SANDBOXES_PER_NODE`
+moves ([Limits](#limits)).
 `NBD_POOL_SIZE` (32) is the orchestrator's warm buffer of claimed devices,
 not a ceiling, and stays below `NBDS_MAX` on purpose: at parity the pool's
 refill loop spins and logs `no free slots` every few seconds on an idle host.
@@ -193,7 +194,9 @@ refill loop spins and logs `no free slots` every few seconds on an idle host.
 same two places, forces `base-template` to rebuild even when a `base` row
 already shows `ready`, for a stale or broken template. `TEAM_API_KEY`,
 `ADMIN_TOKEN` and `SANDBOX_ACCESS_TOKEN_HASH_SEED` are under Secrets below,
-and `E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` under Telemetry.
+`E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` under Telemetry, and
+`MAX_SANDBOXES_PER_NODE`, `MAX_STARTING_INSTANCES_PER_NODE` and
+`NETWORK_REUSED_SLOTS_POOL_SIZE` under Limits.
 
 An optional, git-ignored `env/api.local.env` can add api variables. Create
 the `env/` directory next to `compose.yaml` yourself, since the two-file
@@ -212,9 +215,9 @@ this order; the last applies at any size:
 | Sandboxes the team runs at once | 10 | a 429 whose message says `you have reached the maximum number of concurrent E2B sandboxes (10)` | the database rows below |
 | Sandbox lifetime | 1 hour | `400: Timeout cannot be greater than 1 hours`; a timeout extended later is cut at one hour from the start, without an error | the database rows below |
 | NBD devices | `NBDS_MAX`, 64 | a create waits for a device, then fails ([Everyday commands](#everyday-commands)) | `NBDS_MAX` in `.env`, before the module loads |
-| Network slots kept ready | 132 | creating more than about 130 sandboxes within seconds of killing as many slows down | no setting |
-| Sandboxes on the node | 200 | the create is retried for 70 seconds, then `503: Failed to place sandbox: not enough capacity` | no setting |
-| Sandboxes starting at once | 3 | the creates past three are retried until one of the three finishes, for up to 70 seconds, then the same 503 | no setting |
+| Network slots kept ready | 132 | creating more than about 130 sandboxes within seconds of killing as many slows down | `NETWORK_REUSED_SLOTS_POOL_SIZE` in `.env`; unset, it follows `MAX_SANDBOXES_PER_NODE` |
+| Sandboxes on the node | 200 | the create is retried for 70 seconds, then `503: Failed to place sandbox: not enough capacity` | `MAX_SANDBOXES_PER_NODE` in `.env` |
+| Sandboxes starting at once | 3 | the creates past three are retried until one of the three finishes, for up to 70 seconds, then the same 503 | `MAX_STARTING_INSTANCES_PER_NODE` in `.env` |
 
 The JavaScript SDK stops waiting after 60 seconds by default
 (`requestTimeoutMs`), so it reports a timeout in place of those two 503s.
@@ -232,10 +235,40 @@ docker compose exec postgres psql -U postgres \
 ```
 
 The network slots are the orchestrator's pool of prepared network namespaces:
-32 new ones and up to 100 returned by sandboxes that ended. A returned slot
-past the hundredth is torn down, and new slots are made one at a time, so a
-workload that kills and recreates more than about 130 sandboxes at once waits
-on that.
+32 new ones and up to 100 returned by sandboxes that ended.
+`NETWORK_REUSED_SLOTS_POOL_SIZE` sets the second number, and while it is unset
+the pool takes the value of `MAX_SANDBOXES_PER_NODE`, so raising the sandbox
+limit raises the pool with it. A returned slot the pool has no room for is
+torn down, and new slots are made one at a time, so a workload that kills and
+recreates more sandboxes at once than the pool holds waits on that.
+
+The three node settings are whole numbers, above zero for the two sandbox
+limits; a pool size of 0 means its default of 100. The orchestrator's launcher
+refuses a value that is not such a number: the orchestrator does not start,
+and `docker compose logs orchestrator` ends in a `FIX:` line that names the
+setting. It refuses a pool size above the 32,766 network slots a node has the
+same way, which a sandbox limit above that number also sets while the pool
+follows it. After a change, `docker compose up -d --wait` recreates the
+orchestrator, which ends the sandboxes running on it, and this prints the
+three in effect:
+
+```bash
+docker compose logs orchestrator | grep "node limits"
+```
+
+A pool above 100 changes how the orchestrator stops. It tears the pooled
+slots down one at a time and stops doing so 20 seconds into its 30-second
+shutdown budget; if slots are left it exits non-zero, and the next start
+removes them before it serves, which took 103 seconds for 1,014 slots on a
+test VM. Stopping the stack while several hundred sandboxes are running can
+take the orchestrator past that budget at any pool size, with the same
+outcome.
+
+For hosts that run several hundred sandboxes, `host-setup` raises the
+kernel's neighbour-table thresholds, whose default ceiling of 1024 entries
+overflows near 350 sandboxes and shows up as sandboxes that time out on an
+idle host, and the `clickhouse` service runs with an open-file limit of
+1,048,576.
 
 ### What runs where
 
@@ -246,7 +279,8 @@ or VM: on every `up`, `host-setup`
 - loads the `nbd` (with `nbds_max=NBDS_MAX`), `tun` and `kvm` kernel modules;
 - writes `/etc/modules-load.d/e2b.conf`, `/etc/modprobe.d/e2b-nbd.conf`,
   `/etc/udev/rules.d/97-nbd-device.rules` and `/etc/sysctl.d/90-e2b.conf`,
-  which also raises `net.ipv4.tcp_max_syn_backlog` and `vm.max_map_count`;
+  which also raises `net.ipv4.tcp_max_syn_backlog`, `vm.max_map_count` and
+  the kernel's neighbour-table thresholds;
 - adds one iptables mangle rule, the TCP MSS clamp;
 - reserves the hugepages;
 - creates `/var/lib/e2b`, `/fc-*`, `/orchestrator` and `/var/run/netns`.
@@ -257,9 +291,11 @@ and the iptables rule, and unloads `nbd` when no device is still connected
 `host-setup` was the one that added it: a host that already had an identical
 TCP MSS clamp keeps its own firewall configuration, and the purge says
 `MSS clamp: not added by host-setup, kept`. `kvm` and `tun` are left loaded
-on purpose, because other software on the host may need them, and the two
-extra sysctls stay at their raised values; all of that reverts on the next
-reboot.
+on purpose, because other software on the host may need them, and the other
+sysctls stay at their raised values; all of that reverts on the next reboot.
+Network slots an orchestrator left behind when it stopped stay as well, under
+`/var/run/netns` as `ns-` and a slot number: the next start finds them there
+and removes them with their firewall rules.
 
 After a host reboot, run `docker compose up -d --wait` once. The long-running
 services return on their own (`restart: unless-stopped`), but the TCP MSS

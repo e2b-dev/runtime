@@ -315,6 +315,23 @@ request and limit are one number and have to move together: 2048 pages of
 2 MiB is `4Gi`. [`../tests/kubernetes.bats`](../tests/kubernetes.bats) fails
 when they disagree.
 
+### Node limits
+
+The orchestrator takes three limits from the `e2b-settings` ConfigMap in
+[`kustomization.yaml`](kustomization.yaml): `MAX_SANDBOXES_PER_NODE`, how many
+sandboxes the node runs or starts (200 when empty),
+`MAX_STARTING_INSTANCES_PER_NODE`, how many start at once (3 when empty), and
+`NETWORK_REUSED_SLOTS_POOL_SIZE`, how many network slots returned by ended
+sandboxes stay ready for the next ones (100 when 0 or empty). Under Compose
+the pool size follows the sandbox limit; here it does not, so when you raise
+`MAX_SANDBOXES_PER_NODE`, set `NETWORK_REUSED_SLOTS_POOL_SIZE` to the same
+number. Re-applying rolls the pod onto the changed map, which ends its
+sandboxes, and `kubectl -n e2b logs e2b-0 -c orchestrator | grep "node limits"`
+prints the three in effect. With the URL install, set them in an overlay's
+`e2b-settings` literals, the way [Telemetry](#telemetry) sets the collector
+endpoint. The Compose guide's [Limits](../compose/README.md#limits) says what
+each one bounds and how a pool above 100 changes the orchestrator's shutdown.
+
 ### Limitations
 
 - Template builds with `copy()` steps upload through the orchestrator's port

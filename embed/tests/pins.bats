@@ -91,8 +91,49 @@ setup() {
   fi
 }
 
+# MAX_SANDBOXES_PER_NODE, MAX_STARTING_INSTANCES_PER_NODE and
+# NETWORK_REUSED_SLOTS_POOL_SIZE, which compose.yaml hands the orchestrator
+# from .env, are read from the orchestrator build of 2026-11-11 on. An older
+# pin ignores all three and keeps 200, 3 and 100 whatever .env says, so the
+# pin must not slide back below that build. The two floors are the ones of the
+# test above: v0.30.0 is the last release that does not read them.
+@test "orchestrator pin is at least the build that reads the node limits" {
+  # shellcheck disable=SC2016  # compose's own ${...} is matched literally
+  grep -qF 'MAX_SANDBOXES_PER_NODE: ${MAX_SANDBOXES_PER_NODE:-}' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  case "$orch_tag" in
+    *-*) min=v0.30.202611110256 ;;
+    *) min=v0.30.1 ;;
+  esac
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; the node limits are read from orchestrator build v0.30.202611110256 on, and in every release after v0.30.0" >&2
+    return 1
+  fi
+}
+
 # The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
 # after a hyphen, and two images from different commits must not compare equal.
+# The scripts an install runs come from the tools image, never from the
+# checkout. The launcher's check of the node limits and host-setup's
+# neighbour-table thresholds are in it from the build of 2026-11-11 on, and
+# compose.yaml hands the orchestrator limits that rely on both. v0.30.0 is the
+# last release without them.
+@test "tools image pin is at least the build whose scripts handle the node limits" {
+  tools_tag="$(sed -n 's/^E2B_TOOLS_IMAGE=[^ #]*:\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$tools_tag" ]
+  case "$tools_tag" in
+    *-*) min=v0.30.202611111922 ;;
+    *) min=v0.30.1 ;;
+  esac
+  lowest="$(printf '%s\n%s\n' "$min" "$tools_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_TOOLS_IMAGE is at $tools_tag; its scripts handle the node limits from build v0.30.202611111922 on, and in every release after v0.30.0" >&2
+    return 1
+  fi
+}
+
 @test "api and db-migrator pins move together" {
   api_tag="$(sed -n 's/^E2B_API_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
   mig_tag="$(sed -n 's/^E2B_DB_MIGRATOR_IMAGE=.*:\(v[^ #]*\).*/\1/p' compose/.env)"
