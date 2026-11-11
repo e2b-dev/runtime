@@ -241,6 +241,9 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// EnforceBlockedTeam. Must run after auth (which populates team info on
 	// the gin context) and before the handlers.
 	r.Use(customMiddleware.EnforceBlockedTeam())
+	// Deny a read-only member every route that changes something. Same
+	// ordering constraint as above.
+	r.Use(customMiddleware.EnforceReadOnlyMember())
 	r.Use(idempotency.Middleware(redisClient, ff)) //nolint:contextcheck // Gin middleware gets context from the request.
 
 	// We now register our store above as the handler for the interface

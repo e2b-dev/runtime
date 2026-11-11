@@ -54,6 +54,8 @@ func TestApplyProjectMemberStoresTheRole(t *testing.T) {
 		{sent: ProjectMemberRoleOwner, stored: ProjectMemberRoleOwner},
 		{sent: "", stored: ProjectMemberRoleOwner},
 		{sent: ProjectMemberRoleMember, stored: ProjectMemberRoleMember},
+		{sent: ProjectMemberRoleViewer, stored: ProjectMemberRoleViewer},
+		{sent: "", stored: ProjectMemberRoleViewer},
 	} {
 		require.NoError(t, service.ApplyProjectMember(t.Context(), ProjectMemberProjection{
 			ProjectID:  projectID,

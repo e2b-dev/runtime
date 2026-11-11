@@ -237,6 +237,74 @@ func runCheckTeamAccess(
 	return gotErr
 }
 
+// A viewer reads and does nothing else. A role this build has never heard of
+// is held to the same, and a team resolved without a user is not restricted.
+func TestEnforceReadOnlyMember(t *testing.T) {
+	t.Parallel()
+
+	deniedReads := ReadOnlyDeniedReads{
+		http.MethodGet: {"/templates/:templateID/files/:hash": {}},
+	}
+	withRole := func(role string) *types.Team {
+		team := types.NewTeam(authqueries.GetTeamByTeamIDRow{})
+		team.Role = role
+
+		return team
+	}
+
+	cases := []struct {
+		name     string
+		method   string
+		fullPath string
+		team     *types.Team
+		wantRan  bool
+	}{
+		{name: "no team on context passes", method: http.MethodPost, fullPath: "/sandboxes", wantRan: true},
+		{name: "api key writes", method: http.MethodPost, fullPath: "/sandboxes", team: withRole(""), wantRan: true},
+		{name: "owner writes", method: http.MethodPost, fullPath: "/sandboxes", team: withRole(types.TeamRoleOwner), wantRan: true},
+		{name: "member writes", method: http.MethodDelete, fullPath: "/sandboxes/:sandboxID", team: withRole(types.TeamRoleMember), wantRan: true},
+		{name: "viewer reads", method: http.MethodGet, fullPath: "/sandboxes", team: withRole(types.TeamRoleViewer), wantRan: true},
+		{name: "viewer denied post", method: http.MethodPost, fullPath: "/sandboxes", team: withRole(types.TeamRoleViewer)},
+		{name: "viewer denied put", method: http.MethodPut, fullPath: "/sandboxes/:sandboxID/network", team: withRole(types.TeamRoleViewer)},
+		{name: "viewer denied patch", method: http.MethodPatch, fullPath: "/api-keys/:apiKeyID", team: withRole(types.TeamRoleViewer)},
+		{name: "viewer denied delete", method: http.MethodDelete, fullPath: "/sandboxes/:sandboxID", team: withRole(types.TeamRoleViewer)},
+		{name: "viewer denied a read that writes", method: http.MethodGet, fullPath: "/templates/:templateID/files/:hash", team: withRole(types.TeamRoleViewer)},
+		{name: "member reaches a read that writes", method: http.MethodGet, fullPath: "/templates/:templateID/files/:hash", team: withRole(types.TeamRoleMember), wantRan: true},
+		{name: "unknown role reads", method: http.MethodGet, fullPath: "/sandboxes", team: withRole("auditor"), wantRan: true},
+		{name: "unknown role denied post", method: http.MethodPost, fullPath: "/sandboxes", team: withRole("auditor")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ran := false
+			r := gin.New()
+			r.Handle(tc.method, tc.fullPath, func(c *gin.Context) {
+				if tc.team != nil {
+					authcontext.SetTeamInfo(c, tc.team)
+				}
+				EnforceReadOnlyMember(deniedReads)(c)
+				if !c.IsAborted() {
+					ran = true
+					c.Status(http.StatusOK)
+				}
+			})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), tc.method, concretePath(tc.fullPath), nil))
+
+			assert.Equal(t, tc.wantRan, ran)
+			if tc.wantRan {
+				assert.Equal(t, http.StatusOK, w.Code)
+			} else {
+				assert.Equal(t, http.StatusForbidden, w.Code)
+				assert.Contains(t, w.Body.String(), "read-only")
+			}
+		})
+	}
+}
+
 func runEnforceBlockedTeam(
 	t *testing.T,
 	allowlist BlockedTeamAllowlist,

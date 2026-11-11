@@ -13,6 +13,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -196,7 +197,7 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 			sandbox.Metadata = &meta
 		}
 
-		c.JSON(http.StatusOK, sandbox)
+		sendSandboxDetail(c, teamInfo, sandbox)
 
 		return
 	}
@@ -298,5 +299,25 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		sandbox.Metadata = &metadata
 	}
 
-	c.JSON(http.StatusOK, sandbox)
+	sendSandboxDetail(c, teamInfo, sandbox)
+}
+
+// sendSandboxDetail answers a running or a paused sandbox. A read-only member
+// is not given what the team's writers keep to themselves: the envd access
+// token, which runs commands in the sandbox, and the headers its egress rules
+// add to outbound requests, which carry the team's credentials for other
+// services. detail.Network must not be shared with another response.
+func sendSandboxDetail(c *gin.Context, team *authtypes.Team, detail api.SandboxDetail) {
+	if team.ReadOnly() {
+		detail.EnvdAccessToken = nil
+		if detail.Network != nil && detail.Network.Rules != nil {
+			for _, rules := range *detail.Network.Rules {
+				for i := range rules {
+					rules[i].Transform = nil
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, detail)
 }

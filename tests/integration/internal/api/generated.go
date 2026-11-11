@@ -236,6 +236,7 @@ func (e LogsSource) Valid() bool {
 const (
 	Member ManagementProjectMemberApplyRequestRole = "member"
 	Owner  ManagementProjectMemberApplyRequestRole = "owner"
+	Viewer ManagementProjectMemberApplyRequestRole = "viewer"
 )
 
 // Valid indicates whether the value is a known member of the ManagementProjectMemberApplyRequestRole enum.
@@ -244,6 +245,8 @@ func (e ManagementProjectMemberApplyRequestRole) Valid() bool {
 	case Member:
 		return true
 	case Owner:
+		return true
+	case Viewer:
 		return true
 	default:
 		return false
@@ -1654,11 +1657,11 @@ type ManagementProjectMemberApplyRequest struct {
 	Present   bool  `json:"present"`
 	Revision  int64 `json:"revision"`
 
-	// Role The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
+	// Role The member's effective role on the project. A viewer may only read. An omitted role keeps the stored one, and a new member without one is stored as member.
 	Role *ManagementProjectMemberApplyRequestRole `json:"role,omitempty"`
 }
 
-// ManagementProjectMemberApplyRequestRole The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
+// ManagementProjectMemberApplyRequestRole The member's effective role on the project. A viewer may only read. An omitted role keeps the stored one, and a new member without one is stored as member.
 type ManagementProjectMemberApplyRequestRole string
 
 // ManagementProjectMemberIdentity defines model for ManagementProjectMemberIdentity.
@@ -2567,7 +2570,7 @@ type SnapshotInfo struct {
 
 // Team defines model for Team.
 type Team struct {
-	// ApiKey API key for the team
+	// ApiKey API key for the team. Empty when the user's role on the team is read-only.
 	ApiKey string `json:"apiKey"`
 
 	// IsDefault Whether the team is the default team

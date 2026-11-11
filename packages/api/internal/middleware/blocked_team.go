@@ -70,8 +70,12 @@ func EnforceBlockedTeam() gin.HandlerFunc {
 	return auth.EnforceBlockedTeam(blockedTeamAllowlist)
 }
 
-// CheckTeamAccessForRoute applies CheckTeamBanned + the api blocked-team
-// allowlist to a late-resolved team.
+// CheckTeamAccessForRoute applies CheckTeamBanned, the api blocked-team
+// allowlist and the read-only member check to a late-resolved team.
 func CheckTeamAccessForRoute(c *gin.Context, team *types.Team) error {
-	return auth.CheckTeamAccess(c, team, blockedTeamAllowlist)
+	if err := auth.CheckTeamAccess(c, team, blockedTeamAllowlist); err != nil {
+		return err
+	}
+
+	return auth.CheckReadOnlyMemberForRoute(c, team, readOnlyDeniedReads)
 }

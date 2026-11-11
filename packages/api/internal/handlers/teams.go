@@ -10,6 +10,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/team"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -44,6 +45,19 @@ func (a *APIStore) GetTeams(c *gin.Context) {
 	teams := make([]api.Team, len(results))
 	hasDefault := false
 	for i, row := range results {
+		teams[i] = api.Team{
+			TeamID:    row.ID.String(),
+			Name:      row.Name,
+			IsDefault: row.IsDefault,
+		}
+		hasDefault = hasDefault || row.IsDefault
+
+		// An API key carries no role, so one issued to a read-only member
+		// would let them write.
+		if authtypes.RoleReadOnly(row.Role) {
+			continue
+		}
+
 		// We create a new API key for the CLI and backwards compatibility with API Keys hashing
 		apiKey, err := team.CreateAPIKey(ctx, a.authDB, row.ID, &userID, "CLI login/configure")
 		if err != nil {
@@ -52,14 +66,7 @@ func (a *APIStore) GetTeams(c *gin.Context) {
 
 			return
 		}
-
-		teams[i] = api.Team{
-			TeamID:    row.ID.String(),
-			Name:      row.Name,
-			ApiKey:    apiKey.RawAPIKey,
-			IsDefault: row.IsDefault,
-		}
-		hasDefault = hasDefault || row.IsDefault
+		teams[i].ApiKey = apiKey.RawAPIKey
 	}
 
 	if !hasDefault && len(teams) > 0 {

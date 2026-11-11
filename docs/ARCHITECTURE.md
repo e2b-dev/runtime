@@ -372,10 +372,16 @@ retries.
   per-project/user revision in `projection.project_members`; a duplicate or older revision
   succeeds without changing target state. A present projection carries the user's OIDC
   issuer/subject identities. Every projected user has at least one, and an identity already owned
-  by a different user returns 409. A present projection may carry the user's role (`owner` or
-  `member`), stored in `users_teams.role` and loaded with the team when a user session is
+  by a different user returns 409. A present projection may carry the user's role (`owner`,
+  `member` or `viewer`), stored in `users_teams.role` and loaded with the team when a user session is
   authenticated; an omitted role keeps the stored one, and a new member without one is stored as
-  `member`. Both roles grant the same access. A revocation removes only that user's `users_teams` row;
+  `member`. `owner` and `member` grant the same access. A `viewer`, or any role the API does not
+  know, is read-only: the API refuses that user's session every method but GET, HEAD and OPTIONS
+  with 403, refuses the two reads that hand out a write (the template build file upload link and
+  volume detail, which returns a volume content token), and withholds from sandbox detail the envd access token and the headers egress rules add to
+  outbound requests. The team list issues such a user no API key. API keys carry no role and are
+  not restricted: they belong to the team, so a key a user created keeps working whatever that
+  user's role becomes. A revocation removes only that user's `users_teams` row;
   projected users and identities are retained. Auth caches member authorization, so each accepted
   command evicts that user's authorization for the project after commit.
 - `PUT .../limits` syncs the project's effective limits into `project_limits`, which the team

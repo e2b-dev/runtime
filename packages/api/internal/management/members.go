@@ -27,6 +27,7 @@ type ProjectMemberIdentity struct {
 const (
 	ProjectMemberRoleOwner  = "owner"
 	ProjectMemberRoleMember = "member"
+	ProjectMemberRoleViewer = "viewer"
 )
 
 type ProjectMemberProjection struct {
@@ -146,7 +147,7 @@ func validateProjectMemberProjection(projection ProjectMemberProjection) error {
 		return ErrInvalidProjectMember
 	}
 	switch projection.Role {
-	case "", ProjectMemberRoleOwner, ProjectMemberRoleMember:
+	case "", ProjectMemberRoleOwner, ProjectMemberRoleMember, ProjectMemberRoleViewer:
 	default:
 		return ErrInvalidProjectMember
 	}

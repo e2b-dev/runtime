@@ -13,7 +13,7 @@ import (
 )
 
 const getTeamsWithUsersTeams = `-- name: GetTeamsWithUsersTeams :many
-SELECT t.id, t.created_at, t.name, t.deleted_at, ut.is_default
+SELECT t.id, t.created_at, t.name, t.deleted_at, ut.is_default, ut.role
 FROM "public"."teams" t
 JOIN "public"."users_teams" ut ON ut.team_id = t.id
 WHERE ut.user_id = $1
@@ -25,6 +25,7 @@ type GetTeamsWithUsersTeamsRow struct {
 	Name      string
 	DeletedAt *time.Time
 	IsDefault bool
+	Role      string
 }
 
 func (q *Queries) GetTeamsWithUsersTeams(ctx context.Context, userID uuid.UUID) ([]GetTeamsWithUsersTeamsRow, error) {
@@ -42,6 +43,7 @@ func (q *Queries) GetTeamsWithUsersTeams(ctx context.Context, userID uuid.UUID) 
 			&i.Name,
 			&i.DeletedAt,
 			&i.IsDefault,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}

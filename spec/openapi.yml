@@ -583,7 +583,7 @@ components:
           description: Name of the team
         apiKey:
           type: string
-          description: API key for the team
+          description: API key for the team. Empty when the user's role on the team is read-only.
         isDefault:
           type: boolean
           description: Whether the team is the default team
@@ -4622,8 +4622,8 @@ components:
           description: Whether this membership is the user's default team. Omitted requests from older sources remain non-default.
         role:
           type: string
-          enum: [owner, member]
-          description: The member's effective role on the project. An omitted role keeps the stored one, and a new member without one is stored as member.
+          enum: [owner, member, viewer]
+          description: The member's effective role on the project. A viewer may only read. An omitted role keeps the stored one, and a new member without one is stored as member.
         identities:
           type: array
           maxItems: 16

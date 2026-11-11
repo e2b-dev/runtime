@@ -5,6 +5,12 @@ import (
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
+const (
+	TeamRoleOwner  = "owner"
+	TeamRoleMember = "member"
+	TeamRoleViewer = "viewer"
+)
+
 type Team struct {
 	*dbtypes.Team
 
@@ -15,6 +21,18 @@ type Team struct {
 	// made for a user. It is empty when the team was resolved without one, by
 	// API key or by team ID.
 	Role string
+}
+
+// ReadOnly reports whether the authenticated user may only read the team. A
+// role this build does not know is read-only, so a role added later never
+// grants more here than it was given. An empty role is not a user's.
+func (t *Team) ReadOnly() bool {
+	return t.Role != "" && RoleReadOnly(t.Role)
+}
+
+// RoleReadOnly reports whether a stored member role may only read.
+func RoleReadOnly(role string) bool {
+	return role != TeamRoleOwner && role != TeamRoleMember
 }
 
 func (t *Team) TeamID() string {
