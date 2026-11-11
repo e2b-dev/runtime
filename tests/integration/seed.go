@@ -106,15 +106,7 @@ func seed(ctx context.Context, db *client.Client, authdb *authdb.Client, data Se
 	hasher := keys.NewSHA256Hashing()
 
 	// User
-	err := authdb.TestsRawSQL(ctx, `
-INSERT INTO auth.users (id, email)
-VALUES ($1, $2)
-`, data.UserID, "user-test-integration@e2b.dev")
-	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
-	}
-
-	err = authdb.UpsertPublicUser(ctx, data.UserID)
+	err := authdb.UpsertPublicUser(ctx, data.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to create public user: %w", err)
 	}

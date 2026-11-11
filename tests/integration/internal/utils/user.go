@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -15,20 +14,11 @@ func CreateUser(t *testing.T, db *setup.Database) uuid.UUID {
 
 	userID := uuid.New()
 
-	err := db.AuthDb.TestsRawSQL(t.Context(), `
-INSERT INTO auth.users (id, email)
-VALUES ($1, $2)
-`, userID, fmt.Sprintf("user-test-integration-%s@e2b.dev", userID))
-	require.NoError(t, err)
-
-	err = db.AuthDb.UpsertPublicUser(t.Context(), userID)
+	err := db.AuthDb.UpsertPublicUser(t.Context(), userID)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		_ = db.AuthDb.DeletePublicUser(t.Context(), userID)
-		db.AuthDb.TestsRawSQL(t.Context(), `
-DELETE FROM auth.users WHERE id = $1
-`, userID)
 	})
 
 	return userID

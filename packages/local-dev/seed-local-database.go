@@ -362,18 +362,7 @@ ON CONFLICT (id) DO UPDATE SET
 }
 
 func upsertUser(ctx context.Context, db *authdb.Client, userID uuid.UUID) error {
-	err := db.TestsRawSQL(ctx, `
-INSERT INTO auth.users (id, email)
-VALUES ($1, $2)
-ON CONFLICT (id) DO UPDATE SET
-	email = EXCLUDED.email
-`, userID, "user@e2b-dev.local")
-	if err != nil {
-		return fmt.Errorf("failed to upsert user: %w", err)
-	}
-
-	err = db.UpsertPublicUser(ctx, userID)
-	if err != nil {
+	if err := db.UpsertPublicUser(ctx, userID); err != nil {
 		return fmt.Errorf("failed to upsert public user: %w", err)
 	}
 
