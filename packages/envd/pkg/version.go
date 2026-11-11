@@ -1,3 +1,3 @@
 package pkg
 
-var Version = "0.10.2" // x-release-please-version
+var Version = "0.10.3" // x-release-please-version
