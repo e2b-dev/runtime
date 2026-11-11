@@ -1052,36 +1052,69 @@ func TestCreateSandbox_MalformedExtraCompatibleNodeModelsKeepsHardcodedRule(t *t
 	}
 }
 
-func TestCreateSandbox_CreatedCounterCarriesTeam(t *testing.T) {
+func TestCreateSandbox_CreatedCounterCarriesTeamAndCluster(t *testing.T) {
 	t.Parallel()
 
-	o := newCreateSandboxTestOrchestrator(t)
-	reader := sdkmetric.NewManualReader()
-	counter, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator"), telemetry.ApiOrchestratorCreatedSandboxes)
-	require.NoError(t, err)
-	o.createdSandboxesCounter = counter
+	for _, tc := range []struct {
+		name      string
+		clusterID uuid.UUID
+		wantBYOC  bool
+	}{
+		{name: "local cluster", clusterID: consts.LocalClusterID},
+		{name: "byoc cluster", clusterID: uuid.New(), wantBYOC: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	team := testTeam()
-	now := time.Now()
-	build := testBuild()
-	fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
-		return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			o := newCreateSandboxTestOrchestrator(t)
+			reader := sdkmetric.NewManualReader()
+			counter, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator"), telemetry.ApiOrchestratorCreatedSandboxes)
+			require.NoError(t, err)
+			o.createdSandboxesCounter = counter
+
+			team := testTeam()
+			if tc.clusterID != consts.LocalClusterID {
+				team.ClusterID = &tc.clusterID
+				o.clusters = apiclusters.NewTestPool(apiclusters.NewTestCluster(tc.clusterID, nil))
+				node := o.GetNode(consts.LocalClusterID, "node-1")
+				require.NotNil(t, node)
+				o.deregisterNode(node)
+				node.ClusterID = tc.clusterID
+				o.registerNode(node)
+			}
+
+			now := time.Now()
+			build := testBuild()
+			fetcher := func(_ context.Context) (SandboxMetadata, *api.APIError) {
+				return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: "base-tpl", Build: build}, nil
+			}
+
+			_, apiErr := o.CreateSandbox(t.Context(), "sbx-team-"+uuid.New().String()[:8], uuid.New().String(), team,
+				fetcher, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{})
+			require.Nil(t, apiErr)
+
+			var rm metricdata.ResourceMetrics
+			require.NoError(t, reader.Collect(t.Context(), &rm))
+			require.Len(t, rm.ScopeMetrics, 1)
+			require.Len(t, rm.ScopeMetrics[0].Metrics, 1)
+			sum, ok := rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, sum.DataPoints, 1)
+			attrs := sum.DataPoints[0].Attributes
+
+			teamID, ok := attrs.Value("team.id")
+			require.True(t, ok)
+			assert.Equal(t, team.ID.String(), teamID.AsString())
+
+			clusterID, ok := attrs.Value("cluster.id")
+			require.True(t, ok)
+			assert.Equal(t, tc.clusterID.String(), clusterID.AsString())
+
+			byoc, ok := attrs.Value("byoc")
+			require.True(t, ok)
+			assert.Equal(t, tc.wantBYOC, byoc.AsBool())
+		})
 	}
-
-	_, apiErr := o.CreateSandbox(t.Context(), "sbx-team-"+uuid.New().String()[:8], uuid.New().String(), team,
-		fetcher, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{})
-	require.Nil(t, apiErr)
-
-	var rm metricdata.ResourceMetrics
-	require.NoError(t, reader.Collect(t.Context(), &rm))
-	require.Len(t, rm.ScopeMetrics, 1)
-	require.Len(t, rm.ScopeMetrics[0].Metrics, 1)
-	sum, ok := rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64])
-	require.True(t, ok)
-	require.Len(t, sum.DataPoints, 1)
-	teamID, ok := sum.DataPoints[0].Attributes.Value("team.id")
-	require.True(t, ok)
-	assert.Equal(t, team.ID.String(), teamID.AsString())
 }
 
 // Under the hugepage limit, a placement on a node that reports no pool ceiling

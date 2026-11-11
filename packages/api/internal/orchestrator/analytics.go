@@ -194,6 +194,6 @@ func (o *Orchestrator) handleNewlyCreatedSandbox(ctx context.Context, sbx sandbo
 	o.analyticsInsert(ctx, sbx)
 	o.emitCreatedInstancePosthog(ctx, sbx, meta, startDuration)
 	o.teamMetricsObserver.Add(ctx, sbx.TeamID)
-	o.createdCounter.Add(ctx, 1, metric.WithAttributes(telemetry.WithTeamID(sbx.TeamID.String())))
+	o.createdCounter.Add(ctx, 1, metric.WithAttributes(telemetry.WithTeamID(sbx.TeamID.String())), withCluster(sbx.ClusterID))
 	logSandboxCreated(ctx, sbx)
 }

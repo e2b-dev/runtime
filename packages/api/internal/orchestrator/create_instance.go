@@ -598,7 +598,7 @@ func (o *Orchestrator) CreateSandbox(
 			o.featureUnsupportedCounter.Add(ctx, 1, metric.WithAttributes(
 				telemetry.WithTeamID(team.TeamID()),
 				attribute.String("feature", strings.Join(unsupportedErr.Features, ",")),
-			))
+			), withCluster(nodeClusterID))
 			logger.L().Warn(ctx, "No orchestrator in the cluster supports a feature the sandbox needs",
 				logger.WithTeamID(team.TeamID()),
 				logger.WithTemplateID(sbxData.TemplateID),
@@ -629,13 +629,13 @@ func (o *Orchestrator) CreateSandbox(
 		attribute.Bool("node_affinity_success", affinityRequested && node.ID == *sbxData.NodeID),
 		telemetry.WithTeamID(team.TeamID()),
 	}
-	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
+	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...), withCluster(node.ClusterID))
 
 	if placed.MissingHugepageCeiling != "" {
 		o.noCeilingPlacementsCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("node.id", node.ID),
 			attribute.String("reason", placed.MissingHugepageCeiling),
-		))
+		), withCluster(node.ClusterID))
 	}
 
 	telemetry.SetAttributes(ctx, attribute.String("node.id", node.ID))
@@ -796,7 +796,7 @@ func (o *Orchestrator) maybeRemapResumeOriginNode(ctx context.Context, sandboxID
 
 	// Drop the cached snapshot so the next resume reads the new origin node.
 	o.snapshotCache.Invalidate(wctx, sandboxID)
-	o.resumeOriginNodeRemapCounter.Add(wctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.TeamID())))
+	o.resumeOriginNodeRemapCounter.Add(wctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.TeamID())), withCluster(newNode.ClusterID))
 
 	oldNodeID := ""
 	if originNodeID != nil {

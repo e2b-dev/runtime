@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -16,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -41,6 +43,72 @@ func TestSetupMetrics_LabelsTheOrchestratorGaugeWithItsDiscoveryBackend(t *testi
 		"nomad-node": string(servicediscovery.BackendNomad),
 		"k8s-node":   string(servicediscovery.BackendKubernetes),
 	}, backendsByNode(t, collected))
+}
+
+// Node IDs are only unique within a cluster, and only remote clusters are BYOC.
+func TestSetupMetrics_LabelsNodeMetricsWithTheirCluster(t *testing.T) {
+	t.Parallel()
+
+	byocCluster := uuid.New()
+	reader := sdkmetric.NewManualReader()
+
+	o := &Orchestrator{nodes: smap.New[*nodemanager.Node](), sandboxStore: emptySandboxStore(t)}
+	o.registerNode(&nodemanager.Node{ID: "node", ClusterID: consts.LocalClusterID})
+	o.registerNode(&nodemanager.Node{ID: "node", ClusterID: byocCluster})
+
+	require.NoError(t, o.setupMetrics(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &collected))
+
+	want := map[string]bool{
+		consts.LocalClusterID.String(): false,
+		byocCluster.String():           true,
+	}
+	for _, name := range []string{
+		string(telemetry.ApiOrchestratorCountMeterName),
+		string(telemetry.ApiOrchestratorSbxCreateSuccess),
+		string(telemetry.ApiOrchestratorSbxCreateFailure),
+	} {
+		assert.Equal(t, want, byocByCluster(t, collected, name), name)
+	}
+}
+
+// byocByCluster maps each cluster.id the metric's points carry to their byoc
+// value.
+func byocByCluster(t *testing.T, collected metricdata.ResourceMetrics, name string) map[string]bool {
+	t.Helper()
+
+	got := map[string]bool{}
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != name {
+				continue
+			}
+
+			var points []metricdata.DataPoint[int64]
+			switch data := m.Data.(type) {
+			case metricdata.Gauge[int64]:
+				points = data.DataPoints
+			case metricdata.Sum[int64]:
+				points = data.DataPoints
+			default:
+				require.Failf(t, "unexpected aggregation", "%s is %T", name, m.Data)
+			}
+
+			for _, point := range points {
+				cluster, found := point.Attributes.Value("cluster.id")
+				require.True(t, found, "%s datapoint carries no cluster.id", name)
+
+				byoc, found := point.Attributes.Value("byoc")
+				require.True(t, found, "%s datapoint carries no byoc", name)
+
+				got[cluster.AsString()] = byoc.AsBool()
+			}
+		}
+	}
+
+	return got
 }
 
 // setupMetrics registers every api metric, including the sandbox-count gauge
