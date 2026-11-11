@@ -256,13 +256,15 @@ three in effect:
 docker compose logs orchestrator | grep "node limits"
 ```
 
-A pool above 100 changes how the orchestrator stops. It tears the pooled
-slots down one at a time and stops doing so 20 seconds into its 30-second
-shutdown budget; if slots are left it exits non-zero, and the next start
-removes them before it serves, which took 103 seconds for 1,014 slots on a
-test VM. Stopping the stack while several hundred sandboxes are running can
-take the orchestrator past that budget at any pool size, with the same
-outcome.
+A pool above 100 changes how the orchestrator stops. It tears slots down one
+at a time, those in the pool and those still on their way back to it, and
+stops doing so 20 seconds into its 30-second shutdown budget; if slots are
+left it exits non-zero, and the next start removes them before it serves,
+which took 103 seconds for 1,014 slots on a test VM. A pool of 100 or less
+has no such stop, and at any size a slot the pool has no room for is torn
+down outside it. So stopping the stack while several hundred more sandboxes
+are running than the pool has room for can take the orchestrator past that
+budget, with the same outcome.
 
 For hosts that run several hundred sandboxes, `host-setup` raises the
 kernel's neighbour-table thresholds, whose default ceiling of 1024 entries

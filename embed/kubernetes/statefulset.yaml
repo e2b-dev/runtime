@@ -187,6 +187,8 @@ spec:
             - { name: SANDBOX_DIR, value: /fc-vm }
             - { name: NBD_POOL_SIZE, value: "32" }
             - { name: NETWORK_VERSION, value: "1" }
+            # Inert, as under Compose, where it is what restarts the orchestrator on a new pin; here the map's hashed name rolls the pod.
+            - { name: E2B_ORCHESTRATOR_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_ORCHESTRATOR_VERSION } } }
             - { name: DEFAULT_KERNEL_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_KERNEL_VERSION } } }
             - { name: DEFAULT_FIRECRACKER_VERSION, valueFrom: { configMapKeyRef: { name: e2b-versions, key: E2B_FIRECRACKER_VERSION } } }
             # The launcher's sweep addresses the host cgroup tree through this mount.

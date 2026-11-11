@@ -113,6 +113,28 @@ setup() {
   fi
 }
 
+# A network slot pool above 100, which under Compose a raised sandbox limit
+# sets, stops tearing slots down 20 seconds into the orchestrator's shutdown.
+# Before build v0.30.202611112209 that held only for the slots in the pool:
+# the ones still on their way back to it were torn down without a limit, and
+# stopping a busy node could run past the shutdown budget. The guide describes
+# the stop as covering both, so the pin must not slide back below that build.
+@test "orchestrator pin is at least the build that bounds slots still returning at a stop" {
+  # shellcheck disable=SC2016  # compose's own ${...} is matched literally
+  grep -qF 'NETWORK_REUSED_SLOTS_POOL_SIZE: ${NETWORK_REUSED_SLOTS_POOL_SIZE:-${MAX_SANDBOXES_PER_NODE:-0}}' compose/compose.yaml
+  orch_tag="$(sed -n 's/^E2B_ORCHESTRATOR_VERSION=\(v[^ #]*\).*/\1/p' compose/.env)"
+  [ -n "$orch_tag" ]
+  case "$orch_tag" in
+    *-*) min=v0.30.202611112209 ;;
+    *) min=v0.30.1 ;;
+  esac
+  lowest="$(printf '%s\n%s\n' "$min" "$orch_tag" | sort -V | head -1)"
+  if [ "$lowest" != "$min" ]; then
+    echo "E2B_ORCHESTRATOR_VERSION is $orch_tag; slots still returning at a stop are bounded from orchestrator build v0.30.202611112209 on, and in every release after v0.30.0" >&2
+    return 1
+  fi
+}
+
 # The whole tag, not the SemVer prefix: an auto-deploy tag carries the commit
 # after a hyphen, and two images from different commits must not compare equal.
 # The scripts an install runs come from the tools image, never from the
