@@ -113,8 +113,8 @@ github.com/launchdarkly/go-test-helpers/v3 v3.1.0 h1:E3bxJMzMoA+cJSF3xxtk2/chr1z
 github.com/launchdarkly/go-test-helpers/v3 v3.1.0/go.mod h1:Ake5+hZFS/DmIGKx/cizhn5W9pGA7pplcR7xCxWiLIo=
 github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e h1:Q6MvJtQK/iRcRtzAscm/zF23XxJlbECiGPyRicsX+Ak=
 github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e/go.mod h1:autxFIvghDt3jPTLoqZ9OZ7s9qTGNAWmYCjVFWPX/zg=
-github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8SYxI99mE=
-github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
+github.com/magiconair/properties v1.18.12 h1:sT9zQpvTB3B4gzrX0tmZNTEaGyg8Zw55MFYRE32Mr9I=
+github.com/magiconair/properties v1.18.12/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
 github.com/mailru/easyjson v0.9.2 h1:dX8U45hQsZpxd80nLvDGihsQ/OxlvTkVUXH2r/8cb2M=
 github.com/mailru/easyjson v0.9.2/go.mod h1:1+xMtQp2MRNVL/V1bOzuP3aP8VNwRW55fQUto+XFtTU=
 github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
@@ -176,8 +176,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/sumup/typeid v0.8.0 h1:IiOfmgwwObVcjHu4LPibjB5n+Humr+e1JkrfUZUS7tc=
 github.com/sumup/typeid v0.8.0/go.mod h1:s5c0YitDKn3rzpWDz4Mre9ZpDcRNK1dXSMR9thgG4DQ=
-github.com/testcontainers/testcontainers-go v0.44.0 h1:/Fwh6HY1mIikhnm9e7HwoxGycx0lzRAE0f5VQpjFxzI=
-github.com/testcontainers/testcontainers-go v0.44.0/go.mod h1:IcnwQrYTO86xHXu5bvMaBH7ATlbS3Qn1M1QWW3c66rE=
+github.com/testcontainers/testcontainers-go v0.45.0 h1:ss9Stm9KDX6JLgGL4jr2fC5dwpabTbCBsRcGadBPR9k=
+github.com/testcontainers/testcontainers-go v0.45.0/go.mod h1:VMJZ7M+qhgfEHWNbtjm596OyEOraULSTDaus/h0hmJI=
 github.com/tklauser/go-sysconf v0.4.0 h1:7H0uAN+7RkwWRaxhYXDLqa5V3LPrJeV8wmD9dRUgPQU=
 github.com/tklauser/go-sysconf v0.4.0/go.mod h1:8mTNWyog7H+MpKijp4VmKJAd2bbYQ2zuUwkYRbUArPI=
 github.com/tklauser/numcpus v0.12.0 h1:NR85qdvHA9pFse3x3weVZ0r0ST8R6l5RHbZrlRaqob4=

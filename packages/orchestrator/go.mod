@@ -56,7 +56,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/soheilhy/cmux v0.1.5
 	github.com/stretchr/testify v1.12.1
-	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/tklauser/go-sysconf v0.4.0
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -211,7 +211,7 @@ require (
 	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.0.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
-	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

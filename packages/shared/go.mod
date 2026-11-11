@@ -61,7 +61,7 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.9.0
 	github.com/stretchr/testify v1.12.1
 	github.com/sumup/typeid v0.8.0
-	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
 	go.opentelemetry.io/contrib/bridges/otelzap v0.21.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.72.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.72.0
@@ -287,7 +287,7 @@ require (
 	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.0.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
-	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

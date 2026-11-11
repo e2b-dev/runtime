@@ -254,7 +254,7 @@ require (
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
-	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -345,7 +345,7 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/sumup/typeid v0.8.0 // indirect
-	github.com/testcontainers/testcontainers-go v0.44.0 // indirect
+	github.com/testcontainers/testcontainers-go v0.45.0 // indirect
 	github.com/tidwall/gjson v1.20.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
