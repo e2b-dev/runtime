@@ -237,11 +237,24 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	freezeGen := a.workloadFreezer.FreezeGeneration(ctx)
 
 	if r.Body != nil {
-		// Read raw body so we can wipe it after parsing
+		// Read raw body so we can wipe it after parsing. The body is capped at the
+		// server edge by the bodylimit middleware (POST /init is not exempt), so this
+		// read is bounded even though /init is auth-excluded and the server sets no
+		// ReadTimeout -- without that cap a guest process could stream an unbounded
+		// body here and OOM envd, the control plane, with no credentials.
 		body, err := io.ReadAll(r.Body)
 		// Ensure body is wiped after we're done
 		defer memguard.WipeBytes(body)
 		if err != nil {
+			// An oversized body trips the cap: answer 413 and attempt no unfreeze.
+			// Other read errors keep the existing 400 path.
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				logger.Error().Int64("limit_bytes", maxErr.Limit).Msg("request body exceeds the size cap")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+
+				return
+			}
 			logger.Error().Msgf("Failed to read request body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 

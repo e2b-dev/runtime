@@ -19,6 +19,7 @@ import (
 	"github.com/rs/cors"
 
 	"github.com/e2b-dev/infra/packages/envd/internal/api"
+	"github.com/e2b-dev/infra/packages/envd/internal/api/bodylimit"
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/host"
 	"github.com/e2b-dev/infra/packages/envd/internal/logs"
@@ -330,14 +331,29 @@ func run(stop <-chan struct{}) error {
 	s := &http.Server{
 		Handler: withCORS(
 			service.WithAuthorization(
-				middleware.Wrap(handler),
+				middleware.Wrap(
+					// Cap request bodies at the edge, below auth, so an
+					// unauthenticated oversized body cannot OOM envd before any
+					// handler runs. Streaming endpoints are exempt; see bodylimit.
+					bodylimit.Wrap(handler),
+				),
 			),
 		),
 		Addr: fmt.Sprintf("0.0.0.0:%d", port),
-		// We remove the timeouts as the connection is terminated by closing of the sandbox and keepalive close.
+		// The body and the connect RPC streams are long-lived, so ReadTimeout and
+		// WriteTimeout stay 0 -- a non-zero value would cut a streaming RPC or a
+		// /files transfer. The connection is terminated by closing of the sandbox
+		// and keepalive close.
 		ReadTimeout:  0,
 		WriteTimeout: 0,
 		IdleTimeout:  idleTimeout,
+		// ReadHeaderTimeout bounds only the header read, not the body stream, so it
+		// closes the slowloris surface (a guest trickling request headers to pin a
+		// connection and its goroutine) without touching the long-lived bodies above.
+		// gosec G112 flags the previously-unset value. MaxHeaderBytes caps header
+		// memory, symmetric with the per-path body cap in the bodylimit middleware.
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
 	}
 
 	portLogger := l.With().Str("logger", "port-forwarder").Logger()

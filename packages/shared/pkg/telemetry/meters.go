@@ -90,6 +90,16 @@ const (
 	// reinit after a checkpoint, or repeat). The report is diagnostic, not trusted for CPU limits.
 	EnvdCpuReport CounterType = "orchestrator.sandbox.envd.cpu_report"
 
+	// OOM kills the guest kernel reported, as envd reads them off /dev/kmsg, split
+	// by victim_class: control_plane (envd itself was killed -- the control-plane
+	// OOM #3563 is about; should stay 0) vs workload (a user process hit its cgroup
+	// memory.max -- an expected capacity event). Mixing the two in one total hides
+	// the one that matters, so they are separated here rather than at query time.
+	OrchestratorSandboxOOMKills CounterType = "orchestrator.sandbox.oom.kills"
+	// OOM kills newer than envd's 32-entry window could hold, so counted as a floor
+	// rather than lost: the fleet's "there were more than we listed" signal.
+	OrchestratorSandboxOOMKillsDropped CounterType = "orchestrator.sandbox.oom.kills_dropped"
+
 	// 2 MiB chunks the pre-pause envd heap collapse attempted, split by the
 	// result attribute (collapsed|skipped): attempts = total, successful =
 	// collapsed.
@@ -913,6 +923,8 @@ var counterDesc = map[CounterType]string{
 	EnvdRedirectsRefused:                         "Redirects envd answered a host request with, refused rather than followed, by status_code; envd never redirects, so any is unexpected",
 	EnvdInitUnobservedHandlers:                   "Envd /init handlers that thawed the workload inline and completed after their client had gone, as envd counts them on the served /init of a first customer start that succeeded (X-Envd-Init-Unobserved)",
 	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
+	OrchestratorSandboxOOMKills:                  "Guest OOM kills envd reported off /dev/kmsg, by victim_class (control_plane=envd killed, the #3563 event; workload=a user process hit memory.max) and process",
+	OrchestratorSandboxOOMKillsDropped:           "Guest OOM kills past envd's 32-entry window, counted as a floor so a truncated list is not read as none",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorStatusOverrideRefusedCounterName: "Refused service status overrides, labelled by reason.",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
@@ -1017,6 +1029,8 @@ var counterUnits = map[CounterType]string{
 	EnvdReinitCut:                                "{reinit}",
 	EnvdRedirectsRefused:                         "{redirect}",
 	EnvdCpuReport:                                "{response}",
+	OrchestratorSandboxOOMKills:                  "{kill}",
+	OrchestratorSandboxOOMKillsDropped:           "{kill}",
 	EnvdCollapseChunks:                           "{chunk}",
 	OrchestratorStatusOverrideRefusedCounterName: "{override}",
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
