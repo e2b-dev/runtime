@@ -19,15 +19,13 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/mocks"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	t.Parallel()
-	// Real Unix paths are limited independently of the long test name.
-	dir, err := os.MkdirTemp("", "uffd-owner-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	file, err := os.CreateTemp(t.TempDir(), "received")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = file.Close() })
@@ -137,9 +135,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 
 func TestServeMemoryCleanupPreservesCleanupFailure(t *testing.T) {
 	t.Parallel()
-	dir, err := os.MkdirTemp("", "uffd-close-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	u := uffd.New(blockmocks.NewMockReadonlyDevice(t), filepath.Join(dir, "u.sock"), logger.L())
 	cleanup := NewCleanup()
 	cleanupFailure := errors.New("dependent cleanup failed")

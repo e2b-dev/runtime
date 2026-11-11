@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -41,11 +41,7 @@ const msrFaultResponse = `{"fault_message":"Load snapshot error: Failed to resto
 func TestLoadSnapshotRecordsRefusal(t *testing.T) {
 	reader := sharedMeterReader()
 
-	// Not t.TempDir(): its path embeds the full test name and overflows the
-	// 108-char unix sun_path limit.
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
@@ -77,9 +73,7 @@ func TestLoadSnapshotRecordsRefusal(t *testing.T) {
 func TestLoadSnapshotRecordsUffdExitDuringLoad(t *testing.T) {
 	reader := sharedMeterReader()
 
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)

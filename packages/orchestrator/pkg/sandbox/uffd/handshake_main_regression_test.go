@@ -17,15 +17,13 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/mocks"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 func startHandshakeTest(t *testing.T) *Uffd {
 	t.Helper()
-	// Keep the Unix path under sun_path's limit independently of test names.
-	dir, err := os.MkdirTemp("", "uffd-hs-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	memfile := blockmocks.NewMockReadonlyDevice(t)
 	memfile.EXPECT().Header().Return(nil).Maybe()
 	u := New(memfile, filepath.Join(dir, "u.sock"), logger.L())

@@ -24,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/memory"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -90,11 +91,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, len(want), n)
 			source := &lifecycleCacheSource{cache: cache, want: want, hold: mode == "late-cancel", entered: make(chan struct{})}
-			// Avoid the long test-name prefix in t.TempDir: Unix socket
-			// addresses have a much smaller limit than regular file paths.
-			socketDir, err := os.MkdirTemp("", "pf-") //nolint:usetesting // t.TempDir's test-name prefix exceeds the Unix socket path limit.
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, os.RemoveAll(socketDir)) })
+			socketDir := testutils.SocketDir(t)
 			socket := filepath.Join(socketDir, "uffd.sock")
 			backend := uffd.New(source, socket, log)
 			// Before handler admission, cancellation must keep its error identity.

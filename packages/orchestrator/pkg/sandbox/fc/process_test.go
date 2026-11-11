@@ -24,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
@@ -258,9 +259,7 @@ func (r restoreRootfs) Path() (string, error) { return r.path, nil }
 func newRestoreProcess(t *testing.T, fake *fakeFirecracker) *Process {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)

@@ -25,6 +25,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/rootfs"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
@@ -68,9 +69,7 @@ func (r *wireRecorder) refuse(field string) {
 func newWireRecorder(t *testing.T) (*apiClient, *wireRecorder) {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
