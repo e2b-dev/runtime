@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -53,6 +54,11 @@ var (
 )
 
 const defaultPopulateRetryDelay = 100 * time.Millisecond
+
+// handedTeardownWorkers bounds how many of the slots handed over by returns
+// Close tears down at once. Teardowns mostly wait on each other, so more
+// workers add no speed, only more teardowns still running at the deadline.
+const handedTeardownWorkers = 4
 
 type slotCreationStage string
 
@@ -114,6 +120,11 @@ type V2Pool struct {
 	releaseErr    error
 	cleanupErr    error
 	retainedSlots map[*network.Slot]struct{}
+	// handToClose is set from the moment a Close with a teardown deadline
+	// publishes closed until it collects handedSlots: cleanupWith leaves its
+	// slot there instead of tearing it down. Guarded by closeMu.
+	handToClose bool
+	handedSlots []*network.Slot
 
 	metrics            *Metrics
 	populateRetryDelay time.Duration
@@ -378,6 +389,7 @@ func (p *V2Pool) tryTrackAdmission() bool {
 // claimSlot is the final handoff linearization point. If Close published
 // closed first, the admission still owns the received slot and must clean it
 // up before returning ErrClosed; Close joins that work through admissionsWG.
+// A Close with a teardown deadline takes the slot instead (see cleanupWith).
 func (p *V2Pool) claimSlot(ctx context.Context, slot *network.Slot) error {
 	p.closeMu.RLock()
 	closed := p.closed
@@ -405,7 +417,8 @@ func (p *V2Pool) tryTrackReturn() bool {
 
 // ReturnAsync recycles a slot in the background, logging errors instead of
 // returning them. Close waits for all in-flight returns before draining the
-// pool. If the pool is already closed the slot is cleaned up synchronously.
+// pool. If the pool is already closed the slot is cleaned up synchronously,
+// unless a Close with a teardown deadline takes it (see cleanupWith).
 func (p *V2Pool) ReturnAsync(ctx context.Context, slot *network.Slot, releasedFn network.ReleaseNotify, returnDelay time.Duration) error {
 	p.modeFollower.TakeBack(slot)
 
@@ -532,9 +545,25 @@ func (p *V2Pool) tryReuse(ctx context.Context, slot *network.Slot) (reused bool,
 	}
 }
 
-// cleanupWith tears the slot down and attaches any cleanup error to cause.
+// cleanupWith tears the slot down and attaches any cleanup error to cause. A
+// Close with a teardown deadline takes the slot instead and tears it down
+// itself, so the slots of many returns ending at once meet that deadline too.
 func (p *V2Pool) cleanupWith(ctx context.Context, slot *network.Slot, cause error) error {
-	if cerr := p.cleanup(ctx, slot); cerr != nil {
+	p.closeMu.Lock()
+	handed := p.handToClose
+	if handed {
+		p.handedSlots = append(p.handedSlots, slot)
+	}
+	p.closeMu.Unlock()
+
+	// A handed slot keeps its network for Close and has only its firewall
+	// closed here: a return cut short by the shutdown has not read its tenant's
+	// counters, and nothing reads them if Close leaves the slot.
+	cleanup := p.cleanup
+	if handed {
+		cleanup = func(ctx context.Context, slot *network.Slot) error { return slot.CloseFirewall(ctx) }
+	}
+	if cerr := cleanup(ctx, slot); cerr != nil {
 		cleanupErr := fmt.Errorf("cleanup v2 slot '%d': %w", slot.Idx, cerr)
 		p.closeMu.Lock()
 		if p.cleanupErr == nil {
@@ -576,8 +605,8 @@ func (p *V2Pool) cleanup(ctx context.Context, slot *network.Slot) error {
 // Close leaves the pool unchanged when ctx is canceled before Close publishes
 // closed. Once it has published closed, Close ignores later cancellation so it
 // can join admissions and returns before removing shared network state. Past a
-// teardown deadline on ctx, slots still pooled stay in place and Close returns
-// network.ErrSlotsLeft.
+// teardown deadline on ctx, the slots it has not torn down stay in place and
+// Close returns network.ErrSlotsLeft.
 func (p *V2Pool) Close(ctx context.Context) error {
 	p.closeMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -586,6 +615,7 @@ func (p *V2Pool) Close(ctx context.Context) error {
 		return err
 	}
 	p.closed = true
+	p.handToClose = network.HasTeardownDeadline(ctx)
 	p.doneOnce.Do(func() {
 		close(p.done)
 	})
@@ -606,6 +636,9 @@ func (p *V2Pool) Close(ctx context.Context) error {
 	errs := []error{p.releaseErr, p.cleanupErr}
 	retained := p.retainedSlots
 	p.retainedSlots = nil
+	handed := p.handedSlots
+	p.handedSlots = nil
+	p.handToClose = false
 	p.closeMu.Unlock()
 	// Not bounded by the teardown deadline: this teardown is the only read of
 	// a retained slot's firewall counters.
@@ -615,7 +648,32 @@ func (p *V2Pool) Close(ctx context.Context) error {
 		}
 	}
 
-	left := 0
+	var (
+		left     int
+		handedMu sync.Mutex
+		group    errgroup.Group
+	)
+	group.SetLimit(handedTeardownWorkers)
+	for _, slot := range handed {
+		group.Go(func() error {
+			if network.TeardownDeadlinePassed(ctx) {
+				handedMu.Lock()
+				left++
+				handedMu.Unlock()
+
+				return nil
+			}
+			if err := p.cleanup(ctx, slot); err != nil {
+				handedMu.Lock()
+				errs = append(errs, fmt.Errorf("failed to cleanup v2 slot '%d': %w", slot.Idx, err))
+				handedMu.Unlock()
+			}
+
+			return nil
+		})
+	}
+	_ = group.Wait()
+
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)
 

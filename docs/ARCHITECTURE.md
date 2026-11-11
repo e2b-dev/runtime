@@ -614,10 +614,10 @@ Key mechanisms (all under `pkg/sandbox/`):
   handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
   tracked by `nfs.retirements.gauge` until it finishes; a stuck backing operation does not
   retain the network slot. Pool shutdown removes retained networks while preserving failed
-  release-notification and teardown errors. It also removes the pooled ones, except that, when
-  startup reclaim is enabled, a reuse pool raised above its default
-  (`NETWORK_REUSED_SLOTS_POOL_SIZE`) stops at the shutdown's teardown deadline and leaves the
-  rest for that reclaim.
+  release-notification and teardown errors. It also removes the pooled ones and those still
+  being returned, except that, when startup reclaim is enabled, a reuse pool raised above its
+  default (`NETWORK_REUSED_SLOTS_POOL_SIZE`) stops at the shutdown's teardown deadline and
+  leaves the rest for that reclaim.
   The `/init` caller supplies NFS exports as `/lifecycle_id/volume_name`; the proxy
   checks the request lifecycle against the current IP route before MOUNT admission.
   This prevents a queued or retried old MOUNT from inheriting a reused IP's owner;
