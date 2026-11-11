@@ -13,6 +13,11 @@ setup() {
   : > "$OL_CGROUP_ROOT/sbx-b/cgroup.kill"
   script="$BATS_TEST_DIRNAME/../compose/scripts/orchestrator-launch.sh"
   out="$BATS_TEST_TMPDIR/out"
+  # The child of the limit tests below leaves this file, so its absence says
+  # the child never ran. A limit inherited from the runner's shell must not
+  # reach the launcher in any test.
+  marker="$BATS_TEST_TMPDIR/child-ran"
+  unset MAX_SANDBOXES_PER_NODE MAX_STARTING_INSTANCES_PER_NODE NETWORK_REUSED_SLOTS_POOL_SIZE
 }
 
 # Start the launcher in the background, wait until it reports its child as
@@ -99,4 +104,80 @@ term_launcher() {
   [ "$status" -eq 143 ]
   run grep -q '^FIX:' "$out"
   [ "$status" -ne 0 ]
+}
+
+# The orchestrator keeps its default for a sandbox limit it cannot parse and
+# says nothing, refuses every create on a sandbox limit of zero, and stops at
+# start on a start limit of zero. The launcher refuses each before the child
+# starts, with a FIX line that names the variable.
+@test "refuses a sandbox limit that is not a whole number above zero, before the child starts" {
+  local name bad
+  for name in MAX_SANDBOXES_PER_NODE MAX_STARTING_INSTANCES_PER_NODE; do
+    for bad in 0 00 -1 abc 3x 1.5 9999999999999999999; do
+      run env "$name=$bad" OL_COMMAND="touch $marker" bash "$script"
+      [ "$status" -eq 1 ]
+      [[ "$output" == *"$name=$bad is not a whole number above zero"* ]]
+      [[ "${lines[-1]}" == "FIX: set $name to a whole number above zero"* ]]
+      [ "$(printf '%s\n' "${lines[@]}" | grep -c '^FIX: ')" -eq 1 ]
+      [ ! -e "$marker" ]
+    done
+  done
+}
+
+# Compose hands the pool the sandbox limit's value when only that one is set,
+# so the same text arrives in both, and the FIX line has to name the one the
+# operator wrote.
+@test "a bad sandbox limit that the slot pool follows is the one the FIX line names" {
+  run env MAX_SANDBOXES_PER_NODE=many NETWORK_REUSED_SLOTS_POOL_SIZE=many OL_COMMAND="touch $marker" bash "$script"
+  [ "$status" -eq 1 ]
+  [[ "${lines[-1]}" == "FIX: set MAX_SANDBOXES_PER_NODE to "* ]]
+  [ ! -e "$marker" ]
+}
+
+# Zero is a pool size: it keeps the orchestrator's default. Anything that is
+# not a whole number stops the orchestrator at start.
+@test "refuses a slot pool size that is not a whole number, before the child starts" {
+  local bad
+  for bad in -1 abc 1.5; do
+    run env NETWORK_REUSED_SLOTS_POOL_SIZE="$bad" OL_COMMAND="touch $marker" bash "$script"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NETWORK_REUSED_SLOTS_POOL_SIZE=$bad is not a whole number"* ]]
+    [[ "${lines[-1]}" == "FIX: set NETWORK_REUSED_SLOTS_POOL_SIZE to a whole number in "* ]]
+    [ ! -e "$marker" ]
+  done
+}
+
+# A node has 32766 network slots, and under Compose the pool takes the sandbox
+# limit's value unless it is set itself, so a sandbox limit above that arrives
+# as a pool size the orchestrator stops on, in a message that names only the
+# pool.
+@test "refuses a slot pool above the node's network slots, naming both settings" {
+  local bad
+  for bad in 32767 100000; do
+    run env MAX_SANDBOXES_PER_NODE="$bad" NETWORK_REUSED_SLOTS_POOL_SIZE="$bad" OL_COMMAND="touch $marker" bash "$script"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NETWORK_REUSED_SLOTS_POOL_SIZE=$bad is more than the 32766 network slots a node has"* ]]
+    [[ "${lines[-1]}" == "FIX: "*"MAX_SANDBOXES_PER_NODE"* ]]
+    [ ! -e "$marker" ]
+  done
+  # A pool size of its own that is too long for the shell to compare as a number.
+  run env NETWORK_REUSED_SLOTS_POOL_SIZE=99999999999999999999 OL_COMMAND="touch $marker" bash "$script"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is more than the 32766 network slots a node has"* ]]
+  [ ! -e "$marker" ]
+  run env NETWORK_REUSED_SLOTS_POOL_SIZE=032766 OL_COMMAND="touch $marker" bash "$script"
+  [ "$status" -eq 0 ]
+  [ -e "$marker" ]
+}
+
+@test "starts the child on limits that are whole numbers, and on empty ones" {
+  run env MAX_SANDBOXES_PER_NODE=300 MAX_STARTING_INSTANCES_PER_NODE=8 NETWORK_REUSED_SLOTS_POOL_SIZE=0 \
+    OL_COMMAND="touch $marker" bash "$script"
+  [ "$status" -eq 0 ]
+  [ -e "$marker" ]
+  rm "$marker"
+  run env MAX_SANDBOXES_PER_NODE="" MAX_STARTING_INSTANCES_PER_NODE="" NETWORK_REUSED_SLOTS_POOL_SIZE="" \
+    OL_COMMAND="touch $marker" bash "$script"
+  [ "$status" -eq 0 ]
+  [ -e "$marker" ]
 }
