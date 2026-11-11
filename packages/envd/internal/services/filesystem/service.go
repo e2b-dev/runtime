@@ -28,6 +28,12 @@ type Service struct {
 	watchersMu *sync.Mutex
 }
 
+// maxConnectReadBytes caps one connect request message. Bulk file transfers use the
+// streaming /files endpoint, not these RPCs, so this bounds metadata calls and WriteFile
+// chunks well above any legitimate message while keeping a guest from OOMing envd through
+// the RPC surface. Defense-in-depth under the cgroup memory protection.
+const maxConnectReadBytes = 4 << 20 // 4 MiB
+
 func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults) Service {
 	service := Service{
 		logger:     l,
@@ -41,7 +47,12 @@ func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults) 
 		legacy.Convert(),
 	)
 
-	path, handler := spec.NewFilesystemHandler(service, interceptors)
+	// Cap a single connect request message so a guest process cannot OOM envd
+	// (the control plane) through the RPC surface the way an uncapped /init body
+	// could. The filesystem RPCs carry metadata and bounded WriteFile chunks, not
+	// bulk transfers (those use the streaming /files endpoint), so maxConnectReadBytes
+	// is well above any legitimate message. Defense-in-depth under cgroup memory.min.
+	path, handler := spec.NewFilesystemHandler(service, interceptors, connect.WithReadMaxBytes(maxConnectReadBytes))
 
 	server.Mount(path, handler)
 

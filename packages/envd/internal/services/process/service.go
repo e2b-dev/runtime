@@ -133,12 +133,22 @@ func (s *Service) clearTerminatedForTag(tag string) {
 	})
 }
 
+// maxConnectReadBytes caps one connect request message on the process RPC surface.
+// Process stdin arrives as bounded per-message chunks, so this sits well above any
+// legitimate message while keeping a guest from OOMing envd. Defense-in-depth under
+// the cgroup memory protection.
+const maxConnectReadBytes = 4 << 20 // 4 MiB
+
 func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults, workloadFreezer *cgroups.WorkloadFreezer) *Service {
 	service := newService(l, defaults, workloadFreezer)
 
 	interceptors := connect.WithInterceptors(logs.NewUnaryLogInterceptor(l))
 
-	path, h := spec.NewProcessHandler(service, interceptors)
+	// Cap a single connect request message. Process stdin arrives as bounded
+	// per-message chunks, so maxConnectReadBytes sits well above any legitimate
+	// message while keeping a guest from OOMing envd through the RPC surface.
+	// Defense-in-depth under the cgroup memory protection.
+	path, h := spec.NewProcessHandler(service, interceptors, connect.WithReadMaxBytes(maxConnectReadBytes))
 
 	server.Mount(path, h)
 
