@@ -121,7 +121,7 @@ func TestWaitAdoptedReturnsOnceEveryAdoptedChildIsReaped(t *testing.T) {
 	select {
 	case <-waited(&none):
 	case <-time.After(5 * time.Second):
-		t.Fatal("nothing adopted, so nothing to wait for")
+		require.Fail(t, "nothing adopted, so nothing to wait for")
 	}
 
 	var r Registry
@@ -143,7 +143,7 @@ func TestWaitAdoptedReturnsOnceEveryAdoptedChildIsReaped(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	select {
 	case <-adopted:
-		t.Fatal("closed while an adopted child still runs")
+		require.Fail(t, "closed while an adopted child still runs")
 	default:
 	}
 
@@ -199,7 +199,7 @@ func TestReapRefusesAProcessGroup(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Reap waited on a process group")
+		require.Fail(t, "Reap waited on a process group")
 	}
 
 	require.NoError(t, stdin.Close())

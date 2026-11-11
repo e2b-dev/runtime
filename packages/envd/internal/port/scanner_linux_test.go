@@ -42,7 +42,7 @@ func TestScanner_ScanAndBroadcast_SkipsFailedScans(t *testing.T) {
 
 	select {
 	case got := <-sub.Messages:
-		t.Fatalf("failed scan was broadcast: %+v", got)
+		require.Failf(t, "failed scan was broadcast", "broadcast %+v", got)
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -62,6 +62,6 @@ func TestScanner_ScanAndBroadcast_SkipsFailedScans(t *testing.T) {
 		assert.Equal(t, uint32(8080), got[0].Laddr.Port)
 		assert.Equal(t, "LISTEN", got[0].Status)
 	case <-time.After(time.Second):
-		t.Fatal("subscriber never got the successful scan")
+		require.Fail(t, "subscriber never got the successful scan")
 	}
 }

@@ -3,6 +3,9 @@ package api
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractMetadataHeaders(t *testing.T) {
@@ -47,13 +50,9 @@ func TestExtractMetadataHeaders(t *testing.T) {
 				h.Set(k, v)
 			}
 			got := extractMetadataHeaders(h)
-			if len(got) != len(tc.want) {
-				t.Fatalf("got %v, want %v", got, tc.want)
-			}
+			require.Len(t, got, len(tc.want), "got %v, want %v", got, tc.want)
 			for k, v := range tc.want {
-				if got[k] != v {
-					t.Errorf("key %q: got %q, want %q", k, got[k], v)
-				}
+				assert.Equal(t, v, got[k], "key %q", k)
 			}
 		})
 	}
@@ -66,8 +65,6 @@ func TestExtractMetadataHeaders(t *testing.T) {
 		h.Add("X-Metadata-Author", "second")
 
 		got := extractMetadataHeaders(h)
-		if got["author"] != "first" {
-			t.Fatalf("got %v, want author=first", got)
-		}
+		require.Equal(t, "first", got["author"], "got %v", got)
 	})
 }

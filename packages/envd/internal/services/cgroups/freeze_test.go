@@ -30,7 +30,7 @@ func TestWorkloadFreezer_FreezeHoldBlocksUnfreeze(t *testing.T) {
 
 	select {
 	case <-unfrozen:
-		t.Fatal("Unfreeze thawed the workload while the freeze hold was active")
+		require.Fail(t, "Unfreeze thawed the workload while the freeze hold was active")
 	case <-time.After(100 * time.Millisecond):
 		// expected: blocked on the held lock
 	}
@@ -41,7 +41,7 @@ func TestWorkloadFreezer_FreezeHoldBlocksUnfreeze(t *testing.T) {
 	case <-unfrozen:
 		// expected: proceeds once the hold is released
 	case <-time.After(2 * time.Second):
-		t.Fatal("Unfreeze did not proceed after the hold was released")
+		require.Fail(t, "Unfreeze did not proceed after the hold was released")
 	}
 
 	assert.NotPanics(t, release, "release must be idempotent")
@@ -310,7 +310,7 @@ func TestFreeze_CancellationStopsThePollAndReleasesTheLock(t *testing.T) {
 	select {
 	case <-unfrozen:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Unfreeze blocked: the freeze lock was still held after cancellation")
+		require.Fail(t, "Unfreeze blocked: the freeze lock was still held after cancellation")
 	}
 }
 

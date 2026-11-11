@@ -129,7 +129,7 @@ func TestStart_CancelBeforeStartEvent(t *testing.T) {
 	select {
 	case <-closed:
 	case <-time.After(20 * time.Second):
-		t.Fatal("server close timed out: handler goroutine leaked on cancelled start")
+		require.Fail(t, "server close timed out: handler goroutine leaked on cancelled start")
 	}
 }
 

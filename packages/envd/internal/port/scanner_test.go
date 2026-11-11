@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestScannerSubscriber_Signal_ReturnsOnExit verifies that Signal unparks when
@@ -28,7 +29,7 @@ func TestScannerSubscriber_Signal_ReturnsOnExit(t *testing.T) {
 	// Nothing is receiving and exit is still open, so Signal must stay parked.
 	select {
 	case <-returned:
-		t.Fatal("Signal() returned before the message was taken or exit was closed")
+		require.Fail(t, "Signal() returned before the message was taken or exit was closed")
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -37,7 +38,7 @@ func TestScannerSubscriber_Signal_ReturnsOnExit(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(time.Second):
-		t.Fatal("Signal() stayed blocked after exit was closed — goroutine leaked")
+		require.Fail(t, "Signal() stayed blocked after exit was closed — goroutine leaked")
 	}
 }
 
@@ -60,11 +61,10 @@ func TestScannerSubscriber_Signal_DeliversToSlowReceiver(t *testing.T) {
 
 	select {
 	case got := <-sub.Messages:
-		if len(got) != 1 || got[0].Pid != 42 {
-			t.Fatalf("got %+v, want the signalled connection", got)
-		}
+		require.Len(t, got, 1)
+		require.Equal(t, int32(42), got[0].Pid)
 	case <-time.After(time.Second):
-		t.Fatal("slow receiver never got the message")
+		require.Fail(t, "slow receiver never got the message")
 	}
 }
 
@@ -94,7 +94,7 @@ func TestScanner_Destroy_ExitsWithStalledSubscriber(t *testing.T) {
 	select {
 	case <-scanDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("ScanAndBroadcast did not exit after Destroy() — goroutine leaked")
+		require.Fail(t, "ScanAndBroadcast did not exit after Destroy() — goroutine leaked")
 	}
 }
 

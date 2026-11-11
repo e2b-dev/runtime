@@ -401,7 +401,7 @@ func TestThawWatchdog_FiresWhenNoThawArrives(t *testing.T) {
 		assert.Positive(t, res.Thawed)
 		assert.False(t, frozenOnDisk(t, root, "workload"), "the backstop must actually thaw")
 	case <-time.After(2 * time.Second):
-		t.Fatal("watchdog never fired: a guest whose /init never arrives stays frozen")
+		require.Fail(t, "watchdog never fired: a guest whose /init never arrives stays frozen")
 	}
 }
 
@@ -427,7 +427,7 @@ func TestThawWatchdog_DisarmedByAThaw(t *testing.T) {
 
 	select {
 	case <-fired:
-		t.Fatal("a thaw must disarm the watchdog; it fired against a later freeze")
+		require.Fail(t, "a thaw must disarm the watchdog; it fired against a later freeze")
 	case <-time.After(200 * time.Millisecond):
 		assert.True(t, frozenOnDisk(t, root, "workload"), "the second freeze must still stand")
 	}
@@ -610,7 +610,7 @@ func TestUnfreeze_FailedThawKeepsTheWatchdogArmed(t *testing.T) {
 	case <-fired:
 		// The backstop survived and retried, which is the whole point.
 	case <-time.After(2 * time.Second):
-		t.Fatal("a truncated thaw disarmed the watchdog: nothing will retry the frozen cgroups")
+		require.Fail(t, "a truncated thaw disarmed the watchdog: nothing will retry the frozen cgroups")
 	}
 }
 
@@ -764,7 +764,7 @@ func TestResumeFrozen_RestoresWhatTheExecveDropped(t *testing.T) {
 	select {
 	case <-fired:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the watchdog was not re-armed after the handover: a frozen guest with no backstop")
+		require.Fail(t, "the watchdog was not re-armed after the handover: a frozen guest with no backstop")
 	}
 	assert.False(t, frozenOnDisk(t, root, "workload"), "the backstop thawed what we froze")
 	assert.True(t, frozenOnDisk(t, root, "guest-own"), "and still left the guest's own freeze alone")
@@ -1361,7 +1361,7 @@ func TestThawWatchdog_DirtyRescueRearms(t *testing.T) {
 		case res := <-fired:
 			require.Positive(t, res.Failed, "the rescue was meant to fail, or this proves nothing")
 		case <-time.After(3 * time.Second):
-			t.Fatalf("rescue %d never came: a failed rescue left nothing to retry the freeze", i+1)
+			require.Failf(t, "a failed rescue left nothing to retry the freeze", "rescue %d never came", i+1)
 		}
 	}
 

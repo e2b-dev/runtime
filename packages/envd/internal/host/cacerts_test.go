@@ -422,9 +422,8 @@ func TestInstallCACerts_ConcurrentInstallAndReaders(t *testing.T) {
 		readers.Go(func() {
 			for !stop.Load() {
 				data, err := os.ReadFile(tr.bundlePath)
-				if err != nil {
-					t.Error(err)
-
+				//nolint:testifylint // assert, not require: this runs off the test goroutine
+				if !assert.NoError(t, err) {
 					return
 				}
 				_, after, found := bytes.CutLast(data, []byte("-----END CERTIFICATE-----\n"))

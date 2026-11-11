@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
 )
 
 // TestStartForwarding_StopsOnClosedMessages pins the defensive guard on the
@@ -37,6 +38,6 @@ func TestStartForwarding_StopsOnClosedMessages(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(time.Second):
-		t.Fatal("StartForwarding did not stop after Messages was closed")
+		require.Fail(t, "StartForwarding did not stop after Messages was closed")
 	}
 }

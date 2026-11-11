@@ -54,7 +54,7 @@ func TestKernelLogMarksUserspaceRecords(t *testing.T) {
 		_, _, ok := parseKernelRecord(record)
 		assert.False(t, ok, "a record written from userspace passed as the kernel's: %q", record)
 	case <-time.After(10 * time.Second):
-		t.Fatal("the written record never came back from the kernel log")
+		require.Fail(t, "the written record never came back from the kernel log")
 	}
 }
 

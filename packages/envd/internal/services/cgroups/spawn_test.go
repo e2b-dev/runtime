@@ -67,7 +67,7 @@ func TestBeginSpawn_RefusalIsPromptRatherThanATimeout(t *testing.T) {
 	case err := <-refused:
 		require.ErrorIs(t, err, ErrWorkloadFrozen)
 	case <-time.After(5 * time.Second):
-		t.Fatal("the spawn waited on the semaphore instead of being refused by the held barrier")
+		require.Fail(t, "the spawn waited on the semaphore instead of being refused by the held barrier")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestFreeze_DrainsInFlightSpawnBeforeWriting(t *testing.T) {
 
 	select {
 	case <-frozen:
-		t.Fatal("the freeze completed without waiting for the in-flight spawn")
+		require.Fail(t, "the freeze completed without waiting for the in-flight spawn")
 	default:
 	}
 
@@ -114,7 +114,7 @@ func TestFreeze_DrainsInFlightSpawnBeforeWriting(t *testing.T) {
 		assert.True(t, frozenOnDisk(t, root, string(ProcessTypeUser)),
 			"the freeze must proceed once the spawn has returned")
 	case <-time.After(2 * time.Second):
-		t.Fatal("the freeze did not proceed after the spawn returned")
+		require.Fail(t, "the freeze did not proceed after the spawn returned")
 	}
 }
 
@@ -551,7 +551,7 @@ func TestSpawnBarrier_EnterRespectsItsOwnBound(t *testing.T) {
 
 	select {
 	case err := <-raised:
-		t.Fatalf("the spawn waited for the drain to end (raise returned %v)", err)
+		require.Failf(t, "the spawn waited for the drain to end", "raise returned %v", err)
 	default:
 	}
 

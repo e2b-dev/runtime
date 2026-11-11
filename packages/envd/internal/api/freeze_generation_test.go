@@ -90,7 +90,7 @@ func withheldThawLog(t *testing.T, out string) map[string]any {
 
 		return fields
 	}
-	t.Fatalf("no withheld-thaw line in the log:\n%s", out)
+	require.Failf(t, "no withheld-thaw line in the log", "log:\n%s", out)
 
 	return nil
 }

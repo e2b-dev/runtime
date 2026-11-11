@@ -79,8 +79,7 @@ func TestHTTPExporterFlushAndPurge(t *testing.T) {
 	)
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read request body: %v", err)
+		if !assert.NoError(t, err, "read request body") {
 			w.WriteHeader(http.StatusInternalServerError)
 
 			return
@@ -123,8 +122,7 @@ func TestHTTPExporterWriteFlushBarrier(t *testing.T) {
 		var payload struct {
 			Sequence int `json:"sequence"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Errorf("decode request: %v", err)
+		if err := json.NewDecoder(r.Body).Decode(&payload); !assert.NoError(t, err, "decode request") {
 			w.WriteHeader(http.StatusBadRequest)
 
 			return
@@ -190,7 +188,7 @@ func TestHTTPExporterFlushAndPurgePurgesConcurrentWriteWithoutBlocking(t *testin
 	case <-time.After(time.Second):
 		close(releaseRequest)
 		<-flushDone
-		t.Fatal("Write blocked on the stalled collector")
+		require.Fail(t, "Write blocked on the stalled collector")
 	}
 
 	close(releaseRequest)
@@ -236,7 +234,7 @@ func TestHTTPExporterWriteDoesNotBlockOnStalledBackgroundSend(t *testing.T) {
 		cancel()
 		release()
 		<-backgroundDone
-		t.Fatal("background send did not reach the collector")
+		require.Fail(t, "background send did not reach the collector")
 	}
 
 	writeDone := make(chan error, 1)
@@ -253,7 +251,7 @@ func TestHTTPExporterWriteDoesNotBlockOnStalledBackgroundSend(t *testing.T) {
 		release()
 		<-writeDone
 		<-backgroundDone
-		t.Fatal("Write blocked on the stalled background send")
+		require.Fail(t, "Write blocked on the stalled background send")
 	}
 
 	cancel()
@@ -261,7 +259,7 @@ func TestHTTPExporterWriteDoesNotBlockOnStalledBackgroundSend(t *testing.T) {
 	select {
 	case <-backgroundDone:
 	case <-time.After(writeLatencyBound):
-		t.Fatal("background exporter did not stop")
+		require.Fail(t, "background exporter did not stop")
 	}
 }
 
@@ -306,7 +304,7 @@ func TestHTTPExporterConcurrentWritesStayBoundedDuringStalledBackgroundSend(t *t
 		cancel()
 		release()
 		<-backgroundDone
-		t.Fatal("background send did not reach the collector")
+		require.Fail(t, "background send did not reach the collector")
 	}
 
 	type writeResult struct {
@@ -401,14 +399,14 @@ func TestHTTPExporterNeverHoldsLogLockAcrossIO(t *testing.T) {
 		case acquired := <-result:
 			assert.True(t, acquired, "logLock was held during the background RoundTrip")
 		case <-time.After(writeLatencyBound):
-			t.Fatal("background send did not call RoundTrip")
+			require.Fail(t, "background send did not call RoundTrip")
 		}
 
 		cancel()
 		select {
 		case <-backgroundDone:
 		case <-time.After(writeLatencyBound):
-			t.Fatal("background exporter did not stop")
+			require.Fail(t, "background exporter did not stop")
 		}
 	})
 
@@ -425,7 +423,7 @@ func TestHTTPExporterNeverHoldsLogLockAcrossIO(t *testing.T) {
 		case acquired := <-result:
 			assert.True(t, acquired, "logLock was held during the FlushAndPurge RoundTrip")
 		case <-time.After(writeLatencyBound):
-			t.Fatal("FlushAndPurge did not call RoundTrip")
+			require.Fail(t, "FlushAndPurge did not call RoundTrip")
 		}
 	})
 }
@@ -516,18 +514,15 @@ func TestHTTPExporterConcurrentWriteAndFlushAndPurge(t *testing.T) {
 	for range 8 {
 		workers.Go(func() {
 			for range 200 {
-				if _, err := exporter.Write(line); err != nil {
-					t.Errorf("write log: %v", err)
-				}
+				_, err := exporter.Write(line)
+				assert.NoError(t, err, "write log")
 			}
 		})
 	}
 	for range 4 {
 		workers.Go(func() {
 			for range 200 {
-				if err := exporter.FlushAndPurge(t.Context()); err != nil {
-					t.Errorf("flush logs: %v", err)
-				}
+				assert.NoError(t, exporter.FlushAndPurge(t.Context()), "flush logs")
 			}
 		})
 	}
@@ -554,8 +549,7 @@ func TestHTTPExporterFlushAndPurgeDoesNotDuplicateBackgroundSends(t *testing.T) 
 		var payload struct {
 			Sequence int `json:"sequence"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Errorf("decode request: %v", err)
+		if err := json.NewDecoder(r.Body).Decode(&payload); !assert.NoError(t, err, "decode request") {
 			w.WriteHeader(http.StatusBadRequest)
 
 			return

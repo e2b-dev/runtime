@@ -109,7 +109,7 @@ func TestMultiplexedChannel_AbandonedConsumerDoesNotWedgeFanOut(t *testing.T) {
 	select {
 	case <-abandonReader:
 	case <-time.After(multiplexTestTimeout):
-		t.Fatal("abandoned consumer should have read its single value")
+		require.Fail(t, "abandoned consumer should have read its single value")
 	}
 
 	// Simulate the handler's deferred cancel after return.
@@ -121,7 +121,7 @@ func TestMultiplexedChannel_AbandonedConsumerDoesNotWedgeFanOut(t *testing.T) {
 	select {
 	case <-cancelDone:
 	case <-time.After(multiplexTestTimeout):
-		t.Fatal("cancel func did not return promptly; fan-out is wedged")
+		require.Fail(t, "cancel func did not return promptly; fan-out is wedged")
 	}
 
 	// Producer should still make progress through Source.
@@ -218,7 +218,7 @@ func TestMultiplexedChannel_CancelIsIdempotentAndPrompt(t *testing.T) {
 	select {
 	case <-cancelDone:
 	case <-time.After(multiplexTestTimeout):
-		t.Fatal("cancel func did not return promptly under producer load")
+		require.Fail(t, "cancel func did not return promptly under producer load")
 	}
 }
 
@@ -248,7 +248,7 @@ func TestMultiplexedChannel_SourceCloseClosesLiveSubscribers(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(multiplexTestTimeout):
-		t.Fatal("consumer's `for v := range cons` did not terminate after " +
+		require.Fail(t, "consumer's `for v := range cons` did not terminate after "+
 			"Source close")
 	}
 }
@@ -264,7 +264,7 @@ func TestMultiplexedChannel_ForkAfterSourceCloseReturnsClosedChan(t *testing.T) 
 	deadline := time.Now().Add(multiplexTestTimeout)
 	for !m.exited.Load() {
 		if time.Now().After(deadline) {
-			t.Fatal("fan-out did not mark itself exited after Source close")
+			require.Fail(t, "fan-out did not mark itself exited after Source close")
 		}
 		time.Sleep(time.Millisecond)
 	}

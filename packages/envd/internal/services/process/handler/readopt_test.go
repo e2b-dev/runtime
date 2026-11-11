@@ -32,7 +32,7 @@ func TestReapByPidfd_EmitsEndWhenPidfdOpenFails(t *testing.T) {
 		require.True(t, ok, "EndEvent channel closed without a terminal event")
 		assert.NotNil(t, ev.End, "reaper must emit a terminal event on pidfd_open failure")
 	case <-time.After(5 * time.Second):
-		t.Fatal("re-adopted process orphaned: no EndEvent after pidfd_open failure")
+		require.Fail(t, "re-adopted process orphaned: no EndEvent after pidfd_open failure")
 	}
 }
 
@@ -49,9 +49,8 @@ func TestBeginReaping_ArmsDeadlineForChainedUpgrade(t *testing.T) {
 	// its wait4 fallback returns immediately — no real child needed.
 	h := Readopt(ReadoptArgs{Pid: 0x7FFFFFFF, Timeout: time.Hour}, &logger)
 
-	if _, ok := h.Deadline(); ok {
-		t.Fatal("deadline should be armed by BeginReaping, not Readopt")
-	}
+	_, ok := h.Deadline()
+	require.False(t, ok, "deadline should be armed by BeginReaping, not Readopt")
 
 	h.BeginReaping()
 

@@ -86,7 +86,7 @@ func TestPostInit_SkipLeavesTheWatchdogArmed(t *testing.T) {
 	case <-fired:
 		assert.Equal(t, cgroups.WorkloadProcessTypes, mgr.unfrozen, "the watchdog's thaw is the only one that ran")
 	case <-time.After(5 * time.Second):
-		t.Fatal("the watchdog did not fire: the skipping /init disarmed it")
+		require.Fail(t, "the watchdog did not fire: the skipping /init disarmed it")
 	}
 }
 
