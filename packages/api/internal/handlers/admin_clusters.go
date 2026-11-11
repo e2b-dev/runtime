@@ -125,6 +125,25 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 	c.JSON(http.StatusCreated, clusterDetail(cluster))
 }
 
+func (a *APIStore) AdminGetClusterMetadata(c *gin.Context, clusterID api.ClusterID) {
+	ctx := c.Request.Context()
+
+	cluster, err := a.sqlcDB.GetAdminCluster(ctx, clusterID)
+	if dberrors.IsNotFoundError(err) {
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+
+		return
+	}
+	if err != nil {
+		logger.L().Error(ctx, "Failed to get cluster", zap.Error(err), logger.WithClusterID(clusterID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to get cluster")
+
+		return
+	}
+
+	c.JSON(http.StatusOK, clusterDetail(cluster))
+}
+
 func (a *APIStore) AdminGetCluster(c *gin.Context, clusterID api.ClusterID, params api.AdminGetClusterParams) {
 	ctx := c.Request.Context()
 

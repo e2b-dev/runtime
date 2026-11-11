@@ -8607,6 +8607,32 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /unstable/admin/clusters/{clusterID}/metadata:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    get:
+      operationId: adminGetClusterMetadata
+      summary: Cluster metadata as admin
+      description: Returns cluster metadata without reading assigned teams or counting teams and templates. Never returns the cluster's token.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      responses:
+        "200":
+          description: Cluster metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetail"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "404":
+          $ref: "#/components/responses/404"
+        "500":
+          $ref: "#/components/responses/500"
   /unstable/admin/clusters/{clusterID}/teams:
     parameters:
       - $ref: "#/components/parameters/clusterID"
