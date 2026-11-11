@@ -38,7 +38,7 @@ func TestProjectLimitsMigrationKeepsWhatAnUnpushedRowResolvedTo(t *testing.T) {
 	_, err = sqlDB.ExecContext(t.Context(), `
 		INSERT INTO public.addons (team_id, name, extra_api_team_rps_delete, extra_max_secrets, valid_from, added_by)
 		VALUES ($1, 'active', 4, 5, now() - interval '1 hour', $2)
-	`, unpushed, uuid.Nil)
+	`, unpushed, seedUser(t, sqlDB))
 	require.NoError(t, err)
 	insert := `
 		INSERT INTO public.project_limits (

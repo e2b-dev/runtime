@@ -21,6 +21,16 @@ func seedTeam(t *testing.T, sqlDB *sql.DB, slug string) uuid.UUID {
 	return teamID
 }
 
+func seedUser(t *testing.T, sqlDB *sql.DB) uuid.UUID {
+	t.Helper()
+
+	userID := uuid.New()
+	_, err := sqlDB.ExecContext(t.Context(), `INSERT INTO public.users (id) VALUES ($1)`, userID)
+	require.NoError(t, err)
+
+	return userID
+}
+
 func seedAddon(t *testing.T, sqlDB *sql.DB, teamID uuid.UUID) {
 	t.Helper()
 
@@ -29,8 +39,7 @@ func seedAddon(t *testing.T, sqlDB *sql.DB, teamID uuid.UUID) {
 			team_id, name, extra_concurrent_sandboxes, extra_concurrent_template_builds,
 			extra_max_vcpu, extra_max_ram_mb, extra_disk_mb, extra_events_ttl_days,
 			valid_from, added_by
-		) VALUES ($1, 'test-addon', 5, 6, 7, 8, 9, 10, now() - interval '1 hour',
-		          '00000000-0000-0000-0000-000000000000')
-	`, teamID)
+		) VALUES ($1, 'test-addon', 5, 6, 7, 8, 9, 10, now() - interval '1 hour', $2)
+	`, teamID, seedUser(t, sqlDB))
 	require.NoError(t, err)
 }

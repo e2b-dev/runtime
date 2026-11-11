@@ -259,7 +259,7 @@ func TestDefaultLimitsMigrationKeepsWhatEveryTeamResolvedTo(t *testing.T) {
 		($1, 'active', 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, now() - interval '1 hour', NULL, $2),
 		($1, 'expired', 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
 		 now() - interval '2 hours', now() - interval '1 hour', $2)
-	`, onOtherTierWithAddons, uuid.Nil)
+	`, onOtherTierWithAddons, seedUser(t, sqlDB))
 	require.NoError(t, err)
 	pushed := seedTeam(t, sqlDB, "pinned-pushed")
 	_, err = sqlDB.ExecContext(ctx, `
@@ -358,7 +358,7 @@ func TestDefaultLimitsMigrationFailsOnATeamItCannotPin(t *testing.T) {
 	_, err = sqlDB.ExecContext(ctx, `
 		INSERT INTO public.addons (team_id, name, extra_disk_mb, extra_max_disk_size_mb, added_by)
 		VALUES ($1, 'free disk above the ceiling', 30000, 0, $2)
-	`, teamID, uuid.Nil)
+	`, teamID, seedUser(t, sqlDB))
 	require.NoError(t, err)
 
 	_, err = provider.UpTo(ctx, defaultLimitsMigration)
