@@ -121,6 +121,14 @@ type ProcessOptions struct {
 	// BootCpus caps the CPUs the guest kernel brings up (maxcpus=); 0 is all. Create sets it.
 	BootCpus int64
 
+	// IPv6RouterConfigured reports whether the host-side tap interface for this
+	// slot has an IPv6 router (router advertisements + a routable prefix). When
+	// false (the default) the guest boots with IPv6 addresses stripped from every
+	// interface, so the unroutable fe80:: link-local SLAAC address does not
+	// trigger the Happy Eyeballs ~250 ms fallback on dual-stack outbound
+	// connections. Set from Slot.HasIPv6Router() in Create.
+	IPv6RouterConfigured bool
+
 	// ACPIPowerOff declares the ACPI power-off device, so a guest power-off
 	// ends the process instead of halting the vCPUs. A Firecracker without
 	// the device refuses it, and the boot goes on without.
@@ -553,6 +561,7 @@ func (p *Process) configureGuestDevices(
 
 	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
 	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
+	options.IPv6RouterConfigured = p.slot.HasIPv6Router()
 	kernelArgs := buildKernelArgs(ipv4, options).String()
 	if boot.NoKernelArgs {
 		kernelArgs = ""
