@@ -681,7 +681,10 @@ var (
 	// below one count as one.
 	RemoteClusterMinConnectionsFlag = NewIntFlag("remote-cluster-min-connections", 4)
 
-	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", 200)
+	// MaxSandboxesPerNode caps the sandboxes running or starting on one
+	// orchestrator node. The fallback reads MAX_SANDBOXES_PER_NODE so a
+	// deployment without LaunchDarkly can set it.
+	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", envIntOr("MAX_SANDBOXES_PER_NODE", 200))
 	APIIdempotencyRoutes     = NewJSONFlag("api-idempotency-routes", ldvalue.Null())
 	APIIdempotencyTTLSeconds = NewIntFlag("api-idempotency-ttl-seconds", 86400)
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
@@ -930,8 +933,9 @@ var (
 	BuildBootDiagnosticsFlag = NewBoolFlag("build-boot-diagnostics", false)
 
 	// MaxStartingInstancesPerNode limits concurrent sandbox start/resume operations on a single orchestrator node.
-	// Must be > 0.
-	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", 3)
+	// Must be > 0. The fallback reads MAX_STARTING_INSTANCES_PER_NODE so a
+	// deployment without LaunchDarkly can set it.
+	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", envIntOr("MAX_STARTING_INSTANCES_PER_NODE", 3))
 
 	// MaxConcurrentEvictions caps the number of sandbox evictions that can run
 	// in parallel per API instance. Excess items remain expired in the store

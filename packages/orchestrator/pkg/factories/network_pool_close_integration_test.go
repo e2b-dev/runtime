@@ -184,7 +184,7 @@ func TestNetworkPoolCloserDrainsFullKernelPool(t *testing.T) { //nolint:parallel
 				closed := make(chan error, 1)
 				joined := make(chan error, 1)
 				go func() {
-					closed <- networkPoolCloser(pool).close(closeCtx)
+					closed <- networkPoolCloser(pool, cfg, false).close(closeCtx)
 					joined <- services.Wait()
 				}()
 				select {

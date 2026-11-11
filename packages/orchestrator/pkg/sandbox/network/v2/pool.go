@@ -166,7 +166,7 @@ func NewV2Pool(storage network.Storage, config network.Config, hostFw *HostFirew
 		observer:           observer,
 		registry:           NewSlotV2Registry(),
 		newSlots:           make(chan *network.Slot, network.NewSlotsPoolSize-1),
-		reusedSlots:        make(chan *network.Slot, network.ReusedSlotsPoolSize),
+		reusedSlots:        make(chan *network.Slot, config.ReusedPoolSize()),
 		done:               make(chan struct{}),
 		populateRetryDelay: defaultPopulateRetryDelay,
 		modeFollower:       network.NewNonDNSUDPModeFollower(nil),
@@ -575,7 +575,9 @@ func (p *V2Pool) cleanup(ctx context.Context, slot *network.Slot) error {
 
 // Close leaves the pool unchanged when ctx is canceled before Close publishes
 // closed. Once it has published closed, Close ignores later cancellation so it
-// can join admissions and returns before removing shared network state.
+// can join admissions and returns before removing shared network state. Past a
+// teardown deadline on ctx, slots still pooled stay in place and Close returns
+// network.ErrSlotsLeft.
 func (p *V2Pool) Close(ctx context.Context) error {
 	p.closeMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -605,15 +607,23 @@ func (p *V2Pool) Close(ctx context.Context) error {
 	retained := p.retainedSlots
 	p.retainedSlots = nil
 	p.closeMu.Unlock()
+	// Not bounded by the teardown deadline: this teardown is the only read of
+	// a retained slot's firewall counters.
 	for slot := range retained {
 		if err := p.cleanup(ctx, slot); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup retained v2 slot '%d': %w", slot.Idx, err))
 		}
 	}
 
+	left := 0
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)
 
+		if network.TeardownDeadlinePassed(ctx) {
+			left++
+
+			continue
+		}
 		if err := p.cleanup(ctx, slot); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup v2 slot '%d': %w", slot.Idx, err))
 		}
@@ -625,12 +635,21 @@ drain:
 		case slot := <-p.reusedSlots:
 			reusableSlotsAvailableCounter.Add(ctx, -1)
 
+			if network.TeardownDeadlinePassed(ctx) {
+				left++
+
+				continue
+			}
 			if err := p.cleanup(ctx, slot); err != nil {
 				errs = append(errs, fmt.Errorf("failed to cleanup v2 slot '%d': %w", slot.Idx, err))
 			}
 		default:
 			break drain
 		}
+	}
+
+	if left > 0 {
+		errs = append(errs, fmt.Errorf("%w: %d", network.ErrSlotsLeft, left))
 	}
 
 	if p.hostFw != nil {

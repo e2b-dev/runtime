@@ -548,7 +548,8 @@ by itself authorize node deletion.
 
 `InfoService.ServiceInfo.max_sandboxes` reports the cached node limit for every service role.
 Admin `/nodes` and `/nodes/{nodeID}` return required `maxSandboxes`, including zero. Admission,
-metrics, and node info share the value refreshed from node-scoped flags every 30 seconds.
+metrics, and node info share the value refreshed from node-scoped flags every 30 seconds. The
+flag's fallback reads `MAX_SANDBOXES_PER_NODE`.
 
 Key mechanisms (all under `pkg/sandbox/`):
 
@@ -605,7 +606,10 @@ Key mechanisms (all under `pkg/sandbox/`):
   handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
   tracked by `nfs.retirements.gauge` until it finishes; a stuck backing operation does not
   retain the network slot. Pool shutdown removes retained networks while preserving failed
-  release-notification and teardown errors.
+  release-notification and teardown errors. It also removes the pooled ones, except that, when
+  startup reclaim is enabled, a reuse pool raised above its default
+  (`NETWORK_REUSED_SLOTS_POOL_SIZE`) stops at the shutdown's teardown deadline and leaves the
+  rest for that reclaim.
   The `/init` caller supplies NFS exports as `/lifecycle_id/volume_name`; the proxy
   checks the request lifecycle against the current IP route before MOUNT admission.
   This prevents a queued or retried old MOUNT from inheriting a reused IP's owner;

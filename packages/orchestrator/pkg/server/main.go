@@ -186,6 +186,10 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 	}
 	server.shutdownCtx, server.shutdown = context.WithCancel(context.Background())
 	server.updateMaxSandboxesLimit(ctx)
+	logger.L().Info(ctx, "node limits",
+		zap.Int("max_starting_sandboxes", startingLimit),
+		zap.Int64("max_sandboxes", server.info.MaxSandboxes.Load()),
+		zap.Int("reused_network_slots", cfg.Config.NetworkConfig.ReusedPoolSize()))
 
 	meter := cfg.Tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/server")
 

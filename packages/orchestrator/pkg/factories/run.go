@@ -317,12 +317,23 @@ type closer struct {
 	close func(ctx context.Context) error
 }
 
-func networkPoolCloser(pool network.PoolInterface) closer {
+// networkPoolCloser closes the pool. A reuse pool raised above the default can
+// outlast the closers' deadline, so its teardown stops early, and only when
+// the next start reclaims the slots that leaves.
+func networkPoolCloser(pool network.PoolInterface, config network.Config, reclaimsAtStart bool) closer {
+	boundTeardown := reclaimsAtStart && config.ReusedPoolSize() > network.ReusedSlotsPoolSize
+
 	return closer{"network pool", func(ctx context.Context) error {
 		// FORCE_STOP cancels the shared shutdown context before invoking closers.
 		// The pool must still publish closed and stop its Populate service before
 		// run joins that service; direct pool callers retain their cancel contract.
-		return pool.Close(context.WithoutCancel(ctx))
+		closeCtx := context.WithoutCancel(ctx)
+		if deadline, ok := ctx.Deadline(); ok && boundTeardown {
+			// The last third of the shared budget stays with the later closers.
+			closeCtx = network.WithTeardownDeadline(closeCtx, deadline.Add(-closersDeadline/3))
+		}
+
+		return pool.Close(closeCtx)
 	}}
 }
 
@@ -1050,7 +1061,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 				logger.L().Fatal(ctx, "refusing to start v1: stale v2 host firewall table could hijack v1 sandbox egress", zap.Error(err))
 			}
 		}
-		v1Pool := network.NewPool(network.NewSlotsPoolSize, network.ReusedSlotsPoolSize, slotStorage, config.NetworkConfig, network.WithNonDNSUDPFlag(featureFlags))
+		v1Pool := network.NewPool(network.NewSlotsPoolSize, config.NetworkConfig.ReusedPoolSize(), slotStorage, config.NetworkConfig, network.WithNonDNSUDPFlag(featureFlags))
 		startService("network pool", func() error {
 			v1Pool.Populate(ctx)
 
@@ -1063,7 +1074,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 		// defense so future parsing and selection logic cannot silently diverge.
 		logger.L().Fatal(ctx, "unsupported NETWORK_VERSION after validated config", zap.Int("network_version", config.NetworkConfig.NetworkVersion))
 	}
-	closers = append(closers, networkPoolCloser(networkPool))
+	closers = append(closers, networkPoolCloser(networkPool, config.NetworkConfig, reclaimRan))
 	// After the reclaim and the pool, so the edition's service can bring up
 	// state the reclaim would have removed; its closer was registered above,
 	// before the pool's, so it closes after the pool.

@@ -20,8 +20,9 @@ import (
 )
 
 type recordingNetworkPool struct {
-	closeCtxErr error
-	closeDone   chan struct{}
+	closeCtxErr            error
+	closeDone              chan struct{}
+	teardownDeadlinePassed func() bool
 }
 
 func (p *recordingNetworkPool) Get(context.Context, *orchestrator.SandboxNetworkConfig, sandboxtypes.EgressClass) (*network.Slot, error) {
@@ -34,9 +35,50 @@ func (p *recordingNetworkPool) ReturnAsync(context.Context, *network.Slot, netwo
 
 func (p *recordingNetworkPool) Close(ctx context.Context) error {
 	p.closeCtxErr = ctx.Err()
+	p.teardownDeadlinePassed = func() bool { return network.TeardownDeadlinePassed(ctx) }
 	close(p.closeDone)
 
 	return nil
+}
+
+// A pool gets a teardown deadline only when its reuse size was raised above
+// the default and the next start reclaims what it leaves. The deadline is the
+// shared one less its last third, however late the pool's turn comes.
+func TestNetworkPoolCloserBoundsSlotTeardown(t *testing.T) {
+	t.Parallel()
+
+	raised := network.Config{ReusedSlotsPoolSize: network.ReusedSlotsPoolSize + 1}
+	for _, tc := range []struct {
+		name            string
+		config          network.Config
+		reclaimsAtStart bool
+		bounded         bool
+	}{
+		{"raised pool, reclaim at start", raised, true, true},
+		{"default pool", network.Config{}, true, false},
+		{"raised pool, no reclaim at start", raised, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), closersDeadline)
+				defer cancel()
+				// Earlier closers have used half the budget.
+				time.Sleep(closersDeadline / 2)
+
+				p := &recordingNetworkPool{closeDone: make(chan struct{})}
+				require.NoError(t, networkPoolCloser(p, tc.config, tc.reclaimsAtStart).close(ctx))
+
+				time.Sleep(closersDeadline - closersDeadline/3 - closersDeadline/2 - time.Millisecond)
+				require.False(t, p.teardownDeadlinePassed())
+				time.Sleep(time.Millisecond)
+				require.Equal(t, tc.bounded, p.teardownDeadlinePassed())
+				time.Sleep(closersDeadline)
+				require.Equal(t, tc.bounded, p.teardownDeadlinePassed())
+			})
+		})
+	}
 }
 
 func TestNetworkPoolCloserDetachesForceStopCancellation(t *testing.T) {
@@ -46,7 +88,7 @@ func TestNetworkPoolCloserDetachesForceStopCancellation(t *testing.T) {
 	cancel()
 
 	p := &recordingNetworkPool{closeDone: make(chan struct{})}
-	registered := networkPoolCloser(p)
+	registered := networkPoolCloser(p, network.Config{}, false)
 	require.Equal(t, "network pool", registered.name)
 	require.NoError(t, registered.close(ctx))
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
@@ -132,7 +174,7 @@ func TestNetworkPoolCloserStopsRealProducersAndJoins(t *testing.T) {
 					if mode.forceStop {
 						cancelClose()
 					}
-					registered := networkPoolCloser(pool)
+					registered := networkPoolCloser(pool, network.Config{}, false)
 					closeResult := make(chan error, 1)
 					joinResult := make(chan error, 1)
 					go func() {

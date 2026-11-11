@@ -79,9 +79,10 @@ func TestSandboxLimitMetric(t *testing.T) {
 func TestSandboxLimitFallback(t *testing.T) {
 	t.Parallel()
 
+	fallback := int64(featureflags.MaxSandboxesPerNode.Fallback())
 	server, reader := newSandboxLimitTestServer(t, t.Context(), ldtestdata.DataSource())
-	require.Equal(t, int64(200), server.info.MaxSandboxes.Load())
-	assertSandboxLimitMetric(t, t.Context(), reader, 200)
+	require.Equal(t, fallback, server.info.MaxSandboxes.Load())
+	assertSandboxLimitMetric(t, t.Context(), reader, fallback)
 }
 
 func TestSandboxLimitRefreshStops(t *testing.T) {

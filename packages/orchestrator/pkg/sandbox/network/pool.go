@@ -103,6 +103,27 @@ type Config struct {
 
 	// VethPrefix is the prefix used for host-side sandbox veth interfaces (e.g. "e2b-").
 	VethPrefix string `env:"NETWORK_VETH_PREFIX" envDefault:"e2b-"`
+
+	// ReusedSlotsPoolSize is how many returned slots the pool keeps for the
+	// next sandbox; unset or 0 keeps the default. A slot returned to a full
+	// pool is torn down and the pool makes new slots one at a time, so a node
+	// that recycles more sandboxes at once than this slows its next burst.
+	// Slots still pooled when the node stops are torn down one at a time. A
+	// pool raised above the default stops at the shutdown's teardown deadline:
+	// the stop then exits non-zero and the next start reclaims the rest before
+	// it serves. With that reclaim disabled it keeps going. Slots still on
+	// their way back to the pool are not bounded.
+	ReusedSlotsPoolSize int `env:"NETWORK_REUSED_SLOTS_POOL_SIZE"`
+}
+
+// ReusedPoolSize is the reuse pool's capacity: the configured size, or the
+// default when none is set.
+func (c Config) ReusedPoolSize() int {
+	if c.ReusedSlotsPoolSize > 0 {
+		return c.ReusedSlotsPoolSize
+	}
+
+	return ReusedSlotsPoolSize
 }
 
 const (
@@ -202,6 +223,10 @@ func (c Config) Validate() error {
 
 	if c.BuildSandboxEgressDSCP != nil && *c.BuildSandboxEgressDSCP > maxDSCP {
 		return fmt.Errorf("BUILD_SANDBOX_EGRESS_DSCP=%d out of range (0..%d)", *c.BuildSandboxEgressDSCP, maxDSCP)
+	}
+
+	if c.ReusedSlotsPoolSize < 0 || c.ReusedSlotsPoolSize > vrtSlotsSize {
+		return fmt.Errorf("NETWORK_REUSED_SLOTS_POOL_SIZE=%d out of range (0..%d)", c.ReusedSlotsPoolSize, vrtSlotsSize)
 	}
 
 	prefix := c.VethPrefix
@@ -668,7 +693,9 @@ func (p *Pool) cleanup(ctx context.Context, slot *Slot) error {
 
 // Close leaves the pool unchanged when ctx is canceled before Close publishes
 // closed. Once it has published closed, Close ignores later cancellation so it
-// can join admissions and returns before removing shared network state.
+// can join admissions and returns before removing shared network state. Past a
+// teardown deadline on ctx, slots still pooled stay in place and Close returns
+// ErrSlotsLeft.
 func (p *Pool) Close(ctx context.Context) error {
 	p.closeMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -698,15 +725,23 @@ func (p *Pool) Close(ctx context.Context) error {
 	retained := p.retainedSlots
 	p.retainedSlots = nil
 	p.closeMu.Unlock()
+	// Not bounded by the teardown deadline: this teardown is the only read of
+	// a retained slot's firewall counters.
 	for slot := range retained {
 		if err := p.cleanup(ctx, slot); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup retained slot '%d': %w", slot.Idx, err))
 		}
 	}
 
+	left := 0
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)
 
+		if TeardownDeadlinePassed(ctx) {
+			left++
+
+			continue
+		}
 		err := p.cleanup(ctx, slot)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup slot '%d': %w", slot.Idx, err))
@@ -719,6 +754,11 @@ drain:
 		case slot := <-p.reusedSlots:
 			reusableSlotsAvailableCounter.Add(ctx, -1)
 
+			if TeardownDeadlinePassed(ctx) {
+				left++
+
+				continue
+			}
 			err := p.cleanup(ctx, slot)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to cleanup slot '%d': %w", slot.Idx, err))
@@ -726,6 +766,10 @@ drain:
 		default:
 			break drain
 		}
+	}
+
+	if left > 0 {
+		errs = append(errs, fmt.Errorf("%w: %d", ErrSlotsLeft, left))
 	}
 
 	return errors.Join(errs...)
