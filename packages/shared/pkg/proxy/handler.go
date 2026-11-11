@@ -207,7 +207,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// Connection limiting
 		if connLimitConfig != nil {
 			maxLimit := connLimitConfig.GetMaxLimit(ctx)
-			count, acquired := connLimitConfig.Limiter.TryAcquire(d.ConnectionKey, maxLimit)
+			count, acquired := connLimitConfig.Limiter.TryAcquire(d.LimiterKey(), maxLimit)
 			if !acquired {
 				l.Warn(ctx, "sandbox too many incoming connections",
 					zap.String("host", r.Host),
@@ -239,7 +239,7 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 
 			start := time.Now()
 			defer func() {
-				connLimitConfig.Limiter.Release(d.ConnectionKey)
+				connLimitConfig.Limiter.Release(d.LimiterKey())
 				if connLimitConfig.OnConnectionReleased != nil {
 					connLimitConfig.OnConnectionReleased(ctx, time.Since(start).Milliseconds())
 				}
