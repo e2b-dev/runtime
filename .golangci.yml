@@ -62,6 +62,18 @@ linters:
 
   exclusions:
     rules:
+      # Packages whose tests still use the testing failure methods. Each
+      # migration to testify deletes its own line; the rule goes once empty.
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/orchestrator/pkg/sandbox/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/orchestrator/pkg/template/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/orchestrator/(benchmarks|cmd|pkg/(chrooted|factories|gcpercent|hyperloopserver|metrics|nfsproxy|proxy|routing|server|tcpfirewall))/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/shared/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/api/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/clickhouse/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/nomad-nodepool-apm/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^packages/(auth|db|scheduling-api)/' }
+      - { linters: [forbidigo], text: "Use testify", path: '^tests/integration/' }
+
       - path: '^packages/db/pkg/dberrors/dberrors\.go$'
         linters:
           - forbidigo
@@ -125,6 +137,9 @@ linters:
         - pattern: 'gin\.SetMode'
           pkg: '^github\.com/gin-gonic/gin$'
           msg: "Do not use gin.SetMode(gin.TestMode) - it causes race conditions. GIN_MODE=test is set in CI workflows."
+        - pattern: '^testing\.(T|B|TB|F)\.(Fatal|Fatalf|Fatalln|Error|Errorf|Fail|FailNow)$'
+          pkg: '^testing$'
+          msg: "Use testify: require.* to stop the test, assert.* to continue."
       analyze-types: true
 
     depguard:

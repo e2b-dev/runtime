@@ -179,7 +179,7 @@ The codebase uses several code generators:
 
 ### Testing Patterns
 
-- **Unit tests**: Use `testify/assert` and `testify/require`
+- **Unit tests**: Use `testify/assert` and `testify/require`: `require` for checks that stop the test, `assert` for checks that let it continue
 - **Database tests**: `packages/db/pkg/testutils.SetupDatabase` gives each test its own database on the PostgreSQL server `PG_TEST_DATABASE_URL` names (see [DEV-LOCAL.md](DEV-LOCAL.md#unit-tests-that-need-postgresql))
 - **Integration tests**: `tests/integration/` with shared test utilities
 - **Mocking**: Generated mocks in `mocks/` directories
