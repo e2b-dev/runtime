@@ -28,7 +28,10 @@ func (b *Builder) Chroot(volumeType string, teamID, volumeID uuid.UUID) (*Chroot
 		return nil, err
 	}
 
-	fs, err := Chroot(fullPath, WithMetadata("volume-id", volumeID.String()))
+	fs, err := Chroot(fullPath,
+		WithMetadata("volume-id", volumeID.String()),
+		WithReadDirConcurrency(b.config.VolumeReadDirConcurrency),
+	)
 	if err != nil {
 		return nil, err
 	}

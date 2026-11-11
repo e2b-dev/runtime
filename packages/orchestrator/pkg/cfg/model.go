@@ -149,6 +149,10 @@ type Config struct {
 	NBDPoolSize                 int               `env:"NBD_POOL_SIZE"                 envDefault:"64"`
 	Services                    []string          `env:"ORCHESTRATOR_SERVICES"         envDefault:"orchestrator"`
 	PersistentVolumeMounts      map[string]string `env:"PERSISTENT_VOLUME_MOUNTS"`
+	// VolumeReadDirConcurrency is how many per-entry stat calls a volume
+	// directory listing issues in parallel. Every stat is a round trip on the
+	// volume's storage, so this bounds the listing's cost there.
+	VolumeReadDirConcurrency int `env:"VOLUME_READ_DIR_CONCURRENCY" envDefault:"8"`
 
 	// TLS is the mutual TLS settings of the shared port and the peer hop.
 	TLS TLSConfig
@@ -216,6 +220,10 @@ func Parse() (Config, error) {
 
 	if err = config.BuilderConfig.NetworkConfig.Validate(); err != nil {
 		return config, err
+	}
+
+	if config.VolumeReadDirConcurrency < 1 {
+		return config, fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY must be at least 1, got %d", config.VolumeReadDirConcurrency)
 	}
 
 	if config.PersistentVolumeMounts != nil {

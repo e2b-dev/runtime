@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/filesystem"
@@ -408,9 +409,19 @@ func (fs *Chrooted) TempFile(dir, prefix string) (*os.File, error) {
 	return nil, &os.PathError{Op: "createtemp", Path: path.Join(dir, prefix+"*"), Err: os.ErrExist}
 }
 
+// defaultReadDirInfoConcurrency is the default limit on the number of parallel
+// per-entry stat calls in ReadDir, settable with WithReadDirConcurrency. Each
+// stat is a single fstatat through the listing's directory descriptor, so the
+// calls are independent of each other and safe to run concurrently.
+const defaultReadDirInfoConcurrency = 8
+
 // ReadDir lists the directory at dirPath sorted by name, as os.ReadDir does.
 // Each entry carries its own attributes, not those of a symlink's target. An
 // entry removed while the directory is being read is left out.
+//
+// The per-entry stats run on a bounded worker pool rather than one after
+// another: the tree is usually an NFS volume, where every stat is a network
+// round trip.
 func (fs *Chrooted) ReadDir(dirPath string) ([]os.FileInfo, error) {
 	release, err := fs.acquire()
 	if err != nil {
@@ -432,21 +443,40 @@ func (fs *Chrooted) ReadDir(dirPath string) ([]os.FileInfo, error) {
 	}
 	slices.Sort(names)
 
-	infos := make([]os.FileInfo, 0, len(names))
-	for _, name := range names {
-		info, err := lstatAt(fd, name)
-		if err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				continue
+	infos := make([]os.FileInfo, len(names))
+	group := new(errgroup.Group)
+	group.SetLimit(fs.readDirConcurrency)
+
+	for index := range names {
+		group.Go(func() error {
+			info, statErr := lstatAt(fd, names[index])
+			if statErr != nil {
+				if errors.Is(statErr, unix.ENOENT) {
+					// The entry was removed while the directory was being read.
+					return nil
+				}
+
+				return pathError("readdir", path.Join(dirPath, names[index]), statErr)
 			}
 
-			return nil, pathError("readdir", path.Join(dirPath, name), err)
-		}
+			infos[index] = info
 
-		infos = append(infos, info)
+			return nil
+		})
 	}
 
-	return infos, nil
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+
+	listed := make([]os.FileInfo, 0, len(infos))
+	for _, info := range infos {
+		if info != nil {
+			listed = append(listed, info)
+		}
+	}
+
+	return listed, nil
 }
 
 func (fs *Chrooted) Mkdir(filename string, perm os.FileMode) error {
