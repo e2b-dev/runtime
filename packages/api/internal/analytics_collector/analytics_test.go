@@ -392,6 +392,20 @@ func TestEnqueueAfterCloseIsDropped(t *testing.T) {
 	require.NoError(t, p.Close(), "a second Close is a no-op")
 }
 
+// A failed identify is retried and logged on every request, and a Close
+// error makes the API exit non-zero.
+func TestClientWithoutAPIKeyDropsQuietly(t *testing.T) {
+	t.Parallel()
+
+	p, err := NewPosthogClient(t.Context(), "")
+	require.NoError(t, err)
+
+	p.IdentifyAnalyticsTeam(t.Context(), "team-a", "Team A")
+	assert.True(t, p.teamIdentified("team-a", "Team A"), "the identify counted as failed")
+
+	require.NoError(t, p.Close())
+}
+
 // Run with -race: posthog-go closes its message channel while events are
 // still being enqueued.
 func TestEnqueueDoesNotRaceClose(t *testing.T) {

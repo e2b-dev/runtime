@@ -44,7 +44,7 @@ require (
 	github.com/launchdarkly/go-server-sdk/v7 v7.13.0
 	github.com/oapi-codegen/gin-middleware v1.2.1
 	github.com/oapi-codegen/runtime v1.8.0
-	github.com/posthog/posthog-go v0.0.0-20230801140217-d607812dee69
+	github.com/posthog/posthog-go v1.39.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/riverqueue/river v0.51.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.51.0
@@ -224,6 +224,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hashicorp/memberlist v0.5.4 // indirect
 	github.com/hashicorp/serf v0.10.2 // indirect
 	github.com/huandu/xstrings v1.6.3 // indirect

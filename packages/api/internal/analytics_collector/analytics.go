@@ -2,6 +2,7 @@ package analyticscollector
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -70,13 +71,13 @@ type PosthogClient struct {
 }
 
 func NewPosthogClient(ctx context.Context, posthogAPIKey string) (*PosthogClient, error) {
-	posthogLogger := posthog.StdLogger(log.New(os.Stderr, "posthog ", log.LstdFlags))
+	posthogLogger := posthog.StdLogger(log.New(os.Stderr, "posthog ", log.LstdFlags), false)
 
 	if strings.TrimSpace(posthogAPIKey) == "" {
 		logger.L().Info(ctx, "No Posthog API key provided, silencing logs")
 
 		writer := &utils.NoOpWriter{}
-		posthogLogger = posthog.StdLogger(log.New(writer, "posthog ", log.LstdFlags))
+		posthogLogger = posthog.StdLogger(log.New(writer, "posthog ", log.LstdFlags), false)
 	}
 
 	identifiedTeams := newIdentifiedTeams(teamIdentifyTTL)
@@ -149,7 +150,7 @@ func (p *PosthogClient) Close() error {
 	p.closed = true
 	p.mu.Unlock()
 
-	return p.client.Close()
+	return ignoreDisabled(p.client.Close())
 }
 
 // enqueue drops the message once Close has started.
@@ -161,7 +162,17 @@ func (p *PosthogClient) enqueue(msg posthog.Message) error {
 		return nil
 	}
 
-	return p.client.Enqueue(msg)
+	return ignoreDisabled(p.client.Enqueue(msg))
+}
+
+// posthog-go fails every call with ErrSDKDisabled when built without an API
+// key. Analytics being off is not an error.
+func ignoreDisabled(err error) error {
+	if errors.Is(err, posthog.ErrSDKDisabled) {
+		return nil
+	}
+
+	return err
 }
 
 // IdentifyAnalyticsTeam sets the team group's properties in PostHog. Handlers
