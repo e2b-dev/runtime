@@ -199,7 +199,9 @@ image, which E2B Embed runs on port 3001 against the API alone.
   orchestrator in `SandboxConfig.iam`. The API mints no credential and delivers nothing into the
   sandbox; file-based delivery is rejected at admission. Definitions are persisted in the
   running-sandbox (Redis) and paused-snapshot (Postgres) state so they survive pause/resume and
-  orchestrator re-sync; a fork starts a new workload and does not inherit them.
+  orchestrator re-sync. A fork inherits them from the original's snapshot as a resume does, but
+  runs under its own sandbox ID and a fresh execution ID, so its tokens name the fork, never the
+  original.
 - **Placement**: keeps a live map of orchestrator nodes (discovered via Nomad, Kubernetes, or a
   static list). Chooses a node per sandbox with a **best-of-K** algorithm
   (`internal/orchestrator/placement/`): sample K ready nodes, score by the
@@ -1281,7 +1283,12 @@ sequenceDiagram
   the build row records a failure the node may have gone on to complete.
 - **Fork**: checkpoints the original in place, then starts each fork from that snapshot as a
   new sandbox rather than a resume — like a sandbox created from a snapshot template — so
-  placement spreads the forks across nodes instead of preferring the original's node.
+  placement spreads the forks across nodes instead of preferring the original's node. Each fork
+  carries the configuration saved with that snapshot, as a resume does: metadata, internet
+  access, the network config including egress rules and their transforms, the workload-token
+  definitions, volume mounts, and the auto-pause and auto-resume settings. New for each fork are
+  the timeout from the fork request, its own sandbox ID, a fresh execution ID, and, for a secured
+  sandbox, an envd access token scoped to the fork.
 - **Filesystem-only checkpoint**: `memory: false` on snapshot-template creation exports the
   rootfs and no memfile, resumes the same Firecracker process, and produces a template whose
   sandboxes cold-boot; the source keeps running. Routed by its own flag,
