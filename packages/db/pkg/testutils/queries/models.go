@@ -33,28 +33,6 @@ type ActiveTemplateBuild struct {
 	CreatedAt  time.Time
 }
 
-type Addon struct {
-	ID                            uuid.UUID
-	TeamID                        uuid.UUID
-	Name                          string
-	Description                   pgtype.Text
-	ExtraConcurrentSandboxes      int64
-	ExtraConcurrentTemplateBuilds int64
-	ExtraMaxVcpu                  int64
-	ExtraMaxRamMb                 int64
-	ExtraDiskMb                   int64
-	ValidFrom                     time.Time
-	ValidTo                       *time.Time
-	AddedBy                       uuid.UUID
-	IdempotencyKey                pgtype.Text
-	ExtraEventsTtlDays            int64
-	ExtraMaxDiskSizeMb            pgtype.Int8
-	ExtraMaxFreeDiskSizeMb        pgtype.Int8
-	ExtraApiTeamRpsList           int64
-	ExtraApiTeamRpsDelete         int64
-	ExtraMaxSecrets               int32
-}
-
 type AuthUser struct {
 	ID              uuid.UUID
 	Email           string
@@ -289,26 +267,6 @@ type TeamApiKey struct {
 	ApiKeyLength     int32
 	ApiKeyMaskPrefix string
 	ApiKeyMaskSuffix string
-}
-
-type Tier struct {
-	ID     string
-	Name   string
-	DiskMb int64
-	// The number of instances the team can run concurrently
-	ConcurrentInstances int64
-	MaxLengthHours      int64
-	MaxVcpu             int64
-	MaxRamMb            int64
-	// The number of concurrent template builds the team can run
-	ConcurrentTemplateBuilds int64
-	EventsTtlDays            int64
-	DefaultFreeDiskSizeMb    int64
-	MaxDiskSizeMb            int64
-	MaxFreeDiskSizeMb        pgtype.Int8
-	ApiTeamRpsList           int64
-	ApiTeamRpsDelete         int64
-	MaxSecrets               int32
 }
 
 type User struct {

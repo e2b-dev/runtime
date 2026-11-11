@@ -28,11 +28,6 @@ func TestTeamTierOptionalMigrationRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 
-	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO public.tiers (id, name, disk_mb, concurrent_instances, max_length_hours,
-			default_free_disk_size_mb, max_disk_size_mb)
-		VALUES ('tier_round_trip', 'Round trip', 10240, 1, 24, 8000, 30000)`)
-	require.NoError(t, err)
 	untiered := testutils.CreateTestTeam(t, db)
 	tiered := seedTeam(t, sqlDB, "tiered")
 	_, err = sqlDB.ExecContext(ctx, `UPDATE public.teams SET tier = 'tier_round_trip' WHERE id = $1`, tiered)
