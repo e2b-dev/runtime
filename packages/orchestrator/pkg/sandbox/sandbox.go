@@ -2403,7 +2403,7 @@ func (f *Factory) ResumeSandbox(
 	go func() {
 		uffdWaitErr := fcUffd.Exit().Wait()
 
-		cancelUffdStartCtx(fmt.Errorf("uffd process exited: %w", errors.Join(uffdWaitErr, context.Cause(uffdStartCtx))))
+		cancelUffdStartCtx(fc.UffdExitError{Err: errors.Join(uffdWaitErr, context.Cause(uffdStartCtx))})
 	}()
 	fcMetadata := sbxlogger.SandboxMetadata{
 		SandboxID:  runtime.SandboxID,

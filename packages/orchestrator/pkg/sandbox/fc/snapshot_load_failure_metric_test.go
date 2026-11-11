@@ -3,6 +3,10 @@
 package fc
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -13,7 +17,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"golang.org/x/sys/unix"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -61,6 +67,48 @@ func TestLoadSnapshotRecordsRefusal(t *testing.T) {
 
 	assert.Equal(t, int64(1), counterValue(t, reader, string(telemetry.SandboxFCSnapshotLoadFailures), "reason", string(snapshotLoadVcpuMSR)))
 	assert.Equal(t, int64(1), counterValue(t, reader, string(telemetry.SandboxFCSnapshotLoadFailures), "cpu_template", "abc123"))
+}
+
+// The memory handler exiting cancels the start while Firecracker is still
+// loading. The HTTP client has to hand the cancel's cause on as an error, not
+// only its text, or the load is counted as a transport failure.
+//
+//nolint:paralleltest // otel.SetMeterProvider mutates process state
+func TestLoadSnapshotRecordsUffdExitDuringLoad(t *testing.T) {
+	reader := sharedMeterReader()
+
+	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	socket := dir + "/fc.sock"
+	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
+	require.NoError(t, err)
+
+	loading := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /snapshot/load", func(_ http.ResponseWriter, r *http.Request) {
+		// The server notices the client leaving only once the body is read.
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(loading)
+		<-r.Context().Done()
+	})
+	server := &http.Server{Handler: mux} //nolint:gosec // no timeouts needed for a stub on a private socket
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	go func() {
+		<-loading
+		mmapErr := fmt.Errorf("mmap memfd: %w", block.GuestMemoryError{Err: unix.ENOMEM})
+		cancel(UffdExitError{Err: errors.Join(fmt.Errorf("failed to wrap memfd: %w", mmapErr))})
+	}()
+
+	err = newApiClient(socket).loadSnapshot(ctx, dir+"/uffd.sock", make(chan struct{}), stubSnapfile(dir+"/snapfile"), false, false, false, nil, "", "team-1")
+	require.ErrorIs(t, err, unix.ENOMEM)
+
+	assert.Equal(t, int64(1), counterValue(t, reader, string(telemetry.SandboxFCSnapshotLoadFailures), "reason", string(snapshotLoadGuestMemory)))
 }
 
 // counterValue sums the data points of one counter carrying the given

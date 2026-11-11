@@ -720,6 +720,10 @@ const (
 	//                   later Firecracker words differently.
 	//   unavailable     the API answered a non-400 status, so the load never
 	//                   reached the snapshot.
+	//   guest_memory    the memory handler exited because the hugepage pool
+	//                   could not back the guest: the node is full.
+	//   uffd_exited     the memory handler exited for another reason before
+	//                   Firecracker answered.
 	//   transport       the API socket could not be reached or replied
 	//                   unintelligibly; says nothing about the snapshot.
 	//   timeout         no answer before the request deadline; the load
@@ -975,7 +979,7 @@ var counterDesc = map[CounterType]string{
 	SandboxFCBlockFails:         "Total Firecracker VMM block device execution/event failures",
 	SandboxFCBlockNoAvailBuffer: "Total Firecracker VMM block events where no virtqueue buffer was available",
 
-	SandboxFCSnapshotLoadFailures: "Total snapshot loads refused by Firecracker (reason=vcpu_msr|vcpu_other|missing_file|bad_request|unavailable|transport|timeout|canceled), by the digest of the CPU template the snapshot was built with (cpu_template)",
+	SandboxFCSnapshotLoadFailures: "Total snapshot loads refused by Firecracker (reason=vcpu_msr|vcpu_other|missing_file|bad_request|unavailable|guest_memory|uffd_exited|transport|timeout|canceled), by the digest of the CPU template the snapshot was built with (cpu_template)",
 	SandboxVcpuLimit:              "Starts whose VM has spare vCPUs, by how the CPU limit was applied (outcome=confined|cgroup_fallback|failed) on which path (path=boot|resume)",
 	SandboxTemplateLegFaults:      "Sandbox reads and writes its template's backing device failed (leg=memfile|rootfs)",
 

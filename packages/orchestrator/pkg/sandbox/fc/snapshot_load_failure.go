@@ -9,6 +9,7 @@ import (
 
 	openapiruntime "github.com/go-openapi/runtime"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
@@ -40,6 +41,13 @@ const (
 	// snapshotLoadUnavailable is a non-400 answer: the load never reached the
 	// snapshot.
 	snapshotLoadUnavailable snapshotLoadFailureReason = "unavailable"
+	// snapshotLoadGuestMemory is the memory handler exiting because the
+	// hugepage pool could not back the guest: the node is full, not the
+	// snapshot broken.
+	snapshotLoadGuestMemory snapshotLoadFailureReason = "guest_memory"
+	// snapshotLoadUffdExited is the memory handler exiting for any other
+	// reason, which aborts the load before Firecracker answers.
+	snapshotLoadUffdExited snapshotLoadFailureReason = "uffd_exited"
 	// snapshotLoadTransport is the API socket being unreachable or answering
 	// unintelligibly, which says nothing about the snapshot.
 	snapshotLoadTransport snapshotLoadFailureReason = "transport"
@@ -50,6 +58,20 @@ const (
 	// snapshot, and the one reason an alert leaves out.
 	snapshotLoadCanceled snapshotLoadFailureReason = "canceled"
 )
+
+// UffdExitError is the memory handler exiting while the sandbox starts. It
+// cancels the start, so a snapshot load in flight fails with it.
+type UffdExitError struct{ Err error }
+
+func (e UffdExitError) Error() string {
+	if e.Err == nil {
+		return "uffd process exited"
+	}
+
+	return "uffd process exited: " + e.Err.Error()
+}
+
+func (e UffdExitError) Unwrap() error { return e.Err }
 
 // classifySnapshotLoadFailure maps an error from Firecracker's PUT
 // /snapshot/load to the reason attribute. err must be non-nil.
@@ -79,6 +101,14 @@ func classifySnapshotLoadFailure(err error) snapshotLoadFailureReason {
 
 	if errors.Is(err, context.Canceled) {
 		return snapshotLoadCanceled
+	}
+
+	if _, ok := errors.AsType[UffdExitError](err); ok {
+		if _, ok := errors.AsType[block.GuestMemoryError](err); ok {
+			return snapshotLoadGuestMemory
+		}
+
+		return snapshotLoadUffdExited
 	}
 
 	return snapshotLoadTransport

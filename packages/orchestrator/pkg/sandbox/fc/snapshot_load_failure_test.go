@@ -11,7 +11,9 @@ import (
 
 	openapiruntime "github.com/go-openapi/runtime"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/sys/unix"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
@@ -100,6 +102,25 @@ func TestClassifySnapshotLoadFailure(t *testing.T) {
 			name: "unreachable socket says nothing about the snapshot",
 			err:  fmt.Errorf("post unix socket: %w", &net.OpError{Op: "dial", Err: errors.New("connection refused")}),
 			want: snapshotLoadTransport,
+		},
+		{
+			// The hugepage pool could not back the guest, so the memory handler
+			// exited and took the load with it.
+			name: "memory handler refused the guest memory",
+			err:  fmt.Errorf("put snapshot load: %w", UffdExitError{Err: errors.Join(fmt.Errorf("failed to wrap memfd: mmap memfd: %w", block.GuestMemoryError{Err: unix.ENOMEM}))}),
+			want: snapshotLoadGuestMemory,
+		},
+		{
+			name: "memory handler exiting for another reason",
+			err:  fmt.Errorf("put snapshot load: %w", UffdExitError{Err: errors.New("failed accepting firecracker connection: i/o timeout")}),
+			want: snapshotLoadUffdExited,
+		},
+		{
+			// The handler stops when the start is cancelled; that is still the
+			// caller going away.
+			name: "memory handler stopped by the caller going away",
+			err:  fmt.Errorf("put snapshot load: %w", UffdExitError{Err: errors.Join(errors.New("serve stopped"), context.Canceled)}),
+			want: snapshotLoadCanceled,
 		},
 		{
 			// The one reason an alert leaves out, so it must not absorb a load
