@@ -42,6 +42,15 @@ const MinEnvdVersionForUpgrade = "0.6.12"
 // above it.
 const MinEnvdVersionForHeldInit = "0.10.0"
 
+// MinEnvdVersionForInitBodyLimit is the first envd that caps every non-streaming
+// request body at its server edge (bodylimit middleware, consts.EnvdMaxInitBodyBytes),
+// so an unauthenticated guest process can no longer OOM-kill envd by streaming an
+// unbounded body into POST /init. The cap is safe for all legitimate /init traffic --
+// the public API bounds a sandbox's env vars below it at admission -- so nothing gates
+// behaviour on this; it exists so X-Envd-Version and rollout logic can tell which fleet
+// nodes enforce the body limit.
+const MinEnvdVersionForInitBodyLimit = "0.10.3"
+
 func sanitizeVersion(version string) string {
 	if len(version) > 0 && version[0] != 'v' {
 		version = "v" + version

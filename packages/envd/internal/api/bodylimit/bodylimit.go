@@ -16,12 +16,17 @@ package bodylimit
 import (
 	"net/http"
 	"strings"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 )
 
 // DefaultMaxBytes caps any endpoint that reads its body into memory. The largest
 // legitimate /init payload (env vars plus a CA bundle) is a few KiB; 1 MiB is far
-// above it and cannot reject orchestrator traffic.
-const DefaultMaxBytes int64 = 1 << 20 // 1 MiB
+// above it and cannot reject orchestrator traffic. It is defined once in the shared
+// consts package because the public API derives its env-var admission bound from the
+// same ceiling (consts.MaxSandboxEnvVarsBytes), so an admitted sandbox cannot have
+// its /init body rejected here; the two must not drift.
+const DefaultMaxBytes int64 = consts.EnvdMaxInitBodyBytes // 1 MiB
 
 // exemptPrefixes stream their body to disk or parse it part by part, so they never
 // hold the whole body in heap and must NOT be size-capped by MaxBytesReader:

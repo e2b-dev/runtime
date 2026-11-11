@@ -689,6 +689,12 @@ components:
           description: Full names of the snapshot template including team namespace and tag (e.g. team-slug/my-snapshot:v2)
 
     EnvVars:
+      description: >-
+        Environment variables for the sandbox. The whole map, JSON-serialised,
+        must not exceed 512 KiB: the orchestrator sends it to the sandbox's envd
+        over POST /init, whose request body is capped, and a larger map would be
+        rejected only after the sandbox was admitted. A create request whose env
+        map exceeds the limit is rejected with 400.
       additionalProperties:
         type: string
         description: Environment variables for the sandbox
