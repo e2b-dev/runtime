@@ -110,10 +110,10 @@ func buildKernelArgsFor(arch string, ipv4 string, options ProcessOptions) Kernel
 		// Define kernel init path
 		"init": options.InitScriptPath,
 
-		// Networking IPv4 and IPv6
-		"ip":            ipv4,
-		"ipv6.disable":  "0",
-		"ipv6.autoconf": "1",
+		// Networking. IPv4 is always configured via ip=. The guest's IPv6
+		// behaviour is set just below, derived from whether the host tap has an
+		// IPv6 router configured.
+		"ip": ipv4,
 
 		// Wait 1 second before exiting FC after panic or reboot
 		"panic": "1",
@@ -127,6 +127,34 @@ func buildKernelArgsFor(arch string, ipv4 string, options ProcessOptions) Kernel
 		// The kernel defaults to SELinux; an image whose /etc/selinux/config says enforcing
 		// would hang on the unlabeled rootfs before envd starts.
 		"selinux": "0",
+	}
+
+	// Guest IPv6. The host tap only has an IPv6 router when the slot says so
+	// (options.IPv6RouterConfigured, from Slot.HasIPv6Router). Without a router,
+	// SLAAC yields only an unroutable fe80:: link-local address; leaving IPv6
+	// addresses on the guest makes some runtimes/libraries that run their own
+	// Happy Eyeballs (RFC 8305: Node's autoSelectFamily, curl, Go dual-stack
+	// dialing) try IPv6 first and wait out a ~250 ms timeout before falling
+	// back to IPv4 on every outbound dual-stack connection.
+	//
+	// So by default we strip IPv6 addresses from every interface via the
+	// per-stack sysctls, set on the kernel command line (supported since Linux
+	// 5.8; guest kernels are 5.10/6.1). Unlike ipv6.disable=1, this keeps the
+	// AF_INET6 socket API and `bind(::)` working — a dual-stack wildcard server
+	// in the guest still binds — it only removes the (unroutable) addresses so
+	// the kernel has no IPv6 source and address selection (RFC 6724) prefers
+	// IPv4. The one behaviour it drops is an explicit [::1] loopback bind, which
+	// has no routable counterpart without a v6 stack anyway.
+	//
+	// When the host networking layer gains a real IPv6 router + per-slot prefix,
+	// Slot.HasIPv6Router returns true and the guest keeps IPv6 enabled with
+	// SLAAC (ipv6.disable=0, ipv6.autoconf=1), yielding a routable address.
+	if options.IPv6RouterConfigured {
+		args["ipv6.disable"] = "0"
+		args["ipv6.autoconf"] = "1"
+	} else {
+		args["sysctl.net.ipv6.conf.all.disable_ipv6"] = "1"
+		args["sysctl.net.ipv6.conf.default.disable_ipv6"] = "1"
 	}
 
 	// The i8042 controller and kvm-clock exist only on x86; an arm64 guest has neither and

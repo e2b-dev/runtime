@@ -309,6 +309,21 @@ func (s *Slot) TapMAC() string {
 	return tapMAC
 }
 
+// HasIPv6Router reports whether the host-side tap interface for this slot has
+// an IPv6 router configured — i.e. it sends router advertisements so the guest
+// can obtain a routable IPv6 address via SLAAC.
+//
+// Today the host networking stack is IPv4-only: no RA is sent on the tap, so
+// SLAAC would produce only an unroutable fe80:: link-local address inside the
+// guest. Returning false here makes the orchestrator boot guests with IPv6
+// addresses stripped (see buildKernelArgs), eliminating the ~250 ms Happy
+// Eyeballs penalty an unroutable IPv6 address causes. When the host networking
+// layer gains a full IPv6 stack (router + per-slot prefix), flip this to true
+// (or derive it from the slot's real IPv6 state).
+func (s *Slot) HasIPv6Router() bool {
+	return false
+}
+
 // UseNonDNSUDPMode sets the provider every later chain build consults.
 func (s *Slot) UseNonDNSUDPMode(provider NonDNSUDPModeProvider) {
 	s.nonDNSUDPMode = provider
