@@ -30,7 +30,6 @@ func TestAPIDeleteRateResolvesDefaultsUntilPushed(t *testing.T) {
 
 		return row.ApiTeamRpsDelete
 	}
-	assert.Zero(t, resolved(teamID))
 	const largeRPS int64 = 1 << 32
 	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.default_limits SET api_team_rps_delete = $1`, largeRPS)
 	require.NoError(t, err)

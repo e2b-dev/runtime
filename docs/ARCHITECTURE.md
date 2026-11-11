@@ -145,7 +145,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   require team-identifying authentication; public operations do not populate an API group.
   The `list` group uses `api_team_rps_list`; the `delete` group uses `api_team_rps_delete` only
   for sandbox and template deletion. Other DELETE operations are ungrouped.
-  Delete rates default to zero until configured.
+  The deployment defaults start at 10 list and 20 delete requests per second.
   A group's rate is one of the team's limits and resolves with the rest of them in the statement
   that loads the team, which authentication caches; it has no source of its own.
   Propagated project limits carry both rates, and each accepted revision replaces

@@ -18,7 +18,10 @@ import (
 	testqueries "github.com/e2b-dev/infra/packages/db/pkg/testutils/queries"
 )
 
-const defaultLimitsMigration = 20261019080937
+const (
+	defaultLimitsMigration     = 20261019080937
+	baseDefaultLimitsMigration = 20261111132251
+)
 
 // The lookups repeat their limit columns instead of reading a view, so a limit
 // added to default_limits but forgotten in one of them must fail here.
@@ -233,7 +236,8 @@ func TestDefaultLimitsMigrationKeepsWhatEveryTeamResolvedTo(t *testing.T) {
 
 	_, err = sqlDB.ExecContext(ctx, `
 		UPDATE public.tiers
-		SET concurrent_instances = 33, max_vcpu = 3, api_team_rps_list = 7, api_team_rps_delete = 9, max_secrets = 4
+		SET concurrent_instances = 33, max_vcpu = 3, disk_mb = 2048, default_free_disk_size_mb = 1024,
+			api_team_rps_list = 7, api_team_rps_delete = 9, max_secrets = 4
 		WHERE id = 'base_v1'
 	`)
 	require.NoError(t, err)
@@ -316,8 +320,8 @@ func TestDefaultLimitsMigrationKeepsWhatEveryTeamResolvedTo(t *testing.T) {
 		`SELECT (to_jsonb(d) - 'id')::text FROM public.default_limits d`).Scan(&defaults))
 	assert.JSONEq(t, `{
 		"max_length_hours": 1, "concurrent_sandboxes": 33, "concurrent_template_builds": 20,
-		"max_vcpu": 3, "max_ram_mb": 8192, "disk_mb": 512, "events_ttl_days": 7,
-		"default_free_disk_size_mb": 512, "max_disk_size_mb": 25600,
+		"max_vcpu": 3, "max_ram_mb": 8192, "disk_mb": 2048, "events_ttl_days": 7,
+		"default_free_disk_size_mb": 1024, "max_disk_size_mb": 25600,
 		"api_team_rps_list": 7, "api_team_rps_delete": 9, "max_secrets": 4
 	}`, defaults, "seeded from the tuned base tier")
 
@@ -393,6 +397,65 @@ func TestDefaultLimitsMigrationFailsWithoutTheBaseTier(t *testing.T) {
 	_, err = provider.UpTo(ctx, defaultLimitsMigration)
 	require.ErrorContains(t, err, "tier base_v1 is missing")
 	assertNoDefaultLimitsTable(t, sqlDB)
+}
+
+// The seed's API rates of 0 would leave every team without a project_limits
+// row unthrottled.
+func TestDefaultLimitsStartFromTheBaseLimits(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+
+	assert.JSONEq(t, `{
+		"max_length_hours": 1, "concurrent_sandboxes": 10, "concurrent_template_builds": 20,
+		"max_vcpu": 8, "max_ram_mb": 8192, "disk_mb": 10240, "events_ttl_days": 7,
+		"default_free_disk_size_mb": 10240, "max_disk_size_mb": 25600,
+		"api_team_rps_list": 10, "api_team_rps_delete": 20, "max_secrets": 10
+	}`, defaultLimitsRow(t, sqlDB))
+}
+
+// Only a column still at its seed value moves, so a deployment keeps the
+// defaults it configured.
+func TestBaseDefaultLimitsMigrationKeepsConfiguredValues(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	provider := migrationProvider(t, sqlDB)
+
+	_, err = provider.DownTo(ctx, baseDefaultLimitsMigration-1)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(ctx, `
+		UPDATE public.default_limits SET
+			concurrent_sandboxes = 64, disk_mb = 512, default_free_disk_size_mb = 512,
+			max_disk_size_mb = 4096, api_team_rps_list = 0, api_team_rps_delete = 35
+	`)
+	require.NoError(t, err)
+
+	_, err = provider.UpTo(ctx, baseDefaultLimitsMigration)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"max_length_hours": 1, "concurrent_sandboxes": 64, "concurrent_template_builds": 20,
+		"max_vcpu": 8, "max_ram_mb": 8192, "disk_mb": 10240, "events_ttl_days": 7,
+		"default_free_disk_size_mb": 512, "max_disk_size_mb": 4096,
+		"api_team_rps_list": 10, "api_team_rps_delete": 35, "max_secrets": 10
+	}`, defaultLimitsRow(t, sqlDB), "free disk stays under the configured ceiling")
+}
+
+func defaultLimitsRow(t *testing.T, sqlDB *sql.DB) string {
+	t.Helper()
+
+	var row string
+	require.NoError(t, sqlDB.QueryRowContext(t.Context(),
+		`SELECT (to_jsonb(d) - 'id')::text FROM public.default_limits d`).Scan(&row))
+
+	return row
 }
 
 func assertNoDefaultLimitsTable(t *testing.T, sqlDB *sql.DB) {

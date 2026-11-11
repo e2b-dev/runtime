@@ -121,7 +121,7 @@ VALUES ($1, $2, $3, $4, $5)
 	}
 
 	// Grant the integration test team extra capacity so parallel tests don't
-	// hit the default 20-sandbox cap.
+	// hit the default sandbox cap.
 	err = db.TestsRawSQL(ctx, `
 INSERT INTO project_limits (
 	team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,

@@ -209,7 +209,7 @@ this order; the last applies at any size:
 | Limit | Default | What you see when you reach it | To change it |
 |-------|---------|--------------------------------|--------------|
 | Sandboxes the memory pool holds | `HUGEPAGES` times 2 MiB divided by the sandbox's memory: 8 of `base` | a `500: Failed to place sandbox` that names the sandbox's size ([Requirements](#requirements)) | `HUGEPAGES` in `.env` |
-| Sandboxes the team runs at once | 20 | a 429 whose message says `you have reached the maximum number of concurrent E2B sandboxes (20)` | the database rows below |
+| Sandboxes the team runs at once | 10 | a 429 whose message says `you have reached the maximum number of concurrent E2B sandboxes (10)` | the database rows below |
 | Sandbox lifetime | 1 hour | `400: Timeout cannot be greater than 1 hours`; a timeout extended later is cut at one hour from the start, without an error | the database rows below |
 | NBD devices | `NBDS_MAX`, 64 | a create waits for a device, then fails ([Everyday commands](#everyday-commands)) | `NBDS_MAX` in `.env`, before the module loads |
 | Network slots kept ready | 132 | creating more than about 130 sandboxes within seconds of killing as many slows down | no setting |
