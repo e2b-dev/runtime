@@ -164,9 +164,9 @@ type Config struct {
 // that scale volume directory listings with the entry count; see the
 // VolumeReadDirConcurrency field of Config.
 type ReadDirConcurrencyConfig struct {
-	Threshold int `env:"VOLUME_READ_DIR_CONCURRENCY_THRESHOLD" envDefault:"5000"`
-	Base      int `env:"VOLUME_READ_DIR_CONCURRENCY_BASE"       envDefault:"4"`
-	Step      int `env:"VOLUME_READ_DIR_CONCURRENCY_STEP"       envDefault:"10000"`
+	Threshold int `env:"VOLUME_READ_DIR_CONCURRENCY_THRESHOLD" envDefault:"1000"`
+	Base      int `env:"VOLUME_READ_DIR_CONCURRENCY_BASE"       envDefault:"8"`
+	Step      int `env:"VOLUME_READ_DIR_CONCURRENCY_STEP"       envDefault:"5000"`
 	Max       int `env:"VOLUME_READ_DIR_CONCURRENCY_MAX"        envDefault:"16"`
 }
 

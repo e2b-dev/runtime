@@ -442,7 +442,7 @@ func (s ReadDirScaling) Workers(entries int) int {
 
 // defaultReadDirScaling is the scaling a Chroot gets unless an option
 // overrides it; production values come from the orchestrator's config.
-var defaultReadDirScaling = ReadDirScaling{Threshold: 5000, Base: 4, Step: 10000, Max: 16}
+var defaultReadDirScaling = ReadDirScaling{Threshold: 1000, Base: 8, Step: 5000, Max: 16}
 
 // ReadDir lists the directory at dirPath sorted by name, as os.ReadDir does.
 // Each entry carries its own attributes, not those of a symlink's target. An

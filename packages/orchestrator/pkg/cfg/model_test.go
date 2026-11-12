@@ -76,7 +76,7 @@ func TestParse(t *testing.T) {
 		config, err := Parse()
 		require.NoError(t, err)
 
-		assert.Equal(t, ReadDirConcurrencyConfig{Threshold: 5000, Base: 4, Step: 10000, Max: 16}, config.VolumeReadDirConcurrency)
+		assert.Equal(t, ReadDirConcurrencyConfig{Threshold: 1000, Base: 8, Step: 5000, Max: 16}, config.VolumeReadDirConcurrency)
 	})
 
 	t.Run("volume read dir concurrency can be overridden", func(t *testing.T) {

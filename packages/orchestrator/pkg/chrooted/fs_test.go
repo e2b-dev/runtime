@@ -21,16 +21,16 @@ func TestReadDirScalingWorkers(t *testing.T) {
 		entries int
 		want    int
 	}{
-		// The default scaling: serial below 5000 entries, 4 workers from
-		// there, one more per 10000 additional entries, capped at 16.
+		// The default scaling: serial below 1000 entries, 8 workers from
+		// there, one more per 5000 additional entries, capped at 16.
 		{"default: empty directory", defaultReadDirScaling, 0, 1},
-		{"default: below the threshold", defaultReadDirScaling, 4999, 1},
-		{"default: at the threshold", defaultReadDirScaling, 5000, 4},
-		{"default: one below the first step", defaultReadDirScaling, 14999, 4},
-		{"default: at the first step", defaultReadDirScaling, 15000, 5},
-		{"default: at the second step", defaultReadDirScaling, 25000, 6},
-		{"default: one below the cap", defaultReadDirScaling, 124999, 15},
-		{"default: at the cap", defaultReadDirScaling, 125000, 16},
+		{"default: below the threshold", defaultReadDirScaling, 999, 1},
+		{"default: at the threshold", defaultReadDirScaling, 1000, 8},
+		{"default: one below the first step", defaultReadDirScaling, 5999, 8},
+		{"default: at the first step", defaultReadDirScaling, 6000, 9},
+		{"default: at the second step", defaultReadDirScaling, 11000, 10},
+		{"default: one below the cap", defaultReadDirScaling, 40999, 15},
+		{"default: at the cap", defaultReadDirScaling, 41000, 16},
 		{"default: far above the cap", defaultReadDirScaling, 1000000, 16},
 
 		// The zero value is serial rather than explosive.
