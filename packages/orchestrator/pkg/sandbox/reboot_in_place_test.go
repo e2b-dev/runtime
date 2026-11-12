@@ -322,7 +322,7 @@ func TestRebootInPlaceLookupsWaitForTheBoot(t *testing.T) {
 
 			select {
 			case <-looked:
-				require.FailNow(t, "the lookup returned during the boot")
+				require.Fail(t, "the lookup returned during the boot")
 			case <-time.After(50 * time.Millisecond):
 			}
 
@@ -610,7 +610,7 @@ func TestRebootInPlaceCancelBootOutlastingTheCaller(t *testing.T) {
 		synctest.Wait()
 		select {
 		case <-retried:
-			require.FailNow(t, "the retry returned while the boot still held the sandbox")
+			require.Fail(t, "the retry returned while the boot still held the sandbox")
 		default:
 		}
 

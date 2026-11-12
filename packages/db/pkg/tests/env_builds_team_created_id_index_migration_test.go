@@ -139,7 +139,7 @@ func TestEnvBuildsTeamCreatedIDIndexMigrationStopsWhileABuildRuns(t *testing.T) 
 			select {
 			case err = <-stopped:
 			case <-time.After(30 * time.Second):
-				require.FailNow(t, "the migration waits on the running build instead of stopping")
+				require.Fail(t, "the migration waits on the running build instead of stopping")
 			}
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(t, building, indexOID(t, sqlDB, "idx_env_builds_team_created_id"), "the running build keeps its index")
@@ -198,7 +198,7 @@ func TestEnvBuildsTeamCreatedIDIndexMigrationFailsOnASkippedInvalidIndex(t *test
 	select {
 	case err = <-stopped:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "the migration did not finish")
+		require.Fail(t, "the migration did not finish")
 	}
 	require.ErrorContains(t, err, "public.idx_env_builds_team_created_id is not valid")
 

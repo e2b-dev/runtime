@@ -105,7 +105,7 @@ func TestPlaceSandbox_StartedCreateCompletesForACallerThatLeft(t *testing.T) {
 
 			select {
 			case o := <-outcome:
-				require.FailNow(t, "placement ended before the create did", "%v", o.err)
+				require.Fail(t, "placement ended before the create did", "%v", o.err)
 			case <-time.After(200 * time.Millisecond):
 			}
 			close(client.release)
@@ -169,7 +169,7 @@ func TestPlaceSandbox_InstantCutsAStartedCreateOnlyForACallerThatLeft(t *testing
 		synctest.Wait()
 		select {
 		case o := <-outcome:
-			require.FailNow(t, "the instant cut a create the caller still waits for", "%v", o.err)
+			require.Fail(t, "the instant cut a create the caller still waits for", "%v", o.err)
 		default:
 		}
 		leave()

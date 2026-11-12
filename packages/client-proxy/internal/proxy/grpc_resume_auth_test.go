@@ -283,7 +283,7 @@ func TestOAuthGrpcResumeAuthConcurrentAttemptsShareOneFetch(t *testing.T) {
 	select {
 	case <-ended:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the attempts did not end with their context while the fetch was blocked")
+		require.Fail(t, "the attempts did not end with their context while the fetch was blocked")
 	}
 	close(errs)
 	for err := range errs {

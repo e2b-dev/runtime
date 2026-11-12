@@ -70,7 +70,7 @@ func TestPublisher_PublishEnqueuesAndDrainsToRedis(t *testing.T) {
 		case msg := <-messages:
 			got[msg.Payload] = struct{}{}
 		case <-deadline:
-			require.FailNowf(t, "did not receive all payloads",
+			require.Failf(t, "did not receive all payloads",
 				"got %d/%d", len(got), n)
 		}
 	}
@@ -99,7 +99,7 @@ func TestPublisher_PublishNeverBlocks(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "Publish blocked when queue was full")
+		require.Fail(t, "Publish blocked when queue was full")
 	}
 
 	require.GreaterOrEqual(t, pub.dropped.Load(), uint64(256),
@@ -148,7 +148,7 @@ func TestPublisher_RunExitsOnContextCancel(t *testing.T) {
 	select {
 	case <-pub.done:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "publisher did not exit on context cancel")
+		require.Fail(t, "publisher did not exit on context cancel")
 	}
 }
 
@@ -186,7 +186,7 @@ func TestPublisher_CloseDrainsPending(t *testing.T) {
 		case <-messages:
 			seen++
 		case <-deadline:
-			require.FailNowf(t, "shutdown drain did not flush all pending",
+			require.Failf(t, "shutdown drain did not flush all pending",
 				"got %d/%d", seen, n)
 		}
 	}
@@ -261,7 +261,7 @@ func TestStorage_CloseBeforeStartDoesNotDeadlock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "Close blocked when Start was never called")
+		require.Fail(t, "Close blocked when Start was never called")
 	}
 }
 
@@ -283,7 +283,7 @@ func TestPublisher_CloseBeforeRunDoesNotDeadlock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "publisher.close blocked when run was never called")
+		require.Fail(t, "publisher.close blocked when run was never called")
 	}
 }
 
@@ -326,7 +326,7 @@ func TestPublisher_ConcurrentProducers(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "concurrent producers blocked")
+		require.Fail(t, "concurrent producers blocked")
 	}
 
 	// Touch the drop counter. We do not assert an exact value (it depends

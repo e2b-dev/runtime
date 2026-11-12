@@ -66,7 +66,7 @@ func TestWaitForStart_WokenByFinishStartPublish(t *testing.T) {
 		assert.Less(t, elapsed, 500*time.Millisecond,
 			"waiter should wake via PubSub, not the fallback ticker")
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not wake in time")
+		require.Fail(t, "waiter did not wake in time")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestWaitForStart_WokenByReleasePublish(t *testing.T) {
 		assert.Less(t, time.Since(start), 500*time.Millisecond,
 			"release should wake the waiter via PubSub")
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not wake in time")
+		require.Fail(t, "waiter did not wake in time")
 	}
 }
 
@@ -141,7 +141,7 @@ func TestWaitForStart_FallbackTickerWhenPubSubMissed(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(fallbackPollInterval + 2*time.Second):
-		require.FailNow(t, "fallback ticker did not resolve the wait")
+		require.Fail(t, "fallback ticker did not resolve the wait")
 	}
 }
 
@@ -183,7 +183,7 @@ func TestWaitForStart_ResultLandedBeforeSubscribe(t *testing.T) {
 		assert.Less(t, time.Since(start), 200*time.Millisecond,
 			"initial post-subscribe check must catch a pre-existing result")
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not return")
+		require.Fail(t, "waiter did not return")
 	}
 }
 
@@ -258,7 +258,7 @@ func TestWaitForStart_MultipleWaitersOnePublish(t *testing.T) {
 				"waiter %d should be woken by PubSub", i)
 		}
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "not all waiters completed")
+		require.Fail(t, "not all waiters completed")
 	}
 }
 
@@ -301,7 +301,7 @@ func TestWaitForStart_RedisOpsBounded(t *testing.T) {
 	case err := <-waiterDone:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not return")
+		require.Fail(t, "waiter did not return")
 	}
 
 	// Allow at most a handful of read ops: initial GET (+ ZSCORE legacy

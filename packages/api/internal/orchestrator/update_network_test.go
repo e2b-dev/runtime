@@ -620,7 +620,7 @@ func receiveSignal[T any](t *testing.T, ch <-chan T, what string) T {
 	case v := <-ch:
 		return v
 	case <-time.After(signalTimeout):
-		require.FailNow(t, "timed out waiting for "+what)
+		require.Fail(t, "timed out waiting for "+what)
 
 		var zero T
 
@@ -687,7 +687,7 @@ func TestUpdateSandboxNetworkConfig_OverlappingRefusalsLeaveTheStoredNetwork(t *
 		case got := <-client.entered:
 			require.Failf(t, "the node was called before A's call returned", "called for %s", got)
 		case <-deadline:
-			require.FailNow(t, "timed out waiting for B's store update")
+			require.Fail(t, "timed out waiting for B's store update")
 		}
 	}
 	select {

@@ -286,7 +286,7 @@ func TestFactoryConstructorsRunTheNetworkAssignHook(t *testing.T) {
 			case reason := <-asked:
 				require.Equal(t, tc.reason, reason, "the hook is asked with the start's reason")
 			default:
-				require.FailNow(t, "the hook did not run", "%v", err)
+				require.Fail(t, "the hook did not run", "%v", err)
 			}
 			if tc.optional {
 				require.NotErrorIs(t, err, hookFailure, "the start went on past the hook, to Firecracker")

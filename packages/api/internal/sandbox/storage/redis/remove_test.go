@@ -140,9 +140,9 @@ func TestRemoveSuccessorAddWaitsForLock(t *testing.T) {
 	select {
 	case <-reached:
 	case err := <-removeDone:
-		require.FailNow(t, "Remove ended before the fault point", "err: %v", err)
+		require.Fail(t, "Remove ended before the fault point", "err: %v", err)
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "Remove did not reach the fault point")
+		require.Fail(t, "Remove did not reach the fault point")
 	}
 
 	addDone := make(chan error, 1)

@@ -128,6 +128,9 @@ linters:
         - pattern: '^testing\.(T|B|TB|F)\.(Fatal|Fatalf|Fatalln|Error|Errorf|Fail|FailNow)$'
           pkg: '^testing$'
           msg: "Use testify: require.* to stop the test, assert.* to continue."
+        - pattern: '^(require|assert)\.(Assertions\.)?FailNowf?$'
+          pkg: '^github\.com/stretchr/testify/(require|assert)$'
+          msg: "Use require.Fail or require.Failf; they already stop the test."
       analyze-types: true
 
     depguard:

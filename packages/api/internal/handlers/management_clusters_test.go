@@ -457,7 +457,7 @@ func TestManagementDeleteClusterWaitsForAConcurrentTeamReference(t *testing.T) {
 
 	select {
 	case response := <-responseCh:
-		require.FailNow(t, "cluster deletion returned before the team reference committed", response.Body.String())
+		require.Fail(t, "cluster deletion returned before the team reference committed", response.Body.String())
 	default:
 	}
 	require.NoError(t, referenceTx.Commit(ctx))
@@ -466,7 +466,7 @@ func TestManagementDeleteClusterWaitsForAConcurrentTeamReference(t *testing.T) {
 	case response := <-responseCh:
 		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "cluster deletion did not finish after the team reference committed")
+		require.Fail(t, "cluster deletion did not finish after the team reference committed")
 	}
 	require.Equal(t, clusterID, assignedProjectCluster(t, db, teamID))
 }
@@ -510,7 +510,7 @@ func TestManagementDeleteClusterReleasesRowsARacingRegistrationCommits(t *testin
 	case response := <-responseCh:
 		require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "cluster deletion did not finish after the registration committed")
+		require.Fail(t, "cluster deletion did not finish after the registration committed")
 	}
 	var state string
 	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx, `SELECT jsonb_build_object(

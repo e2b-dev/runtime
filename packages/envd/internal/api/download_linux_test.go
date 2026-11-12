@@ -220,7 +220,7 @@ func getFileIdentity(t *testing.T, path string, header http.Header) (int, http.H
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "GetFiles did not return", path)
+		require.Fail(t, "GetFiles did not return", path)
 	}
 
 	resp := w.Result()

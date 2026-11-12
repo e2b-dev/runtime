@@ -683,7 +683,7 @@ func TestReserve_WaiterGetsStartAPIErrorPromptly(t *testing.T) {
 	select {
 	case <-joinerNotifier.subscribed:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "waiter did not subscribe")
+		require.Fail(t, "waiter did not subscribe")
 	}
 
 	startErr := &api.APIError{
@@ -705,6 +705,6 @@ func TestReserve_WaiterGetsStartAPIErrorPromptly(t *testing.T) {
 		assert.Contains(t, err.Error(), "boom")
 		assert.Less(t, time.Since(start), 500*time.Millisecond, "the waiter is woken by the publish")
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not return")
+		require.Fail(t, "waiter did not return")
 	}
 }

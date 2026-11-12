@@ -37,7 +37,7 @@ func TestSubscriptionManager_SubscribeAndDispatch(t *testing.T) {
 	case <-ch:
 		// OK
 	case <-time.After(time.Second):
-		require.FailNow(t, "expected signal on channel")
+		require.Fail(t, "expected signal on channel")
 	}
 }
 
@@ -58,13 +58,13 @@ func TestSubscriptionManager_DispatchOnlyMatchingKey(t *testing.T) {
 	case <-ch2:
 		// OK — key2 was signalled
 	case <-time.After(time.Second):
-		require.FailNow(t, "expected signal on ch2")
+		require.Fail(t, "expected signal on ch2")
 	}
 
 	// ch1 should NOT have been signalled
 	select {
 	case <-ch1:
-		require.FailNow(t, "ch1 should not have received a signal")
+		require.Fail(t, "ch1 should not have received a signal")
 	case <-time.After(50 * time.Millisecond):
 		// OK — no signal
 	}
@@ -90,7 +90,7 @@ func TestSubscriptionManager_MultipleWaitersForSameKey(t *testing.T) {
 		case <-ch:
 			// OK
 		case <-time.After(time.Second):
-			require.FailNowf(t, "waiter did not receive signal", "waiter %d", i)
+			require.Failf(t, "waiter did not receive signal", "waiter %d", i)
 		}
 	}
 }
@@ -108,7 +108,7 @@ func TestSubscriptionManager_CleanupRemovesWaiter(t *testing.T) {
 
 	select {
 	case <-ch:
-		require.FailNow(t, "should not receive signal after cleanup")
+		require.Fail(t, "should not receive signal after cleanup")
 	case <-time.After(10 * time.Millisecond):
 		// OK
 	}
@@ -137,7 +137,7 @@ func TestSubscriptionManager_CleanupPartialRemoval(t *testing.T) {
 	// ch1 should NOT receive (it was cleaned up)
 	select {
 	case <-ch1:
-		require.FailNow(t, "ch1 should not receive after cleanup")
+		require.Fail(t, "ch1 should not receive after cleanup")
 	case <-time.After(10 * time.Millisecond):
 		// OK
 	}
@@ -147,7 +147,7 @@ func TestSubscriptionManager_CleanupPartialRemoval(t *testing.T) {
 	case <-ch2:
 		// OK
 	case <-time.After(time.Second):
-		require.FailNow(t, "ch2 should still receive signal")
+		require.Fail(t, "ch2 should still receive signal")
 	}
 
 	// The routing key should still exist (ch2 is still subscribed)
@@ -174,13 +174,13 @@ func TestSubscriptionManager_DoubleDispatchDoesNotBlock(t *testing.T) {
 	case <-ch:
 		// OK — first signal consumed
 	case <-time.After(time.Second):
-		require.FailNow(t, "expected signal on channel")
+		require.Fail(t, "expected signal on channel")
 	}
 
 	// No second signal should be available
 	select {
 	case <-ch:
-		require.FailNow(t, "should not have a second signal")
+		require.Fail(t, "should not have a second signal")
 	case <-time.After(50 * time.Millisecond):
 		// OK
 	}
@@ -242,7 +242,7 @@ func TestSubscriptionManager_PubSubEndToEnd(t *testing.T) {
 			return
 		case <-time.After(100 * time.Millisecond):
 		case <-deadline:
-			require.FailNow(t, "did not receive PubSub notification")
+			require.Fail(t, "did not receive PubSub notification")
 		}
 	}
 }
@@ -266,7 +266,7 @@ func TestSubscriptionManager_PubSubIgnoresUnrelatedKeys(t *testing.T) {
 
 	select {
 	case <-ch:
-		require.FailNow(t, "should not have received signal for a different routing key")
+		require.Fail(t, "should not have received signal for a different routing key")
 	case <-time.After(200 * time.Millisecond):
 		// OK
 	}

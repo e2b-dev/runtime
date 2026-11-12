@@ -103,7 +103,7 @@ func TestOtherTeamIsRefused(t *testing.T) {
 		}, sandboxtypes.ErrNotFound},
 		{"Update", func() error {
 			_, err := storage.Update(ctx, caller, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
-				require.FailNow(t, "Update ran the closure on another team's record")
+				require.Fail(t, "Update ran the closure on another team's record")
 
 				return cur, nil
 			})

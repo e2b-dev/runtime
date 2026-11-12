@@ -574,7 +574,7 @@ func TestStorageLocker_ConcurrentWaitersRemainExclusive(t *testing.T) {
 		case resultErr := <-results:
 			require.NoError(t, resultErr)
 		case <-ctx.Done():
-			require.FailNow(t, "concurrent lock waiters did not complete", "err: %v", ctx.Err())
+			require.Fail(t, "concurrent lock waiters did not complete", "err: %v", ctx.Err())
 		}
 	}
 
@@ -733,7 +733,7 @@ func waitForLockWaiter(t *testing.T, subManager *subscriptionManager, routingKey
 	require.Eventually(t, func() bool {
 		select {
 		case err := <-waiterDone:
-			require.FailNow(t, "lock waiter finished before registering", "err: %v", err)
+			require.Fail(t, "lock waiter finished before registering", "err: %v", err)
 		default:
 		}
 
@@ -767,7 +767,7 @@ func requireErrorFromChannel(t *testing.T, ch <-chan error, expected error) {
 	case err := <-ch:
 		require.ErrorIs(t, err, expected)
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, fmt.Sprintf("operation did not return %v", expected))
+		require.Fail(t, fmt.Sprintf("operation did not return %v", expected))
 	}
 }
 

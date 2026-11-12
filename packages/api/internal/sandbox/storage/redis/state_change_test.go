@@ -1040,7 +1040,7 @@ func TestWaitForStateChange_PubSubWakesWaiterFast(t *testing.T) {
 		assert.Less(t, elapsed, 500*time.Millisecond,
 			"waiter should be woken by PubSub much faster than the 1s poll interval")
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "WaitForStateChange did not complete in time")
+		require.Fail(t, "WaitForStateChange did not complete in time")
 	}
 }
 
@@ -1100,7 +1100,7 @@ func TestWaitForStateChange_MultipleWaitersPubSub(t *testing.T) {
 		assert.Less(t, elapsed, 500*time.Millisecond,
 			"all waiters should be woken by PubSub much faster than the 1s poll interval")
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "not all waiters completed in time")
+		require.Fail(t, "not all waiters completed in time")
 	}
 }
 
@@ -1192,7 +1192,7 @@ func TestStartRemoving_PauseThenKill_PubSubFastWake(t *testing.T) {
 			"kill should be woken by PubSub notification, not 1s poll")
 		killCallback(ctx, nil)
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "kill did not complete in time")
+		require.Fail(t, "kill did not complete in time")
 	}
 }
 
@@ -1251,7 +1251,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	// The waiter should still be blocking — stale key doesn't match.
 	select {
 	case err := <-waiterDone:
-		require.FailNow(t, "waiter returned prematurely on stale PubSub notification", "err: %v", err)
+		require.Fail(t, "waiter returned prematurely on stale PubSub notification", "err: %v", err)
 	default:
 		// OK — still waiting
 	}
@@ -1263,7 +1263,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	case err := <-waiterDone:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not complete after transition B finished")
+		require.Fail(t, "waiter did not complete after transition B finished")
 	}
 }
 
@@ -1903,7 +1903,7 @@ func TestWaitCarriesTransitionID(t *testing.T) {
 	case err := <-waiter:
 		require.ErrorContains(t, err, "boom")
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the waiter never returned")
+		require.Fail(t, "the waiter never returned")
 	}
 	require.Equal(t, second, pendingTransitionID(t, client, sbx.SandboxID), "the successor's transition is still pending")
 	finishSuccessor(t.Context(), nil)

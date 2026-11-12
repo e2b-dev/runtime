@@ -65,7 +65,7 @@ func createRefusalDetail(t *testing.T, st *status.Status) *orchestrator.UserErro
 			return userErr
 		}
 	}
-	require.FailNow(t, "the refusal carries no SANDBOX_CREATE_REFUSED detail", "%v", st.Err())
+	require.Fail(t, "the refusal carries no SANDBOX_CREATE_REFUSED detail", "%v", st.Err())
 
 	return nil
 }
