@@ -1,8 +1,9 @@
 package distro
 
 import (
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // capabilities is the canonical list of things a provisioned sandbox needs from
@@ -195,15 +196,11 @@ func TestEveryFamilyCoversEveryCapability(t *testing.T) {
 	for _, p := range provisionedProfiles() {
 		for _, c := range capabilities {
 			pkgs, ok := c.byFamily[p.Key]
-			if !ok {
-				t.Errorf("capability %q has no entry for family %q", c.name, p.Key)
-
+			if !assert.True(t, ok, "capability %q has no entry for family %q", c.name, p.Key) {
 				continue
 			}
 			for _, pkg := range pkgs {
-				if !slices.Contains(p.Packages, pkg) {
-					t.Errorf("family %q claims %q for capability %q but doesn't install it", p.Key, pkg, c.name)
-				}
+				assert.Contains(t, p.Packages, pkg, "family %q claims %q for capability %q but doesn't install it", p.Key, pkg, c.name)
 			}
 		}
 	}
@@ -221,9 +218,7 @@ func TestNoUnmappedPackages(t *testing.T) {
 			}
 		}
 		for _, pkg := range p.Packages {
-			if !mapped[pkg] {
-				t.Errorf("family %q installs %q, which no capability claims", p.Key, pkg)
-			}
+			assert.True(t, mapped[pkg], "family %q installs %q, which no capability claims", p.Key, pkg)
 		}
 	}
 }
@@ -238,9 +233,7 @@ func TestCapabilitiesTrackTheProfileRegistry(t *testing.T) {
 	}
 	for _, c := range capabilities {
 		for family := range c.byFamily {
-			if !known[family] {
-				t.Errorf("capability %q maps unknown family %q", c.name, family)
-			}
+			assert.True(t, known[family], "capability %q maps unknown family %q", c.name, family)
 		}
 	}
 }

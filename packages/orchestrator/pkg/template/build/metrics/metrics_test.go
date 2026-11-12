@@ -46,5 +46,5 @@ func TestRecordBuildResultLabels(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("%s not recorded", telemetry.BuildResultCounterName)
+	require.Fail(t, string(telemetry.BuildResultCounterName)+" not recorded")
 }

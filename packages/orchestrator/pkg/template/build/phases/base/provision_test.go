@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Provisioning must not decide the chrony time source: it runs on a build node,
@@ -19,17 +22,13 @@ func TestProvisionScriptDefersChronySourceToBoot(t *testing.T) {
 	// used to read. It no longer exists, and under `set -u` a leftover reference
 	// is a hard provisioning failure on every distro, not just Alpine.
 	for _, bad := range []string{"[ -e /dev/ptp0 ]", "refclock PHC", "E2B_CHRONY_PHC"} {
-		if strings.Contains(provisionScriptFile, bad) {
-			t.Errorf("provision.sh must not decide the time source (%q) — that happens at boot", bad)
-		}
+		assert.NotContains(t, provisionScriptFile, bad, "provision.sh must not decide the time source — that happens at boot")
 	}
 	for _, want := range []string{
 		`echo "include /run/chrony-e2b/source.conf"`,
 		`echo "makestep 1.0 3"`,
 	} {
-		if !strings.Contains(provisionScriptFile, want) {
-			t.Errorf("provision.sh missing chrony config line %q", want)
-		}
+		assert.Contains(t, provisionScriptFile, want, "provision.sh missing chrony config line")
 	}
 }
 
@@ -43,13 +42,9 @@ func TestProvisionScriptWritesSSHSettingsAsDropIn(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	begin := strings.Index(provisionScriptFile, "echo \"Setting up SSH\"")
-	if begin < 0 {
-		t.Fatal("provision.sh has no SSH block")
-	}
+	require.GreaterOrEqual(t, begin, 0, "provision.sh has no SSH block")
 	end := strings.Index(provisionScriptFile[begin:], "\nEOF\n")
-	if end < 0 {
-		t.Fatal("SSH block has no heredoc terminator")
-	}
+	require.GreaterOrEqual(t, end, 0, "SSH block has no heredoc terminator")
 	block := provisionScriptFile[begin : begin+end+len("\nEOF\n")]
 
 	// mainConfig may reference /etc/ssh; the fixture path is substituted into both the
@@ -57,21 +52,14 @@ func TestProvisionScriptWritesSSHSettingsAsDropIn(t *testing.T) {
 	run := func(t *testing.T, mainConfig string) (main string, dropIn string, dropIns []string) {
 		t.Helper()
 		sshDir := filepath.Join(t.TempDir(), "etc", "ssh")
-		if err := os.MkdirAll(sshDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(sshDir, 0o755))
 		mainConfig = strings.ReplaceAll(mainConfig, "/etc/ssh", sshDir)
-		if err := os.WriteFile(filepath.Join(sshDir, "sshd_config"), []byte(mainConfig), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(sshDir, "sshd_config"), []byte(mainConfig), 0o644))
 		script := strings.ReplaceAll(block, "/etc/ssh", sshDir)
-		if out, err := exec.CommandContext(t.Context(), "bash", "-eu", "-c", script).CombinedOutput(); err != nil {
-			t.Fatalf("SSH block failed: %v\n%s", err, out)
-		}
+		out, err := exec.CommandContext(t.Context(), "bash", "-eu", "-c", script).CombinedOutput()
+		require.NoError(t, err, "SSH block failed:\n%s", out)
 		got, err := os.ReadFile(filepath.Join(sshDir, "sshd_config"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		conf, _ := os.ReadFile(filepath.Join(sshDir, "sshd_config.d", "00-e2b.conf"))
 		entries, _ := os.ReadDir(filepath.Join(sshDir, "sshd_config.d"))
 		for _, e := range entries {
@@ -85,27 +73,19 @@ func TestProvisionScriptWritesSSHSettingsAsDropIn(t *testing.T) {
 		t.Parallel()
 		const mainConfig = "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n"
 		main, dropIn, dropIns := run(t, mainConfig)
-		if !strings.HasSuffix(main, "Port 22\n") || strings.Contains(main, "Permit") {
-			t.Errorf("main sshd_config changed:\n%s", main)
-		}
-		if len(dropIns) != 1 || dropIns[0] != "00-e2b.conf" {
-			t.Fatalf("expected exactly 00-e2b.conf, got %v", dropIns)
-		}
+		assert.True(t, strings.HasSuffix(main, "Port 22\n"), "main sshd_config changed:\n%s", main)
+		assert.NotContains(t, main, "Permit", "main sshd_config changed")
+		require.Equal(t, []string{"00-e2b.conf"}, dropIns)
 		for _, want := range []string{"PermitRootLogin yes", "PermitEmptyPasswords yes", "PasswordAuthentication yes"} {
-			if !strings.Contains(dropIn, want) {
-				t.Errorf("drop-in missing %q", want)
-			}
+			assert.Contains(t, dropIn, want, "drop-in missing a directive")
 		}
 	})
 
 	t.Run("no include appends to the main file", func(t *testing.T) {
 		t.Parallel()
 		main, _, dropIns := run(t, "Port 22\n")
-		if !strings.HasPrefix(main, "Port 22\n") || !strings.Contains(main, "PermitRootLogin yes") {
-			t.Errorf("expected the directives appended after the existing config, got:\n%s", main)
-		}
-		if len(dropIns) != 0 {
-			t.Errorf("no drop-in expected without an Include line, got %v", dropIns)
-		}
+		assert.True(t, strings.HasPrefix(main, "Port 22\n"), "expected the directives appended after the existing config, got:\n%s", main)
+		assert.Contains(t, main, "PermitRootLogin yes", "expected the directives appended after the existing config")
+		assert.Empty(t, dropIns, "no drop-in expected without an Include line")
 	})
 }

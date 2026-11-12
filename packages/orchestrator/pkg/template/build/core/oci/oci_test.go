@@ -48,12 +48,9 @@ func createFileTar(t *testing.T, fileName string) *bytes.Buffer {
 		Mode: 0o600,
 		Size: int64(len(content)),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write(content); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, err = tw.Write(content)
+	require.NoError(t, err)
 	tw.Close()
 
 	return &buf
@@ -311,9 +308,7 @@ func TestGetPublicImageWithGeneralAuth(t *testing.T) {
 	dockerhubRepository := dockerhub.NewNoopRemoteRepository()
 	t.Cleanup(func() {
 		err := dockerhubRepository.Close()
-		if err != nil {
-			t.Errorf("error closing dockerhub repository: %v", err)
-		}
+		assert.NoError(t, err, "error closing dockerhub repository")
 	})
 
 	t.Run("successful auth and pull", func(t *testing.T) {
