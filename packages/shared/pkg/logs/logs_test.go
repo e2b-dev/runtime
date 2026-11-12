@@ -1,8 +1,10 @@
 package logs
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFlatJsonLogLineParser(t *testing.T) {
@@ -122,22 +124,14 @@ func TestFlatJsonLogLineParser(t *testing.T) {
 			result, err := FlatJsonLogLineParser(tt.input)
 
 			if tt.hasError {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
+				assert.Error(t, err)
 
 				return
 			}
 
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+			require.NoError(t, err)
 
-				return
-			}
-
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("expected %v, got %v", tt.expected, result)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

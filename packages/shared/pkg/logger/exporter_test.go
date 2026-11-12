@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,14 +44,11 @@ func TestHTTPWriterSendLogLineStatus(t *testing.T) {
 
 			writer := &HTTPWriter{httpClient: server.Client()}
 			err := writer.sendLogLine(t.Context(), server.URL, []byte(`{"secret":"not-in-error"}`))
-			if tt.wantErr && err == nil {
-				t.Fatal("expected an error")
-			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if err != nil && strings.Contains(err.Error(), "not-in-error") {
-				t.Fatalf("error contains request payload: %v", err)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.NotContains(t, err.Error(), "not-in-error", "error contains request payload")
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -87,12 +83,8 @@ func TestHTTPWriterSendLogLineRespectsContextDeadline(t *testing.T) {
 	err := writer.sendLogLine(ctx, server.URL, []byte(`{"msg":"slow"}`))
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected an error from a slow/hung response once the context deadline passes")
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("sendLogLine took %v to return; expected it to abort promptly once the 50ms deadline passed", elapsed)
-	}
+	require.Error(t, err, "expected an error from a slow/hung response once the context deadline passes")
+	require.LessOrEqual(t, elapsed, 2*time.Second, "expected sendLogLine to abort promptly once the 50ms deadline passed")
 }
 
 // TestHTTPWriterSendLogLineRespectsClientTimeout is the legacy-mode
@@ -121,12 +113,8 @@ func TestHTTPWriterSendLogLineRespectsClientTimeout(t *testing.T) {
 	err := writer.sendLogLine(t.Context(), server.URL, []byte(`{"msg":"slow"}`))
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected an error from a slow/hung response once the client timeout passes")
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("sendLogLine took %v to return; expected it to abort promptly once the 50ms client timeout passed", elapsed)
-	}
+	require.Error(t, err, "expected an error from a slow/hung response once the client timeout passes")
+	require.LessOrEqual(t, elapsed, 2*time.Second, "expected sendLogLine to abort promptly once the 50ms client timeout passed")
 }
 
 // TestHTTPWriterWaitGroupReuse tests the race condition where WaitGroup is reused
@@ -173,9 +161,7 @@ func TestHTTPWriterWaitGroupReuse(t *testing.T) {
 					for j := range 3 {
 						logLine := fmt.Sprintf(`{"level":"info","msg":"test log %d-%d"}`+"\n", i, j)
 						_, err := writer.Write([]byte(logLine))
-						if err != nil {
-							t.Errorf("Write failed: %v", err)
-						}
+						assert.NoError(t, err) //nolint:testifylint // runs on a wg.Go goroutine, not the test goroutine
 						// Yield to increase chance of interleaving
 						runtime.Gosched()
 					}
@@ -188,17 +174,13 @@ func TestHTTPWriterWaitGroupReuse(t *testing.T) {
 				wg.Go(func() {
 					runtime.Gosched() // Let some Write() calls happen first
 					err := writer.Sync()
-					if err != nil {
-						t.Errorf("Sync failed: %v", err)
-					}
+					assert.NoError(t, err) //nolint:testifylint // runs on a wg.Go goroutine, not the test goroutine
 					// Immediately try to write again after sync
 					// This creates the race: Sync() is waiting on WaitGroup,
 					// but Write() immediately tries to reuse it
 					logLine := `{"level":"info","msg":"post-sync log"}` + "\n"
 					_, err = writer.Write([]byte(logLine))
-					if err != nil {
-						t.Errorf("Write after sync failed: %v", err)
-					}
+					assert.NoError(t, err, "write after sync")
 				})
 			}
 
@@ -207,19 +189,17 @@ func TestHTTPWriterWaitGroupReuse(t *testing.T) {
 
 			// Final sync to wait for any pending writes
 			err := writer.Sync()
-			if err != nil {
-				t.Errorf("Final sync failed: %v", err)
-			}
+			assert.NoError(t, err, "final sync")
 		}
 	}()
 
 	// Wait for test to complete or timeout
 	select {
 	case panicMsg := <-panicChan:
-		t.Fatalf("PANIC detected: %v", panicMsg)
+		require.Failf(t, "PANIC detected", "%v", panicMsg)
 	case <-done:
 	case <-time.After(30 * time.Second):
-		t.Fatal("Test timed out")
+		require.Fail(t, "Test timed out")
 	}
 }
 
@@ -300,13 +280,9 @@ func TestHTTPWriterConcurrentWriteSync(t *testing.T) {
 
 	// Final sync
 	err := writer.Sync()
-	if err != nil {
-		t.Errorf("Final sync failed: %v", err)
-	}
+	require.NoError(t, err, "final sync")
 
-	if panicDetected.Load() {
-		t.Fatal("Race condition detected: WaitGroup reuse panic occurred")
-	}
+	require.False(t, panicDetected.Load(), "Race condition detected: WaitGroup reuse panic occurred")
 }
 
 // TestHTTPWriterSequentialWrites tests basic sequential write and sync
@@ -333,26 +309,18 @@ func TestHTTPWriterSequentialWrites(t *testing.T) {
 
 	for _, line := range logLines {
 		n, err := writer.Write([]byte(line))
-		if err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
-		if n != len(line) {
-			t.Errorf("Expected to write %d bytes, wrote %d", len(line), n)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, len(line), n)
 	}
 
 	// Sync to ensure all writes complete
 	err := writer.Sync()
-	if err != nil {
-		t.Fatalf("Sync failed: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Give a moment for async operations to complete
 	time.Sleep(100 * time.Millisecond)
 
-	if requestCount.Load() != int32(len(logLines)) {
-		t.Errorf("Expected %d requests, got %d", len(logLines), requestCount.Load())
-	}
+	assert.Equal(t, int32(len(logLines)), requestCount.Load())
 }
 
 // TestDynamicHTTPWriterPrimaryAndShadow verifies primary + shadow fan-out.
@@ -382,20 +350,12 @@ func TestDynamicHTTPWriterPrimaryAndShadow(t *testing.T) {
 
 	writer := NewDynamicHTTPWriter(t.Context(), primary.URL, resolve)
 	_, err := writer.Write([]byte(`{"level":"info","msg":"line"}` + "\n"))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if err := writer.Sync(); err != nil {
-		t.Fatalf("Sync failed: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, writer.Sync())
 	time.Sleep(100 * time.Millisecond)
 
-	if primaryCount.Load() != 1 {
-		t.Errorf("expected 1 primary request, got %d", primaryCount.Load())
-	}
-	if shadowCount.Load() != 1 {
-		t.Errorf("expected 1 shadow request, got %d", shadowCount.Load())
-	}
+	assert.Equal(t, int32(1), primaryCount.Load())
+	assert.Equal(t, int32(1), shadowCount.Load())
 }
 
 // TestDynamicHTTPWriterShadowFailureIgnored verifies a broken shadow does not
@@ -426,19 +386,15 @@ func TestDynamicHTTPWriterShadowFailureIgnored(t *testing.T) {
 	}
 
 	writer := NewDynamicHTTPWriter(t.Context(), primary.URL, resolve).(*HTTPWriter)
-	if err := writer.routeLogLine([]byte(`{"msg":"x"}`)); err != nil {
-		t.Fatalf("primary failed because shadow returned an error: %v", err)
-	}
+	require.NoError(t, writer.routeLogLine([]byte(`{"msg":"x"}`)), "primary failed because shadow returned an error")
 
 	select {
 	case <-shadowAttempted:
 	case <-time.After(time.Second):
-		t.Fatal("shadow request was not attempted")
+		require.Fail(t, "shadow request was not attempted")
 	}
 
-	if primaryCount.Load() != 1 {
-		t.Errorf("expected 1 primary request despite shadow failure, got %d", primaryCount.Load())
-	}
+	assert.Equal(t, int32(1), primaryCount.Load(), "expected 1 primary request despite shadow failure")
 }
 
 // TestDynamicHTTPWriterShadowFanoutBounded verifies shadow writes are capped by
@@ -485,13 +441,10 @@ func TestDynamicHTTPWriterShadowFanoutBounded(t *testing.T) {
 
 	const writes = 50
 	for range writes {
-		if _, err := writer.Write([]byte(`{"msg":"x"}` + "\n")); err != nil {
-			t.Fatalf("Write failed: %v", err)
-		}
+		_, err := writer.Write([]byte(`{"msg":"x"}` + "\n"))
+		require.NoError(t, err)
 	}
-	if err := writer.Sync(); err != nil {
-		t.Fatalf("Sync failed: %v", err)
-	}
+	require.NoError(t, writer.Sync())
 
 	// Wait until the shadow slots are saturated (bounded, no unbounded growth).
 	deadline := time.Now().Add(5 * time.Second)
@@ -499,12 +452,8 @@ func TestDynamicHTTPWriterShadowFanoutBounded(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	if got := shadowStarted.Load(); got > int32(shadowCap) {
-		t.Errorf("expected at most %d concurrent shadow writes, got %d", shadowCap, got)
-	}
-	if got := primaryCount.Load(); got != writes {
-		t.Errorf("expected %d primary writes, got %d", writes, got)
-	}
+	assert.LessOrEqual(t, shadowStarted.Load(), int32(shadowCap), "concurrent shadow writes")
+	assert.Equal(t, int32(writes), primaryCount.Load())
 }
 
 // TestDynamicHTTPWriterNilResolverIsLegacy verifies a nil resolver behaves like
@@ -520,17 +469,12 @@ func TestDynamicHTTPWriterNilResolverIsLegacy(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	writer := NewDynamicHTTPWriter(t.Context(), server.URL, nil)
-	if _, err := writer.Write([]byte(`{"msg":"x"}` + "\n")); err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if err := writer.Sync(); err != nil {
-		t.Fatalf("Sync failed: %v", err)
-	}
+	_, err := writer.Write([]byte(`{"msg":"x"}` + "\n"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Sync())
 	time.Sleep(100 * time.Millisecond)
 
-	if count.Load() != 1 {
-		t.Errorf("expected 1 request with nil resolver, got %d", count.Load())
-	}
+	assert.Equal(t, int32(1), count.Load(), "expected 1 request with nil resolver")
 }
 
 // TestHTTPWriterWriteContinuesAfterFailedLine verifies a line the collector

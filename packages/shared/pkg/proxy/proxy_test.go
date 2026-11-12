@@ -1037,20 +1037,18 @@ func TestProxyResetAliveConnectionsFromPool(t *testing.T) {
 	select {
 	case <-requestEnded:
 	case <-t.Context().Done():
-		t.Fatalf("request timed out: %v", t.Context().Err())
+		require.Failf(t, "request timed out", "%v", t.Context().Err())
 	}
 
 	select {
 	case readErr, ok := <-instrumentedListener.FirstReadErr:
-		if !ok {
-			t.Fatalf("read error channel closed")
-		}
+		require.True(t, ok, "read error channel closed")
 		require.ErrorContains(t, readErr, "connection reset by peer")
 
 		// io.EOF is returned for the FIN packet.
 		require.NotErrorIs(t, readErr, io.EOF, "server connection should have read error other than EOF")
 	case <-t.Context().Done():
-		t.Fatalf("read error timed out: %v", t.Context().Err())
+		require.Failf(t, "read error timed out", "%v", t.Context().Err())
 	}
 }
 
@@ -1833,7 +1831,7 @@ func TestRetiredOwnerSettlesStalledUpload(t *testing.T) {
 			select {
 			case <-arrived:
 			case <-time.After(5 * time.Second):
-				t.Fatal("backend did not receive upload")
+				require.Fail(t, "backend did not receive upload")
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
@@ -1842,7 +1840,7 @@ func TestRetiredOwnerSettlesStalledUpload(t *testing.T) {
 			case err := <-closed:
 				require.Error(t, err, "retirement must interrupt the backend upload")
 			case <-ctx.Done():
-				t.Fatal("backend socket remained open")
+				require.Fail(t, "backend socket remained open")
 			}
 			response, err := http.ReadResponse(reader, nil)
 			require.NoError(t, err)

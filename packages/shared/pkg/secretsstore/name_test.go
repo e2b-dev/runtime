@@ -1,21 +1,18 @@
 package secretsstore
 
 import (
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNormalizeNameCanonicalizesAllowedName(t *testing.T) {
 	t.Parallel()
 
 	got, err := NormalizeName("  API-Key_1  ")
-	if err != nil {
-		t.Fatalf("NormalizeName() error = %v", err)
-	}
-	if got != "api-key_1" {
-		t.Fatalf("NormalizeName() = %q, want %q", got, "api-key_1")
-	}
+	require.NoError(t, err)
+	require.Equal(t, "api-key_1", got)
 }
 
 func TestNormalizeNameRejectsEachInvalidBranchWithAFixedError(t *testing.T) {
@@ -36,18 +33,10 @@ func TestNormalizeNameRejectsEachInvalidBranchWithAFixedError(t *testing.T) {
 			t.Parallel()
 
 			got, err := NormalizeName(tt.input)
-			if got != "" {
-				t.Fatalf("NormalizeName() = %q, want empty", got)
-			}
-			if !errors.Is(err, ErrInvalidName) {
-				t.Fatalf("NormalizeName() error = %v, want ErrInvalidName", err)
-			}
-			if err.Error() != "secret name is invalid" {
-				t.Fatalf("NormalizeName() error = %q, want fixed message", err)
-			}
-			if strings.Contains(err.Error(), tt.input) {
-				t.Fatalf("NormalizeName() error contains rejected input")
-			}
+			require.Empty(t, got)
+			require.ErrorIs(t, err, ErrInvalidName)
+			require.EqualError(t, err, "secret name is invalid")
+			require.NotContains(t, err.Error(), tt.input, "error contains rejected input")
 		})
 	}
 }

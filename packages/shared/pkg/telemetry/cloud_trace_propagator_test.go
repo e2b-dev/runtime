@@ -1,6 +1,10 @@
 package telemetry
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestParseEdgeTraceID(t *testing.T) {
 	t.Parallel()
@@ -42,12 +46,8 @@ func TestParseEdgeTraceID(t *testing.T) {
 			t.Parallel()
 
 			got, gotOK := ParseEdgeTraceID(tt.gcpHeader, tt.awsHeader)
-			if gotOK != tt.wantOK {
-				t.Fatalf("ParseEdgeTraceID() ok = %v, want %v", gotOK, tt.wantOK)
-			}
-			if got != tt.want {
-				t.Fatalf("ParseEdgeTraceID() = %q, want %q", got, tt.want)
-			}
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.want, got)
 		})
 	}
 }

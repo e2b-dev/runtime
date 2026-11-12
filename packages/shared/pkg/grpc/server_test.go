@@ -247,7 +247,7 @@ func receive[T any](ctx context.Context, t *testing.T, values <-chan T) T {
 	case value := <-values:
 		return value
 	case <-ctx.Done():
-		t.Fatal("timed out waiting for the server")
+		require.Fail(t, "timed out waiting for the server")
 
 		var zero T
 

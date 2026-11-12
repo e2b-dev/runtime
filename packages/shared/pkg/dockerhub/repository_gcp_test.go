@@ -168,7 +168,7 @@ func TestGCPRefreshCancellationDoesNotQueueRetries(t *testing.T) {
 		select {
 		case <-ready:
 		case <-time.After(2 * time.Second):
-			t.Fatal("pull did not join the cancellable refresh wait")
+			require.Fail(t, "pull did not join the cancellable refresh wait")
 		}
 	}
 	cancel()
@@ -177,7 +177,7 @@ func TestGCPRefreshCancellationDoesNotQueueRetries(t *testing.T) {
 		case err := <-canceled:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-time.After(2 * time.Second):
-			t.Fatal("canceled pull remained blocked by token refresh")
+			require.Fail(t, "canceled pull remained blocked by token refresh")
 		}
 	}
 	require.Equal(t, int32(1), attempts.Load())

@@ -11,6 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testLockName = "test-migrations"
@@ -105,13 +108,9 @@ func openLockDatabase(t *testing.T, unlocked bool) (*sql.DB, *lockDriver) {
 	name := fmt.Sprintf("dbmigrate-test-%d", driverID.Add(1))
 	sql.Register(name, fake)
 	databaseConnection, err := sql.Open(name, "")
-	if err != nil {
-		t.Fatalf("open fake database: %v", err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		if err := databaseConnection.Close(); err != nil {
-			t.Errorf("close fake database: %v", err)
-		}
+		assert.NoError(t, databaseConnection.Close())
 	})
 
 	return databaseConnection, fake
@@ -122,19 +121,17 @@ func TestWithPostgresSessionLockReleasesAfterOperationError(t *testing.T) {
 	databaseConnection, fake := openLockDatabase(t, true)
 
 	err := WithPostgresSessionLock(t.Context(), databaseConnection, testLockName, func(ctx context.Context) error {
-		if ctx != t.Context() {
-			t.Error("operation received a different context")
-		}
+		assert.Same(t, t.Context(), ctx, "operation received a different context")
 		fake.record("operation")
 
 		return errOperation
 	})
-	if !errors.Is(err, errOperation) {
-		t.Fatalf("expected operation error, got %v", err)
-	}
-	if queries := fake.recordedQueries(); len(queries) != 3 || !strings.Contains(queries[0], "pg_advisory_lock") || queries[1] != "operation" || !strings.Contains(queries[2], "pg_advisory_unlock") {
-		t.Fatalf("unexpected lock query sequence: %v", queries)
-	}
+	require.ErrorIs(t, err, errOperation)
+	queries := fake.recordedQueries()
+	require.Len(t, queries, 3)
+	require.Contains(t, queries[0], "pg_advisory_lock")
+	require.Equal(t, "operation", queries[1])
+	require.Contains(t, queries[2], "pg_advisory_unlock")
 }
 
 func TestWithPostgresSessionLockReleasesAfterContextCancellation(t *testing.T) {
@@ -148,12 +145,11 @@ func TestWithPostgresSessionLockReleasesAfterContextCancellation(t *testing.T) {
 
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("release lock after cancellation: %v", err)
-	}
-	if queries := fake.recordedQueries(); len(queries) != 3 || queries[1] != "operation" || !strings.Contains(queries[2], "pg_advisory_unlock") {
-		t.Fatalf("lock was not released: %v", queries)
-	}
+	require.NoError(t, err)
+	queries := fake.recordedQueries()
+	require.Len(t, queries, 3)
+	require.Equal(t, "operation", queries[1])
+	require.Contains(t, queries[2], "pg_advisory_unlock", "lock was not released")
 }
 
 func TestWithPostgresSessionLockReportsLostLock(t *testing.T) {
@@ -163,7 +159,5 @@ func TestWithPostgresSessionLockReportsLostLock(t *testing.T) {
 	err := WithPostgresSessionLock(t.Context(), databaseConnection, testLockName, func(context.Context) error {
 		return nil
 	})
-	if !errors.Is(err, ErrLockNotHeld) {
-		t.Fatalf("expected ErrLockNotHeld, got %v", err)
-	}
+	require.ErrorIs(t, err, ErrLockNotHeld)
 }

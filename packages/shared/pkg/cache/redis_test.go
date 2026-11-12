@@ -206,7 +206,7 @@ func TestRedisCache_DeleteWaitsForInflightWriter(t *testing.T) {
 	select {
 	case <-writerDone:
 	default:
-		t.Fatal("Delete returned while the writer still held the lock; the writer's SET could repopulate stale data")
+		require.Fail(t, "Delete returned while the writer still held the lock; the writer's SET could repopulate stale data")
 	}
 
 	require.NoError(t, eg.Wait())

@@ -106,7 +106,7 @@ func TestPromiseDone(t *testing.T) {
 
 	select {
 	case <-p.Done():
-		t.Fatal("promise should not be done yet")
+		require.Fail(t, "promise should not be done yet")
 	default:
 		// expected
 	}

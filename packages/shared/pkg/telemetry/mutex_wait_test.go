@@ -126,9 +126,7 @@ func TestMutexWaitObservationConcurrentReaders(t *testing.T) {
 			for i := range 40 {
 				input := float64((i*7 + readerIndex*3) % 23)
 				result, err := collectMutexWait(reader, input)
-				if err != nil {
-					t.Errorf("collect mutex wait: %v", err)
-
+				if !assert.NoError(t, err, "collect mutex wait") { //nolint:testifylint // runs on a wg.Go goroutine, not the test goroutine
 					return
 				}
 				sum := result.Data.(metricdata.Sum[float64])
@@ -203,13 +201,13 @@ func TestMutexWaitObservationSerializesPublication(t *testing.T) {
 	select {
 	case <-firstEntered:
 	case <-time.After(2 * time.Second):
-		t.Fatal("first SDK callback never reached publication")
+		require.Fail(t, "first SDK callback never reached publication")
 	}
 	// This is the actual publication barrier, not a guessed elapsed-time or
 	// post-callback marker. The guard must still be held inside ObserveFloat64.
 	if wait.mu.TryLock() {
 		wait.mu.Unlock()
-		t.Error("guard released before SDK publication")
+		assert.Fail(t, "guard released before SDK publication")
 	}
 	joined.Go(func() {
 		second, secondErr = collectMutexWait(secondReader, 12)
@@ -217,7 +215,7 @@ func TestMutexWaitObservationSerializesPublication(t *testing.T) {
 	select {
 	case <-secondEntered:
 	case <-time.After(2 * time.Second):
-		t.Fatal("second SDK callback never reached the guard")
+		require.Fail(t, "second SDK callback never reached the guard")
 	}
 	assert.False(t, secondPublication.Load(), "newer callback overtook blocked publication")
 	release.Do(func() { close(releaseFirst) })

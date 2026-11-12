@@ -82,7 +82,7 @@ func TestStreamToChannel_StreamErrorAvailableOnClose(t *testing.T) {
 	case err := <-errCh:
 		require.ErrorContains(t, err, "command failed on purpose")
 	default:
-		t.Fatal("terminal status not available after the message channel closed")
+		require.Fail(t, "terminal status not available after the message channel closed")
 	}
 }
 
@@ -112,7 +112,7 @@ func TestStreamToChannel_CancellationIsTerminalStatus(t *testing.T) {
 	case _, ok := <-msgCh:
 		require.True(t, ok, "stream ended before cancellation")
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the first message")
+		require.Fail(t, "timed out waiting for the first message")
 	}
 
 	cancel()
@@ -125,6 +125,6 @@ func TestStreamToChannel_CancellationIsTerminalStatus(t *testing.T) {
 	case err := <-errCh:
 		require.Error(t, err)
 	default:
-		t.Fatal("cancellation was indistinguishable from a clean end of stream")
+		require.Fail(t, "cancellation was indistinguishable from a clean end of stream")
 	}
 }

@@ -91,11 +91,11 @@ func TestProxyShutdownTracksUpgradedConnection(t *testing.T) {
 				select {
 				case <-started:
 				case <-ctx.Done():
-					t.Fatal("shutdown did not start")
+					require.Fail(t, "shutdown did not start")
 				}
 				select {
 				case err := <-done:
-					t.Fatalf("shutdown returned before the peer closed: %v", err)
+					require.Failf(t, "shutdown returned before the peer closed", "error: %v", err)
 				case <-time.After(100 * time.Millisecond):
 				}
 				echo()
@@ -104,7 +104,7 @@ func TestProxyShutdownTracksUpgradedConnection(t *testing.T) {
 				case err := <-done:
 					require.NoError(t, err)
 				case <-ctx.Done():
-					t.Fatal("shutdown did not finish after the peer closed")
+					require.Fail(t, "shutdown did not finish after the peer closed")
 				}
 			case "deadline fallback":
 				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -119,7 +119,7 @@ func TestProxyShutdownTracksUpgradedConnection(t *testing.T) {
 			select {
 			case <-backendDone:
 			case <-time.After(5 * time.Second):
-				t.Fatal("shutdown left the backend tunnel open")
+				require.Fail(t, "shutdown left the backend tunnel open")
 			}
 			assert.Zero(t, proxy.CurrentServerConnections())
 		})
@@ -187,11 +187,11 @@ func TestProxyShutdownDrainsH2CStream(t *testing.T) {
 	select {
 	case <-started:
 	case <-ctx.Done():
-		t.Fatal("shutdown did not start")
+		require.Fail(t, "shutdown did not start")
 	}
 	select {
 	case err := <-done:
-		t.Fatalf("shutdown returned before the stream finished: %v", err)
+		require.Failf(t, "shutdown returned before the stream finished", "error: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	finish()
@@ -202,7 +202,7 @@ func TestProxyShutdownDrainsH2CStream(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-ctx.Done():
-		t.Fatal("shutdown did not finish after the stream completed")
+		require.Fail(t, "shutdown did not finish after the stream completed")
 	}
 	assert.Zero(t, proxy.CurrentServerConnections())
 }

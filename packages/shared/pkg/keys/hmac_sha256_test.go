@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,9 +19,7 @@ func TestHMACSha256Hashing_ValidHash(t *testing.T) {
 	actualHash, err := hasher.Hash(content)
 	require.NoError(t, err)
 
-	if actualHash != expectedHash {
-		t.Errorf("expected %s, got %s", expectedHash, actualHash)
-	}
+	assert.Equal(t, expectedHash, actualHash)
 }
 
 func TestHMACSha256Hashing_EmptyContent(t *testing.T) {
@@ -32,9 +31,7 @@ func TestHMACSha256Hashing_EmptyContent(t *testing.T) {
 	actualHash, err := hasher.Hash(content)
 	require.NoError(t, err)
 
-	if actualHash != expectedHash {
-		t.Errorf("expected %s, got %s", expectedHash, actualHash)
-	}
+	assert.Equal(t, expectedHash, actualHash)
 }
 
 func TestHMACSha256Hashing_DifferentKey(t *testing.T) {
@@ -50,9 +47,7 @@ func TestHMACSha256Hashing_DifferentKey(t *testing.T) {
 	hashWithDifferentKey, err := differentKeyHasher.Hash(content)
 	require.NoError(t, err)
 
-	if hashWithOriginalKey == hashWithDifferentKey {
-		t.Errorf("hashes with different keys should not match")
-	}
+	assert.NotEqual(t, hashWithOriginalKey, hashWithDifferentKey, "hashes with different keys should not match")
 }
 
 func TestHMACSha256Hashing_IdenticalResult(t *testing.T) {
@@ -68,7 +63,5 @@ func TestHMACSha256Hashing_IdenticalResult(t *testing.T) {
 	actualResult, err := hasher.Hash(content)
 	require.NoError(t, err)
 
-	if actualResult != expectedResult {
-		t.Errorf("expected %s, got %s", expectedResult, actualResult)
-	}
+	assert.Equal(t, expectedResult, actualResult)
 }

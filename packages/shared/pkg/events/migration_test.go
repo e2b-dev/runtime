@@ -1,8 +1,9 @@
 package events
 
 import (
-	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLegacySandboxEventMigrationMapping(t *testing.T) {
@@ -188,23 +189,11 @@ func TestLegacySandboxEventMigrationMapping(t *testing.T) {
 			t.Parallel()
 
 			got, gotErr := LegacySandboxEventMigrationMapping(tc.in)
-			if !errors.Is(gotErr, tc.wantErr) {
-				t.Fatalf("error: got %v, want %v", gotErr, tc.wantErr)
-			}
-
-			if got.Version != tc.want.Version {
-				t.Fatalf("Version: got %q, want %q", got.Version, tc.want.Version)
-			}
-
-			if got.Type != tc.want.Type {
-				t.Fatalf("Event: got %q, want %q (category=%q, label=%q)",
-					got.Type, tc.want.Type, tc.in.EventCategory, tc.in.EventLabel)
-			}
-
-			if got.EventCategory != tc.want.EventCategory || got.EventLabel != tc.want.EventLabel {
-				t.Fatalf("EventCategory/EventLabel mutated: before (%q,%q) after (%q,%q)",
-					tc.in.EventCategory, tc.in.EventLabel, got.EventCategory, got.EventLabel)
-			}
+			require.ErrorIs(t, gotErr, tc.wantErr)
+			require.Equal(t, tc.want.Version, got.Version)
+			require.Equal(t, tc.want.Type, got.Type, "category=%q, label=%q", tc.in.EventCategory, tc.in.EventLabel)
+			require.Equal(t, tc.want.EventCategory, got.EventCategory, "EventCategory mutated")
+			require.Equal(t, tc.want.EventLabel, got.EventLabel, "EventLabel mutated")
 		})
 	}
 }

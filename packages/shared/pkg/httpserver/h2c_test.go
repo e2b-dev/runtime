@@ -107,7 +107,7 @@ func TestConfigureH2CShutdownWaitsForAnH2CStream(t *testing.T) {
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the h2c request never reached the handler")
+		require.Fail(t, "the h2c request never reached the handler")
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -116,7 +116,7 @@ func TestConfigureH2CShutdownWaitsForAnH2CStream(t *testing.T) {
 	go func() { shutdown <- server.Config.Shutdown(ctx) }()
 	select {
 	case err := <-shutdown:
-		t.Fatalf("Shutdown returned while an h2c stream was running: %v", err)
+		require.Failf(t, "Shutdown returned while an h2c stream was running", "error: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 
@@ -129,7 +129,7 @@ func TestConfigureH2CShutdownWaitsForAnH2CStream(t *testing.T) {
 	case err := <-shutdown:
 		require.NoError(t, err)
 	case <-ctx.Done():
-		t.Fatal("Shutdown did not return after the stream finished")
+		require.Fail(t, "Shutdown did not return after the stream finished")
 	}
 }
 
