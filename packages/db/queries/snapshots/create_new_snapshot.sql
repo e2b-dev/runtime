@@ -77,6 +77,7 @@ new_build as (
         kernel_version,
         firecracker_version,
         envd_version,
+        status_group,
         status,
         cluster_node_id,
         total_disk_size_mb,
@@ -98,7 +99,14 @@ new_build as (
         @kernel_version,
         @firecracker_version,
         @envd_version,
-        @status,
+        @status_group,
+        -- Mirrors status_group until the status column is dropped.
+        CASE @status_group
+            WHEN 'pending' THEN 'waiting'
+            WHEN 'in_progress' THEN 'building'
+            WHEN 'ready' THEN 'uploaded'
+            WHEN 'failed' THEN 'failed'
+        END,
         @origin_node_id,
         @total_disk_size_mb,
         now(),

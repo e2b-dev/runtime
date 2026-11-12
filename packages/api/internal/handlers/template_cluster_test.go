@@ -169,7 +169,7 @@ func TestTemplateClusterRebuildReadyLookup(t *testing.T) {
 	old := initial.JSON202
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET public = true WHERE id = $1`, old.TemplateID))
 	require.NoError(t, db.SqlcClient.FinishTemplateBuild(t.Context(), queries.FinishTemplateBuildParams{
-		BuildID: uuid.MustParse(old.BuildID), Status: dbtypes.BuildStatusUploaded,
+		BuildID: uuid.MustParse(old.BuildID), StatusGroup: dbtypes.BuildStatusGroupReady,
 	}))
 	alias, err := store.templateCache.ResolveAlias(t.Context(), "base", team.Slug)
 	require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestTemplateClusterRebuildReadyLookup(t *testing.T) {
 	_, _, err = store.templateCache.Get(t.Context(), alias.TemplateID, nil, team.ID, clusterID)
 	require.ErrorIs(t, err, templatecache.ErrTemplateNotFound, "pending rebuild must not expose the old ready artifact")
 	require.NoError(t, db.SqlcClient.FinishTemplateBuild(t.Context(), queries.FinishTemplateBuildParams{
-		BuildID: uuid.MustParse(rebuilt.JSON202.BuildID), Status: dbtypes.BuildStatusFailed,
+		BuildID: uuid.MustParse(rebuilt.JSON202.BuildID), StatusGroup: dbtypes.BuildStatusGroupFailed,
 	}))
 	_, _, err = store.templateCache.Get(t.Context(), alias.TemplateID, nil, team.ID, clusterID)
 	require.ErrorIs(t, err, templatecache.ErrTemplateNotFound, "failed rebuild must not fall back to the old cluster")
@@ -205,7 +205,7 @@ func TestTemplateClusterRebuildReadyLookup(t *testing.T) {
 	require.NotNil(t, retried.JSON202)
 	require.Equal(t, rebuilt.JSON202.TemplateID, retried.JSON202.TemplateID)
 	require.NoError(t, db.SqlcClient.FinishTemplateBuild(t.Context(), queries.FinishTemplateBuildParams{
-		BuildID: uuid.MustParse(retried.JSON202.BuildID), Status: dbtypes.BuildStatusUploaded,
+		BuildID: uuid.MustParse(retried.JSON202.BuildID), StatusGroup: dbtypes.BuildStatusGroupReady,
 	}))
 	_, readyBuild, err := store.templateCache.Get(t.Context(), alias.TemplateID, nil, team.ID, clusterID)
 	require.NoError(t, err)

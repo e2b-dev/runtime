@@ -102,7 +102,7 @@ func (a *APIStore) GetUnstableAdminSandboxesSandboxIDBuilds(c *gin.Context, sand
 			BuildID:       row.BuildID,
 			TemplateID:    row.EnvID,
 			Tag:           row.Tag,
-			Status:        string(row.Status),
+			Status:        string(row.StatusGroup),
 			StatusGroup:   api.AdminSandboxBuildStatusGroup(row.StatusGroup),
 			ClusterNodeID: row.ClusterNodeID,
 			AssignedAt:    row.AssignedAt,

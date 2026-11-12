@@ -86,7 +86,6 @@ SELECT
     eba.env_id,
     eba.build_id,
     eba.tag,
-    eb.status,
     eb.status_group,
     eb.cluster_node_id
 FROM public.env_build_assignments eba
@@ -107,7 +106,6 @@ type ListAdminSandboxOverviewBuildsRow struct {
 	EnvID         string
 	BuildID       uuid.UUID
 	Tag           string
-	Status        types.BuildStatus
 	StatusGroup   types.BuildStatusGroup
 	ClusterNodeID *string
 }
@@ -128,7 +126,6 @@ func (q *Queries) ListAdminSandboxOverviewBuilds(ctx context.Context, arg ListAd
 			&i.EnvID,
 			&i.BuildID,
 			&i.Tag,
-			&i.Status,
 			&i.StatusGroup,
 			&i.ClusterNodeID,
 		); err != nil {

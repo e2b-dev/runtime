@@ -12,7 +12,14 @@ WITH finished AS (
     SET
         finished_at = NOW(),
         total_disk_size_mb = @total_disk_size_mb,
-        status = @status,
+        status_group = @status_group,
+        -- Mirrors status_group until the status column is dropped.
+        status = CASE @status_group
+                WHEN 'pending' THEN 'waiting'
+                WHEN 'in_progress' THEN 'building'
+                WHEN 'ready' THEN 'uploaded'
+                WHEN 'failed' THEN 'failed'
+            END,
         envd_version = @envd_version,
         kernel_version = COALESCE(NULLIF(@kernel_version::text, ''), kernel_version),
         firecracker_version = COALESCE(NULLIF(@firecracker_version::text, ''), firecracker_version)

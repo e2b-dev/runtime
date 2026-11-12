@@ -491,8 +491,8 @@ func findDefaultTagBuildID(t *testing.T, tags []api.TemplateTag) openapi_types.U
 	return openapi_types.UUID{}
 }
 
-// waitForSnapshotting polls the database until a build with status 'snapshotting'
-// appears for the given sandbox, or the timeout expires.
+// waitForSnapshotting polls the database until an in-progress build appears for
+// the given sandbox, or the timeout expires.
 func waitForSnapshotting(t *testing.T, db *setup.Database, sandboxID string) {
 	t.Helper()
 
@@ -504,7 +504,7 @@ func waitForSnapshotting(t *testing.T, db *setup.Database, sandboxID string) {
 			`SELECT COUNT(*) FROM env_builds eb
 			 JOIN env_build_assignments eba ON eba.build_id = eb.id
 			 JOIN snapshots s ON s.env_id = eba.env_id
-			 WHERE s.sandbox_id = $1 AND eb.status = 'snapshotting'`,
+			 WHERE s.sandbox_id = $1 AND eb.status_group = 'in_progress'`,
 			func(rows pgx.Rows) error {
 				if rows.Next() {
 					return rows.Scan(&count)

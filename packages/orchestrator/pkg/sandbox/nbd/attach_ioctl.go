@@ -55,6 +55,7 @@ var (
 	// with another device, as a netlink attach does on EBUSY.
 	errIoctlDeviceTaken  = errors.New("the device is held by another owner")
 	errIoctlSessionEnded = errors.New("NBD_DO_IT returned before the device started")
+	errIoctlStartTimeout = errors.New("the device did not start in time")
 
 	nbdAttachCounter = utils.Must(meter.Int64Counter("orchestrator.nbd.device.attach",
 		metric.WithDescription("NBD device attaches by kernel interface and outcome: success, taken (a lost device race, retried), cancelled (the caller went away) or failure."),
@@ -90,14 +91,22 @@ type ioctlAttachConfig struct {
 	closeCtl        func(fd int) error
 	disconnectIoctl func(fd int) error
 	// started reports the device as started; nil reads sysfs. Only tests set
-	// it, beforeConfigure, which runs on the session thread after the device
-	// open and before the first NBD_SET_SOCK, and abandoned, which receives a
-	// session its caller left while it was still configuring, before the
-	// attach returns.
+	// it and beforeConfigure, which runs on the session thread after the
+	// device open and before the first NBD_SET_SOCK.
 	started         func(index uint32) bool
 	beforeConfigure func(index uint32)
-	abandoned       func(*ioctlSession)
 }
+
+// ioctlSessionHeldError is an attach failure that left its session holding
+// the device: deviceReleased closes once the session has let go of it.
+type ioctlSessionHeldError struct {
+	err            error
+	deviceReleased <-chan struct{}
+}
+
+func (e *ioctlSessionHeldError) Error() string { return e.err.Error() }
+
+func (e *ioctlSessionHeldError) Unwrap() error { return e.err }
 
 // ioctlSession is one device attached through NBD_DO_IT. The ioctl returns
 // only when the kernel has ended the session, so a dedicated goroutine, locked
@@ -131,6 +140,10 @@ type ioctlSession struct {
 	// against its use.
 	ctlMu sync.Mutex
 	ctl   int
+	// requests counts disconnect requests still holding their own duplicate
+	// of ctl. Each is added under ctlMu while ctl is open, so every add
+	// precedes done.
+	requests sync.WaitGroup
 	// exited closes the moment NBD_DO_IT returns, before any cleanup, which
 	// can stall; done closes once the device descriptors are closed too.
 	// exitErr is set before done closes.
@@ -186,7 +199,7 @@ func attachIoctl(ctx context.Context, cfg ioctlAttachConfig, lg logger.Logger, u
 	// them can wait on the device's lock (a probe or a teardown of the same
 	// device holds it), so a cancelled caller does not wait for it: the
 	// session it abandons is ended by whoever sees it finish configuring.
-	if err := s.awaitConfigured(ctx, configured, cfg.abandoned); err != nil {
+	if err := s.awaitConfigured(ctx, configured); err != nil {
 		return nil, err
 	}
 
@@ -198,17 +211,17 @@ func attachIoctl(ctx context.Context, cfg ioctlAttachConfig, lg logger.Logger, u
 	for !started(cfg.index) {
 		select {
 		case <-s.exited:
-			return nil, s.endedError()
+			return nil, s.held(s.endedError())
 		case <-ctx.Done():
 			s.endEarly(ctx)
 
-			return nil, ctx.Err()
+			return nil, s.held(ctx.Err())
 		default:
 		}
 		if time.Now().After(deadline) {
 			s.endEarly(ctx)
 
-			return nil, fmt.Errorf("device %d did not start within %s", cfg.index, ioctlStartTimeout)
+			return nil, s.held(fmt.Errorf("%w: device %d, %s", errIoctlStartTimeout, cfg.index, ioctlStartTimeout))
 		}
 		time.Sleep(100 * time.Microsecond)
 	}
@@ -216,26 +229,45 @@ func attachIoctl(ctx context.Context, cfg ioctlAttachConfig, lg logger.Logger, u
 	// ended, when another opener keeps its attributes; it is not handed back.
 	select {
 	case <-s.exited:
-		return nil, s.endedError()
+		return nil, s.held(s.endedError())
 	default:
 	}
 	// A caller that went away while the device started gets no device.
 	if err := ctx.Err(); err != nil {
 		s.endEarly(ctx)
 
-		return nil, err
+		return nil, s.held(err)
 	}
 
 	return s, nil
+}
+
+// held reports an attach failure that leaves the session to end on its own.
+func (s *ioctlSession) held(err error) error {
+	return &ioctlSessionHeldError{err: err, deviceReleased: s.deviceReleased()}
+}
+
+// deviceReleased closes once the session holds no descriptor of the device:
+// its thread has closed its own and no disconnect request is still in flight
+// on a duplicate. Until then the device can read as free in sysfs while the
+// session still configures it or ends it.
+func (s *ioctlSession) deviceReleased() <-chan struct{} {
+	released := make(chan struct{})
+	go func() {
+		<-s.done
+		s.requests.Wait()
+		close(released)
+	}()
+
+	return released
 }
 
 // awaitConfigured waits for the session to finish configuring, or for the
 // caller to go away. A configuration already finished is taken first, so an
 // abandoned session is ended here when it can be; one still configuring when
 // the caller leaves is ended by a goroutine once it finishes, on descriptors
-// the session owns, and the caller's release of the device waits for that
-// end within the disconnect bound.
-func (s *ioctlSession) awaitConfigured(ctx context.Context, configured <-chan error, abandoned func(*ioctlSession)) error {
+// the session owns, and the error tells the caller when the device is let go.
+func (s *ioctlSession) awaitConfigured(ctx context.Context, configured <-chan error) error {
 	select {
 	case err := <-configured:
 		return s.configuredOrAbandoned(ctx, err)
@@ -245,16 +277,13 @@ func (s *ioctlSession) awaitConfigured(ctx context.Context, configured <-chan er
 	case err := <-configured:
 		return s.configuredOrAbandoned(ctx, err)
 	case <-ctx.Done():
-		if abandoned != nil {
-			abandoned(s)
-		}
 		go func() {
 			if err := <-configured; err == nil {
 				s.endEarly(context.WithoutCancel(ctx))
 			}
 		}()
 
-		return ctx.Err()
+		return s.held(ctx.Err())
 	}
 }
 
@@ -266,7 +295,7 @@ func (s *ioctlSession) configuredOrAbandoned(ctx context.Context, err error) err
 	if err := ctx.Err(); err != nil {
 		s.endEarly(ctx)
 
-		return err
+		return s.held(err)
 	}
 
 	return nil
@@ -579,6 +608,8 @@ func (s *ioctlSession) requestDisconnect(ctx context.Context) {
 		if ctl, err = unix.FcntlInt(uintptr(s.ctl), unix.F_DUPFD_CLOEXEC, 0); err != nil {
 			s.logger.Warn(ctx, "failed to duplicate the NBD device descriptor for the disconnect request", zap.Uint32("device_index", s.index), zap.Error(err))
 			ctl = -1
+		} else {
+			s.requests.Add(1)
 		}
 	}
 	s.ctlMu.Unlock()
@@ -587,6 +618,7 @@ func (s *ioctlSession) requestDisconnect(ctx context.Context) {
 	}
 	result := make(chan error, 1)
 	go func() {
+		defer s.requests.Done()
 		err := s.disconnectIoctl(ctl)
 		_ = unix.Close(ctl)
 		result <- err

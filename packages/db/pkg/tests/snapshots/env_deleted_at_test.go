@@ -162,7 +162,7 @@ func repauseParams(teamID uuid.UUID, sandboxID, baseTemplateID string) queries.U
 		KernelVersion:      "6.1.0",
 		FirecrackerVersion: "1.4.0",
 		OriginNodeID:       "test-node",
-		Status:             types.BuildStatusSuccess,
+		StatusGroup:        types.BuildStatusGroupReady,
 	}
 }
 

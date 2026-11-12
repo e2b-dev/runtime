@@ -51,6 +51,7 @@ INSERT INTO "public"."env_builds" (
     env_id,
     team_id,
     updated_at,
+    status_group,
     status,
     ram_mb,
     vcpu,
@@ -68,6 +69,13 @@ INSERT INTO "public"."env_builds" (
     (SELECT team_id FROM "public"."envs" WHERE id = $2::text),
     NOW(),
     $3,
+    -- Mirrors status_group until the status column is dropped.
+    CASE $3
+        WHEN 'pending' THEN 'waiting'
+        WHEN 'in_progress' THEN 'building'
+        WHEN 'ready' THEN 'uploaded'
+        WHEN 'failed' THEN 'failed'
+    END,
     $4,
     $5,
     $6,
@@ -84,7 +92,7 @@ INSERT INTO "public"."env_builds" (
 type CreateTemplateBuildParams struct {
 	BuildID            uuid.UUID
 	TemplateID         string
-	Status             types.BuildStatus
+	StatusGroup        types.BuildStatusGroup
 	RamMb              int64
 	Vcpu               int64
 	KernelVersion      string
@@ -108,7 +116,7 @@ func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBui
 	_, err := q.db.Exec(ctx, createTemplateBuild,
 		arg.BuildID,
 		arg.TemplateID,
-		arg.Status,
+		arg.StatusGroup,
 		arg.RamMb,
 		arg.Vcpu,
 		arg.KernelVersion,
@@ -126,7 +134,9 @@ func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBui
 const invalidateUnstartedTemplateBuilds = `-- name: InvalidateUnstartedTemplateBuilds :exec
 WITH invalidated AS (
     UPDATE "public"."env_builds" eb
-    SET status = 'failed',
+    SET status_group = 'failed',
+        -- Mirrors status_group until the status column is dropped.
+        status = 'failed',
         reason = $1,
         updated_at = NOW(),
         finished_at = NOW()

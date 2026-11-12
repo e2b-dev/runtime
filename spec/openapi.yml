@@ -1976,7 +1976,9 @@ components:
           description: Tag the build is assigned under
         status:
           type: string
-          description: Build status as stored, for example ready, snapshotting or waiting
+          deprecated: true
+          x-deprecated-reason: Use statusGroup
+          description: Same value as statusGroup
         statusGroup:
           $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"
         clusterNodeID:
@@ -2185,7 +2187,9 @@ components:
           description: Tag the build is assigned under
         status:
           type: string
-          description: Build status as stored, for example ready, snapshotting or waiting
+          deprecated: true
+          x-deprecated-reason: Use statusGroup
+          description: Same value as statusGroup
         statusGroup:
           allOf:
             - $ref: "#/components/schemas/AdminSandboxBuildStatusGroup"

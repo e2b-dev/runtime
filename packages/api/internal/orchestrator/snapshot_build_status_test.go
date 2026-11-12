@@ -67,9 +67,9 @@ func TestFinishSnapshotBuild_OutlivesCancelledRequest(t *testing.T) {
 
 	o, db, buildID := newSnapshotBuildFixture(t)
 
-	require.NoError(t, o.finishSnapshotBuild(cancelledContext(t), buildID, types.BuildStatusUploaded))
+	require.NoError(t, o.finishSnapshotBuild(cancelledContext(t), buildID))
 
-	assert.Equal(t, string(types.BuildStatusUploaded), testutils.GetBuildStatus(t, t.Context(), db, buildID))
+	assert.Equal(t, types.BuildStatusGroupReady, testutils.GetBuildStatusGroup(t, t.Context(), db, buildID))
 	assert.NotNil(t, buildFinishedAt(t, db, buildID), "a terminal build must record finished_at")
 }
 
@@ -80,9 +80,9 @@ func TestFinishSnapshotBuild_WritesSuccessStatus(t *testing.T) {
 
 	o, db, buildID := newSnapshotBuildFixture(t)
 
-	require.NoError(t, o.finishSnapshotBuild(cancelledContext(t), buildID, types.BuildStatusSuccess))
+	require.NoError(t, o.finishSnapshotBuild(cancelledContext(t), buildID))
 
-	assert.Equal(t, string(types.BuildStatusSuccess), testutils.GetBuildStatus(t, t.Context(), db, buildID))
+	assert.Equal(t, types.BuildStatusGroupReady, testutils.GetBuildStatusGroup(t, t.Context(), db, buildID))
 	assert.NotNil(t, buildFinishedAt(t, db, buildID), "a terminal build must record finished_at")
 }
 
@@ -104,7 +104,7 @@ func TestFinishSnapshotBuild_GivesUpWhenBlocked(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	err = o.finishSnapshotBuild(t.Context(), buildID, types.BuildStatusUploaded)
+	err = o.finishSnapshotBuild(t.Context(), buildID)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, context.DeadlineExceeded, "a blocked status write must give up on its own budget")
@@ -119,6 +119,6 @@ func TestFailSnapshotBuild_OutlivesCancelledRequest(t *testing.T) {
 
 	o.failSnapshotBuild(cancelledContext(t), buildID, errors.New("checkpoint exploded"))
 
-	assert.Equal(t, string(types.BuildStatusFailed), testutils.GetBuildStatus(t, t.Context(), db, buildID))
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, t.Context(), db, buildID))
 	assert.NotNil(t, buildFinishedAt(t, db, buildID), "a terminal build must record finished_at")
 }

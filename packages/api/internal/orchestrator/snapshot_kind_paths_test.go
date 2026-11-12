@@ -180,7 +180,7 @@ func TestCheckpointSandbox_SuccessRecordsMemoryKind(t *testing.T) {
 	assert.False(t, lastSnapshotBuildKind(t, f.o, f.sbx.SandboxID), "the fork's build is labelled memory even though the previous one was filesystem-only")
 	assert.False(t, f.client.lastRequest(t).GetFilesystemOnly(), "a fork never asks for a filesystem-only checkpoint")
 	buildStatus, _ := snapshotBuildStatus(t, f.db, f.sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 	assert.Equal(t, sandbox.StateRunning, f.state(t))
 }
 
@@ -210,7 +210,7 @@ func TestCreateSnapshotTemplate_RecordsRequestedKind(t *testing.T) {
 	assert.True(t, f.templateBuildKind(t, fsOnly.TemplateID), "the memory:false template's build is labelled filesystem-only")
 	assert.True(t, f.client.lastRequest(t).GetFilesystemOnly())
 	buildStatus, _ := snapshotBuildStatus(t, f.db, f.sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusUploaded), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 
 	memory, err := f.o.CreateSnapshotTemplate(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, SnapshotTemplateOpts{Tag: id.DefaultTag})
 	require.NoError(t, err)

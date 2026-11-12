@@ -32,7 +32,6 @@ SELECT
     eba.env_id,
     eba.build_id,
     eba.tag,
-    eb.status,
     eb.status_group,
     eb.cluster_node_id
 FROM public.env_build_assignments eba

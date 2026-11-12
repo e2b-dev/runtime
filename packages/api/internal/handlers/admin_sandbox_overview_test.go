@@ -45,7 +45,7 @@ func TestAdminSandboxOverviewDescribesTheLastPauseAndTheNewestDatedDefaultBuild(
 			"buildId": %[4]q,
 			"templateId": %[3]q,
 			"tag": "default",
-			"status": "waiting",
+			"status": "pending",
 			"statusGroup": "pending",
 			"clusterNodeId": "test-node",
 			"assignedAt": "2026-01-01T02:00:00Z",

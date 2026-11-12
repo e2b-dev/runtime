@@ -83,6 +83,7 @@ new_build as (
         kernel_version,
         firecracker_version,
         envd_version,
+        status_group,
         status,
         cluster_node_id,
         total_disk_size_mb,
@@ -105,6 +106,13 @@ new_build as (
         $17,
         $18,
         $19,
+        -- Mirrors status_group until the status column is dropped.
+        CASE $19
+            WHEN 'pending' THEN 'waiting'
+            WHEN 'in_progress' THEN 'building'
+            WHEN 'ready' THEN 'uploaded'
+            WHEN 'failed' THEN 'failed'
+        END,
         $10,
         $20,
         now(),
@@ -151,7 +159,7 @@ type UpsertSnapshotParams struct {
 	KernelVersion       string
 	FirecrackerVersion  string
 	EnvdVersion         *string
-	Status              types.BuildStatus
+	StatusGroup         types.BuildStatusGroup
 	TotalDiskSizeMb     *int64
 	SourceBuildID       uuid.UUID
 	BuildFilesystemOnly bool
@@ -192,7 +200,7 @@ func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) 
 		arg.KernelVersion,
 		arg.FirecrackerVersion,
 		arg.EnvdVersion,
-		arg.Status,
+		arg.StatusGroup,
 		arg.TotalDiskSizeMb,
 		arg.SourceBuildID,
 		arg.BuildFilesystemOnly,

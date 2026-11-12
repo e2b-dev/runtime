@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/storageopts"
@@ -151,7 +150,7 @@ func (o *Orchestrator) CheckpointSandbox(ctx context.Context, teamID uuid.UUID, 
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, types.BuildStatusSuccess, false); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, false, false, false); err != nil {
 		return errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 

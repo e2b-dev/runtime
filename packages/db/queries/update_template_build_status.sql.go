@@ -16,7 +16,14 @@ import (
 const failTemplateBuildAndDeactivate = `-- name: FailTemplateBuildAndDeactivate :one
 WITH failed AS (
     UPDATE "public"."env_builds"
-    SET status = $1,
+    SET status_group = $1,
+        -- Mirrors status_group until the status column is dropped.
+        status = CASE $1
+            WHEN 'pending' THEN 'waiting'
+            WHEN 'in_progress' THEN 'building'
+            WHEN 'ready' THEN 'uploaded'
+            WHEN 'failed' THEN 'failed'
+        END,
         finished_at = $2,
         reason = $3,
         version = $4
@@ -31,11 +38,11 @@ SELECT EXISTS (SELECT 1 FROM failed) AS recorded
 `
 
 type FailTemplateBuildAndDeactivateParams struct {
-	Status     types.BuildStatus
-	FinishedAt *time.Time
-	Reason     types.BuildReason
-	Version    *string
-	BuildID    uuid.UUID
+	StatusGroup types.BuildStatusGroup
+	FinishedAt  *time.Time
+	Reason      types.BuildReason
+	Version     *string
+	BuildID     uuid.UUID
 }
 
 // Several pollers watch the same build, and it keeps the first terminal outcome
@@ -44,7 +51,7 @@ type FailTemplateBuildAndDeactivateParams struct {
 // own.
 func (q *Queries) FailTemplateBuildAndDeactivate(ctx context.Context, arg FailTemplateBuildAndDeactivateParams) (bool, error) {
 	row := q.db.QueryRow(ctx, failTemplateBuildAndDeactivate,
-		arg.Status,
+		arg.StatusGroup,
 		arg.FinishedAt,
 		arg.Reason,
 		arg.Version,
@@ -57,7 +64,14 @@ func (q *Queries) FailTemplateBuildAndDeactivate(ctx context.Context, arg FailTe
 
 const updateEnvBuildStatus = `-- name: UpdateEnvBuildStatus :exec
 UPDATE "public"."env_builds"
-SET status = $1,
+SET status_group = $1,
+    -- Mirrors status_group until the status column is dropped.
+    status = CASE $1
+        WHEN 'pending' THEN 'waiting'
+        WHEN 'in_progress' THEN 'building'
+        WHEN 'ready' THEN 'uploaded'
+        WHEN 'failed' THEN 'failed'
+    END,
     finished_at = $2,
     reason = $3,
     version = $4
@@ -65,16 +79,16 @@ WHERE id = $5
 `
 
 type UpdateEnvBuildStatusParams struct {
-	Status     types.BuildStatus
-	FinishedAt *time.Time
-	Reason     types.BuildReason
-	Version    *string
-	BuildID    uuid.UUID
+	StatusGroup types.BuildStatusGroup
+	FinishedAt  *time.Time
+	Reason      types.BuildReason
+	Version     *string
+	BuildID     uuid.UUID
 }
 
 func (q *Queries) UpdateEnvBuildStatus(ctx context.Context, arg UpdateEnvBuildStatusParams) error {
 	_, err := q.db.Exec(ctx, updateEnvBuildStatus,
-		arg.Status,
+		arg.StatusGroup,
 		arg.FinishedAt,
 		arg.Reason,
 		arg.Version,

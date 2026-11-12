@@ -56,7 +56,7 @@ func createTestSnapshot(t *testing.T, db *testutils.Database, teamID uuid.UUID, 
 		},
 		OriginNodeID:  "node-1",
 		SourceBuildID: sourceBuildID,
-		Status:        "success",
+		StatusGroup:   "ready",
 	}
 
 	result, err := db.SqlcClient.UpsertSnapshot(t.Context(), params)

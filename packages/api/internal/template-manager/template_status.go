@@ -395,10 +395,10 @@ func (tm *TemplateManager) SetStatus(ctx context.Context, buildID uuid.UUID, sta
 	now := time.Now()
 
 	err := tm.sqlcDB.UpdateEnvBuildStatus(ctx, queries.UpdateEnvBuildStatusParams{
-		Status:     buildStatus(statusGroup),
-		FinishedAt: &now,
-		Reason:     buildReasonFrom(reason),
-		BuildID:    buildID,
+		StatusGroup: statusGroup,
+		FinishedAt:  &now,
+		Reason:      buildReasonFrom(reason),
+		BuildID:     buildID,
 	})
 
 	tm.buildCache.Invalidate(ctx, buildID)
@@ -420,10 +420,10 @@ func (tm *TemplateManager) SetTerminalStatus(ctx context.Context, buildID uuid.U
 	now := time.Now()
 
 	recorded, err := tm.sqlcDB.FailTemplateBuildAndDeactivate(ctx, queries.FailTemplateBuildAndDeactivateParams{
-		Status:     buildStatus(statusGroup),
-		FinishedAt: &now,
-		Reason:     buildReason,
-		BuildID:    buildID,
+		StatusGroup: statusGroup,
+		FinishedAt:  &now,
+		Reason:      buildReason,
+		BuildID:     buildID,
 	})
 
 	tm.buildCache.Invalidate(ctx, buildID)
@@ -448,10 +448,9 @@ func buildReasonFrom(reason *templatemanagergrpc.TemplateBuildStatusReason) type
 
 func (tm *TemplateManager) SetFinished(ctx context.Context, buildID uuid.UUID, rootfsSize int64, envdVersion, kernelVersion, firecrackerVersion string) error {
 	// first do database update to prevent race condition while calling status
-	// TODO(ENG-3469): Switch to types.BuildStatusReady once all consumers are migrated.
 	err := tm.sqlcDB.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		TotalDiskSizeMb:    &rootfsSize,
-		Status:             types.BuildStatusUploaded,
+		StatusGroup:        types.BuildStatusGroupReady,
 		EnvdVersion:        &envdVersion,
 		KernelVersion:      kernelVersion,
 		FirecrackerVersion: firecrackerVersion,
@@ -461,20 +460,4 @@ func (tm *TemplateManager) SetFinished(ctx context.Context, buildID uuid.UUID, r
 	tm.buildCache.Invalidate(ctx, buildID)
 
 	return err
-}
-
-// buildStatus maps a status group to a default build status for the database.
-func buildStatus(g types.BuildStatusGroup) types.BuildStatus {
-	switch g {
-	case types.BuildStatusGroupPending:
-		return types.BuildStatusPending
-	case types.BuildStatusGroupInProgress:
-		return types.BuildStatusBuilding
-	case types.BuildStatusGroupReady:
-		return types.BuildStatusUploaded
-	case types.BuildStatusGroupFailed:
-		return types.BuildStatusFailed
-	default:
-		return types.BuildStatusFailed
-	}
 }
