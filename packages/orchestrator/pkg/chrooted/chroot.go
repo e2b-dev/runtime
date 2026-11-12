@@ -46,9 +46,9 @@ type Chrooted struct {
 	closeDone chan struct{}
 	closeErr  error
 
-	// readDirConcurrency is how many per-entry stat calls ReadDir issues in
-	// parallel; see the option WithReadDirConcurrency.
-	readDirConcurrency int
+	// readDirScaling is how the parallelism of ReadDir's per-entry stat
+	// calls scales with the number of entries; see WithReadDirScaling.
+	readDirScaling ReadDirScaling
 }
 
 type Option func(*Chrooted)
@@ -63,13 +63,11 @@ func WithMetadata(key, value string) Option {
 	}
 }
 
-// WithReadDirConcurrency sets how many per-entry stat calls ReadDir issues in
-// parallel. Values below 1 keep the default.
-func WithReadDirConcurrency(n int) Option {
+// WithReadDirScaling sets how the parallelism of ReadDir's per-entry stat
+// calls scales with the number of entries listed.
+func WithReadDirScaling(scaling ReadDirScaling) Option {
 	return func(fs *Chrooted) {
-		if n >= 1 {
-			fs.readDirConcurrency = n
-		}
+		fs.readDirScaling = scaling
 	}
 }
 
@@ -138,10 +136,10 @@ func Chroot(source string, opts ...Option) (*Chrooted, error) {
 	}
 
 	fs := &Chrooted{
-		ActualRoot:         source,
-		rootFD:             rootFD,
-		closeDone:          make(chan struct{}),
-		readDirConcurrency: defaultReadDirInfoConcurrency,
+		ActualRoot:     source,
+		rootFD:         rootFD,
+		closeDone:      make(chan struct{}),
+		readDirScaling: defaultReadDirScaling,
 	}
 
 	for _, opt := range opts {

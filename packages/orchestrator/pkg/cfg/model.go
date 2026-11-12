@@ -149,13 +149,43 @@ type Config struct {
 	NBDPoolSize                 int               `env:"NBD_POOL_SIZE"                 envDefault:"64"`
 	Services                    []string          `env:"ORCHESTRATOR_SERVICES"         envDefault:"orchestrator"`
 	PersistentVolumeMounts      map[string]string `env:"PERSISTENT_VOLUME_MOUNTS"`
-	// VolumeReadDirConcurrency is how many per-entry stat calls a volume
-	// directory listing issues in parallel. Every stat is a round trip on the
-	// volume's storage, so this bounds the listing's cost there.
-	VolumeReadDirConcurrency int `env:"VOLUME_READ_DIR_CONCURRENCY" envDefault:"8"`
+	// VolumeReadDirConcurrency is how the parallelism of a volume directory
+	// listing's per-entry stat calls scales with the number of entries: the
+	// stats are serial below Threshold, then run on Base workers plus one
+	// more per Step additional entries, capped at Max. Every stat is a round
+	// trip on the volume's storage, so this bounds the listing's cost there.
+	VolumeReadDirConcurrency ReadDirConcurrencyConfig
 
 	// TLS is the mutual TLS settings of the shared port and the peer hop.
 	TLS TLSConfig
+}
+
+// ReadDirConcurrencyConfig holds the VOLUME_READ_DIR_CONCURRENCY_* settings
+// that scale volume directory listings with the entry count; see the
+// VolumeReadDirConcurrency field of Config.
+type ReadDirConcurrencyConfig struct {
+	Threshold int `env:"VOLUME_READ_DIR_CONCURRENCY_THRESHOLD" envDefault:"5000"`
+	Base      int `env:"VOLUME_READ_DIR_CONCURRENCY_BASE"       envDefault:"4"`
+	Step      int `env:"VOLUME_READ_DIR_CONCURRENCY_STEP"       envDefault:"10000"`
+	Max       int `env:"VOLUME_READ_DIR_CONCURRENCY_MAX"        envDefault:"16"`
+}
+
+// Validate reports scaling settings a listing could not run with.
+func (c ReadDirConcurrencyConfig) Validate() error {
+	if c.Threshold < 0 {
+		return fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY_THRESHOLD must be at least 0, got %d", c.Threshold)
+	}
+	if c.Base < 1 {
+		return fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY_BASE must be at least 1, got %d", c.Base)
+	}
+	if c.Step < 1 {
+		return fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY_STEP must be at least 1, got %d", c.Step)
+	}
+	if c.Max < c.Base {
+		return fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY_MAX must be at least VOLUME_READ_DIR_CONCURRENCY_BASE, got %d < %d", c.Max, c.Base)
+	}
+
+	return nil
 }
 
 // AdditionalClickhouseEndpoints returns the non-blank entries from
@@ -222,8 +252,8 @@ func Parse() (Config, error) {
 		return config, err
 	}
 
-	if config.VolumeReadDirConcurrency < 1 {
-		return config, fmt.Errorf("VOLUME_READ_DIR_CONCURRENCY must be at least 1, got %d", config.VolumeReadDirConcurrency)
+	if err := config.VolumeReadDirConcurrency.Validate(); err != nil {
+		return config, err
 	}
 
 	if config.PersistentVolumeMounts != nil {
