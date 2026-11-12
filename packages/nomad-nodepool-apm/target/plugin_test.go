@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +12,8 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad-autoscaler/sdk"
 	"github.com/hashicorp/nomad/api"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testNamespace = "workloads"
@@ -76,8 +77,7 @@ func (s *nomadStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(s.t, w, map[string]any{})
 	case r.Method == http.MethodPut && r.URL.Path == "/v1/job/example/scale":
 		var req api.ScalingRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.t.Errorf("decode scale request: %v", err)
+		if err := json.NewDecoder(r.Body).Decode(&req); !assert.NoError(s.t, err, "decode scale request") {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 
 			return
@@ -190,12 +190,10 @@ func newTestPlugin(t *testing.T, stub *nomadStub) *Plugin {
 
 	p := New(hclog.NewNullLogger())
 	p.retryDelay = 0
-	if err := p.SetConfig(map[string]string{
+	require.NoError(t, p.SetConfig(map[string]string{
 		"nomad_address":   server.URL,
 		"nomad_namespace": "configured-default",
-	}); err != nil {
-		t.Fatalf("SetConfig: %v", err)
-	}
+	}))
 
 	return p
 }
@@ -220,9 +218,7 @@ func TestScaleNormal(t *testing.T) {
 		Meta:   map[string]any{"policy": "web"},
 	}
 
-	if err := p.Scale(action, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(action, targetConfig()))
 
 	calls, requests := stub.snapshot()
 	wantCalls := []string{
@@ -231,23 +227,18 @@ func TestScaleNormal(t *testing.T) {
 		"PUT /v1/job/example/scale",
 		"GET /v1/job/example",
 	}
-	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
-	}
-	if len(requests) != 1 {
-		t.Fatalf("scale request count = %d, want 1", len(requests))
-	}
+	require.Equal(t, wantCalls, calls)
+	require.Len(t, requests, 1)
 	req := requests[0]
-	if req.Count == nil || *req.Count != 5 || req.JobModifyIndex != 20 {
-		t.Fatalf("scale request count/index = %v/%d", req.Count, req.JobModifyIndex)
-	}
-	if req.Message != action.Reason || req.Error != action.Error || !reflect.DeepEqual(req.Meta, action.Meta) {
-		t.Fatalf("scale action fields not preserved: %#v", req)
-	}
+	require.NotNil(t, req.Count)
+	require.Equal(t, int64(5), *req.Count)
+	require.Equal(t, uint64(20), req.JobModifyIndex)
+	require.Equal(t, action.Reason, req.Message)
+	require.Equal(t, action.Error, req.Error)
+	require.Equal(t, action.Meta, req.Meta)
 	rollout := stub.deploymentSnapshot()
-	if rollout == nil || rollout.Status != api.DeploymentStatusRunning {
-		t.Fatalf("rollout deployment spawned by the scale was not left running: %#v", rollout)
-	}
+	require.NotNil(t, rollout, "rollout deployment spawned by the scale")
+	require.Equal(t, api.DeploymentStatusRunning, rollout.Status, "rollout deployment spawned by the scale was not left running")
 }
 
 func TestScaleFailsActiveDeploymentBeforeScaling(t *testing.T) {
@@ -277,9 +268,7 @@ func TestScaleFailsActiveDeploymentBeforeScaling(t *testing.T) {
 			}
 			p := newTestPlugin(t, stub)
 
-			if err := p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()); err != nil {
-				t.Fatalf("Scale: %v", err)
-			}
+			require.NoError(t, p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()))
 
 			calls, _ := stub.snapshot()
 			wantCalls := []string{
@@ -291,13 +280,11 @@ func TestScaleFailsActiveDeploymentBeforeScaling(t *testing.T) {
 				"PUT /v1/job/example/scale",
 				"GET /v1/job/example",
 			}
-			if !reflect.DeepEqual(calls, wantCalls) {
-				t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
-			}
+			require.Equal(t, wantCalls, calls)
 			rollout := stub.deploymentSnapshot()
-			if rollout == nil || rollout.ID == "deployment-1" || rollout.Status != api.DeploymentStatusRunning {
-				t.Fatalf("rollout deployment spawned by the scale was not left running: %#v", rollout)
-			}
+			require.NotNil(t, rollout, "rollout deployment spawned by the scale")
+			require.NotEqual(t, "deployment-1", rollout.ID)
+			require.Equal(t, api.DeploymentStatusRunning, rollout.Status, "rollout deployment spawned by the scale was not left running")
 		})
 	}
 }
@@ -318,22 +305,14 @@ func TestScaleLeavesOwnRolloutAloneWhenCountMatches(t *testing.T) {
 	}
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()))
 
 	calls, requests := stub.snapshot()
 	wantCalls := []string{"GET /v1/job/example"}
-	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
-	}
-	if len(requests) != 0 {
-		t.Fatalf("scale requests = %d, want 0", len(requests))
-	}
+	require.Equal(t, wantCalls, calls)
+	require.Empty(t, requests)
 	rollout := stub.deploymentSnapshot()
-	if rollout.Status != api.DeploymentStatusRunning {
-		t.Fatalf("in-flight rollout was disturbed: %#v", rollout)
-	}
+	require.Equal(t, api.DeploymentStatusRunning, rollout.Status, "in-flight rollout was disturbed")
 }
 
 func TestScaleRetriesWhenDeploymentAppearsBeforeWrite(t *testing.T) {
@@ -343,27 +322,15 @@ func TestScaleRetriesWhenDeploymentAppearsBeforeWrite(t *testing.T) {
 	stub.injectDeploymentOnScale = true
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 6}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 6}, targetConfig()))
 
 	calls, requests := stub.snapshot()
-	if len(requests) != 2 {
-		t.Fatalf("scale request count = %d, want 2", len(requests))
-	}
-	failedInjected := false
-	for _, call := range calls {
-		if call == "PUT /v1/deployment/fail/deployment-injected" {
-			failedInjected = true
-		}
-	}
-	if !failedInjected {
-		t.Fatalf("conflicting deployment was not failed before retrying: %#v", calls)
-	}
+	require.Len(t, requests, 2)
+	require.Contains(t, calls, "PUT /v1/deployment/fail/deployment-injected", "conflicting deployment was not failed before retrying")
 	rollout := stub.deploymentSnapshot()
-	if rollout == nil || rollout.ID == "deployment-injected" || rollout.Status != api.DeploymentStatusRunning {
-		t.Fatalf("rollout deployment spawned by the retried scale was not left running: %#v", rollout)
-	}
+	require.NotNil(t, rollout, "rollout deployment spawned by the retried scale")
+	require.NotEqual(t, "deployment-injected", rollout.ID)
+	require.Equal(t, api.DeploymentStatusRunning, rollout.Status, "rollout deployment spawned by the retried scale was not left running")
 }
 
 func TestScaleRefusesAutoRevertJob(t *testing.T) {
@@ -383,24 +350,16 @@ func TestScaleRefusesAutoRevertJob(t *testing.T) {
 	p := newTestPlugin(t, stub)
 
 	err := p.Scale(sdk.ScalingAction{Count: 4}, targetConfig())
-	if err == nil || !strings.Contains(err.Error(), "auto_revert") {
-		t.Fatalf("Scale error = %v, want auto_revert configuration error", err)
-	}
+	require.ErrorContains(t, err, "auto_revert")
 
 	calls, requests := stub.snapshot()
 	// The guard trips before any deployment read or mutation, and the error
 	// is terminal so there is no retry.
 	wantCalls := []string{"GET /v1/job/example"}
-	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
-	}
-	if len(requests) != 0 {
-		t.Fatalf("scale requests = %d, want 0", len(requests))
-	}
+	require.Equal(t, wantCalls, calls)
+	require.Empty(t, requests)
 	rollout := stub.deploymentSnapshot()
-	if rollout.Status != api.DeploymentStatusRunning {
-		t.Fatalf("deployment of auto_revert job was disturbed: %#v", rollout)
-	}
+	require.Equal(t, api.DeploymentStatusRunning, rollout.Status, "deployment of auto_revert job was disturbed")
 }
 
 func TestScaleAutoRevertJobNoOpWhenCountMatches(t *testing.T) {
@@ -411,9 +370,7 @@ func TestScaleAutoRevertJobNoOpWhenCountMatches(t *testing.T) {
 	stub.count = 4
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 4}, targetConfig()))
 }
 
 func TestScaleAllowsExplicitAutoRevertFalse(t *testing.T) {
@@ -423,9 +380,7 @@ func TestScaleAllowsExplicitAutoRevertFalse(t *testing.T) {
 	stub.autoRevert = new(false)
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 5}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 5}, targetConfig()))
 }
 
 func TestScaleLeavesTerminalDeploymentAlone(t *testing.T) {
@@ -439,15 +394,11 @@ func TestScaleLeavesTerminalDeploymentAlone(t *testing.T) {
 	}
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 3}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 3}, targetConfig()))
 
 	calls, _ := stub.snapshot()
 	for _, call := range calls {
-		if strings.HasPrefix(call, "PUT /v1/deployment/fail/") {
-			t.Fatal("terminal deployment was failed")
-		}
+		require.False(t, strings.HasPrefix(call, "PUT /v1/deployment/fail/"), "terminal deployment was failed")
 	}
 }
 
@@ -462,12 +413,9 @@ func TestScaleDryRunDoesNotReadOrWrite(t *testing.T) {
 	}
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: sdk.StrategyActionMetaValueDryRunCount}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
-	if calls, _ := stub.snapshot(); len(calls) != 0 {
-		t.Fatalf("dry run made requests: %#v", calls)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: sdk.StrategyActionMetaValueDryRunCount}, targetConfig()))
+	calls, _ := stub.snapshot()
+	require.Empty(t, calls, "dry run made requests")
 }
 
 func TestScaleRetriesCASRaceFromFreshJob(t *testing.T) {
@@ -477,17 +425,12 @@ func TestScaleRetriesCASRaceFromFreshJob(t *testing.T) {
 	stub.scaleConflicts = 1
 	p := newTestPlugin(t, stub)
 
-	if err := p.Scale(sdk.ScalingAction{Count: 6}, targetConfig()); err != nil {
-		t.Fatalf("Scale: %v", err)
-	}
+	require.NoError(t, p.Scale(sdk.ScalingAction{Count: 6}, targetConfig()))
 
 	_, requests := stub.snapshot()
-	if len(requests) != 2 {
-		t.Fatalf("scale request count = %d, want 2", len(requests))
-	}
-	if requests[0].JobModifyIndex != 20 || requests[1].JobModifyIndex != 21 {
-		t.Fatalf("CAS indexes = %d, %d; want 20, 21", requests[0].JobModifyIndex, requests[1].JobModifyIndex)
-	}
+	require.Len(t, requests, 2)
+	require.Equal(t, uint64(20), requests[0].JobModifyIndex)
+	require.Equal(t, uint64(21), requests[1].JobModifyIndex)
 }
 
 func TestStatusUsesDurableTaskGroupCount(t *testing.T) {
@@ -497,23 +440,14 @@ func TestStatusUsesDurableTaskGroupCount(t *testing.T) {
 	p := newTestPlugin(t, stub)
 
 	status, err := p.Status(targetConfig())
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if status.Ready || status.Count != 3 {
-		t.Fatalf("status ready/count = %v/%d", status.Ready, status.Count)
-	}
-	if status.Meta["nomad_autoscaler.target.nomad.example.stopped"] != "true" {
-		t.Fatalf("stopped meta = %#v", status.Meta)
-	}
-	if status.Meta[sdk.TargetStatusMetaKeyLastEvent] != "12345" {
-		t.Fatalf("last event meta = %#v", status.Meta)
-	}
+	require.NoError(t, err)
+	require.False(t, status.Ready)
+	require.Equal(t, int64(3), status.Count)
+	require.Equal(t, "true", status.Meta["nomad_autoscaler.target.nomad.example.stopped"])
+	require.Equal(t, "12345", status.Meta[sdk.TargetStatusMetaKeyLastEvent])
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		t.Errorf("encode response: %v", err)
-	}
+	assert.NoError(t, json.NewEncoder(w).Encode(value), "encode response")
 }

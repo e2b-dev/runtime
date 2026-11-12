@@ -2,7 +2,6 @@ package batcher
 
 import (
 	"context"
-	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -20,70 +20,42 @@ import (
 func TestBatcherStartStop(t *testing.T) {
 	t.Parallel()
 	b, err := NewBatcher[int](func(context.Context, []int) error { return nil }, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for range 100 {
-		if err := b.Start(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if err := b.Stop(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, b.Start(t.Context()))
+		require.NoError(t, b.Stop())
 	}
 }
 
 func TestBatcherPushNotStarted(t *testing.T) {
 	t.Parallel()
 	b, err := NewBatcher[int](func(context.Context, []int) error { return nil }, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Push(123); !errors.Is(err, ErrBatcherNotStarted) {
-		t.Fatalf("expected ErrBatcherNotStarted, got %v", err)
-	}
+	require.NoError(t, err)
+	require.ErrorIs(t, b.Push(123), ErrBatcherNotStarted)
 }
 
 func TestBatcherStopNotStarted(t *testing.T) {
 	t.Parallel()
 	b, err := NewBatcher[int](func(context.Context, []int) error { return nil }, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Stop(); !errors.Is(err, ErrBatcherNotStarted) {
-		t.Fatalf("expected ErrBatcherNotStarted, got %v", err)
-	}
+	require.NoError(t, err)
+	require.ErrorIs(t, b.Stop(), ErrBatcherNotStarted)
 }
 
 func TestBatcherDoubleStop(t *testing.T) {
 	t.Parallel()
 	b, err := NewBatcher[int](func(context.Context, []int) error { return nil }, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Stop(); !errors.Is(err, ErrBatcherNotStarted) {
-		t.Fatalf("expected ErrBatcherNotStarted, got %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
+	require.NoError(t, b.Stop())
+	require.ErrorIs(t, b.Stop(), ErrBatcherNotStarted)
 }
 
 func TestBatcherDoubleStart(t *testing.T) {
 	t.Parallel()
 	b, err := NewBatcher[int](func(context.Context, []int) error { return nil }, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); !errors.Is(err, ErrBatcherAlreadyStarted) {
-		t.Fatalf("expected ErrBatcherAlreadyStarted, got %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
+	require.ErrorIs(t, b.Start(t.Context()), ErrBatcherAlreadyStarted)
 }
 
 func TestBatcherPushStop(t *testing.T) {
@@ -94,24 +66,14 @@ func TestBatcherPushStop(t *testing.T) {
 
 		return nil
 	}, BatcherOptions{MaxDelay: time.Hour})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
 	for i := range 10 {
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 	}
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Stop())
 
-	if n != 10 {
-		t.Fatalf("Unexpected n=%d. Expected 10", n)
-	}
+	require.Equal(t, 10, n)
 }
 
 func TestBatcherPushMaxBatchSize(t *testing.T) {
@@ -143,12 +105,8 @@ func TestBatcherConcurrentPush(t *testing.T) {
 
 		return nil
 	}, BatcherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
 	var wg sync.WaitGroup
 	ss := uint32(0)
 	for range 10 {
@@ -161,12 +119,8 @@ func TestBatcherConcurrentPush(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	if s != ss {
-		t.Fatalf("Unepxected sum %d. Expecting %d", s, ss)
-	}
+	require.NoError(t, b.Stop())
+	require.Equal(t, ss, s)
 }
 
 func TestBatcherQueueSize(t *testing.T) {
@@ -183,32 +137,20 @@ func TestBatcherQueueSize(t *testing.T) {
 
 		return nil
 	}, BatcherOptions{MaxDelay: time.Hour, MaxBatchSize: 3, QueueSize: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
 	for i := range 3 {
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 	}
 	<-entered
 	for i := range 10 {
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 	}
-	if b.QueueLen() != b.QueueSize {
-		t.Fatalf("Unexpected queue size %d. Expecting %d", b.QueueLen(), b.QueueSize)
-	}
+	require.Equal(t, b.QueueSize, b.QueueLen())
 
 	// Queue is full: Push must return immediately with ErrBatcherQueueFull.
 	for range 10 {
-		if err := b.Push(123); !errors.Is(err, ErrBatcherQueueFull) {
-			t.Fatalf("expected ErrBatcherQueueFull on full queue, got %v", err)
-		}
+		require.ErrorIs(t, b.Push(123), ErrBatcherQueueFull)
 	}
 
 	close(ch)
@@ -217,17 +159,11 @@ func TestBatcherQueueSize(t *testing.T) {
 		<-completed
 	}
 	for i := range 5 {
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 	}
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Stop())
 
-	if n != 18 {
-		t.Fatalf("Unexpected number of items passed to batcher func: %d. Expected 18", n)
-	}
+	require.Equal(t, 18, n, "number of items passed to batcher func")
 }
 
 func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duration) {
@@ -238,16 +174,12 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 	n := 0
 	nn := 0
 	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
-		// Func runs on the batcher goroutine, where t.Fatalf would exit it and leave Stop blocked.
-		if len(batch) == 0 {
-			t.Errorf("Empty batch. itemsCount=%d", itemsCount)
-
+		// Func runs on the batcher goroutine, where require would exit it and leave Stop blocked.
+		if !assert.NotEmpty(t, batch, "itemsCount=%d", itemsCount) {
 			return nil
 		}
-		if age := time.Since(pushedAt[batch[0]]); age > maxDelay {
-			t.Errorf("Batch flushed %s after its first item. Expected no more than %s. itemsCount=%d",
-				age, maxDelay, itemsCount)
-		}
+		assert.LessOrEqual(t, time.Since(pushedAt[batch[0]]), maxDelay,
+			"batch flushed too long after its first item. itemsCount=%d", itemsCount)
 		nn += len(batch)
 		n++
 
@@ -256,32 +188,19 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 		MaxDelay:     maxDelay,
 		MaxBatchSize: 100500,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
 	defer b.Stop()
 	for i := range itemsCount {
 		pushedAt[i] = time.Now()
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 		time.Sleep(time.Millisecond)
 	}
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Stop())
 
 	expectedN := int(time.Since(startedAt)/maxDelay) + 2
-	if n > expectedN {
-		t.Fatalf("Unexpected number of batch func calls: %d. Expected no more than %d. itemsCount=%d, maxDelay=%s",
-			n, expectedN, itemsCount, maxDelay)
-	}
-	if itemsCount != nn {
-		t.Fatalf("Unexpected number of items passed to batcher func: %d. Expected %d. maxDelay=%s", nn, itemsCount, maxDelay)
-	}
+	require.LessOrEqual(t, n, expectedN, "number of batch func calls. itemsCount=%d, maxDelay=%s", itemsCount, maxDelay)
+	require.Equal(t, itemsCount, nn, "number of items passed to batcher func. maxDelay=%s", maxDelay)
 }
 
 func testBatcherPushMaxBatchSize(t *testing.T, itemsCount, batchSize int) {
@@ -290,12 +209,8 @@ func testBatcherPushMaxBatchSize(t *testing.T, itemsCount, batchSize int) {
 	n := 0
 	nn := 0
 	b, err := NewBatcher[int](func(_ context.Context, batch []int) error {
-		if len(batch) > batchSize {
-			t.Errorf("Unexpected batch size=%d. Must not exceed %d. itemsCount=%d", len(batch), batchSize, itemsCount)
-		}
-		if len(batch) == 0 {
-			t.Errorf("Empty batch. itemsCount=%d, batchSize=%d", itemsCount, batchSize)
-		}
+		assert.LessOrEqual(t, len(batch), batchSize, "batch size. itemsCount=%d", itemsCount)
+		assert.NotEmpty(t, batch, "itemsCount=%d, batchSize=%d", itemsCount, batchSize)
 		nn += len(batch)
 		n++
 
@@ -304,29 +219,16 @@ func testBatcherPushMaxBatchSize(t *testing.T, itemsCount, batchSize int) {
 		MaxDelay:     time.Hour,
 		MaxBatchSize: batchSize,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
 	for i := range itemsCount {
-		if err := b.Push(i); err != nil {
-			t.Fatalf("cannot add item %d to batch: %v", i, err)
-		}
+		require.NoError(t, b.Push(i), "cannot add item %d to batch", i)
 	}
-	if err := b.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Stop())
 
 	expectedN := (itemsCount + batchSize - 1) / batchSize
-	if n != expectedN {
-		t.Fatalf("Unexpected number of batcher func calls: %d. Expected %d. itemsCount=%d, batchSize=%d",
-			n, expectedN, itemsCount, batchSize)
-	}
-	if nn != itemsCount {
-		t.Fatalf("Unexpected number of items in all batches: %d. Expected %d. batchSize=%d", nn, itemsCount, batchSize)
-	}
+	require.Equal(t, expectedN, n, "number of batcher func calls. itemsCount=%d, batchSize=%d", itemsCount, batchSize)
+	require.Equal(t, itemsCount, nn, "number of items in all batches. batchSize=%d", batchSize)
 }
 
 func TestBatcherRefreshesRunningLimits(t *testing.T) {

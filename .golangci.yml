@@ -66,8 +66,6 @@ linters:
       # migration to testify deletes its own line; the rule goes once empty.
       - { linters: [forbidigo], text: "Use testify", path: '^packages/shared/' }
       - { linters: [forbidigo], text: "Use testify", path: '^packages/api/' }
-      - { linters: [forbidigo], text: "Use testify", path: '^packages/clickhouse/' }
-      - { linters: [forbidigo], text: "Use testify", path: '^packages/nomad-nodepool-apm/' }
       - { linters: [forbidigo], text: "Use testify", path: '^packages/(auth|db|scheduling-api)/' }
       - { linters: [forbidigo], text: "Use testify", path: '^tests/integration/' }
 
