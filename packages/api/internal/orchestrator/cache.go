@@ -13,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -39,6 +40,12 @@ func (o *Orchestrator) keepInSync(ctx context.Context, store *sandbox.Store, ski
 	defer ticker.Stop()
 
 	for {
+		// Between syncs, refresh as often as the flag asks. A nil channel never fires.
+		var refresh <-chan time.Time
+		if every := o.nodeRefreshInterval(ctx); every > 0 {
+			refresh = time.After(every)
+		}
+
 		select {
 		case <-ctx.Done():
 			logger.L().Info(ctx, "Stopping keepInSync")
@@ -46,6 +53,36 @@ func (o *Orchestrator) keepInSync(ctx context.Context, store *sandbox.Store, ski
 			return
 		case <-ticker.C:
 			o.syncNodes(ctx, store, skipSyncingWithNomad)
+		case <-refresh:
+			o.refreshNodes(ctx)
+		}
+	}
+}
+
+// nodeRefreshInterval is how often the flag asks for a refresh between syncs;
+// zero is never. A flag that does not exist yet reads as zero.
+func (o *Orchestrator) nodeRefreshInterval(ctx context.Context) time.Duration {
+	seconds, _ := o.featureFlagsClient.IntFlagWithError(ctx, featureflags.NodeInfoRefreshIntervalSecondsFlag)
+
+	return time.Duration(seconds) * time.Second
+}
+
+// refreshNodes asks the local cluster's nodes for their status and metrics.
+// A remote cluster's nodes are left to the sync: they are reached through the
+// cluster's proxy, and its registry already polls each of them.
+func (o *Orchestrator) refreshNodes(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, nodeHealthCheckTimeout)
+	defer cancel()
+
+	ctx, span := tracer.Start(ctx, "refresh-nodes")
+	defer span.End()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	for _, n := range o.nodes.Items() {
+		if !n.IsClusterNode() {
+			wg.Go(func() { n.RefreshInfo(ctx) })
 		}
 	}
 }

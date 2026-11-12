@@ -93,12 +93,14 @@ func TestNode_UpdateMetricsFromSync_KeepsPlacementsRecordedAfterTheRequest(t *te
 
 	assert.Equal(t, uint64(512), node.Metrics().HugePagesReserved)
 	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryAllocatedBytes)
+	assert.Equal(t, uint32(2), node.Metrics().CpuAllocated)
 	assert.Equal(t, uint64(1250), node.Metrics().HugePagesCapacity)
 
 	node.UpdateMetricsFromSync(sample, time.Now().Add(time.Second))
 
 	assert.Zero(t, node.Metrics().HugePagesReserved)
 	assert.Zero(t, node.Metrics().MemoryAllocatedBytes)
+	assert.Zero(t, node.Metrics().CpuAllocated)
 }
 
 // Ordinary pages fault in on use, so until a sync says otherwise a placement

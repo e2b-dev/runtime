@@ -48,16 +48,17 @@ func (n *Node) UpdateMetricsFromServiceInfoResponse(info *orchestratorinfo.Servi
 
 // UpdateMetricsFromSync applies a sample requested at requestedAt. A
 // placement recorded after that may be missing from the sample, so the view
-// keeps its allocated memory, and the counts that placement added (hugepages,
-// or used memory for ordinary pages), until the next sync. Allocated and used
-// memory keep the higher of the view and the sample: the sample also carries
-// what other sandboxes did meanwhile.
+// keeps its allocated CPU and memory, and the counts that placement added
+// (hugepages, or used memory for ordinary pages), until the next sync.
+// Allocated CPU and allocated and used memory keep the higher of the view and
+// the sample: the sample also carries what other sandboxes did meanwhile.
 func (n *Node) UpdateMetricsFromSync(info *orchestratorinfo.ServiceInfoResponse, requestedAt time.Time) {
 	n.metricsMu.Lock()
 	defer n.metricsMu.Unlock()
 
 	used, reserved := n.metrics.HugePagesUsed, n.metrics.HugePagesReserved
 	allocated, memoryUsed := n.metrics.MemoryAllocatedBytes, n.metrics.MemoryUsedBytes
+	cpuAllocated := n.metrics.CpuAllocated
 	n.updateMetrics(info)
 	hugePageAdded, ordinaryPageAdded := n.lastHugePageAdd.After(requestedAt), n.lastOrdinaryPageAdd.After(requestedAt)
 	if hugePageAdded {
@@ -68,6 +69,7 @@ func (n *Node) UpdateMetricsFromSync(info *orchestratorinfo.ServiceInfoResponse,
 	}
 	if hugePageAdded || ordinaryPageAdded {
 		n.metrics.MemoryAllocatedBytes = max(n.metrics.MemoryAllocatedBytes, allocated)
+		n.metrics.CpuAllocated = max(n.metrics.CpuAllocated, cpuAllocated)
 	}
 }
 

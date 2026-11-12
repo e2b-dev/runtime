@@ -10,12 +10,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 // refusingClient answers the first `times` creates with the refusal a node gives
@@ -206,6 +209,51 @@ func TestPlaceSandbox_CapacityRefusedNodeIsRetriedNextSample(t *testing.T) {
 	assert.Equal(t, []string{busy.ID, busy.ID}, picks)
 	assert.Equal(t, int64(2), busyCreates.Load())
 	assert.Zero(t, otherCreates.Load())
+}
+
+// Each refusal is counted under what caused it. Not parallel: it swaps the
+// package counter.
+//
+//nolint:paralleltest
+func TestPlaceSandbox_CountsRefusalsByCause(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	counter, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"), telemetry.ApiOrchestratorCreateRefusals)
+	require.NoError(t, err)
+	previous := createRefusals
+	createRefusals = counter
+	t.Cleanup(func() { createRefusals = previous })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	// Two refusals of one cause and one of the other: with equal counts, swapped
+	// labels would pass.
+	var parkedCreates, fullCreates atomic.Int64
+	parked := nodemanager.NewTestNode("parked", api.NodeStatusReady, 0, 8)
+	parked.SetSandboxClient(statusRefusingClient(&parkedCreates, 2))
+	full := nodemanager.NewTestNode("full", api.NodeStatusReady, 0, 8)
+	full.SetSandboxClient(refusingClient(&fullCreates, 1))
+	nodes := []*nodemanager.Node{parked, full}
+
+	var picks []string
+	_, err = placeSandbox(ctx, firstNotExcluded(nodes, &picks), nodes, nil, testSbxRequest("sbx-count"),
+		Requirements{}, false, nil, refusalBackoff{}, time.Time{})
+	require.NoError(t, err)
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &collected))
+	byCause := map[string]int64{}
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			for _, point := range sum.DataPoints {
+				cause, _ := point.Attributes.Value("cause")
+				byCause[cause.AsString()] = point.Value
+			}
+		}
+	}
+	assert.Equal(t, map[string]int64{"status": 2, "capacity": 1}, byCause)
 }
 
 // When no other candidate can take the sandbox, the skip is withdrawn and the

@@ -42,6 +42,11 @@ const (
 	// applied that the store then failed to record: the live egress differs
 	// from the stored config until the next update replaces both.
 	ApiOrchestratorNetworkUpdateUnstored CounterType = "api.orchestrator.network_update_unstored"
+	// ApiOrchestratorCreateRefusals counts creates a node refused before
+	// starting them, by cause: status (the node's status admits nothing new) |
+	// capacity (the node is full, or its start slots are taken). Placement
+	// retries each one.
+	ApiOrchestratorCreateRefusals CounterType = "api.orchestrator.create_refusals"
 	// ApiOrchestratorPlacementsWithoutHugepageCeiling counts hugepage sandboxes
 	// placed under a hugepage limit on a node the limit could not bound, by
 	// node.id and reason: no_capacity (the orchestrator reports no pool
@@ -909,6 +914,7 @@ var counterDesc = map[CounterType]string{
 	ApiOrchestratorSandboxFeatureUnsupported:     "Sandbox creates refused because no orchestrator in the cluster runs a release implementing a capability the request needs, by feature",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
+	ApiOrchestratorCreateRefusals:                "Sandbox creates a node refused before starting them, by cause: status | capacity.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
 	ApiTemplateListCapExceeded:                   "Unpaginated template list requests refused because the team has more templates than the cap, by team.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
@@ -1014,6 +1020,7 @@ var counterUnits = map[CounterType]string{
 	ApiOrchestratorSandboxFeatureUnsupported:     "{sandbox}",
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
 	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
+	ApiOrchestratorCreateRefusals:                "{refusal}",
 	ApiSandboxListReads:                          "{request}",
 	ApiTemplateListCapExceeded:                   "{request}",
 	BuildResultCounterName:                       "{build}",
