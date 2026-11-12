@@ -89,7 +89,7 @@ func unblocked(ctx context.Context, t *testing.T, faults map[string]<-chan error
 		case err := <-ch:
 			require.NoError(t, err, name)
 		case <-ctx.Done():
-			t.Fatalf("%s did not unblock", name)
+			require.Failf(t, "operation did not unblock", "%s", name)
 		}
 	}
 }

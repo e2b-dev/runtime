@@ -64,7 +64,6 @@ linters:
     rules:
       # Packages whose tests still use the testing failure methods. Each
       # migration to testify deletes its own line; the rule goes once empty.
-      - { linters: [forbidigo], text: "Use testify", path: '^packages/orchestrator/pkg/sandbox/' }
       - { linters: [forbidigo], text: "Use testify", path: '^packages/orchestrator/(benchmarks|cmd|pkg/(chrooted|factories|gcpercent|hyperloopserver|metrics|nfsproxy|proxy|routing|server|tcpfirewall))/' }
       - { linters: [forbidigo], text: "Use testify", path: '^packages/shared/' }
       - { linters: [forbidigo], text: "Use testify", path: '^packages/api/' }

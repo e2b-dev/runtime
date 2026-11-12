@@ -64,10 +64,9 @@ func acquireWindow(t *testing.T, capacity uint) uint {
 		}
 		windowMu.Unlock()
 
-		if time.Now().After(deadline) {
-			t.Fatalf("no slot window freed in %s (capacity %d); a test is holding its window past cleanup",
-				acquireTimeout, capacity)
-		}
+		require.False(t, time.Now().After(deadline),
+			"no slot window freed in %s (capacity %d); a test is holding its window past cleanup",
+			acquireTimeout, capacity)
 		time.Sleep(50 * time.Millisecond)
 	}
 }

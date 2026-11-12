@@ -37,7 +37,7 @@ func BenchmarkSampleHostCPU(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, ok := sampleHostCPU(); !ok {
-			b.Fatal("host CPU sample unavailable")
+			require.Fail(b, "host CPU sample unavailable")
 		}
 	}
 }

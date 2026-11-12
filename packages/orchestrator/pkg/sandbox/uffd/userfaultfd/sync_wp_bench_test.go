@@ -37,6 +37,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/testutils"
@@ -67,12 +69,10 @@ func hugepageMmap(tb testing.TB, size uint64) ([]byte, uintptr) {
 		syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS|UnixMapHugeTLB|UnixMapHuge2MB,
 	)
-	if err != nil {
-		if errors.Is(err, syscall.ENOMEM) {
-			tb.Skipf("skipping: hugepage mmap failed (need %d hugepages reserved): %v", l/int(pagesize), err)
-		}
-		tb.Fatalf("hugepage mmap: %v", err)
+	if errors.Is(err, syscall.ENOMEM) {
+		tb.Skipf("skipping: hugepage mmap failed (need %d hugepages reserved): %v", l/int(pagesize), err)
 	}
+	require.NoError(tb, err, "hugepage mmap")
 	tb.Cleanup(func() { syscall.Munmap(b) })
 
 	return b, uintptr(unsafe.Pointer(&b[0]))
@@ -215,32 +215,25 @@ func BenchmarkSyncWPFaultLatency(b *testing.B) {
 
 	// Create the uffd WITHOUT WP_ASYNC → synchronous WP fault delivery.
 	fd, err := newFd(syscall.O_CLOEXEC | syscall.O_NONBLOCK)
-	if err != nil {
-		b.Fatalf("userfaultfd: %v", err)
-	}
+	require.NoError(b, err, "userfaultfd")
 	b.Cleanup(func() { fd.close() })
 
 	// UFFDIO_API with features=0 (the crux: no WP_ASYNC). Read back the
 	// kernel-supported features for the record.
 	api := newUffdioAPI(UFFD_API, 0)
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		b.Fatalf("UFFDIO_API: %v", errno)
-	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api)))
+	require.Zero(b, errno, "UFFDIO_API")
 	wpAsyncSupported := uint64(api.features)&uint64(UFFD_FEATURE_WP_ASYNC) != 0
 
 	// Register write-protect-only. (Production registers MISSING|WP; we only
 	// need WP here since pages are already present.)
-	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		b.Fatalf("UFFDIO_REGISTER MODE_WP on hugetlbfs: %v", err)
-	}
+	require.NoError(b, register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP), "UFFDIO_REGISTER MODE_WP on hugetlbfs")
 	b.Cleanup(func() { _ = unregister(fd, memStart, size) })
 
 	totalFaults := nPages * nRounds
 
 	var stop [2]int
-	if err := syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK); err != nil {
-		b.Fatalf("pipe2: %v", err)
-	}
+	require.NoError(b, syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK), "pipe2")
 
 	var resolvedSoFar atomic.Int64
 	done := make(chan serveResult, 1)
@@ -329,15 +322,14 @@ func BenchmarkSyncWPFaultLatency(b *testing.B) {
 		// range, and the next round's arm fails there.
 		<-measured
 
-		b.Fatalf("stores did not finish within %s (%d of %d faults resolved): WP faults are not being delivered, or the handler stopped serving before the last store",
+		require.Failf(b, "stores did not finish within the measurement budget",
+			"budget %s, %d of %d faults resolved: WP faults are not being delivered, or the handler stopped serving before the last store",
 			measurementBudget, resolved, totalFaults)
 	}
 
 	b.StopTimer()
 
-	if m.err != nil {
-		b.Fatal(m.err)
-	}
+	require.NoError(b, m.err)
 
 	latencies, arms := m.latencies, m.arms
 
@@ -347,17 +339,11 @@ func BenchmarkSyncWPFaultLatency(b *testing.B) {
 	select {
 	case res = <-done:
 	case <-time.After(30 * time.Second):
-		b.Fatalf("handler did not resolve %d faults — sync WP not delivering on hugepages", totalFaults)
+		require.Failf(b, "handler timed out", "did not resolve %d faults — sync WP not delivering on hugepages", totalFaults)
 	}
-	if res.err != nil {
-		b.Fatalf("handler error after %d/%d faults: %v", res.resolved, totalFaults, res.err)
-	}
-	if res.resolved != totalFaults {
-		b.Fatalf("resolved %d faults, expected %d", res.resolved, totalFaults)
-	}
-	if res.nonWP != 0 {
-		b.Errorf("got %d non-WP pagefaults (expected all WP)", res.nonWP)
-	}
+	require.NoError(b, res.err, "handler error after %d/%d faults", res.resolved, totalFaults)
+	require.Equal(b, totalFaults, res.resolved)
+	assert.Zero(b, res.nonWP, "non-WP pagefaults (expected all WP)")
 
 	slices.Sort(latencies)
 	var sum time.Duration
@@ -415,9 +401,7 @@ func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 	}
 
 	fd, err := newFd(syscall.O_CLOEXEC)
-	if err != nil {
-		b.Fatalf("userfaultfd: %v", err)
-	}
+	require.NoError(b, err, "userfaultfd")
 	b.Cleanup(func() { fd.close() })
 
 	// UFFDIO_API WITH WP_ASYNC (production config).
@@ -426,22 +410,17 @@ func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 		features |= UFFD_FEATURE_MISSING_HUGETLBFS
 	}
 	api := newUffdioAPI(UFFD_API, features)
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		b.Fatalf("UFFDIO_API: %v", errno)
-	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api)))
+	require.Zero(b, errno, "UFFDIO_API")
 	if uint64(api.features)&uint64(UFFD_FEATURE_WP_ASYNC) == 0 {
 		b.Skip("kernel does not support UFFD_FEATURE_WP_ASYNC")
 	}
 
-	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		b.Fatalf("UFFDIO_REGISTER MODE_WP: %v", err)
-	}
+	require.NoError(b, register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP), "UFFDIO_REGISTER MODE_WP")
 	b.Cleanup(func() { _ = unregister(fd, memStart, size) })
 
 	pagemap, err := testutils.NewPagemapReader()
-	if err != nil {
-		b.Fatalf("pagemap reader: %v", err)
-	}
+	require.NoError(b, err, "pagemap reader")
 	b.Cleanup(func() { pagemap.Close() })
 
 	if prev := runtime.GOMAXPROCS(0); prev < 2 {
@@ -460,7 +439,7 @@ func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 	for r := range nRounds {
 		armStart := time.Now()
 		if err := fd.writeProtectRange(memStart, uintptr(size), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
-			b.Fatalf("arm writeProtectRange (round %d): %v", r, err)
+			require.NoError(b, err, "arm writeProtectRange (round %d)", r)
 		}
 		armDur := time.Since(armStart)
 
@@ -480,7 +459,7 @@ func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 		for i := range nPages {
 			e, rerr := pagemap.ReadEntry(memStart + uintptr(uint64(i)*pagesize))
 			if rerr != nil {
-				b.Fatalf("pagemap read (round %d page %d): %v", r, i, rerr)
+				require.NoError(b, rerr, "pagemap read (round %d page %d)", r, i)
 			}
 			if e.IsPresent() && !e.IsWriteProtected() {
 				dirty++
@@ -489,7 +468,7 @@ func BenchmarkAsyncWPWriteLatency(b *testing.B) {
 		scanDur := time.Since(scanStart)
 
 		if dirty != nPages {
-			b.Errorf("round %d: pagemap reported %d/%d dirty (expected all written)", r, dirty, nPages)
+			assert.Equal(b, nPages, dirty, "round %d: pagemap dirty pages (expected all written)", r)
 		}
 		if r > 0 {
 			arms = append(arms, armDur)
@@ -546,18 +525,13 @@ func runConcurrentSyncWP(tb testing.TB, mem []byte, memStart uintptr, pagesize u
 
 	// Non-blocking: the reader polls, then drains until EAGAIN.
 	fd, err := newFd(syscall.O_CLOEXEC | syscall.O_NONBLOCK)
-	if err != nil {
-		tb.Fatalf("userfaultfd: %v", err)
-	}
+	require.NoError(tb, err, "userfaultfd")
 	defer fd.close()
 
 	api := newUffdioAPI(UFFD_API, 0) // features=0 → synchronous WP
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api))); errno != 0 {
-		tb.Fatalf("UFFDIO_API: %v", errno)
-	}
-	if err := register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP); err != nil {
-		tb.Fatalf("register MODE_WP: %v", err)
-	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), UFFDIO_API, uintptr(unsafe.Pointer(&api)))
+	require.Zero(tb, errno, "UFFDIO_API")
+	require.NoError(tb, register(fd, memStart, size, UFFDIO_REGISTER_MODE_WP), "register MODE_WP")
 	defer func() { _ = unregister(fd, memStart, size) }()
 
 	// Handler: one reader draining the uffd (poll-edge-drained), fanning out to
@@ -576,9 +550,7 @@ func runConcurrentSyncWP(tb testing.TB, mem []byte, memStart uintptr, pagesize u
 	// provably resolved (a store can't return until its own fault is), so the
 	// reader terminates cleanly without needing to count faults.
 	var stop [2]int
-	if err := syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK); err != nil {
-		tb.Fatalf("pipe2: %v", err)
-	}
+	require.NoError(tb, syscall.Pipe2(stop[:], syscall.O_CLOEXEC|syscall.O_NONBLOCK), "pipe2")
 	defer syscall.Close(stop[0])
 	defer syscall.Close(stop[1])
 
@@ -649,7 +621,7 @@ func runConcurrentSyncWP(tb testing.TB, mem []byte, memStart uintptr, pagesize u
 				// Arm this writer's own sub-range (disjoint from others).
 				rangeStart := memStart + uintptr(uint64(lo)*pagesize)
 				if err := fd.writeProtectRange(rangeStart, uintptr(uint64(hi-lo)*pagesize), uintptr(pagesize), UFFDIO_WRITEPROTECT_MODE_WP); err != nil {
-					tb.Errorf("writer %d arm: %v", w, err)
+					assert.NoError(tb, err, "writer %d arm", w)
 
 					return
 				}
@@ -691,14 +663,13 @@ func runConcurrentSyncWP(tb testing.TB, mem []byte, memStart uintptr, pagesize u
 		<-writersDone
 		resolvers.Wait()
 
-		tb.Fatalf("nWriters=%d: writers did not finish within 60s (handler not keeping up / deadlock)", nWriters)
+		require.Failf(tb, "writers did not finish within 60s", "nWriters=%d: handler not keeping up / deadlock", nWriters)
 	}
 	wall := time.Since(wallStart)
 
 	// All faults resolved → stop the reader, then drain resolvers.
-	if _, err := syscall.Write(stop[1], []byte{1}); err != nil {
-		tb.Fatalf("signal stop: %v", err)
-	}
+	_, err = syscall.Write(stop[1], []byte{1})
+	require.NoError(tb, err, "signal stop")
 	<-readerDone
 	close(workCh)
 	resolvers.Wait()

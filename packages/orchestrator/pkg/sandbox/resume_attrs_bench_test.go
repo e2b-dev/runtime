@@ -58,8 +58,8 @@ func BenchmarkCachedPercent(b *testing.B) {
 			ctx := b.Context()
 			b.ReportAllocs()
 			for b.Loop() {
-				if cachedPercent(ctx, f, mapping) < 0 {
-					b.Fatal("expected known residency")
+				if percent := cachedPercent(ctx, f, mapping); percent < 0 {
+					require.Fail(b, "expected known residency", "cached percent %v", percent)
 				}
 			}
 		})

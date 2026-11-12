@@ -116,7 +116,7 @@ func TestClassifyE2fsckResult_NeverCondemns(t *testing.T) {
 		case RecoverOutcomeFailed:
 			require.ErrorIs(t, err, ErrRecoveryFailed, "%s: a failed outcome must be retryable", label)
 		default:
-			t.Fatalf("%s: outcome %q — recovery must only ever be replayed, failed_operational, or failed_open", label, outcome)
+			require.Failf(t, "recovery must only ever be replayed, failed_operational, or failed_open", "%s: outcome %q", label, outcome)
 		}
 	}
 

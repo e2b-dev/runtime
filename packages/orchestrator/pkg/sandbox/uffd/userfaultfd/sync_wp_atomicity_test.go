@@ -121,7 +121,7 @@ func expectEvent(t *testing.T, events chan pfEvent, what string) pfEvent {
 	case ev := <-events:
 		return ev
 	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for %s", what)
+		require.Failf(t, "timed out", "waiting for %s", what)
 
 		return pfEvent{}
 	}
@@ -178,16 +178,16 @@ func TestCopyDontwakePresence(t *testing.T) {
 	select {
 	case <-bDone:
 	case ev := <-events:
-		t.Fatalf("thread B faulted (wp=%v) — page not globally writable after COPY(DONTWAKE); "+
-			"the COPY→WP race-window assumption no longer holds", ev.wp)
+		require.Failf(t, "thread B faulted — page not globally writable after COPY(DONTWAKE); "+
+			"the COPY→WP race-window assumption no longer holds", "wp=%v", ev.wp)
 	case <-time.After(2 * time.Second):
-		t.Fatal("B neither completed nor faulted within 2s")
+		require.Fail(t, "B neither completed nor faulted within 2s")
 	}
 
 	// DONTWAKE must keep the FAULTED thread blocked until the explicit WAKE.
 	select {
 	case <-aDone:
-		t.Fatal("thread A proceeded before UFFDIO_WAKE — DONTWAKE did not hold it")
+		require.Fail(t, "thread A proceeded before UFFDIO_WAKE — DONTWAKE did not hold it")
 	default:
 	}
 
@@ -197,7 +197,7 @@ func TestCopyDontwakePresence(t *testing.T) {
 	select {
 	case <-aDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("A still blocked after WAKE")
+		require.Fail(t, "A still blocked after WAKE")
 	}
 	_ = sink
 
@@ -215,7 +215,7 @@ func TestCopyDontwakePresence(t *testing.T) {
 	select {
 	case <-cDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("C still blocked after resolve")
+		require.Fail(t, "C still blocked after resolve")
 	}
 }
 
@@ -253,10 +253,10 @@ func TestMarkerArmThenCopy(t *testing.T) {
 	// changed and arm-first may have become viable.
 	select {
 	case ev := <-events:
-		t.Fatalf("marker-armed page trapped the write (wp=%v) — WP marker unexpectedly survived COPY", ev.wp)
+		require.Failf(t, "marker-armed page trapped the write — WP marker unexpectedly survived COPY", "wp=%v", ev.wp)
 	case <-wDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("writer neither completed nor faulted within 2s")
+		require.Fail(t, "writer neither completed nor faulted within 2s")
 	}
 }
 
@@ -314,11 +314,11 @@ func TestCopyModeWPOnSyncUffd(t *testing.T) {
 		select {
 		case <-wDone:
 		case <-time.After(5 * time.Second):
-			t.Fatal("writer still blocked after resolve")
+			require.Fail(t, "writer still blocked after resolve")
 		}
 	case <-wDone:
-		t.Fatal("write sailed through — COPY_MODE_WP did not stick on the sync uffd")
+		require.Fail(t, "write sailed through — COPY_MODE_WP did not stick on the sync uffd")
 	case <-time.After(2 * time.Second):
-		t.Fatal("writer neither completed nor faulted within 2s")
+		require.Fail(t, "writer neither completed nor faulted within 2s")
 	}
 }

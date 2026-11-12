@@ -132,9 +132,8 @@ func (e *heldEnvd) serve(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = json.Unmarshal(raw, &body)
 		}
-		if err != nil {
-			e.t.Errorf("read the /init body: %v", err) // a handler goroutine: no FailNow here
-		}
+		//nolint:testifylint // assert, not require: a handler goroutine, no FailNow here
+		assert.NoError(e.t, err, "read the /init body")
 
 		e.mu.Lock()
 		e.reqs[idx].bodyRead = start
@@ -438,7 +437,7 @@ func TestHeldInitClosesItsConnectionOnReturn(t *testing.T) {
 	select {
 	case <-e.closed:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the held connection is still open after initEnvd returned")
+		require.Fail(t, "the held connection is still open after initEnvd returned")
 	}
 }
 

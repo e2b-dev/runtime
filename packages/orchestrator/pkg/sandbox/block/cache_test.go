@@ -1246,7 +1246,7 @@ func TestCacheExportToDiffWithMetadata_ProceedsUnderReadLock(t *testing.T) {
 	case exportErr = <-done:
 	case <-time.After(10 * time.Second):
 		c.mu.RUnlock()
-		t.Fatal("export blocked behind a held read lock: ExportToDiffWithMetadata must take RLock, not Lock")
+		require.Fail(t, "export blocked behind a held read lock: ExportToDiffWithMetadata must take RLock, not Lock")
 	}
 	c.mu.RUnlock()
 	require.NoError(t, exportErr)

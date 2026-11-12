@@ -366,7 +366,7 @@ func TestWaitForRootfsSeal_SerializesNextSnapshot(t *testing.T) {
 	// Still sealing: the wait must not return.
 	select {
 	case err := <-returned:
-		t.Fatalf("waitForRootfsSeal returned while the seal was in flight: %v", err)
+		require.Failf(t, "waitForRootfsSeal returned while the seal was in flight", "error: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -493,7 +493,7 @@ func TestSetupInPlaceRootfsExport_AbortCleanupOrder(t *testing.T) {
 	case runErr := <-done:
 		require.NoError(t, runErr)
 	case <-time.After(10 * time.Second):
-		t.Fatal("cleanup deadlocked: deferred diff Close ran before the promise was poisoned")
+		require.Fail(t, "cleanup deadlocked: deferred diff Close ran before the promise was poisoned")
 	}
 
 	// The aborted checkpoint's artifact fails without blocking...

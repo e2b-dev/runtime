@@ -373,7 +373,7 @@ func TestAWedgedSourceStatDoesNotRetainThePublisher(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(10 * time.Second):
-		t.Fatal("publication was retained by a wedged source stat; the warming slot would leak")
+		require.Fail(t, "publication was retained by a wedged source stat; the warming slot would leak")
 	}
 
 	// It declined to publish, which is the safe direction: an unverified entry
@@ -435,7 +435,7 @@ func TestAWedgedSourceStatDoesNotRetainTheWarm(t *testing.T) {
 	case err := <-returned:
 		require.Error(t, err, "the warm must fail rather than hang")
 	case <-time.After(10 * time.Second):
-		t.Fatal("Warm was retained by a wedged source stat; the warming slot would leak")
+		require.Fail(t, "Warm was retained by a wedged source stat; the warming slot would leak")
 	}
 }
 

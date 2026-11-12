@@ -57,7 +57,7 @@ func waitDone(t *testing.T, done <-chan struct{}) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("copyWorker did not return within budget")
+		require.Fail(t, "copyWorker did not return within budget")
 	}
 }
 

@@ -1390,7 +1390,7 @@ func TestMapMigrationHoldsALiveLifecycle(t *testing.T) {
 	}()
 	select {
 	case <-begun:
-		t.Fatal("the migration did not wait for the update in flight")
+		require.Fail(t, "the migration did not wait for the update in flight")
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(finish)

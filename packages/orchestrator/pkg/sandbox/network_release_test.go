@@ -178,7 +178,7 @@ func TestNetworkReleaseConcurrentFailureJoinsAndCancellationDoesNotAbandon(t *te
 		assert.Equal(t, int64(1), calls.Load(), "waiters must join one physical subscriber attempt")
 		select {
 		case <-first:
-			t.Error("waiter cancellation must not abandon the running subscriber")
+			assert.Fail(t, "waiter cancellation must not abandon the running subscriber")
 		default:
 		}
 		close(proceed)

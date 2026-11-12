@@ -164,10 +164,10 @@ func BenchmarkDedupCompare(b *testing.B) {
 				for b.Loop() {
 					plan, err := dedupCompare(b.Context(), readSrc, parent, dirty, blockSize, false, budget)
 					if err != nil {
-						b.Fatal(err)
+						require.NoError(b, err)
 					}
 					if plan.exportedSize != int64(len(src)) || plan.pageEmpty.GetCardinality() != 256 {
-						b.Fatal("incorrect classification")
+						require.Fail(b, "incorrect classification", "exported %d of %d bytes, %d empty pages", plan.exportedSize, len(src), plan.pageEmpty.GetCardinality())
 					}
 				}
 			})
@@ -192,13 +192,13 @@ func BenchmarkCacheDedup(b *testing.B) {
 			for b.Loop() {
 				cache, meta, err := input.Dedup(b.Context(), parent, dirty, blockSize, outPath, false, false, DedupBudget{})
 				if err != nil {
-					b.Fatal(err)
+					require.NoError(b, err)
 				}
 				if err := cache.Close(); err != nil {
-					b.Fatal(err)
+					require.NoError(b, err)
 				}
 				if meta.Dirty.GetCardinality() != 256 || meta.Empty.GetCardinality() != 256 {
-					b.Fatal("incorrect classification")
+					require.Fail(b, "incorrect classification", "%d dirty, %d empty pages", meta.Dirty.GetCardinality(), meta.Empty.GetCardinality())
 				}
 			}
 		})

@@ -34,7 +34,7 @@ func TestSyncWPHandlerStopsWithoutFaults(t *testing.T) {
 	select {
 	case res := <-done:
 		_ = syscall.Close(stop[1])
-		t.Fatalf("handler exited before cancellation: %+v", res)
+		require.Failf(t, "handler exited before cancellation", "result: %+v", res)
 	case <-time.After(20 * time.Millisecond):
 	}
 
@@ -46,6 +46,6 @@ func TestSyncWPHandlerStopsWithoutFaults(t *testing.T) {
 		require.Zero(t, res.nonWP)
 		require.Zero(t, resolved.Load())
 	case <-time.After(5 * time.Second):
-		t.Fatal("idle handler did not stop after cancellation")
+		require.Fail(t, "idle handler did not stop after cancellation")
 	}
 }

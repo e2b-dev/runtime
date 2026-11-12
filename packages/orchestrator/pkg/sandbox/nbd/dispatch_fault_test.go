@@ -120,7 +120,7 @@ func TestDispatch_MmapFault(t *testing.T) {
 			require.Equal(t, uint64(handle+1), resp.Handle)
 			require.NotZerof(t, resp.Error, "request %d: backend fault must be an NBD error reply", handle+1)
 		case <-time.After(5 * time.Second):
-			t.Fatalf("no reply for request %d: dispatch loop is stuck or dead", handle+1)
+			require.Failf(t, "no reply: dispatch loop is stuck or dead", "request %d", handle+1)
 		}
 	}
 
@@ -128,6 +128,6 @@ func TestDispatch_MmapFault(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("dispatch loop did not exit")
+		require.Fail(t, "dispatch loop did not exit")
 	}
 }

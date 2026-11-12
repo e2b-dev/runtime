@@ -176,7 +176,7 @@ func TestCapabilitiesGateTheGuestHooks(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("a hook the profile does not declare did not return")
+		require.Fail(t, "a hook the profile does not declare did not return")
 	}
 
 	assert.Zero(t, envdRequests.Load(), "a hook the profile does not declare reached envd")

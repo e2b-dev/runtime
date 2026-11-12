@@ -86,12 +86,12 @@ func TestMapStoppingJoinsUpdatesBeforeNotification(t *testing.T) {
 				require.False(t, live)
 				select {
 				case <-notified:
-					t.Error("OnStopping ran before the active update returned")
+					assert.Fail(t, "OnStopping ran before the active update returned")
 				default:
 				}
 				select {
 				case err := <-stopDone:
-					t.Errorf("stopping returned before the active update: %v", err)
+					assert.Failf(t, "stopping returned before the active update", "error: %v", err)
 					stopDone <- err
 				default:
 				}

@@ -944,7 +944,7 @@ func publishedDescription(t *testing.T, name telemetry.CounterType) string {
 			}
 		}
 	}
-	t.Fatalf("counter %s was not collected", name)
+	require.Failf(t, "counter was not collected", "%s", name)
 
 	return ""
 }

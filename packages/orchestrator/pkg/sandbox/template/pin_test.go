@@ -133,7 +133,7 @@ func waitEvicted(t *testing.T, evicted <-chan string, key string) {
 				return
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatalf("eviction callback for %q did not run", key)
+			require.Failf(t, "eviction callback did not run", "key %q", key)
 		}
 	}
 }
@@ -349,7 +349,7 @@ func TestPin_IsRecordedUnderExtendMu(t *testing.T) {
 	select {
 	case <-pinning:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pin was never recorded")
+		require.Fail(t, "the pin was never recorded")
 	}
 
 	// The pin is being recorded right now. If extendMu is free at this instant,
@@ -460,7 +460,7 @@ func TestEvict_SupersededInstanceKeepsPeerRouting(t *testing.T) {
 
 	select {
 	case k := <-purged:
-		t.Fatalf("peer routing purged for %q while a newer instance is live", k)
+		require.Failf(t, "peer routing purged while a newer instance is live", "key %q", k)
 	default:
 	}
 }
@@ -582,7 +582,7 @@ func TestEvict_ClosesWhenKeyIsFree(t *testing.T) {
 	case k := <-purged:
 		assert.Equal(t, tmpl.key, k)
 	case <-time.After(time.Second):
-		t.Fatal("peer routing was not purged for an unreferenced template")
+		require.Fail(t, "peer routing was not purged for an unreferenced template")
 	}
 }
 
@@ -799,7 +799,7 @@ func TestEvict_CloseDoesNotHoldExtendMu(t *testing.T) {
 	select {
 	case <-blocking.entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Close was never reached")
+		require.Fail(t, "Close was never reached")
 	}
 
 	// A create/resume arriving while that Close is stuck must not block.
@@ -815,7 +815,7 @@ func TestEvict_CloseDoesNotHoldExtendMu(t *testing.T) {
 	select {
 	case <-acquired:
 	case <-time.After(5 * time.Second):
-		t.Fatal("acquisition blocked behind an in-progress template Close")
+		require.Fail(t, "acquisition blocked behind an in-progress template Close")
 	}
 
 	close(blocking.unblock)
@@ -949,7 +949,7 @@ func TestInvalidate_RetiredInstanceIsStillProtectedFromEviction(t *testing.T) {
 	// instance still reads through it.
 	select {
 	case k := <-purged:
-		t.Fatalf("peer routing purged for %q while a retired instance is still in use", k)
+		require.Failf(t, "peer routing purged while a retired instance is still in use", "key %q", k)
 	default:
 	}
 }
@@ -984,7 +984,7 @@ func TestInvalidate_IsSerializedAgainstAcquisition(t *testing.T) {
 	select {
 	case <-pinning:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pin was never recorded")
+		require.Fail(t, "the pin was never recorded")
 	}
 
 	invalidated := make(chan struct{})
@@ -995,7 +995,7 @@ func TestInvalidate_IsSerializedAgainstAcquisition(t *testing.T) {
 
 	select {
 	case <-invalidated:
-		t.Fatal("Invalidate ran while a pin was being recorded; it must serialize on extendMu")
+		require.Fail(t, "Invalidate ran while a pin was being recorded; it must serialize on extendMu")
 	case <-time.After(100 * time.Millisecond):
 	}
 

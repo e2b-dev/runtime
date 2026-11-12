@@ -77,7 +77,7 @@ func TestSandboxCloseWaitsForAdmittedUpdateBeforeCleanup(t *testing.T) {
 		synctest.Wait()
 		select {
 		case <-cleanupEntered:
-			t.Fatal("cleanup entered before the admitted update was released")
+			require.Fail(t, "cleanup entered before the admitted update was released")
 		default:
 		}
 

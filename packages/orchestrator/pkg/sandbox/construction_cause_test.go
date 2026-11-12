@@ -95,7 +95,7 @@ func TestFactoryFailedConstructorsPreserveCancellationCause(t *testing.T) {
 				select {
 				case <-pool.called:
 				case <-time.After(time.Second):
-					t.Fatal("owned network lookup did not complete")
+					require.Fail(t, "owned network lookup did not complete")
 				}
 			}
 			require.Nil(t, sbx)
@@ -132,7 +132,7 @@ func TestFactoryFailedConstructorsDoNotAttributeIndependentErrorsToCancellation(
 				select {
 				case <-pool.called:
 				case <-time.After(time.Second):
-					t.Fatal("owned network lookup did not complete")
+					require.Fail(t, "owned network lookup did not complete")
 				}
 			}
 			require.Nil(t, sbx)

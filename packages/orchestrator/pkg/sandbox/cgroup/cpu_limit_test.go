@@ -150,7 +150,7 @@ func TestRemoveKillsConfinedThreads(t *testing.T) {
 	select {
 	case <-exited:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the helper outlived Remove")
+		require.Fail(t, "the helper outlived Remove")
 	}
 	assert.NoDirExists(t, handle.path)
 }
@@ -223,7 +223,7 @@ func startVcpuHelper(t *testing.T, handle *CgroupHandle) *exec.Cmd {
 			return cmd
 		}
 	}
-	t.Fatal("the helper never named its threads")
+	require.Fail(t, "the helper never named its threads")
 
 	return nil
 }
