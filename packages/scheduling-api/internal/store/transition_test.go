@@ -510,7 +510,7 @@ func TestWaitForTransition(t *testing.T) {
 			case got := <-done:
 				require.Equal(t, want, got)
 			case <-time.After(5 * time.Second):
-				t.Fatal("the waiter did not see the end of the transition")
+				require.Fail(t, "the waiter did not see the end of the transition")
 			}
 		})
 	}
@@ -542,7 +542,7 @@ func TestWaitForTransition(t *testing.T) {
 		case err := <-done:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-time.After(5 * time.Second):
-			t.Fatal("the waiter did not stop on cancellation")
+			require.Fail(t, "the waiter did not stop on cancellation")
 		}
 		require.Equal(t, int64(1), replicaPool.Stat().AcquireCount(), "no poll after cancellation")
 		require.Empty(t, watchSubscribers(replica), "the last caller stopped the watch")

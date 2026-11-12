@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -315,7 +316,7 @@ func run(t *testing.T, w *Worker) func() {
 		select {
 		case <-done:
 		case <-time.After(2 * releaseTimeout):
-			t.Error("Run did not return after cancel")
+			assert.Fail(t, "Run did not return after cancel")
 		}
 	}
 	t.Cleanup(stop)

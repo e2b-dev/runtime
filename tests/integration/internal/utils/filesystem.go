@@ -48,17 +48,11 @@ func CreateTextFile(tb testing.TB, path string, content string) (*bytes.Buffer, 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", path)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	require.NoError(tb, err)
 	_, err = part.Write([]byte(content))
-	if err != nil {
-		tb.Fatal(err)
-	}
+	require.NoError(tb, err)
 	err = writer.Close()
-	if err != nil {
-		tb.Fatal(err)
-	}
+	require.NoError(tb, err)
 
 	return body, writer.FormDataContentType()
 }

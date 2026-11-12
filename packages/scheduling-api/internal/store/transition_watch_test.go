@@ -194,7 +194,7 @@ func TestWaitCallersAreIndependent(t *testing.T) {
 		case got := <-waiter:
 			require.ErrorIs(t, got.err, context.Canceled)
 		case <-time.After(5 * time.Second):
-			t.Fatal("the caller did not return on cancellation")
+			require.Fail(t, "the caller did not return on cancellation")
 		}
 		require.Empty(t, watchSubscribers(replica), "the watch returned")
 		// pgx sends a cancel request and waits for the server to close the

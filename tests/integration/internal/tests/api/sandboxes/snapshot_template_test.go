@@ -486,7 +486,7 @@ func findDefaultTagBuildID(t *testing.T, tags []api.TemplateTag) openapi_types.U
 		}
 	}
 
-	t.Fatal("no 'default' tag found in template tags")
+	require.Fail(t, "no 'default' tag found in template tags")
 
 	return openapi_types.UUID{}
 }
@@ -523,7 +523,7 @@ func waitForSnapshotting(t *testing.T, db *setup.Database, sandboxID string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	t.Fatalf("timed out waiting for sandbox %s to enter snapshotting state", sandboxID)
+	require.Fail(t, "timed out waiting for sandbox to enter snapshotting state", "sandbox %s", sandboxID)
 }
 
 // startSnapshotInBackground fires a snapshot creation request in a goroutine.

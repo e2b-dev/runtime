@@ -177,8 +177,7 @@ func SetupSandboxWithCleanup(t *testing.T, c *api.ClientWithResponses, options .
 	// Release the slot since we never created a sandbox.
 	release()
 
-	t.Logf("Sandbox creation failed after 10 retries")
-	t.FailNow()
+	require.Fail(t, "Sandbox creation failed after 10 retries")
 
 	return nil
 }

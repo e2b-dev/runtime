@@ -70,7 +70,7 @@ func TestServe(t *testing.T) {
 	case err := <-served:
 		require.NoError(t, err)
 	case <-time.After(shutdownTimeout + 5*time.Second):
-		t.Fatal("serve did not return after shutdown")
+		require.Fail(t, "serve did not return after shutdown")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestServeCleanupWithOneConnection(t *testing.T) {
 	case err := <-served:
 		require.NoError(t, err)
 	case <-time.After(shutdownTimeout + 5*time.Second):
-		t.Fatal("serve did not return after shutdown")
+		require.Fail(t, "serve did not return after shutdown")
 	}
 	require.Eventually(t, func() bool {
 		var holders int
