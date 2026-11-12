@@ -74,11 +74,10 @@ func NewStore(
 	}
 }
 
-// Add inserts a sandbox into the store. A non-nil creation argument is a
-// create's write, which fires the AsyncNewlyCreatedSandbox callback and never
-// overwrites a stored record of the same execution (a retried or delayed
-// duplicate of it must not take the record back); nil is a sync/reconcile
-// re-add, which replaces whatever is stored.
+// Add inserts a sandbox into the store. It never overwrites a stored record
+// of the same execution (a retried or delayed duplicate of it must not take
+// the record back). A non-nil creation argument fires the
+// AsyncNewlyCreatedSandbox callback.
 func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMetadata) error {
 	sbxlogger.I(sandbox).Debug(ctx, "Adding sandbox to cache",
 		zap.Bool("newly_created", creation != nil),
@@ -92,13 +91,7 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 		sandbox.EndTime = sandbox.StartTime.Add(sandbox.MaxInstanceLength)
 	}
 
-	var err error
-	if creation != nil {
-		err = s.storage.Add(ctx, sandbox)
-	} else {
-		err = s.storage.Replace(ctx, sandbox)
-	}
-	if err != nil {
+	if err := s.storage.Add(ctx, sandbox); err != nil {
 		return err
 	}
 

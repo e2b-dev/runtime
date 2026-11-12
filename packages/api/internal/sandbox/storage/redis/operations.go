@@ -50,17 +50,7 @@ func releaseLock(ctx context.Context, release func(context.Context) error, err *
 // later writes), so a record of the same execution already stored is kept
 // as it is, and an execution removed or replaced under the ID is refused
 // for goneExecutionsTTL.
-func (s *Storage) Add(ctx context.Context, sbx sandboxtypes.Sandbox) error {
-	return s.add(ctx, sbx, false)
-}
-
-// Replace stores sbx over whatever is stored under its ID, this execution's
-// record included: a sync or reconcile re-add, never a create's write.
-func (s *Storage) Replace(ctx context.Context, sbx sandboxtypes.Sandbox) error {
-	return s.add(ctx, sbx, true)
-}
-
-func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace bool) (err error) {
+func (s *Storage) Add(ctx context.Context, sbx sandboxtypes.Sandbox) (err error) {
 	data, err := json.Marshal(sbx)
 	if err != nil {
 		return fmt.Errorf("failed to marshal sandbox: %w", err)
@@ -82,10 +72,6 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	// create's write never lowers the score a stored record has reached.
 	member := redis.Z{Score: float64(sbx.EndTime.UnixMilli()), Member: sandboxExpirationMember(sbx)}
 	err = s.run(faultAddAfterLocks, func() error {
-		if replace {
-			return s.redisClient.ZAdd(ctx, globalExpirationSet, member).Err()
-		}
-
 		return s.redisClient.ZAddNX(ctx, globalExpirationSet, member).Err()
 	})
 	if err != nil {
@@ -95,13 +81,9 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 	// The commit point, the gone set beside the record in its slot; the
 	// index entry lives in another slot and follows.
 	keys := []string{key, goneKeyFor(key)}
-	replaceFlag := "0"
-	if replace {
-		replaceFlag = "1"
-	}
 	var written int64
 	err = s.run(faultAddBeforeRecordWrite, func() (runErr error) {
-		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
+		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, int(goneExecutionsTTL.Seconds())).Int64()
 
 		return runErr
 	})
@@ -342,9 +324,6 @@ func (s *Storage) removeUnderLock(ctx context.Context, lock *storageLock, teamID
 		// The removal may have applied without its reply.
 		logger.L().Warn(ctx, "Failed to remove sandbox from global expiration index", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
-	// A Replace of the deleted execution written past an expired lock can
-	// land between the delete and the removal above and lose its member to
-	// it: the record is read again.
 	s.restoreReinstalled(ctx, []memberRef{ref})
 
 	return nil

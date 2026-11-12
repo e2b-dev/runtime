@@ -20,8 +20,6 @@ type Storage interface {
 	// Add stores a sandbox. A record of the same execution already stored is
 	// kept: the write is then a late duplicate of the one that landed.
 	Add(ctx context.Context, sandbox Sandbox) error
-	// Replace stores a sandbox over whatever is stored under its ID.
-	Replace(ctx context.Context, sandbox Sandbox) error
 	Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, error)
 	// Remove deletes the record of the expected execution, or of any when
 	// none is expected; another execution's is left whole and

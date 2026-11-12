@@ -211,8 +211,8 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 		}
 	}
 
-	// A Replace that reinstalled a member's execution between the read above
-	// and the removal lost the member to it; its record is read again now.
+	// An Add that stored a member's execution between the read above and the
+	// removal lost the member to it; its record is read again now.
 	s.restoreReinstalled(ctx, append(orphans, deadExecutions...))
 
 	if len(deferrals) > 0 {
@@ -237,21 +237,20 @@ func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, err
 
 // restoreReinstalled puts back the member of each execution among refs whose
 // record is stored, after a removal of those members by a caller that had
-// read the record absent or another execution's. A Replace reinstalling the
+// read the record absent or another execution's. An Add storing the
 // execution between that read and the removal wrote the same member before
 // its record, and the removal took it; the member and the record live in
 // different slots, so no one command can check the record as it removes the
-// member. The sweep holds no lock, so a complete Replace can land inside it;
-// a Remove holds the record's lock, so only a Replace written past an expired
-// lock can land inside that one. A Replace landing after this read asserts
-// its member again after its record's write (see add), so the two reads
-// together leave no stored record unindexed by an acknowledged removal. The
-// member comes back due now, not scored by the record read here: that
-// record can be older than the one a later write stored, and a future score
-// would hold the sandbox past its end; the next sweep reads the record and
-// scores the member by it, or returns the sandbox if it has expired. NX: a
-// score a concurrent writer set stands. A record the reader skips is left
-// to the healer, as is a failed read or write here.
+// member. The sweep holds no lock, so a complete Add can land inside it. An
+// Add landing after this read asserts its member again after its record's
+// write (see Add), so the two reads together leave no stored record
+// unindexed by an acknowledged removal. The member comes back due now, not
+// scored by the record read here: that record can be older than the one a
+// later write stored, and a future score would hold the sandbox past its
+// end; the next sweep reads the record and scores the member by it, or
+// returns the sandbox if it has expired. NX: a score a concurrent writer set
+// stands. A record the reader skips is left to the healer, as is a failed
+// read or write here.
 func (s *Storage) restoreReinstalled(ctx context.Context, refs []memberRef) {
 	if len(refs) == 0 {
 		return

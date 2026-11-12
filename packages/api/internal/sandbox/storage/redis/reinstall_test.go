@@ -17,11 +17,11 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
-// A Replace reinstalling an execution writes its member before its record.
+// A write reinstalling an execution writes its member before its record.
 // ExpiredItems and Remove remove a member after reading its record absent or
-// another execution's, and a Replace landing between that read and the
+// another execution's, and a write landing between that read and the
 // removal loses its member to it: both read the record again after the
-// removal and put the member back, due now, and a Replace landing after that
+// removal and put the member back, due now, and an Add landing after that
 // read asserts its member again after its record's write, due now as well;
 // the next sweep then scores the member by the record. These tests drive
 // each interleaving through a client hook, with the hook's writes landing
@@ -80,8 +80,8 @@ func isAddScript(cmd redis.Cmder, key string) bool {
 	return ok && strings.HasSuffix(recordKey, key)
 }
 
-// reinstallBeforeAssert performs a Replace's writes up to its record's write:
-// the member, then the record, without the assertion that follows the write.
+// reinstallBeforeAssert writes an execution's member, then its record,
+// without the assertion an Add makes after its record's write.
 func reinstallBeforeAssert(ctx context.Context, client redis.UniversalClient, sbx sandboxtypes.Sandbox) error {
 	member := redis.Z{Score: float64(sbx.EndTime.UnixMilli()), Member: sandboxExpirationMember(sbx)}
 	if err := client.ZAdd(ctx, globalExpirationSet, member).Err(); err != nil {
@@ -93,13 +93,10 @@ func reinstallBeforeAssert(ctx context.Context, client redis.UniversalClient, sb
 		return err
 	}
 
-	key := recordKey(sbx.SandboxID)
-	keys := []string{key, goneKeyFor(key)}
-
-	return RunScript(ctx, client, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, "1", int(goneExecutionsTTL.Seconds())).Err()
+	return client.Set(ctx, recordKey(sbx.SandboxID), data, 0).Err()
 }
 
-// reinstalls are the two ways a Replace can have landed when a removal of
+// reinstalls are the two ways a write can have landed when a removal of
 // its member runs: complete, its assertion included, or up to its record's
 // write.
 var reinstalls = []struct {
@@ -107,7 +104,7 @@ var reinstalls = []struct {
 	land func(ctx context.Context, storage *Storage, client redis.UniversalClient, sbx sandboxtypes.Sandbox) error
 }{
 	{"complete", func(ctx context.Context, storage *Storage, _ redis.UniversalClient, sbx sandboxtypes.Sandbox) error {
-		return storage.Replace(ctx, sbx)
+		return storage.Add(ctx, sbx)
 	}},
 	{"before its assertion", func(ctx context.Context, _ *Storage, client redis.UniversalClient, sbx sandboxtypes.Sandbox) error {
 		return reinstallBeforeAssert(ctx, client, sbx)
@@ -126,7 +123,7 @@ func requireMemberDue(t *testing.T, client redis.UniversalClient, member string,
 }
 
 // The sweep read the member's record absent (a refused create's leftover) or
-// another execution's; the Replace lands before the sweep's removal, which
+// another execution's; the write lands before the sweep's removal, which
 // takes the member. The sweep reads the record again, puts the member back
 // due now, and returns the sandbox, expired, on its next pass.
 func TestExpiredItems_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
@@ -146,7 +143,7 @@ func TestExpiredItems_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 		}},
 	} {
 		for _, reinstall := range reinstalls {
-			t.Run(stored.name+", the Replace "+reinstall.name, func(t *testing.T) {
+			t.Run(stored.name+", the write "+reinstall.name, func(t *testing.T) {
 				t.Parallel()
 
 				ctx := t.Context()
@@ -174,7 +171,7 @@ func TestExpiredItems_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 				before := time.Now()
 				items, err := storage.ExpiredItems(ctx)
 				require.NoError(t, err)
-				require.Empty(t, items, "the sweep judged the member stale before the Replace landed")
+				require.Empty(t, items, "the sweep judged the member stale before the write landed")
 				require.True(t, reinstalled.Load())
 
 				got, err := storage.Get(ctx, teamID, sbx.SandboxID)
@@ -191,12 +188,10 @@ func TestExpiredItems_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 	}
 }
 
-// Remove deleted the record; a Replace reinstalls the execution before
+// Remove deleted the record; a write reinstalls the execution before
 // Remove's removal of its member, which takes the member. Remove reads the
 // record again and puts the member back due now; the next sweep scores it by
-// the record. A complete Replace takes both form locks and waits for this
-// Remove, so the one that can land inside it was written past an expired
-// lock: the writes up to the record, without the assertion.
+// the record.
 func TestRemove_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 	t.Parallel()
 
@@ -238,7 +233,7 @@ func TestRemove_PutsBackAMemberReinstalledDuringItsRemoval(t *testing.T) {
 // reads the record absent again and returns), or a removal right after the
 // record's write. The write asserts its member after the record's write,
 // due now, and the next sweep scores it by the record or returns the
-// sandbox. The same holds for a create's write.
+// sandbox.
 func TestAdd_AssertsItsMemberAfterItsRecordWrite(t *testing.T) {
 	t.Parallel()
 
@@ -259,60 +254,52 @@ func TestAdd_AssertsItsMemberAfterItsRecordWrite(t *testing.T) {
 		}, false},
 	}
 
-	for _, write := range []struct {
-		name  string
-		write func(storage *Storage, ctx context.Context, sbx sandboxtypes.Sandbox) error
-	}{
-		{"replace", (*Storage).Replace},
-		{"create", (*Storage).Add},
-	} {
-		for _, hole := range holes {
-			t.Run(write.name+", "+hole.name, func(t *testing.T) {
-				t.Parallel()
+	for _, hole := range holes {
+		t.Run(hole.name, func(t *testing.T) {
+			t.Parallel()
 
-				ctx := t.Context()
-				teamID := uuid.New()
-				sbx := makeIndexedSandbox(teamID, "sbx-asserted", uuid.NewString(), time.Now().Add(-2*time.Minute), time.Now().Add(hole.endTime))
-				member := sandboxExpirationMember(sbx)
+			ctx := t.Context()
+			teamID := uuid.New()
+			sbx := makeIndexedSandbox(teamID, "sbx-asserted", uuid.NewString(), time.Now().Add(-2*time.Minute), time.Now().Add(hole.endTime))
+			member := sandboxExpirationMember(sbx)
 
-				var storage *Storage
-				var client redis.UniversalClient
-				var landed atomic.Bool
-				storage, client = hookedStorage(t, commandHook{single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
-					if !isAddScript(cmd, recordKey(sbx.SandboxID)) || !landed.CompareAndSwap(false, true) {
-						return next(ctx, cmd)
-					}
-					if hole.before {
-						if err := hole.land(ctx, storage, client, member); err != nil {
-							return err
-						}
-
-						return next(ctx, cmd)
-					}
-					if err := next(ctx, cmd); err != nil {
+			var storage *Storage
+			var client redis.UniversalClient
+			var landed atomic.Bool
+			storage, client = hookedStorage(t, commandHook{single: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+				if !isAddScript(cmd, recordKey(sbx.SandboxID)) || !landed.CompareAndSwap(false, true) {
+					return next(ctx, cmd)
+				}
+				if hole.before {
+					if err := hole.land(ctx, storage, client, member); err != nil {
 						return err
 					}
 
-					return hole.land(ctx, storage, client, member)
-				}})
-
-				require.NoError(t, addSandboxScript.Load(ctx, client).Err())
-				before := time.Now()
-				require.NoError(t, write.write(storage, ctx, sbx))
-				require.True(t, landed.Load())
-				requireMemberDue(t, client, member, before)
-
-				items, err := storage.ExpiredItems(ctx)
-				require.NoError(t, err)
-				if sbx.IsExpired(time.Now()) {
-					require.Len(t, items, 1)
-					require.Equal(t, sbx.ExecutionID, items[0].ExecutionID)
-				} else {
-					require.Empty(t, items)
-					requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
+					return next(ctx, cmd)
 				}
-			})
-		}
+				if err := next(ctx, cmd); err != nil {
+					return err
+				}
+
+				return hole.land(ctx, storage, client, member)
+			}})
+
+			require.NoError(t, addSandboxScript.Load(ctx, client).Err())
+			before := time.Now()
+			require.NoError(t, storage.Add(ctx, sbx))
+			require.True(t, landed.Load())
+			requireMemberDue(t, client, member, before)
+
+			items, err := storage.ExpiredItems(ctx)
+			require.NoError(t, err)
+			if sbx.IsExpired(time.Now()) {
+				require.Len(t, items, 1)
+				require.Equal(t, sbx.ExecutionID, items[0].ExecutionID)
+			} else {
+				require.Empty(t, items)
+				requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
+			}
+		})
 	}
 }
 
@@ -355,7 +342,7 @@ func TestAdd_AFailedAssertionIsLeftToTheHealer(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sibling))
 	require.NoError(t, addSandboxScript.Load(ctx, client).Err())
 
-	require.NoError(t, storage.Replace(ctx, sbx))
+	require.NoError(t, storage.Add(ctx, sbx))
 	require.True(t, swept.Load())
 	require.True(t, failed.Load())
 

@@ -75,16 +75,15 @@ var (
 	`)
 
 	// addSandboxScript atomically stores a record; its index entry lives in
-	// another slot and follows. Unless ARGV[4] is '1', the write is refused
-	// (nothing written) when it is a late duplicate (see Add): 0 when its
-	// execution is already stored, 2 when its execution is in the gone set
-	// (KEYS[2], in the record's slot), which holds the executions removed or
-	// replaced under this sandbox ID for ARGV[5] seconds. A write that
-	// replaces another execution's record puts that execution in the gone set.
+	// another slot and follows. The write is refused (nothing written) when
+	// it is a late duplicate (see Add): 0 when its execution is already
+	// stored, 2 when its execution is in the gone set (KEYS[2], in the
+	// record's slot), which holds the executions removed or replaced under
+	// this sandbox ID for ARGV[4] seconds. A write that replaces another
+	// execution's record puts that execution in the gone set.
 	// KEYS[1] = sandbox key, KEYS[2] = gone set
 	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID,
-	// ARGV[3] = execution ID, ARGV[4] = '1' to replace a stored record of the
-	// same execution, ARGV[5] = gone set TTL in seconds
+	// ARGV[3] = execution ID, ARGV[4] = gone set TTL in seconds
 	// Replies: 1 written, 0 already stored for this execution, 2 refused as
 	// gone, 3 refused as held.
 	addSandboxScript = redis.NewScript(isHeldLua + `
@@ -98,20 +97,18 @@ var (
 				held = is_held(decoded)
 			end
 		end
-		if ARGV[4] ~= '1' then
-			if stored and stored == ARGV[3] then
-				return 0
-			end
-			if redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 1 then
-				return 2
-			end
+		if stored and stored == ARGV[3] then
+			return 0
+		end
+		if redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 1 then
+			return 2
 		end
 		if held then
 			return 3
 		end
 		if stored and stored ~= ARGV[3] then
 			redis.call('SADD', KEYS[2], stored)
-			redis.call('EXPIRE', KEYS[2], ARGV[5])
+			redis.call('EXPIRE', KEYS[2], ARGV[4])
 		end
 		redis.call('SET', KEYS[1], ARGV[1])
 		return 1

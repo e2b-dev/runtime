@@ -31,7 +31,7 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	key := recordKey("sbx")
 	goneKey := goneKeyFor(key)
 
-	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey}, "{}", "sbx", "exec", "0", 60).Err())
+	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey}, "{}", "sbx", "exec", 60).Err())
 	lockRecord(t, client, key)
 
 	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key)}, "sbx", "", 60, "", testLockValue))

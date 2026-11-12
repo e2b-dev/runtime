@@ -154,22 +154,3 @@ func (r *scannedItems) add(batch []sandboxtypes.Sandbox) {
 		r.out = append(r.out, sbx)
 	}
 }
-
-// AllRunningItems returns every running sandbox in the store across all teams,
-// scanned in bounded batches, once each. Teams whose scan fails are skipped,
-// so the result is best effort: a missing sandbox never means "this sandbox
-// does not exist" (see forEachSandboxBatch).
-func (s *Storage) AllRunningItems(ctx context.Context) ([]sandboxtypes.Sandbox, error) {
-	items := newScannedItems([]sandboxtypes.State{sandboxtypes.StateRunning})
-
-	_, err := s.forEachSandboxBatch(ctx, func(_ string, batch []sandboxtypes.Sandbox, _ []recordRef) error {
-		items.add(batch)
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return items.out, nil
-}

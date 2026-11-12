@@ -63,28 +63,6 @@ func TestAdd_ANewExecutionReplacesTheStoredRecord(t *testing.T) {
 	assert.True(t, got.EndTime.Equal(fresh.EndTime))
 }
 
-// A re-add (a sync or reconcile, or a test installing a state) replaces the
-// record of the same execution; only a create's write is idempotent.
-func TestReplace_OverwritesTheSameExecution(t *testing.T) {
-	t.Parallel()
-
-	storage, client := setupTestStorage(t)
-
-	teamID := uuid.New()
-	start := time.Now()
-	sbx := makeIndexedSandbox(teamID, "sbx-replace", uuid.NewString(), start, start.Add(5*time.Minute))
-	require.NoError(t, storage.Add(t.Context(), sbx))
-
-	changed := sbx
-	changed.EndTime = start.Add(2 * time.Minute)
-	require.NoError(t, storage.Replace(t.Context(), changed))
-
-	got, err := storage.Get(t.Context(), teamID, sbx.SandboxID)
-	require.NoError(t, err)
-	assert.True(t, got.EndTime.Equal(changed.EndTime))
-	requireMemberScore(t, client, expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID), float64(changed.EndTime.UnixMilli()))
-}
-
 // A duplicate landing after the record was removed must not bring it back:
 // the gone set sits beside the record in its slot.
 func TestAdd_AfterRemoveTheSameExecutionStaysGone(t *testing.T) {
@@ -132,32 +110,4 @@ func TestAdd_AnOlderExecutionNeverReplacesTheResumedOne(t *testing.T) {
 	got, err := storage.Get(t.Context(), teamID, "sbx-resumed")
 	require.NoError(t, err)
 	assert.Equal(t, fresh.ExecutionID, got.ExecutionID)
-}
-
-// A sync re-add (Replace) of an execution the gone set holds reinstalls it:
-// its record and member are back, and a late duplicate of its create is then
-// a plain duplicate that keeps both, since a stored record of the execution
-// is checked before the gone set.
-func TestReplace_ReinstallsAGoneExecution(t *testing.T) {
-	t.Parallel()
-
-	storage, client := setupTestStorage(t)
-
-	teamID := uuid.New()
-	start := time.Now()
-	sbx := makeIndexedSandbox(teamID, "sbx-reinstalled", uuid.NewString(), start, start.Add(5*time.Minute))
-	require.NoError(t, storage.Add(t.Context(), sbx))
-	require.NoError(t, storage.Remove(t.Context(), teamID, sbx.SandboxID, ""))
-
-	require.NoError(t, storage.Replace(t.Context(), sbx))
-	got, err := storage.Get(t.Context(), teamID, sbx.SandboxID)
-	require.NoError(t, err)
-	assert.Equal(t, sbx.ExecutionID, got.ExecutionID)
-	member := expirationMember(teamID.String(), sbx.SandboxID, sbx.ExecutionID)
-	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
-
-	require.NoError(t, storage.Add(t.Context(), sbx), "a late duplicate of the create")
-	_, err = storage.Get(t.Context(), teamID, sbx.SandboxID)
-	require.NoError(t, err, "the reinstalled record stays")
-	requireMemberScore(t, client, member, float64(sbx.EndTime.UnixMilli()))
 }

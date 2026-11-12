@@ -126,8 +126,6 @@ func TestLifecycleHold(t *testing.T) {
 	replacement := sbx
 	replacement.ExecutionID, replacement.NodeID = uuid.NewString(), "node-c"
 	require.ErrorIs(t, storage.Add(ctx, replacement), sandboxtypes.ErrLifecycleHeld)
-	require.ErrorIs(t, storage.Replace(ctx, replacement), sandboxtypes.ErrLifecycleHeld)
-	require.ErrorIs(t, storage.Replace(ctx, sbx), sandboxtypes.ErrLifecycleHeld, "a re-add of the held execution")
 	require.NoError(t, storage.Add(ctx, sbx), "a late duplicate of the create is kept out")
 	require.ErrorIs(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, ""), sandboxtypes.ErrLifecycleHeld)
 	// A transition whose lock expired before its write: the script refuses
