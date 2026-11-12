@@ -507,7 +507,7 @@ func (s *Storage) healUnindexed(ctx context.Context, lock *storageLock, ref reco
 	if now.Sub(sbx.EndTime) <= sandboxtypes.StaleCutoff {
 		return "", nil
 	}
-	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), lock.Key()}, ref.SandboxID, sbx.ExecutionID, int(goneExecutionsTTL.Seconds()), "", lockValueOf(lock)))
+	deleted, _, _, err := parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), lock.Key(), metaKeyFor(key)}, ref.SandboxID, sbx.ExecutionID, int(goneExecutionsTTL.Seconds()), "", lockValueOf(lock)))
 	if err != nil {
 		return "", fmt.Errorf("remove_record: %w", err)
 	}

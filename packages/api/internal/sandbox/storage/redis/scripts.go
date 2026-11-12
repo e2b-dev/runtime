@@ -34,10 +34,35 @@ const isHeldLua = `
 	end
 `
 
+// parseMetaLua defines parse_meta, which reads the fields the hot path needs —
+// execution ID and whether the record is held — from packMeta's string without
+// decoding the record JSON. Layout: executionID US lifecycleHold US
+// lifecycleHoldUntil(ms). Returns (executionID, held). A hold whose deadline
+// Redis's clock has reached is released, matching is_held.
+const parseMetaLua = `
+	local function parse_meta(s)
+		local sep = string.char(31)
+		local i1 = string.find(s, sep, 1, true)
+		if not i1 then return s, false end
+		local eid = string.sub(s, 1, i1 - 1)
+		local i2 = string.find(s, sep, i1 + 1, true)
+		if not i2 then return eid, false end
+		local hold = string.sub(s, i1 + 1, i2 - 1)
+		if hold == '' then return eid, false end
+		local until_ms = tonumber(string.sub(s, i2 + 1))
+		if not until_ms then return eid, false end
+		local now = redis.call('TIME')
+		return eid, until_ms > tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+	end
+`
+
 // Lua scripts for atomic operations.
 // These scripts ensure true atomicity in Redis cluster mode
 var (
 	// A write past an expired lock can replace the record; compare it atomically before restoring it.
+	// KEYS[1] = record key, KEYS[2] = meta key
+	// ARGV[1] = expected current record, ARGV[2] = updated record,
+	// ARGV[3] = packed meta of the updated record (see packMeta)
 	restoreSandboxScript = redis.NewScript(`
 		local current = redis.call('GET', KEYS[1])
 		if current == ARGV[2] then
@@ -47,19 +72,22 @@ var (
 			return 0
 		end
 		redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')
+		redis.call('SET', KEYS[2], ARGV[3])
 		return 1
 	`)
 
 	// fencedSetScript writes a record, keeping its TTL, only while the lock
 	// key still holds the writer's value. The keys share a slot: the lock key
 	// is the record key with a prefix.
-	// KEYS[1] = lock key, KEYS[2] = record key
-	// ARGV[1] = lock value (token and metadata), ARGV[2] = serialized record
+	// KEYS[1] = lock key, KEYS[2] = record key, KEYS[3] = meta key
+	// ARGV[1] = lock value (token and metadata), ARGV[2] = serialized record,
+	// ARGV[3] = packed meta (see packMeta)
 	fencedSetScript = redis.NewScript(`
 		if redis.call('GET', KEYS[1]) ~= ARGV[1] then
 			return 0
 		end
 		redis.call('SET', KEYS[2], ARGV[2], 'KEEPTTL')
+		redis.call('SET', KEYS[3], ARGV[3])
 		return 1
 	`)
 
@@ -81,10 +109,11 @@ var (
 	// (KEYS[2], in the record's slot), which holds the executions removed or
 	// replaced under this sandbox ID for ARGV[5] seconds. A write that
 	// replaces another execution's record puts that execution in the gone set.
-	// KEYS[1] = sandbox key, KEYS[2] = gone set
+	// KEYS[1] = sandbox key, KEYS[2] = gone set, KEYS[3] = meta key
 	// ARGV[1] = serialized sandbox data, ARGV[2] = sandbox ID,
 	// ARGV[3] = execution ID, ARGV[4] = '1' to replace a stored record of the
-	// same execution, ARGV[5] = gone set TTL in seconds
+	// same execution, ARGV[5] = gone set TTL in seconds,
+	// ARGV[6] = packed meta (see packMeta)
 	// Replies: 1 written, 0 already stored for this execution, 2 refused as
 	// gone, 3 refused as held.
 	addSandboxScript = redis.NewScript(isHeldLua + `
@@ -114,6 +143,7 @@ var (
 			redis.call('EXPIRE', KEYS[2], ARGV[5])
 		end
 		redis.call('SET', KEYS[1], ARGV[1])
+		redis.call('SET', KEYS[3], ARGV[6])
 		return 1
 	`)
 
@@ -134,6 +164,7 @@ var (
 	// removes nothing.
 	// KEYS[1] = sandbox key, KEYS[2] = gone set, both in the record's slot
 	// KEYS[3] = the record's lock key, in the record's slot
+	// KEYS[4] = meta key, in the record's slot
 	// ARGV[1] = sandbox ID
 	// ARGV[2] = expected execution ID, or "" to remove any execution
 	// ARGV[3] = gone set TTL in seconds
@@ -164,6 +195,7 @@ var (
 			return {0, data}
 		end
 		redis.call('DEL', KEYS[1])
+		redis.call('DEL', KEYS[4])
 		if ok and decoded['executionID'] then
 			redis.call('SADD', KEYS[2], decoded['executionID'])
 			redis.call('EXPIRE', KEYS[2], ARGV[3])
@@ -188,33 +220,51 @@ var (
 	// KEYS[2] = transition key
 	// KEYS[3] = transition result key
 	// KEYS[4] = the record's lock key, in the record's slot
+	// KEYS[5] = meta key, in the record's slot
 	// ARGV[1] = new sandbox JSON data
 	// ARGV[2] = transition ID (UUID)
 	// ARGV[3] = transition key TTL in seconds
 	// ARGV[4] = result key TTL in seconds
 	// ARGV[5] = expected execution ID, or "" to write unconditionally
 	// ARGV[6] = lock value (token and metadata)
-	startTransitionScript = redis.NewScript(isHeldLua + `
+	// ARGV[7] = packed meta of the new record (see packMeta)
+	//
+	// The held check and execution-ID guard read the meta key (KEYS[5]) with a
+	// single GET instead of cjson.decode of the record JSON, so the hot path
+	// (the evictor's StartRemoving, calling this with ARGV[5] set under
+	// concurrent expiry) no longer parses JSON on Redis's event loop (#3602).
+	// Migration: a record written before the meta key existed has no meta; the
+	// script then falls back to decoding the record, exactly as before, so
+	// pre-deploy sandboxes stay correct until they are next written (which sets
+	// the meta key) or expire.
+	startTransitionScript = redis.NewScript(isHeldLua + parseMetaLua + `
 		if redis.call('GET', KEYS[4]) ~= ARGV[6] then
 			return 3
 		end
-		local current = redis.call('GET', KEYS[1])
-		local ok, decoded = false, nil
-		if current then
-			ok, decoded = pcall(cjson.decode, current)
+		local meta = redis.call('GET', KEYS[5])
+		local stored, held
+		if meta then
+			stored, held = parse_meta(meta)
+		else
+			local current = redis.call('GET', KEYS[1])
+			if current then
+				local ok, decoded = pcall(cjson.decode, current)
+				if ok then
+					stored = decoded['executionID']
+					held = is_held(decoded)
+				end
+			end
 		end
-		if ok and is_held(decoded) then
+		if held then
 			return 2
 		end
 		if ARGV[5] ~= '' then
-			if not current then
-				return 0
-			end
-			if not ok or decoded['executionID'] ~= ARGV[5] then
+			if not stored or stored ~= ARGV[5] then
 				return 0
 			end
 		end
 		redis.call('SET', KEYS[1], ARGV[1])
+		redis.call('SET', KEYS[5], ARGV[7])
 		redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 		redis.call('SET', KEYS[3], '', 'EX', ARGV[4])
 		return 1

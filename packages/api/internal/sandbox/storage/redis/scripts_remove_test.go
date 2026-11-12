@@ -109,7 +109,7 @@ func newRemoveScript(client redis.UniversalClient) removeScript {
 	as := func(ctx context.Context, sandboxID, expected, holdID, lockValue string) *redis.Cmd {
 		key := recordKey(sandboxID)
 
-		return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)}, sandboxID, expected, 60, holdID, lockValue)
+		return RunScript(ctx, client, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), metaKeyFor(key)}, sandboxID, expected, 60, holdID, lockValue)
 	}
 
 	return removeScript{

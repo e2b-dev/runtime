@@ -175,7 +175,7 @@ func (s *Storage) writeHeld(ctx context.Context, lock *storageLock, sbx sandboxt
 	if err != nil {
 		return fmt.Errorf("failed to marshal sandbox: %w", err)
 	}
-	if err := s.setUnderLock(ctx, lock, recordKey(sbx.SandboxID), data); err != nil {
+	if err := s.setUnderLock(ctx, lock, recordKey(sbx.SandboxID), data, packMeta(sbx)); err != nil {
 		return fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
 

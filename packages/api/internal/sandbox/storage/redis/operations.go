@@ -94,14 +94,14 @@ func (s *Storage) add(ctx context.Context, sbx sandboxtypes.Sandbox, replace boo
 
 	// The commit point, the gone set beside the record in its slot; the
 	// index entry lives in another slot and follows.
-	keys := []string{key, goneKeyFor(key)}
+	keys := []string{key, goneKeyFor(key), metaKeyFor(key)}
 	replaceFlag := "0"
 	if replace {
 		replaceFlag = "1"
 	}
 	var written int64
 	err = s.run(faultAddBeforeRecordWrite, func() (runErr error) {
-		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds())).Int64()
+		written, runErr = RunScript(ctx, s.redisClient, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, replaceFlag, int(goneExecutionsTTL.Seconds()), packMeta(sbx)).Int64()
 
 		return runErr
 	})
@@ -426,7 +426,7 @@ func (s *Storage) removeSandboxRecord(ctx context.Context, key, teamKey string, 
 	var raw string
 	for range removeRecordRetries + 1 {
 		err = s.run(faultRemoveAfterSREM, func() (runErr error) {
-			deleted, raw, absent, runErr = parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key)}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds()), holdID, lockValueOf(lock)))
+			deleted, raw, absent, runErr = parseRemoveReply(RunScript(ctx, s.redisClient, "remove_record", removeSandboxScript, []string{key, goneKeyFor(key), redis_utils.GetLockKey(key), metaKeyFor(key)}, sandboxID, expectedExecutionID, int(goneExecutionsTTL.Seconds()), holdID, lockValueOf(lock)))
 
 			return runErr
 		})
@@ -521,7 +521,7 @@ func (s *Storage) Update(ctx context.Context, teamID uuid.UUID, sandboxID string
 
 	// The update may have acted outside the store already (a network update
 	// applies on the node first), so the write is retried, and fenced by the lock.
-	err = s.setUnderLock(ctx, lock, key, newData)
+	err = s.setUnderLock(ctx, lock, key, newData, packMeta(updatedSbx))
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
@@ -612,7 +612,7 @@ const updateWriteBackoff = 50 * time.Millisecond
 // caller's token, checked and written in one script, so a write that lands
 // late cannot overwrite what a later lock holder stored. A failed write is
 // retried a bounded number of times; a lost lock is not.
-func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key string, data []byte) error {
+func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key string, data []byte, meta string) error {
 	var err error
 	for attempt := range updateWriteAttempts {
 		if attempt > 0 {
@@ -623,7 +623,7 @@ func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key strin
 			}
 		}
 		var written int64
-		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key}, lockValueOf(lock), data).Int64()
+		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key, metaKeyFor(key)}, lockValueOf(lock), data, meta).Int64()
 		if err == nil {
 			if written == 1 {
 				return nil

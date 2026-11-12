@@ -134,7 +134,7 @@ func TestLifecycleHold(t *testing.T) {
 	// the hold taken since, which the Go check before it could not see.
 	transitionID := uuid.NewString()
 	keys := transitionKeysFor(t, client, sbx, transitionID)
-	written, err := RunScript(ctx, client, "start_transition", startTransitionScript, keys, `{"executionID":"stale"}`, transitionID, 60, 60, "", transitionLockValue).Int64()
+	written, err := RunScript(ctx, client, "start_transition", startTransitionScript, keys, `{"executionID":"stale"}`, transitionID, 60, 60, "", transitionLockValue, metaOf("stale")).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), written)
 	assert.Zero(t, client.Exists(ctx, keys[1]).Val(), "no transition started")
@@ -294,7 +294,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	until := time.Now().Add(300 * time.Millisecond)
 	require.NoError(t, holdExecution(t, storage, short, "op", until))
 	lockRecord(t, client, shortKey)
-	removeKeys := []string{shortKey, goneKeyFor(shortKey), redis_utils.GetLockKey(shortKey)}
+	removeKeys := []string{shortKey, goneKeyFor(shortKey), redis_utils.GetLockKey(shortKey), metaKeyFor(shortKey)}
 	deleted, _, _, err := parseRemoveReply(RunScript(ctx, client, "remove_record", removeSandboxScript, removeKeys, short.SandboxID, short.ExecutionID, 60, "", testLockValue))
 	require.NoError(t, err)
 	assert.False(t, deleted, "refused while held")

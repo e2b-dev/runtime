@@ -44,7 +44,7 @@ func isFencedWriteOf(cmd redis.Cmder, key string) bool {
 	if (name != "evalsha" && name != "eval") || len(args) < 5 {
 		return false
 	}
-	if n, ok := args[2].(int); !ok || n != 2 {
+	if n, ok := args[2].(int); !ok || n != 3 {
 		return false
 	}
 	k, ok := args[4].(string)
@@ -144,7 +144,7 @@ func TestFencedSetScript(t *testing.T) {
 	require.NoError(t, client.Set(ctx, key, "v1", time.Hour).Err())
 	require.NoError(t, client.Set(ctx, lockKey, "token-a", time.Minute).Err())
 
-	written, err := fencedSetScript.Run(ctx, client, []string{lockKey, key}, "token-a", "v2").Int64()
+	written, err := fencedSetScript.Run(ctx, client, []string{lockKey, key, metaKeyFor(key)}, "token-a", "v2", metaOf("e2")).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
 	value, err := client.Get(ctx, key).Result()
@@ -154,7 +154,7 @@ func TestFencedSetScript(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, ttl, 50*time.Minute, "KEEPTTL keeps the record's expiry")
 
-	written, err = fencedSetScript.Run(ctx, client, []string{lockKey, key}, "token-b", "v3").Int64()
+	written, err = fencedSetScript.Run(ctx, client, []string{lockKey, key, metaKeyFor(key)}, "token-b", "v3", metaOf("e3")).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written, "another holder's token writes nothing")
 	value, err = client.Get(ctx, key).Result()
@@ -162,7 +162,7 @@ func TestFencedSetScript(t *testing.T) {
 	assert.Equal(t, "v2", value)
 
 	require.NoError(t, client.Del(ctx, lockKey).Err())
-	written, err = fencedSetScript.Run(ctx, client, []string{lockKey, key}, "token-a", "v4").Int64()
+	written, err = fencedSetScript.Run(ctx, client, []string{lockKey, key, metaKeyFor(key)}, "token-a", "v4", metaOf("e4")).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written, "an expired lock writes nothing")
 }
