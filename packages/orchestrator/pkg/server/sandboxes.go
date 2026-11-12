@@ -358,7 +358,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	if err := firecrackerVersionRefusal(ctx, profile, resolvedFCVersion); err != nil {
 		return nil, err
 	}
-	config, err := sandboxConfigOf(req.GetSandbox(), firecrackerConfigFor(meta, profile, req.GetSandbox().GetKernelVersion(), resolvedFCVersion))
+	config, err := sandboxConfigOf(req.GetSandbox(), firecrackerConfigFor(meta, profile, req.GetSandbox().GetKernelVersion(), resolvedFCVersion), s.config.NFSMountNconnect)
 	if err != nil {
 		return nil, err
 	}
@@ -608,8 +608,9 @@ func (s *Server) pinTemplateWithProfile(ctx context.Context, buildID string, isS
 
 // sandboxConfigOf is the configuration a start of the sandbox api describes
 // runs with on firecracker. The start may change it, never api.
-func sandboxConfigOf(api *orchestrator.SandboxConfig, firecracker fc.Config) (*sandbox.Config, error) {
-	volumeMounts, err := createVolumeMountModelsFromAPI(api.GetVolumeMounts())
+// nconnectDefault is the node's nconnect for volume mounts that request none.
+func sandboxConfigOf(api *orchestrator.SandboxConfig, firecracker fc.Config, nconnectDefault int) (*sandbox.Config, error) {
+	volumeMounts, err := createVolumeMountModelsFromAPI(api.GetVolumeMounts(), nconnectDefault)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert volume mounts: %w", err)
 	}
@@ -638,7 +639,7 @@ func sandboxConfigOf(api *orchestrator.SandboxConfig, firecracker fc.Config) (*s
 	}), nil
 }
 
-func createVolumeMountModelsFromAPI(volumeMounts []*orchestrator.SandboxVolumeMount) ([]sandbox.VolumeMountConfig, error) {
+func createVolumeMountModelsFromAPI(volumeMounts []*orchestrator.SandboxVolumeMount, nconnectDefault int) ([]sandbox.VolumeMountConfig, error) {
 	var errs []error
 
 	results := make([]sandbox.VolumeMountConfig, 0, len(volumeMounts))
@@ -651,11 +652,24 @@ func createVolumeMountModelsFromAPI(volumeMounts []*orchestrator.SandboxVolumeMo
 			continue
 		}
 
+		// A mount that requests no nconnect takes the node's default; the
+		// default itself may be 0 to mount without the option.
+		nconnect := int(v.GetNconnect())
+		if nconnect == 0 {
+			nconnect = nconnectDefault
+		}
+		if nconnect < 0 || nconnect > 16 {
+			errs = append(errs, fmt.Errorf("invalid nconnect %d for volume %q: must be between 0 and 16", nconnect, v.GetName()))
+
+			continue
+		}
+
 		results = append(results, sandbox.VolumeMountConfig{
-			ID:   volumeID,
-			Name: v.GetName(),
-			Path: v.GetPath(),
-			Type: v.GetType(),
+			ID:       volumeID,
+			Name:     v.GetName(),
+			Path:     v.GetPath(),
+			Type:     v.GetType(),
+			Nconnect: nconnect,
 		})
 	}
 

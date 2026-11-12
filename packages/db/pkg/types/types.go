@@ -190,6 +190,9 @@ type SandboxVolumeMountConfig struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// Nconnect is the number of parallel NFS transport connections, 0..16.
+	// 0 keeps the mount default.
+	Nconnect int `json:"nconnect,omitempty"`
 }
 
 type SandboxAutoResumePolicy string

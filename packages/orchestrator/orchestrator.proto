@@ -101,6 +101,9 @@ message SandboxVolumeMount {
   string path = 2;
   string type = 3;
   string name = 4;
+  // Number of parallel NFS transport connections (the mount command's
+  // nconnect), 1..16. 0 keeps the mount default.
+  uint32 nconnect = 5;
 }
 
 message SandboxNetworkConfig {

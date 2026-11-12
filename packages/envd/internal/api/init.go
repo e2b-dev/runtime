@@ -771,6 +771,17 @@ var nfsOptions = strings.Join([]string{
 	"retry=0",
 }, ",")
 
+// nfsMountOptions returns the full NFS mount option list. nconnect > 0 requests
+// that many parallel transport connections; 0 keeps the kernel default of one.
+func nfsMountOptions(nconnect int) string {
+	opts := nfsOptions
+	if nconnect > 0 {
+		opts += fmt.Sprintf(",nconnect=%d", nconnect)
+	}
+
+	return "fg,hard," + opts
+}
+
 // nfsMountTimeout bounds one mount command. It starts when that mount starts, since
 // volumes are mounted one at a time.
 const nfsMountTimeout = 10 * time.Second
@@ -921,12 +932,18 @@ func (a *API) mountNFS(ctx context.Context, logger zerolog.Logger, volume Volume
 		return 0, err
 	}
 
+	// An absent nconnect keeps the kernel default of one connection.
+	nconnect := 0
+	if volume.Nconnect != nil {
+		nconnect = *volume.Nconnect
+	}
+
 	start := time.Now()
 	attempts, timeouts := 0, 0
 	for {
 		attempts++
 		mountCtx, cancel := context.WithTimeout(volumeCtx, nfsMountTimeout)
-		err = a.nfs.Mount(mountCtx, volume.NfsTarget, volume.Path)
+		err = a.nfs.Mount(mountCtx, volume.NfsTarget, volume.Path, nconnect)
 		timedOut := mountCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded)
 		cancel()
 		if err == nil {

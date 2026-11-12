@@ -726,6 +726,12 @@ components:
         path:
           type: string
           description: Mount path inside the sandbox
+        nconnect:
+          type: integer
+          minimum: 0
+          maximum: 16
+          default: 0
+          description: Number of parallel NFS connections; zero uses the Linux default
       required:
         - nfs_target
         - path

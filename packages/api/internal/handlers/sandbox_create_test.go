@@ -613,6 +613,32 @@ func TestOrchestrator_convertVolumeMounts(t *testing.T) {
 			volumeTypes: []string{"local"},
 			err:         InvalidVolumeMountsError{[]InvalidMount{{1, "path '/path' is already used"}}},
 		},
+		"nconnect above 16 reports error": {
+			expectFeatureFlag: true,
+			expectResources:   true,
+			volumesEnabled:    true,
+			input: []api.SandboxVolumeMount{
+				{Name: "vol1", Path: "/vol1", Nconnect: new(17)},
+			},
+			database: []queries.CreateVolumeParams{
+				{Name: "vol1", VolumeType: "local"},
+			},
+			volumeTypes: []string{"local"},
+			err:         InvalidVolumeMountsError{[]InvalidMount{{0, "nconnect must be between 0 and 16, got 17"}}},
+		},
+		"negative nconnect reports error": {
+			expectFeatureFlag: true,
+			expectResources:   true,
+			volumesEnabled:    true,
+			input: []api.SandboxVolumeMount{
+				{Name: "vol1", Path: "/vol1", Nconnect: new(-1)},
+			},
+			database: []queries.CreateVolumeParams{
+				{Name: "vol1", VolumeType: "local"},
+			},
+			volumeTypes: []string{"local"},
+			err:         InvalidVolumeMountsError{[]InvalidMount{{0, "nconnect must be between 0 and 16, got -1"}}},
+		},
 		"multiple invalid mounts report all errors": {
 			expectFeatureFlag: true,
 			expectResources:   true,
@@ -700,6 +726,40 @@ func TestOrchestrator_convertVolumeMounts(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []*orchestrator.SandboxVolumeMount{
 			{Id: dbVolume.ID.String(), Name: "vol1", Path: "/vol1", Type: "local"},
+		}, actual)
+	})
+
+	t.Run("nconnect is passed through", func(t *testing.T) {
+		t.Parallel()
+
+		teamID := testutils.CreateTestTeam(t, db)
+
+		dbVolume, err := db.SqlcClient.CreateVolume(t.Context(),
+			queries.CreateVolumeParams{
+				ID:         uuid.New(),
+				Name:       "vol1",
+				TeamID:     teamID,
+				VolumeType: "local",
+			},
+		)
+		require.NoError(t, err)
+
+		ffClient := handlersmocks.NewMockFeatureFlagsClient(t)
+		ffClient.EXPECT().
+			BoolFlag(mock.Anything, mock.Anything).
+			Return(true)
+
+		actual, err := convertAPIVolumesToOrchestratorVolumes(
+			t.Context(), db.SqlcClient, ffClient,
+			teamID, []api.SandboxVolumeMount{
+				{Name: "vol1", Path: "/vol1", Nconnect: new(4)},
+				{Name: "vol1", Path: "/vol2"},
+			}, &queries.EnvBuild{EnvdVersion: new(minEnvdVersionForVolumes)},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, []*orchestrator.SandboxVolumeMount{
+			{Id: dbVolume.ID.String(), Name: "vol1", Path: "/vol1", Type: "local", Nconnect: 4},
+			{Id: dbVolume.ID.String(), Name: "vol1", Path: "/vol2", Type: "local"},
 		}, actual)
 	})
 }

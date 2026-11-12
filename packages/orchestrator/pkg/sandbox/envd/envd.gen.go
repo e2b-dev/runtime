@@ -239,6 +239,9 @@ type OOMKill struct {
 
 // VolumeMount Volume mount configuration
 type VolumeMount struct {
+	// Nconnect Number of parallel NFS connections; zero uses the Linux default
+	Nconnect int `json:"nconnect,omitempty"`
+
 	// NfsTarget Server target address
 	NfsTarget string `json:"nfs_target"`
 

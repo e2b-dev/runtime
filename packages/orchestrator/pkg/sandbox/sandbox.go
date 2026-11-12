@@ -239,6 +239,10 @@ type VolumeMountConfig struct {
 	Name string
 	Path string
 	Type string
+	// Nconnect is the number of parallel NFS transport connections, 0..16.
+	// The value is already resolved: 0 only when the node's default itself is
+	// 0, so envd mounts without the nconnect option.
+	Nconnect int
 }
 
 type EnvdMetadata struct {

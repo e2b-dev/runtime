@@ -586,6 +586,11 @@ Key mechanisms (all under `pkg/sandbox/`):
   rollback to the old export format requires a matching remount/new lifecycle.
   Lifecycle IDs are fresh random UUIDs at create/resume and appear in mount targets
   and logs. They identify stale requests, not a secret credential or new auth policy.
+  A mount may request a number of parallel NFS transport connections (the mount
+  command's `nconnect`, 0..16) with `volumeMounts[].nconnect`; one that requests none
+  uses the node's `NFS_MOUNT_NCONNECT` (default 1, 0 mounts without the option). envd
+  passes `nconnect=N` to the kernel only for a nonzero N, and the value a sandbox runs
+  with is resolved at each start, so the node default applies without a restart.
 - **Sandbox proxy** (:5007, `pkg/proxy/`): reverse-proxies incoming traffic from client-proxy to
   the sandbox's slot IP and requested port over HTTP or configured HTTPS, enforcing per-sandbox
   traffic access tokens through the shared ingress policy. HTTPS backends may use self-signed certificates.

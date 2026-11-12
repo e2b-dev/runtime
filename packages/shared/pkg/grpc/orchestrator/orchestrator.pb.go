@@ -533,11 +533,14 @@ func (x *SandboxAutoResumeConfig) GetTimeoutSeconds() uint64 {
 }
 
 type SandboxVolumeMount struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
-	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Path  string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Type  string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	Name  string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	// Number of parallel NFS transport connections (the mount command's
+	// nconnect), 1..16. 0 keeps the mount default.
+	Nconnect      uint32 `protobuf:"varint,5,opt,name=nconnect,proto3" json:"nconnect,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +601,13 @@ func (x *SandboxVolumeMount) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *SandboxVolumeMount) GetNconnect() uint32 {
+	if x != nil {
+		return x.Nconnect
+	}
+	return 0
 }
 
 type SandboxNetworkConfig struct {
@@ -2072,12 +2082,13 @@ const file_orchestrator_proto_rawDesc = "" +
 	"token_type\x18\x02 \x01(\tR\ttokenType\"Z\n" +
 	"\x17SandboxAutoResumeConfig\x12\x16\n" +
 	"\x06policy\x18\x01 \x01(\tR\x06policy\x12'\n" +
-	"\x0ftimeout_seconds\x18\x02 \x01(\x04R\x0etimeoutSeconds\"`\n" +
+	"\x0ftimeout_seconds\x18\x02 \x01(\x04R\x0etimeoutSeconds\"|\n" +
 	"\x12SandboxVolumeMount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\"\xa4\x01\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1a\n" +
+	"\bnconnect\x18\x05 \x01(\rR\bnconnect\"\xa4\x01\n" +
 	"\x14SandboxNetworkConfig\x128\n" +
 	"\x06egress\x18\x01 \x01(\v2\x1b.SandboxNetworkEgressConfigH\x00R\x06egress\x88\x01\x01\x12;\n" +
 	"\aingress\x18\x02 \x01(\v2\x1c.SandboxNetworkIngressConfigH\x01R\aingress\x88\x01\x01B\t\n" +

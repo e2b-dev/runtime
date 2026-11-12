@@ -1028,6 +1028,12 @@ components:
         path:
           type: string
           description: Path of the volume
+        nconnect:
+          type: integer
+          minimum: 0
+          maximum: 16
+          default: 0
+          description: Number of parallel NFS connections; 0 uses the Linux default, maximum is the kernel limit of 16
       required:
         - name
         - path

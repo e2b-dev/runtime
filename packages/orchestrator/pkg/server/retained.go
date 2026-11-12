@@ -239,7 +239,7 @@ func (s *Server) RestorePaused(ctx context.Context, api *orchestrator.SandboxCon
 
 		return nil, err
 	}
-	config, err := sandboxConfigOf(api, firecrackerConfigFor(meta, profile, meta.Template.KernelVersion, meta.Template.FirecrackerVersion))
+	config, err := sandboxConfigOf(api, firecrackerConfigFor(meta, profile, meta.Template.KernelVersion, meta.Template.FirecrackerVersion), s.config.NFSMountNconnect)
 	if err != nil {
 		releaseTemplate()
 
