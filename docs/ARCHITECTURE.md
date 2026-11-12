@@ -884,122 +884,26 @@ that guest on its worker's network or break its own trust store.
 
 #### Opt-in request idempotency
 
-Participating API routes accept an optional, team-scoped `Idempotency-Key` to prevent retries from
-repeating the operation while a Redis reservation exists. Which routes honour the key is
-controlled by the `api-idempotency-routes` feature flag rather than listed here; a route can be
-enabled once its handler calls the executor and its OpenAPI schema declares the header. A generic
-executor owns reservation and response replay across API replicas. Participating handlers parse and authorize the request,
-then call `idempotency.Execute(c, requestContent, operation)` with all mutations inside the callback.
-The callback writes its success response and returns `nil`, or returns an `*apierrors.APIError`
-for the executor to send. Returning `CanRetry` promises that a fresh execution is safe: the
-failed attempt has no possible committed side effects. The executor uses this typed result,
-not the HTTP status or response header, to allow re-execution. A response already written by
-the callback is replay-only, even if the callback subsequently returns a retryable error.
-The executor buffers finite HTTP responses, so streaming and connection upgrades cannot use it.
+Every API handler that accepts an idempotency token uses the same shared idempotency mechanism.
+Clients send an optional `Idempotency-Key` and reuse it when retrying the same operation.
+Idempotency is enabled per route, and keys are scoped to a team across participating routes.
+Requests still pass the usual authentication, validation, and access checks on every attempt.
 
-##### Admission and request identity
+Handlers define the inputs that identify an operation and delegate execution to a shared
+executor. Redis coordinates reservations across API replicas so that concurrent requests with
+the same key cannot independently execute the operation while its reservation exists. Reusing
+a key with different inputs is rejected. A matching request receives the recorded response,
+or an in-progress result if the original attempt is still running.
 
-The `api-idempotency-routes` JSON flag enables participating handlers by HTTP method and Gin route
-pattern, for example:
+The handler owns its business logic and determines whether a failed attempt is safe to repeat.
+The executor permits a fresh attempt only after an explicitly classified failure with no
+possible committed side effects. If the outcome is uncertain, it preserves the reservation
+rather than risking duplicate work. Response replay does not rerun the handler's operation.
 
-```json
-{"POST /v2/sandboxes": true}
-```
-
-The flag defaults to null, which disables idempotency. The idempotency middleware bypasses requests
-without a key, an authenticated team, or an enabled route. Authentication, schema validation,
-rate limits, and blocked-team checks apply before the executor, including on retries. A key is
-1 to 255 lowercase ASCII letters, digits, or hyphens (`a-z`, `0-9`, `-`), so a lowercase UUID is
-valid as is. Only the route's OpenAPI schema defines that format, and it applies regardless of the
-flag, so a participating route must declare the header with the same schema. The validator checks
-only the first header value; the generated parameter binding rejects a repeated header before the
-handler runs.
-
-The request fingerprint hashes the HTTP method, concrete URI including query string, and
-handler-supplied JSON-serializable content with SHA-256. Handlers include behavior-affecting
-headers or caller information in that content. Sandbox creation fingerprints its parsed request
-after schema defaults, so whitespace and map ordering do not change identity; array order and
-parsed field values do. Template aliases and business configuration resolve during execution.
-
-##### Reservation and replay
-
-The executor reserves a Redis hash keyed by team ID and the SHA-256 digest of the idempotency key.
-The namespace spans participating routes within a team. An atomic reservation script selects one
-owner across API replicas and stores the request fingerprint, a random owner token, and the
-response deadline in `expected_response_at`. The owner token also guards completion and cleanup,
-so an expired request cannot modify a replacement reservation.
-
-Reservation and execution share the request context's deadline. The response deadline adds a
-five-second persistence budget and uses Redis's clock for comparison. The executor reads the
-reservation and server time together, then selects the response:
-
-| Reservation state | Result |
-|---|---|
-| New reservation | Run the operation callback. |
-| Different request fingerprint | Return 409 with `error_code: idempotency_request_mismatch`. |
-| Matching fingerprint with a retryable result and enough retention remaining | Atomically acquire a new owner token and run the operation again. |
-| Matching fingerprint with a completed result, or insufficient retention for another attempt | Replay its status, body, and allowlisted headers. |
-| Matching fingerprint with an unfinished current attempt, before its deadline | Return 409 with `error_code: idempotency_in_progress`. |
-| Matching fingerprint with an unfinished current attempt and an elapsed or unreadable deadline | Return 422 with `error_code: idempotency_outcome_unknown`. |
-| Redis failure, invalid retention configuration, or missing request deadline | Return 503. |
-
-Retries against an active reservation do not wait for or repeat the operation. The `error_code` field
-distinguishes the two conflict cases without requiring clients to parse messages. An unknown
-outcome means the API cannot establish the result, so retrying with a new key can duplicate work.
-A late response from the owner remains replayable while the reservation exists. Admission and
-retry errors do not replace the owner's cached result.
-
-##### Response storage and delivery
-
-The executor captures the handler's status and body, then attempts to persist them before
-delivery. Redis stores one JSON value containing the status, base64-encoded body, and allowlisted
-headers, alongside the attempt's state. Base64 preserves arbitrary response bytes; the separate
-serialized buffer lets Redis finish a write after the HTTP capture buffer has been released.
-Successful, permanent, and unclassified results become complete and remain replayable. A returned
-`CanRetry` error becomes retryable. Its request fingerprint and original expiry remain fixed.
-
-The reservation script atomically claims a retryable record for one new owner and sets a fresh
-response deadline. Other matching requests see an in-progress attempt. The previous error stays
-stored while that attempt runs, but is not replayed by this executor unless the attempt is canceled
-before execution and releases ownership. A panic or uncertain completion therefore cannot turn
-the previous safe failure into permission to repeat an operation that may now have succeeded.
-Older API replicas replay the stored error; they cannot acquire retryable records for execution.
-Records written before retryable states were supported retain their original replay behavior.
-
-The handler edits response headers in place while the executor buffers status and body writes.
-`Content-Type` and `Should-Retry`, when present, enter the cache. Replay applies those headers over the current
-request's headers, preserving fresh request IDs, rate limits, and cross-origin resource sharing
-(CORS) values. The capture pool reuses allocations up to 64 KiB and erases body contents before
-reuse because responses can contain credentials.
-
-Persistence has a detached five-second wait budget and retains request context values for
-tracing. If it fails, the API logs the failure and delivers the handler's response: a caller should
-receive a known creation result even when Redis cannot store it. Subsequent retries can replay
-a completed result or acquire a retryable result only if Redis stored it, even when its
-acknowledgement was lost. Otherwise they receive the pending or unknown-outcome error.
-
-##### Cancellation and retention
-
-Before execution starts, cancellation or a reservation error triggers best-effort cleanup. The
-reservation worker waits for its Redis call to return before attempting cleanup because socket
-I/O can outlive request cancellation. Cleanup gets its own five-second timeout and checks the
-owner token. It deletes a new, unused reservation or returns an unused retry attempt to the
-retryable state, preserving the earlier request fingerprint and response. Failed cleanup or an
-ambiguous Redis write can leave the reservation until expiry.
-
-Once execution starts, cancellation, a panic, or failed persistence leaves the reservation in
-place. An operation can have side effects before writing any response, so releasing its key
-would allow duplicate work. The executor does not reconcile an unknown operation outcome.
-
-The `api-idempotency-ttl-seconds` flag sets retention, defaulting to 86,400 seconds when
-unavailable. Configured values must be positive integers. The executor sets the time to live
-(TTL) at reservation; completion, retries, flag changes, and deleting the sandbox do not extend
-or remove it. A retryable record is reclaimed only when its remaining TTL exceeds the next
-request's remaining deadline plus the five-second persistence budget; otherwise its previous
-error is replayed. Operators must choose retention longer than the operation window: expiry permits
-a new owner even if the first operation is still running. Redis eviction or data loss, a different
-key, and feature bypass also permit another execution. Redis capacity and access controls must
-account for cached response volume and the sandbox credentials those responses can contain.
+This protection lasts only while the Redis record is retained; it is not a permanent
+exactly-once guarantee. Expiry, data loss, a new key, or disabling idempotency can allow another
+execution. Retention must cover the expected operation and retry window. The shared mechanism
+supports buffered responses, not streaming or connection upgrades.
 
 #### Sandbox creation retry hints
 

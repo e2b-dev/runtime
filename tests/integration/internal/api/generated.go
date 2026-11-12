@@ -3595,6 +3595,26 @@ type GetTemplatesParams struct {
 	TeamID *string `form:"teamID,omitempty" json:"teamID,omitempty"`
 }
 
+// PostTemplatesTagsParams defines parameters for PostTemplatesTags.
+type PostTemplatesTagsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // GetTemplatesTemplateIDParams defines parameters for GetTemplatesTemplateID.
 type GetTemplatesTemplateIDParams struct {
 	// NextToken Cursor to start the list from
@@ -5144,7 +5164,7 @@ type ClientInterface interface {
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-	PostTemplatesTagsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostTemplatesTagsWithBody(ctx context.Context, params *PostTemplatesTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostTemplatesTags Assign template tags
 	//
@@ -5153,7 +5173,7 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-	PostTemplatesTags(ctx context.Context, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostTemplatesTags(ctx context.Context, params *PostTemplatesTagsParams, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteTemplatesTemplateID Delete template
 	//
@@ -7338,8 +7358,8 @@ func (c *Client) DeleteTemplatesTags(ctx context.Context, body DeleteTemplatesTa
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-func (c *Client) PostTemplatesTagsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesTagsRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostTemplatesTagsWithBody(ctx context.Context, params *PostTemplatesTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostTemplatesTagsRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7357,8 +7377,8 @@ func (c *Client) PostTemplatesTagsWithBody(ctx context.Context, contentType stri
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-func (c *Client) PostTemplatesTags(ctx context.Context, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostTemplatesTagsRequest(c.Server, body)
+func (c *Client) PostTemplatesTags(ctx context.Context, params *PostTemplatesTagsParams, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostTemplatesTagsRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12009,18 +12029,18 @@ func NewDeleteTemplatesTagsRequestWithBody(server string, contentType string, bo
 }
 
 // NewPostTemplatesTagsRequest calls the generic PostTemplatesTags builder with application/json body
-func NewPostTemplatesTagsRequest(server string, body PostTemplatesTagsJSONRequestBody) (*http.Request, error) {
+func NewPostTemplatesTagsRequest(server string, params *PostTemplatesTagsParams, body PostTemplatesTagsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostTemplatesTagsRequestWithBody(server, "application/json", bodyReader)
+	return NewPostTemplatesTagsRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostTemplatesTagsRequestWithBody constructs an http.Request for the PostTemplatesTags method, with any body, and a specified content type
-func NewPostTemplatesTagsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostTemplatesTagsRequestWithBody(server string, params *PostTemplatesTagsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -12044,6 +12064,21 @@ func NewPostTemplatesTagsRequestWithBody(server string, contentType string, body
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -16483,7 +16518,7 @@ type ClientWithResponsesInterface interface {
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-	PostTemplatesTagsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error)
+	PostTemplatesTagsWithBodyWithResponse(ctx context.Context, params *PostTemplatesTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error)
 
 	// PostTemplatesTagsWithResponse Assign template tags
 	//
@@ -16492,7 +16527,7 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-	PostTemplatesTagsWithResponse(ctx context.Context, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error)
+	PostTemplatesTagsWithResponse(ctx context.Context, params *PostTemplatesTagsParams, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error)
 
 	// DeleteTemplatesTemplateIDWithResponse Delete template
 	//
@@ -22058,9 +22093,60 @@ func (r DeleteTemplatesTagsResponse) ContentType() string {
 	return ""
 }
 
+// PostTemplatesTagsResponse400Headers the declared response headers of an HTTP 400 response for PostTemplatesTags
+type PostTemplatesTagsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse401Headers the declared response headers of an HTTP 401 response for PostTemplatesTags
+type PostTemplatesTagsResponse401Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse403Headers the declared response headers of an HTTP 403 response for PostTemplatesTags
+type PostTemplatesTagsResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse404Headers the declared response headers of an HTTP 404 response for PostTemplatesTags
+type PostTemplatesTagsResponse404Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse408Headers the declared response headers of an HTTP 408 response for PostTemplatesTags
+type PostTemplatesTagsResponse408Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse409Headers the declared response headers of an HTTP 409 response for PostTemplatesTags
+type PostTemplatesTagsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse413Headers the declared response headers of an HTTP 413 response for PostTemplatesTags
+type PostTemplatesTagsResponse413Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse422Headers the declared response headers of an HTTP 422 response for PostTemplatesTags
+type PostTemplatesTagsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostTemplatesTagsResponse429Headers the declared response headers of an HTTP 429 response for PostTemplatesTags
 type PostTemplatesTagsResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter  *int
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse500Headers the declared response headers of an HTTP 500 response for PostTemplatesTags
+type PostTemplatesTagsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostTemplatesTagsResponse503Headers the declared response headers of an HTTP 503 response for PostTemplatesTags
+type PostTemplatesTagsResponse503Headers struct {
+	ShouldRetry *bool
 }
 
 type PostTemplatesTagsResponse struct {
@@ -22069,17 +22155,47 @@ type PostTemplatesTagsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *AssignedTemplateTags
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
+	JSON401 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
+	// JSON408 the response for an HTTP 408 `application/json` response
+	JSON408 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
+	JSON429 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostTemplatesTagsResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PostTemplatesTagsResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostTemplatesTagsResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *PostTemplatesTagsResponse404Headers
+	// Headers408 the parsed response headers for an HTTP 408 response
+	Headers408 *PostTemplatesTagsResponse408Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostTemplatesTagsResponse409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *PostTemplatesTagsResponse413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostTemplatesTagsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostTemplatesTagsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostTemplatesTagsResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostTemplatesTagsResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -22088,28 +22204,53 @@ func (r PostTemplatesTagsResponse) GetJSON201() *AssignedTemplateTags {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostTemplatesTagsResponse) GetJSON400() *N400 {
+func (r PostTemplatesTagsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r PostTemplatesTagsResponse) GetJSON401() *N401 {
+func (r PostTemplatesTagsResponse) GetJSON401() *Error {
 	return r.JSON401
 }
 
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PostTemplatesTagsResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostTemplatesTagsResponse) GetJSON404() *N404 {
+func (r PostTemplatesTagsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
+// GetJSON408 returns the response for an HTTP 408 `application/json` response
+func (r PostTemplatesTagsResponse) GetJSON408() *Error {
+	return r.JSON408
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostTemplatesTagsResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostTemplatesTagsResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r PostTemplatesTagsResponse) GetJSON429() *N429 {
+func (r PostTemplatesTagsResponse) GetJSON429() *Error {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostTemplatesTagsResponse) GetJSON500() *N500 {
+func (r PostTemplatesTagsResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostTemplatesTagsResponse) GetJSON503() *Error {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -28767,8 +28908,8 @@ func (c *ClientWithResponses) DeleteTemplatesTagsWithResponse(ctx context.Contex
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-func (c *ClientWithResponses) PostTemplatesTagsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error) {
-	rsp, err := c.PostTemplatesTagsWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostTemplatesTagsWithBodyWithResponse(ctx context.Context, params *PostTemplatesTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error) {
+	rsp, err := c.PostTemplatesTagsWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -28782,8 +28923,8 @@ func (c *ClientWithResponses) PostTemplatesTagsWithBodyWithResponse(ctx context.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /templates/tags (the `PostTemplatesTags` operationId).
-func (c *ClientWithResponses) PostTemplatesTagsWithResponse(ctx context.Context, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error) {
-	rsp, err := c.PostTemplatesTags(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostTemplatesTagsWithResponse(ctx context.Context, params *PostTemplatesTagsParams, body PostTemplatesTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostTemplatesTagsResponse, error) {
+	rsp, err := c.PostTemplatesTags(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -34428,43 +34569,158 @@ func ParsePostTemplatesTagsResponse(rsp *http.Response) (*PostTemplatesTagsRespo
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 408:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON408 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostTemplatesTagsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers PostTemplatesTagsResponse401Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostTemplatesTagsResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers PostTemplatesTagsResponse404Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 408:
+		var headers PostTemplatesTagsResponse408Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers408 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostTemplatesTagsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers PostTemplatesTagsResponse413Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostTemplatesTagsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostTemplatesTagsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -34474,7 +34730,34 @@ func ParsePostTemplatesTagsResponse(rsp *http.Response) (*PostTemplatesTagsRespo
 			}
 			headers.RetryAfter = &value
 		}
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostTemplatesTagsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostTemplatesTagsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
