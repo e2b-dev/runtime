@@ -317,7 +317,7 @@ func TestConcurrentFirstMountKeepsOneCanonicalRootAndClosesLoser(t *testing.T) {
 		case fs := <-entered:
 			allocated = append(allocated, fs)
 		case <-time.After(time.Second):
-			t.Fatal("both first-MOUNT allocations must reach the actual FD barrier")
+			require.Fail(t, "both first-MOUNT allocations must reach the actual FD barrier")
 		}
 	}
 	require.Equal(t, 2, concernRootFDCount(t, f.paths[0]))
@@ -335,7 +335,7 @@ func TestConcurrentFirstMountKeepsOneCanonicalRootAndClosesLoser(t *testing.T) {
 				assert.Equal(t, rootHandle, handle)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("concurrent first MOUNT never finished")
+			require.Fail(t, "concurrent first MOUNT never finished")
 		}
 	}
 	assert.Equal(t, 1, f.proxy.chroots.Count())
@@ -400,7 +400,7 @@ func TestNetworkReleaseCancellationRetainsCleanup(t *testing.T) { //nolint:paral
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
-		t.Fatal("real second-volume builder was never reached")
+		require.Fail(t, "real second-volume builder was never reached")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -411,14 +411,14 @@ func TestNetworkReleaseCancellationRetainsCleanup(t *testing.T) { //nolint:paral
 	select {
 	case <-closed:
 	case <-time.After(time.Second):
-		t.Fatal("release did not close real owner admission")
+		require.Fail(t, "release did not close real owner admission")
 	}
 	cancel()
 	select {
 	case releaseErr := <-releaseDone:
 		require.NoError(t, releaseErr)
 	case <-time.After(time.Second):
-		t.Fatal("logical release must finish without joining a blocked allocation")
+		require.Fail(t, "logical release must finish without joining a blocked allocation")
 	}
 	require.Equal(t, 1, f.proxy.retirement.count(), "the original cleanup must remain owned after the callback returns")
 	_, _, liveErr := f.proxy.server.Handler.FromHandle(t.Context(), rootHandle)
@@ -431,7 +431,7 @@ func TestNetworkReleaseCancellationRetainsCleanup(t *testing.T) { //nolint:paral
 	case status := <-mountDone:
 		assert.Equal(t, servernfs.MountStatusErrAcces, status, "late real allocation must refuse closed admission and close its FD")
 	case <-time.After(time.Second):
-		t.Fatal("late actual allocation never completed")
+		require.Fail(t, "late actual allocation never completed")
 	}
 	late := <-b.allocated
 	_, lateErr := late.Stat(".")

@@ -68,7 +68,7 @@ func TestPause_UnquiescedGuestFilesystemOnlyIsRefusedBeforeTheProbe(t *testing.T
 	}
 	select {
 	case <-answer.begun:
-		t.Fatal("the guest must not be probed for a capture it cannot take")
+		require.Fail(t, "the guest must not be probed for a capture it cannot take")
 	default:
 	}
 	assert.Empty(t, admissionCounterPoints(t, reader), "no admission decision was made")
@@ -96,7 +96,7 @@ func TestPause_PoweredOffGuestIsCapturedDiskOnlyWithoutTheProbe(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case <-answer.begun:
-		t.Fatal("a powered-off guest is not probed")
+		require.Fail(t, "a powered-off guest is not probed")
 	default:
 	}
 	assert.True(t, resp.GetFilesystemOnly(), "the capture is the held disk")

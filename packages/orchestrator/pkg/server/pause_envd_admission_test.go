@@ -200,7 +200,7 @@ func TestPause_EnvdUnresponsiveProceedsWhenAllowed(t *testing.T) {
 	select {
 	case <-answer.begun:
 	default:
-		t.Fatal("the guest must still be probed")
+		require.Fail(t, "the guest must still be probed")
 	}
 	assert.True(t, resp.GetEnvdUnresponsive(), "the response must report the miss the API persists")
 	assert.Equal(t, "build-1", resp.GetSchedulingMetadata().GetBuildId())
@@ -432,7 +432,7 @@ func TestPause_EnvdProbeMissWhileACheckpointClaimsTheSandboxIsRetryable(t *testi
 	select {
 	case <-answer.begun:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the probe never reached the guest")
+		require.Fail(t, "the probe never reached the guest")
 	}
 
 	done := startSlowCheckpoint(t.Context(), s, steps, sbx)
@@ -442,7 +442,7 @@ func TestPause_EnvdProbeMissWhileACheckpointClaimsTheSandboxIsRetryable(t *testi
 	select {
 	case err = <-pauseErr:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pause never answered")
+		require.Fail(t, "the pause never answered")
 	}
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 	assert.NotNil(t, checkpointInProgressDetail(t, err), "the hold, not the guest, is the reason the API acts on")
@@ -503,7 +503,7 @@ func TestPause_EnvdProbeMissAfterASuccessorTookTheIDIsRetryable(t *testing.T) {
 	select {
 	case <-answer.begun:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the probe never reached the guest")
+		require.Fail(t, "the probe never reached the guest")
 	}
 
 	// The probed execution ends and a fresh one takes its ID.
@@ -517,7 +517,7 @@ func TestPause_EnvdProbeMissAfterASuccessorTookTheIDIsRetryable(t *testing.T) {
 	select {
 	case err = <-pauseErr:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pause never answered")
+		require.Fail(t, "the pause never answered")
 	}
 	requireEnvdUnresponsive(t, err)
 	cur, live := s.sandboxFactory.Sandboxes.Get("sbx-envd-successor")

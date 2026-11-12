@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ProcStats is a snapshot of the calling process' resource usage.
@@ -39,9 +41,7 @@ func SnapshotProcStats(tb testing.TB) ProcStats {
 	var stats ProcStats
 
 	status, err := os.Open("/proc/self/status")
-	if err != nil {
-		tb.Fatalf("failed to open /proc/self/status: %v", err)
-	}
+	require.NoError(tb, err)
 	defer status.Close()
 
 	scanner := bufio.NewScanner(status)
@@ -64,18 +64,12 @@ func SnapshotProcStats(tb testing.TB) ProcStats {
 			kb, err = strconv.ParseInt(fields[0], 10, 64)
 			stats.RSSBytes = kb * 1024
 		}
-		if err != nil {
-			tb.Fatalf("failed to parse %s from /proc/self/status: %v", key, err)
-		}
+		require.NoError(tb, err, "parse %s from /proc/self/status", key)
 	}
-	if err := scanner.Err(); err != nil {
-		tb.Fatalf("failed to read /proc/self/status: %v", err)
-	}
+	require.NoError(tb, scanner.Err(), "read /proc/self/status")
 
 	meminfo, err := os.Open("/proc/meminfo")
-	if err != nil {
-		tb.Fatalf("failed to open /proc/meminfo: %v", err)
-	}
+	require.NoError(tb, err)
 	defer meminfo.Close()
 
 	scanner = bufio.NewScanner(meminfo)
@@ -91,26 +85,18 @@ func SnapshotProcStats(tb testing.TB) ProcStats {
 		}
 
 		kb, err := strconv.ParseInt(fields[0], 10, 64)
-		if err != nil {
-			tb.Fatalf("failed to parse KernelStack from /proc/meminfo: %v", err)
-		}
+		require.NoError(tb, err, "parse KernelStack from /proc/meminfo")
 		stats.KernelStackBytes = kb * 1024
 	}
-	if err := scanner.Err(); err != nil {
-		tb.Fatalf("failed to read /proc/meminfo: %v", err)
-	}
+	require.NoError(tb, scanner.Err(), "read /proc/meminfo")
 
 	fds, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		tb.Fatalf("failed to list /proc/self/fd: %v", err)
-	}
+	require.NoError(tb, err)
 	// ReadDir itself holds one descriptor open while listing.
 	stats.OpenFDs = len(fds) - 1
 
 	tasks, err := os.ReadDir("/proc/self/task")
-	if err != nil {
-		tb.Fatalf("failed to list /proc/self/task: %v", err)
-	}
+	require.NoError(tb, err)
 
 	namespaces := make(map[string]struct{}, 1)
 	for _, task := range tasks {

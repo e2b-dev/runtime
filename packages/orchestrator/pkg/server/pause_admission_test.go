@@ -298,7 +298,7 @@ func TestPause_FlagOffRunsTodaysOrder(t *testing.T) {
 
 			select {
 			case <-done:
-				t.Fatal("pause must still be inside the unchanged snapshot path (parked in the test template), not refused")
+				require.Fail(t, "pause must still be inside the unchanged snapshot path (parked in the test template), not refused")
 			default:
 			}
 		})
@@ -419,7 +419,7 @@ func TestCheckpoint_FlagOffRunsTodaysOrder(t *testing.T) {
 
 			select {
 			case <-done:
-				t.Fatal("checkpoint must still be inside the unchanged snapshot path (parked in the test template), not refused")
+				require.Fail(t, "checkpoint must still be inside the unchanged snapshot path (parked in the test template), not refused")
 			default:
 			}
 		})
@@ -482,7 +482,7 @@ func TestCheckpoint_LatchedErrorRefusesFailedPrecondition(t *testing.T) {
 	select {
 	case ckptErr = <-errCh:
 	case <-time.After(2 * time.Second):
-		t.Fatal("a latched refusal must return before any destructive step, not enter the snapshot path")
+		require.Fail(t, "a latched refusal must return before any destructive step, not enter the snapshot path")
 	}
 
 	require.Error(t, ckptErr)

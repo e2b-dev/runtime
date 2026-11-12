@@ -153,7 +153,7 @@ func TestNetworkPoolNativeNFSReleaseBeforeMountDrain(t *testing.T) { //nolint:pa
 			case err := <-notified:
 				require.NoError(t, err)
 			case <-time.After(time.Second):
-				t.Fatal("network release waited for the old mount to drain")
+				require.Fail(t, "network release waited for the old mount to drain")
 			}
 			require.Zero(t, storage.released.Load())
 			_, err = netlink.LinkByName(slot.VethName())

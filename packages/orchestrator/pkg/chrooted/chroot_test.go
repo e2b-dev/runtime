@@ -80,7 +80,7 @@ func TestWaitClosedJoinsOriginalCloseAfterTimeout(t *testing.T) {
 	go func() { waitDone <- fs.WaitClosed(t.Context()) }()
 	select {
 	case err := <-waitDone:
-		t.Fatalf("original root descriptor joined before the operation released it: %v", err)
+		require.Failf(t, "original root descriptor joined before the operation released it", "err: %v", err)
 	default:
 	}
 	release()
@@ -102,7 +102,7 @@ func TestCloseAsyncJoinsOriginalDrain(t *testing.T) {
 	require.ErrorIs(t, fs.CloseAsync(), ErrClosed)
 	select {
 	case <-fs.closeDone:
-		t.Fatal("descriptor closed while an operation still owns it")
+		require.Fail(t, "descriptor closed while an operation still owns it")
 	default:
 	}
 	release()

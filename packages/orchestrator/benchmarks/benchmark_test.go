@@ -176,9 +176,7 @@ func BenchmarkBaseImageLaunch(b *testing.B) {
 	require.NoError(b, err)
 
 	c, err := cfg.Parse()
-	if err != nil {
-		b.Fatalf("error parsing config: %v", err)
-	}
+	require.NoError(b, err, "parse config")
 
 	templateCache, err := template.NewCache(c, featureFlags, persistence, blockMetrics, peerclient.NopResolver())
 	require.NoError(b, err)

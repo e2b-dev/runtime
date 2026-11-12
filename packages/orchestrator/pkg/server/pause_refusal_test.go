@@ -53,7 +53,7 @@ func boundedCall(t *testing.T, call func() error) error {
 	case err := <-done:
 		return err
 	case <-time.After(10 * time.Second):
-		t.Fatal("the call did not return: the refusal did not come before the destructive path")
+		require.Fail(t, "the call did not return: the refusal did not come before the destructive path")
 
 		return nil
 	}

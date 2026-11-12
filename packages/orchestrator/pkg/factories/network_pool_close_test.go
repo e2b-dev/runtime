@@ -95,7 +95,7 @@ func TestNetworkPoolCloserDetachesForceStopCancellation(t *testing.T) {
 	select {
 	case <-p.closeDone:
 	default:
-		t.Fatal("the registered closer did not call pool.Close")
+		require.Fail(t, "the registered closer did not call pool.Close")
 	}
 	require.NoError(t, p.closeCtxErr)
 }
@@ -166,7 +166,7 @@ func TestNetworkPoolCloserStopsRealProducersAndJoins(t *testing.T) {
 					select {
 					case <-storage.entered:
 					default:
-						t.Fatal("Populate did not reach the storage barrier")
+						require.Fail(t, "Populate did not reach the storage barrier")
 					}
 
 					closeCtx, cancelClose := context.WithCancel(t.Context())
@@ -202,7 +202,7 @@ func TestNetworkPoolCloserStopsRealProducersAndJoins(t *testing.T) {
 						assert.Nil(t, result.slot)
 						require.ErrorIs(t, result.err, network.ErrClosed, "the registered closer did not publish closed")
 					default:
-						t.Error("Get stayed blocked: the registered closer did not publish closed")
+						assert.Fail(t, "Get stayed blocked: the registered closer did not publish closed")
 					}
 
 					storage.resume <- struct{}{}
@@ -212,13 +212,13 @@ func TestNetworkPoolCloserStopsRealProducersAndJoins(t *testing.T) {
 					case err := <-joinResult:
 						require.NoError(t, err)
 					default:
-						t.Error("Populate did not stop; service-group join stayed blocked")
+						assert.Fail(t, "Populate did not stop; service-group join stayed blocked")
 					}
 					select {
 					case err := <-closeResult:
 						require.NoError(t, err)
 					default:
-						t.Error("pool closer did not finish after releasing the producer barrier")
+						assert.Fail(t, "pool closer did not finish after releasing the producer barrier")
 					}
 					// Explicit cancellation follows the successful checks. Deferred
 					// cancellation rescues failures, never supplies asserted completion.

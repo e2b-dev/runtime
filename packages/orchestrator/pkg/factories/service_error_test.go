@@ -22,6 +22,6 @@ func TestServiceErrorChannelRetainsFailureBeforeConsumer(t *testing.T) {
 	case got := <-serviceError:
 		require.ErrorIs(t, got, want)
 	case <-time.After(time.Second):
-		t.Fatal("startup failure was not retained for the Run consumer")
+		require.Fail(t, "startup failure was not retained for the Run consumer")
 	}
 }

@@ -127,7 +127,7 @@ func awaitRefusal(t *testing.T, op func() error) {
 		require.True(t, ok)
 		assert.Equal(t, codes.ResourceExhausted, st.Code())
 	case <-time.After(10 * time.Second):
-		t.Fatal("handler passed the admission pre-flight: the team target was not evaluated")
+		require.Fail(t, "handler passed the admission pre-flight: the team target was not evaluated")
 	}
 }
 

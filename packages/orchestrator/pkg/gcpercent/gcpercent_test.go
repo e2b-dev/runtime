@@ -424,7 +424,7 @@ func TestRunEvaluatesAtOnceAndOnTheIntervalUntilItsContextEnds(t *testing.T) {
 		synctest.Wait()
 		select {
 		case <-done:
-			t.Fatal("Run returned while its context was live")
+			require.Fail(t, "Run returned while its context was live")
 		default:
 		}
 
@@ -433,7 +433,7 @@ func TestRunEvaluatesAtOnceAndOnTheIntervalUntilItsContextEnds(t *testing.T) {
 		select {
 		case <-done:
 		default:
-			t.Fatal("Run did not return after its context ended")
+			require.Fail(t, "Run did not return after its context ended")
 		}
 	})
 }

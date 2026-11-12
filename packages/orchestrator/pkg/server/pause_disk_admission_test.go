@@ -431,7 +431,7 @@ func TestAdmitPauseDisk_NoReleaseLandsBetweenTheSampleAndTheReservation(t *testi
 	}()
 	select {
 	case <-written:
-		t.Fatal("a capture landing on disk must wait for the admission in progress")
+		require.Fail(t, "a capture landing on disk must wait for the admission in progress")
 	case <-time.After(50 * time.Millisecond):
 	}
 

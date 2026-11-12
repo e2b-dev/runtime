@@ -65,7 +65,7 @@ func TestConcurrentMountKeepsCanonicalRootOnDuplicateCloseError(t *testing.T) { 
 
 			return a
 		case <-time.After(time.Second):
-			t.Fatal("MOUNT must reach the actual root allocation before registration")
+			require.Fail(t, "MOUNT must reach the actual root allocation before registration")
 
 			return sequencedConcernAllocation{}
 		}
@@ -76,7 +76,7 @@ func TestConcurrentMountKeepsCanonicalRootOnDuplicateCloseError(t *testing.T) { 
 		case r := <-done:
 			return r
 		case <-time.After(time.Second):
-			t.Fatal("MOUNT did not finish after its allocation was released")
+			require.Fail(t, "MOUNT did not finish after its allocation was released")
 
 			return result{}
 		}

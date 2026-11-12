@@ -161,5 +161,5 @@ func assertSandboxLimitMetric(t *testing.T, ctx context.Context, reader *sdkmetr
 			return
 		}
 	}
-	t.Fatal("sandbox limit gauge missing")
+	require.Fail(t, "sandbox limit gauge missing")
 }

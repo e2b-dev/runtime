@@ -93,7 +93,7 @@ func acceptBefore(t *testing.T, listener net.Listener, deadline time.Time, messa
 
 		return r.conn
 	case <-time.After(time.Until(deadline)):
-		t.Fatal(message)
+		require.Fail(t, message)
 
 		return nil
 	}

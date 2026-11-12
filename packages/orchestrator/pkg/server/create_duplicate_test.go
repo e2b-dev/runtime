@@ -191,7 +191,7 @@ func TestSuccessfulStartReleasesReservationWithoutRollback(t *testing.T) {
 	require.NoError(t, r.MarkRunning(t.Context(), sbx))
 	rollback := sandbox.NewCleanup()
 	rollback.Add(t.Context(), func(context.Context) error {
-		t.Error("successful start ran rollback")
+		assert.Fail(t, "successful start ran rollback")
 
 		return nil
 	})
