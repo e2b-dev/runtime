@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,22 +57,24 @@ func ioctlTestBackend(t *testing.T) block.Device {
 	return overlay
 }
 
-// openIoctlMount attaches a mount through the ioctl interface; closed reports
-// whether the caller closed it already.
-func openIoctlMount(t *testing.T, ff *featureflags.Client, unmasked bool) (*DirectPathMount, uint32, *bool) {
+// openIoctlMount attaches a mount through the ioctl interface, its kernel
+// steps adjusted first; closed reports whether the caller closed it already.
+func openIoctlMount(t *testing.T, ff *featureflags.Client, adjust ...func(*deviceOps)) (*DirectPathMount, uint32, *bool) {
 	t.Helper()
 	if os.Geteuid() != 0 {
 		t.Skip("kernel NBD requires root")
 	}
 	pool := newPartitionedPool(t)
 	mnt := NewDirectPathMount(ioctlTestBackend(t), pool, ff, logger.L())
+	for _, f := range adjust {
+		f(mnt.ops)
+	}
 
-	return openIoctlMountOn(t, mnt, unmasked)
+	return openIoctlMountOn(t, mnt)
 }
 
-func openIoctlMountOn(t *testing.T, mnt *DirectPathMount, unmasked bool) (*DirectPathMount, uint32, *bool) {
+func openIoctlMountOn(t *testing.T, mnt *DirectPathMount) (*DirectPathMount, uint32, *bool) {
 	t.Helper()
-	mnt.ioctlUnmasked = unmasked
 	idx, err := mnt.Open(t.Context())
 	require.NoError(t, err)
 	closed := new(bool)
@@ -85,6 +88,66 @@ func openIoctlMountOn(t *testing.T, mnt *DirectPathMount, unmasked bool) (*Direc
 	})
 
 	return mnt, idx, closed
+}
+
+// afterConfigure runs hook on the session thread once the session has claimed
+// and configured its device, before the attach learns of it.
+func afterConfigure(ops *deviceOps, hook func(index uint32)) {
+	configure := ops.configure
+	ops.configure = func(fd uintptr, cfg ioctlAttachConfig, sockFds []int) (bool, error) {
+		claimed, err := configure(fd, cfg, sockFds)
+		if err == nil {
+			hook(cfg.index)
+		}
+
+		return claimed, err
+	}
+}
+
+// beforeConfigure runs hook on the session thread once it has opened the
+// device, before the first NBD_SET_SOCK.
+func beforeConfigure(ops *deviceOps, hook func(index uint32)) {
+	open := ops.openForSession
+	ops.openForSession = func(index uint32) (*os.File, error) {
+		f, err := open(index)
+		if err == nil {
+			hook(index)
+		}
+
+		return f, err
+	}
+}
+
+// afterAttach runs hook once Open's attach holds the device, on either
+// interface: after the netlink connect, or once an ioctl session's device
+// reads as started.
+func afterAttach(ops *deviceOps, hook func(index uint32)) {
+	connect := ops.netlinkConnect
+	ops.netlinkConnect = func(index uint32, socks []*os.File, size uint64, serverFlags nbdnl.ServerFlags, opts ...nbdnl.ConnectOption) (uint32, error) {
+		idx, err := connect(index, socks, size, serverFlags, opts...)
+		if err == nil {
+			hook(idx)
+		}
+
+		return idx, err
+	}
+	started := ops.deviceStarted
+	ops.deviceStarted = func(index uint32) bool {
+		if !started(index) {
+			return false
+		}
+		hook(index)
+
+		return true
+	}
+}
+
+// recordSessionThread stores the session thread's id in tid once the thread
+// has configured its device; it is the thread that parks in NBD_DO_IT.
+func recordSessionThread(tid *int) func(*deviceOps) {
+	return func(ops *deviceOps) {
+		afterConfigure(ops, func(uint32) { *tid = unix.Gettid() })
+	}
 }
 
 // singleSlotPool is a pool with one known free device buffered and no feeder,
@@ -129,7 +192,7 @@ func writeReadDevice(t *testing.T, idx uint32, seed byte) {
 
 func TestIoctlAttachServesIO(t *testing.T) {
 	t.Parallel()
-	mnt, idx, closed := openIoctlMount(t, ioctlTestFlags(t, 1), false)
+	mnt, idx, closed := openIoctlMount(t, ioctlTestFlags(t, 1))
 	require.NotNil(t, mnt.ioctlSession, "the flag selects the ioctl interface")
 	require.True(t, ioctlDeviceStarted(idx))
 	writeReadDevice(t, idx, 1)
@@ -172,13 +235,15 @@ func TestIoctlAttachAbandonedAfterConfigureEndsTheSession(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		// The hook cancels on a device this attach has claimed; a lost race
 		// never reaches it and is retried with the next free slot.
+		ops := linuxDeviceOps()
+		afterConfigure(ops, func(uint32) { cancel() })
 		cfg := ioctlAttachConfig{
 			index: idx, socks: []*os.File{client}, size: ioctlTestDeviceSize, blockSize: 4096,
 			timeout: time.Minute, flags: uint64(nbdnl.FlagHasFlags), maxDevices: pool.MaxDevices(),
-			afterConfigure: func(uint32) { cancel() },
+			ops: ops,
 		}
 		start := time.Now()
-		_, err = attachIoctl(ctx, cfg, logger.L(), false)
+		_, err = attachIoctl(ctx, cfg, logger.L())
 		elapsed = time.Since(start)
 		cancel()
 		if errors.Is(err, errIoctlDeviceTaken) {
@@ -220,13 +285,15 @@ func TestIoctlAttachCancelledBeforeTheClaimUsesItsOwnSockets(t *testing.T) { //n
 		<-entered
 		cancel()
 	}()
+	ops := linuxDeviceOps()
+	beforeConfigure(ops, func(uint32) {
+		close(entered)
+		<-release
+	})
 	sess, err := attachIoctl(ctx, ioctlAttachConfig{
 		index: slot, socks: []*os.File{client}, size: ioctlTestDeviceSize, blockSize: 4096, timeout: time.Minute, maxDevices: pool.MaxDevices(),
-		beforeConfigure: func(uint32) {
-			close(entered)
-			<-release
-		},
-	}, logger.L(), false)
+		ops: ops,
+	}, logger.L())
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, sess)
 	deviceReleased := heldDevice(t, err)
@@ -335,16 +402,18 @@ func TestIoctlAttachCancelledWhileConfigurationBlocksReturns(t *testing.T) {
 			case <-ctx.Done():
 			}
 		}()
+		// The hook stands in for a device open or ioctl blocked on the
+		// device's lock; it runs only once this attach has claimed the device.
+		ops := linuxDeviceOps()
+		afterConfigure(ops, func(uint32) {
+			close(entered)
+			<-release
+		})
 		start := time.Now()
 		sess, err := attachIoctl(ctx, ioctlAttachConfig{
 			index: slot, socks: []*os.File{client}, size: ioctlTestDeviceSize, blockSize: 4096, timeout: time.Minute, maxDevices: pool.MaxDevices(),
-			// The hook stands in for a device open or ioctl blocked on the
-			// device's lock; it runs only once this attach has claimed the device.
-			afterConfigure: func(uint32) {
-				close(entered)
-				<-release
-			},
-		}, logger.L(), false)
+			ops: ops,
+		}, logger.L())
 		elapsed = time.Since(start)
 		cancel()
 		<-cancelled
@@ -392,12 +461,12 @@ func TestIoctlOpenCancelledDuringConfigureKeepsTheSlotUntilTheSessionEnds(t *tes
 	defer cancel()
 	mnt := NewDirectPathMount(ioctlTestBackend(t), pool, ioctlTestFlags(t, 1), logger.L())
 	configured := DeviceSlot(math.MaxUint32)
-	mnt.ioctlAfterConfigure = func(deviceIndex uint32) {
+	afterConfigure(mnt.ops, func(deviceIndex uint32) {
 		configured = deviceIndex
 		stopAndJoinFeeder()
 		cancel()
 		<-release
-	}
+	})
 	idx, err := mnt.Open(ctx)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, uint32(math.MaxUint32), idx, "Open must keep reporting that it owns no device")
@@ -415,7 +484,7 @@ func TestIoctlOpenCancelledDuringConfigureKeepsTheSlotUntilTheSessionEnds(t *tes
 // keeps serving: the losing side changes nothing on a device it did not claim.
 func TestIoctlAttachLosingTheDeviceLeavesItsOwnerAlone(t *testing.T) {
 	t.Parallel()
-	mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 1), false)
+	mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 1))
 	socks, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	require.NoError(t, err)
 	client, server := os.NewFile(uintptr(socks[0]), "client"), os.NewFile(uintptr(socks[1]), "server")
@@ -424,7 +493,7 @@ func TestIoctlAttachLosingTheDeviceLeavesItsOwnerAlone(t *testing.T) {
 	_, err = attachIoctl(t.Context(), ioctlAttachConfig{
 		index: idx, socks: []*os.File{client}, size: 2 * ioctlTestDeviceSize, blockSize: 4096,
 		timeout: time.Minute, flags: uint64(nbdnl.FlagHasFlags), maxDevices: mnt.devicePool.MaxDevices(),
-	}, logger.L(), false)
+	}, logger.L())
 	require.ErrorIs(t, err, unix.EBUSY)
 	require.ErrorIs(t, err, errIoctlDeviceTaken, "a lost race is retryable")
 	select {
@@ -506,11 +575,11 @@ func TestIoctlAttachRejectsInvalidGeometry(t *testing.T) {
 	require.NoError(t, err)
 	client := os.NewFile(uintptr(socks[0]), "client")
 	t.Cleanup(func() { client.Close(); unix.Close(socks[1]) })
-	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, socks: []*os.File{client}, size: 4097, blockSize: 4096, maxDevices: 16}, logger.L(), false)
+	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, socks: []*os.File{client}, size: 4097, blockSize: 4096, maxDevices: 16}, logger.L())
 	require.ErrorIs(t, err, errIoctlInvalidGeometry)
-	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, size: 4096, blockSize: 4096, maxDevices: 16}, logger.L(), false)
+	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, size: 4096, blockSize: 4096, maxDevices: 16}, logger.L())
 	require.ErrorIs(t, err, errIoctlInvalidConfig, "no sockets")
-	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, socks: []*os.File{client}, size: 0, blockSize: 4096, maxDevices: 16}, logger.L(), false)
+	_, err = attachIoctl(t.Context(), ioctlAttachConfig{index: 0, socks: []*os.File{client}, size: 0, blockSize: 4096, maxDevices: 16}, logger.L())
 	require.ErrorIs(t, err, errIoctlInvalidConfig, "zero size")
 }
 
@@ -518,7 +587,7 @@ func TestIoctlAttachRejectsInvalidGeometry(t *testing.T) {
 // connections pin that the session runs them on one thread.
 func TestIoctlAttachMultipleConnections(t *testing.T) {
 	t.Parallel()
-	mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 2), false)
+	mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 2))
 	require.Len(t, mnt.socksClient, 2)
 	writeReadDevice(t, idx, 2)
 }
@@ -530,8 +599,8 @@ func TestIoctlSessionSurvivesSignals(t *testing.T) {
 	t.Parallel()
 	t.Run("masked", func(t *testing.T) {
 		t.Parallel()
-		mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 1), false)
-		tid := mnt.ioctlSession.tid
+		var tid int
+		mnt, idx, _ := openIoctlMount(t, ioctlTestFlags(t, 1), recordSessionThread(&tid))
 		require.NotZero(t, tid)
 		for range 200 {
 			require.NoError(t, unix.Tgkill(os.Getpid(), tid, unix.SIGURG))
@@ -547,8 +616,11 @@ func TestIoctlSessionSurvivesSignals(t *testing.T) {
 	})
 	t.Run("unmasked control", func(t *testing.T) {
 		t.Parallel()
-		mnt, _, _ := openIoctlMount(t, ioctlTestFlags(t, 1), true)
-		require.NoError(t, unix.Tgkill(os.Getpid(), mnt.ioctlSession.tid, unix.SIGURG))
+		var tid int
+		mnt, _, _ := openIoctlMount(t, ioctlTestFlags(t, 1), recordSessionThread(&tid), func(ops *deviceOps) {
+			ops.blockSignals = func() (func() error, error) { return func() error { return nil }, nil }
+		})
+		require.NoError(t, unix.Tgkill(os.Getpid(), tid, unix.SIGURG))
 		select {
 		case <-mnt.ioctlSession.done:
 			require.ErrorIs(t, mnt.ioctlSession.exitErr, unix.EBUSY, "the restarted NBD_DO_IT finds the pid set")
@@ -566,7 +638,7 @@ func TestIoctlSessionEndsWhenTheServerCloses(t *testing.T) {
 		t.Skip("kernel NBD requires root")
 	}
 	pool, slot := singleSlotPool(t)
-	mnt, idx, closed := openIoctlMountOn(t, NewDirectPathMount(ioctlTestBackend(t), pool, ioctlTestFlags(t, 1), logger.L()), false)
+	mnt, idx, closed := openIoctlMountOn(t, NewDirectPathMount(ioctlTestBackend(t), pool, ioctlTestFlags(t, 1), logger.L()))
 	require.Equal(t, slot, idx)
 	for _, s := range mnt.socksServer {
 		require.NoError(t, s.Close())
@@ -622,7 +694,7 @@ func attachedSession(t *testing.T, cfg ioctlAttachConfig) (*ioctlSession, *os.Fi
 		cfg.timeout = time.Minute
 	}
 	cfg.flags = uint64(nbdnl.FlagHasFlags)
-	sess, err := attachIoctl(t.Context(), cfg, logger.L(), false)
+	sess, err := attachIoctl(t.Context(), cfg, logger.L())
 	require.NoError(t, err)
 
 	return sess, server
@@ -638,14 +710,13 @@ func TestIoctlDisconnectBoundHoldsWhenTheRequestHangs(t *testing.T) {
 	pool, slot := singleSlotPool(t)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	sess, _ := attachedSession(t, ioctlAttachConfig{
-		index: slot, maxDevices: pool.MaxDevices(),
-		disconnectIoctl: func(int) error {
-			<-release
+	ops := linuxDeviceOps()
+	ops.requestDisconnect = func(int) error {
+		<-release
 
-			return nil
-		},
-	})
+		return nil
+	}
+	sess, _ := attachedSession(t, ioctlAttachConfig{index: slot, maxDevices: pool.MaxDevices(), ops: ops})
 	start := time.Now()
 	err := sess.disconnect(t.Context(), 3*time.Second)
 	require.Less(t, time.Since(start), 10*time.Second, "disconnect must return within its bound")
@@ -673,15 +744,14 @@ func TestIoctlDisconnectBoundHoldsWhenTheDescriptorCloseHangs(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	sess, server := attachedSession(t, ioctlAttachConfig{
-		index: slot, maxDevices: pool.MaxDevices(),
-		closeCtl: func(fd int) error {
-			close(entered)
-			<-release
+	ops := linuxDeviceOps()
+	ops.closeCtl = func(fd int) error {
+		close(entered)
+		<-release
 
-			return unix.Close(fd)
-		},
-	})
+		return unix.Close(fd)
+	}
+	sess, server := attachedSession(t, ioctlAttachConfig{index: slot, maxDevices: pool.MaxDevices(), ops: ops})
 	require.NoError(t, server.Close())
 	<-entered
 	start := time.Now()
@@ -704,9 +774,7 @@ func closeWithHungSession(t *testing.T, pool *DevicePool, slot DeviceSlot, befor
 	if before != nil {
 		before(mnt)
 	}
-	mnt.disconnectDeviceFn = func(ctx context.Context, _ uint32) error {
-		return mnt.ioctlSession.disconnect(ctx, 2*time.Second)
-	}
+	mnt.disconnectTimeout = 2 * time.Second
 	idx, err := mnt.Open(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, slot, idx)
@@ -757,7 +825,7 @@ func TestCloseReturnsWhileTheSessionCloseHangs(t *testing.T) {
 	releaseOnce := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(releaseOnce)
 	mnt := closeWithHungSession(t, pool, slot, func(mnt *DirectPathMount) {
-		mnt.ioctlCloseCtl = func(fd int) error {
+		mnt.ops.closeCtl = func(fd int) error {
 			<-release
 
 			return unix.Close(fd)
@@ -817,17 +885,19 @@ func TestIoctlAttachReportsAnExitBeforeTheDeviceStarts(t *testing.T) {
 	release := make(chan struct{})
 	releaseOnce := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(releaseOnce)
+	ops := linuxDeviceOps()
+	ops.deviceStarted = func(uint32) bool { return false }
+	afterConfigure(ops, func(uint32) { _ = server.Close() })
+	ops.closeCtl = func(fd int) error {
+		<-release
+
+		return unix.Close(fd)
+	}
 	start := time.Now()
 	sess, err := attachIoctl(t.Context(), ioctlAttachConfig{
 		index: slot, socks: []*os.File{client}, size: ioctlTestDeviceSize, blockSize: 4096, timeout: time.Minute, maxDevices: pool.MaxDevices(),
-		started:        func(uint32) bool { return false },
-		afterConfigure: func(uint32) { _ = server.Close() },
-		closeCtl: func(fd int) error {
-			<-release
-
-			return unix.Close(fd)
-		},
-	}, logger.L(), false)
+		ops: ops,
+	}, logger.L())
 	require.ErrorIs(t, err, errIoctlSessionEnded)
 	require.Nil(t, sess)
 	require.Less(t, time.Since(start), 5*time.Second, "the exit must be reported before the start deadline")
@@ -851,16 +921,54 @@ func TestIoctlAttachStartTimeoutReportsTheSessionItEnds(t *testing.T) {
 	require.NoError(t, err)
 	client, server := os.NewFile(uintptr(socks[0]), "client"), os.NewFile(uintptr(socks[1]), "server")
 	t.Cleanup(func() { client.Close(); server.Close() })
+	ops := linuxDeviceOps()
+	ops.deviceStarted = func(uint32) bool { return false }
 	sess, err := attachIoctl(t.Context(), ioctlAttachConfig{
 		index: slot, socks: []*os.File{client}, size: ioctlTestDeviceSize, blockSize: 4096, timeout: time.Minute, maxDevices: pool.MaxDevices(),
-		started: func(uint32) bool { return false },
-	}, logger.L(), false)
+		ops: ops,
+	}, logger.L())
 	require.ErrorIs(t, err, errIoctlStartTimeout)
 	require.Nil(t, sess)
 
 	awaitDeviceReleased(t, heldDevice(t, err))
 	require.Eventually(t, func() bool { return !ioctlDeviceConnected(slot) }, 10*time.Second, 10*time.Millisecond)
 	require.NoError(t, pool.ReleaseDevice(t.Context(), slot, WithInfiniteRetry(), WithTimeout(10*time.Second)))
+}
+
+// A device that does not start in time is not final for Open: it waits for
+// that session as it does for an abandoned one and attaches again, while a
+// cancelled caller or a session that ended early is final.
+func TestIoctlOpenRetriesAfterAStartTimeout(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() != 0 {
+		t.Skip("kernel NBD requires root")
+	}
+	pool := poolInWindow(t)
+	stopFeeder := feedSlots(t, pool)
+	mnt := NewDirectPathMount(ioctlTestBackend(t), pool, ioctlTestFlags(t, 1), logger.L())
+	// Only the first configured attach stalls; the retry may land on the same
+	// device once its session has let go.
+	var attaches atomic.Int32
+	configure := mnt.ops.configure
+	mnt.ops.configure = func(fd uintptr, cfg ioctlAttachConfig, sockFds []int) (bool, error) {
+		claimed, err := configure(fd, cfg, sockFds)
+		if err == nil {
+			attaches.Add(1)
+		}
+
+		return claimed, err
+	}
+	started := mnt.ops.deviceStarted
+	mnt.ops.deviceStarted = func(index uint32) bool { return attaches.Load() > 1 && started(index) }
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	idx, err := mnt.Open(ctx)
+	require.NoError(t, err, "a device that does not start in time must be retried")
+	t.Cleanup(func() { assert.NoError(t, mnt.Close(context.WithoutCancel(t.Context()))) })
+	stopFeeder()
+	require.Equal(t, int32(2), attaches.Load(), "Open attaches once more after the start timeout")
+	writeReadDevice(t, idx, 7)
 }
 
 // A session the kernel ends is classified when NBD_DO_IT returns, so a Close
@@ -873,15 +981,14 @@ func TestIoctlKernelEndedSessionIsClassifiedBeforeCleanup(t *testing.T) {
 	pool, slot := singleSlotPool(t)
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	sess, server := attachedSession(t, ioctlAttachConfig{
-		index: slot, maxDevices: pool.MaxDevices(),
-		closeCtl: func(fd int) error {
-			close(entered)
-			<-release
+	ops := linuxDeviceOps()
+	ops.closeCtl = func(fd int) error {
+		close(entered)
+		<-release
 
-			return unix.Close(fd)
-		},
-	})
+		return unix.Close(fd)
+	}
+	sess, server := attachedSession(t, ioctlAttachConfig{index: slot, maxDevices: pool.MaxDevices(), ops: ops})
 	require.NoError(t, server.Close())
 	<-entered
 	sess.expectEnd()
@@ -929,13 +1036,11 @@ func TestOpenCancelledDuringDeviceOpenReturnsNoDevice(t *testing.T) {
 			// The device is this mount's from here on, so the feeder stops
 			// before the unwind under test releases the slot.
 			attached := DeviceSlot(math.MaxUint32)
-			claim := func(deviceIndex uint32) {
+			afterAttach(mnt.ops, func(deviceIndex uint32) {
 				attached = deviceIndex
 				stopAndJoinFeeder()
-			}
-			mnt.afterConnect = claim
-			mnt.ioctlAfterConfigure = claim
-			mnt.openDeviceFn = func(path string) (*os.File, error) {
+			})
+			mnt.ops.openConnected = func(path string) (*os.File, error) {
 				cancel()
 
 				return os.Open(path)
@@ -977,14 +1082,14 @@ func TestIoctlOpenRefusesASessionEndedDuringTheDeviceOpen(t *testing.T) {
 			if tc.holdCleanup {
 				// The hold lifts while Open is still unwinding: its release
 				// of the device waits for the cleanup to finish.
-				mnt.ioctlCloseCtl = func(fd int) error {
+				mnt.ops.closeCtl = func(fd int) error {
 					time.AfterFunc(3*time.Second, releaseOnce)
 					<-release
 
 					return unix.Close(fd)
 				}
 			}
-			mnt.openDeviceFn = func(path string) (*os.File, error) {
+			mnt.ops.openConnected = func(path string) (*os.File, error) {
 				f, err := os.Open(path)
 				if err != nil {
 					return nil, err
@@ -1040,7 +1145,7 @@ func TestIoctlAttachPartialConfigurationFreesTheDevice(t *testing.T) {
 	_, err = attachIoctl(t.Context(), ioctlAttachConfig{
 		index: slot, socks: []*os.File{client}, size: 3000 * 1024, blockSize: 3000,
 		timeout: time.Minute, flags: uint64(nbdnl.FlagHasFlags), maxDevices: pool.MaxDevices(),
-	}, logger.L(), false)
+	}, logger.L())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid argument")
 	require.False(t, ioctlDeviceConnected(slot), "a refused configuration leaves the device free")
