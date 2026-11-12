@@ -23,7 +23,7 @@ func TestClaimKill_NoResumeInFlight_ClaimsAndBlocksResume(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, claimed, "kill should be claimed when no resume is in flight")
 
-	_, _, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	_, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.ErrorIs(t, err, sandboxtypes.ErrSandboxKilled)
 }
 
@@ -33,9 +33,9 @@ func TestClaimKill_ResumePending_Refuses(t *testing.T) {
 
 	teamID := uuid.New()
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart, "first reserve should win the reservation")
+	require.True(t, reserved, "first reserve should win the reservation")
 
 	_, claimed, err := storage.ClaimKill(t.Context(), teamID, testSandboxID)
 	require.NoError(t, err)
@@ -84,14 +84,14 @@ func TestReleaseKillClaim_UnblocksResume(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, claimed)
 
-	_, _, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	_, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.ErrorIs(t, err, sandboxtypes.ErrSandboxKilled)
 
 	require.NoError(t, storage.ReleaseKillClaim(t.Context(), teamID, testSandboxID, claimID))
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.NoError(t, err)
-	assert.NotNil(t, finishStart)
+	assert.True(t, reserved)
 }
 
 func TestReleaseKillClaim_KeepsOverlappingClaim(t *testing.T) {
@@ -110,14 +110,14 @@ func TestReleaseKillClaim_KeepsOverlappingClaim(t *testing.T) {
 
 	require.NoError(t, storage.ReleaseKillClaim(t.Context(), teamID, testSandboxID, firstID))
 
-	_, _, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	_, err = storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.ErrorIs(t, err, sandboxtypes.ErrSandboxKilled, "the second delete's claim must survive the first one's release")
 
 	require.NoError(t, storage.ReleaseKillClaim(t.Context(), teamID, testSandboxID, secondID))
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, testSandboxID, 10)
 	require.NoError(t, err)
-	assert.NotNil(t, finishStart)
+	assert.True(t, reserved)
 }
 
 func TestClaimKill_ConcurrentReserveAndClaim(t *testing.T) {
@@ -135,8 +135,8 @@ func TestClaimKill_ConcurrentReserveAndClaim(t *testing.T) {
 
 		done := make(chan struct{}, 2)
 		go func() {
-			finishStart, _, err := storage.Reserve(t.Context(), teamID, sandboxID, 10)
-			if err == nil && finishStart != nil {
+			r, err := storage.Reserve(t.Context(), teamID, sandboxID, 10)
+			if err == nil && r {
 				reserved = true
 			}
 			done <- struct{}{}

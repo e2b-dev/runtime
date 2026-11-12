@@ -1,4 +1,4 @@
-package redis
+package sandbox
 
 import (
 	"encoding/json"

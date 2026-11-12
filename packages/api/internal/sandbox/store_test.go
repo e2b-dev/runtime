@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	reservationsredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -101,8 +104,12 @@ func (ct *CallbackTracker) AssertCallCount(t *testing.T, name string, count int)
 // NoOpReservationStorage is a no-op implementation for testing
 type NoOpReservationStorage struct{}
 
-func (n *NoOpReservationStorage) Reserve(_ context.Context, _ uuid.UUID, _ string, _ int) (func(Sandbox, error), func(ctx context.Context) (Sandbox, error), error) {
-	return nil, nil, nil
+func (n *NoOpReservationStorage) Reserve(_ context.Context, _ uuid.UUID, _ string, _ int) (bool, error) {
+	return true, nil
+}
+
+func (n *NoOpReservationStorage) FinishStart(_ context.Context, _ uuid.UUID, _ string, _ []byte) error {
+	return nil
 }
 
 func (n *NoOpReservationStorage) Release(_ context.Context, _ uuid.UUID, _ string) error {
@@ -117,8 +124,8 @@ func (n *NoOpReservationStorage) ReleaseKillClaim(_ context.Context, _ uuid.UUID
 	return nil
 }
 
-func (n *NoOpReservationStorage) WaitForStart(_ context.Context, _ uuid.UUID, _ string) error {
-	return nil
+func (n *NoOpReservationStorage) WaitForStart(_ context.Context, _ uuid.UUID, _ string) ([]byte, error) {
+	return nil, nil
 }
 
 // MockStorage wraps real storage and can inject errors
@@ -401,18 +408,19 @@ func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
 	successor := createTestSandbox()
 	successor.ExecutionID = uuid.NewString()
 	teamID, sandboxID := successor.TeamID, successor.SandboxID
-	finishStart, _, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	reserved, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart)
-	_, waitForStart, err := reservations.Reserve(ctx, teamID, sandboxID, 1)
+	require.True(t, reserved)
+	reserved, err = reservations.Reserve(ctx, teamID, sandboxID, 1)
 	require.NoError(t, err)
+	require.False(t, reserved)
 	require.NoError(t, storage.Add(ctx, successor))
 
 	store.Remove(ctx, teamID, sandboxID, uuid.NewString())
 
 	pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
-	_, err = waitForStart(pending)
+	_, err = reservations.WaitForStart(pending, teamID, sandboxID)
 	require.ErrorIs(t, err, context.DeadlineExceeded, "the successor's start is still pending")
 	stored, err := storage.Get(ctx, teamID, sandboxID)
 	require.NoError(t, err)
@@ -422,9 +430,9 @@ func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
 
 	_, err = storage.Get(ctx, teamID, sandboxID)
 	require.ErrorIs(t, err, ErrNotFound)
-	finishStart, _, err = reservations.Reserve(ctx, teamID, sandboxID, 1)
+	reserved, err = reservations.Reserve(ctx, teamID, sandboxID, 1)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart, "the successor's removal released its reservation")
+	require.True(t, reserved, "the successor's removal released its reservation")
 }
 
 // The sync hands every sandbox the node lists as powered off, and only those,
@@ -552,11 +560,12 @@ func TestRemove_HeldRecordKeepsReservation(t *testing.T) {
 
 			sbx := createTestSandbox()
 			sbx.ExecutionID = uuid.NewString()
-			finishStart, _, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			reserved, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
 			require.NoError(t, err)
-			require.NotNil(t, finishStart)
-			_, waitForStart, err := reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
+			require.True(t, reserved)
+			reserved, err = reservations.Reserve(ctx, sbx.TeamID, sbx.SandboxID, 1)
 			require.NoError(t, err)
+			require.False(t, reserved)
 			require.NoError(t, storage.Add(ctx, sbx))
 			tt.refuse(t, store, storage, sbx)
 
@@ -566,8 +575,136 @@ func TestRemove_HeldRecordKeepsReservation(t *testing.T) {
 			require.NoError(t, err, "the record stays")
 			pending, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 			defer cancel()
-			_, err = waitForStart(pending)
+			_, err = reservations.WaitForStart(pending, sbx.TeamID, sbx.SandboxID)
 			require.ErrorIs(t, err, context.DeadlineExceeded, "the start is still pending")
 		})
+	}
+}
+
+// subscribeSignalNotifier closes subscribed on the first Subscribe, so a test
+// can publish once its waiter is registered.
+type subscribeSignalNotifier struct {
+	reservationsredis.Notifier
+
+	subscribed chan struct{}
+	once       sync.Once
+}
+
+func (n *subscribeSignalNotifier) Subscribe(routingKey string) (<-chan struct{}, func()) {
+	ch, cleanup := n.Notifier.Subscribe(routingKey)
+	n.once.Do(func() { close(n.subscribed) })
+
+	return ch, cleanup
+}
+
+// newRedisStore returns a Store with its own storage instance over client,
+// as a separate API instance has, once its pub/sub subscription is live.
+func newRedisStore(t *testing.T, client goredis.UniversalClient) (*Store, *subscribeSignalNotifier) {
+	t.Helper()
+
+	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
+	require.NoError(t, err)
+	go storage.Start(t.Context())
+	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
+
+	notifier := storage.Notifier()
+	probeKey := "notifier-probe:" + uuid.NewString()
+	probe, cleanup := notifier.Subscribe(probeKey)
+	defer cleanup()
+	require.Eventually(t, func() bool {
+		notifier.Publish(t.Context(), probeKey)
+
+		select {
+		case <-probe:
+			return true
+		case <-time.After(50 * time.Millisecond):
+			return false
+		}
+	}, 10*time.Second, time.Millisecond, "storage notifier never delivered a publish")
+
+	signal := &subscribeSignalNotifier{Notifier: notifier, subscribed: make(chan struct{})}
+
+	return NewStore(storage, reservationsredis.NewReservationStorage(client, signal), Callbacks{}), signal
+}
+
+func TestReserve_WaiterOnAnotherStoreGetsStartedSandbox(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	starter, _ := newRedisStore(t, client)
+	joiner, _ := newRedisStore(t, client)
+
+	sbx := createTestSandbox()
+	sbx.ExecutionID = uuid.NewString()
+
+	finishStart, waitForStart, err := starter.Reserve(t.Context(), sbx.TeamID, sbx.SandboxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart, "the first reserve owns the start")
+	require.Nil(t, waitForStart)
+
+	joinFinish, joinWait, err := joiner.Reserve(t.Context(), sbx.TeamID, sbx.SandboxID, 10)
+	require.NoError(t, err)
+	require.Nil(t, joinFinish)
+	require.NotNil(t, joinWait, "a reserve of a pending start joins it")
+
+	finishStart(sbx, nil)
+
+	got, err := joinWait(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, sbx.SandboxID, got.SandboxID)
+	assert.Equal(t, sbx.TeamID, got.TeamID)
+	assert.Equal(t, sbx.ExecutionID, got.ExecutionID)
+	assert.Equal(t, sbx.TemplateID, got.TemplateID)
+	assert.True(t, sbx.EndTime.Equal(got.EndTime), "end time %s, got %s", sbx.EndTime, got.EndTime)
+}
+
+func TestReserve_WaiterGetsStartAPIErrorPromptly(t *testing.T) {
+	t.Parallel()
+
+	client := redis_utils.SetupInstance(t)
+	starter, _ := newRedisStore(t, client)
+	joiner, joinerNotifier := newRedisStore(t, client)
+
+	teamID, sandboxID := uuid.New(), "failed-start"
+
+	finishStart, _, err := starter.Reserve(t.Context(), teamID, sandboxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, finishStart)
+
+	_, waitForStart, err := joiner.Reserve(t.Context(), teamID, sandboxID, 10)
+	require.NoError(t, err)
+	require.NotNil(t, waitForStart)
+
+	waiterErr := make(chan error, 1)
+	go func() {
+		_, err := waitForStart(t.Context())
+		waiterErr <- err
+	}()
+	select {
+	case <-joinerNotifier.subscribed:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "waiter did not subscribe")
+	}
+
+	startErr := &api.APIError{
+		Code:      http.StatusServiceUnavailable,
+		ClientMsg: "no capacity",
+		ErrorCode: "capacity_unavailable",
+		Err:       errors.New("boom"),
+	}
+	start := time.Now()
+	finishStart(Sandbox{}, startErr)
+
+	select {
+	case err := <-waiterErr:
+		var apiErr *api.APIError
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, startErr.Code, apiErr.Code)
+		assert.Equal(t, startErr.ClientMsg, apiErr.ClientMsg)
+		assert.Equal(t, startErr.ErrorCode, apiErr.ErrorCode)
+		assert.Contains(t, err.Error(), "boom")
+		assert.Less(t, time.Since(start), 500*time.Millisecond, "the waiter is woken by the publish")
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "waiter did not return")
 	}
 }

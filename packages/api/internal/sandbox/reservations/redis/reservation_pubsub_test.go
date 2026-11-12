@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -12,24 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	storage_redis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
-	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
-
-// testSandbox is the canonical successful-finish payload used across pubsub tests.
-func testSandbox(teamID uuid.UUID, sandboxID string) sandboxtypes.Sandbox {
-	return sandboxtypes.Sandbox{
-		ClientID:          consts.ClientID,
-		SandboxID:         sandboxID,
-		TemplateID:        "test",
-		TeamID:            teamID,
-		StartTime:         time.Now(),
-		EndTime:           time.Now().Add(time.Hour),
-		MaxInstanceLength: time.Hour,
-	}
-}
 
 // setupReservationStorageWithoutSubManager wires the reservation store so that
 // PubSub messages are never delivered in-process. Used to exercise the safety-net path.
@@ -53,32 +37,32 @@ func TestWaitForStart_WokenByFinishStartPublish(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-finish"
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart)
+	require.True(t, reserved)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err = storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, waitForStart)
+	require.False(t, reserved)
 
 	waiterDone := make(chan struct{})
-	var got sandboxtypes.Sandbox
+	var got []byte
 	var waitErr error
 	go func() {
-		got, waitErr = waitForStart(t.Context())
+		got, waitErr = storage.WaitForStart(t.Context(), teamID, sbxID)
 		close(waiterDone)
 	}()
 
 	waitForSubscribers(t, storage, 1)
 
 	start := time.Now()
-	finishStart(testSandbox(teamID, sbxID), nil)
+	require.NoError(t, storage.FinishStart(t.Context(), teamID, sbxID, testResult))
 
 	select {
 	case <-waiterDone:
 		elapsed := time.Since(start)
 		require.NoError(t, waitErr)
-		assert.Equal(t, sbxID, got.SandboxID)
+		assert.Equal(t, testResult, got)
 		assert.Less(t, elapsed, 500*time.Millisecond,
 			"waiter should wake via PubSub, not the fallback ticker")
 	case <-time.After(3 * time.Second):
@@ -93,17 +77,17 @@ func TestWaitForStart_WokenByReleasePublish(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-release"
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart)
+	require.True(t, reserved)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err = storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, waitForStart)
+	require.False(t, reserved)
 
 	waiterErr := make(chan error, 1)
 	go func() {
-		_, err := waitForStart(t.Context())
+		_, err := storage.WaitForStart(t.Context(), teamID, sbxID)
 		waiterErr <- err
 	}()
 	waitForSubscribers(t, storage, 1)
@@ -129,28 +113,27 @@ func TestWaitForStart_FallbackTickerWhenPubSubMissed(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-fallback"
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
-	require.NotNil(t, finishStart)
+	require.True(t, reserved)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err = storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
+	require.False(t, reserved)
 
 	// Set the result directly via the finishStartScript path; with the
 	// subManager not running, no fan-out occurs. The waiter must rely on
 	// the fallback ticker.
-	resultData, err := encodeResult(testSandbox(teamID, sbxID), nil)
-	require.NoError(t, err)
 	teamIDStr := teamID.String()
 	err = finishStartScript.Run(t.Context(), storage.redisClient,
 		[]string{getPendingSetKey(teamIDStr), getResultKey(teamIDStr, sbxID)},
-		sbxID, resultData, int(resultTTL.Seconds()),
+		sbxID, testResult, int(resultTTL.Seconds()),
 	).Err()
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := waitForStart(t.Context())
+		_, err := storage.WaitForStart(t.Context(), teamID, sbxID)
 		done <- err
 	}()
 
@@ -163,7 +146,7 @@ func TestWaitForStart_FallbackTickerWhenPubSubMissed(t *testing.T) {
 }
 
 // TestWaitForStart_ResultLandedBeforeSubscribe covers the race where the
-// producer finishes BEFORE the waiter calls waitForStart. The initial
+// producer finishes BEFORE the waiter calls WaitForStart. The initial
 // post-subscribe GET must catch the already-present result rather than
 // blocking until a wakeup that will never come.
 func TestWaitForStart_ResultLandedBeforeSubscribe(t *testing.T) {
@@ -173,30 +156,30 @@ func TestWaitForStart_ResultLandedBeforeSubscribe(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-race"
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	_, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	_, err = storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
 
 	// Finish BEFORE the waiter ever subscribes.
-	finishStart(testSandbox(teamID, sbxID), nil)
+	require.NoError(t, storage.FinishStart(t.Context(), teamID, sbxID, testResult))
 	// Give the in-process publisher worker a moment to drain.
 	time.Sleep(50 * time.Millisecond)
 
 	done := make(chan struct{})
-	var got sandboxtypes.Sandbox
+	var got []byte
 	var waitErr error
 	start := time.Now()
 	go func() {
-		got, waitErr = waitForStart(t.Context())
+		got, waitErr = storage.WaitForStart(t.Context(), teamID, sbxID)
 		close(done)
 	}()
 
 	select {
 	case <-done:
 		require.NoError(t, waitErr)
-		assert.Equal(t, sbxID, got.SandboxID)
+		assert.Equal(t, testResult, got)
 		assert.Less(t, time.Since(start), 200*time.Millisecond,
 			"initial post-subscribe check must catch a pre-existing result")
 	case <-time.After(3 * time.Second):
@@ -213,17 +196,18 @@ func TestWaitForStart_ContextCancellation(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-cancel"
 
-	_, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	_, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	reserved, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
+	require.False(t, reserved)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()
-	_, err = waitForStart(ctx)
+	_, err = storage.WaitForStart(ctx, teamID, sbxID)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -240,32 +224,28 @@ func TestWaitForStart_MultipleWaitersOnePublish(t *testing.T) {
 	sbxID := "pubsub-multi"
 	const numWaiters = 10
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 50)
+	_, err := storage.Reserve(t.Context(), teamID, sbxID, 50)
 	require.NoError(t, err)
 
-	waiters := make([]func(ctx context.Context) (sandboxtypes.Sandbox, error), numWaiters)
-	for i := range numWaiters {
-		_, w, err := storage.Reserve(t.Context(), teamID, sbxID, 50)
+	for range numWaiters {
+		reserved, err := storage.Reserve(t.Context(), teamID, sbxID, 50)
 		require.NoError(t, err)
-		require.NotNil(t, w)
-		waiters[i] = w
+		require.False(t, reserved)
 	}
 
 	var wg sync.WaitGroup
 	errs := make([]error, numWaiters)
 	completions := make([]time.Duration, numWaiters)
-	for i, w := range waiters {
-		wg.Add(1)
-		go func(i int, w func(ctx context.Context) (sandboxtypes.Sandbox, error)) {
-			defer wg.Done()
+	for i := range numWaiters {
+		wg.Go(func() {
 			start := time.Now()
-			_, errs[i] = w(t.Context())
+			_, errs[i] = storage.WaitForStart(t.Context(), teamID, sbxID)
 			completions[i] = time.Since(start)
-		}(i, w)
+		})
 	}
 
 	waitForSubscribers(t, storage, numWaiters)
-	finishStart(testSandbox(teamID, sbxID), nil)
+	require.NoError(t, storage.FinishStart(t.Context(), teamID, sbxID, testResult))
 
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
@@ -279,42 +259,6 @@ func TestWaitForStart_MultipleWaitersOnePublish(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		require.FailNow(t, "not all waiters completed")
-	}
-}
-
-// TestWaitForStart_FailedStartPropagatesPromptly proves a producer-side
-// failure round-trips back through the result key and wakes the waiter
-// via PubSub.
-func TestWaitForStart_FailedStartPropagatesPromptly(t *testing.T) {
-	t.Parallel()
-
-	storage, _ := setupTestReservationStorage(t)
-	teamID := uuid.New()
-	sbxID := "pubsub-failed"
-
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
-	require.NoError(t, err)
-
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
-	require.NoError(t, err)
-
-	waiterErr := make(chan error, 1)
-	go func() {
-		_, err := waitForStart(t.Context())
-		waiterErr <- err
-	}()
-	waitForSubscribers(t, storage, 1)
-
-	start := time.Now()
-	finishStart(sandboxtypes.Sandbox{}, errors.New("boom"))
-
-	select {
-	case err := <-waiterErr:
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "boom")
-		assert.Less(t, time.Since(start), 500*time.Millisecond)
-	case <-time.After(3 * time.Second):
-		require.FailNow(t, "waiter did not return")
 	}
 }
 
@@ -335,15 +279,15 @@ func TestWaitForStart_RedisOpsBounded(t *testing.T) {
 	teamID := uuid.New()
 	sbxID := "pubsub-bounded"
 
-	finishStart, _, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	_, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
 
-	_, waitForStart, err := storage.Reserve(t.Context(), teamID, sbxID, 10)
+	_, err = storage.Reserve(t.Context(), teamID, sbxID, 10)
 	require.NoError(t, err)
 
 	waiterDone := make(chan error, 1)
 	go func() {
-		_, err := waitForStart(t.Context())
+		_, err := storage.WaitForStart(t.Context(), teamID, sbxID)
 		waiterDone <- err
 	}()
 
@@ -351,7 +295,7 @@ func TestWaitForStart_RedisOpsBounded(t *testing.T) {
 	counter.Reset() // start counting from after the waiter has subscribed
 
 	time.Sleep(1500 * time.Millisecond)
-	finishStart(testSandbox(teamID, sbxID), nil)
+	require.NoError(t, storage.FinishStart(t.Context(), teamID, sbxID, testResult))
 
 	select {
 	case err := <-waiterDone:

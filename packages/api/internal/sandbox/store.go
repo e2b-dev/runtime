@@ -249,8 +249,11 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 	wg.Wait()
 }
 
+// Reserve returns either finishStart, when the caller owns the start, or
+// waitForStart, when the sandbox is already starting or running; callers
+// compare them with nil.
 func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string, limit int) (finishStart func(Sandbox, error), waitForStart func(ctx context.Context) (Sandbox, error), err error) {
-	finishStart, waitForStart, err = s.reservations.Reserve(ctx, teamID, sandboxID, limit)
+	reserved, err := s.reservations.Reserve(ctx, teamID, sandboxID, limit)
 	if err != nil {
 		if errors.Is(err, ErrAlreadyExists) {
 			// Try to get the sandbox from the storage if already exists
@@ -262,7 +265,44 @@ func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string,
 		return nil, nil, err
 	}
 
-	return finishStart, waitForStart, nil
+	if !reserved {
+		return nil, func(ctx context.Context) (Sandbox, error) {
+			result, err := s.reservations.WaitForStart(ctx, teamID, sandboxID)
+			if err != nil {
+				return Sandbox{}, err
+			}
+
+			return decodeResult(result)
+		}, nil
+	}
+
+	return s.finishStart(ctx, teamID, sandboxID), nil, nil
+}
+
+func (s *Store) finishStart(ctx context.Context, teamID uuid.UUID, sandboxID string) func(Sandbox, error) {
+	return func(sbx Sandbox, startErr error) {
+		bgCtx := context.WithoutCancel(ctx)
+
+		resultData, encodeErr := encodeResult(sbx, startErr)
+		if encodeErr != nil {
+			logger.L().Error(ctx, "failed to encode reservation result",
+				zap.Error(encodeErr),
+				logger.WithSandboxID(sandboxID),
+			)
+
+			// Still try to remove from pending even if encoding fails.
+			_ = s.reservations.Release(bgCtx, teamID, sandboxID)
+
+			return
+		}
+
+		if err := s.reservations.FinishStart(bgCtx, teamID, sandboxID, resultData); err != nil {
+			logger.L().Error(ctx, "failed to run finishStart script",
+				zap.Error(err),
+				logger.WithSandboxID(sandboxID),
+			)
+		}
+	}
 }
 
 func (s *Store) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (string, bool, error) {
@@ -273,6 +313,10 @@ func (s *Store) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxI
 	return s.reservations.ReleaseKillClaim(ctx, teamID, sandboxID, claimID)
 }
 
+// WaitForStart returns once no start of the sandbox is pending. How that start
+// ended is the starter's to report, so only a ctx error is returned.
 func (s *Store) WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	return s.reservations.WaitForStart(ctx, teamID, sandboxID)
+	_, _ = s.reservations.WaitForStart(ctx, teamID, sandboxID)
+
+	return ctx.Err()
 }

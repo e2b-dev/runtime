@@ -119,12 +119,23 @@ type StateTransition struct {
 // ReservationStorage tracks per-team sandbox-start reservations to enforce
 // concurrency limits.
 type ReservationStorage interface {
-	Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string, limit int) (finishStart func(Sandbox, error), waitForStart func(ctx context.Context) (Sandbox, error), err error)
+	// Reserve returns reserved=true when the caller owns the start and must
+	// end it with FinishStart. reserved=false with a nil error means a start
+	// of the sandbox is already pending; the caller waits with WaitForStart.
+	// Errors: ErrAlreadyExists, *LimitExceededError, ErrSandboxKilled, or a
+	// backend failure.
+	Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string, limit int) (reserved bool, err error)
+	// FinishStart stores result for the waiters, removes the pending start
+	// and wakes the waiters.
+	FinishStart(ctx context.Context, teamID uuid.UUID, sandboxID string, result []byte) error
+	// WaitForStart waits until no start of the sandbox is pending and returns
+	// the result its FinishStart stored. A start that ended without a result
+	// is an error.
+	WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) (result []byte, err error)
 	Release(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 
 	// ClaimKill returns false when a resume is in flight or the sandbox is
 	// running again; the caller must then keep the snapshot.
 	ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (claimID string, claimed bool, err error)
 	ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID, claimID string) error
-	WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 }
