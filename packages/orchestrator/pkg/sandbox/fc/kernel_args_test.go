@@ -27,15 +27,17 @@ func TestBuildKernelArgs_DefaultIsPinned(t *testing.T) {
 			name:    "production defaults",
 			options: ProcessOptions{InitScriptPath: "/sbin/init"},
 			want: "i8042.noaux i8042.nokbd init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=1 panic=1 pci=off quiet" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 		{
 			name:    "kvm clock",
 			options: ProcessOptions{InitScriptPath: "/sbin/init", KvmClock: true},
 			want: "clocksource=kvm-clock i8042.noaux i8042.nokbd init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=1 panic=1 pci=off quiet" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 		{
 			// Kernel logs drop `quiet` and raise the log level; asserted because the
@@ -43,16 +45,29 @@ func TestBuildKernelArgs_DefaultIsPinned(t *testing.T) {
 			name:    "kernel logs",
 			options: ProcessOptions{InitScriptPath: "/sbin/init", KernelLogs: true},
 			want: "console=ttyS0 i8042.noaux i8042.nokbd init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=5 panic=1 pci=off" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=5 panic=1 pci=off" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 		{
 			name:    "systemd to kernel logs",
 			options: ProcessOptions{InitScriptPath: "/sbin/init", SystemdToKernelLogs: true},
 			want: "console=ttyS0 i8042.noaux i8042.nokbd init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=5 panic=1 pci=off" +
+				" loglevel=5 panic=1 pci=off" +
 				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1" +
 				" systemd.journald.forward_to_console",
+		},
+		{
+			// When the host tap has a real IPv6 router, the guest keeps IPv6
+			// enabled with SLAAC (ipv6.disable=0, ipv6.autoconf=1) so it can
+			// obtain a routable address — and the address-stripping sysctls are
+			// absent.
+			name:    "ipv6 router configured",
+			options: ProcessOptions{InitScriptPath: "/sbin/init", IPv6RouterConfigured: true},
+			want: "i8042.noaux i8042.nokbd init=/sbin/init ip=" + testIPv4 +
+				" ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
 		},
 	}
 
@@ -80,22 +95,25 @@ func TestBuildKernelArgs_Arm64DropsX86OnlyParams(t *testing.T) {
 			name:    "production defaults",
 			options: ProcessOptions{InitScriptPath: "/sbin/init"},
 			want: "init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=1 panic=1 pci=off quiet" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 		{
 			name:    "kvm clock requested is not applied",
 			options: ProcessOptions{InitScriptPath: "/sbin/init", KvmClock: true},
 			want: "init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=1 panic=1 pci=off quiet" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=1 panic=1 pci=off quiet" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 		{
 			name:    "kernel logs still go to ttyS0",
 			options: ProcessOptions{InitScriptPath: "/sbin/init", KernelLogs: true},
 			want: "console=ttyS0 init=/sbin/init ip=" + testIPv4 +
-				" ipv6.autoconf=1 ipv6.disable=0 loglevel=5 panic=1 pci=off" +
-				" random.trust_cpu=on reboot=k rootflags=discard selinux=0",
+				" loglevel=5 panic=1 pci=off" +
+				" random.trust_cpu=on reboot=k rootflags=discard selinux=0" +
+				" sysctl.net.ipv6.conf.all.disable_ipv6=1 sysctl.net.ipv6.conf.default.disable_ipv6=1",
 		},
 	}
 

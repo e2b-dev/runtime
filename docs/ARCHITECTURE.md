@@ -570,6 +570,18 @@ Key mechanisms (all under `pkg/sandbox/`):
   (with SNI/Host-inspecting TCP firewall for domain allow/deny lists). Slots are pooled and
   reused; slot indexes are allocated locally against the node's netns state (leftover
   namespaces from a previous run are torn down by startup reclaim).
+  **Guest IP stack**: guest networking is **IPv4-only by default**. The host tap has no IPv6
+  router (no router advertisements, no routable prefix), so the guest boots with IPv6 addresses
+  stripped from every interface (`sysctl.net.ipv6.conf.{all,default}.disable_ipv6=1` on the
+  kernel cmdline). This leaves the kernel with no IPv6 source address, so address selection
+  (RFC 6724) prefers IPv4 and the ~250 ms Happy Eyeballs penalty (RFC 8305) — a runtime that
+  races AAAA first, e.g. Node's `autoSelectFamily`, then times out on the unroutable `fe80::`
+  link-local address — does not occur. Unlike `ipv6.disable=1`, the `AF_INET6` socket API and
+  `bind(::)` still work, so a dual-stack wildcard server in the guest still binds; only an
+  explicit `[::1]` loopback bind is unavailable. The switch is `Slot.HasIPv6Router()` →
+  `ProcessOptions.IPv6RouterConfigured` → the IPv6 kernel args; when the host networking layer
+  gains a full IPv6 stack (router + per-slot prefix), `HasIPv6Router()` returns true and guests
+  boot dual-stack (`ipv6.disable=0`, `ipv6.autoconf=1`) without further code changes.
   NFS release removes the old lifecycle's route, closes MOUNT admission and invalidates its
   handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
   tracked by `nfs.retirements.gauge` until it finishes; a stuck backing operation does not
