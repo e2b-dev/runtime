@@ -2,10 +2,13 @@ package placement
 
 import (
 	"context"
+	"errors"
 	"maps"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -172,15 +175,64 @@ func placeSandbox(
 
 	attempt := 0
 	refusals := 0
+	// lastRefusal is the classified label of the most recent node
+	// ResourceExhausted; "" until a node refuses.
+	lastRefusal := ""
 	// A node refused at the record step is excluded, so chooseNode no longer
 	// sees its full pool.
 	poolsFull := false
+
+	// noCapacity builds the capacity-shortage error with the diagnostics
+	// gathered so far, and records the classification on the span. The
+	// client-facing message is unchanged; this only enriches logs/traces.
+	noCapacity := func(reason CapacityShortageReason) NoNodesAvailableError {
+		e := NoNodesAvailableError{
+			Reason:      reason,
+			Attempts:    attempt,
+			Refusals:    refusals,
+			PoolsFull:   poolsFull,
+			LastRefusal: lastRefusal,
+		}
+		span.SetAttributes(
+			attribute.String("placement.capacity_shortage.reason", string(reason)),
+			attribute.Int("placement.capacity_shortage.attempts", attempt),
+			attribute.Int("placement.capacity_shortage.refusals", refusals),
+			attribute.Bool("placement.capacity_shortage.pools_full", poolsFull),
+			attribute.String("placement.capacity_shortage.last_refusal", lastRefusal),
+		)
+		logger.L().Warn(ctx, "Placement found no node with capacity",
+			logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()),
+			logger.WithTemplateID(sbxRequest.GetSandbox().GetTemplateId()),
+			zap.String("reason", string(reason)),
+			zap.Int("attempts", attempt),
+			zap.Int("refusals", refusals),
+			zap.Bool("pools_full", poolsFull),
+			zap.String("last_refusal", lastRefusal),
+			zap.Int64("requested_vcpu", sbxRequest.GetSandbox().GetVcpu()),
+			zap.Int64("requested_ram_mb", sbxRequest.GetSandbox().GetRamMb()),
+		)
+		return e
+	}
+
+	// classifyShortage picks the reason from what placement observed: a
+	// memory-admission failure outranks node refusals (the pool is the
+	// binding constraint), refusals outrank an empty candidate set.
+	classifyShortage := func() CapacityShortageReason {
+		switch {
+		case poolsFull:
+			return ShortageHugepagePool
+		case refusals > 0:
+			return ShortageNodeRefusals
+		default:
+			return ShortageNoCandidate
+		}
+	}
 
 	// answered reports what the nodes said to a caller that left while a
 	// detached create ran: never a timeout, so no node is pinned for a remap.
 	answered := func() (PlacementResult, error) {
 		if attempt == 0 {
-			return PlacementResult{}, NoNodesAvailableError{}
+			return PlacementResult{}, noCapacity(classifyShortage())
 		}
 
 		return PlacementResult{}, SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr}
@@ -189,7 +241,7 @@ func placeSandbox(
 	// Nothing but capacity refusals before the deadline is capacity, not a slow placement.
 	deadline := func() (PlacementResult, error) {
 		if attempt == 0 && (refusals > 0 || poolsFull) {
-			return failed(NoNodesAvailableError{})
+			return failed(noCapacity(classifyShortage()))
 		}
 
 		return failed(PlacementTimeoutError{Attempts: attempt})
@@ -211,7 +263,7 @@ func placeSandbox(
 					return failed(SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr})
 				}
 
-				return failed(NoNodesAvailableError{})
+				return failed(noCapacity(ShortageNoCandidate))
 			}
 
 			candidatesExcluded := nodesExcluded
@@ -232,8 +284,24 @@ func placeSandbox(
 					return failed(SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr})
 				}
 
+				// A capacity shortage from chooseNode (full pools, or an
+				// unavailable node that would otherwise fit) is enriched with the
+				// loop's diagnostics; the chooseNode reason wins when the loop has
+				// not recorded its own pool-full yet. A mismatch (no compatible
+				// node) is returned as is.
+				var fromChoose NoNodesAvailableError
 				if poolsFull {
-					return failed(NoNodesAvailableError{})
+					return failed(noCapacity(ShortageHugepagePool))
+				}
+				if errors.As(err, &fromChoose) {
+					reason := fromChoose.Reason
+					if reason == ShortageUnknown {
+						reason = classifyShortage()
+					}
+					if fromChoose.PoolsFull {
+						poolsFull = true
+					}
+					return failed(noCapacity(reason))
 				}
 
 				return failed(err)
@@ -301,6 +369,9 @@ func placeSandbox(
 		switch statusCode {
 		case codes.ResourceExhausted:
 			refusals++
+			if ok {
+				lastRefusal = classifyRefusal(st)
+			}
 			failedNode.PlacementMetrics.Skip(sbxRequest.GetSandbox().GetSandboxId())
 			if ok && createRefusedByStatus(st) {
 				skipped[failedNode.ID] = struct{}{}
@@ -351,6 +422,33 @@ func placeSandbox(
 	}
 
 	return failed(SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr})
+}
+
+// classifyRefusal labels a node's ResourceExhausted message so a capacity
+// shortage carries what the node was short of, not just "no nodes available".
+// It matches on the orchestrator's own wording; an unrecognised refusal is
+// labelled "other" rather than dropped, so a reworded node message degrades
+// to a coarse label instead of a blank one.
+func classifyRefusal(st *status.Status) string {
+	if st == nil {
+		return ""
+	}
+	msg := st.Message()
+	switch {
+	case strings.Contains(msg, "max number of running sandboxes"):
+		return "running_cap"
+	case strings.Contains(msg, "too many sandboxes starting"):
+		return "starting_cap"
+	case strings.Contains(msg, "not enough memory to map the guest"):
+		return "guest_memory_stopping"
+	case strings.Contains(msg, "not accepting new sandboxes"):
+		return "node_not_accepting"
+	case strings.Contains(msg, "being migrated"), strings.Contains(msg, "rebooting"),
+		strings.Contains(msg, "being checkpointed"), strings.Contains(msg, "persisting sandbox"):
+		return "lifecycle_busy"
+	default:
+		return "other"
+	}
 }
 
 // createRefusedForGood reports a create the node refused with the typed

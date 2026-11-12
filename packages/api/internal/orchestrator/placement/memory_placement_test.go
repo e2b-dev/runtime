@@ -264,3 +264,24 @@ func TestPlaceSandbox_ConcurrentPlacementsNeverOverfillANode(t *testing.T) {
 		})
 	}
 }
+
+// The capacity shortage carries a classified reason for logs and traces. Every
+// pool full is the hugepage-pool reason, not a bare unknown, so an operator can
+// tell a memory shortage from node refusals without reading the message text.
+func TestPlaceSandbox_EveryPoolFull_ReasonIsHugepagePool(t *testing.T) {
+	t.Parallel()
+
+	nodes := []*nodemanager.Node{
+		hugepageNode("a", 1600, 1600, 300, 2000),
+		hugepageNode("b", 1600, 1700, 200, 2000),
+	}
+
+	_, err := PlaceSandbox(t.Context(), NewBestOfK(DefaultBestOfKConfig()), nodes, nil,
+		hugepageSbxRequest(), Requirements{Memory: limit95}, false, nil)
+
+	var noNodes NoNodesAvailableError
+	require.ErrorAs(t, err, &noNodes)
+	assert.Equal(t, ShortageHugepagePool, noNodes.Reason)
+	assert.True(t, noNodes.PoolsFull)
+	assert.Equal(t, 0, noNodes.Attempts)
+}

@@ -167,8 +167,11 @@ func (b *BestOfK) chooseNode(_ context.Context, nodes []*nodemanager.Node, exclu
 	if bestNode == nil {
 		// Full pools, or an unavailable node that would fit, are a shortage that
 		// clears, not a mismatch.
-		if poolsFull || unavailableNodeWouldFit(nodes, excludedNodes, requirements, filterByLabels, requiredLabels) {
-			return nil, NoNodesAvailableError{}
+		if poolsFull {
+			return nil, NoNodesAvailableError{Reason: ShortageHugepagePool, PoolsFull: true}
+		}
+		if unavailableNodeWouldFit(nodes, excludedNodes, requirements, filterByLabels, requiredLabels) {
+			return nil, NoNodesAvailableError{Reason: ShortageNoCandidate}
 		}
 
 		return nil, FailedToPlaceSandboxError{
