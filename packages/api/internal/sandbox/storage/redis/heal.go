@@ -100,6 +100,12 @@ func (s *Storage) healExpirationIndex(ctx context.Context) (int, teamWalk, error
 	}
 	walk.complete = skipped == 0
 
+	// Reuse the scan's own skipped-team count (per-team failures silenced by
+	// forEachSandboxBatch) as the teams_skipped signal — no extra bookkeeping.
+	if skipped > 0 {
+		s.scanMet.teamsSkipped.Add(ctx, int64(skipped))
+	}
+
 	return healed, walk, nil
 }
 
@@ -554,7 +560,7 @@ func (s *Storage) readRecordOf(ctx context.Context, key string, ref recordRef) (
 	if err != nil {
 		return sandboxtypes.Sandbox{}, false, fmt.Errorf("GET: %w", err)
 	}
-	sbx, ok := decodeRecord(ctx, readRef{ref: ref, team: team}, data)
+	sbx, ok := s.decodeRecord(ctx, readRef{ref: ref, team: team}, data)
 
 	return sbx, ok, nil
 }

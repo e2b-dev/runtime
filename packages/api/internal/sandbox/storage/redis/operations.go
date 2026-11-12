@@ -586,6 +586,9 @@ func (s *Storage) TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]int6
 	for _, e := range entries {
 		if count := e.cmd.Val(); count > 0 {
 			teams[e.id] = count
+			// Reuse this already-pipelined SCARD as the team-index-size sample
+			// instead of a second full SCARD pass over globalTeamsSet.
+			s.metrics.teamIndexSize.Record(ctx, count)
 		} else if int64(e.score) < cutoff {
 			// Only prune if the entry is old enough — a fresh score means
 			// an Add happened recently and SCARD==0 may be a transient race.
