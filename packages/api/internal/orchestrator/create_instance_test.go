@@ -490,7 +490,7 @@ func TestCreateSandbox_FilesystemBootDemandRefusesJoin(t *testing.T) {
 	go func() {
 		_, joinErr := o.CreateSandbox(t.Context(), sandboxID, uuid.New().String(), team,
 			func(_ context.Context) (SandboxMetadata, *api.APIError) {
-				t.Error("joiner must not fetch data")
+				assert.Fail(t, "joiner must not fetch data")
 
 				return SandboxMetadata{}, nil
 			},
@@ -503,7 +503,7 @@ func TestCreateSandbox_FilesystemBootDemandRefusesJoin(t *testing.T) {
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusConflict, apiErr.Code)
 	case <-time.After(20 * time.Second):
-		t.Fatal("joiner did not return: it joined the in-flight start instead of being refused")
+		require.Fail(t, "joiner did not return: it joined the in-flight start instead of being refused")
 	}
 
 	close(winnerRelease)
@@ -1490,7 +1490,7 @@ func TestCreateSandbox_RetainsWinningPlacement(t *testing.T) {
 					select {
 					case <-probe.probed:
 					case <-ctx.Done():
-						t.Fatal("joiner did not wait on the pending start")
+						require.Fail(t, "joiner did not wait on the pending start")
 					}
 
 					data, err := plainSandboxData(ctx)

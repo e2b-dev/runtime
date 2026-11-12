@@ -494,7 +494,7 @@ $$`)
 	case err := <-result:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(5 * time.Second):
-		t.Fatal("sandbox list did not stop after cancellation")
+		require.Fail(t, "sandbox list did not stop after cancellation")
 	}
 	var attempts int
 	require.NoError(t, store.sqlcReadDB.Pool().QueryRow(t.Context(), "SELECT last_value FROM snapshot_read_attempt").Scan(&attempts))

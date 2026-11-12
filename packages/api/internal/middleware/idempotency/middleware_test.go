@@ -285,7 +285,7 @@ func TestMalformedCreateDoesNotReserve(t *testing.T) {
 		t.Run(tc.body, func(t *testing.T) {
 			t.Parallel()
 			r := testRouter(t, flags, faultStore{reserveErr: errors.New("unexpected reservation")}, uuid.New(), time.Second, func(_ *gin.Context) {
-				t.Error("malformed create executed")
+				assert.Fail(t, "malformed create executed")
 			})
 			w := request(t.Context(), r, "/v2/sandboxes", tc.body, []string{"key"})
 			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
@@ -541,7 +541,7 @@ func TestRedisMiddleware(t *testing.T) {
 		select {
 		case <-started:
 		case <-ownerDone:
-			t.Fatalf("owner returned before executing: %s", (<-owner).Body.String())
+			require.Failf(t, "owner returned before executing", "%s", (<-owner).Body.String())
 		}
 		cancelOwner()
 		key := recordKey(team.String(), "key")
@@ -713,9 +713,7 @@ func TestResponseDeadlineFromOriginalRequest(t *testing.T) {
 		var fingerprint, reservationOwner, response string
 		var reserveCalls, completeCalls int
 		client := scriptedRedisClient{evalSha: func(ctx context.Context, sha string, keys []string, args ...any) *redis.Cmd {
-			if err := ctx.Err(); err != nil {
-				t.Errorf("Redis called with canceled context: %v", err)
-
+			if err := ctx.Err(); !assert.NoError(t, err, "Redis called with canceled context") {
 				return redis.NewCmdResult(nil, err)
 			}
 			assert.Equal(t, []string{key}, keys)
@@ -756,7 +754,7 @@ func TestResponseDeadlineFromOriginalRequest(t *testing.T) {
 		}
 		ownerRouter := testRouter(t, flags, &redisStore{client: client}, team, time.Minute, handler)
 		retryRouter := testRouter(t, flags, &redisStore{client: client}, team, time.Minute, func(_ *gin.Context) {
-			t.Error("retry executed the operation")
+			assert.Fail(t, "retry executed the operation")
 		})
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
@@ -819,7 +817,7 @@ func TestMissingResponseAfterDeadline(t *testing.T) {
 			expiresAt, err := client.PExpireTime(t.Context(), key).Result()
 			require.NoError(t, err)
 			r := testRouter(t, flags, s, team, time.Minute, func(_ *gin.Context) {
-				t.Error("request with an unknown outcome was executed again")
+				assert.Fail(t, "request with an unknown outcome was executed again")
 			})
 			for range 2 {
 				w := request(t.Context(), r, "/v2/sandboxes", validBody, []string{"key"})
@@ -917,7 +915,7 @@ func TestInvalidRetentionRejectsKeyedRequestsAsPermanent(t *testing.T) {
 	t.Parallel()
 	flags, _ := testFlags(t, false, 0)
 	r := testRouter(t, flags, faultStore{reserveErr: errors.New("unexpected reservation")}, uuid.New(), time.Second, func(_ *gin.Context) {
-		t.Error("misconfigured idempotency executed the request")
+		assert.Fail(t, "misconfigured idempotency executed the request")
 	})
 	w := request(t.Context(), r, "/v2/sandboxes", validBody, []string{"key"})
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
@@ -1009,7 +1007,7 @@ func TestReservationHonorsRequestTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := &ownerStore{}
 		r := testRouter(t, flags, delayedReserveStore{store: s, delay: time.Second}, uuid.New(), 50*time.Millisecond, func(_ *gin.Context) {
-			t.Error("expired request executed")
+			assert.Fail(t, "expired request executed")
 		})
 		start := time.Now()
 		w := request(t.Context(), r, "/v2/sandboxes", validBody, []string{"key"})
@@ -1073,7 +1071,7 @@ func TestReservationHonorsEarlierCallerDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := &ownerStore{}
 		r := testRouter(t, flags, delayedReserveStore{store: s, delay: time.Second}, uuid.New(), time.Second, func(_ *gin.Context) {
-			t.Error("expired request executed")
+			assert.Fail(t, "expired request executed")
 		})
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()

@@ -64,7 +64,7 @@ func TestStartupCoordinatorRetriesTargetThreeTimesWithFreshCanceledContexts(t *t
 	select {
 	case <-ready:
 	case <-t.Context().Done():
-		t.Fatal("startup readiness was not released")
+		require.Fail(t, "startup readiness was not released")
 	}
 
 	mu.Lock()
@@ -130,7 +130,7 @@ func TestStartupDeadlineRetriesWithFreshContexts(t *testing.T) {
 	case err := <-deadlineObserved:
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-t.Context().Done():
-		t.Fatal("second startup attempt did not observe its deadline")
+		require.Fail(t, "second startup attempt did not observe its deadline")
 	}
 
 	completionCtx, completionCancel := context.WithTimeout(t.Context(), time.Second)
@@ -138,7 +138,7 @@ func TestStartupDeadlineRetriesWithFreshContexts(t *testing.T) {
 	select {
 	case <-ready:
 	case <-completionCtx.Done():
-		t.Fatal("startup did not complete after the observed deadline")
+		require.Fail(t, "startup did not complete after the observed deadline")
 	}
 
 	mu.Lock()
@@ -184,7 +184,7 @@ func TestStartupCoordinatorWaitsForEmptyResponseApplication(t *testing.T) {
 	case <-ready:
 		require.True(t, <-readyResult, "readiness must follow empty snapshot application")
 	case <-t.Context().Done():
-		t.Fatal("empty response application did not release startup")
+		require.Fail(t, "empty response application did not release startup")
 	}
 }
 
@@ -227,12 +227,12 @@ func TestStartupEmptyRemoteDiscoveryAppliesBeforeReadiness(t *testing.T) {
 	case err := <-readyResult:
 		require.NoError(t, err)
 	case <-t.Context().Done():
-		t.Fatal("empty remote discovery did not complete startup")
+		require.Fail(t, "empty remote discovery did not complete startup")
 	}
 	select {
 	case <-pool.StartupReady():
 	case <-t.Context().Done():
-		t.Fatal("applied empty remote snapshot did not release pool readiness")
+		require.Fail(t, "applied empty remote snapshot did not release pool readiness")
 	}
 }
 
@@ -289,7 +289,7 @@ func TestStartupRemoteFailureRecoversThroughBackgroundSynchronization(t *testing
 	select {
 	case <-pool.StartupReady():
 	case <-completionCtx.Done():
-		t.Fatal("remote discovery failures did not fail startup open")
+		require.Fail(t, "remote discovery failures did not fail startup open")
 	}
 	require.Equal(t, int32(startupAttempts), discoveryCalls.Load(), "startup must bound real remote discovery failures")
 	require.Zero(t, pool.clusters.Count(), "failed startup probes must not insert the remote target")
@@ -298,14 +298,14 @@ func TestStartupRemoteFailureRecoversThroughBackgroundSynchronization(t *testing
 	select {
 	case <-backgroundRoundStarted:
 	case <-completionCtx.Done():
-		t.Fatal("scheduled background synchronization did not begin recovery")
+		require.Fail(t, "scheduled background synchronization did not begin recovery")
 	}
 	rejectDiscovery.Store(false)
 	close(releaseBackgroundRound)
 	select {
 	case <-recovered:
 	case <-completionCtx.Done():
-		t.Fatal("scheduled background synchronization did not recover the failed-open target")
+		require.Fail(t, "scheduled background synchronization did not recover the failed-open target")
 	}
 	require.Equal(t, 1, pool.clusters.Count(), "ordinary synchronization must insert a target recovered after startup fail-open")
 }
@@ -402,12 +402,12 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 	select {
 	case <-firstStarted:
 	case <-completionCtx.Done():
-		t.Fatal("first target did not start")
+		require.Fail(t, "first target did not start")
 	}
 	select {
 	case <-secondStarted:
 	case <-completionCtx.Done():
-		t.Fatal("second target did not start while first target was blocked")
+		require.Fail(t, "second target did not start while first target was blocked")
 	}
 	observed := map[uuid.UUID]attemptObservation{}
 	for range 2 {
@@ -415,7 +415,7 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 		case observation := <-deadlineObserved:
 			observed[observation.target] = observation
 		case <-completionCtx.Done():
-			t.Fatal("parallel target did not observe its independent deadline")
+			require.Fail(t, "parallel target did not observe its independent deadline")
 		}
 	}
 	firstDeadline, found := observed[first.ID]
@@ -430,11 +430,11 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 	select {
 	case <-ready:
 	case <-completionCtx.Done():
-		t.Fatal("parallel startup did not complete after both deadline events")
+		require.Fail(t, "parallel startup did not complete after both deadline events")
 	}
 	select {
 	case observation := <-unexpectedAttempt:
-		t.Fatalf("unexpected startup attempt for target %s attempt %d", observation.target, observation.attempt)
+		require.Failf(t, "unexpected startup attempt", "target %s attempt %d", observation.target, observation.attempt)
 	default:
 	}
 
@@ -530,7 +530,7 @@ func TestStartupCancellationPreventsReadiness(t *testing.T) {
 	select {
 	case <-attemptStarted:
 	case <-t.Context().Done():
-		t.Fatal("startup attempt did not start")
+		require.Fail(t, "startup attempt did not start")
 	}
 	rootCancel()
 
@@ -538,12 +538,12 @@ func TestStartupCancellationPreventsReadiness(t *testing.T) {
 	case err := <-attemptCanceled:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-t.Context().Done():
-		t.Fatal("startup attempt did not observe cancellation")
+		require.Fail(t, "startup attempt did not observe cancellation")
 	}
 
 	select {
 	case <-ready:
-		t.Fatal("canceled startup must not become ready")
+		require.Fail(t, "canceled startup must not become ready")
 	default:
 	}
 }
@@ -570,7 +570,7 @@ func TestStartupCoordinatorFailsOpenAfterThreeFailures(t *testing.T) {
 	select {
 	case <-ready:
 	case <-t.Context().Done():
-		t.Fatal("three failed attempts did not release startup")
+		require.Fail(t, "three failed attempts did not release startup")
 	}
 	require.Equal(t, int32(startupAttempts), attempts.Load())
 }
@@ -615,11 +615,11 @@ func TestStartupCoordinatorWaitsForFirstSuccessfulInventory(t *testing.T) {
 	select {
 	case <-inventoryFailed:
 	case <-t.Context().Done():
-		t.Fatal("initial inventory did not run")
+		require.Fail(t, "initial inventory did not run")
 	}
 	select {
 	case <-ready:
-		t.Fatal("failed inventory must keep startup blocked")
+		require.Fail(t, "failed inventory must keep startup blocked")
 	default:
 	}
 
@@ -627,7 +627,7 @@ func TestStartupCoordinatorWaitsForFirstSuccessfulInventory(t *testing.T) {
 	select {
 	case <-ready:
 	case <-t.Context().Done():
-		t.Fatal("successful empty inventory did not release startup")
+		require.Fail(t, "successful empty inventory did not release startup")
 	}
 	require.Equal(t, 2, inventoryCalls)
 	require.Zero(t, targetStarts.Load(), "empty first successful inventory must not probe a target")
@@ -666,7 +666,7 @@ func TestStartupCoordinatorFreezesInitialTargets(t *testing.T) {
 	select {
 	case <-ready:
 	case <-t.Context().Done():
-		t.Fatal("initial frozen target did not complete startup")
+		require.Fail(t, "initial frozen target did not complete startup")
 	}
 
 	mu.Lock()

@@ -1,6 +1,10 @@
 package sandboxtypes
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestKillReasonValues(t *testing.T) {
 	t.Parallel()
@@ -14,9 +18,7 @@ func TestKillReasonValues(t *testing.T) {
 		KillReasonBaseTemplateMissing: "base_template_missing",
 		KillReasonTeamDeleted:         "team_deleted",
 	} {
-		if string(reason) != want {
-			t.Errorf("KillReason = %q, want %q", string(reason), want)
-		}
+		assert.Equal(t, want, string(reason))
 	}
 }
 
@@ -69,9 +71,7 @@ func TestKillReasonString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := tt.in.String(); got != tt.want {
-				t.Errorf("(%q).String() = %q, want %q", string(tt.in), got, tt.want)
-			}
+			assert.Equal(t, tt.want, tt.in.String())
 		})
 	}
 }

@@ -407,7 +407,7 @@ func TestLifecycleHoldRefusesADeadlineThatPassedWaitingForTheLock(t *testing.T) 
 	case err := <-done:
 		require.ErrorContains(t, err, "passed while waiting")
 	case <-time.After(10 * time.Second):
-		t.Fatal("the hold did not return")
+		require.Fail(t, "the hold did not return")
 	}
 	record, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)

@@ -158,9 +158,7 @@ func removeEnv(t *testing.T, key string) {
 
 	prevValue, ok := os.LookupEnv(key)
 
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatalf("cannot unset environment variable: %v", err)
-	}
+	require.NoError(t, os.Unsetenv(key))
 
 	if ok {
 		t.Cleanup(func() {

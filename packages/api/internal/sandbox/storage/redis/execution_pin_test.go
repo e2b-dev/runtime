@@ -133,7 +133,7 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 			"a removal that waited out a transition must still honour its pin on retry")
 		require.Nil(t, got.finish)
 	case <-time.After(30 * time.Second):
-		t.Fatal("pinned kill never returned after the in-flight transition completed")
+		require.Fail(t, "pinned kill never returned after the in-flight transition completed")
 	}
 
 	// The resumed incarnation was never in scope and must be untouched.

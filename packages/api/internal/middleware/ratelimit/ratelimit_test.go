@@ -341,7 +341,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 		case http.StatusTooManyRequests:
 			denied++
 		default:
-			t.Errorf("unexpected status code: %d", code)
+			assert.Failf(t, "unexpected status code", "%d", code)
 		}
 	}
 
@@ -372,7 +372,7 @@ func TestSandboxCreateRetryRateLimit(t *testing.T) {
 			router.Use(func(c *gin.Context) {
 				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
 			}, newTestMiddleware(t, limiter, Config{FailOpen: true}, flags))
-			router.POST(tc.path, func(*gin.Context) { t.Error("rate-limited request executed") })
+			router.POST(tc.path, func(*gin.Context) { assert.Fail(t, "rate-limited request executed") })
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tc.path, nil)
 			if tc.key != "" {
 				req.Header.Set("Idempotency-Key", tc.key)
@@ -570,7 +570,7 @@ func TestAPIGroupBypass(t *testing.T) {
 			t.Parallel()
 
 			limiter := groupLimiterFunc(func(context.Context, string, redis_rate.Limit) (*redis_rate.Result, error) {
-				t.Fatal("bypassed request reached Redis")
+				require.Fail(t, "bypassed request reached Redis")
 
 				return nil, nil
 			})

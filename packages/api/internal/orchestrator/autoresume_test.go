@@ -354,7 +354,7 @@ func TestHandleExistingSandboxAutoResume_ReturnsSavedPlacement(t *testing.T) {
 			select {
 			case <-probe.waiting:
 			case <-ctx.Done():
-				t.Fatal("auto-resume did not wait for the checkpoint")
+				require.Fail(t, "auto-resume did not wait for the checkpoint")
 			}
 
 			restored := want(tt.checkpointed)

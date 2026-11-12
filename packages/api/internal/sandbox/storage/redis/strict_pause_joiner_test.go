@@ -50,6 +50,6 @@ func TestStartRemoving_StrictPauseDoesNotJoinAPauseInFlight(t *testing.T) {
 	case err := <-joiner:
 		require.NoError(t, err, "a plain pause joins and inherits the result")
 	case <-time.After(5 * time.Second):
-		t.Fatal("the joiner never returned")
+		require.Fail(t, "the joiner never returned")
 	}
 }

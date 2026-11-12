@@ -356,7 +356,7 @@ func TestWaitForStateChange_WaitForCompletion(t *testing.T) {
 	case <-done:
 		require.NoError(t, waitErr)
 	case <-time.After(time.Second):
-		t.Fatal("WaitForStateChange did not complete in time")
+		require.Fail(t, "WaitForStateChange did not complete in time")
 	}
 }
 
@@ -393,7 +393,7 @@ func TestWaitForStateChange_ContextCancellation(t *testing.T) {
 		require.Error(t, waitErr)
 		require.ErrorIs(t, waitErr, context.DeadlineExceeded)
 	case <-time.After(time.Second):
-		t.Fatal("WaitForStateChange did not timeout as expected")
+		require.Fail(t, "WaitForStateChange did not timeout as expected")
 	}
 
 	// Clean up
@@ -621,7 +621,7 @@ func TestStartRemoving_WaiterCompletesOnCallbackSuccess(t *testing.T) {
 	case <-done:
 		require.NoError(t, waitErr)
 	case <-time.After(time.Second):
-		t.Fatal("WaitForStateChange did not complete in time")
+		require.Fail(t, "WaitForStateChange did not complete in time")
 	}
 
 	// Retry should work now - sandbox is already in pausing state
@@ -667,7 +667,7 @@ func TestStartRemoving_WaiterReceivesErrorOnCallbackFailure(t *testing.T) {
 		require.Error(t, waitErr)
 		assert.Contains(t, waitErr.Error(), "connection refused")
 	case <-time.After(time.Second):
-		t.Fatal("WaitForStateChange did not complete in time")
+		require.Fail(t, "WaitForStateChange did not complete in time")
 	}
 }
 
@@ -1635,7 +1635,7 @@ func awaitTransitionRead(t *testing.T, read <-chan struct{}, who string) {
 	select {
 	case <-read:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("%s never read the in-flight transition", who)
+		require.Fail(t, who+" never read the in-flight transition")
 	}
 }
 
@@ -1674,14 +1674,14 @@ func TestRestoredUnsupportedTransition_JoinerGetsThePermanentRefusal(t *testing.
 	case werr := <-waiter:
 		require.ErrorIs(t, werr, sandboxtypes.ErrTransitionRestored)
 	case <-time.After(5 * time.Second):
-		t.Fatal("waiter did not wake")
+		require.Fail(t, "waiter did not wake")
 	}
 	select {
 	case jerr := <-joiner:
 		require.ErrorIs(t, jerr, sandboxtypes.PauseUnsupportedError{}, "a joining pause must see the permanent refusal, never the retryable one")
 		require.NotErrorIs(t, jerr, sandboxtypes.PauseQueueExhaustedError{})
 	case <-time.After(5 * time.Second):
-		t.Fatal("joiner did not wake")
+		require.Fail(t, "joiner did not wake")
 	}
 
 	restored, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
@@ -1721,7 +1721,7 @@ func TestRestoredUnsupportedTransition_MemoryJoinerMayRetry(t *testing.T) {
 		require.ErrorIs(t, jerr, sandboxtypes.PauseQueueExhaustedError{}, "a memory pause may retry")
 		require.NotErrorIs(t, jerr, sandboxtypes.PauseUnsupportedError{})
 	case <-time.After(5 * time.Second):
-		t.Fatal("joiner did not wake")
+		require.Fail(t, "joiner did not wake")
 	}
 
 	_, _, retryFinish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
@@ -1769,19 +1769,19 @@ func TestRestoredTransition_WaitersJoinersAndKillers(t *testing.T) {
 	case werr := <-waiter:
 		require.ErrorIs(t, werr, sandboxtypes.ErrTransitionRestored)
 	case <-time.After(5 * time.Second):
-		t.Fatal("waiter did not wake")
+		require.Fail(t, "waiter did not wake")
 	}
 	select {
 	case jerr := <-joiner:
 		require.ErrorIs(t, jerr, sandboxtypes.PauseQueueExhaustedError{}, "a joining pause must see the refusal, never a success")
 	case <-time.After(5 * time.Second):
-		t.Fatal("joiner did not wake")
+		require.Fail(t, "joiner did not wake")
 	}
 	select {
 	case kerr := <-killer:
 		require.NoError(t, kerr, "a joining kill retries against the restored Running record")
 	case <-time.After(5 * time.Second):
-		t.Fatal("killer did not wake")
+		require.Fail(t, "killer did not wake")
 	}
 }
 

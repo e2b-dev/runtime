@@ -78,7 +78,7 @@ func (ct *CallbackTracker) WaitForCalls(t *testing.T, timeout time.Duration) {
 	case <-ct.done:
 		return
 	case <-time.After(timeout):
-		t.Fatalf("timeout waiting for callbacks: expected %d, got %d", ct.expectedCalls, ct.actualCalls.Load())
+		require.Failf(t, "timeout waiting for callbacks", "expected %d, got %d", ct.expectedCalls, ct.actualCalls.Load())
 	}
 }
 
@@ -450,12 +450,12 @@ func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
 	case got := <-ended:
 		assert.Equal(t, poweredOff.SandboxID, got.SandboxID)
 	case <-time.After(5 * time.Second):
-		t.Fatal("EndPoweredOffSandbox was not called")
+		require.Fail(t, "EndPoweredOffSandbox was not called")
 	}
 
 	select {
 	case got := <-ended:
-		t.Fatalf("EndPoweredOffSandbox called for %s, which is not powered off", got.SandboxID)
+		require.Failf(t, "EndPoweredOffSandbox called for a sandbox that is not powered off", "sandbox %s", got.SandboxID)
 	case <-time.After(200 * time.Millisecond):
 	}
 }

@@ -86,7 +86,7 @@ func TestCreateSandboxRetryBeforeAndAfterCreation(t *testing.T) {
 				select {
 				case <-client.cleanupDone:
 				case <-time.After(5 * time.Second):
-					t.Fatal("sandbox cleanup did not start")
+					require.Fail(t, "sandbox cleanup did not start")
 				}
 			}
 		})

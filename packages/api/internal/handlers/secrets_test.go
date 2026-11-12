@@ -61,7 +61,7 @@ func requireNoSentinel(t *testing.T, what, haystack string, needles ...string) {
 
 	for _, needle := range needles {
 		if needle != "" && strings.Contains(haystack, needle) {
-			t.Fatalf("%s leaked confidential request material", what)
+			require.Fail(t, what+" leaked confidential request material")
 		}
 	}
 }
@@ -289,7 +289,7 @@ func TestPostSecretsSendsOnlyDerivedProjectAndValue(t *testing.T) {
 	require.Empty(t, request.GetMetadata(), "omitted metadata is sent as empty")
 
 	if string(request.GetValue()) != sentinelSecretValue {
-		t.Fatal("the backend did not receive the value the caller sent")
+		require.Fail(t, "the backend did not receive the value the caller sent")
 	}
 
 	// No caller credential and no client-asserted tenant reaches the hop.
@@ -1192,7 +1192,7 @@ func receiveWithin[T any](t *testing.T, values <-chan T, what string) (value T) 
 	select {
 	case value = <-values:
 	case <-time.After(10 * time.Second):
-		t.Fatalf("timed out waiting for %s", what)
+		require.Fail(t, "timed out waiting for "+what)
 	}
 
 	return value

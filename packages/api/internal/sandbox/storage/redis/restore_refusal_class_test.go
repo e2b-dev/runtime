@@ -59,14 +59,14 @@ func TestStartRemoving_JoinerIsAnsweredWithTheRestoredRefusalsClass(t *testing.T
 					require.NotErrorIs(t, err, sandboxtypes.PauseRefusedEnvdUnresponsiveError{})
 				}
 			case <-time.After(5 * time.Second):
-				t.Fatal("the joiner never returned")
+				require.Fail(t, "the joiner never returned")
 			}
 			select {
 			case err := <-waiter:
 				require.ErrorIs(t, err, sandboxtypes.ErrTransitionRestored)
 				require.ErrorIs(t, err, refusal)
 			case <-time.After(5 * time.Second):
-				t.Fatal("the waiter never returned")
+				require.Fail(t, "the waiter never returned")
 			}
 		})
 	}

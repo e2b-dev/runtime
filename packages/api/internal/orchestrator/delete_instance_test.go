@@ -368,7 +368,7 @@ func TestRemoveSandbox_RefusalInformsWaiters(t *testing.T) {
 	case werr := <-waiter:
 		require.ErrorIs(t, werr, sandbox.ErrTransitionRestored)
 	case <-time.After(5 * time.Second):
-		t.Fatal("waiter did not wake")
+		require.Fail(t, "waiter did not wake")
 	}
 
 	// A pause that joins after the restore is admitted afresh — the record is Running.

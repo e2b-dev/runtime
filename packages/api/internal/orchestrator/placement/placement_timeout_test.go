@@ -47,7 +47,7 @@ func failIfCalled(t *testing.T) stubAlgorithm {
 
 	return stubAlgorithm{
 		choose: func(map[string]struct{}) (*nodemanager.Node, error) {
-			t.Fatal("chooseNode should not be called")
+			require.Fail(t, "chooseNode should not be called")
 
 			return nil, nil
 		},

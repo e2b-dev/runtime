@@ -41,40 +41,20 @@ func TestPostAdminTeamsTeamIDApiKeysCreatesTeamKey(t *testing.T) {
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("expected status 201, got %d: %s", recorder.Code, recorder.Body.String())
-	}
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
 
 	var body api.CreatedTeamAPIKey
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if body.Id == uuid.Nil {
-		t.Fatal("expected API key id")
-	}
-	if body.Name != "Admin integration" {
-		t.Fatalf("expected API key name, got %q", body.Name)
-	}
-	if body.Key == "" {
-		t.Fatal("expected raw API key in response")
-	}
-	if body.CreatedBy != nil {
-		t.Fatalf("expected admin-created key to have nil creator, got %v", *body.CreatedBy)
-	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.NotEqual(t, uuid.Nil, body.Id)
+	require.Equal(t, "Admin integration", body.Name)
+	require.NotEmpty(t, body.Key)
+	require.Nil(t, body.CreatedBy)
 
 	keys, err := testDB.AuthDB.GetTeamAPIKeysWithCreator(t.Context(), teamID)
-	if err != nil {
-		t.Fatalf("failed to list API keys: %v", err)
-	}
-	if len(keys) != 1 {
-		t.Fatalf("expected one API key, got %d", len(keys))
-	}
-	if keys[0].Name != "Admin integration" {
-		t.Fatalf("expected persisted API key name, got %q", keys[0].Name)
-	}
-	if keys[0].CreatedByID != nil {
-		t.Fatalf("expected nil persisted creator, got %v", *keys[0].CreatedByID)
-	}
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.Equal(t, "Admin integration", keys[0].Name)
+	require.Nil(t, keys[0].CreatedByID)
 }
 
 func TestPostAdminTeamsTeamIDApiKeysRejectsBlockedTeam(t *testing.T) {
@@ -101,17 +81,11 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsBlockedTeam(t *testing.T) {
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403, got %d: %s", recorder.Code, recorder.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
 
 	keys, err := testDB.AuthDB.GetTeamAPIKeysWithCreator(t.Context(), teamID)
-	if err != nil {
-		t.Fatalf("failed to list API keys: %v", err)
-	}
-	if len(keys) != 0 {
-		t.Fatalf("expected no API keys for blocked team, got %d", len(keys))
-	}
+	require.NoError(t, err)
+	require.Empty(t, keys)
 }
 
 func TestPostAdminTeamsTeamIDApiKeysRejectsBannedTeam(t *testing.T) {
@@ -133,9 +107,7 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsBannedTeam(t *testing.T) {
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403, got %d: %s", recorder.Code, recorder.Body.String())
-	}
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
 }
 
 func TestPostAdminTeamsTeamIDApiKeysRejectsMissingTeam(t *testing.T) {
@@ -157,9 +129,7 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsMissingTeam(t *testing.T) {
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d: %s", recorder.Code, recorder.Body.String())
-	}
+	require.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
 }
 
 func TestPostAdminTeamsTeamIDApiKeysRejectsNilTeam(t *testing.T) {
@@ -181,9 +151,7 @@ func TestPostAdminTeamsTeamIDApiKeysRejectsNilTeam(t *testing.T) {
 	}
 	store.PostAdminTeamsTeamIDApiKeys(ginCtx, teamID)
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d: %s", recorder.Code, recorder.Body.String())
-	}
+	require.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
 }
 
 func TestDeleteAdminTeamsTeamIDApiKeysDeletesTeamKey(t *testing.T) {
@@ -206,36 +174,24 @@ func TestDeleteAdminTeamsTeamIDApiKeysDeletesTeamKey(t *testing.T) {
 		},
 	}
 	store.PostAdminTeamsTeamIDApiKeys(createCtx, teamID)
-	if createRecorder.Code != http.StatusCreated {
-		t.Fatalf("expected create status 201, got %d: %s", createRecorder.Code, createRecorder.Body.String())
-	}
+	require.Equal(t, http.StatusCreated, createRecorder.Code, createRecorder.Body.String())
 
 	var created api.CreatedTeamAPIKey
-	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
-		t.Fatalf("failed to decode create response: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(createRecorder.Body.Bytes(), &created))
 
 	deleteRecorder := httptest.NewRecorder()
 	deleteCtx, _ := gin.CreateTestContext(deleteRecorder)
 	deleteCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/admin/teams/"+teamID.String()+"/api-keys/"+created.Id.String(), nil)
 
 	store.DeleteAdminTeamsTeamIDApiKeysApiKeyID(deleteCtx, teamID, created.Id.String())
-	if deleteCtx.Writer.Status() != http.StatusNoContent {
-		t.Fatalf("expected delete status 204, got %d: %s", deleteCtx.Writer.Status(), deleteRecorder.Body.String())
-	}
+	require.Equal(t, http.StatusNoContent, deleteCtx.Writer.Status(), deleteRecorder.Body.String())
 
 	keys, err := testDB.AuthDB.GetTeamAPIKeysWithCreator(t.Context(), teamID)
-	if err != nil {
-		t.Fatalf("failed to list API keys: %v", err)
-	}
-	if len(keys) != 0 {
-		t.Fatalf("expected API key to be deleted, got %d keys", len(keys))
-	}
+	require.NoError(t, err)
+	require.Empty(t, keys)
 
 	deletedKeyHash, err := sharedkeys.VerifyKey(sharedkeys.ApiKeyPrefix, created.Key)
-	if err != nil {
-		t.Fatalf("failed to hash created API key: %v", err)
-	}
+	require.NoError(t, err)
 	require.Equal(t, []string{deletedKeyHash}, invalidatedHashes, "expected the deleted key's auth cache entry to be invalidated")
 }
 

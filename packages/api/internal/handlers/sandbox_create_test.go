@@ -74,20 +74,13 @@ func TestBuildAutoResumeConfig(t *testing.T) {
 			got := buildAutoResumeConfig(tt.in)
 
 			if tt.wantNil {
-				if got != nil {
-					t.Fatalf("buildAutoResumeConfig() = %#v, want nil", got)
-				}
+				require.Nil(t, got)
 
 				return
 			}
 
-			if got == nil {
-				t.Fatalf("buildAutoResumeConfig() = nil, want non-nil config")
-			}
-
-			if got.Policy != tt.wantPolicy {
-				t.Fatalf("buildAutoResumeConfig().Policy = %v, want %v", got.Policy, tt.wantPolicy)
-			}
+			require.NotNil(t, got)
+			require.Equal(t, tt.wantPolicy, got.Policy)
 		})
 	}
 }
@@ -464,21 +457,14 @@ func TestValidateNetworkConfig(t *testing.T) {
 			err := validateNetworkConfig(t.Context(), mockFF, uuid.Nil, "", networkRuleLimits{MaxDomains: 10, MaxHeaderValueLen: 2048}, tt.network)
 
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("validateNetworkConfig() expected error, got nil")
-
+				if !assert.NotNil(t, err) {
 					return
 				}
 
-				if err.Code != tt.wantCode {
-					t.Errorf("validateNetworkConfig() error code = %v, want %v", err.Code, tt.wantCode)
-				}
-
-				if err.ClientMsg != tt.wantErrMsg {
-					t.Errorf("validateNetworkConfig() error message = %q, want %q", err.ClientMsg, tt.wantErrMsg)
-				}
-			} else if err != nil {
-				t.Errorf("validateNetworkConfig() unexpected error: %v", err)
+				assert.Equal(t, tt.wantCode, err.Code)
+				assert.Equal(t, tt.wantErrMsg, err.ClientMsg)
+			} else {
+				assert.Nil(t, err)
 			}
 		})
 	}

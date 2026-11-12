@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -186,7 +187,7 @@ func TestNode_CompletePlacementWaitsForAPlacementCheck(t *testing.T) {
 
 	select {
 	case <-completed:
-		t.Fatal("the placement completed in the middle of another's check")
+		require.Fail(t, "the placement completed in the middle of another's check")
 	case <-time.After(50 * time.Millisecond):
 	}
 
