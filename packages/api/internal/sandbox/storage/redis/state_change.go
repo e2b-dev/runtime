@@ -158,8 +158,8 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	resultTtlSeconds := int(transitionResultKeyTTL.Seconds())
 
 	written, err := RunScript(ctx, s.redisClient, "start_transition", startTransitionScript,
-		[]string{key, transitionKey, resultKey, lock.Key()},
-		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID, lockValueOf(lock),
+		[]string{key, transitionKey, resultKey, lock.Key(), metaKeyFor(key)},
+		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID, lockValueOf(lock), packMeta(updated),
 	).Int64()
 	if err != nil {
 		return transition, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
@@ -355,7 +355,7 @@ func (s *Storage) compareAndRestore(ctx context.Context, key string, transition 
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	written, err := RunScript(ctx, s.redisClient, "restore_sandbox", restoreSandboxScript, []string{key}, data, updated).Int64()
+	written, err := RunScript(ctx, s.redisClient, "restore_sandbox", restoreSandboxScript, []string{key, metaKeyFor(key)}, data, updated, packMeta(restored)).Int64()
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to restore sandbox: %w", err)
 	}

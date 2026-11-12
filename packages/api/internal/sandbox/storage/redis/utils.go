@@ -17,7 +17,12 @@ const (
 	notifySuffix        = "notify"
 	indexKey            = "index"
 	recordSuffix        = "record"
+	metaSuffix          = "meta"
 )
+
+// metaFieldSep separates the packed meta fields. US (0x1f) cannot occur in a
+// UUID execution ID or in a lifecycle-hold token, so a plain split is safe.
+const metaFieldSep = "\x1f"
 
 var (
 	// globalStorageNotifyChannel is the single Redis PubSub channel used by
@@ -81,6 +86,28 @@ func GetTeamPrefix(teamID string) string {
 // goneKeyFor names the gone set beside a record key, in the record's slot.
 func goneKeyFor(recordKey string) string {
 	return redis_utils.CreateKey(recordKey, "gone")
+}
+
+// metaKeyFor names the meta key beside a record key, in the record's slot. It
+// holds packMeta's string — the execution ID and lifecycle hold of the record
+// — so the hot path can read them with a single GET instead of decoding the
+// record JSON on Redis's event loop (see packMeta and startTransitionScript).
+func metaKeyFor(recordKey string) string {
+	return redis_utils.CreateKey(recordKey, metaSuffix)
+}
+
+// packMeta serializes the fields the hot path needs from a record — its
+// execution ID and lifecycle hold — into the meta key's value, so they can be
+// read without decoding the record JSON. Layout: executionID, lifecycleHold,
+// lifecycleHoldUntil (Unix ms), US-separated. Kept in sync with the record by
+// every script that writes KEYS[1] (each writes the meta key in the same
+// atomic script); removeSandboxScript deletes it with the record.
+func packMeta(sbx sandboxtypes.Sandbox) string {
+	return strings.Join([]string{
+		sbx.ExecutionID,
+		sbx.LifecycleHold,
+		fmt.Sprintf("%d", sbx.LifecycleHoldUntil),
+	}, metaFieldSep)
 }
 
 // GetSandboxStorageTeamIndexKey returns the storage team index key for external packages (e.g. reservations).

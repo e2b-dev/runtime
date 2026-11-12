@@ -94,9 +94,9 @@ func reinstallBeforeAssert(ctx context.Context, client redis.UniversalClient, sb
 	}
 
 	key := recordKey(sbx.SandboxID)
-	keys := []string{key, goneKeyFor(key)}
+	keys := []string{key, goneKeyFor(key), metaKeyFor(key)}
 
-	return RunScript(ctx, client, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, "1", int(goneExecutionsTTL.Seconds())).Err()
+	return RunScript(ctx, client, "add_sandbox", addSandboxScript, keys, data, sbx.SandboxID, sbx.ExecutionID, "1", int(goneExecutionsTTL.Seconds()), packMeta(sbx)).Err()
 }
 
 // reinstalls are the two ways a Replace can have landed when a removal of
