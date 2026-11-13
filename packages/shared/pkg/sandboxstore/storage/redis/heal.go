@@ -150,7 +150,7 @@ func (s *Storage) healSandboxBatch(ctx context.Context, batch []sandboxtypes.San
 		return 0, nil
 	}
 
-	// NX: only fill holes. A concurrent Add/Update owns the member's score.
+	// NX: only fill holes. A concurrent Add/CommitUpdate owns the member's score.
 	// A TOCTOU with a concurrent Remove can only plant an orphan member,
 	// which ExpiredItems sweeps once its score passes — garbage, never a
 	// false eviction (eviction re-checks the stored JSON and re-validates

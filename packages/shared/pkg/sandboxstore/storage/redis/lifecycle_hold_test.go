@@ -116,7 +116,7 @@ func TestLifecycleHold(t *testing.T) {
 		require.ErrorIs(t, err, sandboxtypes.ErrLifecycleHeld, opts.Action.Name)
 	}
 	called := false
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		called = true
 
 		return s, nil
@@ -166,7 +166,7 @@ func TestLifecycleHold(t *testing.T) {
 
 	// Ordinary operations reopen. Once they removed the record, a
 	// move finds nothing.
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) { return s, nil })
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) { return s, nil })
 	require.NoError(t, err)
 	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, storage.restoreToRunning(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.StatePausing))
 	finish(ctx, sandboxtypes.ErrSkipRestore)
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) { return s, nil })
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) { return s, nil })
 	require.NoError(t, err)
 	got, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)

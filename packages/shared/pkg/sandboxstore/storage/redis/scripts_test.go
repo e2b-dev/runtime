@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -109,7 +110,7 @@ func TestUpdate_RecordsTheFencedWriteAsAScriptRun(t *testing.T) {
 	sbx := createTestSandbox("sbx-fenced-metric")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	updated, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
+	updated, err := sandboxtypes.UpdateRecord(t.Context(), storage, sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
 	require.NoError(t, err)
 	require.Equal(t, "after", updated.TemplateID)
 

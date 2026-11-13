@@ -40,7 +40,7 @@ func TestUpdateLocksTheRecord(t *testing.T) {
 	sbx := newRecord(teamID, "sbx-updated")
 	key := addRecord(t, storage, sbx)
 
-	updated, err := storage.Update(t.Context(), teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	updated, err := sandboxtypes.UpdateRecord(t.Context(), storage, teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		require.True(t, lockHeld(t, storage.locker, redis_utils.GetLockKey(key)), "the record's lock is not held")
 		cur.EndTime = cur.EndTime.Add(time.Hour)
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bsm/redislock"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -463,59 +464,133 @@ func (s *Storage) TeamItems(ctx context.Context, teamID uuid.UUID, states []sand
 	return items.out, nil
 }
 
-// Update modifies a sandbox atomically under its lock. A record of another
-// team is not found, as in Get, before the lock is taken.
-func (s *Storage) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error)) (_ sandboxtypes.Sandbox, err error) {
+// BeginUpdate takes the record's lock and reads the record. A record of
+// another team is not found, as in Get, before the lock is taken.
+func (s *Storage) BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string) (_ sandboxtypes.Sandbox, _ sandboxtypes.UpdateToken, err error) {
 	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
-		return sandboxtypes.Sandbox{}, err
+		return sandboxtypes.Sandbox{}, "", err
 	}
 	key := recordKey(sandboxID)
 	lock, err := s.locker.Obtain(ctx, redis_utils.GetLockKey(key), lockTimeout)
 	if err != nil {
-		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to obtain lock: %w", err)
+		return sandboxtypes.Sandbox{}, "", fmt.Errorf("failed to obtain lock: %w", err)
 	}
-
-	defer releaseLock(ctx, lock.Release, &err)
+	defer func() {
+		if err != nil {
+			releaseLock(ctx, lock.Release, &err)
+		}
+	}()
 
 	_, sbx, err := s.readRecord(ctx, key, teamID, sandboxID)
 	if err != nil {
-		return sandboxtypes.Sandbox{}, err
+		return sandboxtypes.Sandbox{}, "", err
 	}
 
 	if sbx.Held(time.Now()) {
-		return sandboxtypes.Sandbox{}, sandboxtypes.ErrLifecycleHeld
+		return sandboxtypes.Sandbox{}, "", sandboxtypes.ErrLifecycleHeld
 	}
 
-	// Apply update
-	updatedSbx, err := updateFunc(sbx)
+	token, err := encodeUpdateToken(lockValueOf(lock), sbx.EndTime)
 	if err != nil {
-		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to update sandbox: %w", err)
+		return sandboxtypes.Sandbox{}, "", err
 	}
 
-	// Serialize updated sandbox
-	newData, err := json.Marshal(updatedSbx)
+	return sbx, token, nil
+}
+
+// CommitUpdate writes updated under the lock BeginUpdate took and releases
+// the lock.
+func (s *Storage) CommitUpdate(ctx context.Context, _ uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken, updated sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	t, err := decodeUpdateToken(token)
+	if err != nil {
+		return sandboxtypes.Sandbox{}, err
+	}
+	key := recordKey(sandboxID)
+	lockKey := redis_utils.GetLockKey(key)
+	defer func() {
+		if releaseErr := s.releaseLockValue(context.WithoutCancel(ctx), lockKey, t.LockValue); releaseErr != nil {
+			logger.L().Error(ctx, "Failed to release lock", zap.Error(releaseErr))
+		}
+	}()
+
+	newData, err := json.Marshal(updated)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
 
 	// The update may have acted outside the store already (a network update
 	// applies on the node first), so the write is retried, and fenced by the lock.
-	err = s.setUnderLock(ctx, lock, key, newData)
+	err = s.setUnderLock(ctx, lockKey, t.LockValue, key, newData)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, fmt.Errorf("failed to store sandbox in Redis: %w", err)
 	}
 
-	// Re-score the expiration index if EndTime changed.
-	if !updatedSbx.EndTime.Equal(sbx.EndTime) {
+	if !updated.EndTime.Equal(t.EndTime) {
 		if err := s.redisClient.ZAdd(ctx, globalExpirationSet, redis.Z{
-			Score:  float64(updatedSbx.EndTime.UnixMilli()),
-			Member: sandboxExpirationMember(updatedSbx),
+			Score:  float64(updated.EndTime.UnixMilli()),
+			Member: sandboxExpirationMember(updated),
 		}).Err(); err != nil {
 			return sandboxtypes.Sandbox{}, fmt.Errorf("failed to update sandbox in global expiration index: %w", err)
 		}
 	}
 
-	return updatedSbx, nil
+	return updated, nil
+}
+
+// AbortUpdate releases the lock BeginUpdate took.
+func (s *Storage) AbortUpdate(ctx context.Context, _ uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken) error {
+	t, err := decodeUpdateToken(token)
+	if err != nil {
+		return err
+	}
+
+	return s.releaseLockValue(ctx, redis_utils.GetLockKey(recordKey(sandboxID)), t.LockValue)
+}
+
+// updateToken is what an UpdateToken carries: the lock's value, enough for
+// any instance to write under or release the lock, and the record's EndTime
+// at BeginUpdate, against which the commit decides the re-score.
+type updateToken struct {
+	LockValue string    `json:"lock"`
+	EndTime   time.Time `json:"endTime"`
+}
+
+func encodeUpdateToken(lockValue string, endTime time.Time) (sandboxtypes.UpdateToken, error) {
+	data, err := json.Marshal(updateToken{LockValue: lockValue, EndTime: endTime})
+	if err != nil {
+		return "", fmt.Errorf("failed to encode update token: %w", err)
+	}
+
+	return sandboxtypes.UpdateToken(data), nil
+}
+
+func decodeUpdateToken(token sandboxtypes.UpdateToken) (updateToken, error) {
+	var t updateToken
+	if err := json.Unmarshal([]byte(token), &t); err != nil {
+		return updateToken{}, fmt.Errorf("invalid update token: %w", err)
+	}
+	if t.LockValue == "" {
+		return updateToken{}, errors.New("invalid update token: no lock value")
+	}
+
+	return t, nil
+}
+
+// releaseLockValue releases the lock under lockKey while it holds lockValue,
+// redislock.ErrLockNotHeld otherwise, and wakes its waiters as
+// storageLock.Release does. By value, so an instance that did not take the
+// lock can release it.
+func (s *Storage) releaseLockValue(ctx context.Context, lockKey, lockValue string) error {
+	released, err := RunScript(ctx, s.redisClient, "release_lock", releaseLockScript, []string{lockKey}, lockValue).Int64()
+	if err != nil {
+		return err
+	}
+	if released == 0 {
+		return redislock.ErrLockNotHeld
+	}
+	s.locker.notifier.Publish(ctx, getLockRoutingKey(lockKey))
+
+	return nil
 }
 
 func (s *Storage) TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]int64, error) {
@@ -587,11 +662,11 @@ const updateWriteAttempts = 3
 
 const updateWriteBackoff = 50 * time.Millisecond
 
-// setUnderLock writes an updated record only while lock still holds this
-// caller's token, checked and written in one script, so a write that lands
-// late cannot overwrite what a later lock holder stored. A failed write is
-// retried a bounded number of times; a lost lock is not.
-func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key string, data []byte) error {
+// setUnderLock writes an updated record only while the lock under lockKey
+// still holds this caller's lockValue, checked and written in one script, so
+// a write that lands late cannot overwrite what a later lock holder stored.
+// A failed write is retried a bounded number of times; a lost lock is not.
+func (s *Storage) setUnderLock(ctx context.Context, lockKey, lockValue, key string, data []byte) error {
 	var err error
 	for attempt := range updateWriteAttempts {
 		if attempt > 0 {
@@ -602,7 +677,7 @@ func (s *Storage) setUnderLock(ctx context.Context, lock *storageLock, key strin
 			}
 		}
 		var written int64
-		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lock.Key(), key}, lockValueOf(lock), data).Int64()
+		written, err = RunScript(ctx, s.redisClient, "fenced_set", fencedSetScript, []string{lockKey, key}, lockValue, data).Int64()
 		if err == nil {
 			if written == 1 {
 				return nil

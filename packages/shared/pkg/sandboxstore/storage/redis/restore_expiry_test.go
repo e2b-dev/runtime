@@ -18,7 +18,7 @@ func TestRestoreRunning_UsesTransitionExpiryWithoutIndex(t *testing.T) {
 	sbx := createTestSandbox("restore-captured-expiry")
 	require.NoError(t, storage.Add(ctx, sbx))
 	expiresAt := sbx.EndTime.Add(time.Hour)
-	_, err := storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err := sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.EndTime = expiresAt
 
 		return s, nil

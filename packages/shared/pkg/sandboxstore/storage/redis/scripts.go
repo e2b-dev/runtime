@@ -63,6 +63,16 @@ var (
 		return 1
 	`)
 
+	// releaseLockScript deletes a lock key only while it holds the releaser's
+	// value. KEYS[1] = lock key, ARGV[1] = lock value. Replies 1 released, 0
+	// not held.
+	releaseLockScript = redis.NewScript(`
+		if redis.call('GET', KEYS[1]) == ARGV[1] then
+			return redis.call('DEL', KEYS[1])
+		end
+		return 0
+	`)
+
 	finishTransitionScript = redis.NewScript(`
 		redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 		if ARGV[4] ~= '' then

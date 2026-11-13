@@ -249,7 +249,7 @@ func (s *Storage) FinishTransition(ctx context.Context, teamID uuid.UUID, sandbo
 
 // restoreToRunning restores the sandbox to Running if it is still in the given transient state.
 func (s *Storage) restoreToRunning(ctx context.Context, teamID uuid.UUID, sandboxID string, fromState sandboxtypes.State) error {
-	_, err := s.Update(ctx, teamID, sandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err := sandboxtypes.UpdateRecord(ctx, s, teamID, sandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		if sbx.State != fromState {
 			return sbx, nil
 		}

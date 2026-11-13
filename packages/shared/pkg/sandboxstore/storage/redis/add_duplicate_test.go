@@ -25,7 +25,7 @@ func TestAdd_ADuplicateOfTheSameExecutionKeepsTheStoredRecord(t *testing.T) {
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
 	extended := start.Add(10 * time.Minute)
-	_, err := storage.Update(t.Context(), teamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err := sandboxtypes.UpdateRecord(t.Context(), storage, teamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.EndTime = extended
 
 		return s, nil

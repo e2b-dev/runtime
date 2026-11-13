@@ -720,7 +720,7 @@ func TestStartRemoving_DifferentExecutionID(t *testing.T) {
 	assert.Equal(t, int64(0), exists)
 
 	// Simulate resume: update sandbox with new ExecutionID and Running state
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.State = sandboxtypes.StateRunning
 
 		return s, nil
@@ -990,7 +990,7 @@ func TestStartRemoving_Eviction(t *testing.T) {
 
 		// Extend the sandbox timeout while the pause is in progress
 		// (simulating KeepAliveFor extending EndTime).
-		_, updateErr := storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+		_, updateErr := sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 			s.EndTime = time.Now().Add(time.Hour)
 
 			return s, nil
@@ -1240,7 +1240,7 @@ func TestWaitForTransition_StalePubSubNotification(t *testing.T) {
 	callbackA(t.Context(), nil)
 
 	// Restore to Running so we can start a new transition.
-	_, err = storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err = sandboxtypes.UpdateRecord(t.Context(), storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.State = sandboxtypes.StateRunning
 
 		return s, nil
@@ -1360,7 +1360,7 @@ func TestRestoreRunning_ReinstatesClampedExpiry(t *testing.T) {
 	callback(ctx, errors.New("refused"))
 
 	// A refusal long after the previous window ended starts a new episode.
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.RefusedSince = time.Now().Add(-3 * time.Hour)
 		s.RefusedUntil = s.RefusedSince.Add(10 * time.Second)
 
@@ -1431,7 +1431,7 @@ func TestRestoreRunning_RefusesOtherStates(t *testing.T) {
 	transition, _, callback, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	defer callback(ctx, nil)
-	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err = sandboxtypes.UpdateRecord(ctx, storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		s.State = sandboxtypes.StateKilling
 
 		return s, nil

@@ -74,7 +74,7 @@ func TestUpdateRetriesAFailedWrite(t *testing.T) {
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
 
-	updated, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
+	updated, err := sandboxtypes.UpdateRecord(t.Context(), storage, sbx.TeamID, sbx.SandboxID, updateTemplateID("after"))
 	require.NoError(t, err)
 	assert.Equal(t, "after", updated.TemplateID)
 	assert.Equal(t, int32(3), writes.Load(), "two failed writes and the one that landed")
@@ -98,7 +98,7 @@ func TestUpdateGivesUpOnAPersistentWriteFailure(t *testing.T) {
 	require.NoError(t, fencedSetScript.Load(t.Context(), client).Err())
 	client.AddHook(hook)
 
-	_, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, updateTemplateID("never-written"))
+	_, err := sandboxtypes.UpdateRecord(t.Context(), storage, sbx.TeamID, sbx.SandboxID, updateTemplateID("never-written"))
 	require.ErrorContains(t, err, "injected write failure")
 	assert.Equal(t, int32(updateWriteAttempts), writes.Load())
 
@@ -117,7 +117,7 @@ func TestUpdateRefusesTheWriteWhenTheLockChangedHands(t *testing.T) {
 	require.NoError(t, storage.Add(t.Context(), sbx))
 	key := recordKey(sbx.SandboxID)
 
-	_, err := storage.Update(t.Context(), sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	_, err := sandboxtypes.UpdateRecord(t.Context(), storage, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		// The lock expires during the update, and another caller takes it.
 		require.NoError(t, client.Set(t.Context(), redis_utils.GetLockKey(key), "another-holder", time.Minute).Err())
 		s.TemplateID = "late"

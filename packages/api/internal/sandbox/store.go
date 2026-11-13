@@ -152,7 +152,7 @@ func (s *Store) TeamsWithSandboxes(ctx context.Context) (map[uuid.UUID]int64, er
 }
 
 func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error) {
-	return s.storage.Update(ctx, teamID, sandboxID, updateFunc)
+	return sandboxtypes.UpdateRecord(ctx, s.storage, teamID, sandboxID, updateFunc)
 }
 
 // HoldExecution marks the running execution as held until `until`; see

@@ -523,7 +523,7 @@ func TestUpdate_RescoresExecutionMember(t *testing.T) {
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
 	newEndTime := time.Now().Add(2 * time.Hour)
-	updated, err := storage.Update(t.Context(), teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	updated, err := sandboxtypes.UpdateRecord(t.Context(), storage, teamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		cur.EndTime = newEndTime
 
 		return cur, nil

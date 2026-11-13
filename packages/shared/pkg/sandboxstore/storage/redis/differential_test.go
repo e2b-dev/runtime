@@ -740,7 +740,7 @@ func applyDifferentialOp(t *testing.T, actor, other *Storage, teams []uuid.UUID,
 
 		return "added"
 	case kindKeepalive, kindTimeout:
-		_, err := actor.Update(ctx, uuid.MustParse(op.ref.TeamID), op.ref.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+		_, err := sandboxtypes.UpdateRecord(ctx, actor, uuid.MustParse(op.ref.TeamID), op.ref.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 			sbx.EndTime = op.end
 
 			return sbx, nil
@@ -797,7 +797,7 @@ func foreignTrace(t *testing.T, s *Storage, teams []uuid.UUID, ref recordRef) st
 		foreign = teams[1]
 	}
 	result := "updated"
-	switch _, err := s.Update(t.Context(), foreign, ref.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	switch _, err := sandboxtypes.UpdateRecord(t.Context(), s, foreign, ref.SandboxID, func(sbx sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 		sbx.EndTime = sbx.EndTime.Add(time.Hour)
 
 		return sbx, nil

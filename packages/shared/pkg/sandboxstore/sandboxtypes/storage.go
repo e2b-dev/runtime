@@ -3,11 +3,14 @@ package sandboxtypes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 const (
@@ -31,7 +34,7 @@ type Storage interface {
 	ExpiredItems(ctx context.Context) ([]Sandbox, error)
 	TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]int64, error)
 
-	Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error)
+	RecordUpdates
 	StateTransitions
 	LifecycleHolds
 	Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID string) []NodeSandbox
@@ -53,6 +56,56 @@ type RestoreOpts struct {
 	// EnvdRefusal stamps the guest agent's own episode (EnvdRefusedSince,
 	// EnvdRefusedUntil); any other restore leaves both as they are.
 	EnvdRefusal bool
+}
+
+// UpdateToken names one BeginUpdate's hold on the record's lock. It is
+// opaque: a caller only passes it back to CommitUpdate or AbortUpdate, on
+// any instance of the same backend.
+type UpdateToken string
+
+// RecordUpdates change a record under its lock in two calls, so the caller's
+// work runs between them while other writers wait. UpdateRecord runs the
+// protocol; use it rather than the calls.
+type RecordUpdates interface {
+	// BeginUpdate takes the record's lock and returns the record as stored.
+	// ErrNotFound for a record absent or of another team, ErrLifecycleHeld
+	// for a held one. On an error no lock is held. Otherwise the caller must
+	// end with CommitUpdate or AbortUpdate; the lock expires if it does not.
+	BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, UpdateToken, error)
+	// CommitUpdate writes updated only while the lock still holds token,
+	// ErrLockLost otherwise with nothing written, and releases the lock in
+	// every case.
+	CommitUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token UpdateToken, updated Sandbox) (Sandbox, error)
+	// AbortUpdate releases the lock and writes nothing.
+	AbortUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token UpdateToken) error
+}
+
+// UpdateRecord applies updateFunc to the record while its lock is held and
+// stores the result. A failed or panicking updateFunc stores nothing and
+// releases the lock.
+func UpdateRecord(ctx context.Context, s RecordUpdates, teamID uuid.UUID, sandboxID string, updateFunc func(Sandbox) (Sandbox, error)) (Sandbox, error) {
+	sbx, token, err := s.BeginUpdate(ctx, teamID, sandboxID)
+	if err != nil {
+		return Sandbox{}, err
+	}
+
+	committing := false
+	defer func() {
+		if committing {
+			return
+		}
+		if abortErr := s.AbortUpdate(context.WithoutCancel(ctx), teamID, sandboxID, token); abortErr != nil {
+			logger.L().Error(ctx, "Failed to release lock", zap.Error(abortErr))
+		}
+	}()
+
+	updated, err := updateFunc(sbx)
+	if err != nil {
+		return Sandbox{}, fmt.Errorf("failed to update sandbox: %w", err)
+	}
+	committing = true
+
+	return s.CommitUpdate(ctx, teamID, sandboxID, token, updated)
 }
 
 // StateTransitions is the removal state machine: start a transition, undo one
