@@ -58,7 +58,8 @@ func TestMutualTLS(t *testing.T) {
 	}
 	cfg, err := config.ServerTLS(newProcess(t, ca, serverID), mtls.ListenerSettings{Allow: []string{apiID}})
 	require.NoError(t, err)
-	srv := server.New(telemetry.NewNoopClient(), cfg)
+	srv, err := server.New(telemetry.NewNoopClient(), cfg, &fakeStorage{})
+	require.NoError(t, err)
 	srv.RegisterService(&testServiceDesc, struct{}{})
 	healthv1.RegisterHealthServer(srv, health.NewServer())
 	lis, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")

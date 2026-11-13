@@ -6,52 +6,75 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
+const hangTimeout = 30 * time.Second
+
+var reservationServiceName = scheduling.ReservationService_ServiceDesc.ServiceName
+
 func TestServe(t *testing.T) {
 	t.Parallel()
+	redisClient := redis_utils.SetupInstance(t)
 	cfg := config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: freeAddress(t)}
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 	served := make(chan error, 1)
-	go func() { served <- serve(ctx, cfg, telemetry.NewNoopClient(), 2*time.Second) }()
+	go func() { served <- serve(ctx, cfg, telemetry.NewNoopClient(), 2*time.Second, redisClient) }()
 
 	conn, err := grpc.NewClient(cfg.GRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	callCtx, cancelCalls := context.WithTimeout(t.Context(), hangTimeout)
+	defer cancelCalls()
+
+	// Watches, not Check polling: the result must not depend on the drain's length.
 	healthClient := healthv1.NewHealthClient(conn)
-	healthStatus := func(service string) healthv1.HealthCheckResponse_ServingStatus {
-		response, err := healthClient.Check(t.Context(), &healthv1.HealthCheckRequest{Service: service}, grpc.WaitForReady(true))
+	watches := map[string]healthv1.Health_WatchClient{}
+	for _, service := range []string{"", reservationServiceName} {
+		watch, err := healthClient.Watch(callCtx, &healthv1.HealthCheckRequest{Service: service}, grpc.WaitForReady(true))
 		require.NoError(t, err)
-
-		return response.GetStatus()
+		response, err := watch.Recv()
+		require.NoError(t, err)
+		require.Equal(t, healthv1.HealthCheckResponse_SERVING, response.GetStatus(), service)
+		watches[service] = watch
 	}
-	require.Equal(t, healthv1.HealthCheckResponse_SERVING, healthStatus(""))
 
-	err = conn.Invoke(t.Context(), "/test.Missing/Missing", &emptypb.Empty{}, &emptypb.Empty{})
-	require.Equal(t, codes.Unimplemented, status.Code(err))
+	client := scheduling.NewReservationServiceClient(conn)
+	team, sandbox := uuid.NewString(), "sbx-"+uuid.NewString()
+	reserved, err := client.Reserve(callCtx, scheduling.ReserveRequest_builder{TeamId: team, SandboxId: sandbox, Limit: 10}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserved.GetOutcome())
+	_, err = client.FinishStart(callCtx, scheduling.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox, Result: []byte("result")}.Build())
+	require.NoError(t, err)
+	waited, err := client.WaitForStart(callCtx, scheduling.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, waited.GetOutcome())
+	require.Equal(t, []byte("result"), waited.GetResult())
 
 	stop()
-	// Health is withdrawn first while the listener keeps answering.
-	require.Eventually(t, func() bool {
-		return healthStatus("") == healthv1.HealthCheckResponse_NOT_SERVING
-	}, time.Second, 10*time.Millisecond)
+	for service, watch := range watches {
+		response, err := watch.Recv()
+		require.NoError(t, err, service)
+		assert.Equal(t, healthv1.HealthCheckResponse_NOT_SERVING, response.GetStatus(), service)
+	}
+	cancelCalls()
 
 	select {
 	case err := <-served:
 		require.NoError(t, err)
-	case <-time.After(shutdownTimeout + 5*time.Second):
+	case <-time.After(shutdownTimeout + hangTimeout):
 		require.Fail(t, "serve did not return after shutdown")
 	}
 }
@@ -62,7 +85,7 @@ func TestServeListenerInUse(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 
-	err = serve(t.Context(), config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0)
+	err = serve(t.Context(), config.Config{TLS: mtls.ListenerSettings{Mode: "off"}, GRPCAddress: listener.Addr().String()}, telemetry.NewNoopClient(), 0, nil)
 	require.ErrorContains(t, err, "gRPC listener initialization failed")
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -20,9 +21,14 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
+	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	reservationsredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
+	storageredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -87,7 +93,26 @@ func run() int {
 		drain = 0
 	}
 	log.Info(ctx, "starting "+serviceName, zap.String("commit_sha", commitSHA), zap.String("version", version))
-	if err := serve(ctx, cfg, tel, drain); err != nil {
+	redisClient, err := factories.NewRedisClient(ctx, factories.RedisConfig{
+		RedisURL:         cfg.InfraRedisURL,
+		RedisClusterURL:  cfg.InfraRedisClusterURL,
+		RedisTLSCABase64: cfg.InfraRedisTLSCABase64,
+		RedisTLSEnabled:  cfg.InfraRedisTLSEnabled,
+		RedisPassword:    cfg.InfraRedisPassword,
+		PoolSize:         cfg.InfraRedisPoolSize,
+	})
+	if err != nil {
+		log.Error(ctx, serviceName+" Redis initialization failed", zap.Error(err))
+
+		return 1
+	}
+	defer func() {
+		if err := factories.CloseCleanly(redisClient); err != nil {
+			log.Error(context.WithoutCancel(ctx), serviceName+" Redis client close failed", zap.Error(err))
+		}
+	}()
+
+	if err := serve(ctx, cfg, tel, drain, redisClient); err != nil {
 		log.Error(ctx, serviceName+" stopped with an error", zap.Error(err))
 
 		return 1
@@ -96,7 +121,7 @@ func run() int {
 	return 0
 }
 
-func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain time.Duration) error {
+func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain time.Duration, redisClient redis.UniversalClient) error {
 	proc, err := mtls.NewProcess(ctx, tel.MeterProvider, nil, logger.L())
 	if err != nil {
 		return err
@@ -109,7 +134,32 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	if err != nil {
 		return fmt.Errorf("gRPC listener initialization failed: %w", err)
 	}
-	grpcServer, healthServer := newServer(tel, tlsConfig)
+	storage, err := storageredis.NewStorage(redisClient, tel.MeterProvider)
+	if err != nil {
+		_ = listener.Close()
+
+		return fmt.Errorf("sandbox storage initialization failed: %w", err)
+	}
+	storageDone := make(chan struct{})
+	go func() {
+		defer close(storageDone)
+		storage.Start(context.WithoutCancel(ctx))
+	}()
+	// The handlers use the storage until the gRPC server has stopped.
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		storage.Close(closeCtx)
+		<-storageDone
+	}()
+
+	reservations := reservationsredis.NewReservationStorage(redisClient, storage.Notifier())
+	grpcServer, healthServer, err := newServer(tel, tlsConfig, reservations)
+	if err != nil {
+		_ = listener.Close()
+
+		return fmt.Errorf("gRPC server initialization failed: %w", err)
+	}
 
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- grpcServer.Serve(listener) }()
@@ -143,10 +193,14 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	return serveErr
 }
 
-func newServer(tel *telemetry.Client, tlsConfig mtls.ServerConfig) (*grpc.Server, *health.Server) {
-	grpcServer := server.New(tel, tlsConfig)
+func newServer(tel *telemetry.Client, tlsConfig mtls.ServerConfig, reservations sandboxtypes.ReservationStorage) (*grpc.Server, *health.Server, error) {
+	grpcServer, err := server.New(tel, tlsConfig, reservations)
+	if err != nil {
+		return nil, nil, err
+	}
 	healthServer := health.NewServer()
 	healthv1.RegisterHealthServer(grpcServer, healthServer)
+	healthServer.SetServingStatus(scheduling.ReservationService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
 
-	return grpcServer, healthServer
+	return grpcServer, healthServer, nil
 }
