@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -337,5 +338,35 @@ func TestRejectedIDsAreNotReachableViaIDLike(t *testing.T) {
 	// The guard has to come first, or ID_LIKE=fedora would match them.
 	if strings.Index(sel, guard) > strings.Index(sel, "E2B_ID_LIKE") {
 		t.Error("the rejected-id guard must precede the ID_LIKE fallback")
+	}
+}
+
+// UOS Server 20 declares ID=uos and no ID_LIKE. Verified against
+// macrosan/uos:v20-1050 and ixuzhi/uos-server:1070a: RHEL-shaped, but the two
+// lineages name the account-tools package differently (shadow vs shadow-utils),
+// so the profile installs neither — the base image ships useradd — and must not
+// list either, or dnf aborts on the image lacking it.
+func TestUOSProfile(t *testing.T) {
+	t.Parallel()
+	u := profileByKey(t, "uos")
+	if !slices.Contains(u.IDs, "uos") {
+		t.Errorf("uos id must be matched, got IDs=%v", u.IDs)
+	}
+	if slices.Contains(u.Packages, "shadow") || slices.Contains(u.Packages, "shadow-utils") {
+		t.Errorf("uos must install neither shadow nor shadow-utils (lineage-split name); got %v", u.Packages)
+	}
+	if !slices.Contains(u.Packages, "passwd") {
+		t.Error("uos must still install passwd")
+	}
+	if u.InitBinary != "/usr/lib/systemd/systemd" {
+		t.Errorf("uos init path wrong: %s", u.InitBinary)
+	}
+	for _, want := range []string{"dnf -y install --allowerasing", "|| microdnf -y install", "|| yum -y install"} {
+		if !strings.Contains(u.PkgInstall, want) {
+			t.Errorf("uos install missing %q: %s", want, u.PkgInstall)
+		}
+	}
+	if !strings.Contains(ShellSelector(), "uos)") {
+		t.Error("selector must have a uos arm")
 	}
 }
