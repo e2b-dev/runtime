@@ -14,18 +14,17 @@ import (
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
-	"github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/joined"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
-// StartRemoving initiates a state transition for a sandbox using atomic Lua scripts.
+// BeginRemoving starts a state transition for a sandbox using atomic Lua scripts.
 //
 // The function handles concurrent requests safely:
 //  1. Acquires the sandbox's lock
 //  2. Checks if there's an ongoing transition via the transition key:
-//     - If the same target state is in progress, waits for completion and returns the result
-//     - If a different state is in progress, waits for it to complete, then retries
+//     - If one is in progress, releases the lock and returns its ID as
+//     InFlightID once the request is checked against it, without waiting
 //     - If no transition is in progress, start the transition
 //  3. Validates the state transition is allowed
 //  4. Atomically updates the sandbox state and sets the transition key with a unique ID
@@ -34,7 +33,7 @@ import (
 //
 // A record of another team is not found, as in Get, before the lock is
 // taken.
-func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
+func (s *Storage) BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
 	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
 		return sandboxtypes.StateTransition{}, false, err
 	}
@@ -67,8 +66,8 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
 	// Fast path for a caller-pinned removal: refuse a stale one before doing any
-	// further work, and before possibly waiting out an unrelated transition
-	// below only to be refused at the end of it.
+	// further work, and before the caller possibly waits out an unrelated
+	// transition only to be refused at the end of it.
 	//
 	// This is not where the pin is enforced. Add takes this lock too, so only
 	// a lock expired under a stalled call lets a resume install a new
@@ -116,7 +115,21 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 			logger.L().Warn(ctx, "Failed to release lock before waiting", zap.Error(releaseErr))
 		}
 
-		return s.handleExistingTransition(ctx, teamID, sbx, opts, transactionID)
+		if sbx.State == newState {
+			// A pause that requires a healthy guest cannot ride a pause in flight,
+			// whose snapshot may be taken over an unresponsive one: it is answered
+			// as a conflicting transition and retried once the sandbox is paused.
+			// (The sweep never gets here: a transition in flight ends its attempt
+			// above.)
+			if opts.Action == sandboxtypes.StateActionPause && opts.RequireEnvdHealthy {
+				return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+			}
+		} else if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
+			return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		}
+		transition.InFlightID = transactionID
+
+		return transition, false, nil
 	}
 
 	// Check if already in target state
@@ -187,7 +200,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	return transition, false, nil
 }
 
-// FinishTransition ends the transition StartRemoving started.
+// FinishTransition ends the transition BeginRemoving started.
 // A successful transient action restores Running unless the outcome is
 // SkipRestore. Completing a transient action with an error also skips
 // restoration and lets waiters proceed. Waiters must read the resulting state.
@@ -371,25 +384,29 @@ func (s *Storage) compareAndRestore(ctx context.Context, key string, transition 
 	return restored, nil
 }
 
-// WaitForStateChange waits for a sandbox's pending transition, found by its
-// marker, to complete. The key carries no team, so a record of another team
-// is refused before the marker is read, as in Get; without a record, as on
-// the kill path, the marker alone is followed.
-func (s *Storage) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+// WaitForTransition waits for the transition transitionID or, with an empty
+// one, for the sandbox's pending transition, found by its marker, to
+// complete. The key carries no team, so a record of another team is refused
+// first, as in Get; without a record, as on the kill path, the transition
+// alone is followed.
+func (s *Storage) WaitForTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string) (string, error) {
 	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
-		return err
+		return transitionID, err
 	}
-	id, err := s.redisClient.Get(ctx, transitionKeyFor(sandboxID)).Result()
-	if errors.Is(err, redis.Nil) {
-		logger.L().Debug(ctx, "No ongoing transition", logger.WithSandboxID(sandboxID))
+	if transitionID == "" {
+		id, err := s.redisClient.Get(ctx, transitionKeyFor(sandboxID)).Result()
+		if errors.Is(err, redis.Nil) {
+			logger.L().Debug(ctx, "No ongoing transition", logger.WithSandboxID(sandboxID))
 
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("failed to check transition key: %w", err)
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to check transition key: %w", err)
+		}
+		transitionID = id
 	}
 
-	return s.waitForTransition(ctx, sandboxID, id)
+	return transitionID, s.waitForTransition(ctx, sandboxID, transitionID)
 }
 
 // waitForTransition waits for a specific transition to complete. A wait
@@ -473,79 +490,4 @@ func (s *Storage) checkTransitionResult(ctx context.Context, resultKey string) e
 	}
 
 	return nil
-}
-
-// handleExistingTransition waits out a transition that is already in flight and
-// then either joins its result or retries the caller's own removal.
-//
-// It takes the whole RemoveOpts rather than the action alone because the retry
-// is the caller's removal, attempted again: anything it drops is a caller
-// instruction silently discarded across the wait. That has bitten
-// FilesystemOnly (a filesystem-only pause retrying as a full memory snapshot)
-// and Reason (a kill reason arriving as "unknown"), and matters most for
-// ExpectExecutionID, since the wait is exactly the window in which the sandbox
-// can be resumed under a new incarnation.
-func (s *Storage) handleExistingTransition(
-	ctx context.Context,
-	teamID uuid.UUID,
-	sbx sandboxtypes.Sandbox,
-	opts sandboxtypes.RemoveOpts,
-	transitionID string,
-) (sandboxtypes.StateTransition, bool, error) {
-	newState := opts.Action.TargetState
-	transition := sandboxtypes.StateTransition{Sandbox: sbx}
-
-	if sbx.State == newState {
-		// A pause that requires a healthy guest cannot ride a pause in flight,
-		// whose snapshot may be taken over an unresponsive one: it is answered
-		// as a conflicting transition and retried once the sandbox is paused.
-		// (The sweep never gets here: a transition in flight ends its attempt
-		// above.)
-		if opts.Action == sandboxtypes.StateActionPause && opts.RequireEnvdHealthy {
-			return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
-		}
-
-		// Same target state - wait for completion and return alreadyDone=true.
-		// The caller inherits the in-flight transition's result without
-		// doing the work itself: this is a joiner.
-		joined.Mark(ctx)
-
-		logger.L().Debug(ctx, "State transition already in progress to the same state, waiting",
-			logger.WithSandboxID(sbx.SandboxID),
-			zap.String("state", string(newState)))
-
-		err := s.waitForTransition(ctx, sbx.SandboxID, transitionID)
-		if restored, ok := errors.AsType[*sandboxtypes.RestoredTransitionError](err); ok {
-			// The pause the joiner rode was refused as one the guest cannot take
-			// and the sandbox is running again: a joiner asking for the same
-			// kind never succeeds; a memory pause that joined it may retry.
-			if errors.Is(restored.Refusal, sandboxtypes.PauseUnsupportedError{}) && !opts.FilesystemOnly {
-				return transition, false, sandboxtypes.PauseQueueExhaustedError{}
-			}
-
-			// The pause the joiner rode was refused and the sandbox is running
-			// again: the joiner gets the refusal the starter got, not a success.
-			return transition, false, restored.Refusal
-		}
-		if err != nil {
-			return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
-		}
-
-		return transition, true, nil
-	}
-
-	// Different state - validate transition and wait
-	if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
-		return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
-	}
-
-	err := s.waitForTransition(ctx, sbx.SandboxID, transitionID)
-	if err != nil && !errors.Is(err, sandboxtypes.ErrTransitionRestored) {
-		return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
-	}
-
-	// Retry the caller's removal, in full, now the way is clear. Re-reading the
-	// record under the lock is what re-checks the pin against whatever the
-	// sandbox became while we waited.
-	return s.StartRemoving(ctx, teamID, sbx.SandboxID, opts)
 }

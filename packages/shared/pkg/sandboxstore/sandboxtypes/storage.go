@@ -11,6 +11,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/joined"
 )
 
 const (
@@ -110,10 +111,15 @@ func UpdateRecord(ctx context.Context, s RecordUpdates, teamID uuid.UUID, sandbo
 
 // StateTransitions is the removal state machine: start a transition, undo one
 // the node refused, end a checkpoint with the network it left running, or
-// wait one out.
+// wait one out. StartRemoving runs a removal; use it rather than
+// BeginRemoving.
 type StateTransitions interface {
-	StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, error)
-	// FinishTransition ends the transition StartRemoving started, the one
+	// BeginRemoving starts the transition opts asks for and returns it with
+	// ID set, or alreadyDone when the record is in the target state. It
+	// never waits: with another transition in flight it starts none and
+	// returns InFlightID, unless the request cannot follow that transition.
+	BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, error)
+	// FinishTransition ends the transition BeginRemoving started, the one
 	// with transitionID, with the outcome of the caller's work, and wakes
 	// its waiters. A transitionID that is no longer the sandbox's current
 	// one leaves the current transition open. It returns the failure of an
@@ -125,10 +131,66 @@ type StateTransitions interface {
 	// RestoreRunning does without a retry window. It refuses a record that
 	// is another execution, left the transition's state or changed under it.
 	RestoreCheckpointed(ctx context.Context, transition StateTransition, placement *orchestrator.SandboxNetworkPlacement) (Sandbox, error)
-	// WaitForStateChange waits out the sandbox's transition, if one is open.
-	// It takes no tenant guard, since the record may already be gone: the
-	// caller reads the record as the team's before it waits.
-	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+	// WaitForTransition waits out the transition transitionID, or with an
+	// empty one the sandbox's open transition, if any, and returns the ID it
+	// waited for with the outcome. A wait the context ended can be resumed
+	// with that ID while the result is kept; a transition without a kept
+	// result is a success. A record already gone is no refusal.
+	WaitForTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string) (string, error)
+}
+
+// StartRemoving begins the removal opts asks for and waits out a transition
+// in flight: a request for the same target state joins it and gets its
+// outcome, one for another state begins again once it ends. The returned
+// transition has ID set only when this call started it; the caller must end
+// it with FinishTransition.
+func StartRemoving(ctx context.Context, s StateTransitions, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, error) {
+	for {
+		transition, alreadyDone, err := s.BeginRemoving(ctx, teamID, sandboxID, opts)
+		if err != nil || transition.InFlightID == "" {
+			return transition, alreadyDone, err
+		}
+		inFlightID := transition.InFlightID
+		transition.InFlightID = ""
+
+		if transition.Sandbox.State == opts.Action.TargetState {
+			// Same target state - wait for completion and return alreadyDone=true.
+			// The caller inherits the in-flight transition's result without
+			// doing the work itself: this is a joiner.
+			joined.Mark(ctx)
+
+			logger.L().Debug(ctx, "State transition already in progress to the same state, waiting",
+				logger.WithSandboxID(transition.Sandbox.SandboxID),
+				zap.String("state", string(opts.Action.TargetState)))
+
+			_, err := s.WaitForTransition(ctx, teamID, sandboxID, inFlightID)
+			if restored, ok := errors.AsType[*RestoredTransitionError](err); ok {
+				// The pause the joiner rode was refused as one the guest cannot take
+				// and the sandbox is running again: a joiner asking for the same
+				// kind never succeeds; a memory pause that joined it may retry.
+				if errors.Is(restored.Refusal, PauseUnsupportedError{}) && !opts.FilesystemOnly {
+					return transition, false, PauseQueueExhaustedError{}
+				}
+
+				// The pause the joiner rode was refused and the sandbox is running
+				// again: the joiner gets the refusal the starter got, not a success.
+				return transition, false, restored.Refusal
+			}
+			if err != nil {
+				return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
+			}
+
+			return transition, true, nil
+		}
+
+		_, err = s.WaitForTransition(ctx, teamID, sandboxID, inFlightID)
+		if err != nil && !errors.Is(err, ErrTransitionRestored) {
+			return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
+		}
+		// Begin again with opts whole: a field dropped across the wait is a
+		// caller instruction discarded, and the begin re-checks
+		// ExpectExecutionID against whatever the sandbox became meanwhile.
+	}
 }
 
 // Hold names the hold one operation has on a running execution's record.
@@ -177,6 +239,9 @@ type StateTransition struct {
 	// ID is set only for the caller that started the transition, which must
 	// end it with FinishTransition.
 	ID string
+	// InFlightID is set when another transition of the sandbox is in flight
+	// and none was started: the caller waits it out with WaitForTransition.
+	InFlightID string
 }
 
 // TransitionOutcome is the result of the work done under a transition, as

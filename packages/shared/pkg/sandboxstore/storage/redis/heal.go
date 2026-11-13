@@ -154,7 +154,7 @@ func (s *Storage) healSandboxBatch(ctx context.Context, batch []sandboxtypes.San
 	// A TOCTOU with a concurrent Remove can only plant an orphan member,
 	// which ExpiredItems sweeps once its score passes — garbage, never a
 	// false eviction (eviction re-checks the stored JSON and re-validates
-	// expiry under the lock in StartRemoving).
+	// expiry under the lock in BeginRemoving).
 	if err := s.redisClient.ZAddNX(ctx, globalExpirationSet, missing...).Err(); err != nil {
 		return 0, fmt.Errorf("ZADD NX failed: %w", err)
 	}

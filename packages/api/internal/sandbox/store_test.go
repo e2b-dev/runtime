@@ -717,7 +717,7 @@ type finishCall struct {
 	outcome      sandboxtypes.TransitionOutcome
 }
 
-// transitionStorage answers StartRemoving with its fields and records every
+// transitionStorage answers BeginRemoving with its fields and records every
 // FinishTransition call.
 type transitionStorage struct {
 	Storage
@@ -730,7 +730,7 @@ type transitionStorage struct {
 	finishes []finishCall
 }
 
-func (s *transitionStorage) StartRemoving(context.Context, uuid.UUID, string, RemoveOpts) (StateTransition, bool, error) {
+func (s *transitionStorage) BeginRemoving(context.Context, uuid.UUID, string, RemoveOpts) (StateTransition, bool, error) {
 	return s.transition, s.alreadyDone, s.err
 }
 

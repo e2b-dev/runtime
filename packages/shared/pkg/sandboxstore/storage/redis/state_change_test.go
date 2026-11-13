@@ -39,6 +39,17 @@ func setupTestStorage(t *testing.T, hooks ...redis.Hook) (*Storage, redis.Univer
 	return storage, client
 }
 
+// StartRemoving and WaitForStateChange are the calls the API's store makes.
+func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
+	return sandboxtypes.StartRemoving(ctx, s, teamID, sandboxID, opts)
+}
+
+func (s *Storage) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
+	_, err := s.WaitForTransition(ctx, teamID, sandboxID, "")
+
+	return err
+}
+
 // startRemovingWithFinish is StartRemoving with the transition's end as a
 // callback, built as the API's store builds it. A failed finish panics, so no
 // test passes over one, except the restore of a record a test removed.

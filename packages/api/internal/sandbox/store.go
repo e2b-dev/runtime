@@ -190,7 +190,7 @@ func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, er
 // callback that ends it with the caller's error; a no-op when this call
 // started no transition.
 func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {
-	transition, alreadyDone, err := s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
+	transition, alreadyDone, err := sandboxtypes.StartRemoving(ctx, s.storage, teamID, sandboxID, opts)
 	if err != nil {
 		return transition, false, nil, err
 	}
@@ -215,7 +215,9 @@ func (s *Store) RestoreCheckpointed(ctx context.Context, transition StateTransit
 }
 
 func (s *Store) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	return s.storage.WaitForStateChange(ctx, teamID, sandboxID)
+	_, err := s.storage.WaitForTransition(ctx, teamID, sandboxID, "")
+
+	return err
 }
 
 func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID string) {
