@@ -687,6 +687,9 @@ const (
 	RoutingPublishTotal CounterType = "orchestrator.routing.publish.total"
 	RoutingDeleteTotal  CounterType = "orchestrator.routing.delete.total"
 
+	// client-proxy route cache fallback counter (result=hit/stale)
+	CatalogCacheFallbackTotal CounterType = "clientproxy.catalog.cache.fallback.total"
+
 	// Firecracker net counters — global totals, no sandbox_id (low cardinality).
 	// All carry a direction=tx/rx attribute. Per-sandbox distributions are histograms below.
 	SandboxFCNetFails         CounterType = "orchestrator.sandbox.fc.net.fails"
@@ -967,6 +970,7 @@ var counterDesc = map[CounterType]string{
 
 	RoutingPublishTotal: "Total number of sandbox routing record writes on MarkRunning (result=ok/error)",
 	RoutingDeleteTotal:  "Total number of sandbox routing record deletes on MarkStopping (result=ok/error)",
+	CatalogCacheFallbackTotal: "Total client-proxy route resolutions served from the fallback cache during a backing-store error (result=hit when a fresh entry was served, stale when the entry was too old to serve)",
 
 	SandboxFCNetFails:         "Total Firecracker VMM errors transmitting or receiving data (direction=tx/rx)",
 	SandboxFCNetNoAvailBuffer: "Total Firecracker VMM events where no virtqueue buffer was available (direction=tx/rx)",
