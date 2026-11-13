@@ -265,6 +265,30 @@ components:
         type: array
         items:
           $ref: "#/components/schemas/BuildStatus"
+    templateBuildStatuses:
+      name: statuses
+      in: query
+      required: false
+      description: Comma-separated list of build statuses to include. Every status when omitted.
+      style: form
+      explode: false
+      schema:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "#/components/schemas/TemplateBuildStatus"
+    templateBuildTags:
+      name: tags
+      in: query
+      required: false
+      description: Comma-separated list of tags. Only the builds these tags point at are returned. Every build when omitted.
+      style: form
+      explode: false
+      schema:
+        type: array
+        maxItems: 100
+        items:
+          type: string
     buildsCursor:
       name: cursor
       in: query
@@ -3028,6 +3052,86 @@ components:
           $ref: "#/components/schemas/DiskSizeMB"
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
+
+    TemplateBuildWithTags:
+      allOf:
+        - $ref: "#/components/schemas/TemplateBuild"
+        - type: object
+          required:
+            - tags
+          properties:
+            tags:
+              type: array
+              description: Tags of the template that point at this build. A tag points at the latest ready build it was assigned to, the build a sandbox created with that tag starts from.
+              items:
+                type: string
+
+    TemplateV2:
+      description: >
+        A template with its default build. `defaultBuild` is the build a sandbox created
+        without a tag starts from, the latest ready build tagged default; it is absent until
+        such a build is ready. `buildStatus` is the status of the latest build tagged default
+        in any state: it is `building` while a rebuild runs, although sandboxes still start
+        from the default build.
+      required:
+        - templateID
+        - names
+        - public
+        - createdAt
+        - updatedAt
+        - createdBy
+        - lastSpawnedAt
+        - spawnCount
+        - buildCount
+        - isDefault
+        - buildStatus
+      properties:
+        templateID:
+          type: string
+          description: Identifier of the template
+        names:
+          type: array
+          description: Names of the template (namespace/alias format when namespaced)
+          items:
+            type: string
+        public:
+          type: boolean
+          description: Whether the template is public or only accessible by the team
+        createdAt:
+          type: string
+          format: date-time
+          description: Time when the template was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time when the template was last updated
+        createdBy:
+          allOf:
+            - $ref: "#/components/schemas/TeamUser"
+          nullable: true
+        lastSpawnedAt:
+          type: string
+          nullable: true
+          format: date-time
+          description: Time when the template was last used
+        spawnCount:
+          type: integer
+          format: int64
+          description: Number of times the template was used
+        buildCount:
+          type: integer
+          format: int32
+          description: Number of times the template was built
+        isDefault:
+          type: boolean
+          description: Whether the template is one of the platform's default templates
+        description:
+          type: string
+          description: Description of the template
+        buildStatus:
+          $ref: "#/components/schemas/TemplateBuildStatus"
+        defaultBuild:
+          $ref: "#/components/schemas/TemplateBuild"
 
     TemplateWithBuilds:
       allOf:
@@ -6605,6 +6709,51 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /templates/{templateID}/builds:
+    get:
+      summary: List a template's builds
+      x-api-group: list
+      description: List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+      tags: [templates]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/templateID"
+        - $ref: "#/components/parameters/paginationNextToken"
+        - $ref: "#/components/parameters/paginationLimit"
+        - $ref: "#/components/parameters/templateBuildStatuses"
+        - $ref: "#/components/parameters/templateBuildTags"
+      responses:
+        "200":
+          description: Successfully returned the template builds
+          headers:
+            X-Next-Token:
+              $ref: "#/components/headers/XNextToken"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TemplateBuildWithTags"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
   /v2/templates/{templateID}/builds/{buildID}:
     post:
       summary: Start template build (v2)
@@ -6707,6 +6856,40 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /v2/templates/{templateID}:
+    get:
+      summary: Template info (v2)
+      x-api-group: list
+      description: Get a template by its ID or name, with its default build and without its other builds.
+      tags: [templates]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/templateID"
+      responses:
+        "200":
+          description: Successfully returned the template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateV2"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
     patch:
       summary: Update template (v2)
       description: Update template
