@@ -312,6 +312,12 @@ services:
       # create-memory-refusal flag, which has no LaunchDarkly to come from
       # here; orchestrator releases that predate the knob ignore it.
       CREATE_MEMORY_REFUSAL: "true"
+      # A create or resume the hugepage pool cannot back is refused before it
+      # starts. Without this the start goes ahead, and a guest that cannot
+      # fault in its pages fails or crashes a running sandbox. This is the
+      # orchestrator's create-hugepage-admission flag, which has no
+      # LaunchDarkly to come from here.
+      CREATE_HUGEPAGE_ADMISSION: "true"
       BUILD_CACHE_STORAGE_URL: file:///var/lib/e2b/storage/build-cache
       ARTIFACTS_REGISTRY_PROVIDER: Local
       LOCAL_UPLOAD_BASE_URL: http://127.0.0.1:5008

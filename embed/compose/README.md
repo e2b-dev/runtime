@@ -64,11 +64,11 @@ the hub is [`../README.md`](../README.md).
   this reservation as it touches pages, up to its full size (256 of the 2 MiB
   pages for a 512 MiB `base` sandbox, about 90 while idle), so the default
   carries eight sandboxes at full memory or about twenty idle ones. Past
-  that the stack stays healthy and each create fails with `500: Failed to
-  place sandbox: this node cannot map 512 MiB of guest memory: its memory
-  pool is too small or in use by running sandboxes`, with the sandbox's own
-  size in the message, while `docker compose logs orchestrator` shows
-  `create refused: guest memory not mappable`. Set a larger `HUGEPAGES` in
+  that the stack stays healthy and each create is refused before it starts
+  (`CREATE_HUGEPAGE_ADMISSION`) with `500: Failed to place sandbox: this node
+  cannot allocate 512 MiB of guest memory in hugepages`, with the sandbox's
+  own size in the message, while `docker compose logs orchestrator` shows
+  `Insufficient hugepages for sandbox start`. Set a larger `HUGEPAGES` in
   `.env` and run `up` again: `host-setup` re-applies the sysctl on every
   start and the orchestrator needs no restart. A killed sandbox gives its
   pages back a few hundred milliseconds after the kill returns; a create
