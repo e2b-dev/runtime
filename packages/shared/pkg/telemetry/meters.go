@@ -452,6 +452,35 @@ const (
 	// score drifted from the stored EndTime and were re-scored by the evictor
 	// scan. Sustained non-zero rate means score updates are being lost.
 	ApiRedisStorageExpirationIndexRescored CounterType = "api.redis_storage.expiration_index.rescored"
+
+	// ApiRedisStorageLockTimeouts counts Obtain calls whose context expired
+	// while waiting for the distributed sandbox lock.
+	ApiRedisStorageLockTimeouts CounterType = "api.redis_storage.lock.timeout_total"
+
+	// ApiRedisStorageTransitionCallbackFailures counts transition callbacks whose
+	// finish_transition script failed, so waiters may miss the result key.
+	ApiRedisStorageTransitionCallbackFailures CounterType = "api.redis_storage.transition.callback_failures_total"
+
+	// ApiRedisStorageTransitionJoined counts StartRemoving calls that joined an
+	// in-flight transition to the same target state rather than starting their own.
+	ApiRedisStorageTransitionJoined CounterType = "api.redis_storage.transition.joined_total"
+
+	// ApiRedisStorageTransitionFallbackPolls counts waitForTransition iterations
+	// driven by the 1-second fallback ticker (PubSub notification was missed).
+	ApiRedisStorageTransitionFallbackPolls CounterType = "api.redis_storage.transition.wait_fallback_polls_total"
+
+	// ApiRedisStorageTransitionExecutionMismatches counts StartRemoving calls
+	// refused because the sandbox ExecutionID did not match the caller's pin.
+	ApiRedisStorageTransitionExecutionMismatches CounterType = "api.redis_storage.transition.execution_mismatch_total"
+
+	// ApiRedisStorageScanTeamsSkipped counts per-team scan failures silenced
+	// by forEachSandboxBatch (the team is skipped; remaining teams still scan).
+	ApiRedisStorageScanTeamsSkipped CounterType = "api.redis_storage.scan.teams_skipped_total"
+
+	// ApiRedisStorageScanCorruptRecords counts sandbox records that failed
+	// JSON unmarshal during a scan batch and were skipped.
+	ApiRedisStorageScanCorruptRecords CounterType = "api.redis_storage.scan.corrupt_records_total"
+
 	// ApiRedisStorageExpirationIndexDeferred counts expired members the
 	// evictor scan moved out of its window because their sandbox is still in
 	// a transition. A sustained high rate means transitions pile up at the
@@ -750,6 +779,19 @@ const (
 
 const (
 	ApiRedisStoragePublisherPublishDuration HistogramType = "api.redis_storage.publisher.publish.duration"
+
+	// ApiRedisStorageTeamIndexSize records the SCARD of each team's sandbox
+	// index SET, sampled where TeamsWithSandboxCount already pipelines SCARD.
+	// p99/max detects unbounded growth from stale entries Remove() never cleaned.
+	ApiRedisStorageTeamIndexSize HistogramType = "api.redis_storage.team_index.size"
+
+	// ApiRedisStorageLockWaitDuration records the total wait time inside Obtain
+	// (first tryLock attempt until the lock is held), per successful acquisition.
+	ApiRedisStorageLockWaitDuration HistogramType = "api.redis_storage.lock.wait_duration"
+
+	// ApiRedisStorageTransitionDuration records the wall-clock time from
+	// StartRemoving setting the transition key until the callback writes the result.
+	ApiRedisStorageTransitionDuration HistogramType = "api.redis_storage.transition.duration"
 	// ApiRedisScriptDuration is the round trip of one Lua script run against
 	// the sandbox store, by script (see ApiRedisScriptCalls).
 	ApiRedisScriptDuration HistogramType = "api.redis.script.duration"
@@ -986,10 +1028,18 @@ var counterDesc = map[CounterType]string{
 	ApiRedisStorageExpirationIndexSwept:    "Members removed from the global expiration index by the evictor scan (reason=orphan|dead_execution|invalid)",
 	ApiRedisStorageExpirationIndexRescored: "Live expiration index members re-scored after drifting from the stored EndTime",
 	ApiRedisStorageExpirationIndexDeferred: "Expired expiration index members moved out of the evictor scan window while their sandbox is in a transition",
-	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_record|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
-	ApiRedisStorageIndexHeal:               "Repairs the healer made to sandbox records and their index entries (kind=readded|removed|deleted_stale); healthy steady state is zero",
-	ApiRedisStorageWriteAnomalies:          "Sandbox store writes that gave up after their retries (kind=remove_stranded|add_unindexed|add_write_unconfirmed); the healer repairs what they left",
-	ApiRedisStorageErrors:                  "Cluster errors the sandbox store's commands returned (kind=crossslot|moved_exhausted|tryagain|other)",
+
+	ApiRedisStorageLockTimeouts:                  "Obtain calls whose context expired while waiting for the distributed sandbox lock",
+	ApiRedisStorageTransitionCallbackFailures:    "Transition callbacks whose finish_transition script failed, so waiters may miss the result key",
+	ApiRedisStorageTransitionJoined:              "StartRemoving calls that joined an in-flight transition to the same target state instead of starting a new one",
+	ApiRedisStorageTransitionFallbackPolls:       "waitForTransition loop iterations driven by the 1-second fallback ticker (PubSub notification missed)",
+	ApiRedisStorageTransitionExecutionMismatches: "StartRemoving calls refused because the sandbox ExecutionID did not match the caller's pin",
+	ApiRedisStorageScanTeamsSkipped:              "Per-team scan failures silenced by forEachSandboxBatch; the team is skipped but remaining teams still scan",
+	ApiRedisStorageScanCorruptRecords:            "Sandbox records that failed JSON unmarshal during a scan batch and were skipped",
+	ApiRedisScriptCalls:                          "Lua script runs against the sandbox store (script=add_sandbox|remove_record|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
+	ApiRedisStorageIndexHeal:                     "Repairs the healer made to sandbox records and their index entries (kind=readded|removed|deleted_stale); healthy steady state is zero",
+	ApiRedisStorageWriteAnomalies:                "Sandbox store writes that gave up after their retries (kind=remove_stranded|add_unindexed|add_write_unconfirmed); the healer repairs what they left",
+	ApiRedisStorageErrors:                        "Cluster errors the sandbox store's commands returned (kind=crossslot|moved_exhausted|tryagain|other)",
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
@@ -1093,10 +1143,18 @@ var counterUnits = map[CounterType]string{
 	ApiRedisStorageExpirationIndexSwept:    "{member}",
 	ApiRedisStorageExpirationIndexRescored: "{member}",
 	ApiRedisStorageExpirationIndexDeferred: "{member}",
-	ApiRedisScriptCalls:                    "{call}",
-	ApiRedisStorageIndexHeal:               "{repair}",
-	ApiRedisStorageWriteAnomalies:          "{write}",
-	ApiRedisStorageErrors:                  "{error}",
+
+	ApiRedisStorageLockTimeouts:                  "{call}",
+	ApiRedisStorageTransitionCallbackFailures:    "{callback}",
+	ApiRedisStorageTransitionJoined:              "{call}",
+	ApiRedisStorageTransitionFallbackPolls:       "{poll}",
+	ApiRedisStorageTransitionExecutionMismatches: "{call}",
+	ApiRedisStorageScanTeamsSkipped:              "{team}",
+	ApiRedisStorageScanCorruptRecords:            "{record}",
+	ApiRedisScriptCalls:                          "{call}",
+	ApiRedisStorageIndexHeal:                     "{repair}",
+	ApiRedisStorageWriteAnomalies:                "{write}",
+	ApiRedisStorageErrors:                        "{error}",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "{placement}",
 }
@@ -1316,6 +1374,9 @@ func GetGaugeInt(meter metric.Meter, name GaugeIntType) (metric.Int64ObservableG
 
 var histogramDesc = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
+	ApiRedisStorageTeamIndexSize:            "SCARD of a team's sandbox index SET sampled where TeamsWithSandboxCount pipelines SCARD; p99/max detects unbounded growth",
+	ApiRedisStorageLockWaitDuration:         "Total wait time in Obtain from first tryLock attempt until the lock is held, per successful acquisition",
+	ApiRedisStorageTransitionDuration:       "Wall-clock time from StartRemoving setting the transition key until the callback writes the result",
 	ApiRedisScriptDuration:                  "Round trip of one Lua script run against the sandbox store, by script",
 	ApiSandboxListAge:                       "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
 	ApiRedisStorageListGets:                 "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys",
@@ -1415,6 +1476,9 @@ var histogramDesc = map[HistogramType]string{
 
 var histogramUnits = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "ms",
+	ApiRedisStorageTeamIndexSize:            "{entry}",
+	ApiRedisStorageLockWaitDuration:         "ms",
+	ApiRedisStorageTransitionDuration:       "ms",
 	ApiRedisScriptDuration:                  "ms",
 	ApiSandboxListAge:                       "ms",
 	ApiRedisStorageListGets:                 "{command}",
