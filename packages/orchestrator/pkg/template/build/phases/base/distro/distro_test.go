@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -337,5 +338,35 @@ func TestRejectedIDsAreNotReachableViaIDLike(t *testing.T) {
 	// The guard has to come first, or ID_LIKE=fedora would match them.
 	if strings.Index(sel, guard) > strings.Index(sel, "E2B_ID_LIKE") {
 		t.Error("the rejected-id guard must precede the ID_LIKE fallback")
+	}
+}
+
+// Kylin Advanced Server V10 declares ID=kylin and no ID_LIKE, so it needs its
+// own profile. Verified against macrosan/kylin:v10-sp3-2403: RHEL-shaped, with
+// the same package-name difference as openEuler — its repos ship shadow, not
+// shadow-utils. These assertions pin both facts.
+func TestKylinProfile(t *testing.T) {
+	t.Parallel()
+	k := profileByKey(t, "kylin")
+
+	if !slices.Contains(k.IDs, "kylin") {
+		t.Errorf("kylin id must be matched, got IDs=%v", k.IDs)
+	}
+	if slices.Contains(k.Packages, "shadow-utils") {
+		t.Error("Kylin repos have no shadow-utils; it must install shadow")
+	}
+	if !slices.Contains(k.Packages, "shadow") {
+		t.Error("kylin must install shadow for the shadow-tools capability")
+	}
+	if k.InitBinary != "/usr/lib/systemd/systemd" {
+		t.Errorf("kylin init path wrong: %s", k.InitBinary)
+	}
+	for _, want := range []string{"dnf -y install --allowerasing", "|| microdnf -y install", "|| yum -y install"} {
+		if !strings.Contains(k.PkgInstall, want) {
+			t.Errorf("kylin install missing %q: %s", want, k.PkgInstall)
+		}
+	}
+	if !strings.Contains(ShellSelector(), "kylin)") {
+		t.Error("selector must have a kylin arm")
 	}
 }
