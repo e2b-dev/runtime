@@ -433,7 +433,7 @@ const (
 	TemplateBuildMemorySizing CounterType = "orchestrator.template.build.memory_sizing"
 
 	// PauseResumePrefetchHarvestAttempts counts pause-resume prefetch harvest
-	// attempts, by result (success|resume_failed|collect_failed|skipped). The
+	// attempts, by result and path; counterDesc holds the result vocabulary. The
 	// throwaway is absent from Prometheus otherwise (registration-skip), so this
 	// is the harvest-activity / failure-rate signal.
 	PauseResumePrefetchHarvestAttempts CounterType = "orchestrator.sandbox.pause_resume_prefetch.harvest.attempts"
@@ -965,7 +965,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorEnvdBinaryCacheWarms:             "Host envd binary cache warms, by result (ok|superseded|suppressed|pinned|already_warming|bad_target|failed)",
 	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher) and result (ok|failed)",
 	PauseResumePrefetchHarvestThaw:               "Harvest throwaways whose envd /init took the held request and was served a 204, by skipped: true when envd answered X-Envd-Thaw: skip and left the workload frozen, false when it thawed inline and the workload ran into the trace (an envd version the gate admitted that does not skip); envd_running_version is the version the gate read, kept when the orchestrator holds it, else other",
-	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | persist_deadline) and path (pause | checkpoint)",
+	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | guest_unresponsive = snapshot taken over a hung guest agent, not harvested | persist_deadline) and path (pause | checkpoint)",
 	TCPFirewallConnectionsTotal:                  "Total number of TCP firewall connections processed",
 	TCPFirewallErrorsTotal:                       "Total number of TCP firewall errors",
 	TCPFirewallDecisionsTotal:                    "Total number of TCP firewall allow/block decisions",
