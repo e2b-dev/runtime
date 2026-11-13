@@ -193,7 +193,8 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 
 		if time.Since(sbx.EndTime) > sandbox.StaleCutoff && opts.Action.Effect == sandbox.TransitionExpires {
 			o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
-			go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
+			bgCtx := context.WithoutCancel(ctx)
+			o.GoTrackedTail(func() { o.analyticsRemove(bgCtx, sbx, opts.Action) })
 		}
 
 		return nil
@@ -218,7 +219,8 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 			return
 		}
 		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
-		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
+		bgCtx := context.WithoutCancel(ctx)
+		o.GoTrackedTail(func() { o.analyticsRemove(bgCtx, sbx, opts.Action) })
 	}()
 	err = o.removeSandboxFromNode(ctx, sbx, opts)
 	if err != nil {
