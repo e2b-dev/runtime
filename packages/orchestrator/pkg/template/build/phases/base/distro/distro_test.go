@@ -1,6 +1,7 @@
 package distro
 
 import (
+	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -337,5 +338,39 @@ func TestRejectedIDsAreNotReachableViaIDLike(t *testing.T) {
 	// The guard has to come first, or ID_LIKE=fedora would match them.
 	if strings.Index(sel, guard) > strings.Index(sel, "E2B_ID_LIKE") {
 		t.Error("the rejected-id guard must precede the ID_LIKE fallback")
+	}
+}
+
+// openEuler declares ID=openEuler (mixed case; provision.sh matches it verbatim
+// without lowercasing) and no ID_LIKE, so it needs its own profile. Verified
+// against openeuler/openeuler:22.03: it is RHEL-shaped except that its repos
+// ship shadow, not shadow-utils. These assertions pin both facts so a future
+// edit can't silently regress the case-sensitive id or the package name.
+func TestOpenEulerProfile(t *testing.T) {
+	t.Parallel()
+	oe := profileByKey(t, "openeuler")
+
+	if !slices.Contains(oe.IDs, "openEuler") {
+		t.Errorf("openEuler id must be matched verbatim (mixed case), got IDs=%v", oe.IDs)
+	}
+	if slices.Contains(oe.Packages, "shadow-utils") {
+		t.Error("openEuler repos have no shadow-utils; it must install shadow")
+	}
+	if !slices.Contains(oe.Packages, "shadow") {
+		t.Error("openEuler must install shadow for the shadow-tools capability")
+	}
+	// RHEL-family shape: systemd path, dnf→microdnf→yum fallback, wheel admin.
+	if oe.InitBinary != "/usr/lib/systemd/systemd" {
+		t.Errorf("openEuler init path wrong: %s", oe.InitBinary)
+	}
+	for _, want := range []string{"dnf -y install --allowerasing", "|| microdnf -y install", "|| yum -y install"} {
+		if !strings.Contains(oe.PkgInstall, want) {
+			t.Errorf("openEuler install missing %q: %s", want, oe.PkgInstall)
+		}
+	}
+	// The generated selector must carry an openEuler case arm, keyed on the
+	// exact mixed-case id.
+	if !strings.Contains(ShellSelector(), "openEuler)") {
+		t.Error("selector must have an openEuler arm keyed on the verbatim id")
 	}
 }
