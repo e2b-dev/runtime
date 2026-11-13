@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -151,6 +152,41 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 	}
 }
 
+// validateEnvVarsSize rejects a create whose user env map, once JSON-serialised,
+// would not fit the budget the public API reserves for env vars in envd's /init
+// body (consts.MaxSandboxEnvVarsBytes). The orchestrator serialises the whole env
+// map into POST /init, which envd caps at consts.EnvdMaxInitBodyBytes and whose
+// 413 the orchestrator treats as a fatal create/resume. Bounding env here, at
+// admission, keeps that failure from reaching a sandbox the API already accepted;
+// the schema in openapi.yml does not cap env, so this is the only place it is held.
+func validateEnvVarsSize(envVars api.EnvVars) *api.APIError {
+	if len(envVars) == 0 {
+		return nil
+	}
+
+	encoded, err := json.Marshal(envVars)
+	if err != nil {
+		return &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: "Environment variables could not be encoded",
+			Err:       fmt.Errorf("marshal env vars for size check: %w", err),
+		}
+	}
+
+	if int64(len(encoded)) > consts.MaxSandboxEnvVarsBytes {
+		return &api.APIError{
+			Code: http.StatusBadRequest,
+			ClientMsg: fmt.Sprintf(
+				"Environment variables are too large: %d bytes serialised, limit is %d bytes",
+				len(encoded), consts.MaxSandboxEnvVarsBytes,
+			),
+			Err: fmt.Errorf("env vars exceed admission limit: %d > %d", len(encoded), consts.MaxSandboxEnvVarsBytes),
+		}
+	}
+
+	return nil
+}
+
 // createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
 func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) (*api.Sandbox, *api.APIError) {
 	ctx := c.Request.Context()
@@ -242,6 +278,11 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	// timeout auto-pause takes a filesystem-only snapshot (cold-boots on resume).
 	autoPauseFilesystemOnly := !sharedUtils.DerefOrDefault(body.AutoPauseMemory, true)
 	envVars := sharedUtils.DerefOrDefault(body.EnvVars, nil)
+	if apiErr := validateEnvVarsSize(envVars); apiErr != nil {
+		apiErr.Retryable = apierrors.NoRetry
+
+		return nil, apiErr
+	}
 	mcp := sharedUtils.DerefOrDefault(body.Mcp, nil)
 	metadata := sharedUtils.DerefOrDefault(body.Metadata, nil)
 	apiVolumeMounts := sharedUtils.DerefOrDefault(body.VolumeMounts, nil)

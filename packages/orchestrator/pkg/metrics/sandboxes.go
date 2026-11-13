@@ -73,6 +73,12 @@ type SandboxObserver struct {
 	memoryCache metric.Int64ObservableGauge
 	diskTotal   metric.Int64ObservableGauge
 	diskUsed    metric.Int64ObservableGauge
+
+	// Cumulative counters, not gauges: an OOM kill is an event, and the victim_class
+	// split (control_plane vs workload) is what turns a "lots of OOM" story into a
+	// number you can alert on. control_plane should stay 0.
+	oomKills        metric.Int64Counter
+	oomKillsDropped metric.Int64Counter
 }
 
 func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit, serviceVersion, serviceInstanceID string, sandboxes *sandbox.Map) (*SandboxObserver, error) {
@@ -163,6 +169,16 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		return nil, fmt.Errorf("failed to create disk used gauge: %w", err)
 	}
 
+	oomKills, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxOOMKills)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OOM kills counter: %w", err)
+	}
+
+	oomKillsDropped, err := telemetry.GetCounter(meter, telemetry.OrchestratorSandboxOOMKillsDropped)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OOM kills dropped counter: %w", err)
+	}
+
 	so := &SandboxObserver{
 		exportInterval: sandboxMetricExportPeriod,
 		meterExporter:  externalMeterExporter,
@@ -179,6 +195,9 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		memoryCache:    memoryCache,
 		diskTotal:      diskTotal,
 		diskUsed:       diskUsed,
+
+		oomKills:        oomKills,
+		oomKillsDropped: oomKillsDropped,
 	}
 
 	registration, err := so.startObserving()
@@ -323,10 +342,28 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 					kills, more := unseenOOMKills(sbx, sbxMetrics)
 					for _, kill := range kills {
-						sbxlogger.E(sbx).Warn(ctx, "Out of memory: process was killed", zap.String("process", kill.Process))
+						class := oomVictimClass(kill.Process)
+						so.oomKills.Add(ctx, 1, metric.WithAttributes(
+							attribute.String("sandbox_id", sbx.Runtime.SandboxID),
+							attribute.String("team_id", sbx.Runtime.TeamID),
+							attribute.String("victim_class", class),
+							attribute.String("process", kill.Process),
+						))
+						if class == oomVictimControlPlane {
+							// envd being OOM-killed is a different event from a user process
+							// hitting memory.max: it orphans the workload and breaks teardown
+							// and pause/resume. Error, not Warn, so it alerts on its own.
+							sbxlogger.E(sbx).Error(ctx, "Control-plane OOM: envd was killed", zap.String("process", kill.Process))
+						} else {
+							sbxlogger.E(sbx).Warn(ctx, "Out of memory: process was killed", zap.String("process", kill.Process))
+						}
 					}
 					if more > 0 {
 						// envd lists only its latest kills, so there may have been more.
+						so.oomKillsDropped.Add(ctx, int64(more), metric.WithAttributes(
+							attribute.String("sandbox_id", sbx.Runtime.SandboxID),
+							attribute.String("team_id", sbx.Runtime.TeamID),
+						))
 						sbxlogger.E(sbx).Warn(ctx, "Out of memory: at least this many more processes were killed",
 							zap.Int("processes", more))
 					}
@@ -375,6 +412,28 @@ func (so *SandboxObserver) Close(ctx context.Context) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// OOM victim classes for the orchestrator.sandbox.oom.kills counter.
+const (
+	// envd itself was OOM-killed: the control-plane event issue #3563 is about.
+	// Should stay 0; any value means the sandbox's control plane died.
+	oomVictimControlPlane = "control_plane"
+	// A user process was killed, normally by hitting its cgroup memory.max.
+	// An expected capacity event, not a control-plane failure.
+	oomVictimWorkload = "workload"
+)
+
+// oomVictimClass classifies an OOM kill by the killed process's name. envd runs from
+// /usr/bin/envd, so its kernel comm is "envd" (the kernel truncates comm to 15 bytes,
+// which "envd" is well under). Anything else is a workload process. The name is the
+// comm the kernel logged for the victim at kill time, parsed in envd's OOMWatcher.
+func oomVictimClass(process string) string {
+	if process == "envd" {
+		return oomVictimControlPlane
+	}
+
+	return oomVictimWorkload
 }
 
 // unseenOOMKills returns up to maxOomKillsLogged kills not yet logged for sbx, names capped, and
