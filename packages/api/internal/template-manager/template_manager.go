@@ -120,7 +120,7 @@ func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 				go func(b queries.GetInProgressTemplateBuildsRow) {
 					err := tm.BuildStatusSync(ctx, b.EnvBuild.ID, b.ActiveEnv.ID, clustersshared.WithClusterFallback(b.ActiveEnv.ClusterID), b.EnvBuild.ClusterNodeID)
 					if err != nil {
-						logger.L().Error(ctx, "Error syncing build status", zap.Error(err), zap.String("buildID", b.EnvBuild.ID.String()))
+						logger.L().Error(ctx, "Error syncing build status", zap.Error(err), logger.WithBuildID(b.EnvBuild.ID.String()))
 					}
 				}(b)
 			}
@@ -150,7 +150,7 @@ func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterI
 	switch {
 	case errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && nodeInfo.CPUArchitecture != "":
 		logger.L().Warn(ctx, "No template builder with the pinned machine info is at the required version, falling back to any builder at that version",
-			zap.Error(err), zap.String("requiredVersion", minVersion.String()), zap.String("clusterID", clusterID.String()))
+			zap.Error(err), zap.String("requiredVersion", minVersion.String()), logger.WithClusterID(clusterID))
 		if tm.builderPinFallback != nil {
 			tm.builderPinFallback.Add(ctx, 1, metric.WithAttributes(attribute.String("cluster_id", clusterID.String())))
 		}
@@ -158,7 +158,7 @@ func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterI
 		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion, vcpus)
 	case errors.Is(err, clusters.ErrAvailableTemplateBuilderNotFound):
 		// Fallback to any template builder
-		logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.Error(err), zap.String("clusterID", clusterID.String()))
+		logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.Error(err), logger.WithClusterID(clusterID))
 
 		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion, vcpus)
 	}
@@ -247,7 +247,7 @@ func (tm *TemplateManager) DeleteBuild(ctx context.Context, buildID uuid.UUID, t
 		}
 		nodeID = node.NodeID
 
-		logger.L().Info(ctx, "Fallback to available node", zap.String("nodeID", nodeID), zap.String("clusterID", clusterID.String()))
+		logger.L().Info(ctx, "Fallback to available node", logger.WithNodeID(nodeID), logger.WithClusterID(clusterID))
 		client, err = tm.GetClusterBuildClient(clusterID, nodeID)
 		if err != nil {
 			return fmt.Errorf("failed to get builder client: %w", err)

@@ -41,7 +41,7 @@ func (a *APIStore) PostAdminTeamsTeamIDSandboxesKill(c *gin.Context, teamID uuid
 	}
 
 	logger.L().Info(ctx, "Completed killing team sandboxes",
-		zap.String("teamID", teamID.String()),
+		logger.WithTeamID(teamID.String()),
 		zap.Int("killed", killedCount),
 		zap.Int("failed", failedCount),
 	)
