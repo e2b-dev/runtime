@@ -7,7 +7,9 @@ it yet.
 
 The contract is
 [`e2b/scheduling/v1/reservation.proto`](e2b/scheduling/v1/reservation.proto)
-in this directory. The generated Go code is in
+in this directory. The contract of the sandbox state service,
+[`e2b/scheduling/v1/state.proto`](e2b/scheduling/v1/state.proto), is there
+too; the service does not serve it yet. The generated Go code is in
 `packages/shared/pkg/grpc/scheduling`. After a change to the proto, run
 `make generate`. Generation needs network access: it fetches the protovalidate
 rules with `buf export`.
@@ -93,9 +95,9 @@ deadline.
 
 ## Tests
 
-The tests of `internal/reservation` and `.` need a Redis server, named by
-`REDIS_TEST_DATABASE_URL`. Each test's client namespaces its keys and removes
-them when the test ends.
+The tests of `internal/reservation`, `internal/state` and `.` need a Redis
+server, named by `REDIS_TEST_DATABASE_URL`. Each test's client namespaces its
+keys and removes them when the test ends.
 
 ```bash
 docker run -d --rm --name e2b-test-redis -p 56379:6379 redis:8-alpine --save "" --appendonly no
@@ -109,6 +111,7 @@ make test
 |---|---|
 | `internal/config` | Configuration parsing and TLS settings validation |
 | `internal/reservation` | Reservation gRPC handlers: outcomes, validation and errors, against Redis and a fake store |
+| `internal/state` | Sandbox state gRPC handlers: record fidelity, outcomes, validation and errors, against Redis and a fake store |
 | `internal/server` | The production gRPC server with a fake store: request validation, panic recovery, the request deadline, the `WaitForStart` bound; mTLS: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext |
 | `.` | Startup with Redis, health, a start through the listener, shutdown, listener in use |
 
