@@ -889,12 +889,16 @@ var (
 	PauseResumePrefetchHarvestTimeoutMsFlag = NewIntFlag("pause-resume-prefetch-harvest-timeout-ms", 15000) // 15s
 
 	// TCPFirewallMaxConnectionsPerSandbox is the maximum number of concurrent TCP firewall
-	// connections allowed per sandbox. Negative means no limit.
-	TCPFirewallMaxConnectionsPerSandbox = NewIntFlag("tcpfirewall-max-connections-per-sandbox", -1)
+	// connections allowed per sandbox. Negative means no limit. The default is a
+	// generous finite cap so a deployment with no LaunchDarkly override still bounds
+	// per-sandbox egress connections (see #3681); operators raise or disable it per team.
+	TCPFirewallMaxConnectionsPerSandbox = NewIntFlag("tcpfirewall-max-connections-per-sandbox", 1024)
 
 	// SandboxMaxIncomingConnections is the maximum number of concurrent HTTP proxy
-	// connections allowed per sandbox. Negative means no limit.
-	SandboxMaxIncomingConnections = NewIntFlag("sandbox-max-incoming-connections", -1)
+	// connections allowed per sandbox. Negative means no limit. The default is a
+	// generous finite cap so a deployment with no LaunchDarkly override still bounds
+	// per-sandbox ingress connections (see #3681); operators raise or disable it per team.
+	SandboxMaxIncomingConnections = NewIntFlag("sandbox-max-incoming-connections", 1024)
 
 	// BuildBaseRootfsSizeLimitMB is the maximum size of the base rootfs filesystem created from the OCI image, in MB.
 	BuildBaseRootfsSizeLimitMB = NewIntFlag("build-base-rootfs-size-limit-mb", 25000)
