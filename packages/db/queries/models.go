@@ -26,19 +26,6 @@ type ActiveEnv struct {
 	Source        string
 }
 
-type Cluster struct {
-	ID                  uuid.UUID
-	Endpoint            string
-	EndpointTls         bool
-	Token               string
-	SandboxProxyDomain  *string
-	AuthOrgID           *string
-	Name                string
-	DeletionProtection  bool
-	DeletionRequestedAt *time.Time
-	TelemetryClientID   *string
-}
-
 type EnvAlias struct {
 	Alias       string
 	IsRenamable bool

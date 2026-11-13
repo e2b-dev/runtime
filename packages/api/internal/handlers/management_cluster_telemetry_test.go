@@ -1,59 +1,74 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
 
-func TestTelemetryRefreshPreservesClusterSettings(t *testing.T) {
+func callManagementUpdateClusterTelemetry(t *testing.T, store *APIStore, clusterID uuid.UUID, body string) int {
+	t.Helper()
+
+	return callManagement(t, store, http.MethodPut, "/unstable/management/clusters/"+clusterID.String()+"/telemetry", body).Code
+}
+
+// The update carries the telemetry identity alone, so the cluster's other
+// settings stay as stored.
+func TestManagementUpdateClusterTelemetrySendsOnlyTheIdentity(t *testing.T) {
 	t.Parallel()
-	db := testutils.SetupDatabase(t)
-	store, _ := newManagementStore(t, db)
+
 	clusterID := uuid.New()
-	registration := managementClusterRegistration()
-	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, registration).Code)
-	readSettings := func() string {
-		var settings string
-		require.NoError(t, db.SqlcClient.Pool().QueryRow(t.Context(), `SELECT (to_jsonb(c)-'telemetry_client_id')::text FROM public.clusters c WHERE id=$1`, clusterID).Scan(&settings))
+	want := clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String(), TelemetryClientId: new("client_saved")}.Build()
+	store, clusterService := newClusterServiceStore(t)
+	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.UpdateClusterRequest) bool {
+		return proto.Equal(want, req)
+	})).Return(clustersgrpc.UpdateClusterResponse_builder{Cluster: clustersgrpc.Cluster_builder{ClusterId: clusterID.String()}.Build()}.Build(), nil).Once()
 
-		return settings
-	}
-	before := readSettings()
-	refresh := func(id uuid.UUID, client string) int {
-		body := mustJSON(t, api.ManagementUpdateClusterTelemetryJSONRequestBody{TelemetryClientId: client})
+	require.Equal(t, http.StatusNoContent, callManagementUpdateClusterTelemetry(t, store, clusterID, `{"telemetry_client_id":" client_saved "}`))
+}
 
-		return callManagement(t, store, http.MethodPut, "/unstable/management/clusters/"+id.String()+"/telemetry", body).Code
+func TestManagementUpdateClusterTelemetryReportsARefusal(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		answer error
+		want   int
+	}{
+		"another cluster holds the identity": {status.Error(codes.AlreadyExists, "a cluster with this telemetry client exists"), http.StatusConflict},
+		"the cluster has another identity": {
+			clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED), http.StatusConflict,
+		},
+		"an absent cluster": {status.Error(codes.NotFound, "cluster not found"), http.StatusNotFound},
+		"a cluster being deleted": {
+			clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED), http.StatusNotFound,
+		},
+		"an unavailable cluster service": {errors.New("connection refused"), http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			store, clusterService := newClusterServiceStore(t)
+			clusterService.EXPECT().UpdateCluster(mock.Anything, mock.Anything).Return(nil, tc.answer).Once()
+
+			require.Equal(t, tc.want, callManagementUpdateClusterTelemetry(t, store, uuid.New(), `{"telemetry_client_id":"client_saved"}`))
+		})
 	}
-	for range 2 {
-		require.Equal(t, http.StatusNoContent, refresh(clusterID, "client_saved"))
-		require.JSONEq(t, before, readSettings())
-	}
-	var client string
-	require.NoError(t, db.SqlcClient.Pool().QueryRow(t.Context(), `SELECT telemetry_client_id FROM public.clusters WHERE id=$1`, clusterID).Scan(&client))
-	require.Equal(t, "client_saved", client)
-	registration.TelemetryClientId = new("client_replacement")
-	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, clusterID, registration).Code)
-	registeredSettings := readSettings()
-	require.Equal(t, http.StatusConflict, refresh(clusterID, "client_saved"))
-	require.JSONEq(t, registeredSettings, readSettings())
-	require.NoError(t, db.SqlcClient.Pool().QueryRow(t.Context(), `SELECT telemetry_client_id FROM public.clusters WHERE id=$1`, clusterID).Scan(&client))
-	require.Equal(t, "client_replacement", client)
-	other := uuid.New()
-	registration.AuthOrgId = new("org_other")
-	registration.TelemetryClientId = nil
-	require.Equal(t, http.StatusNoContent, callManagementRegisterCluster(t, store, other, registration).Code)
-	require.Equal(t, http.StatusConflict, refresh(other, client))
-	require.Equal(t, http.StatusNotFound, refresh(uuid.New(), "client_absent"))
-	require.Equal(t, http.StatusBadRequest, refresh(clusterID, " "))
-	_, err := db.SqlcClient.Pool().Exec(t.Context(), `UPDATE public.clusters SET deletion_requested_at=now() WHERE id=$1`, clusterID)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusNotFound, refresh(clusterID, "client_changed"))
-	require.NoError(t, db.SqlcClient.Pool().QueryRow(t.Context(), `SELECT telemetry_client_id FROM public.clusters WHERE id=$1`, clusterID).Scan(&client))
-	require.Equal(t, "client_replacement", client)
+}
+
+func TestManagementUpdateClusterTelemetryRequiresAnIdentity(t *testing.T) {
+	t.Parallel()
+
+	// The cluster service is never asked.
+	store, _ := newClusterServiceStore(t)
+
+	require.Equal(t, http.StatusBadRequest, callManagementUpdateClusterTelemetry(t, store, uuid.New(), `{"telemetry_client_id":" "}`))
 }

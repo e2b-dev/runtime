@@ -20,7 +20,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	dbmodule "github.com/e2b-dev/infra/packages/db"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 // The caller cannot tell a create from a reconcile, so one request serves both
@@ -215,6 +214,7 @@ func newManagementStore(t *testing.T, db *testutils.Database) (*APIStore, *fakeA
 		authService:       auth,
 		riverClient:       riverClient,
 		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider()),
+		clusterService:    clusterServiceFromDB(t, db),
 	}, auth
 }
 
@@ -300,10 +300,8 @@ func TestUpsertProjectRefusesAClusterBeingDeleted(t *testing.T) {
 func createCluster(t *testing.T, db *testutils.Database) uuid.UUID {
 	t.Helper()
 
-	clusterID, err := db.SqlcClient.CreateCluster(t.Context(), queries.CreateClusterParams{
-		Name: "project-cluster-" + uuid.NewString()[:8], Endpoint: "https://cluster.example.test", Token: "test-token",
-	})
-	require.NoError(t, err)
+	clusterID := uuid.New()
+	insertCluster(t, db, clusterID, false)
 
 	return clusterID
 }

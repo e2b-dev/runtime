@@ -444,6 +444,12 @@ func run() int {
 	if err != nil {
 		l.Fatal(ctx, "invalid mutual TLS configuration", zap.Error(err))
 	}
+	if config.ClusterServiceGrpcAddress != "" {
+		tlsConfig.hops.ClusterService, err = newClusterServiceHop(tlsProcess, config.TLS.ClusterService, config.ClusterServiceGrpcAddress, env.IsLocal())
+		if err != nil {
+			l.Fatal(ctx, "invalid mutual TLS configuration for the cluster service hop", zap.Error(err))
+		}
+	}
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),
 	// falling back to the fixed collector address. Created here so it can use the

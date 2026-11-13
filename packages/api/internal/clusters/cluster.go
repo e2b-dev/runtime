@@ -18,7 +18,6 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -148,7 +147,7 @@ func remoteInstanceAuthorization(secret string, tls bool, sd servicediscovery.In
 	return &instanceAuthorization{secret: secret, tls: tls, serviceInstanceID: sd.WorkloadID}
 }
 
-func newRemoteCluster(tel *telemetry.Client, featureFlags *featureflags.Client, cluster queries.Cluster) (*Cluster, error) {
+func newRemoteCluster(tel *telemetry.Client, featureFlags *featureflags.Client, cluster Record) (*Cluster, error) {
 	clusterID, endpoint, endpointTLS, secret := cluster.ID, cluster.Endpoint, cluster.EndpointTls, cluster.Token
 	authOrgID := utils.FromPtr(cluster.AuthOrgID)
 

@@ -48,6 +48,7 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
@@ -261,6 +262,10 @@ type APIStore struct {
 	webhooksConn      *grpc.ClientConn
 	webhookManagement webhookmanagement.WebhookManagementServiceClient
 	sandboxEvents     webhookevents.SandboxEventsServiceClient
+
+	// clusterService is nil when no cluster service address is configured.
+	clusterServiceConn *grpc.ClientConn
+	clusterService     clustersgrpc.ClusterServiceClient
 }
 
 const (
@@ -372,7 +377,27 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		}
 	}
 
-	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config, hops.Orchestrator)
+	// An unset address leaves the local cluster as the only one, and the
+	// cluster admin and management routes answering 503.
+	var (
+		clusterServiceConn *grpc.ClientConn
+		clusterService     clustersgrpc.ClusterServiceClient
+	)
+	if config.ClusterServiceGrpcAddress != "" {
+		clusterServiceConn, err = newReadinessBalancedClient(config.ClusterServiceGrpcAddress, hops.ClusterService, clustersgrpc.ClusterService_ServiceDesc.ServiceName, "cluster service")
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing cluster service client", zap.Error(err))
+		}
+
+		clusterService = clustersgrpc.NewClusterServiceClient(clusterServiceConn)
+	} else {
+		if err := refuseLocalOnlyWithRemoteClusters(ctx, sqlcDB); err != nil {
+			logger.L().Fatal(ctx, "CLUSTER_SERVICE_GRPC_ADDRESS is required", zap.Error(err))
+		}
+		logger.L().Warn(ctx, "CLUSTER_SERVICE_GRPC_ADDRESS is not set: only the local cluster is available")
+	}
+
+	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, clusterService, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "initializing edge clusters pool failed", zap.Error(err))
 	}
@@ -496,6 +521,8 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		webhookManagement:     webhookManagement,
 		sandboxEvents:         sandboxEvents,
 		secretsManagement:     secretsManagement,
+		clusterServiceConn:    clusterServiceConn,
+		clusterService:        clusterService,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
@@ -621,6 +648,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 	if a.webhooksConn != nil {
 		if err := a.webhooksConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing webhooks backend client: %w", err))
+		}
+	}
+
+	if a.clusterServiceConn != nil {
+		if err := a.clusterServiceConn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing cluster service client: %w", err))
 		}
 	}
 

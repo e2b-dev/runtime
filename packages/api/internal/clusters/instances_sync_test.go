@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -204,7 +203,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 			probeCanceled <- request.Context().Err()
 		}))
 		t.Cleanup(server.Close)
-		target := queries.Cluster{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
+		target := Record{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
 		startResult := make(chan error, 1)
 		go func() { startResult <- pool.startInitialRemoteCluster(lifecycleCtx, lifecycleCtx, target) }()
 
@@ -273,7 +272,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		}
 		insertionDone := make(chan struct{})
 		go func() {
-			pool.store.PoolInsert(lifecycleCtx, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+			pool.store.PoolInsert(lifecycleCtx, Record{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
 			close(insertionDone)
 		}()
 
@@ -317,7 +316,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 
 		lifecycleCtx, cancel := context.WithCancel(t.Context())
 		pool := newLifecycleTestPool(lifecycleCtx, cancel)
-		remote, err := newRemoteCluster(nil, nil, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+		remote, err := newRemoteCluster(nil, nil, Record{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
 		require.NoError(t, err)
 		require.NoError(t, pool.activateCluster(lifecycleCtx, remote, syncOnNextTick))
 		require.Equal(t, 1, pool.clusters.Count(), "an open pool must accept startup insertion")

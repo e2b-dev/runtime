@@ -7823,7 +7823,7 @@ paths:
     put:
       operationId: managementRegisterCluster
       summary: Register a cluster.
-      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
       tags: [admin]
       security:
         - AdminJWTAuth: []
@@ -7844,10 +7844,12 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDeleteCluster
       summary: Delete a cluster and its environments.
-      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      description: Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [admin]
       security:
         - AdminJWTAuth: []
@@ -7862,6 +7864,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/telemetry:
     parameters:
@@ -7897,6 +7901,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/projects:
     parameters:
@@ -7947,6 +7953,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/destroy-readiness:
     parameters:
@@ -7973,6 +7981,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/projects/{projectID}/cluster/{clusterID}:
     parameters:
@@ -8006,6 +8016,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDetachProjectCluster
       summary: Detach a cluster assignment from a project.
@@ -8068,6 +8080,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDeleteProject
       summary: Soft-delete a project.
@@ -8570,6 +8584,8 @@ paths:
           $ref: "#/components/responses/401"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     post:
       operationId: adminCreateCluster
       summary: Create a cluster as admin
@@ -8599,6 +8615,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}:
     parameters:
@@ -8646,6 +8664,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     patch:
       operationId: adminUpdateCluster
       summary: Update a cluster as admin
@@ -8685,10 +8705,12 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: adminDeleteCluster
       summary: Delete a cluster and its environments as admin
-      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      description: Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []
@@ -8704,6 +8726,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}/metadata:
     parameters:
@@ -8731,6 +8755,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
   /unstable/admin/clusters/{clusterID}/teams:
     parameters:
       - $ref: "#/components/parameters/clusterID"
@@ -8799,6 +8825,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}/token:
     parameters:
@@ -8828,6 +8856,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/templates/aliases:
     get:

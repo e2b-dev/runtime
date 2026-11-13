@@ -11,38 +11,29 @@ import (
 	"github.com/google/uuid"
 )
 
-const listTelemetryNames = `-- name: ListTelemetryNames :many
-SELECT 'team'::text AS kind, id::text AS id, name, ''::text AS telemetry_client_id, COALESCE(cluster_id::text, '')::text AS cluster_id
-FROM public.teams WHERE deleted_at IS NULL AND cluster_id IS NOT NULL
-UNION ALL
-SELECT 'cluster'::text AS kind, id::text AS id, name, COALESCE(telemetry_client_id, '') AS telemetry_client_id, ''::text AS cluster_id
-FROM public.clusters WHERE deletion_requested_at IS NULL
+const listTelemetryTeamNames = `-- name: ListTelemetryTeamNames :many
+SELECT id, name, cluster_id::uuid AS cluster_id
+FROM public.teams
+WHERE deleted_at IS NULL AND cluster_id IS NOT NULL
 `
 
-type ListTelemetryNamesRow struct {
-	Kind              string
-	ID                string
-	Name              string
-	TelemetryClientID string
-	ClusterID         string
+type ListTelemetryTeamNamesRow struct {
+	ID        uuid.UUID
+	Name      string
+	ClusterID uuid.UUID
 }
 
-func (q *Queries) ListTelemetryNames(ctx context.Context) ([]ListTelemetryNamesRow, error) {
-	rows, err := q.db.Query(ctx, listTelemetryNames)
+// Cluster names come from the cluster service.
+func (q *Queries) ListTelemetryTeamNames(ctx context.Context) ([]ListTelemetryTeamNamesRow, error) {
+	rows, err := q.db.Query(ctx, listTelemetryTeamNames)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTelemetryNamesRow
+	var items []ListTelemetryTeamNamesRow
 	for rows.Next() {
-		var i ListTelemetryNamesRow
-		if err := rows.Scan(
-			&i.Kind,
-			&i.ID,
-			&i.Name,
-			&i.TelemetryClientID,
-			&i.ClusterID,
-		); err != nil {
+		var i ListTelemetryTeamNamesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ClusterID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -51,34 +42,4 @@ func (q *Queries) ListTelemetryNames(ctx context.Context) ([]ListTelemetryNamesR
 		return nil, err
 	}
 	return items, nil
-}
-
-const updateClusterTelemetryClient = `-- name: UpdateClusterTelemetryClient :one
-WITH updated AS (
-    UPDATE public.clusters
-    SET telemetry_client_id = $2::text
-    WHERE id = $1::uuid
-      AND deletion_requested_at IS NULL
-      AND (telemetry_client_id IS NULL OR telemetry_client_id = $2::text)
-    RETURNING id
-)
-SELECT EXISTS(SELECT 1 FROM updated) AS updated,
-       EXISTS(SELECT 1 FROM public.clusters WHERE id = $1::uuid AND deletion_requested_at IS NULL) AS found
-`
-
-type UpdateClusterTelemetryClientParams struct {
-	ClusterID         uuid.UUID
-	TelemetryClientID string
-}
-
-type UpdateClusterTelemetryClientRow struct {
-	Updated bool
-	Found   bool
-}
-
-func (q *Queries) UpdateClusterTelemetryClient(ctx context.Context, arg UpdateClusterTelemetryClientParams) (UpdateClusterTelemetryClientRow, error) {
-	row := q.db.QueryRow(ctx, updateClusterTelemetryClient, arg.ClusterID, arg.TelemetryClientID)
-	var i UpdateClusterTelemetryClientRow
-	err := row.Scan(&i.Updated, &i.Found)
-	return i, err
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/connectivity"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/synchronization"
 )
@@ -20,7 +19,7 @@ import (
 type credentialRefreshSource struct {
 	clustersSyncStore
 
-	rows    []queries.Cluster
+	rows    []Record
 	removes atomic.Int32
 }
 
@@ -31,7 +30,7 @@ func (s *credentialRefreshSource) PoolRemove(ctx context.Context, cluster *Clust
 	s.clustersSyncStore.PoolRemove(ctx, cluster)
 }
 
-func (s *credentialRefreshSource) SourceList(context.Context) ([]queries.Cluster, error) {
+func (s *credentialRefreshSource) SourceList(context.Context) ([]Record, error) {
 	return s.rows, nil
 }
 
@@ -53,7 +52,7 @@ func TestClusterSynchronizationRefreshesRemoteCredential(t *testing.T) {
 	pool.store.activateCluster = func(cluster *Cluster, _ initialSyncMode) error {
 		return pool.activateCluster(ctx, cluster, syncOnNextTick)
 	}
-	source := &credentialRefreshSource{clustersSyncStore: pool.store, rows: []queries.Cluster{{
+	source := &credentialRefreshSource{clustersSyncStore: pool.store, rows: []Record{{
 		ID: uuid.New(), Endpoint: endpoint, Token: "old-test-token",
 	}}}
 	syncer := synchronization.NewSynchronize("credential-refresh", "Credential refresh", source)
@@ -81,7 +80,7 @@ func TestClusterSynchronizationRefreshesRemoteCredential(t *testing.T) {
 	require.Positive(t, replacementRequests.Load())
 
 	// Local discovery does not use the database edge credential.
-	require.True(t, source.SourceExists(ctx, []queries.Cluster{{ID: consts.LocalClusterID, Token: "unused"}}, &Cluster{ID: consts.LocalClusterID}))
+	require.True(t, source.SourceExists(ctx, []Record{{ID: consts.LocalClusterID, Token: "unused"}}, &Cluster{ID: consts.LocalClusterID}))
 }
 
 // A cluster that moves to a new domain keeps its credential but changes its
@@ -108,7 +107,7 @@ func TestClusterSynchronizationFollowsAMovedEndpoint(t *testing.T) {
 		return pool.activateCluster(ctx, cluster, syncOnNextTick)
 	}
 	oldDomain, movedDomain := "old.example.test", "moved.example.test"
-	source := &credentialRefreshSource{clustersSyncStore: pool.store, rows: []queries.Cluster{{
+	source := &credentialRefreshSource{clustersSyncStore: pool.store, rows: []Record{{
 		ID: uuid.New(), Endpoint: strings.TrimPrefix(oldServer.URL, "http://"), Token: "test-token", SandboxProxyDomain: &oldDomain,
 	}}}
 	syncer := synchronization.NewSynchronize("endpoint-move", "Endpoint move", source)

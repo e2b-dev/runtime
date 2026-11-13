@@ -21,11 +21,10 @@ SELECT
     sl.total_disk_size_mb,
     sl.started_at,
     sl.stopped_at,
-    c.sandbox_proxy_domain AS domain,
+    t.cluster_id,
     COALESCE(template_alias.alias, '') AS alias
 FROM billing.sandbox_logs sl
 LEFT JOIN public.teams t ON t.id = sl.team_id
-LEFT JOIN public.clusters c ON c.id = t.cluster_id
 LEFT JOIN public.snapshots s
     ON s.sandbox_id = sl.sandbox_id
    AND s.team_id = sl.team_id
@@ -55,7 +54,7 @@ type GetSandboxRecordByTeamAndSandboxIDRow struct {
 	TotalDiskSizeMb int64
 	StartedAt       time.Time
 	StoppedAt       *time.Time
-	Domain          *string
+	ClusterID       *uuid.UUID
 	Alias           string
 }
 
@@ -70,7 +69,7 @@ func (q *Queries) GetSandboxRecordByTeamAndSandboxID(ctx context.Context, arg Ge
 		&i.TotalDiskSizeMb,
 		&i.StartedAt,
 		&i.StoppedAt,
-		&i.Domain,
+		&i.ClusterID,
 		&i.Alias,
 	)
 	return i, err

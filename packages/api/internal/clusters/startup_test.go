@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/synchronization"
 )
 
@@ -31,7 +30,7 @@ func TestStartupCoordinatorRetriesTargetThreeTimesWithFreshCanceledContexts(t *t
 	rootCtx, rootCancel := context.WithCancel(t.Context())
 	defer rootCancel()
 
-	target := queries.Cluster{ID: uuid.New()}
+	target := Record{ID: uuid.New()}
 	ready := make(chan struct{})
 	var (
 		mu              sync.Mutex
@@ -41,8 +40,8 @@ func TestStartupCoordinatorRetriesTargetThreeTimesWithFreshCanceledContexts(t *t
 	)
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(ctx context.Context, cluster queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(ctx context.Context, cluster Record) error {
 			mu.Lock()
 			if len(attempts) > 0 {
 				predecessorErrs = append(predecessorErrs, attempts[len(attempts)-1].Err())
@@ -84,7 +83,7 @@ func TestStartupCoordinatorRetriesTargetThreeTimesWithFreshCanceledContexts(t *t
 func TestStartupDeadlineRetriesWithFreshContexts(t *testing.T) {
 	t.Parallel()
 
-	target := queries.Cluster{ID: uuid.New()}
+	target := Record{ID: uuid.New()}
 	ready := make(chan struct{})
 	deadlineObserved := make(chan error, 1)
 	var (
@@ -95,8 +94,8 @@ func TestStartupDeadlineRetriesWithFreshContexts(t *testing.T) {
 	)
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(ctx context.Context, cluster queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(ctx context.Context, cluster Record) error {
 			mu.Lock()
 			if len(attempts) > 0 {
 				predecessorErrs = append(predecessorErrs, attempts[len(attempts)-1].Err())
@@ -158,14 +157,14 @@ func TestStartupDeadlineRetriesWithFreshContexts(t *testing.T) {
 func TestStartupCoordinatorWaitsForEmptyResponseApplication(t *testing.T) {
 	t.Parallel()
 
-	target := queries.Cluster{ID: uuid.New()}
+	target := Record{ID: uuid.New()}
 	ready := make(chan struct{})
 	readyResult := make(chan bool, 1)
 	var snapshotApplied atomic.Bool
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(context.Context, queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(context.Context, Record) error {
 			// An empty discovery response is still a completed snapshot: the
 			// target may satisfy startup only after that snapshot is applied.
 			snapshotApplied.Store(true)
@@ -200,14 +199,14 @@ func TestStartupEmptyRemoteDiscoveryAppliesBeforeReadiness(t *testing.T) {
 	lifecycleCtx, cancel := context.WithCancel(t.Context())
 	pool := newLifecycleTestPool(lifecycleCtx, cancel)
 	t.Cleanup(func() { pool.Close(t.Context()) })
-	target := queries.Cluster{
+	target := Record{
 		ID:       uuid.New(),
 		Endpoint: strings.TrimPrefix(server.URL, "http://"),
 	}
 	readyResult := make(chan error, 1)
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(attemptCtx context.Context, cluster queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(attemptCtx context.Context, cluster Record) error {
 			return pool.startInitialRemoteCluster(lifecycleCtx, attemptCtx, cluster)
 		},
 		func(ctx context.Context) {
@@ -258,7 +257,7 @@ func TestStartupRemoteFailureRecoversThroughBackgroundSynchronization(t *testing
 	lifecycleCtx, cancel := context.WithCancel(t.Context())
 	pool := newLifecycleTestPool(lifecycleCtx, cancel)
 	t.Cleanup(func() { pool.Close(t.Context()) })
-	target := queries.Cluster{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
+	target := Record{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
 	recovered := make(chan struct{})
 	backgroundRoundStarted := make(chan struct{})
 	releaseBackgroundRound := make(chan struct{})
@@ -275,8 +274,8 @@ func TestStartupRemoteFailureRecoversThroughBackgroundSynchronization(t *testing
 	)
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(attemptCtx context.Context, cluster queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(attemptCtx context.Context, cluster Record) error {
 			return pool.startInitialRemoteCluster(lifecycleCtx, attemptCtx, cluster)
 		},
 		pool.finishStartup,
@@ -313,8 +312,8 @@ func TestStartupRemoteFailureRecoversThroughBackgroundSynchronization(t *testing
 func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 	t.Parallel()
 
-	first := queries.Cluster{ID: uuid.New()}
-	second := queries.Cluster{ID: uuid.New()}
+	first := Record{ID: uuid.New()}
+	second := Record{ID: uuid.New()}
 	firstStarted := make(chan struct{})
 	secondStarted := make(chan struct{})
 	ready := make(chan struct{})
@@ -331,8 +330,8 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 	testCtx := t.Context()
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{first, second}, nil },
-		func(ctx context.Context, cluster queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{first, second}, nil },
+		func(ctx context.Context, cluster Record) error {
 			mu.Lock()
 			attempt := len(attempts[cluster.ID]) + 1
 			if attempt > 1 {
@@ -459,7 +458,7 @@ func TestStartupParallelTargetsObserveIndependentDeadlineRetries(t *testing.T) {
 
 type startupRecoveryStore struct {
 	pool                   *Pool
-	target                 queries.Cluster
+	target                 Record
 	recovered              chan<- struct{}
 	backgroundRoundStarted chan<- struct{}
 	releaseBackgroundRound <-chan struct{}
@@ -467,7 +466,7 @@ type startupRecoveryStore struct {
 	backgroundRound        sync.Once
 }
 
-func (s *startupRecoveryStore) SourceList(ctx context.Context) ([]queries.Cluster, error) {
+func (s *startupRecoveryStore) SourceList(ctx context.Context) ([]Record, error) {
 	s.backgroundRound.Do(func() { close(s.backgroundRoundStarted) })
 	select {
 	case <-ctx.Done():
@@ -475,10 +474,10 @@ func (s *startupRecoveryStore) SourceList(ctx context.Context) ([]queries.Cluste
 	case <-s.releaseBackgroundRound:
 	}
 
-	return []queries.Cluster{s.target}, nil
+	return []Record{s.target}, nil
 }
 
-func (s *startupRecoveryStore) SourceExists(ctx context.Context, source []queries.Cluster, cluster *Cluster) bool {
+func (s *startupRecoveryStore) SourceExists(ctx context.Context, source []Record, cluster *Cluster) bool {
 	return s.pool.store.SourceExists(ctx, source, cluster)
 }
 
@@ -486,11 +485,11 @@ func (s *startupRecoveryStore) PoolList(ctx context.Context) []*Cluster {
 	return s.pool.store.PoolList(ctx)
 }
 
-func (s *startupRecoveryStore) PoolExists(ctx context.Context, cluster queries.Cluster) bool {
+func (s *startupRecoveryStore) PoolExists(ctx context.Context, cluster Record) bool {
 	return s.pool.store.PoolExists(ctx, cluster)
 }
 
-func (s *startupRecoveryStore) PoolInsert(ctx context.Context, cluster queries.Cluster) {
+func (s *startupRecoveryStore) PoolInsert(ctx context.Context, cluster Record) {
 	s.pool.store.PoolInsert(ctx, cluster)
 	if s.pool.clusters.Count() == 1 {
 		s.recover.Do(func() { close(s.recovered) })
@@ -509,14 +508,14 @@ func TestStartupCancellationPreventsReadiness(t *testing.T) {
 	t.Parallel()
 
 	rootCtx, rootCancel := context.WithCancel(t.Context())
-	target := queries.Cluster{ID: uuid.New()}
+	target := Record{ID: uuid.New()}
 	attemptStarted := make(chan struct{})
 	attemptCanceled := make(chan error, 1)
 	ready := make(chan struct{})
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(ctx context.Context, _ queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(ctx context.Context, _ Record) error {
 			close(attemptStarted)
 			<-ctx.Done()
 			attemptCanceled <- ctx.Err()
@@ -551,13 +550,13 @@ func TestStartupCancellationPreventsReadiness(t *testing.T) {
 func TestStartupCoordinatorFailsOpenAfterThreeFailures(t *testing.T) {
 	t.Parallel()
 
-	target := queries.Cluster{ID: uuid.New()}
+	target := Record{ID: uuid.New()}
 	ready := make(chan struct{})
 	var attempts atomic.Int32
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) { return []queries.Cluster{target}, nil },
-		func(context.Context, queries.Cluster) error {
+		func(context.Context) ([]Record, error) { return []Record{target}, nil },
+		func(context.Context, Record) error {
 			attempts.Add(1)
 
 			return errors.New("probe failed")
@@ -585,7 +584,7 @@ func TestStartupCoordinatorWaitsForFirstSuccessfulInventory(t *testing.T) {
 	var targetStarts atomic.Int32
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) {
+		func(context.Context) ([]Record, error) {
 			inventoryCalls++
 			if inventoryCalls == 1 {
 				close(inventoryFailed)
@@ -595,7 +594,7 @@ func TestStartupCoordinatorWaitsForFirstSuccessfulInventory(t *testing.T) {
 
 			return nil, nil
 		},
-		func(context.Context, queries.Cluster) error {
+		func(context.Context, Record) error {
 			targetStarts.Add(1)
 
 			return errors.New("empty first successful inventory must not probe a target")
@@ -636,22 +635,22 @@ func TestStartupCoordinatorWaitsForFirstSuccessfulInventory(t *testing.T) {
 func TestStartupCoordinatorFreezesInitialTargets(t *testing.T) {
 	t.Parallel()
 
-	initial := queries.Cluster{ID: uuid.New()}
-	late := queries.Cluster{ID: uuid.New()}
+	initial := Record{ID: uuid.New()}
+	late := Record{ID: uuid.New()}
 	ready := make(chan struct{})
 	var inventoryCalls atomic.Int32
 	var started []uuid.UUID
 	var mu sync.Mutex
 
 	coordinator := newStartupCoordinator(
-		func(context.Context) ([]queries.Cluster, error) {
+		func(context.Context) ([]Record, error) {
 			if inventoryCalls.Add(1) == 1 {
-				return []queries.Cluster{initial}, nil
+				return []Record{initial}, nil
 			}
 
-			return []queries.Cluster{initial, late}, errors.New("late discovery must not re-arm startup")
+			return []Record{initial, late}, errors.New("late discovery must not re-arm startup")
 		},
-		func(_ context.Context, cluster queries.Cluster) error {
+		func(_ context.Context, cluster Record) error {
 			mu.Lock()
 			started = append(started, cluster.ID)
 			mu.Unlock()

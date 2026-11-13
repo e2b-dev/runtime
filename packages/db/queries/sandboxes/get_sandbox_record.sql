@@ -7,11 +7,10 @@ SELECT
     sl.total_disk_size_mb,
     sl.started_at,
     sl.stopped_at,
-    c.sandbox_proxy_domain AS domain,
+    t.cluster_id,
     COALESCE(template_alias.alias, '') AS alias
 FROM billing.sandbox_logs sl
 LEFT JOIN public.teams t ON t.id = sl.team_id
-LEFT JOIN public.clusters c ON c.id = t.cluster_id
 LEFT JOIN public.snapshots s
     ON s.sandbox_id = sl.sandbox_id
    AND s.team_id = sl.team_id
