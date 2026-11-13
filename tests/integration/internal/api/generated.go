@@ -2568,21 +2568,6 @@ type SnapshotInfo struct {
 	SnapshotID string `json:"snapshotID"`
 }
 
-// Team defines model for Team.
-type Team struct {
-	// ApiKey API key for the team. Empty when the user's role on the team is read-only.
-	ApiKey string `json:"apiKey"`
-
-	// IsDefault Whether the team is the default team
-	IsDefault bool `json:"isDefault"`
-
-	// Name Name of the team
-	Name string `json:"name"`
-
-	// TeamID Identifier of the team
-	TeamID string `json:"teamID"`
-}
-
 // TeamAPIKey defines model for TeamAPIKey.
 type TeamAPIKey struct {
 	// CreatedAt Timestamp of API key creation
@@ -5102,13 +5087,6 @@ type ClientInterface interface {
 	// Corresponds with GET /snapshots (the `GetSnapshots` operationId).
 	GetSnapshots(ctx context.Context, params *GetSnapshotsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetTeams List teams
-	//
-	// List all teams.
-	//
-	// Corresponds with GET /teams (the `GetTeams` operationId).
-	GetTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetTeamsTeamIDMetrics Team metrics
 	//
 	// Get metrics for the team.
@@ -7217,23 +7195,6 @@ func (c *Client) PostSecretsSecretID(ctx context.Context, secretID SecretID, bod
 // Corresponds with GET /snapshots (the `GetSnapshots` operationId).
 func (c *Client) GetSnapshots(ctx context.Context, params *GetSnapshotsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSnapshotsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetTeams List teams
-//
-// List all teams.
-//
-// Corresponds with GET /teams (the `GetTeams` operationId).
-func (c *Client) GetTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTeamsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -11709,33 +11670,6 @@ func NewGetSnapshotsRequest(server string, params *GetSnapshotsParams) (*http.Re
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetTeamsRequest constructs an http.Request for the GetTeams method
-func NewGetTeamsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/teams")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -16445,15 +16379,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /snapshots (the `GetSnapshots` operationId).
 	GetSnapshotsWithResponse(ctx context.Context, params *GetSnapshotsParams, reqEditors ...RequestEditorFn) (*GetSnapshotsResponse, error)
-
-	// GetTeamsWithResponse List teams
-	//
-	// List all teams.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /teams (the `GetTeams` operationId).
-	GetTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTeamsResponse, error)
 
 	// GetTeamsTeamIDMetricsWithResponse Team metrics
 	//
@@ -21617,75 +21542,6 @@ func (r GetSnapshotsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetSnapshotsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// GetTeamsResponse429Headers the declared response headers of an HTTP 429 response for GetTeams
-type GetTeamsResponse429Headers struct {
-	RetryAfter *int
-}
-
-type GetTeamsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Team
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// Headers429 the parsed response headers for an HTTP 429 response
-	Headers429 *GetTeamsResponse429Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetTeamsResponse) GetJSON200() *[]Team {
-	return r.JSON200
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r GetTeamsResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r GetTeamsResponse) GetJSON429() *N429 {
-	return r.JSON429
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r GetTeamsResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r GetTeamsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetTeamsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetTeamsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetTeamsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28899,21 +28755,6 @@ func (c *ClientWithResponses) GetSnapshotsWithResponse(ctx context.Context, para
 	return ParseGetSnapshotsResponse(rsp)
 }
 
-// GetTeamsWithResponse List teams
-//
-// List all teams.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /teams (the `GetTeams` operationId).
-func (c *ClientWithResponses) GetTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTeamsResponse, error) {
-	rsp, err := c.GetTeams(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetTeamsResponse(rsp)
-}
-
 // GetTeamsTeamIDMetricsWithResponse Team metrics
 //
 // Get metrics for the team.
@@ -34220,66 +34061,6 @@ func ParseGetSnapshotsResponse(rsp *http.Response) (*GetSnapshotsResponse, error
 		response.Headers200 = &headers
 	case rsp.StatusCode == 429:
 		var headers GetSnapshotsResponse429Headers
-		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
-			var value int
-			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.RetryAfter = &value
-		}
-		response.Headers429 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseGetTeamsResponse parses an HTTP response from a GetTeamsWithResponse call
-func ParseGetTeamsResponse(rsp *http.Response) (*GetTeamsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetTeamsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Team
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 429:
-		var headers GetTeamsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

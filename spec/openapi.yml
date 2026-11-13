@@ -568,26 +568,6 @@ components:
           type: string
           description: Action being performed when the error occurred (e.g. CREATING)
 
-    Team:
-      required:
-        - teamID
-        - name
-        - apiKey
-        - isDefault
-      properties:
-        teamID:
-          type: string
-          description: Identifier of the team
-        name:
-          type: string
-          description: Name of the team
-        apiKey:
-          type: string
-          description: API key for the team. Empty when the user's role on the team is read-only.
-        isDefault:
-          type: boolean
-          description: Whether the team is the default team
-
     TeamUser:
       required:
         - id
@@ -4840,29 +4820,6 @@ paths:
             text/plain:
               schema:
                 type: string
-
-  /teams:
-    get:
-      summary: List teams
-      description: List all teams
-      tags: [auth]
-      security:
-        - AuthProviderBearerAuth: []
-      responses:
-        "200":
-          description: Successfully returned all teams
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Team"
-        "401":
-          $ref: "#/components/responses/401"
-        "429":
-          $ref: "#/components/responses/429"
-        "500":
-          $ref: "#/components/responses/500"
 
   /teams/{teamID}/metrics:
     get:

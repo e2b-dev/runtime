@@ -457,7 +457,7 @@ func groupRouter(t *testing.T, limiter requestLimiter, mode string, team *types.
 		"/sandboxes", "/v2/sandboxes", "/sandboxes/metrics", "/snapshots",
 		"/templates", "/v2/templates", "/templates/:templateID", "/templates/:templateID/tags",
 		"/api-keys", "/volumes", "/secrets",
-		"/unmapped-group", "/unlimited", "/teams", "/nodes", "/sandboxes/:sandboxID",
+		"/unmapped-group", "/unlimited", "/nodes", "/sandboxes/:sandboxID",
 	} {
 		r.GET(path, ok)
 	}
@@ -560,7 +560,6 @@ func TestAPIGroupBypass(t *testing.T) {
 		{"negative", "enabled", http.MethodGet, "/sandboxes", groupTeam(-1)},
 		{"sandbox creation", "enabled", http.MethodPost, "/sandboxes", groupTeam(1)},
 		{"individual sandbox", "enabled", http.MethodGet, "/sandboxes/sbx-a", groupTeam(1)},
-		{"user-wide teams", "enabled", http.MethodGet, "/teams", groupTeam(1)},
 		{"admin node list", "enabled", http.MethodGet, "/nodes", groupTeam(1)},
 		{"ungrouped route", "enabled", http.MethodGet, "/unlimited?api-group=list", groupTeam(1)},
 		{"unmapped group", "enabled", http.MethodGet, "/unmapped-group", groupTeam(1)},
