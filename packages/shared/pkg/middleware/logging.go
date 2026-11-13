@@ -89,7 +89,7 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 			fields := []zapcore.Field{
 				zap.String("method", c.Request.Method),
 				zap.String("path", route),
-				zap.String("user-agent", c.Request.UserAgent()),
+				zap.String("user_agent", c.Request.UserAgent()),
 				zap.Duration("latency", latency),
 			}
 

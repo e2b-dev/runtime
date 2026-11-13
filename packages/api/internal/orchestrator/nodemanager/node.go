@@ -270,7 +270,7 @@ func (n *Node) OptimisticRemove(ctx context.Context, res SandboxResources) {
 	}
 
 	if cpuSkipped || memorySkipped {
-		logger.L().Warn(ctx, "OptimisticRemove skipped counters that would underflow", logger.WithNodeID(n.ID), zap.Bool("cpuSkipped", cpuSkipped), zap.Bool("memorySkipped", memorySkipped), zap.Uint32("cpuAllocated", n.metrics.CpuAllocated), zap.Uint64("memoryAllocatedBytes", n.metrics.MemoryAllocatedBytes), zap.Uint32("cpuToRemove", cpu), zap.Uint64("memoryToRemove", memory))
+		logger.L().Warn(ctx, "OptimisticRemove skipped counters that would underflow", logger.WithNodeID(n.ID), zap.Bool("cpu_skipped", cpuSkipped), zap.Bool("memory_skipped", memorySkipped), zap.Uint32("cpu_allocated", n.metrics.CpuAllocated), zap.Uint64("memory_allocated_bytes", n.metrics.MemoryAllocatedBytes), zap.Uint32("cpu_to_remove", cpu), zap.Uint64("memory_to_remove", memory))
 	}
 }
 

@@ -168,7 +168,7 @@ func (t *Header) GetShiftedMapping(ctx context.Context, offset int64) (BuildMap,
 		b.Length = 0
 		logger.L().Warn(ctx, "mapped length is negative, but normalize fix is not applied",
 			zap.Int64("offset", offset),
-			zap.Int64("mappedLength", mappedLength),
+			zap.Int64("mapped_length", mappedLength),
 			logger.WithBuildID(mapping.BuildId.String()),
 		)
 	}
@@ -229,7 +229,7 @@ func (t *Header) getMapping(ctx context.Context, offset int64) (BuildMap, int64,
 
 		logger.L().Warn(ctx, "offset is not aligned to page size, but normalize fix is not applied",
 			zap.Int64("offset", offset),
-			zap.Int64("pageSize", PageSize),
+			zap.Int64("page_size", PageSize),
 			logger.WithBuildID(t.Metadata.BuildId.String()),
 		)
 	}
@@ -251,8 +251,8 @@ func (t *Header) getMapping(ctx context.Context, offset int64) (BuildMap, int64,
 
 		logger.L().Warn(ctx, "offset is beyond the end of mapping, but normalize fix is not applied",
 			zap.Int64("offset", offset),
-			zap.Uint64("mappingOffset", mapping.Offset),
-			zap.Uint64("mappingEnd", mapping.Offset+mapping.Length),
+			zap.Uint64("mapping_offset", mapping.Offset),
+			zap.Uint64("mapping_end", mapping.Offset+mapping.Length),
 			logger.WithBuildID(t.Metadata.BuildId.String()),
 		)
 	}

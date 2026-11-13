@@ -150,7 +150,7 @@ func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterI
 	switch {
 	case errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && nodeInfo.CPUArchitecture != "":
 		logger.L().Warn(ctx, "No template builder with the pinned machine info is at the required version, falling back to any builder at that version",
-			zap.Error(err), zap.String("requiredVersion", minVersion.String()), logger.WithClusterID(clusterID))
+			zap.Error(err), zap.String("required_version", minVersion.String()), logger.WithClusterID(clusterID))
 		if tm.builderPinFallback != nil {
 			tm.builderPinFallback.Add(ctx, 1, metric.WithAttributes(attribute.String("cluster_id", clusterID.String())))
 		}

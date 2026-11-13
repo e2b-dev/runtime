@@ -15,7 +15,7 @@ func logStart(ctx context.Context, s string, args ...any) func(context.Context, 
 	start := time.Now()
 	requestID := uuid.NewString()
 
-	l := logger.L().With(zap.String("requestID", requestID))
+	l := logger.L().With(zap.String("request_id", requestID))
 	l.Debug(ctx, fmt.Sprintf("[nfs proxy] %s: start", s), zap.String("operation", s))
 
 	return func(ctx context.Context, err error, result ...any) {
