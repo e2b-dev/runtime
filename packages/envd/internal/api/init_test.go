@@ -1225,3 +1225,52 @@ func TestPostInit_UnauthorizedDoesNotUnfreeze(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Empty(t, mgr.unfreezeAttempts, "unauthorized /init must not attempt unfreeze")
 }
+
+// An oversized /init body must be rejected before it can be parsed or applied:
+// the body is read before auth, so the size cap is the only thing standing
+// between an unauthenticated oversized request and an envd OOM.
+func TestPostInit_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	mgr := &fakeCgroupManager{}
+	api := newAPIWithCgroupManager(mgr)
+	api.isNotFC = true
+
+	// One byte past the cap. Well-formed JSON is irrelevant: the read itself
+	// must fail first.
+	body := bytes.Repeat([]byte{'a'}, maxInitBodyBytes+1)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/init", bytes.NewReader(body))
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	api.PostInit(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.Empty(t, mgr.unfreezeAttempts, "rejected /init must not attempt unfreeze")
+}
+
+// A body at the cap is still accepted.
+func TestPostInit_AcceptsBodyAtSizeCap(t *testing.T) {
+	t.Parallel()
+
+	mgr := &fakeCgroupManager{}
+	api := newAPIWithCgroupManager(mgr)
+	api.isNotFC = true
+
+	// Padding inside the cap, via an env var value.
+	value := strings.Repeat("x", maxInitBodyBytes-64)
+	body, err := json.Marshal(PostInitJSONBody{
+		EnvVars: &EnvVars{"PADDING": value},
+	})
+	require.NoError(t, err)
+	require.Less(t, len(body), maxInitBodyBytes)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/init", bytes.NewReader(body))
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	api.PostInit(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	_, ok := api.defaults.EnvVars.Load("PADDING")
+	assert.True(t, ok, "body at the cap should still be applied")
+}
