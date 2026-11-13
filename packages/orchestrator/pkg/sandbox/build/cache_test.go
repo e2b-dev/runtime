@@ -16,6 +16,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -772,4 +774,115 @@ func TestDiffStoreEvictionSkipsUnsealedDeferredDiff(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.True(t, store.isBeingDeleted(deferred.CacheKey()), "sealed deferred diff must be evictable")
+}
+
+func TestGetOrCreate_NegativeCacheShortCircuits(t *testing.T) {
+	store, err := NewDiffStore(mustParseCfg(t), flagsWithMaxBuildCachePercentage(t, 90), t.TempDir(), time.Hour, time.Minute)
+	require.NoError(t, err)
+	store.Start(t.Context())
+	t.Cleanup(store.Close)
+
+	key := DiffStoreKey(uuid.New().String())
+	calls := 0
+	create := func(ctx context.Context) (Diff, error) {
+		calls++
+		return nil, storage.ErrObjectNotExist
+	}
+
+	_, err = store.GetOrCreate(t.Context(), key, create)
+	require.ErrorIs(t, err, storage.ErrObjectNotExist)
+	require.Equal(t, 1, calls, "create should be called once on first miss")
+
+	for i := 0; i < 3; i++ {
+		_, err = store.GetOrCreate(t.Context(), key, create)
+		require.ErrorIs(t, err, storage.ErrObjectNotExist)
+	}
+	require.Equal(t, 1, calls, "create must not be called again while negative cache is hot")
+}
+
+func TestGetOrCreate_NegativeCacheNotSetForOtherErrors(t *testing.T) {
+	store, err := NewDiffStore(mustParseCfg(t), flagsWithMaxBuildCachePercentage(t, 90), t.TempDir(), time.Hour, time.Minute)
+	require.NoError(t, err)
+	store.Start(t.Context())
+	t.Cleanup(store.Close)
+
+	key := DiffStoreKey(uuid.New().String())
+	sentinel := errors.New("transient network error")
+	calls := 0
+	create := func(ctx context.Context) (Diff, error) {
+		calls++
+		return nil, sentinel
+	}
+
+	_, err = store.GetOrCreate(t.Context(), key, create)
+	require.ErrorIs(t, err, sentinel)
+	_, err = store.GetOrCreate(t.Context(), key, create)
+	require.ErrorIs(t, err, sentinel)
+	require.Equal(t, 2, calls, "create should be retried after non-ErrObjectNotExist errors")
+}
+
+func TestGetOrCreate_AddClearsNegativeCache(t *testing.T) {
+	cachePath := t.TempDir()
+	store, err := NewDiffStore(mustParseCfg(t), flagsWithMaxBuildCachePercentage(t, 90), cachePath, time.Hour, time.Minute)
+	require.NoError(t, err)
+	store.Start(t.Context())
+	t.Cleanup(store.Close)
+
+	diff := newRootFSDiff(t, cachePath, uuid.New().String())
+	key := diff.CacheKey()
+
+	calls := 0
+	notFound := func(ctx context.Context) (Diff, error) {
+		calls++
+		return nil, storage.ErrObjectNotExist
+	}
+
+	_, err = store.GetOrCreate(t.Context(), key, notFound)
+	require.ErrorIs(t, err, storage.ErrObjectNotExist)
+	require.Equal(t, 1, calls)
+
+	store.Add(diff)
+
+	returnDiff := func(ctx context.Context) (Diff, error) {
+		calls++
+		return diff, nil
+	}
+	got, err := store.GetOrCreate(t.Context(), key, returnDiff)
+	require.NoError(t, err)
+	require.Equal(t, diff, got)
+	require.Equal(t, 1, calls, "create must not be called after Add populates the positive cache")
+}
+
+func TestGetOrCreate_AddRaceWithStorageProbe(t *testing.T) {
+	cachePath := t.TempDir()
+	store, err := NewDiffStore(mustParseCfg(t), flagsWithMaxBuildCachePercentage(t, 90), cachePath, time.Hour, time.Minute)
+	require.NoError(t, err)
+	store.Start(t.Context())
+	t.Cleanup(store.Close)
+
+	diff := newRootFSDiff(t, cachePath, uuid.New().String())
+	key := diff.CacheKey()
+
+	ready := make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		_, err := store.GetOrCreate(t.Context(), key, func(ctx context.Context) (Diff, error) {
+			<-ready
+			return nil, storage.ErrObjectNotExist
+		})
+		errc <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	store.Add(diff)
+	close(ready)
+
+	require.ErrorIs(t, <-errc, storage.ErrObjectNotExist)
+
+	got, err := store.GetOrCreate(t.Context(), key, func(ctx context.Context) (Diff, error) {
+		t.Fatal("create must not be called: diff is in the positive cache")
+		return nil, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, diff, got)
 }
