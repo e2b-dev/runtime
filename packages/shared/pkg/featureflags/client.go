@@ -159,6 +159,10 @@ func NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion st
 		return nil, firecrackerVersionsEnvErr
 	}
 
+	if extraCompatibleNodeModelsEnvErr != nil {
+		return nil, extraCompatibleNodeModelsEnvErr
+	}
+
 	cfg := ldclient.Config{
 		ApplicationInfo:  applicationInfo(deploymentEnvironment, serviceName, serviceVersion),
 		Logging:          ldcomponents.Logging().MinLevel(logLevel),
