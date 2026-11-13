@@ -17,7 +17,7 @@ func TestPauseCallbackPreservesSuccessorTransition(t *testing.T) {
 	ctx := t.Context()
 	sbx := createTestSandbox("late-pause-callback")
 	require.NoError(t, storage.Add(ctx, sbx))
-	_, _, finishOld, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, _, finishOld, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 
 	key := transitionKeyFor(sbx.SandboxID)
@@ -28,7 +28,7 @@ func TestPauseCallbackPreservesSuccessorTransition(t *testing.T) {
 	resumed := sbx
 	resumed.ExecutionID = uuid.NewString()
 	require.NoError(t, storage.Add(ctx, resumed))
-	_, _, finishNew, err := storage.StartRemoving(ctx, resumed.TeamID, resumed.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, _, finishNew, err := storage.startRemovingWithFinish(ctx, resumed.TeamID, resumed.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	newID, err := client.Get(ctx, key).Result()
 	require.NoError(t, err)

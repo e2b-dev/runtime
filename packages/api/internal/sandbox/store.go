@@ -186,8 +186,24 @@ func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, er
 	return removed, nil
 }
 
+// StartRemoving returns, for the caller that started the transition, the
+// callback that ends it with the caller's error; a no-op when this call
+// started no transition.
 func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {
-	return s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
+	transition, alreadyDone, err := s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
+	if err != nil {
+		return transition, false, nil, err
+	}
+	if transition.ID == "" {
+		return transition, alreadyDone, func(context.Context, error) {}, nil
+	}
+
+	return transition, alreadyDone, func(ctx context.Context, workErr error) {
+		err := s.storage.FinishTransition(ctx, teamID, sandboxID, transition.ID, opts.Action, sandboxtypes.TransitionOutcomeOf(workErr))
+		if err != nil {
+			logger.L().Warn(ctx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transitionID", transition.ID), zap.Error(err))
+		}
+	}, nil
 }
 
 func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, opts RestoreOpts) (Sandbox, error) {

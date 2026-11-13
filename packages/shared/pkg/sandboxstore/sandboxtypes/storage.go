@@ -2,6 +2,7 @@ package sandboxtypes
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,7 +59,13 @@ type RestoreOpts struct {
 // the node refused, end a checkpoint with the network it left running, or
 // wait one out.
 type StateTransitions interface {
-	StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error)
+	StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, error)
+	// FinishTransition ends the transition StartRemoving started, the one
+	// with transitionID, with the outcome of the caller's work, and wakes
+	// its waiters. A transitionID that is no longer the sandbox's current
+	// one leaves the current transition open. It returns the failure of an
+	// automatic restore to Running as well as its own.
+	FinishTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string, action StateAction, outcome TransitionOutcome) error
 	RestoreRunning(ctx context.Context, transition StateTransition, opts RestoreOpts) (Sandbox, error)
 	// RestoreCheckpointed puts the record of a checkpoint's transition back
 	// to Running with placement, nil for the worker's own network, as
@@ -114,6 +121,42 @@ type StateTransition struct {
 	Sandbox Sandbox
 	// Only the caller that starts the transition owns its pre-clamp expiry.
 	OriginalEndTime *time.Time
+	// ID is set only for the caller that started the transition, which must
+	// end it with FinishTransition.
+	ID string
+}
+
+// TransitionOutcome is the result of the work done under a transition, as
+// FinishTransition records it.
+type TransitionOutcome struct {
+	// Failed means the work returned an error, whose text is Error.
+	Failed bool
+	Error  string
+	// SkipRestore ends a transient transition without restoring Running.
+	SkipRestore bool
+	// Restored means the node refused and the record went back to Running;
+	// RefusalClass is RefusalClass of that refusal.
+	Restored     bool
+	RefusalClass string
+}
+
+// TransitionOutcomeOf is the outcome of work that returned err. ErrSkipRestore
+// is not a failure.
+func TransitionOutcomeOf(err error) TransitionOutcome {
+	if err == nil {
+		return TransitionOutcome{}
+	}
+	if errors.Is(err, ErrSkipRestore) {
+		return TransitionOutcome{SkipRestore: true}
+	}
+
+	outcome := TransitionOutcome{Failed: true, Error: err.Error()}
+	if restored, ok := errors.AsType[*RestoredTransitionError](err); ok {
+		outcome.Restored = true
+		outcome.RefusalClass = RefusalClass(restored.Refusal)
+	}
+
+	return outcome
 }
 
 // ReservationStorage tracks per-team sandbox-start reservations to enforce

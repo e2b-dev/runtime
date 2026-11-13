@@ -28,14 +28,14 @@ func TestStartRemoving_JoinerIsAnsweredWithTheRestoredRefusalsClass(t *testing.T
 
 			sbx := createTestSandbox("joiner-class-" + name)
 			require.NoError(t, storage.Add(t.Context(), sbx))
-			transition, alreadyDone, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+			transition, alreadyDone, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 			require.NoError(t, err)
 			require.False(t, alreadyDone)
 
 			joiner := make(chan error, 1)
 			waiter := make(chan error, 1)
 			go func() {
-				_, _, _, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+				_, _, _, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 				joiner <- err
 			}()
 			go func() { waiter <- storage.WaitForStateChange(t.Context(), sbx.TeamID, sbx.SandboxID) }()
@@ -96,7 +96,7 @@ func TestRestoreRunning_HoldOnlyEndsTheEpisode(t *testing.T) {
 			sbx.RefusedSince = episodeStart
 			sbx.RefusedUntil = time.Now().Add(-time.Second)
 			require.NoError(t, storage.Add(t.Context(), sbx))
-			transition, _, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+			transition, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 			require.NoError(t, err)
 			defer finish(context.WithoutCancel(t.Context()), sandboxtypes.ErrTransitionRestored)
 
@@ -133,7 +133,7 @@ func TestRestoreRunning_EnvdRefusalStampsItsOwnEpisode(t *testing.T) {
 	restore := func(opts sandboxtypes.RestoreOpts) sandboxtypes.Sandbox {
 		t.Helper()
 
-		transition, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+		transition, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 		require.NoError(t, err)
 		restored, err := storage.RestoreRunning(ctx, transition, opts)
 		require.NoError(t, err)

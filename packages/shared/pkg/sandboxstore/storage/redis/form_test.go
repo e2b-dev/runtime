@@ -111,7 +111,7 @@ func TestOtherTeamIsRefused(t *testing.T) {
 			return err
 		}, sandboxtypes.ErrNotFound},
 		{"StartRemoving", func() error {
-			_, alreadyDone, finish, err := storage.StartRemoving(ctx, caller, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+			_, alreadyDone, finish, err := storage.startRemovingWithFinish(ctx, caller, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 			assert.False(t, alreadyDone)
 			assert.Nil(t, finish)
 

@@ -37,7 +37,7 @@ func TestRestoreRunning_ReplayedWriteSucceeds(t *testing.T) {
 
 	sbx := createTestSandbox("restore-replayed-write")
 	require.NoError(t, storage.Add(t.Context(), sbx))
-	transition, _, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	transition, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	defer finish(t.Context(), sandboxtypes.ErrTransitionRestored)
 
@@ -72,7 +72,7 @@ func TestRestoreRunning_RetryIndexFailureKeepsRestoredSandbox(t *testing.T) {
 	sbx := createTestSandbox("restore-index-failure")
 	sbx.EndTime = time.Now().Add(-time.Minute)
 	require.NoError(t, storage.Add(t.Context(), sbx))
-	transition, _, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	transition, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	defer finish(t.Context(), sandboxtypes.ErrTransitionRestored)
 

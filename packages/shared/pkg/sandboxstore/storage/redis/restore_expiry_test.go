@@ -25,7 +25,7 @@ func TestRestoreRunning_UsesTransitionExpiryWithoutIndex(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	transition, alreadyDone, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	transition, alreadyDone, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	require.False(t, alreadyDone)
 	defer finish(ctx, sandboxtypes.ErrTransitionRestored)
@@ -54,7 +54,7 @@ func TestRestoreRunning_RepeatedRefusalsPreserveOriginalExpiry(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sbx))
 
 	for range 3 {
-		transition, alreadyDone, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+		transition, alreadyDone, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 		require.NoError(t, err)
 		require.False(t, alreadyDone)
 		restored, err := storage.RestoreRunning(ctx, transition, sandboxtypes.RestoreOpts{RetryAfter: 10 * time.Second})
@@ -80,11 +80,11 @@ func TestRestoreRunning_RejectsUnownedTransition(t *testing.T) {
 	ctx := t.Context()
 	sbx := createTestSandbox("restore-unowned-transition")
 	require.NoError(t, storage.Add(ctx, sbx))
-	_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	finish(ctx, nil)
 
-	transition, alreadyDone, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	transition, alreadyDone, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	require.True(t, alreadyDone)
 	defer finish(ctx, nil)

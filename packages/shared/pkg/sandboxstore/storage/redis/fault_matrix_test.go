@@ -186,7 +186,7 @@ func (env *matrixEnv) report(ids ...string) []sandboxtypes.NodeSandbox {
 func (env *matrixEnv) pauseOut(t *testing.T, s *Storage, sbx sandboxtypes.Sandbox) {
 	t.Helper()
 
-	transition, alreadyDone, done, err := s.StartRemoving(t.Context(), env.team, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	transition, alreadyDone, done, err := s.startRemovingWithFinish(t.Context(), env.team, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	require.False(t, alreadyDone)
 	require.NoError(t, s.Remove(t.Context(), env.team, sbx.SandboxID, transition.Sandbox.ExecutionID))
@@ -304,7 +304,7 @@ func (env *matrixEnv) injectRemove(t *testing.T) {
 	if env.row.crash() {
 		env.heldOnCrash = []string{redis_utils.GetLockKey(key)}
 	}
-	transition, alreadyDone, done, err := env.actor.StartRemoving(t.Context(), env.team, env.victim.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true})
+	transition, alreadyDone, done, err := env.actor.startRemovingWithFinish(t.Context(), env.team, env.victim.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true})
 	require.NoError(t, err)
 	require.False(t, alreadyDone)
 

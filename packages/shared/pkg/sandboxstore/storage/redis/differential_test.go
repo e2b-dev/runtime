@@ -820,7 +820,7 @@ func runTransition(t *testing.T, actor, other *Storage, ref recordRef, action sa
 
 	ctx := t.Context()
 	team := uuid.MustParse(ref.TeamID)
-	transition, alreadyDone, done, err := actor.StartRemoving(ctx, team, ref.SandboxID, sandboxtypes.RemoveOpts{Action: action})
+	transition, alreadyDone, done, err := actor.startRemovingWithFinish(ctx, team, ref.SandboxID, sandboxtypes.RemoveOpts{Action: action})
 	if err != nil {
 		return "start error: " + err.Error()
 	}
@@ -1004,7 +1004,7 @@ func evictTrace(t *testing.T, s *Storage) string {
 	expired, trace := expiredIDs(t, s)
 	slices.SortFunc(expired, func(a, b sandboxtypes.Sandbox) int { return strings.Compare(a.SandboxID, b.SandboxID) })
 	for _, sbx := range expired {
-		transition, alreadyDone, done, err := s.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true})
+		transition, alreadyDone, done, err := s.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true})
 		if err != nil {
 			trace += " evict error: " + err.Error()
 

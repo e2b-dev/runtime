@@ -21,11 +21,11 @@ func TestStartRemoving_StrictPauseDoesNotJoinAPauseInFlight(t *testing.T) {
 	storage, _ := setupTestStorage(t)
 	sbx := createTestSandbox("strict-joiner")
 	require.NoError(t, storage.Add(t.Context(), sbx))
-	_, alreadyDone, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, alreadyDone, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	require.False(t, alreadyDone)
 
-	_, alreadyDone, _, err = storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause, RequireEnvdHealthy: true})
+	_, alreadyDone, _, err = storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause, RequireEnvdHealthy: true})
 	var transErr *sandboxtypes.InvalidStateTransitionError
 	require.ErrorAs(t, err, &transErr, "a strict pause must not ride the pause in flight")
 	assert.Equal(t, sandboxtypes.StatePausing, transErr.CurrentState)
@@ -34,7 +34,7 @@ func TestStartRemoving_StrictPauseDoesNotJoinAPauseInFlight(t *testing.T) {
 
 	joiner := make(chan error, 1)
 	go func() {
-		_, joined, _, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+		_, joined, _, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 		if err == nil && !joined {
 			err = assert.AnError
 		}

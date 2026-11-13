@@ -112,7 +112,7 @@ func TestLifecycleHold(t *testing.T) {
 		{Action: sandboxtypes.StateActionSnapshot},
 		{Action: sandboxtypes.StateActionKill, Eviction: true},
 	} {
-		_, _, _, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, opts)
+		_, _, _, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, opts)
 		require.ErrorIs(t, err, sandboxtypes.ErrLifecycleHeld, opts.Action.Name)
 	}
 	called := false
@@ -168,7 +168,7 @@ func TestLifecycleHold(t *testing.T) {
 	// move finds nothing.
 	_, err = storage.Update(ctx, sbx.TeamID, sbx.SandboxID, func(s sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) { return s, nil })
 	require.NoError(t, err)
-	_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
+	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
 	require.NoError(t, err)
 	finish(ctx, nil)
 	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, ""))
@@ -186,7 +186,7 @@ func TestLifecycleHoldReleaseAndRemove(t *testing.T) {
 	until := time.Now().Add(time.Minute)
 
 	sbx := heldSandbox(t, storage, "released")
-	_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionSnapshot})
+	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionSnapshot})
 	require.NoError(t, err)
 	require.ErrorIs(t, holdExecution(t, storage, sbx, "op", until), sandboxtypes.ErrHoldConflict)
 	// Restored to running, but the transition has not finished yet.
@@ -200,7 +200,7 @@ func TestLifecycleHoldReleaseAndRemove(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, released.Held(time.Now()))
 	assert.Equal(t, "node-a", released.NodeID)
-	_, _, finish, err = storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, _, finish, err = storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	finish(ctx, nil)
 
@@ -270,7 +270,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	require.NoError(t, storage.Add(ctx, sbx))
 	assert.Equal(t, stored, client.Get(ctx, key).Val(), "a late duplicate of the create is kept out")
 
-	_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
 	require.NoError(t, err)
 	require.NoError(t, storage.restoreToRunning(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.StatePausing))
 	finish(ctx, sandboxtypes.ErrSkipRestore)
@@ -279,7 +279,7 @@ func TestLifecycleHoldExpires(t *testing.T) {
 	got, err := storage.Get(ctx, sbx.TeamID, sbx.SandboxID)
 	require.NoError(t, err)
 	require.Equal(t, "op", got.LifecycleHold, "the expired hold is still on the record")
-	_, _, finish, err = storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
+	_, _, finish, err = storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill})
 	require.NoError(t, err)
 	finish(ctx, nil)
 	require.NoError(t, storage.Remove(ctx, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
@@ -329,7 +329,7 @@ func TestLifecycleHoldDefersExpiry(t *testing.T) {
 	assert.GreaterOrEqual(t, deferred, float64(before.Add(transitionRecheckDelay).UnixMilli()), "the member leaves the expired window")
 	assert.LessOrEqual(t, deferred, float64(time.Now().Add(transitionRecheckDelay).UnixMilli()))
 	evict := sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionKill, Eviction: true, ExpectExecutionID: sbx.ExecutionID}
-	_, alreadyDone, _, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, evict)
+	_, alreadyDone, _, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, evict)
 	require.ErrorIs(t, err, sandboxtypes.ErrLifecycleHeld)
 	assert.False(t, alreadyDone)
 
@@ -339,7 +339,7 @@ func TestLifecycleHoldDefersExpiry(t *testing.T) {
 	expired, err = storage.ExpiredItems(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{sbx.SandboxID}, sandboxIDsOf(expired))
-	_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, evict)
+	_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, evict)
 	require.NoError(t, err)
 	finish(ctx, nil)
 }

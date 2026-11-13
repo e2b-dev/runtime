@@ -29,16 +29,14 @@ import (
 //     - If no transition is in progress, start the transition
 //  3. Validates the state transition is allowed
 //  4. Atomically updates the sandbox state and sets the transition key with a unique ID
-//  5. Returns a callback that the caller must invoke to signal completion
+//  5. Returns the transition with its ID, which the caller must end with
+//     FinishTransition
 //
 // A record of another team is not found, as in Get, before the lock is
 // taken.
-//
-// The callback is critical: it deletes the transition key
-// and sets the result value with short TTL to notify waiters of the outcome.
-func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
+func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
 	if err := s.refuseOtherTeam(ctx, teamID.String(), sandboxID); err != nil {
-		return sandboxtypes.StateTransition{}, false, nil, err
+		return sandboxtypes.StateTransition{}, false, err
 	}
 	key := recordKey(sandboxID)
 	transitionKey := transitionKeyFor(sandboxID)
@@ -47,7 +45,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// Acquire distributed lock
 	lock, err := s.locker.Obtain(ctx, lockKey, lockTimeout)
 	if err != nil {
-		return sandboxtypes.StateTransition{}, false, nil, fmt.Errorf("failed to obtain lock: %w", err)
+		return sandboxtypes.StateTransition{}, false, fmt.Errorf("failed to obtain lock: %w", err)
 	}
 
 	// Ensure lock is released once
@@ -64,7 +62,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 
 	_, sbx, err := s.readRecord(ctx, key, teamID, sandboxID)
 	if err != nil {
-		return sandboxtypes.StateTransition{}, false, nil, err
+		return sandboxtypes.StateTransition{}, false, err
 	}
 	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
@@ -78,7 +76,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// equivalent check inside startTransitionScript, which is atomic with that
 	// write.
 	if opts.ExpectExecutionID != "" && sbx.ExecutionID != opts.ExpectExecutionID {
-		return transition, false, nil, fmt.Errorf(
+		return transition, false, fmt.Errorf(
 			"sandbox %q is execution %q, expected %q: %w",
 			sandboxID, sbx.ExecutionID, opts.ExpectExecutionID, sandboxtypes.ErrExecutionMismatch,
 		)
@@ -88,25 +86,25 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	// operation, not a transition. Hold refuses a record in transition, so
 	// one never starts under the other.
 	if sbx.Held(time.Now()) {
-		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
+		return transition, false, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
 	}
 
 	// Check if there's an existing transition
 	transactionID, err := s.redisClient.Get(ctx, transitionKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return transition, false, nil, fmt.Errorf("failed to check transition key: %w", err)
+		return transition, false, fmt.Errorf("failed to check transition key: %w", err)
 	}
 
 	// Resolve eviction under the lock + re-check expiry
 	if opts.Eviction {
 		// if there's a transition already in place, don't do anything
 		if transactionID != "" {
-			return transition, false, nil, sandboxtypes.ErrEvictionInProgress
+			return transition, false, sandboxtypes.ErrEvictionInProgress
 		}
 
 		// if sandbox isn't expired (e.g. race condition with SetTimeout)
 		if !opts.BeforeEndTime && !sbx.IsExpired(time.Now()) {
-			return transition, false, nil, sandboxtypes.ErrEvictionNotNeeded
+			return transition, false, sandboxtypes.ErrEvictionNotNeeded
 		}
 	}
 
@@ -125,12 +123,12 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 	if sbx.State == newState {
 		logger.L().Debug(ctx, "Already in the same state", logger.WithSandboxID(sandboxID), zap.String("state", string(newState)))
 
-		return transition, true, func(context.Context, error) {}, nil
+		return transition, true, nil
 	}
 
 	// Validate state transition is allowed
 	if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
-		return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 	}
 
 	// Build the updated sandbox for Redis without mutating the original.
@@ -146,7 +144,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 
 	newData, err := json.Marshal(updated)
 	if err != nil {
-		return transition, false, nil, fmt.Errorf("failed to marshal sandbox: %w", err)
+		return transition, false, fmt.Errorf("failed to marshal sandbox: %w", err)
 	}
 
 	// Generate transition ID
@@ -162,19 +160,19 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 		newData, transitionID, ttlSeconds, resultTtlSeconds, opts.ExpectExecutionID, lockValueOf(lock),
 	).Int64()
 	if err != nil {
-		return transition, false, nil, fmt.Errorf("failed to update sandbox state: %w", err)
+		return transition, false, fmt.Errorf("failed to update sandbox state: %w", err)
 	}
 	if written == 3 {
-		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLockLost)
+		return transition, false, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLockLost)
 	}
 	if written == 2 {
-		return transition, false, nil, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
+		return transition, false, fmt.Errorf("sandbox %q: %w", sandboxID, sandboxtypes.ErrLifecycleHeld)
 	}
 	if written == 0 {
 		// The pin no longer holds: the incarnation was replaced since the check
 		// above, past a lock that expired; the script refused rather than
 		// overwrite whatever is there now, and nothing has been written.
-		return transition, false, nil, fmt.Errorf(
+		return transition, false, fmt.Errorf(
 			"sandbox %q is no longer execution %q: %w",
 			sandboxID, opts.ExpectExecutionID, sandboxtypes.ErrExecutionMismatch,
 		)
@@ -184,62 +182,69 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 
 	transition.Sandbox = updated
 	transition.OriginalEndTime = &sbx.EndTime
+	transition.ID = transitionID
 
-	return transition, false, s.createCallback(teamID, sandboxID, transitionKey, resultKey, transitionID, opts.Action), nil
+	return transition, false, nil
 }
 
-// createCallback returns a callback function for completing a transition.
-// A successful transient action restores Running unless the caller passes
-// ErrSkipRestore. Completing a transient action with an error also skips
+// FinishTransition ends the transition StartRemoving started.
+// A successful transient action restores Running unless the outcome is
+// SkipRestore. Completing a transient action with an error also skips
 // restoration and lets waiters proceed. Waiters must read the resulting state.
 // Automatic restore failures and non-transient errors are published to waiters.
-func (s *Storage) createCallback(teamID uuid.UUID, sandboxID, transitionKey, resultKey, transitionID string, stateAction sandboxtypes.StateAction) func(context.Context, error) {
-	return func(cbCtx context.Context, cbErr error) {
-		skipRestore := errors.Is(cbErr, sandboxtypes.ErrSkipRestore)
-		if skipRestore {
-			cbErr = nil
-		}
-		logger.L().Debug(cbCtx, "Transition complete", logger.WithSandboxID(sandboxID), zap.String("state", string(stateAction.TargetState)), zap.String("transitionID", transitionID), zap.Error(cbErr))
+func (s *Storage) FinishTransition(ctx context.Context, teamID uuid.UUID, sandboxID, transitionID string, stateAction sandboxtypes.StateAction, outcome sandboxtypes.TransitionOutcome) error {
+	transitionKey := transitionKeyFor(sandboxID)
+	resultKey := transitionResultKeyFor(sandboxID, transitionID)
 
-		var restoreErr error
-		if stateAction.Effect == sandboxtypes.TransitionTransient && cbErr == nil && !skipRestore {
-			restoreErr = s.restoreToRunning(cbCtx, teamID, sandboxID, stateAction.TargetState)
-		}
-
-		// Determine result value for waiters:
-		// - Restore failure: propagate so callers know state is inconsistent
-		// - Transient original failure: signal success so concurrent ops (e.g. kill) can proceed
-		// - Non-transient failure: propagate the error
-		resultValue := ""
-		if restoreErr != nil {
-			resultValue = fmt.Errorf("failed to restore sandbox to running: %w", restoreErr).Error()
-		} else if cbErr != nil && stateAction.Effect != sandboxtypes.TransitionTransient {
-			resultValue = cbErr.Error()
-		}
-
-		// A restored pause's refusal class rides beside the result; the result
-		// itself stays the text a replica that predates the class reads.
-		refusalClass := ""
-		if restored, ok := errors.AsType[*sandboxtypes.RestoredTransitionError](cbErr); ok {
-			resultValue = sandboxtypes.ErrTransitionRestored.Error()
-			refusalClass = sandboxtypes.RefusalClass(restored.Refusal)
-		}
-
-		// Publish the result before waiters can observe completion; expired owners cannot delete a successor's key.
-		err := RunScript(cbCtx, s.redisClient, "finish_transition", finishTransitionScript, []string{transitionKey, resultKey, refusalClassKey(resultKey)},
-			transitionID, resultValue, int(transitionResultKeyTTL.Seconds()), refusalClass).Err()
-		if err != nil {
-			logger.L().Warn(cbCtx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transitionID", transitionID), zap.Error(err))
-		}
-
-		// Notify subscribers that the transition is complete so waitForTransition
-		// goroutines wake up immediately rather than waiting for the next poll tick.
-		// The routing key is published as the payload so the single global channel
-		// can serve all sandboxes across all teams. The publish is handed off to
-		// the shared publisher worker; on overflow the 1s fallback ticker in
-		// waitForTransition covers any dropped notification.
-		s.publisher.Publish(cbCtx, transitionRoutingKey(resultKey))
+	var outcomeErr error
+	if outcome.Failed {
+		outcomeErr = errors.New(outcome.Error)
 	}
+	logger.L().Debug(ctx, "Transition complete", logger.WithSandboxID(sandboxID), zap.String("state", string(stateAction.TargetState)), zap.String("transitionID", transitionID), zap.Error(outcomeErr))
+
+	var restoreErr error
+	if stateAction.Effect == sandboxtypes.TransitionTransient && !outcome.Failed && !outcome.SkipRestore {
+		restoreErr = s.restoreToRunning(ctx, teamID, sandboxID, stateAction.TargetState)
+		if restoreErr != nil {
+			restoreErr = fmt.Errorf("failed to restore sandbox to running: %w", restoreErr)
+		}
+	}
+
+	// Determine result value for waiters:
+	// - Restore failure: propagate so callers know state is inconsistent
+	// - Transient original failure: signal success so concurrent ops (e.g. kill) can proceed
+	// - Non-transient failure: propagate the error
+	resultValue := ""
+	if restoreErr != nil {
+		resultValue = restoreErr.Error()
+	} else if outcome.Failed && stateAction.Effect != sandboxtypes.TransitionTransient {
+		resultValue = outcome.Error
+	}
+
+	// A restored pause's refusal class rides beside the result; the result
+	// itself stays the text a replica that predates the class reads.
+	refusalClass := ""
+	if outcome.Restored {
+		resultValue = sandboxtypes.ErrTransitionRestored.Error()
+		refusalClass = outcome.RefusalClass
+	}
+
+	// Publish the result before waiters can observe completion; expired owners cannot delete a successor's key.
+	err := RunScript(ctx, s.redisClient, "finish_transition", finishTransitionScript, []string{transitionKey, resultKey, refusalClassKey(resultKey)},
+		transitionID, resultValue, int(transitionResultKeyTTL.Seconds()), refusalClass).Err()
+	if err != nil {
+		err = fmt.Errorf("failed to run finish-transition script: %w", err)
+	}
+
+	// Notify subscribers that the transition is complete so waitForTransition
+	// goroutines wake up immediately rather than waiting for the next poll tick.
+	// The routing key is published as the payload so the single global channel
+	// can serve all sandboxes across all teams. The publish is handed off to
+	// the shared publisher worker; on overflow the 1s fallback ticker in
+	// waitForTransition covers any dropped notification.
+	s.publisher.Publish(ctx, transitionRoutingKey(resultKey))
+
+	return errors.Join(restoreErr, err)
 }
 
 // restoreToRunning restores the sandbox to Running if it is still in the given transient state.
@@ -486,7 +491,7 @@ func (s *Storage) handleExistingTransition(
 	sbx sandboxtypes.Sandbox,
 	opts sandboxtypes.RemoveOpts,
 	transitionID string,
-) (sandboxtypes.StateTransition, bool, func(context.Context, error), error) {
+) (sandboxtypes.StateTransition, bool, error) {
 	newState := opts.Action.TargetState
 	transition := sandboxtypes.StateTransition{Sandbox: sbx}
 
@@ -497,7 +502,7 @@ func (s *Storage) handleExistingTransition(
 		// (The sweep never gets here: a transition in flight ends its attempt
 		// above.)
 		if opts.Action == sandboxtypes.StateActionPause && opts.RequireEnvdHealthy {
-			return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+			return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 		}
 
 		// Same target state - wait for completion and return alreadyDone=true.
@@ -515,28 +520,28 @@ func (s *Storage) handleExistingTransition(
 			// and the sandbox is running again: a joiner asking for the same
 			// kind never succeeds; a memory pause that joined it may retry.
 			if errors.Is(restored.Refusal, sandboxtypes.PauseUnsupportedError{}) && !opts.FilesystemOnly {
-				return transition, false, nil, sandboxtypes.PauseQueueExhaustedError{}
+				return transition, false, sandboxtypes.PauseQueueExhaustedError{}
 			}
 
 			// The pause the joiner rode was refused and the sandbox is running
 			// again: the joiner gets the refusal the starter got, not a success.
-			return transition, false, nil, restored.Refusal
+			return transition, false, restored.Refusal
 		}
 		if err != nil {
-			return transition, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
+			return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
 		}
 
-		return transition, true, func(context.Context, error) {}, nil
+		return transition, true, nil
 	}
 
 	// Different state - validate transition and wait
 	if !sandboxtypes.AllowedTransitions[sbx.State][newState] {
-		return transition, false, nil, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
+		return transition, false, &sandboxtypes.InvalidStateTransitionError{CurrentState: sbx.State, TargetState: newState}
 	}
 
 	err := s.waitForTransition(ctx, sbx.SandboxID, transitionID)
 	if err != nil && !errors.Is(err, sandboxtypes.ErrTransitionRestored) {
-		return transition, false, nil, fmt.Errorf("failed waiting for transition: %w", err)
+		return transition, false, fmt.Errorf("failed waiting for transition: %w", err)
 	}
 
 	// Retry the caller's removal, in full, now the way is clear. Re-reading the

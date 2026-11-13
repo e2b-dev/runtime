@@ -34,7 +34,7 @@ func TestStartRemoving_ExecutionPinMismatchRefuses(t *testing.T) {
 	sbx := createTestSandbox("sbx-replaced")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	_, _, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
+	_, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
 		Action:            sandboxtypes.StateActionKill,
 		Reason:            sandboxtypes.KillReasonRequest,
 		ExpectExecutionID: uuid.NewString(), // the incarnation the caller saw, now gone
@@ -57,7 +57,7 @@ func TestStartRemoving_ExecutionPinMatchProceeds(t *testing.T) {
 	sbx := createTestSandbox("sbx-still-there")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	_, alreadyDone, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
+	_, alreadyDone, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
 		Action:            sandboxtypes.StateActionKill,
 		Reason:            sandboxtypes.KillReasonRequest,
 		ExpectExecutionID: sbx.ExecutionID,
@@ -91,7 +91,7 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 
 	// Occupy the transition slot with a pause, so a kill cannot proceed
 	// directly and has to wait it out and retry.
-	_, _, finishPause, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
+	_, _, finishPause, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
 		Action: sandboxtypes.StateActionPause,
 	})
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestStartRemoving_ExecutionPinSurvivesWaitingOutATransition(t *testing.T) {
 	// the pin check on the way in and blocks in the wait. The retry afterwards
 	// is what this test is about.
 	go func() {
-		_, _, finish, err := storage.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
+		_, _, finish, err := storage.startRemovingWithFinish(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
 			Action:            sandboxtypes.StateActionKill,
 			Reason:            sandboxtypes.KillReasonRequest,
 			ExpectExecutionID: sbx.ExecutionID,
@@ -328,7 +328,7 @@ func TestStartRemoving_NoExecutionPinRemovesWhateverIsStored(t *testing.T) {
 	sbx := createTestSandbox("sbx-unpinned")
 	require.NoError(t, storage.Add(t.Context(), sbx))
 
-	_, _, finish, err := storage.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
+	_, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{
 		Action: sandboxtypes.StateActionKill,
 		Reason: sandboxtypes.KillReasonRequest,
 	})
