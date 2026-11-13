@@ -726,6 +726,90 @@ func run(config cfg.Config, opts Options) (success bool) {
 	}
 	peersCreds := mtls.NewClientCredentials(peersHop)
 
+	// Early-bind the shared service port and start the HTTP /health endpoint
+	// BEFORE the long sandbox-runtime init below (startup reclaim can take tens
+	// of minutes on a host with many leaked ns-* in /run/netns). The node is
+	// held NotReady until the gRPC server is serving and the edition egress (if
+	// any) is ready, so /health answers 503 the whole time: the port is open
+	// (Nomad sees "starting", not a connection-refused "failed") but the edge
+	// routes no new work here until the hold flips it Healthy.
+	//
+	// cmux matchers must be created before Serve() (Match mutates state Serve
+	// reads). The gRPC listener is matched here but only Served later, after all
+	// RegisterService calls complete — gRPC forbids RegisterService after Serve,
+	// so early gRPC connections buffer in the matcher until then.
+	var grpcServing atomic.Bool
+	var egressReadyFn atomic.Pointer[func() bool]
+	serviceInfo.HoldUntilReady(ctx, func() bool {
+		if !grpcServing.Load() {
+			return false
+		}
+		if f := egressReadyFn.Load(); f != nil {
+			return (*f)()
+		}
+
+		return true
+	})
+
+	cmuxServer, err := NewCMUXServer(ctx, config.GRPCPort, tel.MeterProvider, sharedPortTLS.wrap)
+	if err != nil {
+		logger.L().Fatal(ctx, "failed to create cmux server", zap.Error(err))
+	}
+	// Create all matchers BEFORE Serve() to avoid a data race: cmux.Match()
+	// mutates internal state that Serve() reads.
+	httpListener := cmuxServer.Match(cmux.HTTP1Fast())
+	grpcListener := cmuxServer.Match(cmux.Any()) // the rest are GRPC requests
+
+	startService("cmux server", func() error {
+		logger.L().Info(ctx, "Starting network server", zap.Uint16("port", config.GRPCPort))
+		err := cmuxServer.Serve()
+		if err != nil && strings.Contains(err.Error(), "use of closed network connection") {
+			return nil
+		}
+
+		return err
+	})
+	closers = append(closers, closer{"cmux server", func(context.Context) error {
+		logger.L().Info(ctx, "Shutting down cmux server")
+		cmuxServer.Close()
+
+		return nil
+	}})
+
+	healthcheck, err := e2bhealthcheck.NewHealthcheck(serviceInfo)
+	if err != nil {
+		logger.L().Fatal(ctx, "failed to create healthcheck", zap.Error(err))
+	}
+
+	// The /upload handler (local build storage) is created later during template
+	// manager setup. Serve a stable indirection now so the mux is immutable once
+	// Serve starts; it 503s until the real handler is stored.
+	var uploadHandlerPtr atomic.Pointer[localupload.Handler]
+	uploadIndirection := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := uploadHandlerPtr.Load(); h != nil {
+			h.ServeHTTP(w, r)
+
+			return
+		}
+
+		http.Error(w, "upload handler not ready", http.StatusServiceUnavailable)
+	})
+
+	httpServer := NewHTTPServer()
+	httpServer.Handler = sharedPortTLS.guard(newHTTPHandler(healthcheck.CreateHandler(), uploadIndirection))
+	startService("http server", func() error {
+		err := httpServer.Serve(httpListener)
+		switch {
+		case errors.Is(err, cmux.ErrServerClosed):
+			return nil
+		case errors.Is(err, http.ErrServerClosed):
+			return nil
+		default:
+			return err
+		}
+	})
+	closers = append(closers, closer{"http server", httpServer.Shutdown})
+
 	// Not a service and no closer: pacing stays in force through the sandbox
 	// drain and ends with the process.
 	if usesSandboxRuntime {
@@ -937,10 +1021,12 @@ func run(config cfg.Config, opts Options) (success bool) {
 	if egressSetup.Close != nil {
 		closers = append(closers, closer{"egress proxy", egressSetup.Close})
 	}
-	// Before the gRPC and HTTP servers start, so no one sees the node
-	// Healthy first.
+	// Feed the edition egress readiness into the hold started at early-bind, so
+	// the node turns Healthy only once egress is ready too (and never before the
+	// gRPC server serves).
 	if egressSetup.Ready != nil {
-		serviceInfo.HoldUntilReady(ctx, egressSetup.Ready)
+		ready := egressSetup.Ready
+		egressReadyFn.Store(&ready)
 	}
 
 	// Sandbox-runtime reclaim must run before NewStorageLocal below: reclaim
@@ -1186,14 +1272,17 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 	// template manager
 	var tmpl *tmplserver.ServerStore
-	var localUploadHandler *localupload.Handler
 	if services.RunsTemplateManager() {
 		buildPersistence, uploadHandler, err := setupBuildStorage(ctx, limiter, config)
 		if err != nil {
 			logger.L().Fatal(ctx, "failed to setup build storage", zap.Error(err))
 		}
 
-		localUploadHandler = uploadHandler
+		// Publish the real /upload handler to the indirection registered on the
+		// early HTTP mux (nil until now → served 503).
+		if uploadHandler != nil {
+			uploadHandlerPtr.Store(uploadHandler)
+		}
 
 		tmpl, err = tmplserver.New(
 			ctx,
@@ -1236,56 +1325,9 @@ func run(config cfg.Config, opts Options) (success bool) {
 	grpcHealth := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, grpcHealth)
 
-	// cmux server, allows us to reuse the same TCP port between grpc and HTTP requests
-	cmuxServer, err := NewCMUXServer(ctx, config.GRPCPort, tel.MeterProvider, sharedPortTLS.wrap)
-	if err != nil {
-		logger.L().Fatal(ctx, "failed to create cmux server", zap.Error(err))
-	}
-
-	// Create all matchers BEFORE starting Serve() to avoid data race.
-	// cmux.Match() modifies internal state that Serve() reads from.
-	httpListener := cmuxServer.Match(cmux.HTTP1Fast())
-	grpcListener := cmuxServer.Match(cmux.Any()) // the rest are GRPC requests
-
-	startService("cmux server", func() error {
-		logger.L().Info(ctx, "Starting network server", zap.Uint16("port", config.GRPCPort))
-		err := cmuxServer.Serve()
-		if err != nil && strings.Contains(err.Error(), "use of closed network connection") {
-			return nil
-		}
-
-		return err
-	})
-	closers = append(closers, closer{"cmux server", func(context.Context) error {
-		logger.L().Info(ctx, "Shutting down cmux server")
-		cmuxServer.Close()
-
-		return nil
-	}})
-
-	// http server
-	healthcheck, err := e2bhealthcheck.NewHealthcheck(serviceInfo)
-	if err != nil {
-		logger.L().Fatal(ctx, "failed to create healthcheck", zap.Error(err))
-	}
-
-	httpServer := NewHTTPServer()
-	httpServer.Handler = sharedPortTLS.guard(newHTTPHandler(healthcheck.CreateHandler(), localUploadHandler))
-
-	startService("http server", func() error {
-		err := httpServer.Serve(httpListener)
-		switch {
-		case errors.Is(err, cmux.ErrServerClosed):
-			return nil
-		case errors.Is(err, http.ErrServerClosed):
-			return nil
-		default:
-			return err
-		}
-	})
-	closers = append(closers, closer{"http server", httpServer.Shutdown})
-
-	// grpc server
+	// grpc server. All RegisterService calls above are complete, so it is now
+	// safe to Serve the grpc listener that cmux has been matching since early
+	// bind (any connections received meanwhile are buffered in the matcher).
 	startService("grpc server", func() error {
 		return grpcServer.Serve(grpcListener)
 	})
@@ -1306,6 +1348,11 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 		return nil
 	}})
+
+	// Sandbox runtime is fully wired up and the gRPC server is serving. Mark it
+	// so the readiness hold started at early-bind flips the node Healthy (once
+	// egress, if any, is also ready). Until now the port was open but 503.
+	grpcServing.Store(true)
 
 	// Wait for the shutdown signal or if some service fails
 	select {
