@@ -46,8 +46,9 @@ type Callbacks struct {
 	// Used during sync when the Redis backend detects sandboxes running on a node but not present in the store.
 	KillOrphanSandbox OrphanCallback
 	// EndPoweredOffSandbox runs the timeout action of a sandbox whose node
-	// reports that its guest powered off. Called during sync, asynchronously,
-	// for every such sandbox the node lists.
+	// reports that its guest powered off. Called during sync for every such
+	// sandbox the node lists. It must return without waiting for the action:
+	// a pause can outlast the sync interval.
 	EndPoweredOffSandbox OrphanCallback
 	// EndEndedSandbox ends the record of a sandbox its node lists as ended
 	// with nothing kept, as a kill would. Called during sync for every such
@@ -236,12 +237,12 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 	orphans := s.storage.Reconcile(ctx, running, nodeID)
 
 	// A powered-off sandbox gets its timeout action now rather than at its
-	// end time. Not waited for: a pause can outlast the sync interval, and
-	// the evictor drops a repeat while one is in flight.
+	// end time. The callback does not wait for it, and the evictor drops a
+	// repeat while one is in flight.
 	if s.callbacks.EndPoweredOffSandbox != nil {
 		for _, sbx := range sandboxes {
 			if sbx.DiskKept {
-				go s.callbacks.EndPoweredOffSandbox(context.WithoutCancel(ctx), sbx)
+				s.callbacks.EndPoweredOffSandbox(context.WithoutCancel(ctx), sbx)
 			}
 		}
 	}

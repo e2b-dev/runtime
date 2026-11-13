@@ -31,9 +31,14 @@ func (o *Orchestrator) GetSandbox(ctx context.Context, teamID uuid.UUID, sandbox
 
 // keepInSync the cache with the actual instances in Orchestrator to handle instances that died.
 func (o *Orchestrator) keepInSync(ctx context.Context, store *sandbox.Store, skipSyncingWithNomad bool) {
+	// A stop ends the loop between syncs. A sync cut short would report every
+	// node it had not reached as failing and mark it unhealthy; it ends on
+	// its own timeout instead.
+	syncCtx := context.WithoutCancel(ctx)
+
 	// Run the first sync immediately
 	logger.L().Info(ctx, "Running the initial node sync")
-	o.syncNodes(ctx, store, skipSyncingWithNomad)
+	o.syncNodes(syncCtx, store, skipSyncingWithNomad)
 
 	// Sync the nodes every cacheSyncTime
 	ticker := time.NewTicker(cacheSyncTime)
@@ -51,10 +56,16 @@ func (o *Orchestrator) keepInSync(ctx context.Context, store *sandbox.Store, ski
 			logger.L().Info(ctx, "Stopping keepInSync")
 
 			return
+		// A tick can be ready together with the stop, and select then picks
+		// either: no round starts once stopped.
 		case <-ticker.C:
-			o.syncNodes(ctx, store, skipSyncingWithNomad)
+			if ctx.Err() == nil {
+				o.syncNodes(syncCtx, store, skipSyncingWithNomad)
+			}
 		case <-refresh:
-			o.refreshNodes(ctx)
+			if ctx.Err() == nil {
+				o.refreshNodes(syncCtx)
+			}
 		}
 	}
 }

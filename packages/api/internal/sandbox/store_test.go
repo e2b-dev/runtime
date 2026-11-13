@@ -437,13 +437,14 @@ func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
 }
 
 // The sync hands every sandbox the node lists as powered off, and only those,
-// to EndPoweredOffSandbox.
+// to EndPoweredOffSandbox, before it returns: the caller tracks what the
+// callback starts under the sync still running.
 func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
 	t.Parallel()
 
-	ended := make(chan NodeSandbox, 2)
+	var ended []string
 	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
-		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended <- sbx },
+		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended = append(ended, sbx.SandboxID) },
 	})
 
 	running := createTestSandbox()
@@ -455,18 +456,7 @@ func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
 	listed.DiskKept = true
 	store.Reconcile(t.Context(), []NodeSandbox{running.ToNodeSandbox(), listed}, "node-1")
 
-	select {
-	case got := <-ended:
-		assert.Equal(t, poweredOff.SandboxID, got.SandboxID)
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "EndPoweredOffSandbox was not called")
-	}
-
-	select {
-	case got := <-ended:
-		require.Failf(t, "EndPoweredOffSandbox called for a sandbox that is not powered off", "sandbox %s", got.SandboxID)
-	case <-time.After(200 * time.Millisecond):
-	}
+	assert.Equal(t, []string{poweredOff.SandboxID}, ended)
 }
 
 // The sync hands every sandbox the node lists as ended with nothing kept to

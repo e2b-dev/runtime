@@ -1107,9 +1107,11 @@ sequenceDiagram
   ten-second budget. Snapshot uploads and sandbox teardown retain their separate background
   lifetimes. Shutdown drains pauses still in flight — after the HTTP and gRPC drains, before the
   database and Redis clients close — so a deploy cannot cut a snapshot short. The drain stops
-  admitting pauses first, so the eviction sweep cannot start one behind it; a refused pause
-  leaves the sandbox running for another replica. The wait is bounded by the pause budget plus
-  the terminal build-status write it falls through to, plus a short grace.
+  admitting pauses first, then stops the eviction sweep and the node sync and waits for the
+  round and the evictions they have in flight; a refused pause leaves the sandbox running for
+  another replica. The wait is bounded by the pause budget plus the terminal build-status write
+  it falls through to, plus a short grace. The Redis client closes last, after every other
+  shutdown step has returned.
   - **Deferred rootfs export** (gated by the `deferred-rootfs-export` flag in
     `packages/shared/pkg/featureflags`): instead of diffing the rootfs on the pause critical
     path, the orchestrator ejects the writable COW cache during pause and returns, then seals it

@@ -87,6 +87,12 @@ type Orchestrator struct {
 	snapshotUpsertSem *utils.AdjustableSemaphore
 	redisStorage      *redisbackend.Storage
 
+	// background runs the evictor and the node sync, and the evictions the
+	// sync starts. They use Redis, so Drain stops them and waits before
+	// shutdown closes it.
+	background     sync.WaitGroup
+	stopBackground context.CancelFunc
+
 	// work tracks operations that continue after their caller is gone, so a
 	// drain waits for them instead of killing them mid-write.
 	work            sync.WaitGroup
@@ -220,8 +226,10 @@ func New(
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: o.handleNewlyCreatedSandbox,
 			KillOrphanSandbox:        o.killOrphanSandbox,
-			EndPoweredOffSandbox:     o.endPoweredOffSandbox,
-			EndEndedSandbox:          o.endEndedSandbox,
+			EndPoweredOffSandbox: func(ctx context.Context, sbx sandbox.NodeSandbox) {
+				o.background.Go(func() { o.endPoweredOffSandbox(ctx, sbx) })
+			},
+			EndEndedSandbox: o.endEndedSandbox,
 		},
 	)
 
@@ -236,7 +244,9 @@ func New(
 	// Set before the sync starts, which is the only caller of
 	// endPoweredOffSandbox.
 	o.sandboxEvictor = sandboxEvictor
-	go sandboxEvictor.Start(ctx)
+	backgroundCtx, stopBackground := context.WithCancel(ctx)
+	o.stopBackground = stopBackground
+	o.background.Go(func() { sandboxEvictor.Start(backgroundCtx) })
 
 	teamMetricsObserver, err := metrics.NewTeamObserver(ctx, o.sandboxStore)
 	if err != nil {
@@ -247,7 +257,7 @@ func New(
 
 	o.teamMetricsObserver = teamMetricsObserver
 
-	go o.keepInSync(ctx, o.sandboxStore, skipNomadSync)
+	o.background.Go(func() { o.keepInSync(backgroundCtx, o.sandboxStore, skipNomadSync) })
 
 	if err := o.setupMetrics(tel.MeterProvider); err != nil {
 		logger.L().Error(ctx, "Failed to setup metrics", zap.Error(err))
@@ -290,12 +300,17 @@ func (o *Orchestrator) OutstandingWork() int64 {
 	return o.outstandingWork.Load()
 }
 
-// Drain stops admitting tracked work and waits for what is in flight, bounded
-// by the budget that work stops itself at.
+// Drain stops admitting tracked work and stops the background loops, and
+// waits for what is in flight, bounded by the budget that work stops itself
+// at.
 func (o *Orchestrator) Drain(ctx context.Context) error {
 	o.drainMu.Lock()
 	o.draining = true
 	o.drainMu.Unlock()
+
+	if o.stopBackground != nil {
+		o.stopBackground()
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, trackedWorkBound+workDrainGrace)
 	defer cancel()
@@ -304,6 +319,7 @@ func (o *Orchestrator) Drain(ctx context.Context) error {
 	go func() {
 		defer close(done)
 		o.work.Wait()
+		o.background.Wait()
 	}()
 
 	select {
