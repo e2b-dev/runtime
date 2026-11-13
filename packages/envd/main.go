@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -182,6 +183,20 @@ func run(stop <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Bind the listener before any blocking initializer so the TCP port is
+	// reachable from process start. Incoming connections are queued in the
+	// kernel's accept backlog; nothing is dispatched until s.Serve(ln) below.
+	// Without this, a slow or hanging initializer (e.g. writeCgroupProp under
+	// memory pressure) produces a window where the process is alive but the port
+	// returns ECONNREFUSED — indistinguishable from a crashed envd to any
+	// TCP-based health check or orchestrator readiness probe.
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		return fmt.Errorf("bind envd listener: %w", err)
+	}
+	defer ln.Close()
+	fmt.Fprintf(os.Stderr, "envd: HTTP listener bound on :%d\n", port)
+
 	if err := os.MkdirAll(host.E2BRunDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "error creating E2B run directory: %v\n", err)
 	}
@@ -217,7 +232,9 @@ func run(stop <-chan struct{}) error {
 	fsLogger := l.With().Str("logger", "filesystem").Logger()
 	filesystemService := filesystemRpc.Handle(m, &fsLogger, defaults)
 
+	fmt.Fprintf(os.Stderr, "envd startup: creating cgroup manager\n")
 	cgroupManager := createCgroupManager()
+	fmt.Fprintf(os.Stderr, "envd startup: cgroup manager ready\n")
 	defer func() {
 		err := cgroupManager.Close()
 		if err != nil {
@@ -476,7 +493,7 @@ func run(stop <-chan struct{}) error {
 		}
 	})
 
-	// A stop request closes the listener, which makes ListenAndServe return.
+	// A stop request closes the listener, which makes Serve return.
 	stopped := make(chan struct{})
 	defer close(stopped)
 	go func() {
@@ -487,7 +504,8 @@ func run(stop <-chan struct{}) error {
 		}
 	}()
 
-	err := s.ListenAndServe()
+	// err is already declared by net.Listen at the top of run().
+	err = s.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
 		select {
 		case <-stop:
