@@ -1498,5 +1498,5 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto`, `packages/scheduling-api/e2b/` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.

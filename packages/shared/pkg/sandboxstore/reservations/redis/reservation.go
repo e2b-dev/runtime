@@ -244,7 +244,7 @@ func (s *ReservationStorage) tryReadResult(
 			return true, nil, fmt.Errorf("failed to check result key: %w", getErr)
 		}
 
-		return true, nil, fmt.Errorf("sandbox %s is no longer pending and has no result", sandboxID)
+		return true, nil, &sandboxtypes.StartResultMissingError{SandboxID: sandboxID}
 	}
 	if scoreErr != nil {
 		return true, nil, fmt.Errorf("failed to check pending set: %w", scoreErr)

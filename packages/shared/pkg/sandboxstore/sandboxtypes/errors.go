@@ -17,6 +17,14 @@ func (e *LimitExceededError) Error() string {
 
 var ErrNotFound = errors.New("sandbox not found")
 
+type StartResultMissingError struct {
+	SandboxID string
+}
+
+func (e *StartResultMissingError) Error() string {
+	return fmt.Sprintf("sandbox %s is no longer pending and has no result", e.SandboxID)
+}
+
 type InvalidStateTransitionError struct {
 	CurrentState State
 	TargetState  State

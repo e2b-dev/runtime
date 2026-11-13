@@ -1,7 +1,13 @@
 # scheduling-api
 
-gRPC service for scheduling. It has no RPC contract: it serves only the
-standard gRPC health service.
+gRPC service for scheduling. It serves only the standard gRPC health service.
+
+The contract of the start reservation service is
+`e2b/scheduling/v1/reservation.proto` in this directory; the service does not
+serve it yet. The generated Go code is in
+`packages/shared/pkg/grpc/scheduling`. After a change to the proto, run
+`make generate`. Generation needs network access: it fetches the protovalidate
+rules with `buf export`.
 
 ## Transport
 
@@ -46,17 +52,20 @@ deadline.
 
 ## Tests
 
-The tests need no external services.
+The `internal/reservation` tests need a Redis server at
+`REDIS_TEST_DATABASE_URL`; the other tests need no external services.
 
 | Package | Covers |
 |---|---|
 | `internal/config` | Configuration parsing and TLS settings validation |
+| `internal/reservation` | Reservation gRPC handlers: outcomes, validation and errors, against Redis and a fake store |
 | `internal/server` | mTLS of the gRPC server: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext |
 | `.` | Startup, health, shutdown, listener in use |
 
 ## Commands
 
 ```bash
+make generate   # regenerate the Go code from the proto
 make build      # bin/scheduling-api
 make test       # go test -race ./...
 make run-local  # build and listen on :50051; needs the E2B_TLS_* files or E2B_TLS_GRPC_MODE=off

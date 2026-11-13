@@ -152,6 +152,24 @@ func TestReservation_Release(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestWaitForStart_ReleasedStartIsResultMissing(t *testing.T) {
+	t.Parallel()
+	storage, _ := setupTestReservationStorage(t)
+
+	teamID := uuid.New()
+	reserved, err := storage.Reserve(t.Context(), teamID, testSandboxID, 1)
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NoError(t, storage.Release(t.Context(), teamID, testSandboxID))
+
+	_, err = storage.WaitForStart(t.Context(), teamID, testSandboxID)
+	require.Error(t, err)
+	assert.Equal(t, "sandbox "+testSandboxID+" is no longer pending and has no result", err.Error())
+	missing, ok := errors.AsType[*sandboxtypes.StartResultMissingError](err)
+	require.True(t, ok)
+	assert.Equal(t, testSandboxID, missing.SandboxID)
+}
+
 func TestReservation_MultipleWaiters(t *testing.T) {
 	t.Parallel()
 	storage, _ := setupTestReservationStorage(t)
