@@ -30,6 +30,13 @@ const (
 	// back to any builder at that version.
 	ApiTemplateBuildBuilderPinFallback       CounterType = "api.template.build.builder_pin_fallback"
 	ApiOrchestratorCreatedSandboxes          CounterType = "api.orchestrator.created_sandboxes"
+	ApiTemplateArtifactsCandidates           CounterType = "api.template.artifacts.candidates"
+	ApiTemplateArtifactsDeleted              CounterType = "api.template.artifacts.deleted"
+	ApiTemplateArtifactsDeleteFailed         CounterType = "api.template.artifacts.delete_failed"
+	ApiTemplateArtifactsSkippedNilNode       CounterType = "api.template.artifacts.skipped_nil_node"
+	ApiTemplateArtifactsGuardKept            CounterType = "api.template.artifacts.guard_kept"
+	ApiTemplateArtifactsSkippedTooNew        CounterType = "api.template.artifacts.skipped_too_new"
+	ApiTemplateArtifactsFailClosed           CounterType = "api.template.artifacts.fail_closed"
 	ApiOrchestratorResumeOriginNodeRemap     CounterType = "api.orchestrator.resume_origin_node_remapped"
 	ApiOrchestratorSandboxFeatureUnsupported CounterType = "api.orchestrator.sandbox_feature_unsupported"
 	// ApiOrchestratorPauseRefusalRestore counts what became of a pause the
@@ -896,6 +903,13 @@ var counterDesc = map[CounterType]string{
 	ApiTemplateBuildBuilderPinFallback:           "Template builder lookups that fell back to any builder because none with the pinned machine info is at the required version",
 	SandboxCreateMeterName:                       "Number of currently waiting requests to create a new sandbox",
 	ApiOrchestratorCreatedSandboxes:              "Number of successfully created sandboxes",
+	ApiTemplateArtifactsCandidates:               "Number of builds the DB considered exclusive to a deleted template (reconciliation denominator: candidates == deleted + delete_failed + skipped_nil_node + guard_kept, or fail_closed>0 when nothing was deleted)",
+	ApiTemplateArtifactsDeleted:                  "Number of template build artifacts (rootfs/kernel/snapshot) successfully deleted on template deletion, by cluster",
+	ApiTemplateArtifactsDeleteFailed:             "Number of template build artifacts whose deletion failed on template deletion (potential orphaned storage), by cluster",
+	ApiTemplateArtifactsSkippedNilNode:           "Number of exclusive builds skipped because they were never materialized on a node (nil cluster_node_id; nothing to delete)",
+	ApiTemplateArtifactsGuardKept:                "Number of exclusive builds the reachability guard kept because a live build still references them through its header closure (space intentionally not reclaimed)",
+	ApiTemplateArtifactsSkippedTooNew:            "Number of exclusive builds skipped on the online path because they were younger than the grace window (deferred to the offline sweeper; narrows the TOCTOU window against a concurrent cache-hit reuse)",
+	ApiTemplateArtifactsFailClosed:               "Number of exclusive builds not deleted because the reachability guard could not be proven and the cleanup failed closed, by reason (reader_unconfigured|live_roots_query|header_unreadable). Alert on this: it means storage is not being reclaimed.",
 	ApiEvictorFsOnlyAutoPause:                    "Timeout auto-pauses with a filesystem-only policy.",
 	ApiEvictorAutoPauseDegraded:                  "Timeout auto-pauses the evictor answered with a degrade after a node refusal, by cause: filesystem-only for a busy node (admission_refused | overstay_budget), the memory pause retried without requiring a healthy guest agent, so the node takes it and records the miss (envd_grace), or that retry withheld for want of an execution id (envd_grace_withheld) or because the sweep asks for a filesystem-only capture, which needs the guest agent (envd_grace_fs_only).",
 	ApiOrchestratorResumeOriginNodeRemap:         "Number of resume snapshots repointed to the fallback node a previous resume timed out on",
@@ -1000,6 +1014,13 @@ var counterUnits = map[CounterType]string{
 	ApiTemplateBuildBuilderPinFallback:           "{lookup}",
 	SandboxCreateMeterName:                       "{sandbox}",
 	ApiOrchestratorCreatedSandboxes:              "{sandbox}",
+	ApiTemplateArtifactsCandidates:               "{build}",
+	ApiTemplateArtifactsDeleted:                  "{build}",
+	ApiTemplateArtifactsDeleteFailed:             "{build}",
+	ApiTemplateArtifactsSkippedNilNode:           "{build}",
+	ApiTemplateArtifactsGuardKept:                "{build}",
+	ApiTemplateArtifactsSkippedTooNew:            "{build}",
+	ApiTemplateArtifactsFailClosed:               "{build}",
 	ApiEvictorFsOnlyAutoPause:                    "{pause}",
 	ApiEvictorAutoPauseDegraded:                  "{pause}",
 	ApiOrchestratorResumeOriginNodeRemap:         "{snapshot}",

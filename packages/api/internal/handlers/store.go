@@ -227,26 +227,34 @@ type APIStore struct {
 	teamSandboxCounter        teamRunningSandboxCounter
 	sandboxLifecycles         sandboxLifecycleReader
 	templateManager           *template_manager.TemplateManager
-	sqlcDB                    *sqlcdb.Client
-	sqlcReadDB                *sqlcdb.Client
-	authDB                    *authdb.Client
-	redisClient               redis.UniversalClient
-	templateCache             *templatecache.TemplateCache
-	templateBuildsCache       *templatecache.TemplatesBuildCache
-	snapshotCache             *snapshotcache.SnapshotCache
-	authService               sharedauth.Service
-	managementService         *management.Service
-	teamService               *team.Service
-	riverClient               *river.Client[pgx.Tx] // set by NewOutbox
-	templateSpawnCounter      *utils.TemplateSpawnCounter
-	clickhouseStore           clickhouse.Clickhouse
-	sandboxLogsReader         *sandboxlogs.Reader
-	accessTokenGenerator      *sandbox.AccessTokenGenerator
-	featureFlags              *featureflags.Client
-	clusters                  *clusters.Pool
-	snapshotUpsertSem         *sharedutils.AdjustableSemaphore
-	sandboxListSem            *sharedutils.AdjustableSemaphore
-	snapshotBuildQuerySem     *sharedutils.AdjustableSemaphore
+	// buildAncestors resolves a build's header-mapping ancestor closure for
+	// the template-deletion reachability guard. Nil when template storage is
+	// not configured for the API, in which case artifact cleanup fails closed.
+	buildAncestors buildAncestorReader
+	// liveRootSources enumerates the build-ID roots the reachability guard
+	// expands to protect still-referenced ancestors. Nil in production (falls
+	// back to the DB source via liveRootSourcesOrDefault); tests inject stubs.
+	liveRootSources       []liveRootSource
+	sqlcDB                *sqlcdb.Client
+	sqlcReadDB            *sqlcdb.Client
+	authDB                *authdb.Client
+	redisClient           redis.UniversalClient
+	templateCache         *templatecache.TemplateCache
+	templateBuildsCache   *templatecache.TemplatesBuildCache
+	snapshotCache         *snapshotcache.SnapshotCache
+	authService           sharedauth.Service
+	managementService     *management.Service
+	teamService           *team.Service
+	riverClient           *river.Client[pgx.Tx] // set by NewOutbox
+	templateSpawnCounter  *utils.TemplateSpawnCounter
+	clickhouseStore       clickhouse.Clickhouse
+	sandboxLogsReader     *sandboxlogs.Reader
+	accessTokenGenerator  *sandbox.AccessTokenGenerator
+	featureFlags          *featureflags.Client
+	clusters              *clusters.Pool
+	snapshotUpsertSem     *sharedutils.AdjustableSemaphore
+	sandboxListSem        *sharedutils.AdjustableSemaphore
+	snapshotBuildQuerySem *sharedutils.AdjustableSemaphore
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer
@@ -462,6 +470,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		teamSandboxCounter:    sandboxcountscache.NewCountsCache(orch, redisClient),
 		sandboxLifecycles:     clickhouseStore,
 		templateManager:       templateManager,
+		buildAncestors:        newTemplateBuildAncestorReader(ctx),
 		sqlcDB:                sqlcDB,
 		sqlcReadDB:            sqlcReadDB,
 		authDB:                authDB,
