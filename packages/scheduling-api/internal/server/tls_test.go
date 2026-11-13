@@ -6,22 +6,41 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
-	"github.com/e2b-dev/infra/packages/scheduling-api/internal/db/dbtest"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
-	"github.com/e2b-dev/infra/packages/scheduling-api/internal/store"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/mtlstest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
+
+const testMethod = "/test.Service/Call"
+
+var testServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Service",
+	HandlerType: (*any)(nil),
+	Methods: []grpc.MethodDesc{{
+		MethodName: "Call",
+		Handler: func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+			in := new(emptypb.Empty)
+			if err := dec(in); err != nil {
+				return nil, err
+			}
+			handler := func(context.Context, any) (any, error) { return &emptypb.Empty{}, nil }
+			if interceptor == nil {
+				return handler(ctx, in)
+			}
+
+			return interceptor(ctx, in, &grpc.UnaryServerInfo{FullMethod: testMethod}, handler)
+		},
+	}},
+}
 
 func TestMutualTLS(t *testing.T) {
 	t.Parallel()
@@ -39,9 +58,8 @@ func TestMutualTLS(t *testing.T) {
 	}
 	cfg, err := config.ServerTLS(newProcess(t, ca, serverID), mtls.ListenerSettings{Allow: []string{apiID}})
 	require.NoError(t, err)
-	pool := dbtest.MigratedPool(t)
-	srv, err := server.New(telemetry.NewNoopClient(), store.New(pool, pool), cfg)
-	require.NoError(t, err)
+	srv := server.New(telemetry.NewNoopClient(), cfg)
+	srv.RegisterService(&testServiceDesc, struct{}{})
 	healthv1.RegisterHealthServer(srv, health.NewServer())
 	lis, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -72,9 +90,7 @@ func TestMutualTLS(t *testing.T) {
 			t.Cleanup(func() { _ = conn.Close() })
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			client := scheduling.NewSchedulingServiceClient(conn)
-			project, reservation := uuid.NewString(), uuid.NewString()
-			_, err = client.Get(ctx, scheduling.GetRequest_builder{ProjectId: project, SandboxId: sandboxID}.Build())
+			err = conn.Invoke(ctx, testMethod, &emptypb.Empty{}, &emptypb.Empty{})
 			if !tc.allowed {
 				require.Error(t, err)
 				if tc.signer == nil {
@@ -85,13 +101,6 @@ func TestMutualTLS(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			_, err = client.Reserve(ctx, reserveRequest(project, sandboxID, reservation, 10))
-			require.NoError(t, err)
-			_, err = client.Put(ctx, putRequest(project, reservation))
-			require.NoError(t, err)
-			got, err := client.Get(ctx, scheduling.GetRequest_builder{ProjectId: project, SandboxId: sandboxID}.Build())
-			require.NoError(t, err)
-			requireSandbox(t, project, got.GetSandbox())
 		})
 	}
 }

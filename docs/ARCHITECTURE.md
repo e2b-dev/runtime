@@ -90,7 +90,7 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
-| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service: actor lifecycle state (admission, start, pause and kill) in its own Postgres database, with transition waits; callers run node operations; one replica, chosen by a Postgres advisory lock, ends expired starts and purges old tombstones in the background; trusted maintenance methods list stale pauses and kills across projects and claim them for recovery; no callers yet |
+| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves only the standard gRPC health service; no callers yet |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -803,15 +803,9 @@ answers 408.
 | Store | Owner packages | What lives there |
 |---|---|---|
 | **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
-| **Scheduling PostgreSQL** | `packages/scheduling-api` (goose migrations, own ledger `scheduling_migrations`, sqlc) | A separate database for actor state: `scheduling_actor` (record of a live sandbox), `scheduling_actor_run` (state, deadline, reservation, transition, failure, retry window), `scheduling_project_live_count` (live sandboxes per project, split over counter slots). Each replica uses one extra connection, outside its pool, to try the cleanup leader lock; only the leader keeps it open, with a 60 s idle session timeout so that PostgreSQL releases the lock of a failed leader. Not used by other services yet |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
-
-Scheduling PostgreSQL uses separate read and write pgx pools from one
-`SCHEDULING_DATABASE_URL`, with the same database, role and primary endpoint.
-The defaults allow 8 read and 24 write connections per service replica. Reads
-within a mutation transaction stay on the write pool.
 
 The scheduling listener requires mTLS by default. `E2B_TLS_GRPC_ALLOW` names
 the API SPIFFE identities allowed to call it. The shared TLS loader reads the
@@ -1490,7 +1484,7 @@ packages/
   orchestrator/         Sandbox runtime + template builder (one binary, per-node)
   client-proxy/         Edge router for sandbox traffic
   envd/                 In-VM agent (pkg/version.go is release-please's; see Envd)
-  scheduling-api/       gRPC actor lifecycle state (admission, start, pause, kill, waits; no callers yet)
+  scheduling-api/       gRPC scheduling service (health service only; no callers yet)
   shared/               Protos, telemetry, storage clients, proxy engine, feature flags
   auth/                 AuthN library (API keys, JWT/OIDC) used by api
   db/                   Postgres migrations (goose) + queries (sqlc)
@@ -1504,6 +1498,5 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto`, `packages/scheduling-api/e2b/` and `packages/envd/spec/`, SQL in `packages/db/queries/`
-and `packages/scheduling-api/internal/db/queries/sql/`.
+`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.

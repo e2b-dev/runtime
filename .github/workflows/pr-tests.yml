@@ -134,7 +134,6 @@ jobs:
             runner: infra-tests
           - package: packages/scheduling-api
             test_path: ./...
-            postgres: true
             sudo: false
             race: true
             runner: blacksmith-4vcpu-ubuntu-2404
