@@ -351,7 +351,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		clusterLogsReader = sandboxLogsReader
 	}
 
-	posthogClient, posthogErr := analyticscollector.NewPosthogClient(ctx, config.PosthogAPIKey)
+	posthogClient, posthogErr := analyticscollector.NewPosthogClient(ctx, config.PosthogAPIKey, analyticscollector.WithCluster(config.DeploymentEnvironment))
 	if posthogErr != nil {
 		logger.L().Fatal(ctx, "Initializing Posthog client", zap.Error(posthogErr))
 	}
