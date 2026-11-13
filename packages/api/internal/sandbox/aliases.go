@@ -61,20 +61,21 @@ const (
 
 // Errors and pre-defined state actions / transition tables.
 var (
-	ErrAlreadyExists      = sandboxtypes.ErrAlreadyExists
-	ErrNotFound           = sandboxtypes.ErrNotFound
-	ErrEvictionInProgress = sandboxtypes.ErrEvictionInProgress
-	ErrEvictionNotNeeded  = sandboxtypes.ErrEvictionNotNeeded
-	ErrExecutionMismatch  = sandboxtypes.ErrExecutionMismatch
-	ErrLifecycleHeld      = sandboxtypes.ErrLifecycleHeld
-	ErrLockLost           = sandboxtypes.ErrLockLost
-	ErrHoldConflict       = sandboxtypes.ErrHoldConflict
-	ErrNotHeld            = sandboxtypes.ErrNotHeld
-	ErrRestoreConflict    = sandboxtypes.ErrRestoreConflict
-	ErrTransitionRestored = sandboxtypes.ErrTransitionRestored
-	ErrSkipRestore        = sandboxtypes.ErrSkipRestore
-	ErrDraining           = sandboxtypes.ErrDraining
-	ErrSandboxKilled      = sandboxtypes.ErrSandboxKilled
+	ErrAlreadyExists         = sandboxtypes.ErrAlreadyExists
+	ErrNotFound              = sandboxtypes.ErrNotFound
+	ErrEvictionInProgress    = sandboxtypes.ErrEvictionInProgress
+	ErrEvictionNotNeeded     = sandboxtypes.ErrEvictionNotNeeded
+	ErrExecutionMismatch     = sandboxtypes.ErrExecutionMismatch
+	ErrLifecycleHeld         = sandboxtypes.ErrLifecycleHeld
+	ErrLockLost              = sandboxtypes.ErrLockLost
+	ErrHoldConflict          = sandboxtypes.ErrHoldConflict
+	ErrNotHeld               = sandboxtypes.ErrNotHeld
+	ErrRestoreConflict       = sandboxtypes.ErrRestoreConflict
+	ErrTransitionRestored    = sandboxtypes.ErrTransitionRestored
+	ErrSkipRestore           = sandboxtypes.ErrSkipRestore
+	ErrDraining              = sandboxtypes.ErrDraining
+	ErrSandboxKilled         = sandboxtypes.ErrSandboxKilled
+	ErrReservationLeaderLeft = sandboxtypes.ErrReservationLeaderLeft
 
 	AllowedTransitions = sandboxtypes.AllowedTransitions
 
