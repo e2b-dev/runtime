@@ -135,6 +135,13 @@ type Sandbox struct {
 	// Iam records the sandbox workload identity configuration. Persisted so it
 	// survives re-sync and is carried into the paused snapshot.
 	Iam *sandboxconfig.SandboxIam `json:"iam,omitempty"`
+	// PausedTTL is how long the sandbox may stay paused after this run ends
+	// before it expires. Nil means it never expires.
+	PausedTTL *time.Duration `json:"pausedTtl,omitempty"`
+	// PausedTTLStored records that this run was resumed from a snapshot that
+	// had a TTL, so its end must clear the stored expiry even when PausedTTL
+	// was removed during the run.
+	PausedTTLStored bool `json:"pausedTtlStored,omitempty"`
 	// NetworkPlacement is the placement the orchestrator returned for this
 	// execution's successful create. Nil means the legacy per-worker network,
 	// including records written before orchestrators returned a placement.

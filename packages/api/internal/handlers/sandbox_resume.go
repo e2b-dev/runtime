@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -443,12 +444,17 @@ func (a *APIStore) buildResumeSandboxDataFromSnapshot(snapshotSandboxID, sandbox
 		// execution still gets a freshly generated execution ID upstream, so no
 		// stored identity subject is carried across.
 		var iam *types.SandboxIam
+		// A fork inherits the parent's TTL, as it does the rest of the config.
+		var pausedTTL *time.Duration
 		if snap.Config != nil {
 			network = snap.Config.Network
 			autoResume = snap.Config.AutoResume
 			volumes = snap.Config.VolumeMounts
 			autoPauseFilesystemOnly = snap.Config.AutoPauseFilesystemOnly
 			iam = snap.Config.Iam
+			if snap.Config.PausedTTL != nil {
+				pausedTTL = new(time.Duration(*snap.Config.PausedTTL) * time.Second)
+			}
 		}
 
 		return orchestrator.SandboxMetadata{
@@ -465,6 +471,8 @@ func (a *APIStore) buildResumeSandboxDataFromSnapshot(snapshotSandboxID, sandbox
 			VolumeMounts:            convertDatabaseMountsToOrchestratorMounts(volumes),
 			EnvdAccessToken:         envdAccessToken,
 			Iam:                     iam,
+			PausedTTL:               pausedTTL,
+			PausedTTLStored:         pausedTTL != nil,
 			NodeID:                  &nodeID,
 			SnapshotSandboxID:       snapshotSandboxID,
 			FilesystemBoot:          filesystemBoot,

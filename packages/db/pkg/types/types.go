@@ -168,6 +168,11 @@ type PausedSandboxConfig struct {
 	// any workload identity is rederived from the current execution rather than a
 	// stored subject. Pre-existing rows omit the key and decode to nil.
 	Iam *SandboxIam `json:"iam,omitempty"`
+
+	// PausedTTL is how long, in seconds, the sandbox may stay paused after a
+	// run ends before it expires. snapshots.expires_at holds the resulting
+	// time. Nil means it never expires.
+	PausedTTL *int64 `json:"pausedTtl,omitempty"`
 }
 
 func (c PausedSandboxConfig) Value() (driver.Value, error) {

@@ -217,6 +217,7 @@ func (o *Orchestrator) RemoveSandbox(ctx context.Context, teamID uuid.UUID, sand
 		if preserveRecord {
 			return
 		}
+		o.stampPausedExpiry(context.WithoutCancel(ctx), sbx)
 		o.sandboxStore.Remove(context.WithoutCancel(ctx), teamID, sandboxID, sbx.ExecutionID)
 		go o.analyticsRemove(context.WithoutCancel(ctx), sbx, opts.Action)
 	}()

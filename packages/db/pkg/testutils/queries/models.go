@@ -226,6 +226,7 @@ type Snapshot struct {
 	TeamID              uuid.UUID
 	Config              []byte
 	EnvDeletedAt        *time.Time
+	ExpiresAt           *time.Time
 }
 
 type SnapshotTemplate struct {

@@ -16,7 +16,7 @@ import (
 
 const getSnapshotsByTemplateWithCursor = `-- name: GetSnapshotsByTemplateWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at, s.expires_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
     eb.max_vcpu AS build_max_vcpu,
@@ -118,6 +118,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
 			&i.Snapshot.EnvDeletedAt,
+			&i.Snapshot.ExpiresAt,
 			&i.BuildID,
 			&i.BuildVcpu,
 			&i.BuildMaxVcpu,
@@ -139,7 +140,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursor(ctx context.Context, arg GetS
 
 const getSnapshotsByTemplateWithCursorAsc = `-- name: GetSnapshotsByTemplateWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at, s.expires_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
     eb.max_vcpu AS build_max_vcpu,
@@ -244,6 +245,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
 			&i.Snapshot.EnvDeletedAt,
+			&i.Snapshot.ExpiresAt,
 			&i.BuildID,
 			&i.BuildVcpu,
 			&i.BuildMaxVcpu,
@@ -265,7 +267,7 @@ func (q *Queries) GetSnapshotsByTemplateWithCursorAsc(ctx context.Context, arg G
 
 const getSnapshotsWithCursor = `-- name: GetSnapshotsWithCursor :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at, s.expires_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
     eb.max_vcpu AS build_max_vcpu,
@@ -368,6 +370,7 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
 			&i.Snapshot.EnvDeletedAt,
+			&i.Snapshot.ExpiresAt,
 			&i.BuildID,
 			&i.BuildVcpu,
 			&i.BuildMaxVcpu,
@@ -389,7 +392,7 @@ func (q *Queries) GetSnapshotsWithCursor(ctx context.Context, arg GetSnapshotsWi
 
 const getSnapshotsWithCursorAsc = `-- name: GetSnapshotsWithCursorAsc :many
 SELECT COALESCE(ea.aliases, ARRAY[]::text[])::text[] AS aliases, COALESCE(ea.names, ARRAY[]::text[])::text[] AS names,
-    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at,
+    s.created_at, s.env_id, s.sandbox_id, s.id, s.metadata, s.base_env_id, s.sandbox_started_at, s.env_secure, s.origin_node_id, s.allow_internet_access, s.auto_pause, s.team_id, s.config, s.env_deleted_at, s.expires_at,
     eb.id AS build_id,
     eb.vcpu AS build_vcpu,
     eb.max_vcpu AS build_max_vcpu,
@@ -494,6 +497,7 @@ func (q *Queries) GetSnapshotsWithCursorAsc(ctx context.Context, arg GetSnapshot
 			&i.Snapshot.TeamID,
 			&i.Snapshot.Config,
 			&i.Snapshot.EnvDeletedAt,
+			&i.Snapshot.ExpiresAt,
 			&i.BuildID,
 			&i.BuildVcpu,
 			&i.BuildMaxVcpu,

@@ -68,8 +68,10 @@ type SandboxMetadata struct {
 	EnvdAccessToken         *string
 	// Iam records the sandbox workload identity configuration requested at create
 	// time. Nil means workload identity is disabled.
-	Iam    *types.SandboxIam
-	NodeID *string
+	Iam             *types.SandboxIam
+	PausedTTL       *time.Duration
+	PausedTTLStored bool
+	NodeID          *string
 	// SnapshotSandboxID is the sandbox ID the resume snapshot is stored under.
 	// It differs from the ID of the sandbox being started when forking.
 	SnapshotSandboxID string
@@ -692,6 +694,8 @@ func (o *Orchestrator) CreateSandbox(
 	)
 	sbx.FirecrackerVersionResolved = resolvedFCVersion
 	sbx.NetworkPlacement = placed.Response.GetNetworkPlacement()
+	sbx.PausedTTL = sbxData.PausedTTL
+	sbx.PausedTTLStored = sbxData.PausedTTLStored
 
 	// An orchestrator that predates the filesystem_boot field ignores it and
 	// memory-restores; only the echo proves the demand was honored. Kill the
@@ -717,6 +721,34 @@ func (o *Orchestrator) CreateSandbox(
 			ErrorCode: ErrCodeFilesystemBootUnconfirmed,
 			ClientMsg: "This cluster cannot resume without memory yet (memory: false); the resume was rolled back and the snapshot is untouched — retry shortly",
 			Err:       fmt.Errorf("filesystem-boot demand for '%s' not confirmed by node %s", sandboxID, node.ID),
+		}
+	}
+
+	// Before the record exists, so no run end can stamp ahead of it. Without
+	// it a failed stamp would leave the previous pause's expiry, and the
+	// sandbox would be deleted right after this run.
+	if isResume {
+		if err := o.boundPausedExpiry(ctx, sbx); err != nil {
+			// Torn down synchronously: the 503 invites a retry, and an async
+			// kill would race it with the sandbox ID still live on the node.
+			killErr := o.removeSandboxFromNode(
+				context.WithoutCancel(ctx),
+				sbx,
+				sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
+			)
+			if killErr != nil {
+				logger.L().Error(ctx, "Error removing resumed sandbox after its expiry bound failed",
+					zap.Error(killErr),
+					logger.WithSandboxID(sbx.SandboxID),
+				)
+			}
+
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusServiceUnavailable,
+				ClientMsg: "Failed to resume sandbox, retry shortly",
+				Err:       fmt.Errorf("failed to bound the paused expiry of '%s': %w", sandboxID, err),
+				Retryable: apierrors.CanRetry,
+			}
 		}
 	}
 

@@ -85,6 +85,7 @@ type Snapshot struct {
 	TeamID              uuid.UUID
 	Config              *types.PausedSandboxConfig
 	EnvDeletedAt        *time.Time
+	ExpiresAt           *time.Time
 }
 
 type Volume struct {
