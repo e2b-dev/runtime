@@ -96,6 +96,16 @@ func (s *AdjustableSemaphore) SetLimit(limit int64) error {
 	return nil
 }
 
+// Limit returns the semaphore's current capacity. Used to annotate
+// ResourceExhausted errors with the cap the caller hit; at the moment of
+// refusal the used count equals this, so the limit is the informative value.
+func (s *AdjustableSemaphore) Limit() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.limit
+}
+
 func (s *AdjustableSemaphore) Release(n int64) {
 	if n <= 0 {
 		panic("Release: n must be > 0")
