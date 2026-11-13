@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -21,6 +22,28 @@ func setupTestManager(t *testing.T) *subscriptionManager {
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
 
 	return storage.subManager
+}
+
+// waitForSubscription blocks until m receives notifications: it subscribes in
+// the background, and a notification published before then is lost.
+func waitForSubscription(t *testing.T, m *subscriptionManager) {
+	t.Helper()
+
+	probe := "subscription-probe:" + uuid.NewString()
+	ch, cleanup := m.subscribe(probe)
+	defer cleanup()
+
+	require.Eventually(t, func() bool {
+		if err := m.redisClient.Publish(t.Context(), m.channel, probe).Err(); err != nil {
+			return false
+		}
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, testPollInterval, "the subscription manager never received a notification")
 }
 
 func TestSubscriptionManager_SubscribeAndDispatch(t *testing.T) {

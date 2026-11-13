@@ -40,6 +40,7 @@ func startNotifications(t *testing.T, s *Storage) {
 	t.Cleanup(func() { s.publisher.close(context.WithoutCancel(t.Context())) })
 	go s.subManager.start(t.Context())
 	t.Cleanup(s.subManager.close)
+	waitForSubscription(t, s.subManager)
 }
 
 // counterByAttr returns the count a counter holds under one attribute.

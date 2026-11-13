@@ -626,6 +626,7 @@ func setupTestLocker(t *testing.T, startSubManager bool) (*storageLocker, *subsc
 	if startSubManager {
 		go subManager.start(t.Context())
 		t.Cleanup(subManager.close)
+		waitForSubscription(t, subManager)
 	}
 
 	return newStorageLocker(redisClient, subManager, pub), subManager

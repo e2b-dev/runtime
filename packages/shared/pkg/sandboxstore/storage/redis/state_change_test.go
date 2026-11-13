@@ -34,6 +34,7 @@ func setupTestStorage(t *testing.T, hooks ...redis.Hook) (*Storage, redis.Univer
 	storage := newTestStorage(t, client)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
+	waitForSubscription(t, storage.subManager)
 
 	return storage, client
 }
