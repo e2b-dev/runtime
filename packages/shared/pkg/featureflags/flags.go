@@ -896,6 +896,13 @@ var (
 	// connections allowed per sandbox. Negative means no limit.
 	SandboxMaxIncomingConnections = NewIntFlag("sandbox-max-incoming-connections", -1)
 
+	// ClientProxyMaxConnectionsPerSandbox is the maximum number of concurrent
+	// client-proxy ingress requests accounted per sandbox. The client-proxy
+	// shares one keepalive connection pool across sandboxes, so without this the
+	// only bound on per-sandbox in-flight requests is the process-wide pool
+	// ceiling. Negative means no limit; the default preserves existing behavior.
+	ClientProxyMaxConnectionsPerSandbox = NewIntFlag("client-proxy-max-connections-per-sandbox", -1)
+
 	// BuildBaseRootfsSizeLimitMB is the maximum size of the base rootfs filesystem created from the OCI image, in MB.
 	BuildBaseRootfsSizeLimitMB = NewIntFlag("build-base-rootfs-size-limit-mb", 25000)
 

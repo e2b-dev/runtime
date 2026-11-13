@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/connlimit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
@@ -241,6 +242,18 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 		}))
 	}
 
+	// Per-sandbox ingress limiter. The client-proxy shares one keepalive pool
+	// (ConnectionKey constant) across sandboxes, so the limiter is keyed by the
+	// Destination's LimitKey (the sandbox ID) instead, bounding per-sandbox
+	// in-flight requests without fragmenting the pool. Default flag -1 keeps the
+	// limiter inert until an operator sets a finite cap.
+	connLimitConfig := &reverseproxy.ConnectionLimitConfig{
+		Limiter: connlimit.NewConnectionLimiter(),
+		GetMaxLimit: func(ctx context.Context) int {
+			return featureFlagsClient.IntFlag(ctx, featureflags.ClientProxyMaxConnectionsPerSandbox)
+		},
+	}
+
 	getTargetFromRequest := reverseproxy.GetTargetFromRequest()
 	forwardedHostDomains = normalizeForwardedHostDomains(forwardedHostDomains)
 	proxy := reverseproxy.New(
@@ -342,7 +355,11 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 				RequestLogger:       l,
 				SandboxPort:         port,
 				ConnectionKey:       connectionKey,
-				Url:                 url,
+				// Share the pool across sandboxes via ConnectionKey, but account
+				// the ingress limiter per sandbox via LimitKey, so one sandbox
+				// cannot occupy the shared edge without bound.
+				LimitKey: sandboxId,
+				Url:      url,
 				MaskRequestHost: clientProxyMaskRequestHost(
 					ctx,
 					featureFlagsClient,
@@ -352,7 +369,7 @@ func NewClientProxy(meterProvider metric.MeterProvider, serviceName string, port
 				),
 			}, nil
 		},
-		nil,
+		connLimitConfig,
 		false,
 		proxyOptions...,
 	)
