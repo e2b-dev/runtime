@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 type CreationMetadata struct {

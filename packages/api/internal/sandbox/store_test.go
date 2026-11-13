@@ -17,10 +17,10 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	reservationsredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	reservationsredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
 
 // newTestStorage spins up a redis testcontainer and returns a fresh redis-backed

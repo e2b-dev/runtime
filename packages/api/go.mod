@@ -18,7 +18,6 @@ require (
 	buf.build/go/protovalidate v1.4.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/bsm/redislock v0.10.0
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/coreos/go-oidc/v3 v3.15.0
 	github.com/e2b-dev/infra/packages/auth v0.0.0
@@ -118,6 +117,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.5 // indirect
 	github.com/bits-and-blooms/bloom/v3 v3.7.0 // indirect
+	github.com/bsm/redislock v0.10.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.4 // indirect

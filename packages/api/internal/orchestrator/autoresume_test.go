@@ -19,11 +19,11 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 

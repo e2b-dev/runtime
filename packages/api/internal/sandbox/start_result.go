@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 // reservationResult is the serializable result stored in Redis for cross-instance communication.

@@ -1,11 +1,11 @@
 package sandbox
 
-import "github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
+import "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 
 // This file re-exports the sandbox domain types defined in the sandboxtypes
 // leaf package. The types live in sandboxtypes (rather than directly in
-// package sandbox) so storage backends like sandbox/storage/memory and
-// sandbox/storage/redis can implement the Storage interface without creating
+// package sandbox) so storage backends like sandboxstore/storage/redis can
+// implement the Storage interface without creating
 // an import cycle back into package sandbox. External callers can continue to
 // reference these symbols through sandbox.Sandbox, sandbox.State, etc.
 
