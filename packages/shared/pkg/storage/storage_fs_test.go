@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -433,4 +435,75 @@ func TestWriteToNonExistentObject(t *testing.T) {
 
 	_, err = GetBlob(t.Context(), obj)
 	require.ErrorIs(t, err, ErrObjectNotExist)
+}
+
+func TestFSReadOnlyObject(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+
+	p := newTempProvider(t)
+	path := filepath.Join(p.basePath, "object")
+	const contents = "hello world"
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o444))
+	require.NoError(t, os.Chmod(p.basePath, 0o555))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(p.basePath, 0o755))
+	})
+
+	t.Run("WriteTo", func(t *testing.T) {
+		obj, err := p.OpenBlob(t.Context(), "object")
+		require.NoError(t, err)
+		var dst bytes.Buffer
+		n, err := obj.WriteTo(t.Context(), &dst)
+		require.NoError(t, err)
+		assert.EqualValues(t, len(contents), n)
+		assert.Equal(t, contents, dst.String())
+	})
+	t.Run("Size", func(t *testing.T) {
+		obj, err := p.OpenSeekable(t.Context(), "object")
+		require.NoError(t, err)
+		size, err := obj.Size(t.Context())
+		require.NoError(t, err)
+		assert.EqualValues(t, len(contents), size)
+	})
+	t.Run("OpenRangeReader", func(t *testing.T) {
+		obj, err := p.OpenSeekable(t.Context(), "object")
+		require.NoError(t, err)
+		reader, _, err := obj.OpenRangeReader(t.Context(), 6, 5, nil)
+		require.NoError(t, err)
+		defer reader.Close(t.Context())
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		assert.Equal(t, "world", string(data))
+	})
+}
+
+func TestFSReadMissingObject(t *testing.T) {
+	t.Parallel()
+	p := newTempProvider(t)
+	obj, err := p.OpenSeekable(t.Context(), "missing")
+	require.NoError(t, err)
+
+	_, err = obj.Size(t.Context())
+	require.ErrorIs(t, err, ErrObjectNotExist)
+	reader, _, err := obj.OpenRangeReader(t.Context(), 0, 1, nil)
+	require.ErrorIs(t, err, ErrObjectNotExist)
+	assert.Nil(t, reader)
+	assert.NoFileExists(t, filepath.Join(p.basePath, "missing"))
+}
+
+func TestFSReadDirectory(t *testing.T) {
+	t.Parallel()
+	p := newTempProvider(t)
+	require.NoError(t, os.Mkdir(filepath.Join(p.basePath, "directory"), 0o755))
+	obj, err := p.OpenSeekable(t.Context(), "directory")
+	require.NoError(t, err)
+
+	_, err = obj.Size(t.Context())
+	require.ErrorContains(t, err, "is a directory")
+	reader, _, err := obj.OpenRangeReader(t.Context(), 0, 1, nil)
+	require.ErrorContains(t, err, "is a directory")
+	assert.Nil(t, reader)
 }
