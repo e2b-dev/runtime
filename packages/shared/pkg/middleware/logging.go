@@ -124,6 +124,11 @@ func LoggingMiddleware(logger logger.Logger, conf Config) gin.HandlerFunc {
 			switch {
 			case status >= http.StatusInternalServerError:
 				level = zapcore.ErrorLevel
+			case status == http.StatusNotFound:
+				// A 404 is a normal "resource already gone / never existed"
+				// outcome (e.g. SDK cleanup racing sandbox expiry), not a
+				// client error worth a WARN in the access log.
+				level = zapcore.InfoLevel
 			case status >= http.StatusBadRequest:
 				level = zapcore.WarnLevel
 			}
