@@ -201,7 +201,7 @@ func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID s
 	return transition, alreadyDone, func(ctx context.Context, workErr error) {
 		err := s.storage.FinishTransition(ctx, teamID, sandboxID, transition.ID, opts.Action, sandboxtypes.TransitionOutcomeOf(workErr))
 		if err != nil {
-			logger.L().Warn(ctx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transitionID", transition.ID), zap.Error(err))
+			logger.L().Warn(ctx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transition_id", transition.ID), zap.Error(err))
 		}
 	}, nil
 }

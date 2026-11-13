@@ -178,7 +178,7 @@ func (s *Storage) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 		)
 	}
 
-	logger.L().Debug(ctx, "Started state transition", logger.WithSandboxID(sandboxID), zap.String("state", string(newState)), zap.String("transitionID", transitionID))
+	logger.L().Debug(ctx, "Started state transition", logger.WithSandboxID(sandboxID), zap.String("state", string(newState)), zap.String("transition_id", transitionID))
 
 	transition.Sandbox = updated
 	transition.OriginalEndTime = &sbx.EndTime
@@ -200,7 +200,7 @@ func (s *Storage) FinishTransition(ctx context.Context, teamID uuid.UUID, sandbo
 	if outcome.Failed {
 		outcomeErr = errors.New(outcome.Error)
 	}
-	logger.L().Debug(ctx, "Transition complete", logger.WithSandboxID(sandboxID), zap.String("state", string(stateAction.TargetState)), zap.String("transitionID", transitionID), zap.Error(outcomeErr))
+	logger.L().Debug(ctx, "Transition complete", logger.WithSandboxID(sandboxID), zap.String("state", string(stateAction.TargetState)), zap.String("transition_id", transitionID), zap.Error(outcomeErr))
 
 	var restoreErr error
 	if stateAction.Effect == sandboxtypes.TransitionTransient && !outcome.Failed && !outcome.SkipRestore {
