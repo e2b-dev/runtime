@@ -127,15 +127,24 @@ func GetAccessTokenHashFromMMDS(ctx context.Context) (string, error) {
 	return opts.AccessTokenHash, nil
 }
 
-func PollForMMDSOpts(ctx context.Context, mmdsChan chan<- *MMDSOpts, envVars *utils.EnvVars) {
-	// Match mmdsAccessTokenClient: bound any single tick (e.g. -j DROP on
-	// MMDS would otherwise hang on the TCP handshake) and avoid keepalive
-	// so a broken intermediate doesn't poison a kept-open connection.
-	httpClient := &http.Client{
-		Timeout:   mmdsAccessTokenRequestClientTimeout,
-		Transport: &http.Transport{DisableKeepAlives: true},
+func PollForMMDSOpts(ctx context.Context, mmdsChan chan<- *MMDSOpts, envVars *utils.EnvVars, isNotFC bool) {
+	pollForMMDSOpts(ctx, mmdsChan, envVars, isNotFC, nil, E2BRunDir)
+}
+
+// Tests use an owned HTTP server and directory rather than guest metadata.
+func pollForMMDSOpts(ctx context.Context, mmdsChan chan<- *MMDSOpts, envVars *utils.EnvVars, isNotFC bool, httpClient *http.Client, runDir string) {
+	if isNotFC {
+		return
 	}
-	defer httpClient.CloseIdleConnections()
+
+	if httpClient == nil {
+		// Bound a single request and avoid reusing a broken connection.
+		httpClient = &http.Client{
+			Timeout:   mmdsAccessTokenRequestClientTimeout,
+			Transport: &http.Transport{DisableKeepAlives: true},
+		}
+		defer httpClient.CloseIdleConnections()
+	}
 
 	var lastErr error
 
@@ -170,10 +179,10 @@ func PollForMMDSOpts(ctx context.Context, mmdsChan chan<- *MMDSOpts, envVars *ut
 			envVars.Store("E2B_SANDBOX_ID", mmdsOpts.SandboxID)
 			envVars.Store("E2B_TEMPLATE_ID", mmdsOpts.TemplateID)
 
-			if err := os.WriteFile(filepath.Join(E2BRunDir, ".E2B_SANDBOX_ID"), []byte(mmdsOpts.SandboxID), 0o666); err != nil {
+			if err := os.WriteFile(filepath.Join(runDir, ".E2B_SANDBOX_ID"), []byte(mmdsOpts.SandboxID), 0o666); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing sandbox ID file: %v\n", err)
 			}
-			if err := os.WriteFile(filepath.Join(E2BRunDir, ".E2B_TEMPLATE_ID"), []byte(mmdsOpts.TemplateID), 0o666); err != nil {
+			if err := os.WriteFile(filepath.Join(runDir, ".E2B_TEMPLATE_ID"), []byte(mmdsOpts.TemplateID), 0o666); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing template ID file: %v\n", err)
 			}
 
