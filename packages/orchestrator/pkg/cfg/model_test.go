@@ -71,6 +71,49 @@ func TestParse(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, config.DisableStartupReclaim)
 	})
+
+	t.Run("volume read dir concurrency gets defaults", func(t *testing.T) {
+		config, err := Parse()
+		require.NoError(t, err)
+
+		assert.Equal(t, ReadDirConcurrencyConfig{Threshold: 1000, Base: 8, Step: 5000, Max: 16}, config.VolumeReadDirConcurrency)
+	})
+
+	t.Run("volume read dir concurrency can be overridden", func(t *testing.T) {
+		t.Setenv("VOLUME_READ_DIR_CONCURRENCY_THRESHOLD", "100")
+		t.Setenv("VOLUME_READ_DIR_CONCURRENCY_BASE", "2")
+		t.Setenv("VOLUME_READ_DIR_CONCURRENCY_STEP", "50")
+		t.Setenv("VOLUME_READ_DIR_CONCURRENCY_MAX", "6")
+
+		config, err := Parse()
+		require.NoError(t, err)
+
+		assert.Equal(t, ReadDirConcurrencyConfig{Threshold: 100, Base: 2, Step: 50, Max: 6}, config.VolumeReadDirConcurrency)
+	})
+
+	t.Run("volume read dir concurrency rejects unusable scaling", func(t *testing.T) {
+		tests := []struct {
+			name string
+			envs map[string]string
+		}{
+			{"negative threshold", map[string]string{"VOLUME_READ_DIR_CONCURRENCY_THRESHOLD": "-1"}},
+			{"zero base", map[string]string{"VOLUME_READ_DIR_CONCURRENCY_BASE": "0"}},
+			{"zero step", map[string]string{"VOLUME_READ_DIR_CONCURRENCY_STEP": "0"}},
+			{"max below base", map[string]string{"VOLUME_READ_DIR_CONCURRENCY_BASE": "4", "VOLUME_READ_DIR_CONCURRENCY_MAX": "3"}},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				for key, value := range test.envs {
+					t.Setenv(key, value)
+				}
+
+				_, err := Parse()
+				require.Error(t, err)
+				assert.ErrorContains(t, err, "VOLUME_READ_DIR_CONCURRENCY")
+			})
+		}
+	})
 }
 
 func TestAdditionalClickhouseEndpoints(t *testing.T) {
