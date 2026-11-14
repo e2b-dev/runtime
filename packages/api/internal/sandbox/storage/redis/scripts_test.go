@@ -31,15 +31,15 @@ func TestRunScript_RecordsCallsAndDurationByScript(t *testing.T) {
 	key := recordKey("sbx")
 	goneKey := goneKeyFor(key)
 
-	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey}, "{}", "sbx", "exec", "0", 60).Err())
+	require.NoError(t, metrics.run(t.Context(), client, "add_sandbox", addSandboxScript, []string{key, goneKey, metaKeyFor(key)}, "{}", "sbx", "exec", "0", 60, metaOf("exec")).Err())
 	lockRecord(t, client, key)
 
-	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key)}, "sbx", "", 60, "", testLockValue))
+	deleted, raw, _, err := parseRemoveReply(metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key), metaKeyFor(key)}, "sbx", "", 60, "", testLockValue))
 	require.NoError(t, err)
 	require.True(t, deleted)
 	require.Equal(t, "{}", raw)
 
-	err = metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key)}, "sbx", "", 60, "", testLockValue).Err()
+	err = metrics.run(t.Context(), client, "remove_record", removeSandboxScript, []string{key, goneKey, redis_utils.GetLockKey(key), metaKeyFor(key)}, "sbx", "", 60, "", testLockValue).Err()
 	require.ErrorIs(t, err, redis.Nil)
 
 	failing := redis.NewScript(`return redis.call('NOSUCHCOMMAND')`)

@@ -172,7 +172,13 @@ func transitionKeysFor(t *testing.T, client redis.UniversalClient, sbx sandboxty
 		transitionKeyFor(sbx.SandboxID),
 		transitionResultKeyFor(sbx.SandboxID, transitionID),
 		lockKey,
+		metaKeyFor(key),
 	}
+}
+
+// metaOf packs a record's execution ID into the meta value for tests (no hold).
+func metaOf(eid string) string {
+	return eid + metaFieldSep + metaFieldSep + "0"
 }
 
 const transitionLockValue = "token"
@@ -192,7 +198,7 @@ func TestStartTransitionScript_RefusesAStaleIncarnation(t *testing.T) {
 	written, err := startTransitionScript.Run(ctx, client, keys,
 		`{"executionID":"clobbered"}`, transitionID, 60, 60,
 		uuid.NewString(), // the incarnation the caller pinned, no longer stored
-		transitionLockValue,
+		transitionLockValue, metaOf("clobbered"),
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written, "the script must refuse a stale pin")
@@ -223,7 +229,7 @@ func TestStartTransitionScript_ProceedsOnTheMatchingIncarnation(t *testing.T) {
 	require.NoError(t, err)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
+		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue, metaOf(sbx.ExecutionID),
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
@@ -250,7 +256,7 @@ func TestStartTransitionScript_RefusesADeletedRecord(t *testing.T) {
 	keys := transitionKeysFor(t, client, sbx, transitionID)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		`{"executionID":"resurrected"}`, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
+		`{"executionID":"resurrected"}`, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue, metaOf("resurrected"),
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), written)
@@ -278,7 +284,7 @@ func TestStartTransitionScript_UnpinnedWritesUnconditionally(t *testing.T) {
 	require.NoError(t, err)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		data, transitionID, 60, 60, "", transitionLockValue,
+		data, transitionID, 60, 60, "", transitionLockValue, metaOf(sbx.ExecutionID),
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), written)
@@ -308,7 +314,7 @@ func TestStartTransitionScript_RefusesALostLock(t *testing.T) {
 	require.NoError(t, err)
 
 	written, err := startTransitionScript.Run(ctx, client, keys,
-		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue,
+		data, transitionID, 60, 60, sbx.ExecutionID, transitionLockValue, metaOf(sbx.ExecutionID),
 	).Int64()
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), written)
