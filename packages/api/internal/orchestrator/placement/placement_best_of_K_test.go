@@ -612,6 +612,8 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 		filterByLabels bool
 		pinnedModel    string
 		requiredLabels []string
+		checkedNodes   int
+		rejections     nodeRejectionCounts
 		wantContains   []string
 		wantNotContain string
 	}{
@@ -619,9 +621,13 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 			name:           "without label filtering",
 			filterByLabels: false,
 			requiredLabels: nil,
+			checkedNodes:   10,
+			rejections:     nodeRejectionCounts{cpuMismatch: 10},
 			wantContains: []string{
 				"no node available with required metadata",
 				fmt.Sprintf("machine=%v", machine),
+				"rejected 10 node(s)",
+				"10 cpu-incompatible",
 			},
 			wantNotContain: "labels=",
 		},
@@ -646,10 +652,15 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 			name:           "with label filtering",
 			filterByLabels: true,
 			requiredLabels: []string{"gpu", "fast-disk"},
+			checkedNodes:   5,
+			rejections:     nodeRejectionCounts{notAccepting: 2, labelMismatch: 3},
 			wantContains: []string{
 				"no node available with required metadata",
 				fmt.Sprintf("machine=%v", machine),
 				"labels=[gpu fast-disk]",
+				"rejected 5 node(s)",
+				"2 not-accepting",
+				"3 label-filtered",
 			},
 		},
 		{
@@ -680,6 +691,8 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 				filterByLabels: tt.filterByLabels,
 				requiredLabels: tt.requiredLabels,
 				cpu:            CPURequirement{Build: machine, PinnedModel: tt.pinnedModel},
+				checkedNodes:   tt.checkedNodes,
+				rejections:     tt.rejections,
 			}
 
 			msg := err.Error()
@@ -693,6 +706,62 @@ func TestFailedToPlaceSandboxError_Error(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBestOfK_Sample_RejectionCounts verifies sample() tallies each filter
+// stage when no candidate survives: one node per rejection reason, counted once.
+func TestBestOfK_Sample_RejectionCounts(t *testing.T) {
+	t.Parallel()
+
+	config := BestOfKConfig{R: 4, Alpha: 0.5, K: 1}
+	algo := NewBestOfK(config).(*BestOfK)
+
+	// One node that will be excluded by ID, one that cannot accept new
+	// requests, and one CPU-incompatible node (wrong pinned model).
+	excluded := nodemanager.NewTestNode("excluded", api.NodeStatusReady, 0, 8, emptyHugePool())
+	draining := nodemanager.NewTestNode("draining", api.NodeStatusDraining, 0, 8, emptyHugePool())
+
+	nodes := []*nodemanager.Node{excluded, draining}
+	excludedNodes := map[string]struct{}{"excluded": {}}
+
+	candidates, poolsFull, rejections := algo.sample(
+		nodes, config, excludedNodes,
+		nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512},
+		Requirements{}, false, nil,
+	)
+
+	assert.Empty(t, candidates, "no node should survive")
+	assert.False(t, poolsFull, "no node reached the memory stage")
+	assert.Equal(t, 1, rejections.excluded, "the excluded node is tallied once")
+	assert.Equal(t, 1, rejections.notAccepting, "the draining node is tallied once")
+	assert.Equal(t, 2, rejections.excluded+rejections.notAccepting+rejections.cpuMismatch+
+		rejections.featureMismatch+rejections.labelMismatch+rejections.memoryMismatch,
+		"every rejection is attributed to exactly one stage")
+}
+
+// TestBestOfK_ChooseNode_PropagatesRejectionBreakdown verifies the per-stage
+// counts reach FailedToPlaceSandboxError.Error() end-to-end: a fleet whose only
+// node is CPU-incompatible yields a "cpu-incompatible" breakdown.
+func TestBestOfK_ChooseNode_PropagatesRejectionBreakdown(t *testing.T) {
+	t.Parallel()
+
+	config := BestOfKConfig{R: 4, Alpha: 0.5, K: 3}
+	algo := NewBestOfK(config).(*BestOfK)
+
+	// A ready node that fails only the pinned-CPU-model requirement.
+	node := nodemanager.NewTestNode("wrong-cpu", api.NodeStatusReady, 0, 8, emptyHugePool())
+
+	_, err := algo.chooseNode(
+		t.Context(), []*nodemanager.Node{node}, nil,
+		nodemanager.SandboxResources{CPUs: 1, MiBMemory: 512},
+		Requirements{CPU: CPURequirement{PinnedModel: "nonexistent-model"}},
+		false, nil,
+	)
+
+	var placeErr FailedToPlaceSandboxError
+	require.ErrorAs(t, err, &placeErr)
+	assert.Contains(t, placeErr.Error(), "rejected 1 node(s)")
+	assert.Contains(t, placeErr.Error(), "1 cpu-incompatible")
 }
 
 func TestFailedToPlaceSandboxError_IsError(t *testing.T) {
@@ -754,7 +823,7 @@ func TestBestOfK_Sample(t *testing.T) {
 	excludedNodes := make(map[string]struct{})
 
 	// Test sampling fewer nodes than available
-	sampled, _ := algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
+	sampled, _, _ := algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
 	assert.LessOrEqual(t, len(sampled), 3)
 
 	// Check all sampled nodes are unique
@@ -767,7 +836,7 @@ func TestBestOfK_Sample(t *testing.T) {
 	// Test sampling with exclusions
 	excludedNodes["a"] = struct{}{}
 	excludedNodes["b"] = struct{}{}
-	sampled, _ = algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
+	sampled, _, _ = algo.sample(nodes, config, excludedNodes, nodemanager.SandboxResources{}, Requirements{}, false, nil)
 
 	for _, n := range sampled {
 		assert.NotEqual(t, "a", n.ID)
