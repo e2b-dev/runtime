@@ -3,6 +3,7 @@
 package fc
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
 
@@ -49,7 +51,7 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 				"ln -s /orchestrator/sandbox/rootfs-test-sandbox-static-id.link /fc-vm/rootfs.ext4",
 				"mkdir -p /fc-vm/6.1.0",
 				"ln -s /fc-kernels/6.1.0/vmlinux.bin /fc-vm/6.1.0/vmlinux.bin",
-				"ip netns exec ns-789 /fc-versions/1.4.0/firecracker --api-sock",
+				"nsenter --net=/var/run/netns/ns-789 -- /fc-versions/1.4.0/firecracker --api-sock",
 				"fc-test-sandbox-static-id.sock",
 			},
 		},
@@ -74,7 +76,7 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 				"ln -s /orchestrator/sandbox/rootfs-legacy-sandbox-legacy-id.link /mnt/disks/fc-envs/v1/legacy-template/builds/legacy-build/rootfs.ext4",
 				"mount -t tmpfs tmpfs /fc-vm/5.10.0 -o X-mount.mkdir",
 				"ln -s /fc-kernels/5.10.0/vmlinux.bin /fc-vm/5.10.0/vmlinux.bin",
-				"ip netns exec legacy-ns /fc-versions/1.3.0/firecracker --api-sock",
+				"nsenter --net=/var/run/netns/legacy-ns -- /fc-versions/1.3.0/firecracker --api-sock",
 				"fc-legacy-sandbox-legacy-id.sock",
 			},
 		},
@@ -96,7 +98,7 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 			expectedScriptContent: []string{
 				"mkdir -p /fc-vm/6.2.1",
 				"ln -s /fc-kernels/6.2.1/vmlinux.bin /fc-vm/6.2.1/vmlinux.bin",
-				"ip netns exec custom-ns-id /fc-versions/1.5.0-beta/firecracker --api-sock",
+				"nsenter --net=/var/run/netns/custom-ns-id -- /fc-versions/1.5.0-beta/firecracker --api-sock",
 				"fc-custom-sandbox-custom-id.sock",
 			},
 		},
@@ -130,8 +132,11 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 			if !strings.Contains(result.Value, "mount --make-rprivate /") {
 				t.Error("Script should start with mount command")
 			}
-			if !strings.Contains(result.Value, "ip netns exec") {
-				t.Error("Script should end with firecracker execution")
+			if !strings.Contains(result.Value, "nsenter --net=") {
+				t.Error("Script should end with firecracker execution via nsenter")
+			}
+			if strings.Contains(result.Value, "ip netns exec") {
+				t.Error("Script must not contain ip netns exec (triggers a second mount namespace copy)")
 			}
 
 			// Test that the script has proper formatting (should not have extra spaces or newlines)
@@ -141,6 +146,156 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStartScriptBuilder_NoIpNetnsExec is the core regression guard for the perf fix:
+// `ip netns exec` internally calls unshare(CLONE_NEWNS), triggering a second mount-tree
+// copy that contends on the namespace_sem global kernel lock under high concurrency.
+func TestStartScriptBuilder_NoIpNetnsExec(t *testing.T) {
+	t.Parallel()
+	config, err := cfg.ParseBuilder()
+	require.NoError(t, err)
+
+	builder := NewStartScriptBuilder(config)
+
+	for _, version := range []uint64{1, 2} {
+		t.Run(fmt.Sprintf("template_v%d", version), func(t *testing.T) {
+			t.Parallel()
+			result, err := builder.Build(
+				Config{KernelVersion: "6.1.0", FirecrackerVersion: "1.4.0"},
+				createTestSandboxFiles("sbx", "sid"),
+				RootfsPaths{TemplateVersion: version, TemplateID: "tmpl", BuildID: "bld"},
+				"ns-42",
+			)
+			require.NoError(t, err)
+			assert.NotContains(t, result.Value, "ip netns exec",
+				"script must not contain ip netns exec (triggers a second mount namespace copy)")
+		})
+	}
+}
+
+// TestStartScriptBuilder_NsenterFormat verifies the nsenter command shape: full
+// /var/run/netns/<id> path, the `--` separator so firecracker args are not parsed
+// by nsenter, and the firecracker binary immediately after.
+func TestStartScriptBuilder_NsenterFormat(t *testing.T) {
+	t.Parallel()
+	config, err := cfg.ParseBuilder()
+	require.NoError(t, err)
+
+	builder := NewStartScriptBuilder(config)
+
+	for _, namespaceID := range []string{"ns-1", "ns-32766", "my-custom-ns"} {
+		t.Run(namespaceID, func(t *testing.T) {
+			t.Parallel()
+			result, err := builder.Build(
+				Config{KernelVersion: "6.1.0", FirecrackerVersion: "1.4.0"},
+				createTestSandboxFiles("sbx", "sid"),
+				RootfsPaths{TemplateVersion: 2, TemplateID: "tmpl", BuildID: "bld"},
+				namespaceID,
+			)
+			require.NoError(t, err)
+			assert.Contains(t, result.Value,
+				fmt.Sprintf("nsenter --net=%s --", network.NetNSPath(namespaceID)),
+				"nsenter must use the full netns path with a -- separator")
+		})
+	}
+}
+
+// TestStartScriptBuilder_NetNamespacePath pins the NetNamespacePath construction in
+// buildArgs to network.NetNSPath, the single source of truth shared with the slot.
+func TestStartScriptBuilder_NetNamespacePath(t *testing.T) {
+	t.Parallel()
+	config, err := cfg.ParseBuilder()
+	require.NoError(t, err)
+
+	builder := NewStartScriptBuilder(config)
+
+	for _, namespaceID := range []string{"ns-1", "ns-100"} {
+		t.Run(namespaceID, func(t *testing.T) {
+			t.Parallel()
+			args := builder.buildArgs(
+				Config{KernelVersion: "6.1.0", FirecrackerVersion: "1.4.0"},
+				createTestSandboxFiles("sbx", "sid"),
+				RootfsPaths{TemplateVersion: 2, TemplateID: "tmpl", BuildID: "bld"},
+				namespaceID,
+			)
+			assert.Equal(t, network.NetNSPath(namespaceID), args.NetNamespacePath)
+			assert.Equal(t, "/var/run/netns/"+namespaceID, args.NetNamespacePath)
+		})
+	}
+}
+
+// BenchmarkBuild measures single-goroutine script generation cost for both
+// template versions. This covers template rendering and path construction only;
+// subprocess spawn and namespace syscalls (the actual perf win) require root +
+// real netns files and cannot be measured here.
+//
+// Run with:
+//
+//	go test -bench=BenchmarkBuild -benchmem -count=5 \
+//	    ./packages/orchestrator/pkg/sandbox/fc/
+func BenchmarkBuild(b *testing.B) {
+	config, err := cfg.ParseBuilder()
+	if err != nil {
+		b.Fatal(err)
+	}
+	builder := NewStartScriptBuilder(config)
+	files := createTestSandboxFiles("sbx", "sid")
+
+	b.Run("v2", func(b *testing.B) {
+		b.ReportAllocs()
+		versions := Config{KernelVersion: "6.1.0", FirecrackerVersion: "1.4.0"}
+		rp := RootfsPaths{TemplateVersion: 2, TemplateID: "tmpl", BuildID: "bld"}
+		for b.Loop() {
+			if _, err := builder.Build(versions, files, rp, "ns-1"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("v1", func(b *testing.B) {
+		b.ReportAllocs()
+		versions := Config{KernelVersion: "5.10.0", FirecrackerVersion: "1.3.0"}
+		rp := RootfsPaths{TemplateVersion: 1, TemplateID: "tmpl", BuildID: "bld"}
+		for b.Loop() {
+			if _, err := builder.Build(versions, files, rp, "ns-1"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// BenchmarkSandboxConcurrentStart measures script generation throughput under
+// GOMAXPROCS parallelism, simulating concurrent sandbox startup at the
+// template-rendering layer. It confirms StartScriptBuilder is stateless and
+// contention-free in Go (the namespace_sem kernel lock that caused >400 ms
+// latency under ip-netns-exec no longer appears in this path at all).
+//
+// Run with:
+//
+//	go test -bench=BenchmarkSandboxConcurrentStart -benchmem -count=5 \
+//	    -cpu=1,4,8,16 \
+//	    ./packages/orchestrator/pkg/sandbox/fc/
+//
+// Expected: throughput scales linearly with -cpu; no lock-induced flattening.
+func BenchmarkSandboxConcurrentStart(b *testing.B) {
+	config, err := cfg.ParseBuilder()
+	if err != nil {
+		b.Fatal(err)
+	}
+	builder := NewStartScriptBuilder(config)
+	files := createTestSandboxFiles("sbx", "sid")
+	versions := Config{KernelVersion: "6.1.0", FirecrackerVersion: "1.4.0"}
+	rp := RootfsPaths{TemplateVersion: 2, TemplateID: "tmpl", BuildID: "bld"}
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if _, err := builder.Build(versions, files, rp, "ns-1"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 // createTestSandboxFiles creates a SandboxFiles instance for testing
