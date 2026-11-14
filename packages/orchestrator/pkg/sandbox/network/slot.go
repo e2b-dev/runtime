@@ -414,7 +414,7 @@ func (s *Slot) reapplyNonDNSUDPMode(ctx context.Context) (bool, error) {
 	}
 
 	egress := s.tenantEgress
-	if err := fw.ApplyRules(ctx, egress.GetEgressProxyAddress() != "", mode, egress.GetAllowedCidrs(), egress.GetDeniedCidrs()); err != nil {
+	if err := fw.ApplyRules(ctx, egress.GetEgressProxyAddress() != "", mode, egress.GetAllowedCidrs(), egress.GetDeniedCidrs(), egress.GetDefaultDeny()); err != nil {
 		return false, err
 	}
 
@@ -569,7 +569,9 @@ func (s *Slot) ConfigureInternet(ctx context.Context, network *orchestrator.Sand
 	egress := network.GetEgress()
 	hasUserRules := len(egress.GetAllowedCidrs()) != 0 ||
 		len(egress.GetDeniedCidrs()) != 0 ||
-		len(egress.GetAllowedDomains()) != 0
+		len(egress.GetAllowedDomains()) != 0 ||
+		len(egress.GetDeniedDomains()) != 0 ||
+		egress.GetDefaultDeny()
 	hasBYOP := egress.GetEgressProxyAddress() != ""
 
 	s.firewallMu.Lock()
@@ -594,7 +596,7 @@ func (s *Slot) ConfigureInternet(ctx context.Context, network *orchestrator.Sand
 		s.firewallCustomRules.Store(true)
 	}
 
-	if err := fw.ApplyRules(ctx, hasBYOP, mode, egress.GetAllowedCidrs(), egress.GetDeniedCidrs()); err != nil {
+	if err := fw.ApplyRules(ctx, hasBYOP, mode, egress.GetAllowedCidrs(), egress.GetDeniedCidrs(), egress.GetDefaultDeny()); err != nil {
 		return err
 	}
 	s.rememberTenant(ctx, egress)
@@ -624,7 +626,7 @@ func (s *Slot) UpdateInternet(ctx context.Context, egress *orchestrator.SandboxN
 	// Set before mutating: a partial failure must still trigger cleanup.
 	s.firewallCustomRules.Store(true)
 
-	if err := fw.ApplyRules(ctx, hasBYOP, s.currentNonDNSUDPMode(ctx), allowedCIDRs, deniedCIDRs); err != nil {
+	if err := fw.ApplyRules(ctx, hasBYOP, s.currentNonDNSUDPMode(ctx), allowedCIDRs, deniedCIDRs, egress.GetDefaultDeny()); err != nil {
 		return err
 	}
 	s.rememberTenant(ctx, egress)
@@ -680,7 +682,7 @@ func (s *Slot) ResetInternet(ctx context.Context) error {
 
 	if s.firewallCustomRules.Load() {
 		// Revert BYOP so the next tenant can't inherit non-TCP-only deny rules.
-		if err := fw.ApplyRules(ctx, false, s.currentNonDNSUDPMode(ctx), nil, nil); err != nil {
+		if err := fw.ApplyRules(ctx, false, s.currentNonDNSUDPMode(ctx), nil, nil, false); err != nil {
 			return err
 		}
 	}

@@ -381,6 +381,71 @@ func TestIsEgressAllowed(t *testing.T) {
 			want:      true,
 			wantError: false,
 		},
+		{
+			name: "default_deny drops traffic matching no allow rule",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{DefaultDeny: true},
+			},
+			hostname: "example.com",
+			ip:       net.ParseIP("1.2.3.4"),
+			want:     false,
+		},
+		{
+			name: "default_deny still allows an explicitly allowed domain",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{
+					DefaultDeny:    true,
+					AllowedDomains: []string{"example.com"},
+				},
+			},
+			hostname: "example.com",
+			ip:       net.ParseIP("1.2.3.4"),
+			want:     true,
+		},
+		{
+			name: "default_deny still allows an explicitly allowed CIDR",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{
+					DefaultDeny:  true,
+					AllowedCidrs: []string{"1.2.3.0/24"},
+				},
+			},
+			hostname: "",
+			ip:       net.ParseIP("1.2.3.4"),
+			want:     true,
+		},
+		{
+			name: "default_deny drops a no-hostname (no-SNI) connection not in an allow CIDR",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{DefaultDeny: true},
+			},
+			hostname: "",
+			ip:       net.ParseIP("9.9.9.9"),
+			want:     false,
+		},
+		{
+			name: "denied_domains blocks a domain even under default-allow",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{
+					DeniedDomains: []string{"*.evil.com"},
+				},
+			},
+			hostname: "c2.evil.com",
+			ip:       net.ParseIP("1.2.3.4"),
+			want:     false,
+		},
+		{
+			name: "allowed_domains beats denied_domains (allow has priority)",
+			network: &orchestrator.SandboxNetworkConfig{
+				Egress: &orchestrator.SandboxNetworkEgressConfig{
+					AllowedDomains: []string{"safe.evil.com"},
+					DeniedDomains:  []string{"*.evil.com"},
+				},
+			},
+			hostname: "safe.evil.com",
+			ip:       net.ParseIP("1.2.3.4"),
+			want:     true,
+		},
 	}
 
 	for _, tt := range tests {

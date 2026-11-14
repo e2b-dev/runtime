@@ -97,7 +97,7 @@ func TestHeadFilterRules_LeadEveryPolicy(t *testing.T) { //nolint:paralleltest /
 
 	require.True(t, summarizeFilterChain(t, slot.NamespaceID()).plainAcceptFirst, "the head rule leads the initial rules")
 
-	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeCount, []string{"192.0.2.0/24"}, []string{"0.0.0.0/0"}))
+	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeCount, []string{"192.0.2.0/24"}, []string{"0.0.0.0/0"}, false))
 	require.True(t, summarizeFilterChain(t, slot.NamespaceID()).plainAcceptFirst, "the head rule leads a replaced policy, the non-DNS UDP rule included")
 
 	require.NoError(t, slot.DenyEgress(t.Context()))
