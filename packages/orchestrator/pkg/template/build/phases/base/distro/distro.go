@@ -125,6 +125,31 @@ var Profiles = []Profile{
 		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
 	},
 	{
+		// Kylin Linux Advanced Server (银河麒麟高级服务器) V10 is an RPM/dnf,
+		// systemd distro widely used across domestic infrastructure. Its
+		// /etc/os-release declares ID=kylin and no ID_LIKE, so without this
+		// profile a Kylin base falls through to the unsupported-distro error.
+		// Verified against macrosan/kylin:v10-sp3-2403: RHEL-shaped, with the
+		// same one difference as openEuler — it ships shadow, not shadow-utils.
+		Key:  "kylin",
+		Init: InitSystemd,
+		IDs:  []string{"kylin"},
+		Packages: []string{
+			"systemd", "shadow", "passwd", "openssh-server", "sudo", "chrony",
+			"socat", "curl", "ca-certificates", "fuse3", "iptables", "git",
+			"nfs-utils", "less", "nftables", "iputils", "jq", "bash", "tar",
+			"iproute", "findutils",
+		},
+		PkgQueryBody: `rpm -q "$1" >/dev/null 2>&1`,
+		PkgInstall:   `dnf -y install --allowerasing "$@" || microdnf -y install "$@" || yum -y install "$@"`,
+		InitBinary:   "/usr/lib/systemd/systemd",
+		TimeSyncUnit: "chronyd",
+		SSHUnit:      "sshd",
+		AdminGroup:   "wheel",
+		CABundle:     "/etc/ssl/certs/ca-certificates.crt",
+		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
+	},
+	{
 		Key:  "arch",
 		Init: InitSystemd,
 		IDs:  []string{"arch", "archarm"},
