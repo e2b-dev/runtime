@@ -188,9 +188,10 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 
 			// We go through the ports map one more time and stop forwarding all ports
 			// that stayed marked as "DELETE".
-			for _, v := range f.ports {
+			for key, v := range f.ports {
 				if v.state == PortStateDelete {
 					f.stopPortForwarding(v)
+					delete(f.ports, key)
 				}
 			}
 
