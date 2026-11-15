@@ -118,7 +118,7 @@ func TestApplyLagFloorsADecisionAheadOfThisClockAtZero(t *testing.T) {
 func newMeasuredService(db *testutils.Database) (*Service, *sdkmetric.ManualReader) {
 	reader := sdkmetric.NewManualReader()
 
-	return NewService(db.AuthDB, db.SqlcClient, &recordingCache{}, sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))), reader
+	return NewService(db.AuthDB, db.SqlcClient, &recordingCache{}, nil, sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))), reader
 }
 
 type applyLagPoints struct {

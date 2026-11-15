@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -75,18 +76,29 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 	if err != nil {
 		return Project{}, false, fmt.Errorf("start project upsert transaction: %w", err)
 	}
+	// Without the request's context, so a caller that gives up mid-check
+	// still ends the transaction and frees the assignment lock.
 	defer func() {
-		_ = tx.Rollback(ctx)
+		_ = tx.Rollback(context.WithoutCancel(ctx))
 	}()
 
-	currentSlug, err := txDB.LockManagedTeam(ctx, project.ID)
+	if project.ClusterID != nil {
+		if err := clusterassign.Lock(ctx, tx, *project.ClusterID); err != nil {
+			return Project{}, false, err
+		}
+	}
+	current, err := txDB.LockManagedTeam(ctx, project.ID)
 
 	switch {
 	case err == nil:
-		stored, err = reconcileProject(ctx, txDB, project, currentSlug)
+		if err = s.checkNewAssignment(ctx, project.ClusterID, current.ClusterID); err == nil {
+			stored, err = reconcileProject(ctx, txDB, project, current.Slug)
+		}
 	case dberrors.IsNotFoundError(err):
-		stored, err = createProject(ctx, txDB, project)
-		created = true
+		if err = s.checkNewAssignment(ctx, project.ClusterID, nil); err == nil {
+			stored, err = createProject(ctx, txDB, project)
+			created = true
+		}
 	default:
 		return Project{}, false, fmt.Errorf("look up project: %w", err)
 	}
@@ -100,6 +112,17 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 	}
 
 	return stored, created, nil
+}
+
+// checkNewAssignment refuses moving a team to a cluster no team may be newly
+// assigned to, returning clusterassign's errors. Keeping the team's current
+// cluster, or giving none, is not a new assignment.
+func (s *Service) checkNewAssignment(ctx context.Context, requested, current *uuid.UUID) error {
+	if requested == nil || (current != nil && *current == *requested) {
+		return nil
+	}
+
+	return clusterassign.Check(ctx, s.clusters, *requested)
 }
 
 func createProject(ctx context.Context, txDB *authqueries.Queries, project Project) (Project, error) {

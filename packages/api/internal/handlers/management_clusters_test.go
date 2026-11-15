@@ -648,6 +648,7 @@ func TestManagementDeleteClusterRefusesAProtectedCluster(t *testing.T) {
 func TestManagementRequestClusterDeletion(t *testing.T) {
 	t.Parallel()
 
+	db := testutils.SetupDatabase(t)
 	for name, tc := range map[string]struct {
 		answer error
 		want   int
@@ -664,6 +665,7 @@ func TestManagementRequestClusterDeletion(t *testing.T) {
 			clusterID := uuid.New()
 			want := clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String(), RequestDeletion: true}.Build()
 			store, clusterService := newClusterServiceStore(t)
+			store.sqlcDB = db.SqlcClient
 			var answer *clustersgrpc.UpdateClusterResponse
 			if tc.answer == nil {
 				answer = clustersgrpc.UpdateClusterResponse_builder{Cluster: clustersgrpc.Cluster_builder{ClusterId: clusterID.String()}.Build()}.Build()

@@ -63,6 +63,12 @@ SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NOT NULL;
 
+-- name: LockTeamCluster :one
+SELECT cluster_id
+FROM public.teams
+WHERE id = sqlc.arg(team_id)::uuid
+FOR UPDATE;
+
 -- name: AssignTeamCluster :one
 WITH locked_team AS MATERIALIZED (
     SELECT cluster_id

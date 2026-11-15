@@ -208,13 +208,15 @@ func newManagementStore(t *testing.T, db *testutils.Database) (*APIStore, *fakeA
 	riverClient, err := river.NewClient(riverpgxv5.New(db.SqlcClient.Pool()), &river.Config{Schema: dbmodule.RiverSchema})
 	require.NoError(t, err)
 
+	clusterService := clusterServiceFromDB(t, db)
+
 	return &APIStore{
 		sqlcDB:            db.SqlcClient,
 		authDB:            db.AuthDB,
 		authService:       auth,
 		riverClient:       riverClient,
-		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider()),
-		clusterService:    clusterServiceFromDB(t, db),
+		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, clusterService, noop.NewMeterProvider()),
+		clusterService:    clusterService,
 	}, auth
 }
 

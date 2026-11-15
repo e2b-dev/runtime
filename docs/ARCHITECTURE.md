@@ -509,18 +509,22 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
-request has the cluster service set `clusters.deletion_requested_at`, returns a conflict while
-deletion protection is on, and succeeds for an absent cluster and on repeat. From then on a
-check constraint keeps deletion protection off, and a trigger on `teams` refuses to newly assign a
-team to the cluster (`cluster_assignment_cluster_deleting` from the assignment route, a conflict
-from the project upsert carrying the cluster ID). The trigger takes a key-share lock on the cluster
-row before it checks, so an assignment either commits before the deletion is recorded, where the
+request has the cluster service record the deletion, returns a conflict while deletion
+protection is on, and succeeds for an absent cluster and on repeat. From then on deletion
+protection stays off, and the API refuses to newly assign a team to the cluster
+(`cluster_assignment_cluster_deleting` from the assignment route, a conflict from the project
+upsert carrying the cluster ID); keeping a team's current cluster is not a new assignment. A new
+assignment, by either route, checks the cluster with the cluster service while holding a
+per-cluster advisory lock in the database, and the deletion request takes that lock once the
+deletion is recorded. So an assignment either commits before the request returns, where the
 caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
 The cluster delete then checks deletion protection with the cluster service, and in one
-transaction refuses a cluster a live team still uses, soft-deletes its templates and clears
-it from teams and templates deleted earlier; last, the cluster service removes the record. A team
-assigned between those steps makes that last step return a conflict with the templates
-already deleted, and a retry once the team is detached finishes the delete.
+transaction refuses a cluster a live team still uses, soft-deletes its templates and clears it
+from teams and templates deleted earlier. Last, holding the same lock, it counts the cluster's
+live teams again and has the cluster service remove the record. A team assigned between those
+steps makes the last one return a conflict with the templates already deleted, and a retry once
+the team is detached finishes the delete; an assignment requested during the last step waits for
+it and is then refused.
 Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
 `cluster_assignment_*`) in the shared error response; callers use that code rather than the
 human-readable message, and treat uncoded or unknown reasons as generic errors.

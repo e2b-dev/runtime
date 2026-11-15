@@ -173,6 +173,20 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 	return items, nil
 }
 
+const lockTeamCluster = `-- name: LockTeamCluster :one
+SELECT cluster_id
+FROM public.teams
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+func (q *Queries) LockTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockTeamCluster, teamID)
+	var cluster_id *uuid.UUID
+	err := row.Scan(&cluster_id)
+	return cluster_id, err
+}
+
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec
 DELETE FROM public.env_aliases
 WHERE env_id = ANY($1::text[])

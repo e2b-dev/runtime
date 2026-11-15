@@ -28,7 +28,7 @@ func TestApplyProjectBanRefusesTheTeamsKeysAndEnqueuesItsContainment(t *testing.
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, auth.Close(context.WithoutCancel(ctx))) })
 	store, _ := newManagementStore(t, db)
-	store.managementService = management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider())
+	store.managementService = management.NewService(db.AuthDB, db.SqlcClient, auth, store.clusterService, noop.NewMeterProvider())
 	teamID := testutils.CreateTestTeam(t, db)
 	key := addProjectAPIKey(t, db, teamID)
 	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())

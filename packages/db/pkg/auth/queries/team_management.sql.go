@@ -134,22 +134,27 @@ func (q *Queries) InsertManagedTeam(ctx context.Context, arg InsertManagedTeamPa
 
 const lockManagedTeam = `-- name: LockManagedTeam :one
 
-SELECT slug FROM public.teams
+SELECT slug, cluster_id FROM public.teams
 WHERE id = $1::uuid
 FOR UPDATE
 `
+
+type LockManagedTeamRow struct {
+	Slug      string
+	ClusterID *uuid.UUID
+}
 
 // Project reconciliation for the control-plane management interface. The caller
 // supplies the id, so create and reconcile are one request and these are its
 // branches.
 // Taken first, so the branch is decided by whether the project exists rather
-// than by an insert failing. Returns the slug so a reconcile can tell whether
-// it moves.
-func (q *Queries) LockManagedTeam(ctx context.Context, id uuid.UUID) (string, error) {
+// than by an insert failing. Returns the slug and the cluster so a reconcile
+// can tell whether either moves.
+func (q *Queries) LockManagedTeam(ctx context.Context, id uuid.UUID) (LockManagedTeamRow, error) {
 	row := q.db.QueryRow(ctx, lockManagedTeam, id)
-	var slug string
-	err := row.Scan(&slug)
-	return slug, err
+	var i LockManagedTeamRow
+	err := row.Scan(&i.Slug, &i.ClusterID)
+	return i, err
 }
 
 const updateManagedTeam = `-- name: UpdateManagedTeam :one

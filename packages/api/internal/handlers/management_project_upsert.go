@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
@@ -67,6 +68,12 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 
 		return
 	}
+	if errors.Is(err, clusterassign.ErrNotFound) {
+		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "upsert project failed", err, attrs...)
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+
+		return
+	}
 
 	telemetry.ReportCriticalError(ctx, "upsert project failed", err, attrs...)
 	a.sendAPIStoreError(c, http.StatusInternalServerError, "Error upserting project")
@@ -84,7 +91,7 @@ func projectConflictMessage(err error) string {
 		return "Slug is already taken on this control plane"
 	case errors.Is(err, management.ErrProjectRaced):
 		return "Project was created concurrently, retry"
-	case dberrors.ConstraintName(err) == clusterDeletingConstraint:
+	case errors.Is(err, clusterassign.ErrDeleting), dberrors.ConstraintName(err) == clusterDeletingConstraint:
 		return "Cluster is being deleted"
 	}
 

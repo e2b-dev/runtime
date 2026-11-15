@@ -18,7 +18,7 @@ import (
 func newService(db *testutils.Database) (*Service, *recordingCache) {
 	cache := &recordingCache{}
 
-	return NewService(db.AuthDB, db.SqlcClient, cache, noop.NewMeterProvider()), cache
+	return NewService(db.AuthDB, db.SqlcClient, cache, nil, noop.NewMeterProvider()), cache
 }
 
 func teamMembers(t *testing.T, db *testutils.Database, teamID uuid.UUID) []uuid.UUID {
