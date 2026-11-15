@@ -86,7 +86,7 @@ func (s *Sandbox) endPoweredOff() {
 // see that, so the snapshot is not marked quiesced.
 func (s *Sandbox) pausePoweredOff(ctx context.Context, m metadata.Template) (st *Snapshot, e error) {
 	ctx, span := tracer.Start(ctx, "sandbox-snapshot-powered-off", trace.WithAttributes(
-		attribute.Bool("fs-only-snapshot", true),
+		attribute.Bool("fs_only_snapshot", true),
 	))
 	defer span.End()
 

@@ -190,7 +190,7 @@ func (o *NBDProvider) ExportDiffInPlace(
 	ctx, span := tracer.Start(
 		ctx,
 		"cow-export",
-		trace.WithAttributes(attribute.Bool("in-place", true)),
+		trace.WithAttributes(attribute.Bool("in_place", true)),
 	)
 	defer span.End()
 
