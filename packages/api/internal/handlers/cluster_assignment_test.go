@@ -65,6 +65,17 @@ func newSingleClusterService(t *testing.T, clusterID uuid.UUID, state clusterSta
 
 			return clustersgrpc.GetClusterResponse_builder{Cluster: cluster.Build()}.Build(), nil
 		}).Maybe()
+	s.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(isDeletionRequest)).RunAndReturn(
+		func(context.Context, *clustersgrpc.UpdateClusterRequest, ...grpc.CallOption) (*clustersgrpc.UpdateClusterResponse, error) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.state == clusterAbsent {
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			}
+			s.state = clusterDeleting
+
+			return clustersgrpc.UpdateClusterResponse_builder{Cluster: clustersgrpc.Cluster_builder{ClusterId: clusterID.String()}.Build()}.Build(), nil
+		}).Maybe()
 
 	return s
 }
@@ -250,9 +261,9 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 }
 
 // An assignment that read the cluster before the delete took the lock
-// commits while holding it. The delete counts the cluster's teams again once
-// it has the lock, and refuses without removing the cluster.
-func TestAClusterDeleteCountsTeamsAgainUnderTheLock(t *testing.T) {
+// commits while holding it. The delete counts the cluster's teams once it has
+// the lock, and refuses without removing the cluster.
+func TestAClusterDeleteCountsTeamsUnderTheLock(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
@@ -308,4 +319,90 @@ func TestAClusterDeleteHoldsOneConnectionAtATime(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		require.Fail(t, "the delete did not finish on a pool of one connection")
 	}
+}
+
+func templateDeleted(t *testing.T, db *testutils.Database, templateID string) bool {
+	t.Helper()
+
+	var deleted bool
+	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT deleted_at IS NOT NULL FROM public.envs WHERE id = $1`,
+		func(rows pgx.Rows) error {
+			require.True(t, rows.Next())
+
+			return rows.Scan(&deleted)
+		}, templateID))
+
+	return deleted
+}
+
+// A sandbox still running on the cluster can record a template while the
+// cluster service removes the record. Once the record is gone, nothing would
+// release it.
+func TestAClusterDeleteReleasesATemplateRecordedWhileTheServiceRemovesIt(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	store, _ := newManagementStore(t, db)
+	clusterID, owner := uuid.New(), testutils.CreateTestTeam(t, db)
+	late := testutils.CreateTestTemplate(t, db, owner)
+	clusterService := newSingleClusterService(t, clusterID, clusterPresent)
+	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, _ *clustersgrpc.DeleteClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.DeleteClusterResponse, error) {
+			require.NoError(t, db.SqlcClient.TestsRawSQL(ctx, `UPDATE public.envs SET cluster_id = $2 WHERE id = $1`, late, clusterID))
+			clusterService.set(clusterAbsent)
+
+			return clustersgrpc.DeleteClusterResponse_builder{}.Build(), nil
+		}).Once()
+	withClusterService(t, db, store, clusterService)
+
+	response := callManagementDeleteCluster(t, store, clusterID)
+
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+	require.True(t, templateDeleted(t, db, late))
+}
+
+// A delete whose commit failed after the cluster service removed the record
+// is retried against an absent cluster, and must still release its templates.
+func TestDeletingAnAbsentClusterReleasesItsTemplates(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	store, _ := newManagementStore(t, db)
+	clusterID, owner := uuid.New(), testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, owner)
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET cluster_id = $2 WHERE id = $1`, templateID, clusterID))
+	withClusterService(t, db, store, newSingleClusterService(t, clusterID, clusterAbsent))
+
+	response := callManagementDeleteCluster(t, store, clusterID)
+
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+	require.True(t, templateDeleted(t, db, templateID))
+}
+
+// Ending the delete when the caller leaves could leave the record removed
+// and the templates still live.
+func TestAClusterDeleteFinishesWhenTheCallerLeaves(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	store, _ := newManagementStore(t, db)
+	clusterID, owner := uuid.New(), testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, owner)
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.envs SET cluster_id = $2 WHERE id = $1`, templateID, clusterID))
+	request, leave := context.WithCancel(t.Context())
+	clusterService := newSingleClusterService(t, clusterID, clusterPresent)
+	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, _ *clustersgrpc.DeleteClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.DeleteClusterResponse, error) {
+			leave()
+			if err := ctx.Err(); err != nil {
+				return nil, status.FromContextError(err).Err()
+			}
+			clusterService.set(clusterAbsent)
+
+			return clustersgrpc.DeleteClusterResponse_builder{}.Build(), nil
+		}).Once()
+	withClusterService(t, db, store, clusterService)
+
+	require.NoError(t, store.deleteCluster(request, clusterID))
+	require.True(t, templateDeleted(t, db, templateID))
 }

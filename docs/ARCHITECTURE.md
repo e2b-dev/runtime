@@ -271,7 +271,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Cluster records**: the API keeps no remote cluster record itself. It reads and writes them
   (endpoint, edge token, sandbox domain, auth organization, deletion protection and request,
   telemetry identity) over a unary gRPC contract (`e2b.clusters.management.v1`) on the cluster
-  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`, which stores them in the `clusters` table. The
+  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`; nothing in the API's database refers to them. The
   `cluster_service` client hop is on unless `E2B_TLS_CLUSTER_SERVICE_CLIENT_MODE` says otherwise,
   and may be off only with `ENVIRONMENT=local` or a loopback address, because the service hands its
   callers every cluster's edge token. Team assignment, template cleanup and the shared-cluster
@@ -519,12 +519,13 @@ per-cluster advisory lock in the database, and the deletion request takes that l
 deletion is recorded. So an assignment either commits before the request returns, where the
 caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
 The cluster delete then checks deletion protection with the cluster service, and in one
-transaction refuses a cluster a live team still uses, soft-deletes its templates and clears it
-from teams and templates deleted earlier. Last, holding the same lock, it counts the cluster's
-live teams again and has the cluster service remove the record. A team assigned between those
-steps makes the last one return a conflict with the templates already deleted, and a retry once
-the team is detached finishes the delete; an assignment requested during the last step waits for
-it and is then refused.
+transaction holding the same lock refuses a cluster a live team still uses, soft-deletes its
+templates and clears it from teams and templates deleted earlier, has the cluster service record
+the deletion and remove the record, and releases any template recorded meanwhile. An assignment
+requested during the delete waits for it and is then refused. If the cluster service does not
+remove the record, the transaction rolls back but the recorded deletion stays, so assignments
+remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
+cluster still releases its templates.
 Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
 `cluster_assignment_*`) in the shared error response; callers use that code rather than the
 human-readable message, and treat uncoded or unknown reasons as generic errors.

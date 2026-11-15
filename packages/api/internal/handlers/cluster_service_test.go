@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management/clienttests"
@@ -42,9 +42,7 @@ func clusterRefusal(reason clustersgrpc.ClusterErrorReason) error {
 }
 
 // clusterServiceFromDB answers the cluster service's reads and deletes from
-// the clusters stored in the test database, which the service shares with the
-// API. A delete removes the row, refused as IN_USE while a team or template
-// still references it.
+// the clusters stored in the test database.
 func clusterServiceFromDB(t *testing.T, db *testutils.Database) *clienttests.MockClusterServiceClient {
 	t.Helper()
 
@@ -70,13 +68,27 @@ func clusterServiceFromDB(t *testing.T, db *testutils.Database) *clienttests.Moc
 
 			return clustersgrpc.ListClustersResponse_builder{Clusters: clusters}.Build(), nil
 		}).Maybe()
+	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(isDeletionRequest)).RunAndReturn(
+		func(ctx context.Context, req *clustersgrpc.UpdateClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.UpdateClusterResponse, error) {
+			clusters, err := storedClusters(ctx, db, req.GetClusterId())
+			switch {
+			case err != nil:
+				return nil, err
+			case len(clusters) == 0:
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			case clusters[0].GetDeletionProtection():
+				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED)
+			}
+			if err := db.SqlcClient.TestsRawSQL(ctx,
+				`UPDATE public.clusters SET deletion_requested_at = COALESCE(deletion_requested_at, now()) WHERE id = $1::uuid`, req.GetClusterId()); err != nil {
+				return nil, err
+			}
+
+			return clustersgrpc.UpdateClusterResponse_builder{Cluster: clusters[0]}.Build(), nil
+		}).Maybe()
 	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
 		func(ctx context.Context, req *clustersgrpc.DeleteClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.DeleteClusterResponse, error) {
-			err := db.SqlcClient.TestsRawSQL(ctx, `DELETE FROM public.clusters WHERE id = $1::uuid`, req.GetClusterId())
-			if dberrors.IsForeignKeyViolation(err) {
-				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_IN_USE)
-			}
-			if err != nil {
+			if err := db.SqlcClient.TestsRawSQL(ctx, `DELETE FROM public.clusters WHERE id = $1::uuid`, req.GetClusterId()); err != nil {
 				return nil, err
 			}
 
@@ -84,6 +96,12 @@ func clusterServiceFromDB(t *testing.T, db *testutils.Database) *clienttests.Moc
 		}).Maybe()
 
 	return clusterService
+}
+
+// isDeletionRequest matches an UpdateCluster that only records a deletion,
+// leaving other updates to the expectations a test sets.
+func isDeletionRequest(req *clustersgrpc.UpdateClusterRequest) bool {
+	return req.GetRequestDeletion() && proto.Equal(req, clustersgrpc.UpdateClusterRequest_builder{ClusterId: req.GetClusterId(), RequestDeletion: true}.Build())
 }
 
 // storedClusters reads one stored cluster, or every one for an empty ID.

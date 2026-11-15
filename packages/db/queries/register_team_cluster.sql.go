@@ -90,7 +90,7 @@ WHERE cluster_id = $1::uuid
 `
 
 // Deleting a project clears its team's cluster, but a team deleted before that
-// still holds it and would block the cluster delete.
+// still holds it. Clearing it leaves no row pointing at a deleted cluster.
 func (q *Queries) DetachDeletedTeamsFromCluster(ctx context.Context, clusterID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, detachDeletedTeamsFromCluster, clusterID)
 	return err

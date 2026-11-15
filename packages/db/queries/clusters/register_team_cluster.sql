@@ -57,7 +57,7 @@ WHERE cluster_id = sqlc.arg(cluster_id)::uuid
 
 -- name: DetachDeletedTeamsFromCluster :exec
 -- Deleting a project clears its team's cluster, but a team deleted before that
--- still holds it and would block the cluster delete.
+-- still holds it. Clearing it leaves no row pointing at a deleted cluster.
 UPDATE public.teams
 SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
