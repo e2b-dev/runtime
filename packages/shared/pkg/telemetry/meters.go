@@ -136,9 +136,16 @@ const (
 	// first answered on a create or resume.
 	OrchestratorSandboxGuestRebootsCounterName CounterType = "orchestrator.sandbox.guest_reboots"
 	// SandboxMemoryHotplugRefused counts starts and in-place reboots refused because their
-	// memory hotplug region cannot run here, by reason and path; reason=firecracker is a
+	// memory hotplug region or memory request cannot run here, by reason and path; reason=firecracker is a
 	// firecracker-versions line below the hotplug release.
 	SandboxMemoryHotplugRefused CounterType = "orchestrator.sandbox.memory_hotplug.refused"
+	// SandboxMemoryResize counts starts that changed a sandbox's plugged memory, by how far
+	// confirmation got (outcome), start_type and stage: start for the bounded wait inside the
+	// start, background for the final outcome of a confirmation the start returned before.
+	SandboxMemoryResize CounterType = "orchestrator.sandbox.memory_resize"
+	// SandboxMemoryHotplugPluggedAboveRequested counts pauses that found more memory plugged than
+	// the sandbox recorded asking for, which a sandbox never does unless that record was lost.
+	SandboxMemoryHotplugPluggedAboveRequested CounterType = "orchestrator.sandbox.memory_hotplug.plugged_above_requested"
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
@@ -537,17 +544,25 @@ const (
 	// Sandbox timing histograms
 	OrchestratorSandboxCreateDurationName HistogramType = "orchestrator.sandbox.create.duration"
 	WaitForEnvdDurationHistogramName      HistogramType = "orchestrator.sandbox.envd.init.duration"
-	EnvdInitTimestampAgeHistogramName     HistogramType = "orchestrator.sandbox.envd.init.timestamp_age"
-	EnvdInitClockCorrectionHistogramName  HistogramType = "orchestrator.sandbox.envd.init.clock_correction"
-	GuestSyncDurationHistogramName        HistogramType = "orchestrator.sandbox.guest_sync.duration"
-	PauseDurationHistogramName            HistogramType = "orchestrator.sandbox.pause.duration"
-	GuestRebootDurationHistogramName      HistogramType = "orchestrator.sandbox.guest_reboot.duration"
-	SnapshotProcessMemoryDurationName     HistogramType = "orchestrator.sandbox.snapshot.process_memory.duration"
-	SnapshotProcessRootfsDurationName     HistogramType = "orchestrator.sandbox.snapshot.process_rootfs.duration"
-	SnapshotRootfsSealDurationName        HistogramType = "orchestrator.sandbox.snapshot.rootfs_seal.duration"
-	SnapshotGuestFreezeDurationName       HistogramType = "orchestrator.sandbox.snapshot.guest_freeze.duration"
-	CheckpointDurationName                HistogramType = "orchestrator.sandbox.checkpoint.duration"
-	SnapshotMemorySealDurationName        HistogramType = "orchestrator.sandbox.snapshot.memory_seal.duration"
+	// SandboxMemoryResizeWaitHistogramName is how long a start that changed its plugged memory
+	// waited for it to be confirmed, by outcome and start_type.
+	SandboxMemoryResizeWaitHistogramName HistogramType = "orchestrator.sandbox.memory_resize.wait"
+	// SandboxMemoryResizePlugHistogramName and SandboxMemoryResizeConfirmHistogramName split that
+	// wait: until Firecracker reported the requested memory plugged, and from then until envd
+	// confirmed it, by outcome and start_type.
+	SandboxMemoryResizePlugHistogramName    HistogramType = "orchestrator.sandbox.memory_resize.plug"
+	SandboxMemoryResizeConfirmHistogramName HistogramType = "orchestrator.sandbox.memory_resize.confirm"
+	EnvdInitTimestampAgeHistogramName       HistogramType = "orchestrator.sandbox.envd.init.timestamp_age"
+	EnvdInitClockCorrectionHistogramName    HistogramType = "orchestrator.sandbox.envd.init.clock_correction"
+	GuestSyncDurationHistogramName          HistogramType = "orchestrator.sandbox.guest_sync.duration"
+	PauseDurationHistogramName              HistogramType = "orchestrator.sandbox.pause.duration"
+	GuestRebootDurationHistogramName        HistogramType = "orchestrator.sandbox.guest_reboot.duration"
+	SnapshotProcessMemoryDurationName       HistogramType = "orchestrator.sandbox.snapshot.process_memory.duration"
+	SnapshotProcessRootfsDurationName       HistogramType = "orchestrator.sandbox.snapshot.process_rootfs.duration"
+	SnapshotRootfsSealDurationName          HistogramType = "orchestrator.sandbox.snapshot.rootfs_seal.duration"
+	SnapshotGuestFreezeDurationName         HistogramType = "orchestrator.sandbox.snapshot.guest_freeze.duration"
+	CheckpointDurationName                  HistogramType = "orchestrator.sandbox.checkpoint.duration"
+	SnapshotMemorySealDurationName          HistogramType = "orchestrator.sandbox.snapshot.memory_seal.duration"
 
 	// OrchestratorSandboxExecutionDurationName is one sample per Firecracker
 	// run, so a sandbox that is paused and resumed records one per run.
@@ -927,13 +942,15 @@ var counterDesc = map[CounterType]string{
 	EnvdInitSlowDials:                            "Held envd init dials that took over 500 ms on a first customer start, by how that attempt ended: connect, write, response or success",
 	EnvdRedirectsRefused:                         "Redirects envd answered a host request with, refused rather than followed, by status_code; envd never redirects, so any is unexpected",
 	EnvdInitUnobservedHandlers:                   "Envd /init handlers that thawed the workload inline and completed after their client had gone, as envd counts them on the served /init of a first customer start that succeeded (X-Envd-Init-Unobserved)",
-	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit or repeat)",
+	EnvdCpuReport:                                "Successful /init responses for VMs with spare vCPUs, by sandbox_type, start_type, outcome, and init (why the /init was sent: first, reinit, repeat, or memory_confirm for a start confirming its plugged memory)",
 	EnvdCollapseChunks:                           "2 MiB chunks the pre-pause envd heap collapse attempted, by result",
 	OrchestratorStatusOverrideRefusedCounterName: "Refused service status overrides, labelled by reason.",
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (guest_reset/guest_crash/guest_poweroff/clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
 	OrchestratorSandboxGuestRebootsCounterName:   "Guest resets the orchestrator handled, labeled by outcome, guest_os and path",
-	SandboxMemoryHotplugRefused:                  "Sandbox starts and in-place reboots refused because their memory hotplug region cannot run here, by reason (firecracker|kernel|invalid) and path (start|reboot)",
+	SandboxMemoryHotplugRefused:                  "Sandbox starts and in-place reboots refused because their memory hotplug region or memory request cannot run here, by reason (firecracker|kernel|invalid for the platform; shrink|invalid_request for a requested memory size the sandbox cannot take) and path (start|reboot)",
+	SandboxMemoryHotplugPluggedAboveRequested:    "Pauses that found more memory plugged into a sandbox's hotplug region than it recorded asking for: its recorded size was lost (for example by a rollback to a build that drops memory_hotplug_requested_mb), so the node counts it smaller than it is",
+	SandboxMemoryResize:                          "Sandbox starts that changed their plugged memory, by outcome (settled: confirmed, envd_unsupported, firecracker_error for a permanent refusal, aborted when the sandbox stopped or the start ended; unsettled: plug_timeout, device_inactive, firecracker_unavailable, envd_unconfirmed, envd_mismatch), start_type and stage (start for the bounded wait, background for the final outcome of a confirmation the start returned before)",
 	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent), rpc (pause/checkpoint) and, on envd_unhealthy and envd_unhealthy_proceeded only, cause (unanswered|powered_off|checkpoint_in_flight|rebooting|superseded|exited|exited_held|not_found; the orchestrator's envdProbeCause constants define them, and unanswered is the only cause a proceeded snapshot carries)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
@@ -1040,6 +1057,8 @@ var counterUnits = map[CounterType]string{
 	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
 	OrchestratorSandboxGuestRebootsCounterName:   "{reset}",
 	SandboxMemoryHotplugRefused:                  "{sandbox}",
+	SandboxMemoryHotplugPluggedAboveRequested:    "{pause}",
+	SandboxMemoryResize:                          "{sandbox}",
 	OrchestratorSandboxPauseAdmissionCounterName: "{decision}",
 	OrchestratorSandboxCheckpointCounterName:     "{checkpoint}",
 	OrchestratorFPRResumeCounterName:             "{resume}",
@@ -1348,6 +1367,9 @@ var histogramDesc = map[HistogramType]string{
 	OrchestratorEnvdUpgradeDurationName:               "Wall-time of a resume-time envd upgrade (delivery + trigger + WaitForEnvd)",
 	OrchestratorEnvdUpgradePhaseDurationName:          "Wall-time of one resume-time envd upgrade phase (resolve|deliver|ready); resolve is absent from the combined histogram",
 	WaitForEnvdDurationHistogramName:                  "Time taken for Envd to initialize successfully",
+	SandboxMemoryResizeWaitHistogramName:              "Time a start that changed its plugged memory waited for Firecracker and envd to confirm it, by outcome and start_type",
+	SandboxMemoryResizePlugHistogramName:              "Time a start that changed its plugged memory waited for Firecracker to report the requested memory plugged (or gave up), by outcome and start_type",
+	SandboxMemoryResizeConfirmHistogramName:           "Time from Firecracker reporting a start's requested memory plugged until envd confirmed it in use (or the start gave up), by outcome and start_type",
 	EnvdInitTimestampAgeHistogramName:                 "Age of the host timestamp carried by the served envd /init when its response arrived, on a handle's first customer start that succeeded. envd steps the guest clock to that timestamp, so this bounds how far behind the host the guest clock is left by it: the age also holds the rest of the handler and the response's transit, which come after the step, and an envd that corrects the timestamp (clock_correction) removes its own share before the step",
 	EnvdInitClockCorrectionHistogramName:              "Time envd added to the served /init timestamp before its clock rules, its own time from reading the request body to those rules whether or not they stepped the clock, in whole milliseconds as reported on X-Envd-Init-Clock-Correction, on a handle's first customer start that succeeded; absent when the envd sends no such header",
 	EnvdCollapseDurationHistogramName:                 "Time taken for the pre-pause envd heap collapse round-trip",
@@ -1450,6 +1472,9 @@ var histogramUnits = map[HistogramType]string{
 	OrchestratorEnvdBinaryCacheSourceStatDurationName: "ms",
 	OrchestratorFsRecoveryDurationName:                "ms",
 	WaitForEnvdDurationHistogramName:                  "ms",
+	SandboxMemoryResizeWaitHistogramName:              "ms",
+	SandboxMemoryResizePlugHistogramName:              "ms",
+	SandboxMemoryResizeConfirmHistogramName:           "ms",
 	EnvdInitTimestampAgeHistogramName:                 "ms",
 	EnvdInitClockCorrectionHistogramName:              "ms",
 	EnvdCollapseDurationHistogramName:                 "ms",

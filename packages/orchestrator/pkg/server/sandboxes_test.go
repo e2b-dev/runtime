@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -60,7 +61,50 @@ func Test_server_List(t *testing.T) {
 		endAt   time.Time
 
 		poweredOff bool
+		// requestedMB is the hotplug memory the sandbox asked to plug.
+		requestedMB int64
 	}{
+		{
+			name:        "should report boot RAM and the memory a resized sandbox runs with",
+			requestedMB: 1536,
+
+			args: args{
+				in1: &emptypb.Empty{},
+			},
+			data: []*sandbox.Sandbox{
+				{
+					APIStoredConfig: &orchestrator.SandboxConfig{
+						TemplateId: "template-id",
+					},
+					Metadata: &sandbox.Metadata{
+						Runtime: sandboxtypes.RuntimeMetadata{
+							SandboxID:   listSandboxID,
+							TeamID:      listTeamID,
+							ExecutionID: listExecutionID,
+						},
+						Config: sandbox.NewConfig(sandbox.Config{Vcpu: 2, RamMB: 512}),
+					},
+					Resources: &sandbox.Resources{
+						Slot: &network.Slot{HostIP: net.IPv4(127, 0, 0, 1)},
+					},
+				},
+			},
+			endAt: endTime,
+			want: &orchestrator.SandboxListResponse{
+				Sandboxes: []*orchestrator.RunningSandbox{
+					{
+						StartTime:   timestamppb.New(startTime),
+						EndTime:     timestamppb.New(endTime),
+						SandboxId:   listSandboxID,
+						TeamId:      listTeamID,
+						ExecutionId: listExecutionID,
+						Vcpu:        2,
+						RamMb:       512,
+						MemoryMb:    proto.Int64(2048),
+					},
+				},
+			},
+		},
 		{
 			name: "should return all sandboxes",
 
@@ -97,6 +141,7 @@ func Test_server_List(t *testing.T) {
 						ExecutionId: listExecutionID,
 						Vcpu:        2,
 						RamMb:       512,
+						MemoryMb:    proto.Int64(512),
 					},
 				},
 			},
@@ -140,6 +185,7 @@ func Test_server_List(t *testing.T) {
 						ExecutionId: listExecutionID,
 						Vcpu:        2,
 						RamMb:       512,
+						MemoryMb:    proto.Int64(512),
 
 						Ended:      true,
 						GuestEvent: orchestrator.GuestEvent_GUEST_EVENT_POWER_OFF,
@@ -162,6 +208,7 @@ func Test_server_List(t *testing.T) {
 			for _, sbx := range tt.data {
 				sbx.SetStartedAt(startTime)
 				sbx.SetEndAt(tt.endAt)
+				sbx.SetMemoryHotplugRequestedMBForTest(tt.requestedMB)
 				sandboxes.AssignNetwork(t.Context(), sbx)
 				sandboxes.MarkRunning(t.Context(), sbx)
 				if tt.poweredOff {
@@ -205,6 +252,9 @@ func TestGetSandboxExecutionData(t *testing.T) {
 	assert.Equal(t, int64(512), result["memory_mb"])
 	assert.IsType(t, int64(0), result["execution_time"])
 	assert.Positive(t, result["execution_time"].(int64))
+
+	sbx.SetMemoryHotplugRequestedMBForTest(1024)
+	assert.Equal(t, int64(1536), s.getSandboxExecutionData(sbx)["memory_mb"], "the webhook reports the memory the sandbox runs with")
 }
 
 func TestGetSandboxExecutionDataSurvivesCheckpointHandlerRebuild(t *testing.T) {

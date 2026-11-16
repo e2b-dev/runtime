@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // envdMemoryHeader carries the memory protection configured on the guest envd's cgroup
@@ -209,4 +210,64 @@ func (s *Sandbox) envdProtectionAttrs() []attribute.KeyValue {
 	}
 
 	return []attribute.KeyValue{attribute.String("protection", string(p.protection()))}
+}
+
+// EnvdMemoryLimit is the memory limit envd keeps on the user and PTY cgroups, from the limit object
+// of the X-Envd-Memory header. Values are bytes. MemTotal is the guest memory the applied limit was
+// computed from; Pending is set while the limit does not yet follow the guest's current memory or
+// the last attempt to apply it failed.
+type EnvdMemoryLimit struct {
+	MemTotal uint64 `json:"mem_total"`
+	Applied  uint64 `json:"applied"`
+	Pending  bool   `json:"pending,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// EnvdMemoryLayout is how the guest onlined its memory, from the layout object of the
+// X-Envd-Memory header: the memory hotplug online policy and the managed memory in movable
+// zones (memory that can be unplugged again) and in kernel zones. Sizes are bytes.
+type EnvdMemoryLayout struct {
+	Policy     string `json:"policy,omitempty"`
+	AutoOnline string `json:"auto_online,omitempty"`
+	Movable    uint64 `json:"movable"`
+	Kernel     uint64 `json:"kernel"`
+}
+
+// EnvdMemoryReport is the memory limit and layout part of the X-Envd-Memory header. Both are nil
+// from an envd that predates them.
+type EnvdMemoryReport struct {
+	Limit  *EnvdMemoryLimit  `json:"limit,omitempty"`
+	Layout *EnvdMemoryLayout `json:"layout,omitempty"`
+}
+
+// envdMemoryReading is the report the latest served /init carried, numbered so that a waiter can
+// tell a reading of its own /init from an older one. report is nil when that /init carried no
+// limit, from an envd that predates it.
+type envdMemoryReading struct {
+	seq    uint64
+	report *EnvdMemoryReport
+}
+
+// envdMemoryLimitErrorMaxLen bounds the guest-written limit error kept for logs and spans.
+const envdMemoryLimitErrorMaxLen = 256
+
+// recordEnvdMemoryReport keeps what a served /init reported about the memory limit and layout.
+// It is recorded for every served /init, with or without the header, so that the absence of a
+// limit is itself a reading. The header is guest-written: it is decoded under the same cap as the
+// protection report, an oversized one reads as no report, and the limit's error is truncated.
+func (s *Sandbox) recordEnvdMemoryReport(header string) {
+	var report *EnvdMemoryReport
+	if header != "" {
+		r, err := decodeEnvdHeader[EnvdMemoryReport](header, envdMemoryHeaderMaxBytes)
+		if err == nil && r.Limit != nil {
+			r.Limit.Error = utils.Truncate(r.Limit.Error, envdMemoryLimitErrorMaxLen)
+			report = &r
+		}
+	}
+	s.envdMemoryReading.Store(&envdMemoryReading{seq: s.envdMemoryReadings.Add(1), report: report})
+}
+
+// latestEnvdMemoryReading is the reading of the latest served /init, nil before the first.
+func (s *Sandbox) latestEnvdMemoryReading() *envdMemoryReading {
+	return s.envdMemoryReading.Load()
 }

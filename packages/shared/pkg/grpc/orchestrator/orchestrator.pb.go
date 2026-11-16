@@ -114,7 +114,11 @@ type SandboxConfig struct {
 	RamMb       int64             `protobuf:"varint,12,opt,name=ram_mb,json=ramMb,proto3" json:"ram_mb,omitempty"`
 	// VM capacity on cold boot; 0 defaults to max(vcpu, recorded snapshot capacity).
 	// Memory resumes use recorded capacity; legacy resizes must pass the original size.
-	MaxVcpus int64  `protobuf:"varint,28,opt,name=max_vcpus,json=maxVcpus,proto3" json:"max_vcpus,omitempty"`
+	MaxVcpus int64 `protobuf:"varint,28,opt,name=max_vcpus,json=maxVcpus,proto3" json:"max_vcpus,omitempty"`
+	// Memory the sandbox runs with, in MiB: ram_mb is boot RAM and the rest is plugged
+	// into the template's hotplug region. 0 keeps the size the sandbox was paused with
+	// (boot RAM for a template). A memory resume never shrinks a sandbox.
+	MemoryMb int64  `protobuf:"varint,29,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
 	TeamId   string `protobuf:"bytes,13,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
 	// Maximum length of the sandbox in Hours.
 	MaxSandboxLength int64   `protobuf:"varint,14,opt,name=max_sandbox_length,json=maxSandboxLength,proto3" json:"max_sandbox_length,omitempty"`
@@ -266,6 +270,13 @@ func (x *SandboxConfig) GetRamMb() int64 {
 func (x *SandboxConfig) GetMaxVcpus() int64 {
 	if x != nil {
 		return x.MaxVcpus
+	}
+	return 0
+}
+
+func (x *SandboxConfig) GetMemoryMb() int64 {
+	if x != nil {
+		return x.MemoryMb
 	}
 	return 0
 }
@@ -1842,7 +1853,12 @@ type RunningSandbox struct {
 	// The node keeps the ended sandbox, disk included, until the API ends it
 	// with its own timeout action: a kill, or a pause, which the node makes
 	// filesystem-only. Set for a guest that powered itself off.
-	DiskKept      bool `protobuf:"varint,12,opt,name=disk_kept,json=diskKept,proto3" json:"disk_kept,omitempty"`
+	DiskKept bool `protobuf:"varint,12,opt,name=disk_kept,json=diskKept,proto3" json:"disk_kept,omitempty"`
+	// Memory the sandbox runs with, in MiB: ram_mb of boot RAM plus the memory
+	// it asked its hotplug region to plug, including a size kept from its
+	// snapshot. ram_mb keeps meaning boot RAM; a node that predates this field
+	// leaves it unset, and ram_mb is then the whole size.
+	MemoryMb      *int64 `protobuf:"varint,13,opt,name=memory_mb,json=memoryMb,proto3,oneof" json:"memory_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1962,6 +1978,13 @@ func (x *RunningSandbox) GetDiskKept() bool {
 	return false
 }
 
+func (x *RunningSandbox) GetMemoryMb() int64 {
+	if x != nil && x.MemoryMb != nil {
+		return *x.MemoryMb
+	}
+	return 0
+}
+
 type SandboxListResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sandboxes     []*RunningSandbox      `protobuf:"bytes,1,rep,name=sandboxes,proto3" json:"sandboxes,omitempty"`
@@ -2010,7 +2033,7 @@ var File_orchestrator_proto protoreflect.FileDescriptor
 
 const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd2\n" +
+	"\x12orchestrator.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xef\n" +
 	"\n" +
 	"\rSandboxConfig\x12\x1f\n" +
 	"\vtemplate_id\x18\x01 \x01(\tR\n" +
@@ -2029,7 +2052,8 @@ const file_orchestrator_proto_rawDesc = "" +
 	" \x01(\tR\venvdVersion\x12\x12\n" +
 	"\x04vcpu\x18\v \x01(\x03R\x04vcpu\x12\x15\n" +
 	"\x06ram_mb\x18\f \x01(\x03R\x05ramMb\x12\x1b\n" +
-	"\tmax_vcpus\x18\x1c \x01(\x03R\bmaxVcpus\x12\x17\n" +
+	"\tmax_vcpus\x18\x1c \x01(\x03R\bmaxVcpus\x12\x1b\n" +
+	"\tmemory_mb\x18\x1d \x01(\x03R\bmemoryMb\x12\x17\n" +
 	"\ateam_id\x18\r \x01(\tR\x06teamId\x12,\n" +
 	"\x12max_sandbox_length\x18\x0e \x01(\x03R\x10maxSandboxLength\x12+\n" +
 	"\x12total_disk_size_mb\x18\x0f \x01(\x03R\x0ftotalDiskSizeMb\x12\x1a\n" +
@@ -2193,7 +2217,7 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x18SandboxCheckpointNetwork\x12;\n" +
 	"\tplacement\x18\x01 \x01(\v2\x18.SandboxNetworkPlacementH\x00R\tplacement\x88\x01\x01B\f\n" +
 	"\n" +
-	"_placement\"\xb2\x03\n" +
+	"_placement\"\xe2\x03\n" +
 	"\x0eRunningSandbox\x12*\n" +
 	"\x06config\x18\x01 \x01(\v2\x0e.SandboxConfigB\x02\x18\x01R\x06config\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x129\n" +
@@ -2210,7 +2234,10 @@ const file_orchestrator_proto_rawDesc = "" +
 	" \x01(\bR\x05ended\x12,\n" +
 	"\vguest_event\x18\v \x01(\x0e2\v.GuestEventR\n" +
 	"guestEvent\x12\x1b\n" +
-	"\tdisk_kept\x18\f \x01(\bR\bdiskKept\"D\n" +
+	"\tdisk_kept\x18\f \x01(\bR\bdiskKept\x12 \n" +
+	"\tmemory_mb\x18\r \x01(\x03H\x00R\bmemoryMb\x88\x01\x01B\f\n" +
+	"\n" +
+	"_memory_mb\"D\n" +
 	"\x13SandboxListResponse\x12-\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x0f.RunningSandboxR\tsandboxes*\xdd\x01\n" +
 	"\n" +
@@ -2350,6 +2377,7 @@ func file_orchestrator_proto_init() {
 	file_orchestrator_proto_msgTypes[16].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[21].OneofWrappers = []any{}
 	file_orchestrator_proto_msgTypes[22].OneofWrappers = []any{}
+	file_orchestrator_proto_msgTypes[23].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

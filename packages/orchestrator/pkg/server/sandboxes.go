@@ -386,6 +386,27 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 			return nil, err
 		}
 	}
+	// Admission charged boot RAM. The rest of the size the start will run at, a named size, the one
+	// a memory resume's snapshot had asked for, or the one a cold boot plugs back, is checked
+	// against the template and then charged, so a size the template cannot take is refused as the
+	// caller's error, not as a node short of memory for it. The charge is held until Create
+	// returns, which covers a cold boot's wait for its plug; past that a cold-booted guest's memory
+	// counts in the pool only as it touches it.
+	startMB, requestedHotplugMB, err := startMemory(meta, config, filesystemBooted)
+	if err != nil {
+		if refusal := s.memoryHotplugRefusal(ctx, err, runtime); refusal != nil {
+			return nil, refusal
+		}
+
+		return nil, err
+	}
+	if requestedHotplugMB > 0 {
+		releaseRequested, err := s.admitHugePagesMB(ctx, runtime.SandboxID, requestedHotplugMB)
+		if err != nil {
+			return nil, err
+		}
+		defer releaseRequested()
+	}
 
 	// Read before the start too: a teardown that ends during it gave its pages
 	// back after the mmap failed, so a retry would find them.
@@ -468,7 +489,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 
 			return nil, refusal
 		}
-		if refusal := s.memoryRefusal(ctx, err, req.GetSandbox().GetRamMb(), stoppingBefore, runtime); refusal != nil {
+		if refusal := s.memoryRefusal(ctx, err, startMB, stoppingBefore, runtime); refusal != nil {
 			// Placement may retry this node with the same sandbox ID within a
 			// millisecond, and the ID stays reserved until the rollback has run
 			// (finishSandboxStart runs it on a goroutine), so run it now. It
@@ -623,6 +644,7 @@ func sandboxConfigOf(api *orchestrator.SandboxConfig, firecracker fc.Config) (*s
 		Vcpu:              api.GetVcpu(),
 		ConfiguredVmVcpus: api.GetMaxVcpus(),
 		RamMB:             api.GetRamMb(),
+		MemoryMB:          api.GetMemoryMb(),
 		TotalDiskSizeMB:   api.GetTotalDiskSizeMb(),
 		HugePages:         true,
 
@@ -907,6 +929,7 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 			ExecutionId: sbx.Runtime.ExecutionID,
 			Vcpu:        sbx.Config.Vcpu,
 			RamMb:       sbx.Config.RamMB,
+			MemoryMb:    new(sbx.MemoryMB()),
 		}
 		if sbx.GuestPoweredOff() {
 			entry.Ended = true
@@ -926,6 +949,7 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 			ExecutionId: e.ExecutionID,
 			Vcpu:        e.Vcpu,
 			RamMb:       e.RamMB,
+			MemoryMb:    new(e.MemoryMB),
 			Ended:       true,
 			GuestEvent:  guestEventProto(e.GuestEvent),
 		})
@@ -2846,7 +2870,7 @@ func (s *Server) getSandboxExecutionData(sbx *sandbox.Sandbox) map[string]any {
 	return map[string]any{
 		"started_at":     startedAt.UTC().Format(time.RFC3339),
 		"vcpu_count":     sbx.Config.Vcpu,
-		"memory_mb":      sbx.Config.RamMB,
+		"memory_mb":      sbx.MemoryMB(),
 		"execution_time": time.Since(startedAt).Milliseconds(),
 	}
 }
@@ -3983,13 +4007,18 @@ func (s *Server) memoryHotplugRefusal(ctx context.Context, err error, runtime sa
 	if !ok {
 		return nil
 	}
-	logger.L().Warn(ctx, "start refused: the sandbox's memory hotplug region cannot run here", zap.Error(err),
+	// A requested size the sandbox cannot take is the caller's error; the rest are the platform's.
+	code, message := codes.FailedPrecondition, "start refused: the sandbox's memory hotplug region cannot run here"
+	if errors.Is(err, fc.ErrMemoryRequestInvalid) {
+		code, message = codes.InvalidArgument, "start refused: the requested memory does not fit the sandbox"
+	}
+	logger.L().Warn(ctx, message, zap.Error(err),
 		zap.String("reason", reason),
 		logger.WithSandboxID(runtime.SandboxID),
 		logger.WithBuildID(runtime.BuildID),
 		logger.WithTemplateID(runtime.TemplateID))
 
-	return createRefused(ctx, codes.FailedPrecondition, "memory hotplug refused (%s): %s", reason, err.Error())
+	return createRefused(ctx, code, "memory hotplug refused (%s): %s", reason, err.Error())
 }
 
 // countMemoryHotplugRefusal counts err when it is a memory hotplug refusal, returning its reason.

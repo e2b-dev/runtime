@@ -114,21 +114,41 @@ func (s *Server) pauseDiskNeed(ctx context.Context, sbx *sandbox.Sandbox, filesy
 }
 
 // pauseMemoryMB bounds the memory a pause exports: dirty pages live only in boot RAM and in the
-// slots plugged now. A sandbox without a region asks Firecracker nothing; one whose plugged size
-// cannot be read is bounded by its whole region.
+// plugged slots. A sandbox without a region asks Firecracker nothing. Plugging goes on after a
+// start returns, so the size plugged now is no upper bound: a guest still growing can plug and
+// dirty more before the pause freezes it. The bound is the larger of the plugged size and what the
+// sandbox asked Firecracker to plug, which the guest can never exceed. One whose plugged size
+// cannot be read is bounded by that request, or by the last plugged size read if that is larger,
+// as a shrink the guest has not finished would leave it; with neither known, by the whole region.
 func (s *Server) pauseMemoryMB(ctx context.Context, sbx *sandbox.Sandbox) int64 {
 	if sbx.MemoryHotplugMB() == 0 {
 		return sbx.Config.RamMB
 	}
 	plugged, err := sbx.PluggedMemoryMB(ctx)
 	if err != nil {
-		sbxlogger.I(sbx).Warn(ctx, "Cannot read the plugged memory, bounding the pause by the whole hotplug region",
-			zap.Error(err), zap.Int64("memory_hotplug_mb", sbx.MemoryHotplugMB()))
+		bound := max(sbx.MemoryHotplugRequestedMB(), sbx.LastPluggedMB())
+		if bound == 0 {
+			bound = sbx.MemoryHotplugMB()
+		}
+		sbxlogger.I(sbx).Warn(ctx, "Cannot read the plugged memory, bounding the pause by the requested size or the region",
+			zap.Error(err), zap.Int64("memory_hotplug_mb", sbx.MemoryHotplugMB()), zap.Int64("bound_mb", bound))
 
-		return sbx.Config.RamMB + sbx.MemoryHotplugMB()
+		return sbx.Config.RamMB + bound
 	}
 
-	return sbx.Config.RamMB + plugged
+	requested := sbx.MemoryHotplugRequestedMB()
+	if plugged > requested {
+		// A guest never plugs more than it was asked to: the recorded request was lost, for example
+		// by a rollback to a build that drops memory_hotplug_requested_mb, so the node counts the
+		// sandbox smaller than it is.
+		sbxlogger.I(sbx).Warn(ctx, "More memory plugged than the sandbox recorded asking for; its recorded size was lost",
+			zap.Int64("plugged_mb", plugged), zap.Int64("requested_mb", requested))
+		if s.pluggedAboveRequested != nil {
+			s.pluggedAboveRequested.Add(ctx, 1)
+		}
+	}
+
+	return sbx.Config.RamMB + max(plugged, requested)
 }
 
 // memfdExport reports whether the sandbox's memory is exported from a memfd

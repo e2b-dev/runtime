@@ -694,7 +694,7 @@ func TestStartEnvdReinitUnderAPauseCutPublishesNothing(t *testing.T) {
 			}
 			s, _, _ := newReinitSandbox(t, e.srv.URL, true, time.Minute)
 
-			require.True(t, s.startEnvdReinit(t.Context()))
+			require.NotNil(t, s.startEnvdReinit(t.Context()))
 			r := s.envdReinit.Load()
 			<-arrived
 
@@ -704,14 +704,14 @@ func TestStartEnvdReinitUnderAPauseCutPublishesNothing(t *testing.T) {
 			<-r.done
 
 			// The interleaving: a start between the cut and the freeze.
-			assert.False(t, s.startEnvdReinit(t.Context()), "a start under the cut publishes nothing")
+			assert.Nil(t, s.startEnvdReinit(t.Context()), "a start under the cut publishes nothing")
 			assert.Same(t, r, s.envdReinit.Load(), "the cut handle stays in place")
 			assert.Equal(t, 1, countInits(e), "nothing wrote an /init after the cut")
 
 			if tc.freezeLands {
 				pauseLanded = true
 				s.releaseEnvdReinit()
-				require.True(t, s.startEnvdReinit(t.Context()), "once the freeze landed, a start publishes")
+				require.NotNil(t, s.startEnvdReinit(t.Context()), "once the freeze landed, a start publishes")
 			} else {
 				require.NoError(t, cleanup.Run(t.Context()))
 			}
@@ -722,7 +722,7 @@ func TestStartEnvdReinitUnderAPauseCutPublishesNothing(t *testing.T) {
 			if tc.freezeLands {
 				require.NoError(t, cleanup.Run(t.Context()), "a landed Pause's cleanup releases nothing")
 			}
-			assert.True(t, s.startEnvdReinit(t.Context()), "no hold is left")
+			assert.NotNil(t, s.startEnvdReinit(t.Context()), "no hold is left")
 			<-s.envdReinit.Load().done
 		})
 	}
@@ -739,11 +739,11 @@ func TestStartEnvdReinitUnderAPauseCutPublishesNothing(t *testing.T) {
 			assert.Nil(t, r)
 			assert.False(t, cut)
 		}
-		assert.False(t, s.startEnvdReinit(t.Context()), "two Pauses hold")
+		assert.Nil(t, s.startEnvdReinit(t.Context()), "two Pauses hold")
 		s.releaseEnvdReinit()
-		assert.False(t, s.startEnvdReinit(t.Context()), "one Pause still holds")
+		assert.Nil(t, s.startEnvdReinit(t.Context()), "one Pause still holds")
 		s.releaseEnvdReinit()
-		require.True(t, s.startEnvdReinit(t.Context()), "no Pause holds")
+		require.NotNil(t, s.startEnvdReinit(t.Context()), "no Pause holds")
 		<-s.envdReinit.Load().done
 		assert.Equal(t, 1, countInits(e))
 	})

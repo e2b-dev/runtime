@@ -707,6 +707,19 @@ var (
 	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
 	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
 	EnvdTimeoutMilliseconds       = NewIntFlag("envd-timeout-milliseconds", envdTimeoutFallbackMs()) // Timeout for waiting for envd on resume; falls back to ENVD_TIMEOUT env var (default 10s)
+	// MemoryResizeWaitMilliseconds bounds how long a start that changes a sandbox's plugged memory waits
+	// for Firecracker to report it plugged and for envd to report the new memory in use, before it
+	// returns anyway and confirmation goes on in the background. Starts that keep their size never wait.
+	// Default 1500: a 2 GiB plug and envd's limit took under 0.1 s on a dev guest, and a plug scales
+	// with its size, so this covers plugs of tens of GiB while capping what a slow guest adds to a start.
+	MemoryResizeWaitMilliseconds = NewIntFlag("memory-resize-wait-milliseconds", 1500)
+	// MemoryResizePollMilliseconds is how often, within that wait, a start that changes a sandbox's
+	// plugged memory asks Firecracker whether the plugged size has reached the requested one. The wait
+	// is the whole budget before confirmation moves to the background; this is the pace inside it, so
+	// a plug that lands between polls costs the start up to one interval. The orchestrator keeps it
+	// within 1-100 ms and reads 0 or less as the default. Default 5: dev-cluster plugs took 41-67 ms
+	// and at a 20 ms poll bunched at two or three polls. The background stage keeps its own backoff.
+	MemoryResizePollMilliseconds = NewIntFlag("memory-resize-poll-milliseconds", 5)
 	// SandboxMigrationOperationBudgetSeconds bounds how long a sandbox migration may run, fixed per migration at acceptance.
 	SandboxMigrationOperationBudgetSeconds = NewIntFlag("sandbox-migration-operation-budget-seconds", 900)
 	// SandboxMigrationTerminationBudgetSeconds is how long the API's hold on a migrating sandbox outlives the operation deadline, fixed per migration at acceptance.

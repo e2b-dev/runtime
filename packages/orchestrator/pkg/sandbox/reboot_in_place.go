@@ -339,6 +339,7 @@ func (f *Factory) bootInPlace(ctx context.Context, from *Sandbox, endAt time.Tim
 	if err := next.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdTimeoutFor(from.Config)); err != nil {
 		return next, resetDuringBoot(ctx, next, err), fmt.Errorf("wait for envd after the guest reset: %w", err)
 	}
+	next.completeMemoryResize(ctx, StartTypeReboot)
 
 	return next, false, nil
 }

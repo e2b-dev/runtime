@@ -149,7 +149,7 @@ type harvestUpload interface {
 type factoryResumer struct {
 	factory *sandbox.Factory
 	// hold counts the throwaway's hugepages toward the create admission; nil holds nothing.
-	hold func(context.Context, *sandbox.Config) func()
+	hold func(context.Context, *sandbox.Config, metadata.Template) func()
 }
 
 func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Template, config *sandbox.Config, runtime sandboxtypes.RuntimeMetadata, startedAt, endAt time.Time, envdVersion string) (harvestInstance, error) {
@@ -157,7 +157,9 @@ func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Temp
 	// sandbox.
 	opts := append(sandbox.ThrowawayResumeOptions(), sandbox.WithInheritedEnvdVersion(envdVersion))
 	if r.hold != nil {
-		releaseHugePages := r.hold(ctx, config)
+		// An unreadable snapshot fails the resume itself; until then the hold counts what the config names.
+		meta, _ := t.Metadata()
+		releaseHugePages := r.hold(ctx, config, meta)
 		defer releaseHugePages()
 		opts = append(opts, sandbox.WithGuestMemoryReserved(releaseHugePages))
 	}

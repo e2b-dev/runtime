@@ -209,6 +209,12 @@ type Process struct {
 	// device, on the cold boot's machine config or the restore's PATCH.
 	acpiPowerOff atomic.Bool
 
+	// memoryHotplugTarget is how much of the hotplug region a restore asks the guest to plug;
+	// nil keeps what the snapshot asked for. memoryHotplugResized is set once a restore sent a
+	// target that differs from the snapshot's.
+	memoryHotplugTarget  *memoryHotplugTarget
+	memoryHotplugResized bool
+
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
 	// stop's acknowledgement wait keys on them.
@@ -1040,6 +1046,14 @@ func (p *Process) RestorePaused(
 	// Keep this before any resume and fatal: no CI test pins it (the cgroup tests need root), so rerun them on a VM.
 	err = p.limitVcpusBeforeResume(ctx, cgroupHandle, vcpus.Target, p.resolveVmVcpus(ctx, vcpus.Snapshot, vcpus.Recorded))
 	if err := vcpuCapResumeErr(err, vcpus.RefuseSmallerVM); err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(err, fcStopErr)
+	}
+
+	// The device is restored and the vCPUs are still paused: a new target set now is what the
+	// guest finds when it runs, and it plugs towards it then.
+	if err := p.applyMemoryHotplugTarget(ctx); err != nil {
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(err, fcStopErr)

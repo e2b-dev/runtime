@@ -3,6 +3,7 @@
 package fc
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -204,8 +205,132 @@ func TestPluggedMemoryMB(t *testing.T) {
 	assert.Equal(t, int64(1024), plugged)
 
 	rec.mu.Lock()
+	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusOK, body: `{"total_size_mib":3072,"plugged_size_mib":512,"requested_size_mib":2048}`}
+	rec.mu.Unlock()
+	status, err := p.MemoryHotplugStatus(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, MemoryHotplugStatus{PluggedMB: 512, RequestedMB: 2048}, status)
+
+	rec.mu.Lock()
 	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusBadRequest, body: `{"fault_message":"no hotplug device"}`}
 	rec.mu.Unlock()
 	_, err = p.PluggedMemoryMB(t.Context())
 	require.Error(t, err)
+}
+
+func TestMemoryRequestErrorsNameOnlyTheRequest(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range []error{ErrMemoryRequestInvalid, ErrMemoryHotplugShrink} {
+		require.ErrorIs(t, err, ErrMemoryRequestInvalid)
+		require.ErrorIs(t, err, ErrMemoryHotplugUnsupported)
+		require.NotContains(t, err.Error(), "cannot carry a memory hotplug region")
+	}
+	require.Equal(t, "the requested memory does not fit the sandbox: a memory resume cannot shrink the sandbox", ErrMemoryHotplugShrink.Error())
+}
+
+// A restore sends its hotplug target only when it is above the one the snapshot restored. An
+// explicit target is always checked against the restored device, which refuses one below its own
+// request whatever the metadata said; a kept one only plugs up to the recorded size.
+func TestApplyMemoryHotplugTarget(t *testing.T) {
+	t.Parallel()
+
+	patches := func(rec *wireRecorder) []string {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		var bodies []string
+		for _, r := range rec.sent {
+			if r.key == "PATCH /hotplug/memory" {
+				bodies = append(bodies, r.body)
+			}
+		}
+
+		return bodies
+	}
+
+	for name, tc := range map[string]struct {
+		noTarget  bool
+		target    int64
+		explicit  bool
+		restored  int64
+		wantPatch bool
+		wantErr   error
+	}{
+		"no target keeps the snapshot's":                   {noTarget: true, restored: 1024},
+		"the same explicit target is not resent":           {target: 1024, explicit: true, restored: 1024},
+		"a larger explicit target is sent":                 {target: 2048, explicit: true, restored: 1024, wantPatch: true},
+		"an explicit target below the device's is refused": {target: 1024, explicit: true, restored: 2048, wantErr: ErrMemoryHotplugShrink},
+		"boot RAM named over stale metadata is refused":    {target: 0, explicit: true, restored: 1024, wantErr: ErrMemoryHotplugShrink},
+		"a kept size the device lost is plugged again":     {target: 2048, restored: 0, wantPatch: true},
+		"a kept size the device already has is not resent": {target: 2048, restored: 2048},
+		"a device above the kept size is left as it is":    {target: 1024, restored: 2048},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			p, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.17-0.4.1"}, 56)
+			rec.mu.Lock()
+			rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusOK, body: fmt.Sprintf(`{"total_size_mib":3072,"plugged_size_mib":%d,"requested_size_mib":%d}`, tc.restored, tc.restored)}
+			rec.mu.Unlock()
+
+			if !tc.noTarget {
+				p.SetMemoryHotplugTarget(tc.target, tc.explicit)
+			}
+			err := p.applyMemoryHotplugTarget(t.Context())
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantPatch, p.MemoryHotplugResized())
+			if tc.noTarget {
+				rec.mu.Lock()
+				for _, r := range rec.sent {
+					assert.NotEqual(t, "GET /hotplug/memory", r.key, "no target, no hotplug query")
+				}
+				rec.mu.Unlock()
+			}
+			if tc.wantPatch {
+				assert.JSONEq(t, fmt.Sprintf(`{"requested_size_mib":%d}`, tc.target), patches(rec)[0])
+			} else {
+				assert.Empty(t, patches(rec))
+			}
+		})
+	}
+
+	p, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.17-0.4.1"}, 57)
+	rec.mu.Lock()
+	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusBadRequest, body: `{"fault_message":"no hotplug device"}`}
+	rec.mu.Unlock()
+	p.SetMemoryHotplugTarget(2048, true)
+	require.Error(t, p.applyMemoryHotplugTarget(t.Context()), "a status that cannot be read fails the restore")
+}
+
+// Firecracker's answers to a hotplug call are classed: an inactive device passes once the guest is
+// up, any other 4xx is permanent, and a 5xx or a transport failure may pass.
+func TestMemoryHotplugErrorClasses(t *testing.T) {
+	t.Parallel()
+
+	p, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.17-0.4.1"}, 59)
+	answer := func(status int, body string) error {
+		rec.mu.Lock()
+		rec.answers["PATCH /hotplug/memory"] = stubAnswer{status: status, body: body}
+		rec.mu.Unlock()
+
+		return p.RequestMemoryHotplug(t.Context(), 2048)
+	}
+
+	err := answer(http.StatusBadRequest, `{"fault_message":"Virtio memory error: Device is not active"}`)
+	assert.True(t, MemoryHotplugDeviceNotActive(err))
+	assert.False(t, MemoryHotplugErrorPermanent(err))
+
+	err = answer(http.StatusBadRequest, `{"fault_message":"Virtio memory error: Size 3 is invalid"}`)
+	assert.False(t, MemoryHotplugDeviceNotActive(err))
+	assert.True(t, MemoryHotplugErrorPermanent(err))
+
+	err = answer(http.StatusInternalServerError, `{"fault_message":"internal"}`)
+	assert.False(t, MemoryHotplugErrorPermanent(err))
+
+	assert.False(t, MemoryHotplugErrorPermanent(errors.New("dial unix: connection refused")))
+	assert.False(t, MemoryHotplugDeviceNotActive(nil))
 }
