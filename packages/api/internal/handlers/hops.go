@@ -10,4 +10,5 @@ type Hops struct {
 	Analytics      credentials.TransportCredentials
 	Orchestrator   credentials.TransportCredentials
 	ClusterService credentials.TransportCredentials
+	Scheduling     credentials.TransportCredentials
 }

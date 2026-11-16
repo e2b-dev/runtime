@@ -19,7 +19,10 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-const schedulingTLSMethod = "/test.Service/Call"
+const (
+	schedulingTLSMethod  = "/test.Service/Call"
+	schedulingTLSAddress = "dns:///scheduling-api:5000"
+)
 
 var schedulingTLSServiceDesc = grpc.ServiceDesc{
 	ServiceName: "test.Service",
@@ -79,9 +82,9 @@ func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tlsConfig, err := newServiceTLS(procFor(t, tc.identity, tc.trusted), cfg.TLSConfig{Scheduling: mtls.HopSettings{Expect: []string{tc.expected}}}, false, true)
+			tlsConfig, err := newServiceTLS(procFor(t, tc.identity, tc.trusted), cfg.TLSConfig{Scheduling: mtls.HopSettings{Expect: []string{tc.expected}}}, false, schedulingTLSAddress)
 			require.NoError(t, err)
-			conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(tlsConfig.scheduling))
+			conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(tlsConfig.hops.Scheduling))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 			callCtx, stop := context.WithTimeout(t.Context(), 3*time.Second)
@@ -115,18 +118,18 @@ func TestSchedulingTLSConfiguration(t *testing.T) {
 		{Expect: []string{"*"}},
 		{Expect: []string{"spiffe://test.example/scheduling-api"}},
 	} {
-		_, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: settings}, false, true)
+		_, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: settings}, false, schedulingTLSAddress)
 		require.Error(t, err)
 	}
-	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: mtls.HopSettings{Mode: "off"}}, false, true)
+	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: mtls.HopSettings{Mode: "off"}}, false, schedulingTLSAddress)
 	require.NoError(t, err)
-	conn, err := grpc.NewClient(servicetest.GRPCServer(t), grpc.WithTransportCredentials(tlsConfig.scheduling))
+	conn, err := grpc.NewClient(servicetest.GRPCServer(t), grpc.WithTransportCredentials(tlsConfig.hops.Scheduling))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	healthCheck(t, conn)
-	tlsConfig, err = newServiceTLS(proc, cfg.TLSConfig{}, false, false)
+	tlsConfig, err = newServiceTLS(proc, cfg.TLSConfig{}, false, "")
 	require.NoError(t, err)
-	require.Nil(t, tlsConfig.scheduling)
+	require.Nil(t, tlsConfig.hops.Scheduling)
 }
 
 func TestSchedulingTLSModeWithCertificates(t *testing.T) {
@@ -152,14 +155,14 @@ func TestSchedulingTLSModeWithCertificates(t *testing.T) {
 			t.Parallel()
 			tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: mtls.HopSettings{
 				Mode: tc.mode, Expect: []string{"spiffe://test.example/scheduling-api"},
-			}}, false, true)
+			}}, false, schedulingTLSAddress)
 			if !tc.valid {
 				require.Error(t, err)
 
 				return
 			}
 			require.NoError(t, err)
-			require.NotNil(t, tlsConfig.scheduling)
+			require.NotNil(t, tlsConfig.hops.Scheduling)
 		})
 	}
 }

@@ -33,12 +33,11 @@ type serviceTLS struct {
 	http, internalGRPC, publicGRPC mtls.ServerConfig
 	httpHealthPaths                []string
 	hops                           handlers.Hops
-	scheduling                     credentials.TransportCredentials
 }
 
 // newServiceTLS builds the api's listeners and hops from the chart's
 // settings; no wildcard is admitted on its ports.
-func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, schedulingHop bool) (serviceTLS, error) {
+func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool, schedulingAddress string) (serviceTLS, error) {
 	var s serviceTLS
 	var err error
 	if s.http, err = proc.Listener("http", httpModeFlag, c.HTTP, mtls.WithoutWildcards()); err != nil {
@@ -77,7 +76,7 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, scheduling
 		return serviceTLS{}, err
 	}
 
-	if schedulingHop {
+	if schedulingAddress != "" {
 		settings := c.Scheduling
 		if settings.Mode == "" {
 			settings.Mode = "on"
@@ -92,7 +91,7 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, scheduling
 		if settings.Mode != "off" && hopConfig.Files.Bundle() == nil {
 			return serviceTLS{}, errors.New("scheduling TLS certificate files are unavailable")
 		}
-		s.scheduling = mtls.NewClientCredentials(hopConfig)
+		s.hops.Scheduling = mtls.NewClientCredentials(hopConfig)
 	}
 
 	return s, nil

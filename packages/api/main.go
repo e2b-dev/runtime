@@ -450,7 +450,7 @@ func run() int {
 	if err != nil {
 		l.Fatal(ctx, "failed to set up mutual TLS", zap.Error(err))
 	}
-	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS, false)
+	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS, config.SchedulingAPIGrpcAddress)
 	if err != nil {
 		l.Fatal(ctx, "invalid mutual TLS configuration", zap.Error(err))
 	}

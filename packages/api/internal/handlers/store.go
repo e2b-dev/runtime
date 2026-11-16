@@ -266,6 +266,8 @@ type APIStore struct {
 	// clusterService is nil when no cluster service address is configured.
 	clusterServiceConn *grpc.ClientConn
 	clusterService     clustersgrpc.ClusterServiceClient
+
+	schedulingConn *grpc.ClientConn
 }
 
 const (
@@ -424,6 +426,14 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		logger.L().Fatal(ctx, "failed to create snapshot build query semaphore", zap.Error(err))
 	}
 
+	var schedulingConn *grpc.ClientConn
+	if config.SchedulingAPIGrpcAddress != "" {
+		schedulingConn, err = newSchedulingClient(config.SchedulingAPIGrpcAddress, hops.Scheduling)
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing scheduling-api client", zap.Error(err))
+		}
+	}
+
 	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
@@ -523,6 +533,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		secretsManagement:     secretsManagement,
 		clusterServiceConn:    clusterServiceConn,
 		clusterService:        clusterService,
+		schedulingConn:        schedulingConn,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
@@ -654,6 +665,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 	if a.clusterServiceConn != nil {
 		if err := a.clusterServiceConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing cluster service client: %w", err))
+		}
+	}
+
+	if a.schedulingConn != nil {
+		if err := a.schedulingConn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing scheduling-api client: %w", err))
 		}
 	}
 

@@ -283,6 +283,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   is assigned to one. At startup a cluster service that fails three lists in a row stops holding
   the API back: it starts with the local cluster, and the background sync adds the remote clusters
   once the service answers.
+- **Scheduling API connection**: with `SCHEDULING_API_GRPC_ADDRESS` set, the API prepares a gRPC
+  connection to scheduling-api through the `scheduling` client hop, balanced over every resolved
+  address like the cluster service's (a `dns:///name:port` target gives each replica of a headless
+  Service its own connection) and sent only to replicas that report `e2b.scheduling.v1.StateService`
+  as `SERVING`. Nothing uses the connection yet. Without an address the API makes no connection.
 - **Rig passthrough**: admin endpoints under `/clusters/{clusterID}/rigs` manage a cluster's
   orchestrator node pools ("rigs"). They list rigs, change rig capacity, list and terminate
   instances, and read recent scaling errors. Every handler delegates to the cluster's edge service
