@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -633,6 +634,26 @@ func TestShouldRemountNFS(t *testing.T) {
 			assert.Equal(t, tt.wantRemount, got)
 		})
 	}
+}
+
+// nconnect must be present and inside the kernel's accepted range: an out-of-range
+// value fails the whole mount, which would break every volume.
+func TestNFSOptionsCarryAValidNconnect(t *testing.T) {
+	t.Parallel()
+
+	var nconnect string
+	for _, option := range strings.Split(nfsOptions, ",") {
+		if value, ok := strings.CutPrefix(option, "nconnect="); ok {
+			nconnect = value
+		}
+	}
+
+	require.NotEmpty(t, nconnect, "nfsOptions must set nconnect so one slow operation does not block the mount's other requests")
+
+	connections, err := strconv.Atoi(nconnect)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, connections, 1)
+	assert.LessOrEqual(t, connections, 16, "the kernel accepts nconnect values of 1-16 and fails the mount otherwise")
 }
 
 type fakeCgroupManager struct {
