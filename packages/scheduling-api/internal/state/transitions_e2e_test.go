@@ -2,7 +2,6 @@ package state_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,11 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/grpc"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -72,179 +70,18 @@ func (o *observedStorage) removeOpts() []sandboxtypes.RemoveOpts {
 	return append([]sandboxtypes.RemoveOpts(nil), o.opts...)
 }
 
-type rpcTransitions struct {
-	client  scheduling.StateServiceClient
-	waiting chan struct{}
-}
-
-var _ sandboxtypes.StateTransitions = rpcTransitions{}
-
-var wireActions = map[sandboxtypes.StateAction]scheduling.RemoveAction{
-	sandboxtypes.StateActionPause:    scheduling.RemoveAction_REMOVE_ACTION_PAUSE,
-	sandboxtypes.StateActionKill:     scheduling.RemoveAction_REMOVE_ACTION_KILL,
-	sandboxtypes.StateActionSnapshot: scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT,
-}
-
-var goStates = map[scheduling.SandboxState]sandboxtypes.State{
-	scheduling.SandboxState_SANDBOX_STATE_RUNNING:      sandboxtypes.StateRunning,
-	scheduling.SandboxState_SANDBOX_STATE_PAUSING:      sandboxtypes.StatePausing,
-	scheduling.SandboxState_SANDBOX_STATE_KILLING:      sandboxtypes.StateKilling,
-	scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING: sandboxtypes.StateSnapshotting,
-}
-
-func transitionErrorOf(outcome scheduling.StateOutcome, current scheduling.SandboxState, target sandboxtypes.State) error {
-	if outcome == scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION {
-		return &sandboxtypes.InvalidStateTransitionError{CurrentState: goStates[current], TargetState: target}
-	}
-
-	return errorOf(outcome)
-}
-
-func decodeTransition(wire *scheduling.StateTransition) (sandboxtypes.StateTransition, error) {
-	if wire == nil {
-		return sandboxtypes.StateTransition{}, nil
-	}
-	var sbx sandboxtypes.Sandbox
-	if err := json.Unmarshal(wire.GetRecord(), &sbx); err != nil {
-		return sandboxtypes.StateTransition{}, err
-	}
-	transition := sandboxtypes.StateTransition{Sandbox: sbx, ID: wire.GetId(), InFlightID: wire.GetInFlightId()}
-	if wire.HasOriginalEndTime() {
-		end := wire.GetOriginalEndTime().AsTime()
-		transition.OriginalEndTime = &end
-	}
-
-	return transition, nil
-}
-
-func encodeWireTransition(transition sandboxtypes.StateTransition) (*scheduling.StateTransition, error) {
-	record, err := json.Marshal(transition.Sandbox)
-	if err != nil {
-		return nil, err
-	}
-	wire := scheduling.StateTransition_builder{Record: record, Id: transition.ID, InFlightId: transition.InFlightID}.Build()
-	if transition.OriginalEndTime != nil {
-		wire.SetOriginalEndTime(timestamppb.New(*transition.OriginalEndTime))
-	}
-
-	return wire, nil
-}
-
-func (r rpcTransitions) BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
-	resp, err := r.client.BeginRemoving(ctx, scheduling.BeginRemovingRequest_builder{
-		TeamId: teamID.String(), SandboxId: sandboxID,
-		Options: scheduling.RemoveOptions_builder{
-			Action:             wireActions[opts.Action],
-			Eviction:           opts.Eviction,
-			Reason:             string(opts.Reason),
-			FilesystemOnly:     opts.FilesystemOnly,
-			RequireEnvdHealthy: opts.RequireEnvdHealthy,
-			ExpectExecutionId:  opts.ExpectExecutionID,
-			BeforeEndTime:      opts.BeforeEndTime,
-		}.Build(),
-	}.Build())
-	if err != nil {
-		return sandboxtypes.StateTransition{}, false, err
-	}
-	transition, err := decodeTransition(resp.GetTransition())
-	if err != nil {
-		return sandboxtypes.StateTransition{}, false, err
-	}
-
-	return transition, resp.GetAlreadyDone(), transitionErrorOf(resp.GetOutcome(), resp.GetCurrentState(), opts.Action.TargetState)
-}
-
-func (r rpcTransitions) FinishTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string, action sandboxtypes.StateAction, outcome sandboxtypes.TransitionOutcome) error {
-	resp, err := r.client.FinishTransition(ctx, scheduling.FinishTransitionRequest_builder{
-		TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: transitionID, Action: wireActions[action],
-		Result: scheduling.TransitionResult_builder{
-			Failed: outcome.Failed, Error: outcome.Error, SkipRestore: outcome.SkipRestore, Restored: outcome.Restored, RefusalClass: outcome.RefusalClass,
-		}.Build(),
-	}.Build())
-	if err != nil {
-		return err
-	}
-
-	return errorOf(resp.GetOutcome())
-}
-
-func (r rpcTransitions) restored(record []byte, outcome scheduling.StateOutcome, current scheduling.SandboxState, err error) (sandboxtypes.Sandbox, error) {
-	if err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	if err := transitionErrorOf(outcome, current, sandboxtypes.StateRunning); err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	var sbx sandboxtypes.Sandbox
-	if err := json.Unmarshal(record, &sbx); err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-
-	return sbx, nil
-}
-
-func (r rpcTransitions) RestoreRunning(ctx context.Context, transition sandboxtypes.StateTransition, opts sandboxtypes.RestoreOpts) (sandboxtypes.Sandbox, error) {
-	wire, err := encodeWireTransition(transition)
-	if err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	resp, err := r.client.RestoreRunning(ctx, scheduling.RestoreRunningRequest_builder{
-		Transition: wire,
-		Options:    scheduling.RestoreOptions_builder{RetryAfter: durationpb.New(opts.RetryAfter), HoldOnly: opts.HoldOnly, EnvdRefusal: opts.EnvdRefusal}.Build(),
-	}.Build())
-
-	return r.restored(resp.GetRecord(), resp.GetOutcome(), resp.GetCurrentState(), err)
-}
-
-func (r rpcTransitions) RestoreCheckpointed(ctx context.Context, transition sandboxtypes.StateTransition, placement *orchestrator.SandboxNetworkPlacement) (sandboxtypes.Sandbox, error) {
-	wire, err := encodeWireTransition(transition)
-	if err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	req := scheduling.RestoreCheckpointedRequest_builder{Transition: wire}.Build()
-	if placement != nil {
-		mirror := &scheduling.NetworkPlacement{}
-		copyByName(placement.ProtoReflect(), mirror.ProtoReflect())
-		req.SetPlacement(mirror)
-	}
-	resp, err := r.client.RestoreCheckpointed(ctx, req)
-
-	return r.restored(resp.GetRecord(), resp.GetOutcome(), resp.GetCurrentState(), err)
-}
-
-func (r rpcTransitions) WaitForTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string) (string, error) {
-	for {
-		resp, err := r.client.WaitForTransition(ctx, scheduling.WaitForTransitionRequest_builder{
-			TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: transitionID,
-		}.Build())
-		if err != nil {
-			if ctx.Err() != nil {
-				return transitionID, ctx.Err()
-			}
-
-			return transitionID, err
-		}
-		transitionID = resp.GetTransitionId()
-		switch resp.GetOutcome() {
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING:
+func countWaiting(waiting chan<- struct{}) grpc.DialOption {
+	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		err := invoker(ctx, method, req, reply, cc, opts...)
+		if resp, ok := reply.(*scheduling.WaitForTransitionResponse); ok && err == nil && resp.GetOutcome() == scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING {
 			select {
-			case r.waiting <- struct{}{}:
+			case waiting <- struct{}{}:
 			default:
 			}
-
-			continue
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED:
-			return transitionID, nil
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED:
-			return transitionID, &sandboxtypes.RestoredTransitionError{Refusal: sandboxtypes.RefusalFromClass(resp.GetRefusalClass())}
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED:
-			return transitionID, &sandboxtypes.TransitionFailedError{Message: resp.GetFailure()}
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND:
-			return transitionID, sandboxtypes.ErrNotFound
-		default:
-			return transitionID, fmt.Errorf("unknown wait outcome %v", resp.GetOutcome())
 		}
-	}
+
+		return err
+	})
 }
 
 type removeResult struct {
@@ -283,7 +120,7 @@ func runJoin(t *testing.T, s redisSetup, path string, tt joinScenario) removeRes
 	awaitWait := func() { observed.awaitWaits(t, 1) }
 	if path == "rpc" {
 		waiting := make(chan struct{}, 64)
-		transitions = rpcTransitions{client: newClientWithWait(t, observed, shortWait), waiting: waiting}
+		transitions = remote.NewStorage(newConnWithWait(t, observed, shortWait, countWaiting(waiting)))
 		awaitWait = func() {
 			for range 2 {
 				select {

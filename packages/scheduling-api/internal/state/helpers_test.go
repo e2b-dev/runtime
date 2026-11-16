@@ -38,6 +38,12 @@ func newClient(t *testing.T, storage sandboxtypes.Storage) scheduling.StateServi
 func newClientWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration) scheduling.StateServiceClient {
 	t.Helper()
 
+	return scheduling.NewStateServiceClient(newConnWithWait(t, storage, maxWait))
+}
+
+func newConnWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration, options ...grpc.DialOption) *grpc.ClientConn {
+	t.Helper()
+
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
 	scheduling.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
@@ -46,16 +52,16 @@ func newClientWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.
 	}()
 	t.Cleanup(server.Stop)
 
-	conn, err := grpc.NewClient("passthrough:///bufconn",
+	conn, err := grpc.NewClient("passthrough:///bufconn", append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return listener.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}, options...)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
 
-	return scheduling.NewStateServiceClient(conn)
+	return conn
 }
 
 func callContext(t *testing.T) context.Context {

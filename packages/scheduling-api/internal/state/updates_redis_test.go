@@ -2,9 +2,7 @@ package state_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -18,88 +16,6 @@ import (
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
-
-type rpcUpdates struct {
-	client scheduling.StateServiceClient
-}
-
-var _ sandboxtypes.RecordUpdates = rpcUpdates{}
-
-func errorOf(outcome scheduling.StateOutcome) error {
-	switch outcome {
-	case scheduling.StateOutcome_STATE_OUTCOME_OK:
-		return nil
-	case scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND:
-		return sandboxtypes.ErrNotFound
-	case scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD:
-		return sandboxtypes.ErrLifecycleHeld
-	case scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH:
-		return sandboxtypes.ErrExecutionMismatch
-	case scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST:
-		return sandboxtypes.ErrLockLost
-	case scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT:
-		return sandboxtypes.ErrHoldConflict
-	case scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD:
-		return sandboxtypes.ErrNotHeld
-	case scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS:
-		return sandboxtypes.ErrEvictionInProgress
-	case scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED:
-		return sandboxtypes.ErrEvictionNotNeeded
-	case scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT:
-		return sandboxtypes.ErrRestoreConflict
-	default:
-		return fmt.Errorf("unknown outcome %v", outcome)
-	}
-}
-
-func (u rpcUpdates) BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, sandboxtypes.UpdateToken, error) {
-	resp, err := u.client.BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
-	if err != nil {
-		return sandboxtypes.Sandbox{}, "", err
-	}
-	if err := errorOf(resp.GetOutcome()); err != nil {
-		return sandboxtypes.Sandbox{}, "", err
-	}
-	var sbx sandboxtypes.Sandbox
-	if err := json.Unmarshal(resp.GetRecord(), &sbx); err != nil {
-		return sandboxtypes.Sandbox{}, "", err
-	}
-
-	return sbx, sandboxtypes.UpdateToken(resp.GetToken()), nil
-}
-
-func (u rpcUpdates) CommitUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken, updated sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
-	record, err := json.Marshal(updated)
-	if err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	resp, err := u.client.CommitUpdate(ctx, scheduling.CommitUpdateRequest_builder{
-		TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token), Record: record,
-	}.Build())
-	if err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	if err := errorOf(resp.GetOutcome()); err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-	var committed sandboxtypes.Sandbox
-	if err := json.Unmarshal(resp.GetRecord(), &committed); err != nil {
-		return sandboxtypes.Sandbox{}, err
-	}
-
-	return committed, nil
-}
-
-func (u rpcUpdates) AbortUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken) error {
-	resp, err := u.client.AbortUpdate(ctx, scheduling.AbortUpdateRequest_builder{
-		TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token),
-	}.Build())
-	if err != nil {
-		return err
-	}
-
-	return errorOf(resp.GetOutcome())
-}
 
 func (s redisSetup) begin(ctx context.Context, t *testing.T, teamID uuid.UUID, sandboxID string) *scheduling.BeginUpdateResponse {
 	t.Helper()
@@ -386,7 +302,7 @@ func TestRedisUpdateRecordThroughRPC(t *testing.T) {
 	t.Parallel()
 
 	s := setupRedis(t)
-	updates := rpcUpdates{client: s.client}
+	updates := s.remote
 
 	t.Run("commits", func(t *testing.T) {
 		t.Parallel()
@@ -629,7 +545,7 @@ func TestRedisCommitRejectedRecordReleasesTheLock(t *testing.T) {
 		sbx := minimalRecord(uuid.New(), newSandboxID())
 		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
 
-		_, err := sandboxtypes.UpdateRecord(ctx, rpcUpdates{client: s.client}, sbx.TeamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+		_, err := sandboxtypes.UpdateRecord(ctx, s.remote, sbx.TeamID, sbx.SandboxID, func(cur sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
 			cur.ExecutionID = "not-a-uuid"
 
 			return cur, nil

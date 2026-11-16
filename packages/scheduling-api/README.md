@@ -5,6 +5,11 @@ gRPC service for scheduling. It serves the start reservation service
 `e2b.scheduling.v1.StateService` on the Redis data of the API: it connects to
 the same Redis and reads and writes the same keys. No caller uses it yet.
 
+The Go client is `packages/shared/pkg/sandboxstore/remote`. It implements the
+sandbox store interfaces `Storage` and `ReservationStorage` over a gRPC
+connection to this service, with the same results and errors as the Redis
+backends.
+
 The contracts are
 [`e2b/scheduling/v1/reservation.proto`](e2b/scheduling/v1/reservation.proto)
 and [`e2b/scheduling/v1/state.proto`](e2b/scheduling/v1/state.proto) in this
@@ -112,9 +117,9 @@ at most 32 MiB.
 
 ## Tests
 
-The tests of `internal/reservation`, `internal/state` and `.` need a Redis
-server, named by `REDIS_TEST_DATABASE_URL`. Each test's client namespaces its
-keys and removes them when the test ends.
+The tests of `internal/reservation`, `internal/state`, `internal/server` and
+`.` need a Redis server, named by `REDIS_TEST_DATABASE_URL`. Each test's
+client namespaces its keys and removes them when the test ends.
 
 ```bash
 docker run -d --rm --name e2b-test-redis -p 56379:6379 redis:8-alpine --save "" --appendonly no
@@ -129,7 +134,7 @@ make test
 | `internal/config` | Configuration parsing and TLS settings validation |
 | `internal/reservation` | Reservation gRPC handlers: outcomes, validation and errors, against Redis and a fake store |
 | `internal/state` | Sandbox state gRPC handlers: record fidelity, outcomes, validation and errors, against Redis and a fake store |
-| `internal/server` | The production gRPC server with fake stores: unary and stream request validation, panic recovery, the request deadline, the `WaitForStart` and `WaitForTransition` bounds, the message limit; mTLS: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext |
+| `internal/server` | The production gRPC server with fake stores: unary and stream request validation, panic recovery, the request deadline, the `WaitForStart` and `WaitForTransition` bounds, the message limit; mTLS: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext; the client's deadlines and message limit against the server's, and a record above 4 MiB through Redis |
 | `.` | Startup with Redis, health, a start, a record and a kill through the listener, shutdown, listener in use |
 
 ## Commands

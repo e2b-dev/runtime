@@ -39,16 +39,22 @@ func serve(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait t
 func dial(t *testing.T, listener *bufconn.Listener) scheduling.ReservationServiceClient {
 	t.Helper()
 
-	conn, err := grpc.NewClient("passthrough:///bufconn",
+	return scheduling.NewReservationServiceClient(dialConn(t, listener))
+}
+
+func dialConn(t *testing.T, listener *bufconn.Listener, options ...grpc.DialOption) *grpc.ClientConn {
+	t.Helper()
+
+	conn, err := grpc.NewClient("passthrough:///bufconn", append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return listener.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}, options...)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
 
-	return scheduling.NewReservationServiceClient(conn)
+	return conn
 }
 
 func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait time.Duration) scheduling.ReservationServiceClient {

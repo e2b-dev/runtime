@@ -16,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	storage_redis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
@@ -23,6 +24,7 @@ import (
 type redisSetup struct {
 	records *storage_redis.Storage
 	client  scheduling.StateServiceClient
+	remote  *remote.Storage
 }
 
 func setupRedis(t *testing.T) redisSetup {
@@ -39,7 +41,9 @@ func setupRedisOn(t *testing.T, client goredis.UniversalClient) redisSetup {
 	go records.Start(t.Context())
 	t.Cleanup(func() { records.Close(context.WithoutCancel(t.Context())) })
 
-	return redisSetup{records: records, client: newClient(t, records)}
+	conn := newConnWithWait(t, records, hangTimeout)
+
+	return redisSetup{records: records, client: scheduling.NewStateServiceClient(conn), remote: remote.NewStorage(conn)}
 }
 
 func (s redisSetup) add(ctx context.Context, t *testing.T, sbx sandboxtypes.Sandbox) scheduling.StateOutcome {
