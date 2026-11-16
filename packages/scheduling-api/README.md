@@ -3,7 +3,9 @@
 gRPC service for scheduling. It serves the start reservation service
 `e2b.scheduling.v1.ReservationService` and the sandbox state service
 `e2b.scheduling.v1.StateService` on the Redis data of the API: it connects to
-the same Redis and reads and writes the same keys. No caller uses it yet.
+the same Redis and reads and writes the same keys. The API's sandbox store
+calls it when the `sandbox-state-scheduling-api` flag is on, which it is not by
+default.
 
 The Go client is `packages/shared/pkg/sandboxstore/remote`. It implements the
 sandbox store interfaces `Storage` and `ReservationStorage` over a gRPC

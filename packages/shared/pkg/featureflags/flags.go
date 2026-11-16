@@ -509,6 +509,12 @@ var (
 	// read, with the same store commands as before.
 	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
 
+	// SandboxStateSchedulingAPIFlag sends the API's sandbox store calls to
+	// scheduling-api instead of its own Redis store. Evaluated per call with
+	// team and sandbox contexts, and only when the API has a scheduling-api
+	// address. The fallback reads SANDBOX_STATE_SCHEDULING_API.
+	SandboxStateSchedulingAPIFlag = NewBoolFlag("sandbox-state-scheduling-api", envBoolOr("SANDBOX_STATE_SCHEDULING_API", false))
+
 	// NodeInfoRefreshIntervalSecondsFlag is how often, in seconds, each API
 	// replica asks the local cluster's nodes for their status and metrics
 	// between syncs, so a node that stopped accepting sandboxes is seen that

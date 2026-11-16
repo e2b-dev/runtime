@@ -4,7 +4,12 @@ The API TLS configuration has a dedicated scheduling hop. The API startup
 selects it when `SCHEDULING_API_GRPC_ADDRESS` is set. That address is the gRPC
 target of scheduling-api: a plain `host:port`, or a schemed target such as
 `dns:///name:port` for a headless Service. The API then prepares a connection
-to it through the hop. Nothing uses the connection yet.
+to it through the hop. The sandbox store sends a call over it when the
+`sandbox-state-scheduling-api` feature flag is on for the call's team or
+sandbox; otherwise the call goes to the API's own Redis store. Without
+LaunchDarkly the flag reads `SANDBOX_STATE_SCHEDULING_API` and defaults to off.
+The calls that have no team (expired items, teams with sandboxes, node sync)
+always stay on Redis.
 
 When selected, the hop defaults to mTLS. It uses the shared certificate loader
 and verifies the server's SPIFFE identity. Configure these settings:

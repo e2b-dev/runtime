@@ -434,7 +434,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		}
 	}
 
-	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator)
+	orch, err := orchestrator.New(ctx, config, tel, sd.nodes, provider == cfg.ServiceDiscoveryProviderLocal, posthogClient, redisClient, sqlcDB, clusters, featureFlags, accessTokenGenerator, snapshotCache, snapshotUpsertSem, hops.Analytics, hops.Orchestrator, schedulingConn)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Orchestrator client", zap.Error(err))
 	}
