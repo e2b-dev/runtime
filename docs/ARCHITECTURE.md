@@ -90,7 +90,7 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
-| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation service on the API's Redis data; no callers yet |
+| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation and sandbox state services on the API's Redis data; no callers yet |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -1492,7 +1492,7 @@ packages/
   orchestrator/         Sandbox runtime + template builder (one binary, per-node)
   client-proxy/         Edge router for sandbox traffic
   envd/                 In-VM agent (pkg/version.go is release-please's; see Envd)
-  scheduling-api/       gRPC start reservation service on the API's Redis data (not deployed yet; no callers yet)
+  scheduling-api/       gRPC start reservation and sandbox state services on the API's Redis data (not deployed yet; no callers yet)
   shared/               Protos, telemetry, storage clients, proxy engine, feature flags
   auth/                 AuthN library (API keys, JWT/OIDC) used by api
   db/                   Postgres migrations (goose) + queries (sqlc)

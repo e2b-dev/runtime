@@ -1,15 +1,14 @@
 # scheduling-api
 
 gRPC service for scheduling. It serves the start reservation service
-`e2b.scheduling.v1.ReservationService` on the Redis data of the API: it
-connects to the same Redis and reads and writes the same keys. No caller uses
-it yet.
+`e2b.scheduling.v1.ReservationService` and the sandbox state service
+`e2b.scheduling.v1.StateService` on the Redis data of the API: it connects to
+the same Redis and reads and writes the same keys. No caller uses it yet.
 
-The contract is
+The contracts are
 [`e2b/scheduling/v1/reservation.proto`](e2b/scheduling/v1/reservation.proto)
-in this directory. The contract of the sandbox state service,
-[`e2b/scheduling/v1/state.proto`](e2b/scheduling/v1/state.proto), is there
-too; the service does not serve it yet. The generated Go code is in
+and [`e2b/scheduling/v1/state.proto`](e2b/scheduling/v1/state.proto) in this
+directory. The generated Go code is in
 `packages/shared/pkg/grpc/scheduling`. After a change to the proto, run
 `make generate`. Generation needs network access: it fetches the protovalidate
 rules with `buf export`.
@@ -32,7 +31,9 @@ but rejects other plaintext calls.
 
 ## Methods
 
-The proto describes each method, its fields and its outcomes.
+The protos describe each method, its fields and its outcomes.
+
+### ReservationService
 
 | Method | Outcomes |
 |---|---|
@@ -43,9 +44,22 @@ The proto describes each method, its fields and its outcomes.
 | `ClaimKill` | `claimed` with `claim_id`, or not claimed |
 | `ReleaseKillClaim` | none |
 
-The service validates the requests with the protovalidate rules of the proto
-and returns `INVALID_ARGUMENT` with `buf.validate.Violations` details. A
-`WaitForStart` call waits at most 5 s and then returns `WAITING`.
+### StateService
+
+The records of running sandboxes, as the JSON of the store's record. See
+[`state.proto`](e2b/scheduling/v1/state.proto) for each method.
+
+| Group | Methods |
+|---|---|
+| Records | `Add`, `Get`, `Remove`, `TeamItems` (stream), `ExpiredItems` (stream), `TeamsWithSandboxCount`, `Reconcile` |
+| Updates | `BeginUpdate`, `CommitUpdate`, `AbortUpdate` |
+| Holds | `HoldExecution`, `MoveHeldExecution`, `ReleaseHeldExecution`, `RemoveHeldExecution` |
+| Transitions | `BeginRemoving`, `FinishTransition`, `RestoreRunning`, `RestoreCheckpointed`, `WaitForTransition` |
+
+The service validates the requests, unary and stream, with the protovalidate
+rules of the protos and returns `INVALID_ARGUMENT` with
+`buf.validate.Violations` details. A `WaitForStart` or `WaitForTransition`
+call waits at most 5 s and then returns `WAITING`.
 
 ## Configuration
 
@@ -80,18 +94,21 @@ retries the first ping for up to 5 minutes. If the Redis connection, the TLS
 configuration or the listener fails on start, the service closes what it
 opened and exits with an error.
 
-The standard gRPC health service then reports `SERVING` for `""` and
-`e2b.scheduling.v1.ReservationService`. On `SIGTERM` or `SIGINT` both health
-statuses change to `NOT_SERVING`. The listener keeps serving for 10 s, then
+The standard gRPC health service then reports `SERVING` for `""`,
+`e2b.scheduling.v1.ReservationService` and `e2b.scheduling.v1.StateService`.
+On `SIGTERM` or `SIGINT` all health statuses change to `NOT_SERVING`. The listener keeps serving for 10 s, then
 stops gracefully within 10 s. Then the service stops the sandbox store and
 closes the Redis client.
 
 As in the API, the sandbox store runs in the background: it sends and receives
-the Redis notifications that wake `WaitForStart` calls, and it repairs the
+the Redis notifications that wake `WaitForStart` and `WaitForTransition` calls
+and the waits for a record's lock, and it repairs the
 sandbox store indexes every few minutes.
 
-Every request has a default 10 s server deadline and respects an earlier caller
-deadline.
+Every unary request has a default 70 s server deadline and respects an
+earlier caller deadline: a state call can wait up to one minute for a record's
+lock. Streams have no server deadline. A message, request or response, can be
+at most 32 MiB.
 
 ## Tests
 
@@ -112,8 +129,8 @@ make test
 | `internal/config` | Configuration parsing and TLS settings validation |
 | `internal/reservation` | Reservation gRPC handlers: outcomes, validation and errors, against Redis and a fake store |
 | `internal/state` | Sandbox state gRPC handlers: record fidelity, outcomes, validation and errors, against Redis and a fake store |
-| `internal/server` | The production gRPC server with a fake store: request validation, panic recovery, the request deadline, the `WaitForStart` bound; mTLS: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext |
-| `.` | Startup with Redis, health, a start through the listener, shutdown, listener in use |
+| `internal/server` | The production gRPC server with fake stores: unary and stream request validation, panic recovery, the request deadline, the `WaitForStart` and `WaitForTransition` bounds, the message limit; mTLS: trusted and wrong caller identities, untrusted certificates, wrong server identity, plaintext |
+| `.` | Startup with Redis, health, a start, a record and a kill through the listener, shutdown, listener in use |
 
 ## Commands
 

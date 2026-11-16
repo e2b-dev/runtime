@@ -154,7 +154,7 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	}()
 
 	reservations := reservationsredis.NewReservationStorage(redisClient, storage.Notifier())
-	grpcServer, healthServer, err := newServer(tel, tlsConfig, reservations)
+	grpcServer, healthServer, err := newServer(tel, tlsConfig, reservations, storage)
 	if err != nil {
 		_ = listener.Close()
 
@@ -193,14 +193,15 @@ func serve(ctx context.Context, cfg config.Config, tel *telemetry.Client, drain 
 	return serveErr
 }
 
-func newServer(tel *telemetry.Client, tlsConfig mtls.ServerConfig, reservations sandboxtypes.ReservationStorage) (*grpc.Server, *health.Server, error) {
-	grpcServer, err := server.New(tel, tlsConfig, reservations)
+func newServer(tel *telemetry.Client, tlsConfig mtls.ServerConfig, reservations sandboxtypes.ReservationStorage, storage sandboxtypes.Storage) (*grpc.Server, *health.Server, error) {
+	grpcServer, err := server.New(tel, tlsConfig, reservations, storage)
 	if err != nil {
 		return nil, nil, err
 	}
 	healthServer := health.NewServer()
 	healthv1.RegisterHealthServer(grpcServer, healthServer)
 	healthServer.SetServingStatus(scheduling.ReservationService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(scheduling.StateService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
 
 	return grpcServer, healthServer, nil
 }
