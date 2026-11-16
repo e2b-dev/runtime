@@ -217,6 +217,10 @@ func outcomeOf(err error) (scheduling.StateOutcome, bool) {
 		return scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, true
 	case errors.Is(err, sandboxtypes.ErrLockLost):
 		return scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST, true
+	case errors.Is(err, sandboxtypes.ErrHoldConflict):
+		return scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT, true
+	case errors.Is(err, sandboxtypes.ErrNotHeld):
+		return scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD, true
 	}
 
 	return scheduling.StateOutcome_STATE_OUTCOME_UNSPECIFIED, false

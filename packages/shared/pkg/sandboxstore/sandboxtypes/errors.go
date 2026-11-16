@@ -200,6 +200,10 @@ var ErrHoldConflict = errors.New("the sandbox record cannot be held by this oper
 // written. Nothing was written, so a retry can succeed.
 var ErrLockLost = errors.New("the record's lock was lost before the update was written")
 
+// ErrInvalidUpdateToken refuses an UpdateToken that no BeginUpdate of this
+// backend returned; nothing is written or released.
+var ErrInvalidUpdateToken = errors.New("invalid update token")
+
 // ErrNotHeld means the record is not held by the operation.
 var ErrNotHeld = errors.New("the sandbox record is not held by this operation")
 

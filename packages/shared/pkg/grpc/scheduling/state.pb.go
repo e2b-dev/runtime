@@ -31,6 +31,8 @@ const (
 	StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD     StateOutcome = 3
 	StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH StateOutcome = 4
 	StateOutcome_STATE_OUTCOME_LOCK_LOST          StateOutcome = 5
+	StateOutcome_STATE_OUTCOME_HOLD_CONFLICT      StateOutcome = 6
+	StateOutcome_STATE_OUTCOME_NOT_HELD           StateOutcome = 7
 )
 
 // Enum value maps for StateOutcome.
@@ -42,6 +44,8 @@ var (
 		3: "STATE_OUTCOME_LIFECYCLE_HELD",
 		4: "STATE_OUTCOME_EXECUTION_MISMATCH",
 		5: "STATE_OUTCOME_LOCK_LOST",
+		6: "STATE_OUTCOME_HOLD_CONFLICT",
+		7: "STATE_OUTCOME_NOT_HELD",
 	}
 	StateOutcome_value = map[string]int32{
 		"STATE_OUTCOME_UNSPECIFIED":        0,
@@ -50,6 +54,8 @@ var (
 		"STATE_OUTCOME_LIFECYCLE_HELD":     3,
 		"STATE_OUTCOME_EXECUTION_MISMATCH": 4,
 		"STATE_OUTCOME_LOCK_LOST":          5,
+		"STATE_OUTCOME_HOLD_CONFLICT":      6,
+		"STATE_OUTCOME_NOT_HELD":           7,
 	}
 )
 
@@ -1284,6 +1290,1178 @@ func (b0 ReconcileResponse_builder) Build() *ReconcileResponse {
 	return m0
 }
 
+type BeginUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *BeginUpdateRequest) Reset() {
+	*x = BeginUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginUpdateRequest) ProtoMessage() {}
+
+func (x *BeginUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *BeginUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *BeginUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *BeginUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+type BeginUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+}
+
+func (b0 BeginUpdateRequest_builder) Build() *BeginUpdateRequest {
+	m0 := &BeginUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	return m0
+}
+
+type BeginUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	xxx_hidden_Token   []byte                 `protobuf:"bytes,3,opt,name=token"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *BeginUpdateResponse) Reset() {
+	*x = BeginUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginUpdateResponse) ProtoMessage() {}
+
+func (x *BeginUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *BeginUpdateResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *BeginUpdateResponse) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *BeginUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *BeginUpdateResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+func (x *BeginUpdateResponse) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+type BeginUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+	// A secret of this update, valid only with its team_id and sandbox_id: it
+	// writes under and releases the lock.
+	Token []byte
+}
+
+func (b0 BeginUpdateResponse_builder) Build() *BeginUpdateResponse {
+	m0 := &BeginUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	x.xxx_hidden_Token = b.Token
+	return m0
+}
+
+type CommitUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_Token     []byte                 `protobuf:"bytes,3,opt,name=token"`
+	xxx_hidden_Record    []byte                 `protobuf:"bytes,4,opt,name=record"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *CommitUpdateRequest) Reset() {
+	*x = CommitUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitUpdateRequest) ProtoMessage() {}
+
+func (x *CommitUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CommitUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *CommitUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *CommitUpdateRequest) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *CommitUpdateRequest) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *CommitUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *CommitUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *CommitUpdateRequest) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+func (x *CommitUpdateRequest) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type CommitUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	Token     []byte
+	// Its team and sandbox IDs must be team_id and sandbox_id.
+	Record []byte
+}
+
+func (b0 CommitUpdateRequest_builder) Build() *CommitUpdateRequest {
+	m0 := &CommitUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_Token = b.Token
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
+type CommitUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *CommitUpdateResponse) Reset() {
+	*x = CommitUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitUpdateResponse) ProtoMessage() {}
+
+func (x *CommitUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CommitUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *CommitUpdateResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *CommitUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *CommitUpdateResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type CommitUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+}
+
+func (b0 CommitUpdateResponse_builder) Build() *CommitUpdateResponse {
+	m0 := &CommitUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
+type AbortUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_Token     []byte                 `protobuf:"bytes,3,opt,name=token"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AbortUpdateRequest) Reset() {
+	*x = AbortUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortUpdateRequest) ProtoMessage() {}
+
+func (x *AbortUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *AbortUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *AbortUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *AbortUpdateRequest) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *AbortUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *AbortUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *AbortUpdateRequest) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+type AbortUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	Token     []byte
+}
+
+func (b0 AbortUpdateRequest_builder) Build() *AbortUpdateRequest {
+	m0 := &AbortUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_Token = b.Token
+	return m0
+}
+
+type AbortUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *AbortUpdateResponse) Reset() {
+	*x = AbortUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortUpdateResponse) ProtoMessage() {}
+
+func (x *AbortUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *AbortUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *AbortUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type AbortUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 AbortUpdateResponse_builder) Build() *AbortUpdateResponse {
+	m0 := &AbortUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type Hold struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId       string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId    string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_ExecutionId  string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId"`
+	xxx_hidden_SourceNodeId string                 `protobuf:"bytes,4,opt,name=source_node_id,json=sourceNodeId"`
+	xxx_hidden_Id           string                 `protobuf:"bytes,5,opt,name=id"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *Hold) Reset() {
+	*x = Hold{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Hold) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Hold) ProtoMessage() {}
+
+func (x *Hold) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Hold) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *Hold) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *Hold) GetExecutionId() string {
+	if x != nil {
+		return x.xxx_hidden_ExecutionId
+	}
+	return ""
+}
+
+func (x *Hold) GetSourceNodeId() string {
+	if x != nil {
+		return x.xxx_hidden_SourceNodeId
+	}
+	return ""
+}
+
+func (x *Hold) GetId() string {
+	if x != nil {
+		return x.xxx_hidden_Id
+	}
+	return ""
+}
+
+func (x *Hold) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *Hold) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *Hold) SetExecutionId(v string) {
+	x.xxx_hidden_ExecutionId = v
+}
+
+func (x *Hold) SetSourceNodeId(v string) {
+	x.xxx_hidden_SourceNodeId = v
+}
+
+func (x *Hold) SetId(v string) {
+	x.xxx_hidden_Id = v
+}
+
+type Hold_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId       string
+	SandboxId    string
+	ExecutionId  string
+	SourceNodeId string
+	Id           string
+}
+
+func (b0 Hold_builder) Build() *Hold {
+	m0 := &Hold{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_ExecutionId = b.ExecutionId
+	x.xxx_hidden_SourceNodeId = b.SourceNodeId
+	x.xxx_hidden_Id = b.Id
+	return m0
+}
+
+type HoldExecutionRequest struct {
+	state            protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold  *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	xxx_hidden_Until *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=until"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *HoldExecutionRequest) Reset() {
+	*x = HoldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HoldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HoldExecutionRequest) ProtoMessage() {}
+
+func (x *HoldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *HoldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *HoldExecutionRequest) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.xxx_hidden_Until
+	}
+	return nil
+}
+
+func (x *HoldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *HoldExecutionRequest) SetUntil(v *timestamppb.Timestamp) {
+	x.xxx_hidden_Until = v
+}
+
+func (x *HoldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *HoldExecutionRequest) HasUntil() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Until != nil
+}
+
+func (x *HoldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+func (x *HoldExecutionRequest) ClearUntil() {
+	x.xxx_hidden_Until = nil
+}
+
+type HoldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold  *Hold
+	Until *timestamppb.Timestamp
+}
+
+func (b0 HoldExecutionRequest_builder) Build() *HoldExecutionRequest {
+	m0 := &HoldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	x.xxx_hidden_Until = b.Until
+	return m0
+}
+
+type HoldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *HoldExecutionResponse) Reset() {
+	*x = HoldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HoldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HoldExecutionResponse) ProtoMessage() {}
+
+func (x *HoldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *HoldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *HoldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type HoldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 HoldExecutionResponse_builder) Build() *HoldExecutionResponse {
+	m0 := &HoldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type MoveHeldExecutionRequest struct {
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold   *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	xxx_hidden_NodeId string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *MoveHeldExecutionRequest) Reset() {
+	*x = MoveHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MoveHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MoveHeldExecutionRequest) ProtoMessage() {}
+
+func (x *MoveHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *MoveHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *MoveHeldExecutionRequest) GetNodeId() string {
+	if x != nil {
+		return x.xxx_hidden_NodeId
+	}
+	return ""
+}
+
+func (x *MoveHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *MoveHeldExecutionRequest) SetNodeId(v string) {
+	x.xxx_hidden_NodeId = v
+}
+
+func (x *MoveHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *MoveHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type MoveHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold   *Hold
+	NodeId string
+}
+
+func (b0 MoveHeldExecutionRequest_builder) Build() *MoveHeldExecutionRequest {
+	m0 := &MoveHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	x.xxx_hidden_NodeId = b.NodeId
+	return m0
+}
+
+type MoveHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Moved   bool                   `protobuf:"varint,2,opt,name=moved"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *MoveHeldExecutionResponse) Reset() {
+	*x = MoveHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MoveHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MoveHeldExecutionResponse) ProtoMessage() {}
+
+func (x *MoveHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *MoveHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *MoveHeldExecutionResponse) GetMoved() bool {
+	if x != nil {
+		return x.xxx_hidden_Moved
+	}
+	return false
+}
+
+func (x *MoveHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *MoveHeldExecutionResponse) SetMoved(v bool) {
+	x.xxx_hidden_Moved = v
+}
+
+type MoveHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Moved   bool
+}
+
+func (b0 MoveHeldExecutionResponse_builder) Build() *MoveHeldExecutionResponse {
+	m0 := &MoveHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Moved = b.Moved
+	return m0
+}
+
+type ReleaseHeldExecutionRequest struct {
+	state           protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ReleaseHeldExecutionRequest) Reset() {
+	*x = ReleaseHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseHeldExecutionRequest) ProtoMessage() {}
+
+func (x *ReleaseHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ReleaseHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *ReleaseHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *ReleaseHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *ReleaseHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type ReleaseHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold *Hold
+}
+
+func (b0 ReleaseHeldExecutionRequest_builder) Build() *ReleaseHeldExecutionRequest {
+	m0 := &ReleaseHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	return m0
+}
+
+type ReleaseHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ReleaseHeldExecutionResponse) Reset() {
+	*x = ReleaseHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseHeldExecutionResponse) ProtoMessage() {}
+
+func (x *ReleaseHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ReleaseHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *ReleaseHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type ReleaseHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 ReleaseHeldExecutionResponse_builder) Build() *ReleaseHeldExecutionResponse {
+	m0 := &ReleaseHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type RemoveHeldExecutionRequest struct {
+	state           protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RemoveHeldExecutionRequest) Reset() {
+	*x = RemoveHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveHeldExecutionRequest) ProtoMessage() {}
+
+func (x *RemoveHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RemoveHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *RemoveHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *RemoveHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *RemoveHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type RemoveHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold *Hold
+}
+
+func (b0 RemoveHeldExecutionRequest_builder) Build() *RemoveHeldExecutionRequest {
+	m0 := &RemoveHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	return m0
+}
+
+type RemoveHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *RemoveHeldExecutionResponse) Reset() {
+	*x = RemoveHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveHeldExecutionResponse) ProtoMessage() {}
+
+func (x *RemoveHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RemoveHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *RemoveHeldExecutionResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *RemoveHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *RemoveHeldExecutionResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type RemoveHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+}
+
+func (b0 RemoveHeldExecutionResponse_builder) Build() *RemoveHeldExecutionResponse {
+	m0 := &RemoveHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
 var File_e2b_scheduling_v1_state_proto protoreflect.FileDescriptor
 
 const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
@@ -1352,20 +2530,79 @@ const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x02 \x01(\tR\tsandboxId\"R\n" +
 	"\x11ReconcileResponse\x12=\n" +
-	"\aorphans\x18\x01 \x03(\v2#.e2b.scheduling.v1.SandboxReferenceR\aorphans*\xc5\x01\n" +
+	"\aorphans\x18\x01 \x03(\v2#.e2b.scheduling.v1.SandboxReferenceR\aorphans\"g\n" +
+	"\x12BeginUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\"~\n" +
+	"\x13BeginUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\fR\x05token\"\x9f\x01\n" +
+	"\x13CommitUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12\x1d\n" +
+	"\x05token\x18\x03 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\x05token\x12\x16\n" +
+	"\x06record\x18\x04 \x01(\fR\x06record\"i\n" +
+	"\x14CommitUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\"\x86\x01\n" +
+	"\x12AbortUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12\x1d\n" +
+	"\x05token\x18\x03 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\x05token\"P\n" +
+	"\x13AbortUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"\xbb\x01\n" +
+	"\x04Hold\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12!\n" +
+	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x12$\n" +
+	"\x0esource_node_id\x18\x04 \x01(\tR\fsourceNodeId\x12\x17\n" +
+	"\x02id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\"\xe8\x01\n" +
+	"\x14HoldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\x128\n" +
+	"\x05until\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x05until:a\xbaH^\x1a\\\n" +
+	"\x13hold.source_node_id\x12%hold.source_node_id must not be empty\x1a\x1ethis.hold.source_node_id != ''\"R\n" +
+	"\x15HoldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"q\n" +
+	"\x18MoveHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\x12 \n" +
+	"\anode_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06nodeId\"l\n" +
+	"\x19MoveHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x14\n" +
+	"\x05moved\x18\x02 \x01(\bR\x05moved\"R\n" +
+	"\x1bReleaseHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\"Y\n" +
+	"\x1cReleaseHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"Q\n" +
+	"\x1aRemoveHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\"p\n" +
+	"\x1bRemoveHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record*\x82\x02\n" +
 	"\fStateOutcome\x12\x1d\n" +
 	"\x19STATE_OUTCOME_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10STATE_OUTCOME_OK\x10\x01\x12\x1b\n" +
 	"\x17STATE_OUTCOME_NOT_FOUND\x10\x02\x12 \n" +
 	"\x1cSTATE_OUTCOME_LIFECYCLE_HELD\x10\x03\x12$\n" +
 	" STATE_OUTCOME_EXECUTION_MISMATCH\x10\x04\x12\x1b\n" +
-	"\x17STATE_OUTCOME_LOCK_LOST\x10\x05*\x9e\x01\n" +
+	"\x17STATE_OUTCOME_LOCK_LOST\x10\x05\x12\x1f\n" +
+	"\x1bSTATE_OUTCOME_HOLD_CONFLICT\x10\x06\x12\x1a\n" +
+	"\x16STATE_OUTCOME_NOT_HELD\x10\a*\x9e\x01\n" +
 	"\fSandboxState\x12\x1d\n" +
 	"\x19SANDBOX_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SANDBOX_STATE_RUNNING\x10\x01\x12\x19\n" +
 	"\x15SANDBOX_STATE_PAUSING\x10\x02\x12\x19\n" +
 	"\x15SANDBOX_STATE_KILLING\x10\x03\x12\x1e\n" +
-	"\x1aSANDBOX_STATE_SNAPSHOTTING\x10\x042\xfa\x04\n" +
+	"\x1aSANDBOX_STATE_SNAPSHOTTING\x10\x042\xda\n" +
+	"\n" +
 	"\fStateService\x12D\n" +
 	"\x03Add\x12\x1d.e2b.scheduling.v1.AddRequest\x1a\x1e.e2b.scheduling.v1.AddResponse\x12D\n" +
 	"\x03Get\x12\x1d.e2b.scheduling.v1.GetRequest\x1a\x1e.e2b.scheduling.v1.GetResponse\x12M\n" +
@@ -1373,10 +2610,17 @@ const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
 	"\tTeamItems\x12#.e2b.scheduling.v1.TeamItemsRequest\x1a$.e2b.scheduling.v1.TeamItemsResponse0\x01\x12a\n" +
 	"\fExpiredItems\x12&.e2b.scheduling.v1.ExpiredItemsRequest\x1a'.e2b.scheduling.v1.ExpiredItemsResponse0\x01\x12z\n" +
 	"\x15TeamsWithSandboxCount\x12/.e2b.scheduling.v1.TeamsWithSandboxCountRequest\x1a0.e2b.scheduling.v1.TeamsWithSandboxCountResponse\x12V\n" +
-	"\tReconcile\x12#.e2b.scheduling.v1.ReconcileRequest\x1a$.e2b.scheduling.v1.ReconcileResponseBNZGgithub.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling\x92\x03\x02\b\x02b\beditionsp\xe9\a"
+	"\tReconcile\x12#.e2b.scheduling.v1.ReconcileRequest\x1a$.e2b.scheduling.v1.ReconcileResponse\x12\\\n" +
+	"\vBeginUpdate\x12%.e2b.scheduling.v1.BeginUpdateRequest\x1a&.e2b.scheduling.v1.BeginUpdateResponse\x12_\n" +
+	"\fCommitUpdate\x12&.e2b.scheduling.v1.CommitUpdateRequest\x1a'.e2b.scheduling.v1.CommitUpdateResponse\x12\\\n" +
+	"\vAbortUpdate\x12%.e2b.scheduling.v1.AbortUpdateRequest\x1a&.e2b.scheduling.v1.AbortUpdateResponse\x12b\n" +
+	"\rHoldExecution\x12'.e2b.scheduling.v1.HoldExecutionRequest\x1a(.e2b.scheduling.v1.HoldExecutionResponse\x12n\n" +
+	"\x11MoveHeldExecution\x12+.e2b.scheduling.v1.MoveHeldExecutionRequest\x1a,.e2b.scheduling.v1.MoveHeldExecutionResponse\x12w\n" +
+	"\x14ReleaseHeldExecution\x12..e2b.scheduling.v1.ReleaseHeldExecutionRequest\x1a/.e2b.scheduling.v1.ReleaseHeldExecutionResponse\x12t\n" +
+	"\x13RemoveHeldExecution\x12-.e2b.scheduling.v1.RemoveHeldExecutionRequest\x1a..e2b.scheduling.v1.RemoveHeldExecutionResponseBNZGgithub.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling\x92\x03\x02\b\x02b\beditionsp\xe9\a"
 
 var file_e2b_scheduling_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_e2b_scheduling_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_e2b_scheduling_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_e2b_scheduling_v1_state_proto_goTypes = []any{
 	(StateOutcome)(0),                     // 0: e2b.scheduling.v1.StateOutcome
 	(SandboxState)(0),                     // 1: e2b.scheduling.v1.SandboxState
@@ -1396,37 +2640,78 @@ var file_e2b_scheduling_v1_state_proto_goTypes = []any{
 	(*ReconcileRequest)(nil),              // 15: e2b.scheduling.v1.ReconcileRequest
 	(*SandboxReference)(nil),              // 16: e2b.scheduling.v1.SandboxReference
 	(*ReconcileResponse)(nil),             // 17: e2b.scheduling.v1.ReconcileResponse
-	nil,                                   // 18: e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
-	(*timestamppb.Timestamp)(nil),         // 19: google.protobuf.Timestamp
+	(*BeginUpdateRequest)(nil),            // 18: e2b.scheduling.v1.BeginUpdateRequest
+	(*BeginUpdateResponse)(nil),           // 19: e2b.scheduling.v1.BeginUpdateResponse
+	(*CommitUpdateRequest)(nil),           // 20: e2b.scheduling.v1.CommitUpdateRequest
+	(*CommitUpdateResponse)(nil),          // 21: e2b.scheduling.v1.CommitUpdateResponse
+	(*AbortUpdateRequest)(nil),            // 22: e2b.scheduling.v1.AbortUpdateRequest
+	(*AbortUpdateResponse)(nil),           // 23: e2b.scheduling.v1.AbortUpdateResponse
+	(*Hold)(nil),                          // 24: e2b.scheduling.v1.Hold
+	(*HoldExecutionRequest)(nil),          // 25: e2b.scheduling.v1.HoldExecutionRequest
+	(*HoldExecutionResponse)(nil),         // 26: e2b.scheduling.v1.HoldExecutionResponse
+	(*MoveHeldExecutionRequest)(nil),      // 27: e2b.scheduling.v1.MoveHeldExecutionRequest
+	(*MoveHeldExecutionResponse)(nil),     // 28: e2b.scheduling.v1.MoveHeldExecutionResponse
+	(*ReleaseHeldExecutionRequest)(nil),   // 29: e2b.scheduling.v1.ReleaseHeldExecutionRequest
+	(*ReleaseHeldExecutionResponse)(nil),  // 30: e2b.scheduling.v1.ReleaseHeldExecutionResponse
+	(*RemoveHeldExecutionRequest)(nil),    // 31: e2b.scheduling.v1.RemoveHeldExecutionRequest
+	(*RemoveHeldExecutionResponse)(nil),   // 32: e2b.scheduling.v1.RemoveHeldExecutionResponse
+	nil,                                   // 33: e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
+	(*timestamppb.Timestamp)(nil),         // 34: google.protobuf.Timestamp
 }
 var file_e2b_scheduling_v1_state_proto_depIdxs = []int32{
 	0,  // 0: e2b.scheduling.v1.AddResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	0,  // 1: e2b.scheduling.v1.GetResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	0,  // 2: e2b.scheduling.v1.RemoveResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	1,  // 3: e2b.scheduling.v1.TeamItemsRequest.states:type_name -> e2b.scheduling.v1.SandboxState
-	18, // 4: e2b.scheduling.v1.TeamsWithSandboxCountResponse.counts:type_name -> e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
-	19, // 5: e2b.scheduling.v1.NodeSandbox.start_time:type_name -> google.protobuf.Timestamp
+	33, // 4: e2b.scheduling.v1.TeamsWithSandboxCountResponse.counts:type_name -> e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
+	34, // 5: e2b.scheduling.v1.NodeSandbox.start_time:type_name -> google.protobuf.Timestamp
 	14, // 6: e2b.scheduling.v1.ReconcileRequest.sandboxes:type_name -> e2b.scheduling.v1.NodeSandbox
 	16, // 7: e2b.scheduling.v1.ReconcileResponse.orphans:type_name -> e2b.scheduling.v1.SandboxReference
-	2,  // 8: e2b.scheduling.v1.StateService.Add:input_type -> e2b.scheduling.v1.AddRequest
-	4,  // 9: e2b.scheduling.v1.StateService.Get:input_type -> e2b.scheduling.v1.GetRequest
-	6,  // 10: e2b.scheduling.v1.StateService.Remove:input_type -> e2b.scheduling.v1.RemoveRequest
-	8,  // 11: e2b.scheduling.v1.StateService.TeamItems:input_type -> e2b.scheduling.v1.TeamItemsRequest
-	10, // 12: e2b.scheduling.v1.StateService.ExpiredItems:input_type -> e2b.scheduling.v1.ExpiredItemsRequest
-	12, // 13: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:input_type -> e2b.scheduling.v1.TeamsWithSandboxCountRequest
-	15, // 14: e2b.scheduling.v1.StateService.Reconcile:input_type -> e2b.scheduling.v1.ReconcileRequest
-	3,  // 15: e2b.scheduling.v1.StateService.Add:output_type -> e2b.scheduling.v1.AddResponse
-	5,  // 16: e2b.scheduling.v1.StateService.Get:output_type -> e2b.scheduling.v1.GetResponse
-	7,  // 17: e2b.scheduling.v1.StateService.Remove:output_type -> e2b.scheduling.v1.RemoveResponse
-	9,  // 18: e2b.scheduling.v1.StateService.TeamItems:output_type -> e2b.scheduling.v1.TeamItemsResponse
-	11, // 19: e2b.scheduling.v1.StateService.ExpiredItems:output_type -> e2b.scheduling.v1.ExpiredItemsResponse
-	13, // 20: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:output_type -> e2b.scheduling.v1.TeamsWithSandboxCountResponse
-	17, // 21: e2b.scheduling.v1.StateService.Reconcile:output_type -> e2b.scheduling.v1.ReconcileResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	0,  // 8: e2b.scheduling.v1.BeginUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	0,  // 9: e2b.scheduling.v1.CommitUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	0,  // 10: e2b.scheduling.v1.AbortUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	24, // 11: e2b.scheduling.v1.HoldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	34, // 12: e2b.scheduling.v1.HoldExecutionRequest.until:type_name -> google.protobuf.Timestamp
+	0,  // 13: e2b.scheduling.v1.HoldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	24, // 14: e2b.scheduling.v1.MoveHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 15: e2b.scheduling.v1.MoveHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	24, // 16: e2b.scheduling.v1.ReleaseHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 17: e2b.scheduling.v1.ReleaseHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	24, // 18: e2b.scheduling.v1.RemoveHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 19: e2b.scheduling.v1.RemoveHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	2,  // 20: e2b.scheduling.v1.StateService.Add:input_type -> e2b.scheduling.v1.AddRequest
+	4,  // 21: e2b.scheduling.v1.StateService.Get:input_type -> e2b.scheduling.v1.GetRequest
+	6,  // 22: e2b.scheduling.v1.StateService.Remove:input_type -> e2b.scheduling.v1.RemoveRequest
+	8,  // 23: e2b.scheduling.v1.StateService.TeamItems:input_type -> e2b.scheduling.v1.TeamItemsRequest
+	10, // 24: e2b.scheduling.v1.StateService.ExpiredItems:input_type -> e2b.scheduling.v1.ExpiredItemsRequest
+	12, // 25: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:input_type -> e2b.scheduling.v1.TeamsWithSandboxCountRequest
+	15, // 26: e2b.scheduling.v1.StateService.Reconcile:input_type -> e2b.scheduling.v1.ReconcileRequest
+	18, // 27: e2b.scheduling.v1.StateService.BeginUpdate:input_type -> e2b.scheduling.v1.BeginUpdateRequest
+	20, // 28: e2b.scheduling.v1.StateService.CommitUpdate:input_type -> e2b.scheduling.v1.CommitUpdateRequest
+	22, // 29: e2b.scheduling.v1.StateService.AbortUpdate:input_type -> e2b.scheduling.v1.AbortUpdateRequest
+	25, // 30: e2b.scheduling.v1.StateService.HoldExecution:input_type -> e2b.scheduling.v1.HoldExecutionRequest
+	27, // 31: e2b.scheduling.v1.StateService.MoveHeldExecution:input_type -> e2b.scheduling.v1.MoveHeldExecutionRequest
+	29, // 32: e2b.scheduling.v1.StateService.ReleaseHeldExecution:input_type -> e2b.scheduling.v1.ReleaseHeldExecutionRequest
+	31, // 33: e2b.scheduling.v1.StateService.RemoveHeldExecution:input_type -> e2b.scheduling.v1.RemoveHeldExecutionRequest
+	3,  // 34: e2b.scheduling.v1.StateService.Add:output_type -> e2b.scheduling.v1.AddResponse
+	5,  // 35: e2b.scheduling.v1.StateService.Get:output_type -> e2b.scheduling.v1.GetResponse
+	7,  // 36: e2b.scheduling.v1.StateService.Remove:output_type -> e2b.scheduling.v1.RemoveResponse
+	9,  // 37: e2b.scheduling.v1.StateService.TeamItems:output_type -> e2b.scheduling.v1.TeamItemsResponse
+	11, // 38: e2b.scheduling.v1.StateService.ExpiredItems:output_type -> e2b.scheduling.v1.ExpiredItemsResponse
+	13, // 39: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:output_type -> e2b.scheduling.v1.TeamsWithSandboxCountResponse
+	17, // 40: e2b.scheduling.v1.StateService.Reconcile:output_type -> e2b.scheduling.v1.ReconcileResponse
+	19, // 41: e2b.scheduling.v1.StateService.BeginUpdate:output_type -> e2b.scheduling.v1.BeginUpdateResponse
+	21, // 42: e2b.scheduling.v1.StateService.CommitUpdate:output_type -> e2b.scheduling.v1.CommitUpdateResponse
+	23, // 43: e2b.scheduling.v1.StateService.AbortUpdate:output_type -> e2b.scheduling.v1.AbortUpdateResponse
+	26, // 44: e2b.scheduling.v1.StateService.HoldExecution:output_type -> e2b.scheduling.v1.HoldExecutionResponse
+	28, // 45: e2b.scheduling.v1.StateService.MoveHeldExecution:output_type -> e2b.scheduling.v1.MoveHeldExecutionResponse
+	30, // 46: e2b.scheduling.v1.StateService.ReleaseHeldExecution:output_type -> e2b.scheduling.v1.ReleaseHeldExecutionResponse
+	32, // 47: e2b.scheduling.v1.StateService.RemoveHeldExecution:output_type -> e2b.scheduling.v1.RemoveHeldExecutionResponse
+	34, // [34:48] is the sub-list for method output_type
+	20, // [20:34] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_e2b_scheduling_v1_state_proto_init() }
@@ -1440,7 +2725,7 @@ func file_e2b_scheduling_v1_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_e2b_scheduling_v1_state_proto_rawDesc), len(file_e2b_scheduling_v1_state_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   17,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

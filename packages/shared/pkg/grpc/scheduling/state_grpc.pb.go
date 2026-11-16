@@ -26,6 +26,13 @@ const (
 	StateService_ExpiredItems_FullMethodName          = "/e2b.scheduling.v1.StateService/ExpiredItems"
 	StateService_TeamsWithSandboxCount_FullMethodName = "/e2b.scheduling.v1.StateService/TeamsWithSandboxCount"
 	StateService_Reconcile_FullMethodName             = "/e2b.scheduling.v1.StateService/Reconcile"
+	StateService_BeginUpdate_FullMethodName           = "/e2b.scheduling.v1.StateService/BeginUpdate"
+	StateService_CommitUpdate_FullMethodName          = "/e2b.scheduling.v1.StateService/CommitUpdate"
+	StateService_AbortUpdate_FullMethodName           = "/e2b.scheduling.v1.StateService/AbortUpdate"
+	StateService_HoldExecution_FullMethodName         = "/e2b.scheduling.v1.StateService/HoldExecution"
+	StateService_MoveHeldExecution_FullMethodName     = "/e2b.scheduling.v1.StateService/MoveHeldExecution"
+	StateService_ReleaseHeldExecution_FullMethodName  = "/e2b.scheduling.v1.StateService/ReleaseHeldExecution"
+	StateService_RemoveHeldExecution_FullMethodName   = "/e2b.scheduling.v1.StateService/RemoveHeldExecution"
 )
 
 // StateServiceClient is the client API for StateService service.
@@ -46,6 +53,19 @@ type StateServiceClient interface {
 	TeamsWithSandboxCount(ctx context.Context, in *TeamsWithSandboxCountRequest, opts ...grpc.CallOption) (*TeamsWithSandboxCountResponse, error)
 	// A failed read answers no orphans.
 	Reconcile(ctx context.Context, in *ReconcileRequest, opts ...grpc.CallOption) (*ReconcileResponse, error)
+	// OK leaves the record's lock held until CommitUpdate or AbortUpdate with
+	// the token, or until it expires.
+	BeginUpdate(ctx context.Context, in *BeginUpdateRequest, opts ...grpc.CallOption) (*BeginUpdateResponse, error)
+	// Writes only while the lock still holds the token, and releases it.
+	CommitUpdate(ctx context.Context, in *CommitUpdateRequest, opts ...grpc.CallOption) (*CommitUpdateResponse, error)
+	AbortUpdate(ctx context.Context, in *AbortUpdateRequest, opts ...grpc.CallOption) (*AbortUpdateResponse, error)
+	HoldExecution(ctx context.Context, in *HoldExecutionRequest, opts ...grpc.CallOption) (*HoldExecutionResponse, error)
+	// Moves the execution to node_id and releases the hold in one write. OK with
+	// moved false: a repeat that found that write done and wrote nothing.
+	MoveHeldExecution(ctx context.Context, in *MoveHeldExecutionRequest, opts ...grpc.CallOption) (*MoveHeldExecutionResponse, error)
+	ReleaseHeldExecution(ctx context.Context, in *ReleaseHeldExecutionRequest, opts ...grpc.CallOption) (*ReleaseHeldExecutionResponse, error)
+	// Returns the record as it was before the removal.
+	RemoveHeldExecution(ctx context.Context, in *RemoveHeldExecutionRequest, opts ...grpc.CallOption) (*RemoveHeldExecutionResponse, error)
 }
 
 type stateServiceClient struct {
@@ -144,6 +164,76 @@ func (c *stateServiceClient) Reconcile(ctx context.Context, in *ReconcileRequest
 	return out, nil
 }
 
+func (c *stateServiceClient) BeginUpdate(ctx context.Context, in *BeginUpdateRequest, opts ...grpc.CallOption) (*BeginUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginUpdateResponse)
+	err := c.cc.Invoke(ctx, StateService_BeginUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) CommitUpdate(ctx context.Context, in *CommitUpdateRequest, opts ...grpc.CallOption) (*CommitUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommitUpdateResponse)
+	err := c.cc.Invoke(ctx, StateService_CommitUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) AbortUpdate(ctx context.Context, in *AbortUpdateRequest, opts ...grpc.CallOption) (*AbortUpdateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AbortUpdateResponse)
+	err := c.cc.Invoke(ctx, StateService_AbortUpdate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) HoldExecution(ctx context.Context, in *HoldExecutionRequest, opts ...grpc.CallOption) (*HoldExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HoldExecutionResponse)
+	err := c.cc.Invoke(ctx, StateService_HoldExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) MoveHeldExecution(ctx context.Context, in *MoveHeldExecutionRequest, opts ...grpc.CallOption) (*MoveHeldExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MoveHeldExecutionResponse)
+	err := c.cc.Invoke(ctx, StateService_MoveHeldExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) ReleaseHeldExecution(ctx context.Context, in *ReleaseHeldExecutionRequest, opts ...grpc.CallOption) (*ReleaseHeldExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseHeldExecutionResponse)
+	err := c.cc.Invoke(ctx, StateService_ReleaseHeldExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) RemoveHeldExecution(ctx context.Context, in *RemoveHeldExecutionRequest, opts ...grpc.CallOption) (*RemoveHeldExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveHeldExecutionResponse)
+	err := c.cc.Invoke(ctx, StateService_RemoveHeldExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StateServiceServer is the server API for StateService service.
 // All implementations must embed UnimplementedStateServiceServer
 // for forward compatibility.
@@ -162,6 +252,19 @@ type StateServiceServer interface {
 	TeamsWithSandboxCount(context.Context, *TeamsWithSandboxCountRequest) (*TeamsWithSandboxCountResponse, error)
 	// A failed read answers no orphans.
 	Reconcile(context.Context, *ReconcileRequest) (*ReconcileResponse, error)
+	// OK leaves the record's lock held until CommitUpdate or AbortUpdate with
+	// the token, or until it expires.
+	BeginUpdate(context.Context, *BeginUpdateRequest) (*BeginUpdateResponse, error)
+	// Writes only while the lock still holds the token, and releases it.
+	CommitUpdate(context.Context, *CommitUpdateRequest) (*CommitUpdateResponse, error)
+	AbortUpdate(context.Context, *AbortUpdateRequest) (*AbortUpdateResponse, error)
+	HoldExecution(context.Context, *HoldExecutionRequest) (*HoldExecutionResponse, error)
+	// Moves the execution to node_id and releases the hold in one write. OK with
+	// moved false: a repeat that found that write done and wrote nothing.
+	MoveHeldExecution(context.Context, *MoveHeldExecutionRequest) (*MoveHeldExecutionResponse, error)
+	ReleaseHeldExecution(context.Context, *ReleaseHeldExecutionRequest) (*ReleaseHeldExecutionResponse, error)
+	// Returns the record as it was before the removal.
+	RemoveHeldExecution(context.Context, *RemoveHeldExecutionRequest) (*RemoveHeldExecutionResponse, error)
 	mustEmbedUnimplementedStateServiceServer()
 }
 
@@ -192,6 +295,27 @@ func (UnimplementedStateServiceServer) TeamsWithSandboxCount(context.Context, *T
 }
 func (UnimplementedStateServiceServer) Reconcile(context.Context, *ReconcileRequest) (*ReconcileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Reconcile not implemented")
+}
+func (UnimplementedStateServiceServer) BeginUpdate(context.Context, *BeginUpdateRequest) (*BeginUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BeginUpdate not implemented")
+}
+func (UnimplementedStateServiceServer) CommitUpdate(context.Context, *CommitUpdateRequest) (*CommitUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CommitUpdate not implemented")
+}
+func (UnimplementedStateServiceServer) AbortUpdate(context.Context, *AbortUpdateRequest) (*AbortUpdateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AbortUpdate not implemented")
+}
+func (UnimplementedStateServiceServer) HoldExecution(context.Context, *HoldExecutionRequest) (*HoldExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method HoldExecution not implemented")
+}
+func (UnimplementedStateServiceServer) MoveHeldExecution(context.Context, *MoveHeldExecutionRequest) (*MoveHeldExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MoveHeldExecution not implemented")
+}
+func (UnimplementedStateServiceServer) ReleaseHeldExecution(context.Context, *ReleaseHeldExecutionRequest) (*ReleaseHeldExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseHeldExecution not implemented")
+}
+func (UnimplementedStateServiceServer) RemoveHeldExecution(context.Context, *RemoveHeldExecutionRequest) (*RemoveHeldExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveHeldExecution not implemented")
 }
 func (UnimplementedStateServiceServer) mustEmbedUnimplementedStateServiceServer() {}
 func (UnimplementedStateServiceServer) testEmbeddedByValue()                      {}
@@ -326,6 +450,132 @@ func _StateService_Reconcile_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_BeginUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).BeginUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_BeginUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).BeginUpdate(ctx, req.(*BeginUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_CommitUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommitUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).CommitUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_CommitUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).CommitUpdate(ctx, req.(*CommitUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_AbortUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AbortUpdateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).AbortUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_AbortUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).AbortUpdate(ctx, req.(*AbortUpdateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_HoldExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).HoldExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_HoldExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).HoldExecution(ctx, req.(*HoldExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_MoveHeldExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MoveHeldExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).MoveHeldExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_MoveHeldExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).MoveHeldExecution(ctx, req.(*MoveHeldExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_ReleaseHeldExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseHeldExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ReleaseHeldExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ReleaseHeldExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ReleaseHeldExecution(ctx, req.(*ReleaseHeldExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_RemoveHeldExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveHeldExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).RemoveHeldExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_RemoveHeldExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).RemoveHeldExecution(ctx, req.(*RemoveHeldExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StateService_ServiceDesc is the grpc.ServiceDesc for StateService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -352,6 +602,34 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Reconcile",
 			Handler:    _StateService_Reconcile_Handler,
+		},
+		{
+			MethodName: "BeginUpdate",
+			Handler:    _StateService_BeginUpdate_Handler,
+		},
+		{
+			MethodName: "CommitUpdate",
+			Handler:    _StateService_CommitUpdate_Handler,
+		},
+		{
+			MethodName: "AbortUpdate",
+			Handler:    _StateService_AbortUpdate_Handler,
+		},
+		{
+			MethodName: "HoldExecution",
+			Handler:    _StateService_HoldExecution_Handler,
+		},
+		{
+			MethodName: "MoveHeldExecution",
+			Handler:    _StateService_MoveHeldExecution_Handler,
+		},
+		{
+			MethodName: "ReleaseHeldExecution",
+			Handler:    _StateService_ReleaseHeldExecution_Handler,
+		},
+		{
+			MethodName: "RemoveHeldExecution",
+			Handler:    _StateService_RemoveHeldExecution_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
