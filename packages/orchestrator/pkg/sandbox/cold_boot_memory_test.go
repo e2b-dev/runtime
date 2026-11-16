@@ -206,6 +206,7 @@ func TestRequestedMemoryHotplug(t *testing.T) {
 		"beyond the region":                        {memoryMB: 4224, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryHotplugUnsupported},
 		"no region":                                {memoryMB: 2048, ramMB: 1024, regionMB: 0, wantErr: fc.ErrMemoryHotplugUnsupported},
 		"not a whole block":                        {memoryMB: 2049, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryHotplugUnsupported},
+		"whole blocks but not a whole slot":        {memoryMB: 1024 + 1026, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryRequestInvalid},
 		"a memory resume cannot shrink":            {memoryMB: 2048, ramMB: 1024, regionMB: 3072, recordedMB: 2048, memoryResume: true, wantErr: fc.ErrMemoryHotplugShrink},
 		"a cold boot may come back smaller":        {memoryMB: 2048, ramMB: 1024, regionMB: 3072, recordedMB: 2048, want: 1024},
 		"a memory resume may keep its size":        {memoryMB: 3072, ramMB: 1024, regionMB: 3072, recordedMB: 2048, memoryResume: true, want: 2048},
@@ -339,6 +340,30 @@ func TestPrepareColdBootPlugsBackTheRecordedRequest(t *testing.T) {
 			_, err := (&Factory{featureFlags: ff}).prepareColdBoot(t.Context(), tpl, meta, config, sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + uuid.NewString()})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, config.MemoryMB)
+		})
+	}
+}
+
+func TestMemoryHotplugUnusedBytes(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name                          string
+		regionMB, slotMB, requestedMB int64
+		wantMB                        int64
+	}{
+		{"no region", 0, 0, 0, 0},
+		{"nothing requested leaves the whole region unmapped", 3072, 0, 0, 3072},
+		{"a whole-slot request maps exactly it", 3072, 0, 1024, 2048},
+		{"a partial slot is mapped whole", 3072, 0, 1026, 1920},
+		{"the whole region maps everything", 3072, 0, 3072, 0},
+		{"the device's slot size wins over the default", 3072, 512, 1100, 1536},
+		{"a larger slot rounds further", 3072, 1024, 1026, 1024},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.wantMB<<20, memoryHotplugUnusedBytes(tt.regionMB, tt.slotMB, tt.requestedMB))
 		})
 	}
 }

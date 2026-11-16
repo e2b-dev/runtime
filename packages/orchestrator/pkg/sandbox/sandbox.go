@@ -2007,7 +2007,10 @@ func (f *Factory) ResumeSandbox(
 
 		telemetry.ReportEvent(ctx, "got template memfile")
 
-		return uffd.New(memfile, fcUffdPath, sbxLogger), nil
+		u := uffd.New(memfile, fcUffdPath, sbxLogger)
+		u.SetMemfdUnusedTail(memoryHotplugUnusedBytes(meta.MemoryHotplugMB, 0, memoryRequestMB))
+
+		return u, nil
 	})
 
 	// Prefetching. Derive the prefetch context and register its cancel with the
@@ -2488,6 +2491,18 @@ func (f *Factory) ResumeSandbox(
 	if target, explicit, ok := restoreMemoryHotplugTarget(meta.MemoryHotplugMB, config.MemoryMB, memoryRequestMB); ok {
 		fcHandle.SetMemoryHotplugTarget(target, explicit)
 	}
+	if meta.MemoryHotplugMB > 0 {
+		// The restored device is the truth for the region and its slots; metadata only sized the
+		// handshake's first mapping.
+		fcHandle.OnMemoryHotplugRestored(func(status fc.MemoryHotplugStatus) error {
+			regionMB := status.TotalMB
+			if regionMB == 0 {
+				regionMB = meta.MemoryHotplugMB
+			}
+
+			return fcUffd.ExtendMemfd(memoryHotplugUnusedBytes(regionMB, status.SlotMB, status.RequestedMB))
+		})
+	}
 	var fcStartErr error
 	if ropts.vmPaused {
 		// ResumeVM sets the MMDS metadata after it runs the vCPUs.
@@ -2502,8 +2517,15 @@ func (f *Factory) ResumeSandbox(
 		return nil, fmt.Errorf("failed to start FC: %w", fcStartErr)
 	}
 	// The handshake mapped the guest memory file, if Firecracker passed one,
-	// before the restore returned.
+	// before the restore returned, and the restore extended it to the guest's
+	// hotplug size; nothing may replace the mapping from here on.
+	fcUffd.SealMemfd()
 	ropts.reportGuestMemoryReserved(ctx, fcUffd)
+	if memfd := fcUffd.PeekMemfd(ctx); memfd != nil {
+		telemetry.SetAttributes(ctx,
+			attribute.Int64("sandbox.memfd.mapped_bytes", memfd.MappedBytes()),
+			attribute.Int64("sandbox.memfd.file_bytes", memfd.FileBytes()))
+	}
 	if fcHandle.MemoryHotplugResized() {
 		sbx.memoryResize.Store(&memoryResize{requestedMB: memoryRequestMB})
 	}

@@ -401,7 +401,8 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 		return nil, err
 	}
 	if requestedHotplugMB > 0 {
-		releaseRequested, err := s.admitHugePagesMB(ctx, runtime.SandboxID, requestedHotplugMB)
+		// The handshake reserves whole slots, so the charge is the request rounded up to one.
+		releaseRequested, err := s.admitHugePagesMB(ctx, runtime.SandboxID, fc.MemoryHotplugUsableMB(requestedHotplugMB, 0))
 		if err != nil {
 			return nil, err
 		}

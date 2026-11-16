@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
@@ -214,6 +215,8 @@ type Process struct {
 	// target that differs from the snapshot's.
 	memoryHotplugTarget  *memoryHotplugTarget
 	memoryHotplugResized bool
+	// memoryHotplugRestored, when set, is told what the restored device asks the guest to plug.
+	memoryHotplugRestored func(MemoryHotplugStatus) error
 
 	// hintCmd is the command id of the last hinting cycle this process
 	// started, and hintGuestSeen the last guest_cmd a cycle observed; the
@@ -1054,6 +1057,19 @@ func (p *Process) RestorePaused(
 	// The device is restored and the vCPUs are still paused: a new target set now is what the
 	// guest finds when it runs, and it plugs towards it then.
 	if err := p.applyMemoryHotplugTarget(ctx); err != nil {
+		var reason snapshotLoadFailureReason
+		if _, ok := errors.AsType[block.GuestMemoryError](err); ok {
+			reason = snapshotLoadGuestMemory
+		} else if errors.Is(err, errMemoryHotplugStatusUnread) {
+			reason = snapshotLoadHotplugStatus
+		}
+		if reason != "" {
+			fcSnapshotLoadFailures.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", string(reason)),
+				attribute.String("cpu_template", cpuTemplate),
+				telemetry.WithTeamID(p.teamID),
+			))
+		}
 		fcStopErr := p.Stop(ctx)
 
 		return errors.Join(err, fcStopErr)

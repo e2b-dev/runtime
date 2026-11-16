@@ -84,7 +84,7 @@ func restoreMemoryHotplugTarget(regionMB, memoryMB, requestMB int64) (target int
 
 // requestedMemoryHotplug is how much of the hotplug region, in MiB, a start asks Firecracker to
 // plug: memoryMB minus boot RAM, or what the snapshot had asked for (recordedMB) when memoryMB is 0.
-// The request must be a whole number of hotplug blocks within the region. A memory resume may
+// The request must be a whole number of hotplug slots within the region. A memory resume may
 // only keep or grow its snapshot's request; a cold boot starts with nothing plugged and may ask
 // for any size in the region.
 func requestedMemoryHotplug(memoryMB, ramMB, regionMB, recordedMB int64, memoryResume bool) (int64, error) {
@@ -98,8 +98,10 @@ func requestedMemoryHotplug(memoryMB, ramMB, regionMB, recordedMB int64, memoryR
 	case want == 0:
 	case regionMB == 0:
 		return 0, fmt.Errorf("%w: memory of %d MiB needs a hotplug region and the template has none", fc.ErrMemoryRequestInvalid, memoryMB)
-	case want%fc.MemoryHotplugBlockMiB != 0:
-		return 0, fmt.Errorf("%w: %d MiB above boot RAM is not a whole number of %d MiB blocks", fc.ErrMemoryRequestInvalid, want, fc.MemoryHotplugBlockMiB)
+	case want%fc.MemoryHotplugSlotMiB != 0:
+		// The guest's memory is reserved in whole slots, so a request in whole slots is what
+		// both the orchestrator's and the API's counts agree on.
+		return 0, fmt.Errorf("%w: %d MiB above boot RAM is not a whole number of %d MiB slots", fc.ErrMemoryRequestInvalid, want, fc.MemoryHotplugSlotMiB)
 	case want > regionMB:
 		return 0, fmt.Errorf("%w: %d MiB above boot RAM exceeds the %d MiB hotplug region", fc.ErrMemoryRequestInvalid, want, regionMB)
 	}
@@ -108,4 +110,18 @@ func requestedMemoryHotplug(memoryMB, ramMB, regionMB, recordedMB int64, memoryR
 	}
 
 	return want, nil
+}
+
+// memoryHotplugUnusedBytes is the part of a hotplug region of regionMB, with slots of slotMB, that
+// the guest cannot plug while Firecracker asks for requestedMB, and so needs no huge pages. The
+// region is the last memory in Firecracker's memfd, so this is the file's tail. It holds while
+// the request is only raised before the vCPUs run: a raise on a running sandbox would let the
+// guest plug past a mapping it can no longer safely extend.
+func memoryHotplugUnusedBytes(regionMB, slotMB, requestedMB int64) int64 {
+	usableMB := fc.MemoryHotplugUsableMB(requestedMB, slotMB)
+	if usableMB >= regionMB {
+		return 0
+	}
+
+	return (regionMB - usableMB) << 20
 }

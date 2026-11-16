@@ -13,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -173,13 +174,14 @@ func (s *Server) holdHugePages(ctx context.Context, cfg *sandbox.Config, meta me
 		return func() {}
 	}
 
-	totalMB, _, err := startMemory(meta, cfg, false)
+	_, hotplugMB, err := startMemory(meta, cfg, false)
 	if err != nil {
 		// The resume refuses the request itself; until then the hold covers what was named or recorded.
-		totalMB = cfg.RamMB + max(cfg.MemoryMB-cfg.RamMB, meta.MemoryHotplugRequestedMB, 0)
+		hotplugMB = max(cfg.MemoryMB-cfg.RamMB, meta.MemoryHotplugRequestedMB, 0)
 	}
 
-	return s.hugePages.hold(totalMB)
+	// The handshake reserves whole slots, as Create's charge counts them.
+	return s.hugePages.hold(cfg.RamMB + fc.MemoryHotplugUsableMB(hotplugMB, 0))
 }
 
 // startMemory checks a start's requested memory against the template it starts from and returns

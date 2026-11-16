@@ -303,6 +303,12 @@ func TestHugePageAdmissionChargesTheRequestedMemory(t *testing.T) {
 	hold := s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: 4096, HugePages: true}), metadata.Template{})
 	assert.Equal(t, int64(4096), s.hugePages.pendingMiB)
 	hold()
+
+	// A request off the slot grid is refused by the resume; until then the hold counts it as the
+	// whole slots a handshake would reserve.
+	hold = s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: 1024 + 1026, HugePages: true}), metadata.Template{MemoryHotplugMB: 3072})
+	assert.Equal(t, int64(1024+1152), s.hugePages.pendingMiB)
+	hold()
 }
 
 // A memory resume that names no size runs at the size its snapshot had asked for, and is charged

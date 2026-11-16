@@ -209,7 +209,7 @@ func TestPluggedMemoryMB(t *testing.T) {
 	rec.mu.Unlock()
 	status, err := p.MemoryHotplugStatus(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, MemoryHotplugStatus{PluggedMB: 512, RequestedMB: 2048}, status)
+	assert.Equal(t, MemoryHotplugStatus{PluggedMB: 512, RequestedMB: 2048, TotalMB: 3072}, status)
 
 	rec.mu.Lock()
 	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusBadRequest, body: `{"fault_message":"no hotplug device"}`}
@@ -303,7 +303,71 @@ func TestApplyMemoryHotplugTarget(t *testing.T) {
 	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusBadRequest, body: `{"fault_message":"no hotplug device"}`}
 	rec.mu.Unlock()
 	p.SetMemoryHotplugTarget(2048, true)
-	require.Error(t, p.applyMemoryHotplugTarget(t.Context()), "a status that cannot be read fails the restore")
+	err := p.applyMemoryHotplugTarget(t.Context())
+	require.ErrorIs(t, err, errMemoryHotplugStatusUnread, "a status that cannot be read fails the restore")
+	assert.Contains(t, err.Error(), "memory hotplug status")
+}
+
+// The restore tells its callback the device's state with the size the guest is asked to plug: the
+// new target when one was sent, the device's own request otherwise, even when a kept target is
+// below it. Without a target the callback still gets the device's state.
+func TestApplyMemoryHotplugTargetTellsTheCallback(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		noTarget      bool
+		target        int64
+		explicit      bool
+		restored      int64
+		wantRequested int64
+		wantErr       error
+		wantCalled    bool
+	}{
+		"no target reports the device":                      {noTarget: true, restored: 1024, wantRequested: 1024, wantCalled: true},
+		"a sent target is reported":                         {target: 2048, explicit: true, restored: 1024, wantRequested: 2048, wantCalled: true},
+		"a kept target below the device reports the device": {target: 1024, restored: 2048, wantRequested: 2048, wantCalled: true},
+		"a refused shrink never reaches it":                 {target: 1024, explicit: true, restored: 2048, wantErr: ErrMemoryHotplugShrink},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			p, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.17-0.4.1"}, 58)
+			rec.mu.Lock()
+			rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusOK, body: fmt.Sprintf(`{"total_size_mib":3072,"slot_size_mib":128,"plugged_size_mib":%d,"requested_size_mib":%d}`, tc.restored, tc.restored)}
+			rec.mu.Unlock()
+
+			var got *MemoryHotplugStatus
+			p.OnMemoryHotplugRestored(func(s MemoryHotplugStatus) error {
+				got = &s
+
+				return nil
+			})
+			if !tc.noTarget {
+				p.SetMemoryHotplugTarget(tc.target, tc.explicit)
+			}
+			err := p.applyMemoryHotplugTarget(t.Context())
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			if !tc.wantCalled {
+				assert.Nil(t, got)
+
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, MemoryHotplugStatus{PluggedMB: tc.restored, RequestedMB: tc.wantRequested, TotalMB: 3072, SlotMB: 128}, *got)
+		})
+	}
+
+	p, rec, _ := goldenProcess(t, Config{KernelVersion: "vmlinux-6.1", FirecrackerVersion: "v1.17-0.4.1"}, 59)
+	rec.mu.Lock()
+	rec.answers["GET /hotplug/memory"] = stubAnswer{status: http.StatusOK, body: `{"total_size_mib":3072,"slot_size_mib":128,"plugged_size_mib":0,"requested_size_mib":0}`}
+	rec.mu.Unlock()
+	wantErr := errors.New("extend failed")
+	p.OnMemoryHotplugRestored(func(MemoryHotplugStatus) error { return wantErr })
+	require.ErrorIs(t, p.applyMemoryHotplugTarget(t.Context()), wantErr, "a callback failure fails the restore")
 }
 
 // Firecracker's answers to a hotplug call are classed: an inactive device passes once the guest is
