@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +32,15 @@ const hangTimeout = 30 * time.Second
 func newClient(t *testing.T, storage sandboxtypes.Storage) scheduling.StateServiceClient {
 	t.Helper()
 
+	return newClientWithWait(t, storage, hangTimeout)
+}
+
+func newClientWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration) scheduling.StateServiceClient {
+	t.Helper()
+
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	scheduling.RegisterStateServiceServer(server, state.NewServer(storage))
+	scheduling.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
 	go func() {
 		assert.NoError(t, server.Serve(listener))
 	}()
@@ -217,7 +224,7 @@ func walkNonZero(v reflect.Value, label, path string, zero *[]string) {
 			walkNonZero(v.Field(i), label+"."+field.Name, fieldPath, zero)
 		}
 	case reflect.Slice:
-		if v.Len() == 0 && !emptyAllowed[path] {
+		if v.Len() == 0 && !emptyAllowed[strings.TrimPrefix(path, "Sandbox.")] {
 			*zero = append(*zero, label+" (empty)")
 		}
 		for i := range v.Len() {

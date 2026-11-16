@@ -183,6 +183,10 @@ func TestEverySentinelHasAnOutcome(t *testing.T) {
 		sandboxtypes.ErrLockLost,
 		sandboxtypes.ErrHoldConflict,
 		sandboxtypes.ErrNotHeld,
+		sandboxtypes.ErrEvictionInProgress,
+		sandboxtypes.ErrEvictionNotNeeded,
+		&sandboxtypes.InvalidStateTransitionError{CurrentState: sandboxtypes.StateKilling, TargetState: sandboxtypes.StatePausing},
+		sandboxtypes.ErrRestoreConflict,
 	}
 	require.Len(t, scheduling.StateOutcome_name, len(sentinels)+2, "every outcome besides UNSPECIFIED and OK has its sentinel")
 
@@ -270,7 +274,7 @@ func TestUpdateCancelledCaller(t *testing.T) {
 			cancel()
 			fake := newFake()
 			fake.err = errors.New("backend gave up")
-			st := requireCode(t, call(ctx, state.NewServer(fake)), codes.Canceled)
+			st := requireCode(t, call(ctx, state.NewServer(fake, hangTimeout)), codes.Canceled)
 			assert.NotContains(t, st.Message(), "backend gave up")
 		})
 	}
@@ -282,7 +286,7 @@ func TestUpdateCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.token = "begun-token"
 		fake.block = func(context.Context) { cancel() }
-		_, err := state.NewServer(fake).BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+		_, err := state.NewServer(fake, hangTimeout).BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 		requireCode(t, err, codes.Canceled)
 		assert.Equal(t, []sandboxtypes.UpdateToken{"begun-token"}, fake.snapshot().aborted)
 	})

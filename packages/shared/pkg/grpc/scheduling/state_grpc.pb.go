@@ -33,6 +33,11 @@ const (
 	StateService_MoveHeldExecution_FullMethodName     = "/e2b.scheduling.v1.StateService/MoveHeldExecution"
 	StateService_ReleaseHeldExecution_FullMethodName  = "/e2b.scheduling.v1.StateService/ReleaseHeldExecution"
 	StateService_RemoveHeldExecution_FullMethodName   = "/e2b.scheduling.v1.StateService/RemoveHeldExecution"
+	StateService_BeginRemoving_FullMethodName         = "/e2b.scheduling.v1.StateService/BeginRemoving"
+	StateService_FinishTransition_FullMethodName      = "/e2b.scheduling.v1.StateService/FinishTransition"
+	StateService_RestoreRunning_FullMethodName        = "/e2b.scheduling.v1.StateService/RestoreRunning"
+	StateService_RestoreCheckpointed_FullMethodName   = "/e2b.scheduling.v1.StateService/RestoreCheckpointed"
+	StateService_WaitForTransition_FullMethodName     = "/e2b.scheduling.v1.StateService/WaitForTransition"
 )
 
 // StateServiceClient is the client API for StateService service.
@@ -66,6 +71,23 @@ type StateServiceClient interface {
 	ReleaseHeldExecution(ctx context.Context, in *ReleaseHeldExecutionRequest, opts ...grpc.CallOption) (*ReleaseHeldExecutionResponse, error)
 	// Returns the record as it was before the removal.
 	RemoveHeldExecution(ctx context.Context, in *RemoveHeldExecutionRequest, opts ...grpc.CallOption) (*RemoveHeldExecutionResponse, error)
+	// OK with transition.id set: this call started the transition, and the
+	// caller must end it with FinishTransition. OK with transition.in_flight_id
+	// set: another transition is open and none was started; wait it out with
+	// WaitForTransition and that ID. Most refusals also carry the transition
+	// with the record as read. current_state is set with INVALID_TRANSITION.
+	BeginRemoving(ctx context.Context, in *BeginRemovingRequest, opts ...grpc.CallOption) (*BeginRemovingResponse, error)
+	// Any failure, a failed restore of a transient action to running included,
+	// is a failed call: the waiters read it as the transition's failure.
+	FinishTransition(ctx context.Context, in *FinishTransitionRequest, opts ...grpc.CallOption) (*FinishTransitionResponse, error)
+	// current_state is set with INVALID_TRANSITION.
+	RestoreRunning(ctx context.Context, in *RestoreRunningRequest, opts ...grpc.CallOption) (*RestoreRunningResponse, error)
+	// current_state is set with INVALID_TRANSITION.
+	RestoreCheckpointed(ctx context.Context, in *RestoreCheckpointedRequest, opts ...grpc.CallOption) (*RestoreCheckpointedResponse, error)
+	// Long poll: answers WAITING after the server's maximum wait; call again
+	// with the returned transition_id, which an empty request ID resolves to.
+	// A transition whose result expired, or an unknown ID, answers FINISHED.
+	WaitForTransition(ctx context.Context, in *WaitForTransitionRequest, opts ...grpc.CallOption) (*WaitForTransitionResponse, error)
 }
 
 type stateServiceClient struct {
@@ -234,6 +256,56 @@ func (c *stateServiceClient) RemoveHeldExecution(ctx context.Context, in *Remove
 	return out, nil
 }
 
+func (c *stateServiceClient) BeginRemoving(ctx context.Context, in *BeginRemovingRequest, opts ...grpc.CallOption) (*BeginRemovingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginRemovingResponse)
+	err := c.cc.Invoke(ctx, StateService_BeginRemoving_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) FinishTransition(ctx context.Context, in *FinishTransitionRequest, opts ...grpc.CallOption) (*FinishTransitionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinishTransitionResponse)
+	err := c.cc.Invoke(ctx, StateService_FinishTransition_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) RestoreRunning(ctx context.Context, in *RestoreRunningRequest, opts ...grpc.CallOption) (*RestoreRunningResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreRunningResponse)
+	err := c.cc.Invoke(ctx, StateService_RestoreRunning_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) RestoreCheckpointed(ctx context.Context, in *RestoreCheckpointedRequest, opts ...grpc.CallOption) (*RestoreCheckpointedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreCheckpointedResponse)
+	err := c.cc.Invoke(ctx, StateService_RestoreCheckpointed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stateServiceClient) WaitForTransition(ctx context.Context, in *WaitForTransitionRequest, opts ...grpc.CallOption) (*WaitForTransitionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WaitForTransitionResponse)
+	err := c.cc.Invoke(ctx, StateService_WaitForTransition_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StateServiceServer is the server API for StateService service.
 // All implementations must embed UnimplementedStateServiceServer
 // for forward compatibility.
@@ -265,6 +337,23 @@ type StateServiceServer interface {
 	ReleaseHeldExecution(context.Context, *ReleaseHeldExecutionRequest) (*ReleaseHeldExecutionResponse, error)
 	// Returns the record as it was before the removal.
 	RemoveHeldExecution(context.Context, *RemoveHeldExecutionRequest) (*RemoveHeldExecutionResponse, error)
+	// OK with transition.id set: this call started the transition, and the
+	// caller must end it with FinishTransition. OK with transition.in_flight_id
+	// set: another transition is open and none was started; wait it out with
+	// WaitForTransition and that ID. Most refusals also carry the transition
+	// with the record as read. current_state is set with INVALID_TRANSITION.
+	BeginRemoving(context.Context, *BeginRemovingRequest) (*BeginRemovingResponse, error)
+	// Any failure, a failed restore of a transient action to running included,
+	// is a failed call: the waiters read it as the transition's failure.
+	FinishTransition(context.Context, *FinishTransitionRequest) (*FinishTransitionResponse, error)
+	// current_state is set with INVALID_TRANSITION.
+	RestoreRunning(context.Context, *RestoreRunningRequest) (*RestoreRunningResponse, error)
+	// current_state is set with INVALID_TRANSITION.
+	RestoreCheckpointed(context.Context, *RestoreCheckpointedRequest) (*RestoreCheckpointedResponse, error)
+	// Long poll: answers WAITING after the server's maximum wait; call again
+	// with the returned transition_id, which an empty request ID resolves to.
+	// A transition whose result expired, or an unknown ID, answers FINISHED.
+	WaitForTransition(context.Context, *WaitForTransitionRequest) (*WaitForTransitionResponse, error)
 	mustEmbedUnimplementedStateServiceServer()
 }
 
@@ -316,6 +405,21 @@ func (UnimplementedStateServiceServer) ReleaseHeldExecution(context.Context, *Re
 }
 func (UnimplementedStateServiceServer) RemoveHeldExecution(context.Context, *RemoveHeldExecutionRequest) (*RemoveHeldExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveHeldExecution not implemented")
+}
+func (UnimplementedStateServiceServer) BeginRemoving(context.Context, *BeginRemovingRequest) (*BeginRemovingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BeginRemoving not implemented")
+}
+func (UnimplementedStateServiceServer) FinishTransition(context.Context, *FinishTransitionRequest) (*FinishTransitionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FinishTransition not implemented")
+}
+func (UnimplementedStateServiceServer) RestoreRunning(context.Context, *RestoreRunningRequest) (*RestoreRunningResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreRunning not implemented")
+}
+func (UnimplementedStateServiceServer) RestoreCheckpointed(context.Context, *RestoreCheckpointedRequest) (*RestoreCheckpointedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreCheckpointed not implemented")
+}
+func (UnimplementedStateServiceServer) WaitForTransition(context.Context, *WaitForTransitionRequest) (*WaitForTransitionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WaitForTransition not implemented")
 }
 func (UnimplementedStateServiceServer) mustEmbedUnimplementedStateServiceServer() {}
 func (UnimplementedStateServiceServer) testEmbeddedByValue()                      {}
@@ -576,6 +680,96 @@ func _StateService_RemoveHeldExecution_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_BeginRemoving_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginRemovingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).BeginRemoving(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_BeginRemoving_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).BeginRemoving(ctx, req.(*BeginRemovingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_FinishTransition_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishTransitionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).FinishTransition(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_FinishTransition_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).FinishTransition(ctx, req.(*FinishTransitionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_RestoreRunning_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreRunningRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).RestoreRunning(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_RestoreRunning_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).RestoreRunning(ctx, req.(*RestoreRunningRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_RestoreCheckpointed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreCheckpointedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).RestoreCheckpointed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_RestoreCheckpointed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).RestoreCheckpointed(ctx, req.(*RestoreCheckpointedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StateService_WaitForTransition_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WaitForTransitionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).WaitForTransition(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_WaitForTransition_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).WaitForTransition(ctx, req.(*WaitForTransitionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StateService_ServiceDesc is the grpc.ServiceDesc for StateService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -630,6 +824,26 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveHeldExecution",
 			Handler:    _StateService_RemoveHeldExecution_Handler,
+		},
+		{
+			MethodName: "BeginRemoving",
+			Handler:    _StateService_BeginRemoving_Handler,
+		},
+		{
+			MethodName: "FinishTransition",
+			Handler:    _StateService_FinishTransition_Handler,
+		},
+		{
+			MethodName: "RestoreRunning",
+			Handler:    _StateService_RestoreRunning_Handler,
+		},
+		{
+			MethodName: "RestoreCheckpointed",
+			Handler:    _StateService_RestoreCheckpointed_Handler,
+		},
+		{
+			MethodName: "WaitForTransition",
+			Handler:    _StateService_WaitForTransition_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

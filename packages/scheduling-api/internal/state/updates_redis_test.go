@@ -41,6 +41,12 @@ func errorOf(outcome scheduling.StateOutcome) error {
 		return sandboxtypes.ErrHoldConflict
 	case scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD:
 		return sandboxtypes.ErrNotHeld
+	case scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS:
+		return sandboxtypes.ErrEvictionInProgress
+	case scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED:
+		return sandboxtypes.ErrEvictionNotNeeded
+	case scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT:
+		return sandboxtypes.ErrRestoreConflict
 	default:
 		return fmt.Errorf("unknown outcome %v", outcome)
 	}

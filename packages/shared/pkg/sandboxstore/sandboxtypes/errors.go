@@ -90,6 +90,16 @@ func (PauseRefusedCheckpointInProgressError) Is(target error) bool {
 	return ok
 }
 
+// TransitionFailedError is the failure a transition's starter finished it
+// with, as its waiters read it back from the store.
+type TransitionFailedError struct {
+	Message string
+}
+
+func (e *TransitionFailedError) Error() string {
+	return "transition failed: " + e.Message
+}
+
 // RestoredTransitionError is what the starter of a refused pause finishes
 // its transition with and what the pause's waiters receive: it is
 // ErrTransitionRestored to every existing check and carries the refusal, so
