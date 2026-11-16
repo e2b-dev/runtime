@@ -450,9 +450,15 @@ func run() int {
 	if err != nil {
 		l.Fatal(ctx, "failed to set up mutual TLS", zap.Error(err))
 	}
-	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS, config.SchedulingAPIGrpcAddress)
+	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS)
 	if err != nil {
 		l.Fatal(ctx, "invalid mutual TLS configuration", zap.Error(err))
+	}
+	if config.SchedulingAPIGrpcAddress != "" {
+		tlsConfig.hops.Scheduling, err = newSchedulingHop(tlsProcess, config.TLS.Scheduling)
+		if err != nil {
+			l.Fatal(ctx, "invalid mutual TLS configuration for the scheduling hop", zap.Error(err))
+		}
 	}
 	if config.ClusterServiceGrpcAddress != "" {
 		tlsConfig.hops.ClusterService, err = newClusterServiceHop(tlsProcess, config.TLS.ClusterService, config.ClusterServiceGrpcAddress, env.IsLocal())
