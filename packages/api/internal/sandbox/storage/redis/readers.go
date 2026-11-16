@@ -128,7 +128,7 @@ func (s *Storage) getRecords(ctx context.Context, reads []readRef, found map[rec
 
 			return nil, fmt.Errorf("failed to read the record of sandbox %s: %w", r.ref.SandboxID, err)
 		}
-		if sbx, ok := decodeRecord(ctx, r, data); ok {
+		if sbx, ok := s.decodeRecord(ctx, r, data); ok {
 			found[r.ref] = sbx
 		}
 	}
@@ -142,9 +142,10 @@ func (s *Storage) getRecords(ctx context.Context, reads []readRef, found map[rec
 // or a record naming another sandbox than its key, from whose ID the callers
 // would build keys, is logged and left out. Teams are compared as UUIDs,
 // never as strings.
-func decodeRecord(ctx context.Context, r readRef, data []byte) (sandboxtypes.Sandbox, bool) {
+func (s *Storage) decodeRecord(ctx context.Context, r readRef, data []byte) (sandboxtypes.Sandbox, bool) {
 	var sbx sandboxtypes.Sandbox
 	if err := json.Unmarshal(data, &sbx); err != nil {
+		s.scanMet.corruptRecords.Add(ctx, 1)
 		// Warn, not Error: every scan pass re-reads the same record, so a
 		// single corrupt one would otherwise page on a loop.
 		logger.L().Warn(ctx, "Skipping sandbox record that does not decode",
