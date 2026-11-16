@@ -535,7 +535,8 @@ a service JWT: it lists clusters with their team counts, reads one cluster with 
 a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
 its token, and deletes it with the same checks as the management delete. The list filters, sorts
 and pages the cluster service's records in memory, comparing text without regard to case. No
-route returns a cluster's token.
+route returns a cluster's token. `/unstable/admin/clusters/team-counts` returns the live team
+count of each cluster on its own; it reads only the teams, so it answers without a cluster service.
 
 ### Orchestrator (`packages/orchestrator`)
 

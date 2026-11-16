@@ -1850,6 +1850,30 @@ components:
           type: string
           format: date-time
 
+    ClusterTeamCount:
+      type: object
+      required:
+        - clusterId
+        - teamCount
+      properties:
+        clusterId:
+          type: string
+          format: uuid
+        teamCount:
+          type: integer
+          format: int64
+          description: Number of live teams assigned to the cluster
+
+    ClusterTeamCountList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterTeamCount"
+
     ClusterTeamListResponse:
       type: object
       required:
@@ -8757,6 +8781,27 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
+
+  /unstable/admin/clusters/team-counts:
+    get:
+      operationId: adminListClusterTeamCounts
+      summary: Count each cluster's teams as admin
+      description: Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      responses:
+        "200":
+          description: The team count of every cluster a live team is assigned to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterTeamCountList"
+        "401":
+          $ref: "#/components/responses/401"
+        "500":
+          $ref: "#/components/responses/500"
 
   /unstable/admin/clusters/{clusterID}:
     parameters:
