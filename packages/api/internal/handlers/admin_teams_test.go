@@ -16,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -257,12 +258,11 @@ func TestGetUnstableAdminTeamsTeamIDReturnsBannedTeamWithCluster(t *testing.T) {
 	testDB := testutils.SetupDatabase(t)
 	teamID := testutils.CreateTestTeam(t, testDB)
 	clusterID := uuid.New()
-	require.NoError(t, testDB.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1, 'eu-west', 'api.example.test:5008', true, 'token')`, clusterID))
+	recordsOf(testDB).put(clustersgrpc.Cluster_builder{ClusterId: clusterID.String(), Name: "eu-west", Endpoint: "api.example.test:5008", EndpointTls: true, Token: "token"}.Build())
 	require.NoError(t, testDB.SqlcClient.TestsRawSQL(t.Context(),
 		`UPDATE public.teams SET cluster_id = $2, is_banned = true, is_blocked = true, blocked_reason = 'abuse', sandbox_scheduling_labels = '{gpu}' WHERE id = $1`, teamID, clusterID))
 
-	recorder := getAdminTeam(t, &APIStore{sqlcDB: testDB.SqlcClient, clusterService: clusterServiceFromDB(t, testDB)}, teamID)
+	recorder := getAdminTeam(t, &APIStore{sqlcDB: testDB.SqlcClient, clusterService: clusterServiceFor(t, testDB)}, teamID)
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	var body api.AdminTeam

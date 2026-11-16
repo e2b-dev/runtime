@@ -75,11 +75,6 @@ func templateClusterTeam(t *testing.T, db *testutils.Database, clusterID *uuid.U
 
 func assignTemplateClusterTeam(t *testing.T, db *testutils.Database, team *types.Team, clusterID *uuid.UUID) {
 	t.Helper()
-	if clusterID != nil {
-		require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-			`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token)
-			 VALUES ($1::uuid, $1::uuid::text, $1::uuid::text, true, 'test-token') ON CONFLICT (id) DO NOTHING`, clusterID))
-	}
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, team.ID, clusterID))
 	team.ClusterID = clusterID
 }

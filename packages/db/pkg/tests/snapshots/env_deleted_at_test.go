@@ -84,23 +84,14 @@ func TestSoftDeleteClusterEnvironments_StampsTheClustersSnapshots(t *testing.T) 
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
 
-	createCluster := func() uuid.UUID {
-		t.Helper()
-		id := uuid.New()
-		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-			`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token)
-			VALUES ($1::uuid, $1::uuid::text, 'api.example.test:5008', true, 'token')`, id))
-
-		return id
-	}
 	placeOn := func(envID string, clusterID uuid.UUID) {
 		t.Helper()
 		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
 			`UPDATE public.envs SET cluster_id = $2 WHERE id = $1`, envID, clusterID))
 	}
 
-	deletedCluster := createCluster()
-	keptCluster := createCluster()
+	deletedCluster := uuid.New()
+	keptCluster := uuid.New()
 	teamID := testutils.CreateTestTeam(t, db)
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
 	onDeleted, onDeletedEnv := pausedSandbox(t, db, teamID, baseTemplateID)

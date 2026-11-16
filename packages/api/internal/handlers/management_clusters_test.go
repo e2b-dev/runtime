@@ -469,25 +469,24 @@ func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t
 				require.Equal(t, http.StatusNoContent, callManagementDeleteCluster(t, store, clusterID).Code)
 			}
 			wantJSON, err := json.Marshal(map[string]any{
-				"cluster_exists": teamAssigned,
-				"envs":           wantEnvs,
-				"aliases":        wantReferences,
-				"active_builds":  wantReferences,
+				"envs":          wantEnvs,
+				"aliases":       wantReferences,
+				"active_builds": wantReferences,
 			})
 			require.NoError(t, err)
 			var state string
 			require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx, `SELECT jsonb_build_object(
-				'cluster_exists', EXISTS (SELECT FROM public.clusters WHERE id = $1),
 				'envs', (SELECT jsonb_object_agg(id, jsonb_build_object('cluster', cluster_id, 'deleted', deleted_at IS NOT NULL))
-					FROM public.envs WHERE id = ANY($2::text[])),
-				'aliases', (SELECT count(*) FROM public.env_aliases WHERE env_id = $3),
-				'active_builds', (SELECT count(*) FROM public.active_template_builds WHERE template_id = $3))::text`,
+					FROM public.envs WHERE id = ANY($1::text[])),
+				'aliases', (SELECT count(*) FROM public.env_aliases WHERE env_id = $2),
+				'active_builds', (SELECT count(*) FROM public.active_template_builds WHERE template_id = $2))::text`,
 				func(rows pgx.Rows) error {
 					require.True(t, rows.Next())
 
 					return rows.Scan(&state)
-				}, clusterID, []string{deletedID, activeID, snapshotID, otherID, localID}, activeID))
+				}, []string{deletedID, activeID, snapshotID, otherID, localID}, activeID))
 			require.JSONEq(t, string(wantJSON), state)
+			require.Equal(t, teamAssigned, clusterExists(t, db, clusterID))
 			require.True(t, testutils.GetEnvBuildByID(t, ctx, db, buildID), "build history must survive")
 		})
 	}
@@ -618,11 +617,16 @@ func TestManagementDeleteClusterRefusesAProtectedCluster(t *testing.T) {
 	ctx := t.Context()
 	clusterID := uuid.New()
 	registration := managementClusterRegistration()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token, sandbox_proxy_domain, auth_org_id, deletion_protection)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
-		clusterID, registration.Name, registration.Endpoint, registration.EndpointTls, registration.Token,
-		*registration.SandboxProxyDomain, *registration.AuthOrgId))
+	recordsOf(db).put(clustersgrpc.Cluster_builder{
+		ClusterId:          clusterID.String(),
+		Name:               registration.Name,
+		Endpoint:           registration.Endpoint,
+		EndpointTls:        registration.EndpointTls,
+		Token:              registration.Token,
+		SandboxProxyDomain: registration.SandboxProxyDomain,
+		AuthOrgId:          registration.AuthOrgId,
+		DeletionProtection: true,
+	}.Build())
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx, `UPDATE public.envs SET cluster_id = $2 WHERE id = $1`, templateID, clusterID))
@@ -632,16 +636,18 @@ func TestManagementDeleteClusterRefusesAProtectedCluster(t *testing.T) {
 
 	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	require.JSONEq(t, `{"code":409,"message":"Cluster has deletion protection turned on"}`, response.Body.String())
-	var protectedAndIntact bool
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx, `SELECT
-		EXISTS (SELECT FROM public.clusters WHERE id = $1 AND deletion_protection)
-		AND EXISTS (SELECT FROM public.envs WHERE id = $2 AND cluster_id = $1 AND deleted_at IS NULL)`,
+	stored, ok := recordsOf(db).get(clusterID)
+	require.True(t, ok)
+	require.True(t, stored.GetDeletionProtection())
+	var intact bool
+	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx,
+		`SELECT EXISTS (SELECT FROM public.envs WHERE id = $1 AND cluster_id = $2 AND deleted_at IS NULL)`,
 		func(rows pgx.Rows) error {
 			require.True(t, rows.Next())
 
-			return rows.Scan(&protectedAndIntact)
-		}, clusterID, templateID))
-	require.True(t, protectedAndIntact)
+			return rows.Scan(&intact)
+		}, templateID, clusterID))
+	require.True(t, intact)
 }
 
 func TestManagementRequestClusterDeletion(t *testing.T) {
@@ -710,13 +716,11 @@ func TestNoTeamIsNewlyAssignedToAClusterBeingDeleted(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	ctx := t.Context()
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
 	assigned, late := testutils.CreateTestTeam(t, db), testutils.CreateTestTeam(t, db)
 	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, assigned, clusterID).Code)
-	// The cluster service records the deletion request on the shared row.
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx, `UPDATE public.clusters SET deletion_requested_at = now() WHERE id = $1`, clusterID))
+	markClusterDeleting(t, db, clusterID)
 
 	refused := callManagementAssignProjectCluster(t, store, late, clusterID)
 	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
@@ -762,10 +766,8 @@ func TestClusterDestroyReadinessRefusesOnlySharedClustersWithoutMutation(t *test
 	for _, clusterID := range []uuid.UUID{ownCluster, foreignEnvCluster, sharedCluster, orphanCluster, historyCluster} {
 		insertCluster(t, db, clusterID, false)
 	}
-	// Created without a protection value, so it takes the column default.
 	protectedCluster := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1::uuid, $1::uuid::text, $1::uuid::text, true, 'secret-token')`, protectedCluster))
+	insertCluster(t, db, protectedCluster, true)
 	for _, assignment := range []struct {
 		teamID, clusterID uuid.UUID
 	}{
@@ -800,14 +802,14 @@ func TestClusterDestroyReadinessRefusesOnlySharedClustersWithoutMutation(t *test
 
 		var state string
 		require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT jsonb_build_object(
-			'clusters', (SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM public.clusters c),
+			'clusters', $1::jsonb,
 			'teams', (SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM public.teams t),
 			'envs', (SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM public.envs e))::text`,
 			func(rows pgx.Rows) error {
 				require.True(t, rows.Next())
 
 				return rows.Scan(&state)
-			}))
+			}, recordedClustersJSON(t, db)))
 
 		return state
 	}
@@ -959,28 +961,6 @@ func requireClusterErrorCode(t *testing.T, response *httptest.ResponseRecorder, 
 	require.NotNil(t, body.ErrorCode)
 	require.Equal(t, code, *body.ErrorCode)
 	require.EqualValues(t, response.Code, body.Code)
-}
-
-func insertCluster(t *testing.T, db *testutils.Database, clusterID uuid.UUID, protected bool) {
-	t.Helper()
-
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token, deletion_protection)
-		VALUES ($1::uuid, $1::uuid::text, $1::uuid::text, true, 'token', $2)`, clusterID, protected))
-}
-
-func clusterExists(t *testing.T, db *testutils.Database, clusterID uuid.UUID) bool {
-	t.Helper()
-
-	var exists bool
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT EXISTS (SELECT FROM public.clusters WHERE id = $1)`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&exists)
-		}, clusterID))
-
-	return exists
 }
 
 func assignedProjectCluster(t *testing.T, db *testutils.Database, projectID uuid.UUID) uuid.UUID {

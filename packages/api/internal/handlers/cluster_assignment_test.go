@@ -37,7 +37,7 @@ const (
 )
 
 // singleClusterService answers GetCluster for one cluster from a state the
-// test changes, independently of the clusters table.
+// test changes.
 type singleClusterService struct {
 	*clienttests.MockClusterServiceClient
 
@@ -95,8 +95,6 @@ func withClusterService(t *testing.T, db *testutils.Database, store *APIStore, c
 	store.managementService = management.NewService(db.AuthDB, db.SqlcClient, store.authService, clusterService, noop.NewMeterProvider())
 }
 
-// Each case keeps a clusters row the database accepts, so only the cluster
-// service can refuse the assignment.
 func TestANewAssignmentChecksTheClusterService(t *testing.T) {
 	t.Parallel()
 
@@ -116,7 +114,6 @@ func TestANewAssignmentChecksTheClusterService(t *testing.T) {
 			db := testutils.SetupDatabase(t)
 			store, _ := newManagementStore(t, db)
 			clusterID, team := uuid.New(), testutils.CreateTestTeam(t, db)
-			insertCluster(t, db, clusterID, false)
 			if tc.current {
 				require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, team))
 			}

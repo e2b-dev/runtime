@@ -53,19 +53,6 @@ type BillingSandboxLog struct {
 	TeamID          uuid.UUID
 }
 
-type Cluster struct {
-	ID                  uuid.UUID
-	Endpoint            string
-	EndpointTls         bool
-	Token               string
-	SandboxProxyDomain  pgtype.Text
-	AuthOrgID           pgtype.Text
-	Name                string
-	DeletionProtection  bool
-	DeletionRequestedAt *time.Time
-	TelemetryClientID   pgtype.Text
-}
-
 type DefaultLimit struct {
 	ID                       bool
 	MaxLengthHours           int64

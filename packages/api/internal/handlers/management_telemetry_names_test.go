@@ -15,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 )
 
@@ -23,8 +24,10 @@ func TestTelemetryNamesExcludeCredentialsAndDeletedRecords(t *testing.T) {
 	db := testutils.SetupDatabase(t)
 	teamID := insertAdminTestTeam(t, db, adminTestTeam{name: "Team name", createdAt: time.Now()})
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `INSERT INTO public.clusters(id,name,endpoint,token,telemetry_client_id,deletion_protection) VALUES ($1,'Cluster name','private.example:443','private-token','client_test',false)`, clusterID))
-	store := &APIStore{sqlcReadDB: db.SqlcClient, clusterService: clusterServiceFromDB(t, db), config: cfg.Config{TelemetryReaderID: telemetryReader}}
+	recordsOf(db).put(clustersgrpc.Cluster_builder{
+		ClusterId: clusterID.String(), Name: "Cluster name", Endpoint: "private.example:443", Token: "private-token", TelemetryClientId: new("client_test"),
+	}.Build())
+	store := &APIStore{sqlcReadDB: db.SqlcClient, clusterService: clusterServiceFor(t, db), config: cfg.Config{TelemetryReaderID: telemetryReader}}
 	read := func() api.TelemetryNames {
 		names, body := readTelemetryNames(t, store)
 		assert.NotContains(t, body, "private-token")
@@ -44,7 +47,7 @@ func TestTelemetryNamesExcludeCredentialsAndDeletedRecords(t *testing.T) {
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET name='Renamed' WHERE id=$1`, teamID))
 	assert.Equal(t, "Renamed", read().Teams[teamID.String()].Name)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET deleted_at=now(),is_blocked=true WHERE id=$1`, teamID))
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.clusters SET deletion_requested_at=now() WHERE id=$1`, clusterID))
+	markClusterDeleting(t, db, clusterID)
 	names = read()
 	assert.NotContains(t, names.Teams, teamID.String())
 	assert.Empty(t, names.Clusters)

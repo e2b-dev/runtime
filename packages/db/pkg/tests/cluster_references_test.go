@@ -42,19 +42,6 @@ func clusterReferences(t *testing.T, sqlDB *sql.DB) []string {
 	return references
 }
 
-// The migration that removes these drops each by name with IF EXISTS, which
-// succeeds without dropping anything when a name is wrong.
-func TestNothingRefersToTheClustersTable(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	sqlDB, err := sql.Open("pgx", db.ConnStr())
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
-
-	assert.Empty(t, clusterReferences(t, sqlDB))
-}
-
 // The rollback runs without a transaction, so one the lock timeout stops, or
 // one the migrator does not get to record, has to run again over what it
 // already restored.

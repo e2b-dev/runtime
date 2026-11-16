@@ -580,11 +580,11 @@ func TestClusterRoutesTreatTheLocalClusterAsUnknown(t *testing.T) {
 }
 
 // newAdminClusterStore serves the admin cluster routes from the test
-// database, which the cluster service shares.
+// database and the clusters recorded for it.
 func newAdminClusterStore(t *testing.T, db *testutils.Database) *APIStore {
 	t.Helper()
 
-	return &APIStore{sqlcDB: db.SqlcClient, clusterService: clusterServiceFromDB(t, db)}
+	return &APIStore{sqlcDB: db.SqlcClient, clusterService: clusterServiceFor(t, db)}
 }
 
 // callAdmin serves one request the way the server does: through the OpenAPI
@@ -645,9 +645,14 @@ func insertNamedCluster(t *testing.T, db *testutils.Database, name, endpoint str
 	t.Helper()
 
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token, sandbox_proxy_domain, deletion_protection)
-		VALUES ($1, $2, $3, true, 'token', $4, false)`, clusterID, name, endpoint, sandboxProxyDomain))
+	recordsOf(db).put(clustersgrpc.Cluster_builder{
+		ClusterId:          clusterID.String(),
+		Name:               name,
+		Endpoint:           endpoint,
+		EndpointTls:        true,
+		Token:              "token",
+		SandboxProxyDomain: sandboxProxyDomain,
+	}.Build())
 
 	return clusterID
 }

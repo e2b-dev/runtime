@@ -2,17 +2,20 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -41,56 +44,107 @@ func clusterRefusal(reason clustersgrpc.ClusterErrorReason) error {
 	return st.Err()
 }
 
-// clusterServiceFromDB answers the cluster service's reads and deletes from
-// the clusters stored in the test database.
-func clusterServiceFromDB(t *testing.T, db *testutils.Database) *clienttests.MockClusterServiceClient {
+// clusterRecords is what the cluster service holds for one test database,
+// the records the API reaches through clusterServiceFor.
+type clusterRecords struct {
+	mu   sync.Mutex
+	byID map[uuid.UUID]*clustersgrpc.Cluster
+}
+
+// testClusterRecords maps each test database's connection string, unique per
+// test, to its records.
+var testClusterRecords sync.Map
+
+func recordsOf(db *testutils.Database) *clusterRecords {
+	records, _ := testClusterRecords.LoadOrStore(db.ConnStr(), &clusterRecords{byID: map[uuid.UUID]*clustersgrpc.Cluster{}})
+
+	return records.(*clusterRecords)
+}
+
+func (r *clusterRecords) put(cluster *clustersgrpc.Cluster) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID[uuid.MustParse(cluster.GetClusterId())] = cluster
+}
+
+func (r *clusterRecords) get(clusterID uuid.UUID) (*clustersgrpc.Cluster, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cluster, ok := r.byID[clusterID]
+
+	return cluster, ok
+}
+
+func (r *clusterRecords) list() []*clustersgrpc.Cluster {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clusters := make([]*clustersgrpc.Cluster, 0, len(r.byID))
+	for _, cluster := range r.byID {
+		clusters = append(clusters, cluster)
+	}
+	slices.SortFunc(clusters, func(a, b *clustersgrpc.Cluster) int { return strings.Compare(a.GetClusterId(), b.GetClusterId()) })
+
+	return clusters
+}
+
+// requestDeletion records the deletion of a present, unprotected cluster, as
+// the cluster service does.
+func (r *clusterRecords) requestDeletion(clusterID uuid.UUID) (*clustersgrpc.Cluster, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cluster, ok := r.byID[clusterID]
+	switch {
+	case !ok:
+		return nil, status.Error(codes.NotFound, "cluster not found")
+	case cluster.GetDeletionProtection():
+		return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED)
+	case !cluster.HasDeletionRequestedAt():
+		cluster = proto.CloneOf(cluster)
+		cluster.SetDeletionRequestedAt(timestamppb.Now())
+		r.byID[clusterID] = cluster
+	}
+
+	return cluster, nil
+}
+
+func (r *clusterRecords) delete(clusterID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byID, clusterID)
+}
+
+// clusterServiceFor answers the cluster service's reads and deletes from the
+// records kept for db.
+func clusterServiceFor(t *testing.T, db *testutils.Database) *clienttests.MockClusterServiceClient {
 	t.Helper()
 
+	records := recordsOf(db)
 	clusterService := clienttests.NewMockClusterServiceClient(t)
 	clusterService.EXPECT().GetCluster(mock.Anything, mock.Anything).RunAndReturn(
-		func(ctx context.Context, req *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
-			clusters, err := storedClusters(ctx, db, req.GetClusterId())
-			if err != nil {
-				return nil, err
-			}
-			if len(clusters) == 0 {
+		func(_ context.Context, req *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
+			cluster, ok := records.get(uuid.MustParse(req.GetClusterId()))
+			if !ok {
 				return nil, status.Error(codes.NotFound, "cluster not found")
 			}
 
-			return clustersgrpc.GetClusterResponse_builder{Cluster: clusters[0]}.Build(), nil
+			return clustersgrpc.GetClusterResponse_builder{Cluster: cluster}.Build(), nil
 		}).Maybe()
 	clusterService.EXPECT().ListClusters(mock.Anything, mock.Anything).RunAndReturn(
-		func(ctx context.Context, _ *clustersgrpc.ListClustersRequest, _ ...grpc.CallOption) (*clustersgrpc.ListClustersResponse, error) {
-			clusters, err := storedClusters(ctx, db, "")
+		func(context.Context, *clustersgrpc.ListClustersRequest, ...grpc.CallOption) (*clustersgrpc.ListClustersResponse, error) {
+			return clustersgrpc.ListClustersResponse_builder{Clusters: records.list()}.Build(), nil
+		}).Maybe()
+	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(isDeletionRequest)).RunAndReturn(
+		func(_ context.Context, req *clustersgrpc.UpdateClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.UpdateClusterResponse, error) {
+			cluster, err := records.requestDeletion(uuid.MustParse(req.GetClusterId()))
 			if err != nil {
 				return nil, err
 			}
 
-			return clustersgrpc.ListClustersResponse_builder{Clusters: clusters}.Build(), nil
-		}).Maybe()
-	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(isDeletionRequest)).RunAndReturn(
-		func(ctx context.Context, req *clustersgrpc.UpdateClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.UpdateClusterResponse, error) {
-			clusters, err := storedClusters(ctx, db, req.GetClusterId())
-			switch {
-			case err != nil:
-				return nil, err
-			case len(clusters) == 0:
-				return nil, status.Error(codes.NotFound, "cluster not found")
-			case clusters[0].GetDeletionProtection():
-				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED)
-			}
-			if err := db.SqlcClient.TestsRawSQL(ctx,
-				`UPDATE public.clusters SET deletion_requested_at = COALESCE(deletion_requested_at, now()) WHERE id = $1::uuid`, req.GetClusterId()); err != nil {
-				return nil, err
-			}
-
-			return clustersgrpc.UpdateClusterResponse_builder{Cluster: clusters[0]}.Build(), nil
+			return clustersgrpc.UpdateClusterResponse_builder{Cluster: cluster}.Build(), nil
 		}).Maybe()
 	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
-		func(ctx context.Context, req *clustersgrpc.DeleteClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.DeleteClusterResponse, error) {
-			if err := db.SqlcClient.TestsRawSQL(ctx, `DELETE FROM public.clusters WHERE id = $1::uuid`, req.GetClusterId()); err != nil {
-				return nil, err
-			}
+		func(_ context.Context, req *clustersgrpc.DeleteClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.DeleteClusterResponse, error) {
+			records.delete(uuid.MustParse(req.GetClusterId()))
 
 			return clustersgrpc.DeleteClusterResponse_builder{}.Build(), nil
 		}).Maybe()
@@ -104,46 +158,57 @@ func isDeletionRequest(req *clustersgrpc.UpdateClusterRequest) bool {
 	return req.GetRequestDeletion() && proto.Equal(req, clustersgrpc.UpdateClusterRequest_builder{ClusterId: req.GetClusterId(), RequestDeletion: true}.Build())
 }
 
-// storedClusters reads one stored cluster, or every one for an empty ID.
-func storedClusters(ctx context.Context, db *testutils.Database, clusterID string) ([]*clustersgrpc.Cluster, error) {
-	clusters := []*clustersgrpc.Cluster{}
-	err := db.SqlcClient.TestsRawSQLQuery(ctx,
-		`SELECT id::text, name, endpoint, endpoint_tls, token, sandbox_proxy_domain, auth_org_id,
-			deletion_protection, deletion_requested_at, telemetry_client_id
-		FROM public.clusters WHERE $1::text = '' OR id::text = $1::text ORDER BY id`,
-		func(rows pgx.Rows) error {
-			for rows.Next() {
-				var (
-					id, name, endpoint, token                      string
-					endpointTLS, deletionProtection                bool
-					sandboxProxyDomain, authOrgID, telemetryClient *string
-					deletionRequestedAt                            *time.Time
-				)
-				if err := rows.Scan(&id, &name, &endpoint, &endpointTLS, &token, &sandboxProxyDomain, &authOrgID,
-					&deletionProtection, &deletionRequestedAt, &telemetryClient); err != nil {
-					return err
-				}
-				cluster := clustersgrpc.Cluster_builder{
-					ClusterId:          id,
-					Name:               name,
-					Endpoint:           endpoint,
-					EndpointTls:        endpointTLS,
-					Token:              token,
-					SandboxProxyDomain: sandboxProxyDomain,
-					AuthOrgId:          authOrgID,
-					DeletionProtection: deletionProtection,
-					TelemetryClientId:  telemetryClient,
-				}
-				if deletionRequestedAt != nil {
-					cluster.DeletionRequestedAt = timestamppb.New(*deletionRequestedAt)
-				}
-				clusters = append(clusters, cluster.Build())
-			}
+// insertCluster records a cluster named and addressed by its ID.
+func insertCluster(t *testing.T, db *testutils.Database, clusterID uuid.UUID, protected bool) {
+	t.Helper()
 
-			return rows.Err()
-		}, clusterID)
+	recordsOf(db).put(clustersgrpc.Cluster_builder{
+		ClusterId:          clusterID.String(),
+		Name:               clusterID.String(),
+		Endpoint:           clusterID.String(),
+		EndpointTls:        true,
+		Token:              "token",
+		DeletionProtection: protected,
+	}.Build())
+}
 
-	return clusters, err
+func clusterExists(t *testing.T, db *testutils.Database, clusterID uuid.UUID) bool {
+	t.Helper()
+
+	_, ok := recordsOf(db).get(clusterID)
+
+	return ok
+}
+
+// recordedClustersJSON is the records kept for db, as JSON.
+func recordedClustersJSON(t *testing.T, db *testutils.Database) string {
+	t.Helper()
+
+	clusters := recordsOf(db).list()
+	encoded := make([]json.RawMessage, 0, len(clusters))
+	for _, cluster := range clusters {
+		raw, err := protojson.Marshal(cluster)
+		require.NoError(t, err)
+		encoded = append(encoded, raw)
+	}
+	out, err := json.Marshal(encoded)
+	require.NoError(t, err)
+
+	return string(out)
+}
+
+// markClusterDeleting records the cluster's deletion as the cluster service
+// does on a deletion request.
+func markClusterDeleting(t *testing.T, db *testutils.Database, clusterID uuid.UUID) {
+	t.Helper()
+
+	records := recordsOf(db)
+	cluster, ok := records.get(clusterID)
+	require.True(t, ok, "the cluster is recorded")
+	deleting, _ := proto.Clone(cluster).(*clustersgrpc.Cluster)
+	deleting.SetDeletionProtection(false)
+	deleting.SetDeletionRequestedAt(timestamppb.Now())
+	records.put(deleting)
 }
 
 // An API without a cluster service keeps only the local cluster, so it must
