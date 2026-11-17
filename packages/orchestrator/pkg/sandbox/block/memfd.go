@@ -31,9 +31,8 @@ type Memfd struct {
 	mmap []byte
 }
 
-// GuestMemoryError is the guest-memory mmap failing with ENOMEM: the hugepage
-// pool could not back the whole guest, because sandboxes still hold the pages
-// or the pool is smaller than the guest. It keeps the errno's text.
+// GuestMemoryError identifies ENOMEM while mapping guest memory.
+// It keeps the errno's text.
 type GuestMemoryError struct{ Err error }
 
 func (e GuestMemoryError) Error() string { return e.Err.Error() }
@@ -46,7 +45,10 @@ func NewFromFd(fd int) (*Memfd, error) {
 
 		return nil, fmt.Errorf("fstat memfd: %w", err)
 	}
-	b, err := unix.Mmap(fd, 0, int(st.Size), unix.PROT_READ, unix.MAP_SHARED)
+	// Firecracker maps this lazily populated hugetlb memfd with MAP_NORESERVE.
+	// Keep the same policy for our read-only view: otherwise mmap reserves the
+	// whole guest's hugepages and can fail with ENOMEM before we read any page.
+	b, err := unix.Mmap(fd, 0, int(st.Size), unix.PROT_READ, unix.MAP_SHARED|unix.MAP_NORESERVE)
 	if err != nil {
 		_ = unix.Close(fd)
 		if errors.Is(err, unix.ENOMEM) {
