@@ -605,15 +605,18 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 		t.Parallel()
 
 		want := sandboxtypes.RemoveOpts{
-			Action:             sandboxtypes.StateActionSnapshot,
-			Eviction:           true,
-			Reason:             sandboxtypes.KillReasonTimeout,
-			FilesystemOnly:     true,
-			RequireEnvdHealthy: true,
-			ExpectExecutionID:  uuid.NewString(),
-			BeforeEndTime:      true,
+			Action:               sandboxtypes.StateActionSnapshot,
+			Eviction:             true,
+			Reason:               sandboxtypes.KillReasonTimeout,
+			FilesystemOnly:       true,
+			RequireEnvdHealthy:   true,
+			ExpectExecutionID:    uuid.NewString(),
+			BeforeEndTime:        true,
+			WaitForLifecycleHold: true,
 		}
 		requireNoZeroField(t, want)
+		// The API's store reads it; the request does not carry it.
+		want.WaitForLifecycleHold = false
 
 		fake := newFake()
 		_, err := newClient(t, fake).BeginRemoving(callContext(t), scheduling.BeginRemovingRequest_builder{

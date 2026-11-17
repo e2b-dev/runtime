@@ -382,3 +382,31 @@ func TestKeepAliveFor_NodeInPoolExtends(t *testing.T) {
 	assert.Equal(t, got.EndTime.UnixMilli(), client.appliedEnd.Load())
 	assert.Zero(t, discovery.calls.Load())
 }
+
+// Counted from the request's arrival, a timeout shorter than the wait for a
+// lifecycle hold would have expired the sandbox by the time it is answered.
+func TestKeepAliveFor_TimeoutCountsFromTheEndOfAHold(t *testing.T) {
+	t.Parallel()
+
+	rc := redis_utils.SetupInstance(t)
+	o := newKeepAliveReplica(t, rc, &countingDiscovery{})
+	addKeepAliveNode(o, "node-2", &keepAliveNodeClient{})
+	sbx := addKeepAliveSandbox(t, o, "node-2", time.Minute)
+	hold := sandbox.Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: uuid.NewString()}
+	require.NoError(t, o.sandboxStore.HoldExecution(t.Context(), hold, time.Now().Add(time.Minute)))
+
+	released := make(chan time.Time, 1)
+	releaseErr := make(chan error, 1)
+	go func() {
+		// Lets the timeout request reach the held record first.
+		time.Sleep(100 * time.Millisecond)
+		released <- time.Now()
+		releaseErr <- o.sandboxStore.ReleaseHeldExecution(t.Context(), hold)
+	}()
+
+	const timeout = 10 * time.Second
+	got, apiErr := o.KeepAliveFor(t.Context(), sbx.TeamID, sbx.SandboxID, timeout, true)
+	require.NoError(t, <-releaseErr)
+	require.Nil(t, apiErr)
+	assert.False(t, got.EndTime.Before((<-released).Add(timeout)), "the timeout counts from when the hold ended")
+}

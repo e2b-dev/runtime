@@ -307,9 +307,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   serves `SandboxPlacementService` (`e2b.sandbox.placement.v1`) for the sandbox migration
   manager: `GetSandboxPlacement` admits a move between two local nodes and reports the
   execution's network mode and whether managed volumes are attached, for the manager to
-  decide whether the sandbox can move. `HoldExecution` holds a running execution's record
-  so pause, kill and timeout refuse it, and `ResolveExecutionHold` moves the record to the
-  target, releases it, or ends it. Only a chain-verified caller named in
+  decide whether the sandbox can move. `HoldExecution` holds a running execution's record:
+  a request that pauses, kills or updates the sandbox waits up to 30 seconds for the hold
+  to end and is then refused as retryable, a snapshot, a fork, eviction and the node sync
+  are refused at once, and reads are served as usual. `ResolveExecutionHold` moves the
+  record to the target, releases it, or ends it. Only a chain-verified caller named in
   `E2B_TLS_PLACEMENT_ALLOW` is served; the listener's own allow-list is not enough, since
   client-proxy shares it. Every call is safe to repeat.
 - **Node sandboxes**: admin `GET /nodes/{nodeID}/sandboxes` lists the sandboxes a node runs

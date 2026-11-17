@@ -35,6 +35,8 @@ func TestRequestsCarryTheCallersValues(t *testing.T) {
 	removeOpts := sandboxtypes.RemoveOpts{
 		Action: sandboxtypes.StateActionSnapshot, Eviction: true, Reason: sandboxtypes.KillReasonTimeout, FilesystemOnly: true,
 		RequireEnvdHealthy: true, ExpectExecutionID: sbx.ExecutionID, BeforeEndTime: true,
+		// The API's store reads it; the request does not carry it.
+		WaitForLifecycleHold: true,
 	}
 	requireNoZeroField(t, removeOpts)
 	restoreOpts := sandboxtypes.RestoreOpts{RetryAfter: 90*time.Second + 123*time.Nanosecond, HoldOnly: true, EnvdRefusal: true}

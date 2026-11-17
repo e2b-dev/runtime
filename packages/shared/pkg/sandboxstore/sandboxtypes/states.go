@@ -79,6 +79,12 @@ type RemoveOpts struct {
 	Eviction bool
 	Reason   KillReason
 
+	// WaitForLifecycleHold makes the API's store wait a bounded time for a
+	// lifecycle hold to end before it refuses the removal with
+	// ErrLifecycleHeld. For a pause or kill a caller requested: eviction and
+	// the node sync must not wait. A storage backend never reads it.
+	WaitForLifecycleHold bool
+
 	// FilesystemOnly requests a filesystem-only snapshot on pause (no memory
 	// snapshot); resuming it cold-boots from disk. Ignored unless Action is a
 	// pause. Default false = full memory snapshot.
