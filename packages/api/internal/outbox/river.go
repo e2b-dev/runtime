@@ -1,6 +1,7 @@
 // Package outbox works the API's River jobs: the jobs another service enqueues
 // in the shared database for work only the API can do, because it holds the
-// orchestrator connections.
+// orchestrator connections, and the jobs the API enqueues with its own writes
+// to carry them to another service.
 package outbox
 
 import (
@@ -16,8 +17,10 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	dbmodule "github.com/e2b-dev/infra/packages/db"
+	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -45,9 +48,13 @@ type Dependencies struct {
 	Containment teamContainer
 	TeamCache   teamCache
 	Teams       *authdb.Client
-	Logger      logger.Logger
-	Telemetry   *telemetry.Client
-	Config      Config
+	// DB reads the teams' clusters.
+	DB *sqlcdb.Client
+	// Clusters is nil without a cluster service.
+	Clusters  clustersgrpc.ClusterServiceClient
+	Logger    logger.Logger
+	Telemetry *telemetry.Client
+	Config    Config
 }
 
 type River struct {
@@ -71,6 +78,11 @@ func New(deps Dependencies) (*River, error) {
 		settle:    containSettleDelay,
 		steps:     steps.Job(outbox.ContainBannedTeam{}.Kind()),
 	})
+	river.AddWorker(workers, &teamClusterAssignmentWorker{
+		db:       deps.DB,
+		clusters: deps.Clusters,
+		steps:    steps.Job(outbox.SyncTeamClusterAssignment{}.Kind()),
+	})
 
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
@@ -92,7 +104,7 @@ func New(deps Dependencies) (*River, error) {
 
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind()},
+		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind()},
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {

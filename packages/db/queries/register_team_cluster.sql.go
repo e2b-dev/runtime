@@ -145,6 +145,21 @@ func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterPa
 	return i, err
 }
 
+const getLiveTeamCluster = `-- name: GetLiveTeamCluster :one
+SELECT cluster_id
+FROM public.teams
+WHERE id = $1::uuid
+  AND deleted_at IS NULL
+`
+
+// A deleted team holds no cluster, whatever its row still says.
+func (q *Queries) GetLiveTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getLiveTeamCluster, teamID)
+	var cluster_id *uuid.UUID
+	err := row.Scan(&cluster_id)
+	return cluster_id, err
+}
+
 const listClusterTeamIDs = `-- name: ListClusterTeamIDs :many
 SELECT id
 FROM public.teams
@@ -185,6 +200,17 @@ func (q *Queries) LockTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.
 	var cluster_id *uuid.UUID
 	err := row.Scan(&cluster_id)
 	return cluster_id, err
+}
+
+const lockTeamClusterSync = `-- name: LockTeamClusterSync :exec
+SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || $1::uuid::text, 0))
+`
+
+// Serializes the syncs of one team's cluster to the cluster service, so each
+// reads the team only after the sync before it has finished.
+func (q *Queries) LockTeamClusterSync(ctx context.Context, teamID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTeamClusterSync, teamID)
+	return err
 }
 
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec

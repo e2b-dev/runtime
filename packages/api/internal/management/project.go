@@ -6,11 +6,14 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
+	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -25,6 +28,11 @@ var (
 	// this request's own insert.
 	ErrProjectRaced = errors.New("project was created concurrently")
 )
+
+// JobEnqueuer enqueues a job outside any transaction.
+type JobEnqueuer interface {
+	Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error)
+}
 
 // Project is the set of properties the caller synchronizes. It sends all of
 // them on every push, so a reconcile is a complete statement rather than a
@@ -48,7 +56,12 @@ type Project struct {
 // One operation serves both because the caller cannot tell them apart: it
 // retries, and a retry after a response it never saw has to land on the same
 // state as the original.
-func (s *Service) UpsertProject(ctx context.Context, project Project) (stored Project, created bool, err error) {
+//
+// A project on a cluster has that cluster copied to the cluster service by a
+// job. The row is written through the auth pool and River inserts through the
+// project pool, so the job is enqueued after the commit and not in it; a
+// failure is returned, and the caller's retry enqueues it again.
+func (s *Service) UpsertProject(ctx context.Context, jobs JobEnqueuer, project Project) (stored Project, created bool, err error) {
 	stored, created, err = s.writeProject(ctx, project)
 	if err != nil {
 		return Project{}, false, err
@@ -62,6 +75,12 @@ func (s *Service) UpsertProject(ctx context.Context, project Project) (stored Pr
 		if err := s.cache.InvalidateTeamCache(ctx, project.ID); err != nil {
 			logger.L().Error(ctx, "invalidating team cache after project reconcile",
 				logger.WithTeamID(project.ID.String()), zap.Error(err))
+		}
+	}
+
+	if stored.ClusterID != nil {
+		if _, err := jobs.Insert(ctx, outbox.SyncTeamClusterAssignment{TeamID: project.ID}, nil); err != nil {
+			return Project{}, false, fmt.Errorf("enqueue team cluster sync: %w", err)
 		}
 	}
 
