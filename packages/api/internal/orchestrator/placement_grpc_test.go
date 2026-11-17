@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -11,6 +13,7 @@ import (
 	"buf.build/go/protovalidate"
 	"github.com/google/uuid"
 	protovalidatemw "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +29,8 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -73,6 +78,30 @@ type placementHarness struct {
 	store          *sandbox.Store
 	source, target *nodemanager.Node
 	stops          *recordingCollector
+	flags          *ldtestdata.TestDataSource
+	teams          placementTeams
+}
+
+// placementTeam is what a team read answers for one team: its scheduling
+// labels, or the read's failure.
+type placementTeam struct {
+	labels []string
+	err    error
+}
+
+// placementTeams reads a team that is not recorded as one without
+// scheduling labels. Every team has the same name.
+type placementTeams map[uuid.UUID]placementTeam
+
+const placementTeamName = "placement-team"
+
+func (p placementTeams) GetTeamByID(_ context.Context, teamID uuid.UUID) (*teamtypes.Team, error) {
+	team := p[teamID]
+	if team.err != nil {
+		return nil, team.err
+	}
+
+	return &teamtypes.Team{Team: &types.Team{ID: teamID, Name: placementTeamName, SandboxSchedulingLabels: team.labels}}, nil
 }
 
 // localPlacementHarness is an Orchestrator over a real store on Redis with
@@ -86,7 +115,8 @@ func localPlacementHarness(t *testing.T) (*placementHarness, *SandboxPlacementSe
 	go storage.Start(ctx)
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(ctx)) })
 	store := sandbox.NewStore(storage, redisreservations.NewReservationStorage(redisClient, storage.Notifier()), sandbox.Callbacks{})
-	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	flagSource := ldtestdata.DataSource()
+	flags, err := featureflags.NewClientWithDatasource(flagSource)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(ctx)) })
 	posthog, err := analyticscollector.NewPosthogClient(ctx, "")
@@ -94,13 +124,13 @@ func localPlacementHarness(t *testing.T) (*placementHarness, *SandboxPlacementSe
 	t.Cleanup(func() { _ = posthog.Close() })
 	stops := &recordingCollector{}
 	o := &Orchestrator{sandboxStore: store, nodes: smap.New[*nodemanager.Node](), featureFlagsClient: flags, posthogClient: posthog, analytics: analyticscollector.NewAnalyticsWithClient(stops)}
-	h := &placementHarness{o: o, store: store, stops: stops}
+	h := &placementHarness{o: o, store: store, stops: stops, flags: flagSource, teams: placementTeams{}}
 	h.source = h.node("node-a", api.NodeStatusReady, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	h.target = h.node("node-b", api.NodeStatusReady, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	callers, err := mtls.ParseAllowList([]string{placementCaller}, mtls.WithoutWildcards())
 	require.NoError(t, err)
 
-	return h, NewSandboxPlacementService(h.o, callers)
+	return h, NewSandboxPlacementService(h.o, callers, h.teams)
 }
 
 func (h *placementHarness) node(id string, status api.NodeStatus, opts ...nodemanager.TestOptions) *nodemanager.Node {
@@ -360,7 +390,7 @@ func TestPlacementCaller(t *testing.T) {
 			t.Parallel()
 			callers, err := mtls.ParseAllowList([]string{placementCaller}, mtls.WithoutWildcards())
 			require.NoError(t, err)
-			client := placementClient(t, NewSandboxPlacementService(nil, callers), peer, nil)
+			client := placementClient(t, NewSandboxPlacementService(nil, callers, nil), peer, nil)
 			_, err = client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx", ExpectedExecutionId: uuid.NewString(), ExpectedSourceNodeId: "node-a", TargetNodeId: "node-b"}.Build())
 			expected := codes.Unauthenticated
 			if peer.ChainVerified {
@@ -384,6 +414,43 @@ func TestPlacementReportsVolumeMounts(t *testing.T) {
 	placement, err := client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: sbx.TeamID.String(), SandboxId: sbx.SandboxID, ExpectedExecutionId: sbx.ExecutionID, ExpectedSourceNodeId: sbx.NodeID, TargetNodeId: h.target.ID}.Build())
 	require.NoError(t, err)
 	assert.True(t, placement.GetVolumesAttached())
+}
+
+// With label scheduling on, a target is admitted only when a create of the
+// sandbox could be placed on it: a node labelled for one team takes that
+// team's sandboxes and no other's. The flag is targeted on the cluster and
+// the team name, which a create request carries and a move must too. A
+// banned or missing team is refused. Any other failed team read is
+// unavailable, which the caller does not take for a refusal.
+func TestPlacementTargetLabels(t *testing.T) {
+	t.Parallel()
+	h, service := localPlacementHarness(t)
+	h.flags.Update(h.flags.Flag(featureflags.SandboxLabelBasedSchedulingFlag.Key()).BooleanFlag().FallthroughVariation(false).
+		IfMatchContext(featureflags.ClusterKind, "key", ldvalue.String(consts.LocalClusterID.String())).
+		AndMatchContext(featureflags.TeamKind, "name", ldvalue.String(placementTeamName)).
+		ThenReturn(true))
+	shared := h.node("node-b", api.NodeStatusReady, nodemanager.WithLabels([]string{"default"}), nodemanager.WithServiceInstanceID(uuid.NewString()))
+	dedicated := h.node("node-c", api.NodeStatusReady, nodemanager.WithLabels([]string{"dedicated"}), nodemanager.WithServiceInstanceID(uuid.NewString()))
+	unlabelled, labelled, banned, missing, unread := h.running(t), h.running(t), h.running(t), h.running(t), h.running(t)
+	h.teams[labelled.TeamID] = placementTeam{labels: []string{"dedicated"}}
+	h.teams[banned.TeamID] = placementTeam{err: &auth.TeamForbiddenError{Message: "team is banned"}}
+	h.teams[missing.TeamID] = placementTeam{err: fmt.Errorf("failed to get team from team ID: %w", sql.ErrNoRows)}
+	h.teams[unread.TeamID] = placementTeam{err: errors.New("connection refused")}
+	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, nil)
+	move := func(sbx sandbox.Sandbox, target *nodemanager.Node) error {
+		_, err := client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: sbx.TeamID.String(), SandboxId: sbx.SandboxID, ExpectedExecutionId: sbx.ExecutionID, ExpectedSourceNodeId: sbx.NodeID, TargetNodeId: target.ID}.Build())
+
+		return err
+	}
+
+	err := move(unlabelled, dedicated)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
+	assert.Contains(t, status.Convert(err).Message(), "scheduling labels")
+	require.NoError(t, move(unlabelled, shared), "a team without labels is placed on the default nodes")
+	require.NoError(t, move(labelled, dedicated))
+	for sbx, want := range map[*sandbox.Sandbox]codes.Code{&banned: codes.FailedPrecondition, &missing: codes.FailedPrecondition, &unread: codes.Unavailable} {
+		require.Equal(t, want, status.Code(move(*sbx, shared)), sbx.TeamID)
+	}
 }
 
 // Every refusal names its reason: the caller shows it to the operator.

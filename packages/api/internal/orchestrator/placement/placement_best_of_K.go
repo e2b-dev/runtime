@@ -217,7 +217,7 @@ func unavailableNodeWouldFit(nodes []*nodemanager.Node, excludedNodes map[string
 			continue
 		}
 
-		if NodeSatisfiesCPU(n, requirements.CPU) && NodeSatisfiesFeatures(n, requirements.Features) && (!filterByLabels || isNodeLabelsCompatible(n, requiredLabels)) {
+		if NodeSatisfiesCPU(n, requirements.CPU) && NodeSatisfiesFeatures(n, requirements.Features) && (!filterByLabels || NodeSatisfiesLabels(n, requiredLabels)) {
 			return true
 		}
 	}
@@ -272,7 +272,7 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 		}
 
 		// Skip if node doesn't have the required labels
-		if filterByLabels && !isNodeLabelsCompatible(n, requiredLabels) {
+		if filterByLabels && !NodeSatisfiesLabels(n, requiredLabels) {
 			continue
 		}
 

@@ -801,5 +801,5 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 }
 
 func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
-	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers, a.authService)
 }
